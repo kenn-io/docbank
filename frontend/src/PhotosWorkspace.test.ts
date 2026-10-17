@@ -219,7 +219,7 @@ it("disables search and filters until a delayed Hide finishes", async () => {
   await cache.dispose();
 });
 
-it("reports submitted photo searches and facets while keeping filter clearing silent", async () => {
+it("restores photo searches, guides empty libraries, and reports submissions and facets", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {

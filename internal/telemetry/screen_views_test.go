@@ -120,7 +120,7 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, 202, postEvent(t, handler, screenBody("search", "tui")).Code)
-	for _, event := range []string{"document_opened", "search_run"} {
+	for _, event := range []string{"document_added", "document_opened", "search_run"} {
 		for _, surface := range []string{"web", "tui", "cli"} {
 			values := []string{""}
 			if event == "search_run" {
@@ -162,14 +162,14 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 		require.NoError(t, reporter.Close())
 		mu.Lock()
-		assert.Len(t, events, 20+i)
+		assert.Len(t, events, 26+i)
 		assert.Equal(t, "browse", events[len(events)-1]["screen"])
 		assert.Equal(t, "web", events[len(events)-1]["surface"])
 		mu.Unlock()
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 21)
+	require.Len(t, events, 27)
 	assert.Equal(t, "browse", events[0]["screen"])
 	assert.Equal(t, "web", events[0]["surface"])
 	assert.Equal(t, "browse", events[1]["screen"])

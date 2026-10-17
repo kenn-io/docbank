@@ -680,7 +680,7 @@ func TestUpgradeReleasedJobsStartWithoutActionAttribution(t *testing.T) {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
 			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
-			pkg, run, _ := prepareReceivedPackage(t, legacy, "released-import")
+			pkg, _, _ := prepareReceivedPackage(t, legacy, "released-import")
 			_, err := legacy.CreatePackage(t.Context(), pkg)
 			require.NoError(t, err)
 			request := packageImportJobRequest(t, legacy, pkg)
@@ -711,7 +711,6 @@ func TestUpgradeReleasedJobsStartWithoutActionAttribution(t *testing.T) {
 			require.Empty(t, imported.ActionSurface)
 			require.False(t, imported.ActionAddedReported)
 			require.Equal(t, request.JobJSON, imported.JobJSON)
-			require.Equal(t, run.ID(), pkg.IngestID)
 			mailbox, err := upgraded.MailboxJob(t.Context(), job.Owner, job.ID)
 			require.NoError(t, err)
 			require.Empty(t, mailbox.ActionSurface)

@@ -101,7 +101,7 @@ function snapshot(
   };
 }
 
-it("navigates frozen documents across pages and stops at the boundary or expiry", async () => {
+it("navigates frozen documents within their boundaries and reports submitted searches", async () => {
   history.replaceState(
     null,
     "",

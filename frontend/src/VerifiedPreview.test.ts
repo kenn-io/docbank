@@ -206,7 +206,7 @@ it.each([
   },
 );
 
-it("keeps unsupported content on the verified-download fallback without a preview request", async () => {
+it("keeps unsupported content on the download fallback and reports download inspection", async () => {
   const selected = source(
     new TextEncoder().encode("<svg/>"),
     "44444444-4444-4444-8444-444444444444",

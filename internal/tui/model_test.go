@@ -608,9 +608,17 @@ func TestModelReportsSearchIntentAndReturnsToTree(t *testing.T) {
 	model, _ = updateModel(t, model, runeKey('/'))
 	assert.True(t, model.searching)
 	model.searchInput.SetValue("quarterly report")
-	model, _ = updateModel(t, model, key(tea.KeyEnter))
-	model, cmd = updateModel(t, model, model.loadSearch("quarterly report", model.requestID)())
-	model = runModelCommand(t, model, cmd)
+	model, cmd = updateModel(t, model, key(tea.KeyEnter))
+	require.NotNil(t, cmd)
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok)
+	for _, command := range batch {
+		model, cmd = updateModel(t, model, command())
+		if cmd != nil {
+			model = runModelCommand(t, model, cmd)
+		}
+	}
+
 	require.Equal(t, [][2]string{{"search_run", "text"}}, backend.actions)
 	assert.Equal(t, maxSearchItems, backend.searchMax)
 	assert.Equal(t, modeSearch, model.mode)
@@ -619,7 +627,6 @@ func TestModelReportsSearchIntentAndReturnsToTree(t *testing.T) {
 	assert.Equal(t, "content", model.rows[0].match)
 
 	model, cmd = updateModel(t, model, runeKey('r'))
-	model, cmd = updateModel(t, model, cmd())
 	if cmd != nil {
 		model = runModelCommand(t, model, cmd)
 	}
@@ -1586,7 +1593,7 @@ func TestSearchKeepsRelevanceUntilSortChanges(t *testing.T) {
 	assert.Equal(t, int64(20), selected.node.ID)
 }
 
-func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
+func TestExpandedDetailReportsInspectionAndExposesCompleteAuthority(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)

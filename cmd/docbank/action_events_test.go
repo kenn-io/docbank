@@ -39,11 +39,17 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, redirected.Close()) }()
 	events := make(chan api.TelemetryEventRequest, 2)
+	timedOut := make(chan bool, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body api.TelemetryEventRequest
 		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
 		if body.Event == "search_run" {
-			<-r.Context().Done()
+			select {
+			case <-r.Context().Done():
+				timedOut <- true
+			case <-time.After(250 * time.Millisecond):
+				timedOut <- false
+			}
 			return
 		}
 		events <- body
@@ -86,7 +92,6 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetIn(terminal)
 	cmd.SetContext(t.Context())
-	start := time.Now()
 	reportAction(cmd, connection, "search_run", "hybrid")
-	assert.Less(t, time.Since(start), time.Second)
+	assert.True(t, <-timedOut, "action request must cancel before the server stall ends")
 }

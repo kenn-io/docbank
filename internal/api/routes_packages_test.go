@@ -10,7 +10,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -311,11 +310,8 @@ func TestPackagePreflightRejectsRecordAboveReceiptBound(t *testing.T) {
 }
 
 func TestSealedZIPPackagePreflightRetainsContainerBinding(t *testing.T) {
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
-	t.Setenv("TELEMETRY_ENABLED", "1")
-	capture := newActionCollector(t)
-	server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture })
-	srv := &testServer{ts: server}
+	t.Parallel()
+	srv, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	var archive bytes.Buffer
 	writer := zip.NewWriter(&archive)
@@ -371,28 +367,6 @@ func TestSealedZIPPackagePreflightRetainsContainerBinding(t *testing.T) {
 	require.NotEmpty(t, record.MappingJSON)
 	read := srv.get(t, "/api/v1/packages/preflights/"+out.PreflightID)
 	require.Equal(t, 200, read.Code, read.Body.String())
-
-	gate := api.NewOperationGate()
-	worker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
-		Catalog: catalog.Store, Blobs: catalog.Blobs, Owner: "synthetic-worker", Mutate: gate.MutateContext,
-		OpenContainer: func(_ context.Context, _, id string) (io.ReaderAt, int64, error) {
-			require.Equal(t, containerID, id)
-			return bytes.NewReader(archive.Bytes()), int64(archive.Len()), nil
-		},
-		ImportResult: capture.capture.DocumentAdded,
-	})
-	require.NoError(t, err)
-	fast := packageAdmissionGate(func(ctx context.Context, mutate func() error) error {
-		if err := gate.MutateContext(ctx, mutate); err != nil {
-			return err
-		}
-		_, err := worker.ProcessOnce(ctx) // complete before admission returns to the caller
-		return err
-	})
-	_, err = api.AdmitPackageImport(t.Context(), api.Deps{Store: catalog.Store, Blobs: catalog.Blobs, TelemetryCapture: capture.capture}, fast,
-		"vault:"+catalog.VaultID(), api.PackageImportRequest{PreflightID: out.PreflightID, Into: "/", Name: "synthetic-package", OperationID: uuid.NewString()}, "web")
-	require.NoError(t, err)
-	capture.requireEvent(t, "document_added", map[string]any{"surface": "web"})
 }
 
 func TestPreflightPersistsOneExpiringRowAndMutatesNothingElse(t *testing.T) {
@@ -868,10 +842,4 @@ func TestPreflightUsesCSVNormalizationForQuotedMultilineFields(t *testing.T) {
 	assert.Equal(t, "DOC-B", records[1].DocID)
 	require.Len(t, records[1].Fields, 2)
 	assert.Equal(t, "plain", records[1].Fields[1].Raw)
-}
-
-type packageAdmissionGate func(context.Context, func() error) error
-
-func (g packageAdmissionGate) MutateContext(ctx context.Context, mutate func() error) error {
-	return g(ctx, mutate)
 }

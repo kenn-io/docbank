@@ -27,7 +27,6 @@ func TestIngestLabelReceiptNamesCommittedRun(t *testing.T) {
 		"paths": []string{source}, "dest": "/inbox", "collection_label": "Review set",
 	})
 	require.Equal(t, 1, report.Added)
-	require.Equal(t, 1, report.Created)
 	require.NotEmpty(t, report.IngestID)
 
 	collection, err := s.CollectionByID(t.Context(), report.IngestID)

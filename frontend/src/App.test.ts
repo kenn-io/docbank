@@ -1961,7 +1961,7 @@ async function configureFirstTagHotkey(): Promise<void> {
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 }
 
-it("navigates the displayed page, keeps checkbox selection independent, and activates a row once", async () => {
+it("navigates the displayed page, keeps selection independent, and reports deliberate inspections", async () => {
   prepareKeyboardApp();
   const backend = installKeyboardBackend();
   render(App);

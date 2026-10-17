@@ -59,9 +59,9 @@ func (c *lostReceiptConn) Write(data []byte) (int, error) {
 	return n, nil
 }
 
-func TestBrowserImportsReportOnceWhenReceiptIsLost(t *testing.T) {
+func TestBrowserImportsReportCommittedAdditionsAcrossRollbackAndLostReceipts(t *testing.T) {
 	for _, photos := range []bool{false, true} {
-		for _, dropAfter := range []int{1, 2} {
+		for _, dropAfter := range []int{0, 1, 2} {
 			t.Run(fmt.Sprintf("photos=%t/drop=%d", photos, dropAfter), func(t *testing.T) {
 				t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
 				t.Setenv("TELEMETRY_ENABLED", "1")
@@ -73,23 +73,38 @@ func TestBrowserImportsReportOnceWhenReceiptIsLost(t *testing.T) {
 				defer proxy.Close()
 				proxy.Client().Transport = ts.Client().Transport
 				conn := browserUploadSocket(t, proxy)
+				defer func() { _ = conn.CloseNow() }()
 				data := []byte("synthetic data 0")
-				members := []map[string]any{
-					{"relative_path": "file-0.JPG", "expected_size": len(data)},
-					{"relative_path": "file-1.JPG", "expected_size": len(data)},
-				}
 				importID := "synthetic-import"
 				if photos {
-					importID = planBrowserPhotos(t, conn, members)
+					importID = planBrowserPhotos(t, conn, []map[string]any{
+						{"relative_path": "file-0.JPG", "expected_size": len(data)},
+						{"relative_path": "file-1.JPG", "expected_size": len(data)},
+					})
+					if dropAfter == 0 {
+						db, err := store.DefaultSQLiteDriver().Open(catalog.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+						require.NoError(t, err)
+						defer func() { require.NoError(t, db.Close()) }()
+						// Defer the failure until Commit, after the group has produced an Added result.
+						_, err = db.Exec(`CREATE TABLE synthetic_photo_failure(node_id INTEGER REFERENCES nodes(id) DEFERRABLE INITIALLY DEFERRED)`)
+						require.NoError(t, err)
+						_, err = db.Exec(`CREATE TRIGGER synthetic_photo_rollback AFTER INSERT ON photo_assets BEGIN INSERT INTO synthetic_photo_failure VALUES(-1); END`)
+						require.NoError(t, err)
+					}
 				}
-				for i := range dropAfter {
+				count := max(1, dropAfter)
+				for i := range count {
 					data = []byte(fmt.Sprintf("synthetic data %d", i))
 					hash := sha256.Sum256(data)
+					expectedHash := hex.EncodeToString(hash[:])
+					if dropAfter == 0 && !photos {
+						expectedHash = strings.Repeat("a", 64)
+					}
 					begin := map[string]any{"type": "begin", "request_id": "file", "import_id": importID,
 						"parent_id": catalog.RootID(), "name": fmt.Sprintf("file-%d.txt", i), "mime_type": "text/plain",
-						"expected_hash": hex.EncodeToString(hash[:]), "expected_size": len(data)}
+						"expected_hash": expectedHash, "expected_size": len(data)}
 					if photos {
-						begin = map[string]any{"type": "begin_photo_group", "request_id": "file", "import_id": importID, "group": i, "hashes": []string{hex.EncodeToString(hash[:])}}
+						begin = map[string]any{"type": "begin_photo_group", "request_id": "file", "import_id": importID, "group": i, "hashes": []string{expectedHash}}
 					}
 					require.NoError(t, wsjson.Write(t.Context(), conn, begin))
 					var message map[string]any
@@ -98,67 +113,34 @@ func TestBrowserImportsReportOnceWhenReceiptIsLost(t *testing.T) {
 					require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, data))
 					require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "end", "request_id": "file"}))
 					err := wsjson.Read(t.Context(), conn, &message)
-					if i < dropAfter-1 {
+					if dropAfter == 0 {
+						require.NoError(t, err)
+						require.Equal(t, "error", message["type"])
+					} else if i < dropAfter-1 {
 						require.NoError(t, err)
 					} else {
 						require.Error(t, err)
 					}
 				}
-				for i := range dropAfter {
+				for i := range count {
 					path := fmt.Sprintf("/file-%d.txt", i)
 					if photos {
 						path = fmt.Sprintf("/photos/file-%d.JPG", i)
 					}
 					_, err := catalog.NodeByPath(t.Context(), path)
-					require.NoError(t, err)
+					if dropAfter == 0 {
+						require.ErrorIs(t, err, store.ErrNotFound)
+					} else {
+						require.NoError(t, err)
+					}
 				}
-				capture.requireEvent(t, "document_added", map[string]any{"surface": "web"})
+				if dropAfter == 0 {
+					require.NoError(t, capture.reporter.Close())
+					require.Empty(t, capture.events)
+				} else {
+					capture.requireEvent(t, "document_added", map[string]any{"surface": "web"})
+				}
 			})
 		}
-	}
-}
-
-func TestBrowserImportFailuresDoNotReportAdditions(t *testing.T) {
-	for _, photos := range []bool{false, true} {
-		t.Run(fmt.Sprintf("photos=%t", photos), func(t *testing.T) {
-			t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
-			t.Setenv("TELEMETRY_ENABLED", "1")
-			capture := newActionCollector(t)
-			server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture })
-			conn := browserUploadSocket(t, server)
-			defer func() { _ = conn.CloseNow() }()
-			data := []byte("synthetic rolled back upload")
-			digest := sha256.Sum256(data)
-			hash := hex.EncodeToString(digest[:])
-			begin := map[string]any{"type": "begin", "request_id": "failed", "import_id": "synthetic-failure", "parent_id": catalog.RootID(), "name": "failed.txt", "mime_type": "text/plain", "expected_hash": strings.Repeat("a", 64), "expected_size": len(data)}
-			if photos {
-				importID := planBrowserPhotos(t, conn, []map[string]any{{"relative_path": "failed.JPG", "expected_size": len(data)}})
-				db, err := store.DefaultSQLiteDriver().Open(catalog.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
-				require.NoError(t, err)
-				defer func() { require.NoError(t, db.Close()) }()
-				// Defer the failure until Commit, after the group has produced an Added result.
-				_, err = db.Exec(`CREATE TABLE synthetic_photo_failure(node_id INTEGER REFERENCES nodes(id) DEFERRABLE INITIALLY DEFERRED)`)
-				require.NoError(t, err)
-				_, err = db.Exec(`CREATE TRIGGER synthetic_photo_rollback AFTER INSERT ON photo_assets BEGIN INSERT INTO synthetic_photo_failure VALUES(-1); END`)
-				require.NoError(t, err)
-				begin = map[string]any{"type": "begin_photo_group", "request_id": "failed", "import_id": importID, "group": 0, "hashes": []string{hash}}
-			}
-			require.NoError(t, wsjson.Write(t.Context(), conn, begin))
-			var message map[string]any
-			require.NoError(t, wsjson.Read(t.Context(), conn, &message))
-			require.Equal(t, "ready", message["type"])
-			require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, data))
-			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "end", "request_id": "failed"}))
-			require.NoError(t, wsjson.Read(t.Context(), conn, &message))
-			require.Equal(t, "error", message["type"])
-			path := "/failed.txt"
-			if photos {
-				path = "/photos/failed.JPG"
-			}
-			_, err := catalog.NodeByPath(t.Context(), path)
-			require.ErrorIs(t, err, store.ErrNotFound)
-			require.NoError(t, capture.reporter.Close())
-			require.Empty(t, capture.events)
-		})
 	}
 }
