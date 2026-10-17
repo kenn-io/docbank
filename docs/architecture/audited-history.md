@@ -414,6 +414,8 @@ distinct canonical sort keys. Omitting either half, retaining two active
 generations for the same node, or rotating when the post-state is byte-identical
 is invalid.
 
+Burst representatives and burst settings use the global allocation chain, including photos outside enrolled scopes. Representative records identify an asset and its chosen rank; the settings record identifies the vault singleton and records its gap and representative sequence. Enrollment includes non-default state. Absent records mean no representative, gap 2, and sequence 0, preserving earlier audit histories. A choice advances the sequence once and assigns that rank to one asset; Undo restores its earlier rank while retaining the sequence. Gap-only updates preserve the sequence. These changes add attached-metadata deltas without file events or scope fanout. Replay checks identities, exact prior state, counts, and transitions; verification compares the replay with current metadata. Settings requests that also change the display preference remain unsupported under audit.
+
 Authoritative attached metadata has the same replay boundary. Enabling the
 first scope records a vault-wide, canonically sorted genesis projection of every
 tag definition and assignment plus every ingest and provenance record. Its

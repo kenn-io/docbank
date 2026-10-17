@@ -440,9 +440,7 @@ Representative receipts must reference existing photo assets.
 `photo_library_settings` owns the vault-wide display preference, `burst_gap_seconds`
 (default 2, range 1–30), and their shared revision. One settings update can
 change both values; API callers use `reset_preference: true` to reset the
-preference while changing the gap. Audited vaults refuse burst-gap changes,
-representative choices, and representative Undo until these operations have
-audited writers. `photo_files` owns the
+preference while changing the gap. Audited vaults support gap-only changes, representative choices, and representative Undo through the global attached-metadata allocation chain. The representative rank is keyed by asset ID; the gap and sequence share the vault singleton identity. Default records are omitted: no representative, gap 2, sequence 0. Choice advances the sequence once; Undo retains its high-water mark. These writes, their revisions, and receipts commit together. A settings request that also changes the display preference remains refused under audit. `photo_files` owns the
 role, revision, authored decisions, and same-asset sidecar relationship for each
 node. Detached rows have NULL asset membership and no sidecar pointer; reattachment
 reuses their stable identity and decisions. A sidecar never

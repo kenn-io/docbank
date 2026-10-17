@@ -340,6 +340,10 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 // choosePhotoRepresentativeTx stores an explicit choice with the next rank.
 // Flags stay unchanged, so every frame keeps its picks and rejects.
 func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, frame photoStackFrame) (PhotoAuthoredReceipt, error) {
+	prior, err := photoBurstSettingsTx(ctx, tx)
+	if err != nil {
+		return PhotoAuthoredReceipt{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,updated_at) VALUES(1,'') ON CONFLICT(singleton) DO NOTHING`); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
@@ -349,6 +353,9 @@ func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, fra
 	}
 	change, err := setPhotoRepresentativeTx(ctx, tx, frame.AssetID, -1, &rank)
 	if err != nil {
+		return PhotoAuthoredReceipt{}, err
+	}
+	if err := s.auditPhotoBurstTx(ctx, tx, prior, []PhotoRepresentativeChange{change}); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	return persistPhotoRepresentativeReceiptTx(ctx, tx, PhotoAuthoredReceipt{Representatives: []PhotoRepresentativeChange{change}})
@@ -369,16 +376,9 @@ func setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, r
 	return change, err
 }
 
-// photoRepresentativeStateTx refuses choices and undo until they have an audited writer.
+// photoRepresentativeStateTx loads the prior rank and asset revision.
 func photoRepresentativeStateTx(ctx context.Context, tx *sql.Tx, assetID string, rank *int64) (PhotoRepresentativeChange, error) {
 	change := PhotoRepresentativeChange{AssetID: assetID, After: rank}
-	active, err := auditAuthorityActiveTx(ctx, tx)
-	if err != nil {
-		return change, err
-	}
-	if active {
-		return change, ErrAuditMutationUnsupported
-	}
 	var before sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT revision,representative_rank FROM photo_assets WHERE asset_id=?`, assetID).Scan(&change.BeforeRevision, &before); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

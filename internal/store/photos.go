@@ -857,7 +857,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		return PhotoSettings{}, fmt.Errorf("%w: burst gap must be 1 to 30 seconds", ErrInvalidPhotoAsset)
 	}
 	var result PhotoSettings
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		current, err := photoSettingsTx(ctx, tx)
 		if err != nil {
 			return err
@@ -876,6 +876,17 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			result = current
 			return nil
 		}
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if active && !equalPhotoString(current.Preference, next.Preference) {
+			return ErrAuditMutationUnsupported
+		}
+		priorBurst, err := photoBurstSettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		// Read assets before the new preference is visible; reads resolve the display choice.
 		var assets []PhotoAsset
 		if !equalPhotoString(current.Preference, next.Preference) {
@@ -892,6 +903,9 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			AfterRevision: next.Revision, Before: photoSettingsState(current),
 			After: photoSettingsState(next),
 		}); err != nil {
+			return err
+		}
+		if err := s.auditPhotoBurstTx(ctx, tx, priorBurst, nil); err != nil {
 			return err
 		}
 		result = next
