@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestWorkspaceQueryRoutesCreateAndPageFrozenResults(t *testing.T) {
@@ -448,6 +449,29 @@ func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	require.EqualValues(t, 3, page.Total)
 	require.Len(t, page.Rows, 3)
 	require.Equal(t, new(""), page.Rows[0].Flag)
+}
+
+func TestWorkspaceAdHocPhotoSnapshotPick(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "picked.jpg", testHash("picked-photo"), 10, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Flag: new("pick")}})
+	require.NoError(t, err)
+
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{"filters":{"flags":["pick"]}},"page_size":50}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.EqualValues(t, 1, page.Total)
+	require.Len(t, page.Rows, 1)
+	require.Equal(t, asset.ID, page.Rows[0].AssetID)
+	require.Equal(t, new("pick"), page.Rows[0].Flag)
 }
 
 func TestWorkspacePhotoSnapshotWithoutProfileKeepsUnconfiguredCoverage(t *testing.T) {
