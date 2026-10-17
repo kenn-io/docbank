@@ -157,7 +157,11 @@ it("navigates with keyboard focus after activating Undo", async () => {
   await screen.findByText("Photo 3.jpg");
 });
 
-it("blocks navigation during preparation and the write", async () => {
+it("blocks decisions, navigation, scope changes and exit during checkpoint checks, preparation and writes", async () => {
+  let finishCheck!: (value: CullRun["checkpoint"]) => void;
+  const saved = vi.fn(
+    () => new Promise<CullRun["checkpoint"]>((resolve) => (finishCheck = resolve)),
+  );
   let finishPrepare!: (value: api.PhotoAuthoredPreparation) => void;
   const pendingPrepare = new Promise<api.PhotoAuthoredPreparation>(
     (resolve) => (finishPrepare = resolve),
@@ -166,22 +170,89 @@ it("blocks navigation during preparation and the write", async () => {
   let finishWrite!: (value: PhotoAuthoredReceipt) => void;
   const pendingWrite = new Promise<PhotoAuthoredReceipt>((resolve) => (finishWrite = resolve));
   const edit = vi.spyOn(api, "editPhotoAuthored").mockReturnValue(pendingWrite);
-  const { cull, photos, container } = await reviewPhoto();
+  const rows = [photo(1), photo(2), photo(3)];
+  const { cull, photos, container, onclose } = await reviewPhoto(rows[0], false, {
+    saved,
+    load: vi.fn(),
+    replace: vi.fn(),
+    checkpoint: vi.fn(),
+  });
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  await act(() => {
+    cull.run = {
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id), position: 1 },
+    };
+  });
+  await screen.findByText("Photo 2.jpg");
+  const move = vi.spyOn(cull, "move");
+  const choose = vi.spyOn(cull, "choose");
+  const skip = vi.spyOn(cull, "skip");
+  const nextPass = vi.spyOn(cull, "nextPass");
   const shell = container.querySelector(".photo-cull")!;
   await fireEvent.keyDown(shell, { key: "p" });
-  for (const phase of ["prepare", "write"]) {
-    expect(photos.cullEditor!.canChangeTarget()).toBe(false);
-    await fireEvent.keyDown(shell, { key: "ArrowRight" });
-    await fireEvent.keyDown(shell, { key: "Escape" });
-    expect(cull.currentID).toBe("photo-1");
-    expect(screen.getByRole("button", { name: "Exit cull" }).matches(":disabled")).toBe(true);
-    if (phase === "prepare") {
-      await act(() => finishPrepare(photoPreparation([preparedPhoto(1)])));
+  for (const phase of ["check", "prepare", "write"]) {
+    await waitFor(() => {
+      if (phase === "check") expect(saved).toHaveBeenCalledOnce();
+      else if (phase === "prepare") expect(photos.cullEditor!.loading).toBe(true);
+      else expect(photos.cullEditor!.busy).toBe(true);
+    });
+    for (const key of [
+      "ArrowLeft",
+      "ArrowUp",
+      "ArrowRight",
+      "ArrowDown",
+      "Escape",
+      "s",
+      "p",
+      "x",
+      "u",
+      "4",
+    ])
+      await fireEvent.keyDown(shell, { key });
+    for (const name of [
+      "Previous",
+      "Next",
+      "Skip",
+      "Exit cull",
+      "Scope: all",
+      "Pick (P)",
+      "Reject (X)",
+      "Clear flag (U)",
+      "Show Photo 1.jpg",
+      "Show Photo 3.jpg",
+    ]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.matches(":disabled")).toBe(true);
+      await fireEvent.click(button);
+    }
+    expect(cull.currentID).toBe("photo-2");
+    expect(move).not.toHaveBeenCalled();
+    expect(choose).not.toHaveBeenCalled();
+    expect(skip).not.toHaveBeenCalled();
+    expect(nextPass).not.toHaveBeenCalled();
+    expect(onclose).not.toHaveBeenCalled();
+    expect(saved).toHaveBeenCalledOnce();
+    if (phase === "check") {
+      expect(api.preparePhotoAuthored).not.toHaveBeenCalled();
+      await act(() => finishCheck(cull.run!.checkpoint));
+    } else if (phase === "prepare") {
+      expect(edit).not.toHaveBeenCalled();
+      await act(() => finishPrepare(photoPreparation([preparedPhoto(2)])));
       await waitFor(() => expect(edit).toHaveBeenCalledOnce());
     }
   }
   await act(() => finishWrite({ receipt_id: "", before: [], after: [] }));
   await readyButton("Exit cull");
+  await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(cull.currentID).toBe("photo-3");
+  await fireEvent.click(screen.getByRole("button", { name: "Exit cull" }));
+  expect(onclose).toHaveBeenCalledOnce();
 });
 
 it("keeps a failed decision on screen and guards exit while its draft remains", async () => {
@@ -492,16 +563,17 @@ async function reviewPhoto(
   vi.spyOn(photos, "lookup").mockResolvedValue(row);
   vi.spyOn(photos, "lookupMany").mockResolvedValue([row]);
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  const onclose = vi.fn();
   const view = render(PhotoCullView, {
     cull,
     photos,
     cache: {
       get: vi.fn(async () => new Blob(["synthetic-photo"])),
     } as unknown as PhotoPreviewCache,
-    onclose: vi.fn(),
+    onclose,
   });
   await screen.findByText(row.name);
-  return { cull, photos, ...view };
+  return { cull, photos, onclose, ...view };
 }
 
 it("shows prepared flag, rating and rotation after a no-op decision without replacing Undo", async () => {

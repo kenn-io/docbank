@@ -126,7 +126,7 @@
     ),
   );
   function canChangeTarget() {
-    return !checkingDecision && editor.canChangeTarget();
+    return !busy && editor.canChangeTarget();
   }
   async function nextPass(followUp = false) {
     if (canChangeTarget()) await cull.nextPass(followUp);
@@ -156,7 +156,7 @@
     neighbors = neighbors.map(updated);
   }
   async function decide(patch: PhotoAuthoredPatch) {
-    if (!photo || loading || busy || cull.stale || cull.busy || !canChangeTarget()) return;
+    if (!photo || loading || cull.stale || cull.busy || !canChangeTarget()) return;
     editor.reset();
     await applyDecision(photo, patch);
   }
