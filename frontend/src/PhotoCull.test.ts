@@ -1,6 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { APIError } from "./api-transport.js";
 import PhotoCullView from "./PhotoCull.svelte";
 import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
