@@ -1304,3 +1304,39 @@ it("replaces an earlier rating undo summary when a caption is accepted", async (
   expect(editor.undoState.summary).toBe("1 file updated: caption");
   editor.dispose();
 });
+
+it.each([
+  { suggestion: "coast", names: ["Coast"], assigned: "tag-0" },
+  { suggestion: "cafe\u0301", names: ["CAFÉ"], assigned: "tag-0" },
+  { suggestion: "coast", names: ["Coast", "coast"], assigned: "tag-1" },
+  { suggestion: "coast", names: ["coAST", "Coast"], assigned: "tag-1" },
+])(
+  "hides the resolved existing tag from suggestion choices: $names",
+  ({ suggestion, names, assigned }) => {
+    const editor = editorWithTargets();
+    editor.suggestions = [
+      {
+        suggestion_id: "suggestion",
+        content_version_id: "version",
+        producer_fingerprint: "producer",
+        kind: "photo_description",
+        target: "jpeg",
+        value: { caption: "", tags: [suggestion], visible_text: "QUAYSIDE" },
+        response: "accepted",
+        revision: 2,
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+    editor.tags = names.map((name, index) => ({
+      id: `tag-${index}`,
+      name,
+      assignment_count: 2,
+      revision: 1,
+    }));
+    for (const target of editor.targets) target.tags = [assigned];
+    ui(editor);
+    expect(screen.queryByRole("checkbox", { name: suggestion })).toBeNull();
+    expect(screen.getByText("QUAYSIDE")).toBeTruthy();
+    editor.dispose();
+  },
+);

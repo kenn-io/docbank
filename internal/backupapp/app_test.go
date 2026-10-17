@@ -402,7 +402,7 @@ func TestDetachedPhotoSuggestionBackupRoundTrip(t *testing.T) {
 						tags, _, err := catalog.NodeTags(ctx, node.ID, 100, 0)
 						require.NoError(t, err)
 						require.Len(t, tags, 1)
-						require.Equal(t, []string{tags[0].ID}, values[0].AcceptedTagIDs)
+						require.Equal(t, []store.PhotoSuggestionAcceptedTag{{FileID: file.ID, TagID: tags[0].ID}}, values[0].AcceptedTags)
 					}
 				}
 			}

@@ -241,7 +241,19 @@ export class PhotoAuthoredEditor {
         targets.some((target) => target.values.caption !== suggestion.value.caption),
       tags: suggestion.value.tags.filter((name) => {
         const normalized = name.normalize("NFC");
-        const tag = this.tags.find((tag) => tag.name === normalized);
+        // Unicode simple folding matches the server's tag identity lookup.
+        const equivalent = new RegExp(
+          `^${normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "iu",
+        );
+        const tag =
+          this.tags.find((tag) => tag.name === normalized) ??
+          this.tags
+            .filter((tag) => equivalent.test(tag.name))
+            .toSorted((a, b) => {
+              if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+              return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+            })[0];
         return targets.some((target) => !tag || !target.tags.includes(tag.id));
       }),
     };

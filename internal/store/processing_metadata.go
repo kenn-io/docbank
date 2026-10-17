@@ -303,11 +303,8 @@ var processingMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
 		record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
 		suffix: "ORDER BY job_id,waiter_id", checkExport: true, exportAll: exportRenditionJobWaiters,
-		validate: func(value metadataRenditionJobWaiter) error {
-			_, err := validateMetadataRenditionJobWaiter(value)
-			return err
-		},
-		insert: importMetadataRenditionJobWaiter}),
+		validate: validateMetadataRenditionJobWaiterRecord,
+		insert:   importMetadataRenditionJobWaiter}),
 }
 
 var (
@@ -336,11 +333,26 @@ var (
 		validate: validateMetadataDerivativePurgeSuppression})
 )
 
+func validateMetadataRenditionJobWaiterRecord(value metadataRenditionJobWaiter) error {
+	_, err := validateMetadataRenditionJobWaiter(value)
+	return err
+}
+
 // A restored pending proposal needs fresh work; an empty published outcome stays
 // completed. Export changes only the snapshot's waiter, never the source vault.
 func exportRenditionJobWaiters(ctx context.Context, q metadataQuerier, write metadataWrite) error {
 	pending := `EXISTS(SELECT 1 FROM photo_suggestions s JOIN rendition_jobs j ON j.job_id=w.job_id WHERE s.content_version_id=w.content_version_id AND s.response='pending' AND s.producer_fingerprint=j.rendition_request_fingerprint AND json_extract(j.execution_identity_json,'$.upload.input_kind')='derived_upload')`
-	table := newMetadataTable(metadataTable[metadataRenditionJobWaiter]{record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters", suffix: "ORDER BY job_id,waiter_id"})
+	table := newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
+		record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
+		suffix: "ORDER BY job_id,waiter_id", checkExport: true, validate: validateMetadataRenditionJobWaiterRecord,
+	})
+	var hasSuggestions bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='photo_suggestions')`).Scan(&hasSuggestions); err != nil {
+		return err
+	}
+	if !hasSuggestions {
+		return table.export(ctx, q, write)
+	}
 	columns := make([]string, 0, len(table.plan.columns))
 	for _, column := range table.plan.columns {
 		expression := "w." + column.name

@@ -8,21 +8,21 @@ import (
 )
 
 type metadataPhotoSuggestion struct {
-	AcceptedTagIDs      []string                  `json:"accepted_tag_ids" db:"accepted_tag_ids_json,json"`
-	Type                string                    `json:"type"`
-	ID                  string                    `json:"suggestion_id" db:"suggestion_id"`
-	ContentVersionID    string                    `json:"content_version_id" db:"content_version_id"`
-	ProducerFingerprint string                    `json:"producer_fingerprint" db:"producer_fingerprint"`
-	Kind                string                    `json:"kind" db:"kind"`
-	Value               document.PhotoDescription `json:"value" db:"value_json,json"`
-	Response            string                    `json:"response" db:"response"`
-	Revision            int64                     `json:"revision" db:"revision"`
-	ReceiptID           *string                   `json:"receipt_id" db:"receipt_id"`
-	CreatedAt           string                    `json:"created_at" db:"created_at"`
+	AcceptedTags        []PhotoSuggestionAcceptedTag `json:"accepted_tags" db:"accepted_tags_json,json"`
+	Type                string                       `json:"type"`
+	ID                  string                       `json:"suggestion_id" db:"suggestion_id"`
+	ContentVersionID    string                       `json:"content_version_id" db:"content_version_id"`
+	ProducerFingerprint string                       `json:"producer_fingerprint" db:"producer_fingerprint"`
+	Kind                string                       `json:"kind" db:"kind"`
+	Value               document.PhotoDescription    `json:"value" db:"value_json,json"`
+	Response            string                       `json:"response" db:"response"`
+	Revision            int64                        `json:"revision" db:"revision"`
+	ReceiptID           *string                      `json:"receipt_id" db:"receipt_id"`
+	CreatedAt           string                       `json:"created_at" db:"created_at"`
 }
 
 func (value metadataPhotoSuggestion) suggestion() PhotoSuggestion {
-	return PhotoSuggestion{AcceptedTagIDs: value.AcceptedTagIDs, ID: value.ID, ContentVersionID: value.ContentVersionID, ProducerFingerprint: value.ProducerFingerprint, Kind: value.Kind, Value: value.Value, Response: value.Response, Revision: value.Revision, ReceiptID: value.ReceiptID, CreatedAt: value.CreatedAt}
+	return PhotoSuggestion{AcceptedTags: value.AcceptedTags, ID: value.ID, ContentVersionID: value.ContentVersionID, ProducerFingerprint: value.ProducerFingerprint, Kind: value.Kind, Value: value.Value, Response: value.Response, Revision: value.Revision, ReceiptID: value.ReceiptID, CreatedAt: value.CreatedAt}
 }
 
 var photoSuggestionMetadata = newMetadataTable(metadataTable[metadataPhotoSuggestion]{record: metadataPhotoSuggestion{Type: "photo_suggestion"}, table: "photo_suggestions", suffix: "WHERE response<>'pending' ORDER BY suggestion_id", validate: func(value metadataPhotoSuggestion) error {

@@ -39,23 +39,28 @@ var ErrInvalidPhotoSuggestionResponse = errors.New("invalid photo suggestion res
 
 var ErrPhotoSuggestionConflict = errors.New("photo suggestion revision changed")
 
-type PhotoSuggestion struct {
-	AcceptedTagIDs      []string                  `json:"-"`
-	AuthoredReceipt     *PhotoAuthoredReceipt     `json:"authored_receipt,omitempty"`
-	AuthoredReceiptID   string                    `json:"authored_receipt_id,omitempty"`
-	ID                  string                    `json:"suggestion_id"`
-	ContentVersionID    string                    `json:"content_version_id"`
-	ProducerFingerprint string                    `json:"producer_fingerprint"`
-	Kind                string                    `json:"kind"`
-	Target              string                    `json:"target"`
-	Value               document.PhotoDescription `json:"value"`
-	Response            string                    `json:"response"`
-	Revision            int64                     `json:"revision"`
-	ReceiptID           *string                   `json:"receipt_id,omitempty"`
-	CreatedAt           string                    `json:"created_at"`
+type PhotoSuggestionAcceptedTag struct {
+	FileID string `json:"file_id"`
+	TagID  string `json:"tag_id"`
 }
 
-const photoSuggestionColumns = `s.suggestion_id,s.content_version_id,s.producer_fingerprint,s.kind,(SELECT f.file_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=s.content_version_id),s.value_json,s.response,s.revision,s.receipt_id,s.created_at,s.accepted_tag_ids_json`
+type PhotoSuggestion struct {
+	AcceptedTags        []PhotoSuggestionAcceptedTag `json:"-"`
+	AuthoredReceipt     *PhotoAuthoredReceipt        `json:"authored_receipt,omitempty"`
+	AuthoredReceiptID   string                       `json:"authored_receipt_id,omitempty"`
+	ID                  string                       `json:"suggestion_id"`
+	ContentVersionID    string                       `json:"content_version_id"`
+	ProducerFingerprint string                       `json:"producer_fingerprint"`
+	Kind                string                       `json:"kind"`
+	Target              string                       `json:"target"`
+	Value               document.PhotoDescription    `json:"value"`
+	Response            string                       `json:"response"`
+	Revision            int64                        `json:"revision"`
+	ReceiptID           *string                      `json:"receipt_id,omitempty"`
+	CreatedAt           string                       `json:"created_at"`
+}
+
+const photoSuggestionColumns = `s.suggestion_id,s.content_version_id,s.producer_fingerprint,s.kind,(SELECT f.file_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=s.content_version_id),s.value_json,s.response,s.revision,s.receipt_id,s.created_at,s.accepted_tags_json`
 
 func scanPhotoSuggestion(row interface{ Scan(dest ...any) error }) (PhotoSuggestion, error) {
 	var value PhotoSuggestion
@@ -63,7 +68,7 @@ func scanPhotoSuggestion(row interface{ Scan(dest ...any) error }) (PhotoSuggest
 	if err := row.Scan(&value.ID, &value.ContentVersionID, &value.ProducerFingerprint, &value.Kind, &value.Target, &raw, &value.Response, &value.Revision, &value.ReceiptID, &value.CreatedAt, &tags); err != nil {
 		return value, err
 	}
-	if err := json.Unmarshal([]byte(tags), &value.AcceptedTagIDs); err != nil {
+	if err := json.Unmarshal([]byte(tags), &value.AcceptedTags); err != nil {
 		return value, err
 	}
 	return value, json.Unmarshal([]byte(raw), &value.Value, json.RejectUnknownMembers(true))
@@ -278,12 +283,15 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 			if err != nil {
 				return err
 			}
-			for _, keyword := range edit.Keywords {
-				if !slices.Contains(value.AcceptedTagIDs, keyword.TagID) {
-					value.AcceptedTagIDs = append(value.AcceptedTagIDs, keyword.TagID)
+			for _, target := range request.Targets {
+				for _, keyword := range edit.Keywords {
+					accepted := PhotoSuggestionAcceptedTag{FileID: target.FileID, TagID: keyword.TagID}
+					if !slices.Contains(value.AcceptedTags, accepted) {
+						value.AcceptedTags = append(value.AcceptedTags, accepted)
+					}
 				}
 			}
-			slices.Sort(value.AcceptedTagIDs)
+			slices.SortFunc(value.AcceptedTags, comparePhotoSuggestionAcceptedTags)
 			value.AuthoredReceiptID = authored.ReceiptID
 			if value.ReceiptID == nil {
 				value.ReceiptID = &authored.ReceiptID
@@ -291,11 +299,11 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 			authoredReceipt = &authored
 		}
 
-		tags, err := json.Marshal(value.AcceptedTagIDs)
+		tags, err := json.Marshal(value.AcceptedTags)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET response=?,revision=?,receipt_id=?,accepted_tag_ids_json=? WHERE suggestion_id=?`, value.Response, value.Revision, value.ReceiptID, string(tags), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET response=?,revision=?,receipt_id=?,accepted_tags_json=? WHERE suggestion_id=?`, value.Response, value.Revision, value.ReceiptID, string(tags), id); err != nil {
 			return err
 		}
 		result = value
@@ -347,11 +355,11 @@ func (s *Store) ensureSuggestionTagTx(ctx context.Context, tx *sql.Tx, name stri
 }
 
 func validatePhotoSuggestion(value PhotoSuggestion) error {
-	if value.Response == photoSuggestionPending && len(value.AcceptedTagIDs) > 0 {
+	if value.Response == photoSuggestionPending && len(value.AcceptedTags) > 0 {
 		return errors.New("invalid accepted suggestion tags")
 	}
-	for i, id := range value.AcceptedTagIDs {
-		if validateUUIDv4(id) != nil || i > 0 && value.AcceptedTagIDs[i-1] >= id {
+	for i, accepted := range value.AcceptedTags {
+		if validateUUIDv4(accepted.FileID) != nil || validateUUIDv4(accepted.TagID) != nil || i > 0 && comparePhotoSuggestionAcceptedTags(value.AcceptedTags[i-1], accepted) >= 0 {
 			return errors.New("invalid accepted suggestion tag identity")
 		}
 	}
@@ -428,4 +436,11 @@ func bumpUndonePhotoSuggestionRevisionsTx(ctx context.Context, tx *sql.Tx, recei
 		}
 	}
 	return nil
+}
+
+func comparePhotoSuggestionAcceptedTags(a, b PhotoSuggestionAcceptedTag) int {
+	if result := strings.Compare(a.FileID, b.FileID); result != 0 {
+		return result
+	}
+	return strings.Compare(a.TagID, b.TagID)
 }

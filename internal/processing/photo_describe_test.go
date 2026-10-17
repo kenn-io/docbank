@@ -30,6 +30,7 @@ import (
 )
 
 type photoDescriptionScenario struct {
+	sourceType     string
 	action         string
 	status         int
 	reason         string
@@ -564,6 +565,13 @@ func newPhotoDescriptionFixture(t *testing.T, scenario photoDescriptionScenario)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	source := syntheticJPEGSegment(t, mediatest.JPEG(2048, 8, color.White), 0xe1, append([]byte("Exif\x00\x00"), syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil)...))
 	source = syntheticJPEGSegment(t, source, 0xe1, []byte("http://ns.adobe.com/xap/1.0/\x00synthetic-private-marker"))
+	mediaType, filename := "image/jpeg", "synthetic-photo.jpg"
+	switch scenario.sourceType {
+	case "png":
+		source, mediaType, filename = mediatest.PNG(8, 2048, color.White), "image/png", "synthetic-photo.png"
+	case "gif":
+		source, mediaType, filename = mediatest.GIF(8, 2048, 1), "image/gif", "synthetic-photo.gif"
+	}
 	written, err := blobs.WriteDetailedContext(ctx, bytes.NewReader(source))
 	require.NoError(t, err)
 	var node store.Node
@@ -572,10 +580,10 @@ func newPhotoDescriptionFixture(t *testing.T, scenario photoDescriptionScenario)
 		run, err := catalog.BeginIngest(ctx, "cli", "Synthetic photo coverage")
 		require.NoError(t, err)
 		collectionID = run.ID()
-		node, err = catalog.IngestFileExact(ctx, run, catalog.RootID(), "synthetic-photo.jpg", written.Hash, written.Size, "image/jpeg", "synthetic-photo.jpg", "", processingBlobPhysical(t, written))
+		node, err = catalog.IngestFileExact(ctx, run, catalog.RootID(), filename, written.Hash, written.Size, mediaType, filename, "", processingBlobPhysical(t, written))
 		require.NoError(t, err)
 	} else {
-		node, err = catalog.CreateFile(ctx, catalog.RootID(), "synthetic-photo.jpg", written.Hash, written.Size, "image/jpeg", processingBlobPhysical(t, written))
+		node, err = catalog.CreateFile(ctx, catalog.RootID(), filename, written.Hash, written.Size, mediaType, processingBlobPhysical(t, written))
 		require.NoError(t, err)
 	}
 	asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
@@ -1950,6 +1958,26 @@ func TestPhotoDescriptionHideWaitsForDispatch(t *testing.T) {
 			require.NoError(t, <-hidden)
 			require.NoError(t, <-finished)
 			require.Equal(t, dispatch, f.descriptionCalls)
+		})
+	}
+}
+
+func TestPhotoDescriptionPublishesNonJPEGSource(t *testing.T) {
+	t.Parallel()
+	for _, format := range []string{"png", "gif"} {
+		t.Run(format, func(t *testing.T) {
+			f := newPhotoDescriptionFixture(t, photoDescriptionScenario{sourceType: format})
+			ctx := t.Context()
+			selector := Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: "vision"}
+			plan, err := f.service.Plan(ctx, selector)
+			require.NoError(t, err)
+			_, err = f.service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NoError(t, err)
+			require.Equal(t, 1, f.descriptionCalls)
+			suggestions, err := f.catalog.PhotoSuggestions(ctx, f.asset.ID)
+			require.NoError(t, err)
+			require.Len(t, suggestions, 1)
+			require.Equal(t, "A white panorama.", suggestions[0].Value.Caption)
 		})
 	}
 }

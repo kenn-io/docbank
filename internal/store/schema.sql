@@ -2349,10 +2349,10 @@ CREATE VIEW IF NOT EXISTS photo_accepted_tag_assignments AS
 SELECT DISTINCT nt.node_id,nt.tag_id,t.name
 FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
 JOIN photo_files target ON target.node_id=nt.node_id
-JOIN photo_files source ON source.asset_id=target.asset_id
-JOIN content_versions v ON v.node_id=source.node_id
-JOIN photo_suggestions ps ON ps.content_version_id=v.version_id
-JOIN json_each(ps.accepted_tag_ids_json) accepted ON accepted.value=nt.tag_id;
+JOIN photo_suggestions ps
+JOIN json_each(ps.accepted_tags_json) accepted
+    ON json_extract(accepted.value,'$.tag_id')=nt.tag_id
+    AND json_extract(accepted.value,'$.file_id')=target.file_id;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS photo_authored_fts USING fts5(caption, creator, copyright, keywords, tokenize='unicode61');
 CREATE TRIGGER IF NOT EXISTS photo_authored_fts_insert AFTER INSERT ON photo_files BEGIN
@@ -2777,7 +2777,7 @@ CREATE TABLE IF NOT EXISTS photo_suggestions (
     kind TEXT NOT NULL,
     value_json TEXT NOT NULL,
     response TEXT NOT NULL,
-    accepted_tag_ids_json TEXT NOT NULL DEFAULT '[]',
+    accepted_tags_json TEXT NOT NULL DEFAULT '[]',
     revision INTEGER NOT NULL,
     receipt_id TEXT REFERENCES photo_change_receipts(receipt_id) ON DELETE SET NULL,
     created_at TEXT NOT NULL
@@ -2799,11 +2799,11 @@ WHEN old.current_version_id IS NOT new.current_version_id BEGIN
     DELETE FROM photo_suggestions WHERE content_version_id=old.current_version_id AND response='pending';
 END;
 
-CREATE TRIGGER IF NOT EXISTS photo_suggestion_accepted_tags AFTER UPDATE OF accepted_tag_ids_json ON photo_suggestions
-WHEN old.accepted_tag_ids_json IS NOT new.accepted_tag_ids_json BEGIN
-    UPDATE photo_authored_fts SET keywords=COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=photo_authored_fts.rowid),'') WHERE rowid IN (SELECT target.node_id FROM content_versions v JOIN photo_files source ON source.node_id=v.node_id JOIN photo_files target ON target.asset_id=source.asset_id WHERE v.version_id=new.content_version_id);
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_accepted_tags AFTER UPDATE OF accepted_tags_json ON photo_suggestions
+WHEN old.accepted_tags_json IS NOT new.accepted_tags_json BEGIN
+    UPDATE photo_authored_fts SET keywords=COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=photo_authored_fts.rowid),'') WHERE rowid IN (SELECT target.node_id FROM photo_files target JOIN json_each(new.accepted_tags_json) accepted ON json_extract(accepted.value,'$.file_id')=target.file_id);
 END;
 CREATE TRIGGER IF NOT EXISTS photo_suggestion_accepted_tags_insert AFTER INSERT ON photo_suggestions
-WHEN json_array_length(new.accepted_tag_ids_json)>0 BEGIN
-    UPDATE photo_authored_fts SET keywords=COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=photo_authored_fts.rowid),'') WHERE rowid IN (SELECT target.node_id FROM content_versions v JOIN photo_files source ON source.node_id=v.node_id JOIN photo_files target ON target.asset_id=source.asset_id WHERE v.version_id=new.content_version_id);
+WHEN json_array_length(new.accepted_tags_json)>0 BEGIN
+    UPDATE photo_authored_fts SET keywords=COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=photo_authored_fts.rowid),'') WHERE rowid IN (SELECT target.node_id FROM photo_files target JOIN json_each(new.accepted_tags_json) accepted ON json_extract(accepted.value,'$.file_id')=target.file_id);
 END;

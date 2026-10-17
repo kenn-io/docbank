@@ -2063,6 +2063,13 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 		return RenditionExecution{}, err
 	}
 	version := runtimeVersion(work)
+	if work.ExecutionIdentity.Authorization.InputKind == document.RenditionInputDerivedUpload {
+		var err error
+		version, err = runtime.catalog.ContentVersionByID(ctx, work.Waiter.ContentVersionID)
+		if err != nil {
+			return RenditionExecution{}, err
+		}
+	}
 	node := store.Node{ID: version.NodeID, Name: work.ExecutionIdentity.Upload.Filename,
 		CurrentVersionID: version.ID, BlobHash: version.BlobHash, Size: version.Size, MimeType: version.MimeType}
 	profile := configuredProfile{portable: portable, provider: runtime.provider, record: work.Profile,

@@ -882,10 +882,6 @@ func (s *Store) BeginRenditionProvider(
 	ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time,
 	snapshots ...document.RenditionExecutionSnapshotV1,
 ) (ProviderOperationAuthorization, error) {
-	return s.beginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
-}
-
-func (s *Store) beginRenditionProvider(ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time, snapshots ...document.RenditionExecutionSnapshotV1) (ProviderOperationAuthorization, error) {
 	if len(snapshots) > 1 {
 		return ProviderOperationAuthorization{}, errors.New(
 			"beginning rendition provider accepts at most one execution snapshot")
@@ -1046,7 +1042,7 @@ func (s *Store) BeginRenditionProviderEgress(
 ) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
 	s.providerEgressMu.RLock()
 	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
-	authorization, err := s.beginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
+	authorization, err := s.BeginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
 	if err != nil {
 		fence.Close()
 		return ProviderOperationAuthorization{}, nil, err

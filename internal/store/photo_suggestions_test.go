@@ -908,8 +908,8 @@ func TestOnlyAcceptedSuggestionTagsSearchAsAuthored(t *testing.T) {
 	require.NoError(t, err)
 	accepted, err = s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: []PhotoAuthoredEditTarget{*suggestionTarget(t, s, asset)}, Revision: current[0].Revision, Response: "accepted", Tags: []string{"headland"}})
 	require.NoError(t, err)
-	require.Len(t, accepted.AcceptedTagIDs, 2)
-	require.Contains(t, accepted.AcceptedTagIDs, coast.ID)
+	require.Len(t, accepted.AcceptedTags, 2)
+	require.Contains(t, accepted.AcceptedTags, PhotoSuggestionAcceptedTag{FileID: asset.Files[0].ID, TagID: coast.ID})
 	var metadata bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &metadata))
 	restored := newTestStore(t)
@@ -923,7 +923,7 @@ func TestOnlyAcceptedSuggestionTagsSearchAsAuthored(t *testing.T) {
 		require.False(t, page.Items[0].MatchedAISuggestion)
 		values, err := catalog.PhotoSuggestions(ctx, asset.ID)
 		require.NoError(t, err)
-		require.Equal(t, accepted.AcceptedTagIDs, values[0].AcceptedTagIDs)
+		require.Equal(t, accepted.AcceptedTags, values[0].AcceptedTags)
 	}
 
 	node, err = s.NodeByID(ctx, asset.Files[0].NodeID)
@@ -972,4 +972,60 @@ func TestPhotoSuggestionBadgeUsesPrimaryBrowseQuery(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.True(t, rows[0].MatchedAISuggestion)
 	require.Equal(t, 1, counted.calls)
+}
+
+func TestPhotoSuggestionAcceptedTagsSurviveRegrouping(t *testing.T) {
+	t.Parallel()
+	for _, scope := range []string{"raw", "pair"} {
+		t.Run(scope, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := authoredPair(t, s)
+			jpeg, raw := fileByRole(asset.Files, PhotoRoleImage), fileByRole(asset.Files, PhotoRoleRAW)
+			asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpeg.ID)
+			require.NoError(t, err)
+			suggestion := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Tags: []string{"coast"}})
+			prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+			var targets []PhotoAuthoredEditTarget
+			for _, target := range prepared.Targets {
+				if scope == "pair" || target.FileID == raw.ID {
+					targets = append(targets, target.PhotoAuthoredEditTarget)
+				}
+			}
+			_, err = s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: targets, Revision: 1, Response: "accepted", Tags: []string{"coast"}})
+			require.NoError(t, err)
+			asset, err = s.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{})
+			require.NoError(t, err)
+			destination := albumAsset(t, s, "destination.jpg")
+			destination, err = s.AttachPhotoFile(ctx, destination.ID, destination.Revision, raw.NodeID, PhotoRoleRAW, nil)
+			require.NoError(t, err)
+			prepared, err = s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{destination.ID}})
+			require.NoError(t, err)
+			for _, target := range prepared.Targets {
+				if target.FileID == raw.ID {
+					_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{target.PhotoAuthoredEditTarget}, Patch: PhotoAuthoredPatch{Caption: new("Regrouped capture")}})
+					require.NoError(t, err)
+				}
+			}
+			var metadata bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &metadata))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
+			for _, catalog := range []*Store{s, restored} {
+				page := browsePhotoPage(t, catalog, `{"text":"coast","sort":{"field":"relevance","direction":"desc"}}`)
+				matches := map[string]bool{}
+				for _, item := range page.Items {
+					matches[item.AssetID] = item.MatchedAISuggestion
+				}
+				matchedAI, exists := matches[destination.ID]
+				require.True(t, exists, "the regrouped RAW keeps its accepted tag searchable")
+				require.False(t, matchedAI, "the accepted tag remains an authored match")
+				require.Contains(t, matches, asset.ID)
+				require.Equal(t, scope != "pair", matches[asset.ID], "acceptance provenance must remain specific to the edited files")
+			}
+		})
+	}
 }
