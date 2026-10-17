@@ -4,7 +4,7 @@ import { tick } from "svelte";
 import PhotoSmartSet from "./PhotoSmartSet.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoAlbums } from "./photoAlbums.svelte.js";
-import { updateSavedQuery } from "./savedQueries.js";
+import { definitionsChanged } from "./savedQueries.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 import { savedSmartSet as savedSmartSetFixture } from "./photo-test-fixtures.js";
 import * as generated from "./generated/docbank.js";
@@ -262,34 +262,6 @@ it.each(["server expiry", "a member leaves Library", "member hash mismatch"])(
   },
 );
 
-it("refreshes a renamed definition through the subscription", async () => {
-  const id = "00000000-0000-4000-8000-000000000001";
-  const payload = parseQuery(
-    '{"text":"harbor","filters":{"kinds":["photo","video"]},"sort":{"field":"name","direction":"asc"}}',
-  );
-  const saved = savedSmartSetFixture(payload, await queryFingerprint(payload), {
-    id,
-    name: "Picks",
-  });
-  let current = saved;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string, init: RequestInit) => {
-      if (init?.method === "PATCH") current = { ...current, name: "Renamed", revision: 2 };
-      return Response.json(current, { headers: { ETag: `"${current.revision}"` }, status: 200 });
-    }),
-  );
-  const photos = new Photos("session", vi.fn());
-  photos.query = payload;
-  photos.smartSet = saved;
-  const albums = new PhotoAlbums("session", vi.fn());
-  render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
-  await updateSavedQuery("session", saved, { name: "Renamed" });
-  expect(await screen.findByText("Renamed")).toBeTruthy();
-  photos.dispose();
-  albums.dispose();
-});
-
 const freezeRecoveryCases = [
   {
     name: "snapshot gone",
@@ -492,6 +464,37 @@ it("keeps a frozen result when album saving waits for another album change", asy
   expect(photos.frozen).toBe(frozen);
   expect(photos.frozenExpired).toBe(false);
   expect(fetcher).not.toHaveBeenCalled();
+  photos.dispose();
+  albums.dispose();
+});
+
+it("retains the name after a definition failure, recovers it, and accepts deletion", async () => {
+  const photos = new Photos("session", vi.fn());
+  const saved = savedSmartSetFixture(
+    photos.savedPhotoQuery,
+    await queryFingerprint(photos.savedPhotoQuery),
+  );
+  photos.smartSet = saved;
+  const albums = new PhotoAlbums("session", vi.fn());
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(Response.json({ detail: "Definition unavailable" }, { status: 503 }));
+  vi.stubGlobal("fetch", fetch);
+  render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
+  await tick();
+  await definitionsChanged("session").catch(() => {});
+  expect(screen.getByText(saved.name)).toBeTruthy();
+  fetch.mockResolvedValue(
+    Response.json(
+      { ...saved, name: "Renamed definition", revision: 2 },
+      { headers: { ETag: '"2"' } },
+    ),
+  );
+  await definitionsChanged("session");
+  await screen.findByText("Renamed definition");
+  fetch.mockResolvedValue(Response.json({ detail: "gone" }, { status: 404 }));
+  await definitionsChanged("session");
+  expect(screen.queryByText("Renamed definition")).toBeNull();
   photos.dispose();
   albums.dispose();
 });

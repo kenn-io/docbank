@@ -11,6 +11,7 @@
   } from "./generated/docbank.js";
   import type { PhotoUndoState } from "./photoAuthored.svelte.js";
   import { Photos } from "./photos.svelte.js";
+  import type { PhotoEventBatch } from "./photoEvents.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import {
     concealPhotoWorkspace,
@@ -83,14 +84,16 @@
   export function captureReturn() {
     photoWorkspace?.captureReturn();
   }
-  export async function refresh() {
-    if (workspaceVisible) await photoWorkspace?.refresh();
-    else await checkAccess();
+  export async function refresh(changes?: PhotoEventBatch) {
+    if (workspaceVisible) await photoWorkspace?.refresh(changes);
+    else if (!changes || changes.refetch) await checkAccess(!!changes);
   }
+
   export function lock() {
     return action("lock");
   }
   let workspaceVisible = $state(false);
+  let rechecking = $state(false);
   let concealment = 0;
   let passcode = $state("");
   let currentPasscode = $state("");
@@ -136,13 +139,13 @@
     else void checkAccess();
   }
   async function applyState(result: PhotoHiddenState, signal: AbortSignal, requestedAt: number) {
+    const membershipChanged = workspaceVisible && result.change_id !== hiddenState.change_id;
     onstate?.(result);
     if (
       workspace &&
       (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)
     )
       clear();
-    else if (workspace && result.change_id !== hiddenState.change_id) void conceal();
     readError = "";
     lockoutError = "";
     hiddenState = result;
@@ -179,8 +182,28 @@
         return;
       workspaceVisible = true;
     }
+    if (membershipChanged && workspaceVisible && photoWorkspace && workspace) {
+      const current = workspace;
+      const version = concealment;
+      rechecking = true;
+      try {
+        await current.cache.dispose();
+        if (signal.aborted || disposed || version !== concealment) return;
+        current.cache = new PhotoPreviewCache(access.session, authorizationLost, true);
+        if (!(await photoWorkspace.refresh({ assets: new Map(), refetch: true }))) await conceal();
+      } finally {
+        rechecking = false;
+      }
+    }
   }
-  async function checkAccess() {
+  // The access poll is also the browser fallback for live photo changes, so it keeps capture interest.
+  function readState(signal: AbortSignal) {
+    return getPhotoHiddenState(
+      { watch: true },
+      { session: access.session, signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) },
+    );
+  }
+  async function checkAccess(live = false) {
     if (document.visibilityState !== "visible") return;
     refreshController.abort();
     refreshController = new AbortController();
@@ -189,19 +212,13 @@
     try {
       // Anchoring at send time can only end access early, never late.
       let requestedAt = Date.now();
-      let result = await getPhotoHiddenState({
-        session: access.session,
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
-      });
+      let result = await readState(controller.signal);
       if (controller.signal.aborted || disposed) return;
       if (!workspaceVisible && result.expires_in) {
         await access.settled();
         if (controller.signal.aborted || disposed) return;
         requestedAt = Date.now();
-        result = await getPhotoHiddenState({
-          session: access.session,
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
-        });
+        result = await readState(controller.signal);
       }
       if (controller.signal.aborted || disposed) return;
       await applyState(result, controller.signal, requestedAt);
@@ -214,6 +231,7 @@
           hiddenState.expires_at = undefined;
           if (cause.status === 401) access.onauthfailure(cause);
         } else void conceal();
+        if (live) throw cause;
       }
     } finally {
       if (!controller.signal.aborted) reading = false;
@@ -395,6 +413,7 @@
         photos={current.photos}
         cache={current.cache}
         title="Hidden"
+        concealed={rechecking}
         {onexport}
         {photoID}
         {onphotochange}

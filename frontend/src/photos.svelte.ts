@@ -13,6 +13,7 @@ import {
   movePhotoRejects,
   type PhotoRejectsPreflight,
   type PhotoAuthoredPatch,
+  type PhotoAuthoredPrepareRequest,
   type PhotoAuthoredReceipt,
   type PhotoPreviewSlot,
   type PhotoBrowseRow,
@@ -44,6 +45,7 @@ import {
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+import type { PhotoEventBatch } from "./photoEvents.js";
 
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
@@ -166,7 +168,7 @@ export class Photos {
       /* Keep the current view usable without storage. */
     }
   }
-  async recoverSmartSet() {
+  async recoverSmartSet(signal?: AbortSignal) {
     if (this.hidden || this.withoutCounts) return;
     const storageKey = smartSetStorageKey(this.session);
     let id = this.smartSet?.id;
@@ -183,7 +185,8 @@ export class Photos {
       generation === this.smartSetRecoveryGeneration &&
       (!this.smartSet || this.smartSet.id === id);
     try {
-      const saved = await getSavedQuery(this.session, id);
+      const saved = await getSavedQuery(this.session, id, signal);
+      signal?.throwIfAborted();
       if (!current() || (this.smartSet?.id === id && saved.revision < this.smartSet.revision))
         return;
       if (
@@ -212,7 +215,10 @@ export class Photos {
         } catch {
           /* The missing definition stays unavailable in this view. */
         }
-      } else if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      } else {
+        if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+        throw cause;
+      }
     }
   }
   openSmartSet(saved: SavedQuery) {
@@ -761,6 +767,10 @@ export class Photos {
     this.rejectsLoading = false;
   }
 
+  async reconcileMetadata() {
+    await this.authored.reconcile(this.authoredScope(this.selectedIDs));
+  }
+
   resume(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.needsFacets && !this.facetsError) void this.retryFacets();
     if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError)
@@ -777,6 +787,7 @@ export class Photos {
         this.replacement ?? "expiry",
         preserve,
         this.replacementDate,
+        false,
         this.projection === "map",
       );
     this.error = "";
@@ -833,15 +844,60 @@ export class Photos {
     return this.dependsOnAuthored || (this.projection === "map" && rotations.size > 0);
   }
 
-  refresh(preserve?: () => (() => Promise<void>) | undefined) {
+  refresh(preserve?: () => (() => Promise<void>) | undefined, live = false) {
     this.timelineController.abort();
-    this.timeline = undefined;
+    // A live refresh keeps the current timeline on screen until its replacement arrives.
+    if (!live) this.timeline = undefined;
     this.timelineError = "";
     this.timelineLoading = false;
-    if (this.view === "timeline") void this.loadTimeline();
-    return this.replacement === "date"
-      ? this.replace("date", undefined, this.replacementDate)
-      : this.replace("refresh", preserve);
+    const timeline = this.view === "timeline" ? this.loadTimeline(live) : undefined;
+    const listing =
+      this.replacement === "date"
+        ? this.replace("date", undefined, this.replacementDate, live)
+        : this.replace("refresh", preserve, undefined, live);
+    if (!live) return listing;
+    const controller = this.controller;
+    return (async () => {
+      const result = await listing;
+      await timeline;
+      if (this.disposed || controller.signal.aborted) return false;
+      if (this.error || this.timelineError) throw new Error(this.error || this.timelineError);
+      return result;
+    })();
+  }
+
+  /** Refreshes for live changes. Preview-only changes replace their loaded rows without rerunning the whole query. */
+  refreshChanges(
+    changes?: PhotoEventBatch,
+    preserve?: () => (() => Promise<void>) | undefined,
+  ): Promise<boolean> {
+    // An in-flight replacement may predate the change, so it restarts instead.
+    if (!changes || changes.refetch || this.loading) return this.refresh(preserve, !!changes);
+    return this.refreshRows([...changes.assets.keys()], preserve);
+  }
+
+  private async refreshRows(
+    assetIDs: string[],
+    preserve?: () => (() => Promise<void>) | undefined,
+  ): Promise<boolean> {
+    const query = this.query;
+    const controller = this.controller;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+    const ids = assetIDs.filter((id) => this.items.some((item) => item.asset_id === id));
+    if (this.disposed || !ids.length) return !this.disposed;
+    const page = await this.page(
+      { ...query, filters: { ...query.filters, asset_ids: ids } },
+      signal,
+    ).catch((cause) => {
+      if (!controller.signal.aborted) this.authFailure(cause);
+      throw cause;
+    });
+    if (this.disposed || signal.aborted || this.query !== query) return false;
+    const rows = new Map(page.items.map((row) => [row.asset_id, row]));
+    // A row that no longer matches needs the whole query to restore order and totals.
+    if (ids.some((id) => !rows.has(id))) return this.refresh(preserve, true);
+    this.items = this.items.map((item) => rows.get(item.asset_id) ?? item);
+    return true;
   }
 
   setView(view: "grid" | "timeline") {
@@ -849,14 +905,18 @@ export class Photos {
     if (view === "timeline" && !this.timeline && !this.timelineLoading) void this.loadTimeline();
   }
 
-  async loadTimeline() {
+  async loadTimeline(live = false) {
     if (this.disposed || this.hidden) return;
     this.timelineController.abort();
     const controller = (this.timelineController = new AbortController());
+    const signal = live
+      ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
+      : controller.signal;
     this.timelineLoading = true;
     this.timelineError = "";
     try {
-      const page = await fetchPhotoTimeline(this.session, this.baseQuery, controller.signal);
+      const page = await fetchPhotoTimeline(this.session, this.baseQuery, signal);
+      signal.throwIfAborted();
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -876,6 +936,7 @@ export class Photos {
           reason: cause.code,
           values: [],
         };
+        if (live && cause.code !== "snapshot_too_large") this.timelineError = cause.message;
       } else this.timelineError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.timelineLoading = false;
@@ -910,6 +971,21 @@ export class Photos {
     return eligible;
   }
 
+  private authoredScope(eligible: Set<string>): PhotoAuthoredPrepareRequest {
+    const query = this.authored.preparingQuery ?? (this.allResults ? this.query : undefined);
+    return {
+      ...(this.authored.inspectedID
+        ? { asset_ids: [this.authored.inspectedID], skip_unavailable: true }
+        : query
+          ? { query: structuredClone(query) }
+          : {
+              asset_ids: [...this.selectedIDs].filter((id) => eligible.has(id)),
+              skip_unavailable: true,
+            }),
+      hidden: this.hidden,
+    };
+  }
+
   async revalidateAuthored(valid: () => boolean): Promise<boolean> {
     const controller = this.controller;
     this.authored.validating = true;
@@ -923,7 +999,7 @@ export class Photos {
           selectedIDs: new Set([...this.selection.selectedIDs].filter((id) => eligible.has(id))),
         };
       }
-      this.authored.revalidate(eligible);
+      this.authored.revalidate(eligible, this.authoredScope(eligible));
       return true;
     } catch (cause) {
       if (!controller.signal.aborted) this.authFailure(cause);
@@ -1039,15 +1115,18 @@ export class Photos {
     mode: "refresh" | "expiry" | "date",
     preserve?: () => (() => Promise<void>) | undefined,
     date?: string,
+    live = false,
     resume = false,
   ) {
     if (this.disposed) return false;
-    this.authored.conceal();
+    if (live) this.authored.validating = true;
+    else this.authored.conceal();
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();
     this.facetsLoading = false;
     const controller = this.controller;
+    let membershipRevalidated = false;
     let signal = controller.signal;
     this.replacement = mode;
     this.replacementDate = date;
@@ -1111,7 +1190,8 @@ export class Photos {
       const restore = mode === "date" ? undefined : preserve?.();
       const captured = !this.authored.inspectedID && !!this.authored.targets.length;
       if (captured) this.captureSelection();
-      this.authored.revalidate(eligible);
+      this.authored.revalidate(eligible, this.authoredScope(eligible));
+      membershipRevalidated = true;
       this.editScopeRevision++;
       this.items = [...candidate.values()];
       this.total = total;
@@ -1143,13 +1223,9 @@ export class Photos {
       this.replacement = undefined;
       this.staged = undefined;
       await restore?.();
-      if (!controller.signal.aborted) {
-        this.needsFacets = true;
-        void this.retryFacets();
-      }
-      return !controller.signal.aborted;
     } catch (cause) {
       if (controller.signal.aborted) return false;
+      if (live && !membershipRevalidated) this.authored.changedElsewhere();
       this.authFailure(cause);
       if (
         cause instanceof APIError &&
@@ -1169,6 +1245,12 @@ export class Photos {
         this.authored.validating = false;
       }
     }
+    if (!controller.signal.aborted) {
+      this.needsFacets = true;
+      const facets = this.retryFacets(live);
+      if (live) await facets;
+    }
+    return !controller.signal.aborted;
   }
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
@@ -1249,18 +1331,21 @@ export class Photos {
 
   // reloadCounts replaces counts that a change outside this listing made stale,
   // such as an album membership change, without reloading the photos.
-  reloadCounts() {
+  reloadCounts(live = false) {
     if (this.disposed || this.withoutCounts) return;
     this.facetsController.abort();
     this.facetsLoading = false;
     this.needsFacets = true;
-    return this.retryFacets();
+    return this.retryFacets(live);
   }
 
-  async retryFacets() {
+  async retryFacets(live = false) {
     if (this.disposed || !this.started || this.facetsLoading || this.withoutCounts) return;
     this.facetsController.abort();
     const controller = (this.facetsController = new AbortController());
+    const signal = live
+      ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
+      : controller.signal;
     this.needsFacets = true;
     this.facetsLoading = true;
     this.facetsError = "";
@@ -1271,8 +1356,9 @@ export class Photos {
       query.sort = { field: "capture_time", direction: "desc" };
       const page = await listPhotoAssets(
         { query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 },
-        { session: this.session, signal: controller.signal },
+        { session: this.session, signal },
       );
+      signal.throwIfAborted();
       if (controller.signal.aborted) return;
       this.facets = (page.facets ?? []) as SnapshotPage["facets"];
       this.needsFacets = false;
@@ -1285,12 +1371,14 @@ export class Photos {
         this.facetsError = this.facetsRetryable
           ? "Some photo counts couldn't be loaded."
           : "Photo counts exceed the query's limits. Narrow your search or filters.";
+        if (live && this.facetsRetryable) throw new Error(this.facetsError);
       }
     } catch (cause) {
       if (controller.signal.aborted) return;
       this.authFailure(cause);
       this.needsFacets = false;
       this.facetsError = cause instanceof Error ? cause.message : String(cause);
+      if (live) throw cause;
     } finally {
       if (!controller.signal.aborted) this.facetsLoading = false;
     }

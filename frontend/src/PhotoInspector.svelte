@@ -15,12 +15,19 @@
     onedit: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
   } = $props();
   let keyword = $state("");
+  $effect(() => {
+    if (keyword && !editor.tags.some((tag) => tag.id === keyword)) keyword = "";
+  });
+  function stageKeyword(assign: boolean) {
+    if (keyword && editor.tags.some((tag) => tag.id === keyword))
+      editor.stage({}, [{ tag_id: keyword, assign }]);
+  }
   const disabled = $derived(
     actionDisabled ||
       editor.concealed ||
       editor.conflict ||
       editor.busy ||
-      editor.loading ||
+      (editor.loading && !editor.comparing) ||
       (!!editor.error && !editor.targets.length),
   );
   const fields = ["caption", "creator", "copyright"] as const;
@@ -138,15 +145,10 @@
       />
     </div>
     {#if keyword}<div class="keyword-actions">
-        <Button
+        <Button size="sm" {disabled} onclick={() => stageKeyword(true)}>Add keyword</Button><Button
           size="sm"
           {disabled}
-          onclick={() => editor.stage({}, [{ tag_id: keyword, assign: true }])}>Add keyword</Button
-        ><Button
-          size="sm"
-          {disabled}
-          onclick={() => editor.stage({}, [{ tag_id: keyword, assign: false }])}
-          >Remove keyword</Button
+          onclick={() => stageKeyword(false)}>Remove keyword</Button
         >{#if editor.keywordState(keyword)}<span
             >{editor.keywordState(keyword) === "mixed" ? "Mixed" : "Assigned"}</span
           >{/if}
@@ -160,7 +162,9 @@
         tone="warning"
         message={editor.targets.length
           ? "Review the current photos before applying these edits."
-          : "No photos are available to review. Clear edits to discard this draft."}
+          : editor.canReload
+            ? "No photos are available to review."
+            : "No photos are available to review. Clear edits to discard this draft."}
       />{/if}
     {#if editor.membershipChanged && editor.targets.length}
       <Notice
@@ -173,12 +177,14 @@
       <Button disabled={editor.busy || editor.loading} onclick={() => editor.reviewMembers()}
         >Use reviewed members</Button
       >
-    {:else if editor.conflict && editor.targets.length}<Button
+    {/if}
+    {#if editor.conflict && editor.canReload}<Button
         disabled={editor.busy || editor.loading}
         onclick={() => void editor.reload()}>Reload metadata</Button
       >{/if}
-    <Button disabled={disabled || editor.conflict || !editor.dirty} onclick={() => onedit({})}
-      >Apply</Button
+    <Button
+      disabled={disabled || editor.loading || editor.validating || editor.conflict || !editor.dirty}
+      onclick={() => onedit({})}>Apply</Button
     >
   {/if}
   {#if editor.dirty}<Button

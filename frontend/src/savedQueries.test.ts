@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import {
+  definitionsChanged,
   createSavedQuery,
   deleteSavedQuery,
   getSavedQuery,
@@ -60,20 +61,20 @@ describe("saved definition receipts", () => {
         kind: "query",
         payload,
       });
-      expect(listener).toHaveBeenCalledExactlyOnceWith("session");
+      expect(listener).toHaveBeenCalledExactlyOnceWith("session", expect.any(AbortSignal));
       listener.mockClear();
       const renamed = { ...saved, name: "Renamed", revision: 2 };
       fetch.mockResolvedValueOnce(
         new Response(JSON.stringify(renamed), { headers: { ETag: '"2"' } }),
       );
       const updated = await updateSavedQuery("session", saved, { name: "Renamed" });
-      expect(listener).toHaveBeenCalledExactlyOnceWith("session");
+      expect(listener).toHaveBeenCalledExactlyOnceWith("session", expect.any(AbortSignal));
       listener.mockClear();
       fetch.mockResolvedValueOnce(
         new Response(JSON.stringify(updated), { headers: { ETag: '"2"' } }),
       );
       await deleteSavedQuery("session", updated);
-      expect(listener).toHaveBeenCalledExactlyOnceWith("session");
+      expect(listener).toHaveBeenCalledExactlyOnceWith("session", expect.any(AbortSignal));
     } finally {
       unsubscribe();
     }
@@ -229,4 +230,55 @@ describe("saved definition receipts", () => {
     ).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
   });
+});
+
+it("aborts pending definition reads at the notification deadline", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  let requestSignal: AbortSignal | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    (_url, init) =>
+      new Promise((_, reject) => {
+        requestSignal = init?.signal ?? undefined;
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+          once: true,
+        });
+      }),
+  );
+  const unsubscribe = subscribeSavedQueries(async (session, signal) => {
+    await listSavedQueries(session, undefined, 0, 100, false, signal);
+  });
+  try {
+    const refreshing = definitionsChanged("session");
+    const rejected = expect(refreshing).rejects.toThrow("Definition deadline");
+    expect(requestSignal).toBe(deadline.signal);
+    deadline.abort(new DOMException("Definition deadline", "TimeoutError"));
+    await rejected;
+  } finally {
+    unsubscribe();
+  }
+});
+
+it("returns a committed write receipt when a subscriber read fails", async () => {
+  const fetch = respond({ ...record, revision: 1 }, '"1"');
+  fetch.mockResolvedValueOnce(
+    Response.json({ ...record, revision: 1 }, { headers: { ETag: '"1"' } }),
+  );
+  fetch.mockResolvedValue(Response.json({ detail: "Read unavailable" }, { status: 503 }));
+  const unsubscribe = subscribeSavedQueries(async (session, signal) => {
+    await getSavedQuery(session, id, signal);
+  });
+  try {
+    const saved = await createSavedQuery("session", {
+      name: record.name,
+      description: record.description,
+      kind: "query",
+      payload,
+    });
+    expect(saved.id).toBe(id);
+    expect(saved.revision).toBe(1);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  } finally {
+    unsubscribe();
+  }
 });

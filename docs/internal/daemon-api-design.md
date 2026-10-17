@@ -33,6 +33,10 @@ When a change makes old clients unsafe against a new daemon, or vice versa,
 bump the daemon protocol revision even when both development binaries still
 report the same version string.
 
+## Live photo changes
+
+The daemon publishes committed photo changes to authenticated viewers and checks each viewer's current Hidden access before delivery. The browser refreshes affected views through an event stream or its own access poll, including when another tab owns the stream. See the [live photo change contract](../architecture/http-api.md#live-photo-changes) for event policies, capture limits, stream ownership, and polling leases.
+
 ## Runtime record and trust boundary
 
 Docbank is a single-user local service. `$DOCBANK_HOME` is private to the

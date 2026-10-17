@@ -68,9 +68,13 @@ func photoHiddenMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+type photoHiddenStateInput struct {
+	Watch bool `query:"watch" doc:"Renew photo change capture for a browser polling change_cursor"`
+}
+
 func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
-	huma.Register(api, huma.Operation{OperationID: "getPhotoHiddenState", Method: http.MethodGet, Path: "/api/v1/photos/hidden", Summary: "Read hidden photos configuration and current unlock expiry"}, func(ctx context.Context, _ *struct{}) (*photoHiddenOutput, error) {
-		state, err := d.Store.PhotoHiddenState(ctx)
+	huma.Register(api, huma.Operation{OperationID: "getPhotoHiddenState", Method: http.MethodGet, Path: "/api/v1/photos/hidden", Summary: "Read hidden photos configuration and current unlock expiry"}, func(ctx context.Context, in *photoHiddenStateInput) (*photoHiddenOutput, error) {
+		state, err := d.Store.PhotoHiddenState(ctx, in.Watch)
 		return &photoHiddenOutput{Body: state}, hiddenError(err)
 	})
 	for _, action := range []string{"setup", "change", "disable", "unlock", "lock", "reset"} {
@@ -103,7 +107,7 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return nil, hiddenError(err)
 			}
-			state, err := d.Store.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, token))
+			state, err := d.Store.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, token), false)
 			if err != nil {
 				return nil, hiddenError(err)
 			}

@@ -144,13 +144,30 @@ func TestPhotoHiddenBrowserAllowlistAndCookie(t *testing.T) {
 	require.True(t, cookies[0].HttpOnly)
 	require.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
 	require.False(t, cookies[0].Secure)
+	response, body = get(t, ts, "/api/v1/photos/hidden", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var lockedState store.PhotoHiddenState
+	require.NoError(t, json.Unmarshal([]byte(body), &lockedState))
+	expected, err := s.PhotoHiddenState(t.Context(), false)
+	require.NoError(t, err)
+	require.Equal(t, expected.ChangeCursor, lockedState.ChangeCursor)
+	headers["Cookie"] = cookies[0].String()
+	response, body = get(t, ts, "/api/v1/photos/hidden", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var unlockedState store.PhotoHiddenState
+	require.NoError(t, json.Unmarshal([]byte(body), &unlockedState))
+	expected, err = s.PhotoHiddenState(store.WithPhotoHiddenToken(t.Context(), cookies[0].Value), false)
+	require.NoError(t, err)
+	require.Equal(t, expected.ChangeCursor, unlockedState.ChangeCursor)
+	require.NotEqual(t, lockedState.ChangeCursor, unlockedState.ChangeCursor)
+	delete(headers, "Cookie")
 	unlocked := store.WithPhotoHiddenToken(t.Context(), cookies[0].Value)
-	state, err := s.PhotoHiddenState(unlocked)
+	state, err := s.PhotoHiddenState(unlocked, false)
 	require.NoError(t, err)
 	require.NotNil(t, state.ExpiresAt)
 	response, body = do(t, ts, http.MethodDelete, "/api/daemon/web-session", headers, nil)
 	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
-	state, err = s.PhotoHiddenState(unlocked)
+	state, err = s.PhotoHiddenState(unlocked, false)
 	require.NoError(t, err)
 	require.Nil(t, state.ExpiresAt, "ending a browser session must lock Hidden")
 }
@@ -181,7 +198,39 @@ func TestPhotoHiddenLockDuringMaintenance(t *testing.T) {
 	require.ErrorIs(t, err, daemonconn.ErrMaintenanceBusy)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", map[string]string{"Cookie": cookie}, map[string]string{})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	state, err := s.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, strings.SplitN(cookie, "=", 2)[1]))
+	state, err := s.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, strings.SplitN(cookie, "=", 2)[1]), false)
 	require.NoError(t, err)
 	require.Nil(t, state.ExpiresAt)
+}
+
+func TestPhotoHiddenHTTPWatchInterest(t *testing.T) {
+	t.Parallel()
+	for _, watch := range []bool{false, true} {
+		t.Run(strconv.FormatBool(watch), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			ctx := t.Context()
+			hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
+			require.NoError(t, err)
+			node, err := s.CreateFile(ctx, s.RootID(), "before.jpg", hash, size, "image/jpeg")
+			require.NoError(t, err)
+			poll := func() string {
+				t.Helper()
+				response, body := get(t, ts, "/api/v1/photos/hidden?watch="+strconv.FormatBool(watch), nil)
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				var state store.PhotoHiddenState
+				require.NoError(t, json.Unmarshal([]byte(body), &state))
+				require.NotEmpty(t, state.ChangeCursor)
+				return state.ChangeCursor
+			}
+			before := poll()
+			_, _, err = s.Move(ctx, node.ID, s.RootID(), "renamed.jpg", node.Revision)
+			require.NoError(t, err)
+			after := poll()
+			if watch {
+				require.NotEqual(t, before, after, "watch=true reaches the store")
+			} else {
+				require.Equal(t, before, after, "watch=false reaches the store")
+			}
+		})
+	}
 }

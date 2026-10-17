@@ -5757,6 +5757,7 @@ export interface PhotoHiddenPasscodeRequest {
 export interface PhotoHiddenState {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  change_cursor?: string;
   change_id?: string;
   configured: boolean;
   /** @nullable */
@@ -8709,6 +8710,13 @@ export type UnhidePhotoAssetHeaders = {
 
 export type UndoPhotoFaceDecisionParams = {
 operation_id?: string;
+};
+
+export type GetPhotoHiddenStateParams = {
+/**
+ * Renew photo change capture for a browser polling change_cursor
+ */
+watch?: boolean;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -16279,6 +16287,44 @@ export const undoPhotoAuthored = async (receiptId: string, options?: Parameters<
 
 
 
+export const getPhotoEventsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/events`
+}
+
+/**
+ * @summary Observe photo changes as server-sent events
+ */
+export const photoEvents = ( options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<string>(getPhotoEventsUrl(),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `text/event-stream`, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
 export const getUndoPhotoFaceDecisionUrl = (receiptId: string,
     params?: UndoPhotoFaceDecisionParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -16312,20 +16358,27 @@ export const undoPhotoFaceDecision = async (receiptId: string,
 
 
 
-export const getGetPhotoHiddenStateUrl = () => {
+export const getGetPhotoHiddenStateUrl = (params?: GetPhotoHiddenStateParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/photos/hidden`
+  return stringifiedParams.length > 0 ? `/api/v1/photos/hidden?${stringifiedParams}` : `/api/v1/photos/hidden`
 }
 
 /**
  * @summary Read hidden photos configuration and current unlock expiry
  */
-export const getPhotoHiddenState = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+export const getPhotoHiddenState = async (params?: GetPhotoHiddenStateParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
 
-  return sessionJSON<PhotoHiddenState>(getGetPhotoHiddenStateUrl(),
+  return sessionJSON<PhotoHiddenState>(getGetPhotoHiddenStateUrl(params),
   {
     ...options,
     method: 'GET'

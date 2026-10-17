@@ -50,9 +50,13 @@
     untrack(() => photos.reconcileFrozen());
   });
   onMount(() => {
-    if (!photos.smartSet) void photos.recoverSmartSet();
-    return subscribeSavedQueries((session) => {
-      if (session === photos.session) void photos.recoverSmartSet();
+    if (!photos.smartSet)
+      void photos.recoverSmartSet().catch((cause) => {
+        if (!controller.signal.aborted)
+          error = cause instanceof Error ? cause.message : String(cause);
+      });
+    return subscribeSavedQueries((session, signal) => {
+      if (session === photos.session) return photos.recoverSmartSet(signal);
     });
   });
   onDestroy(() => controller.abort());
@@ -157,7 +161,11 @@
           hidden: freezeHidden,
           id: definition.id,
         };
-        await photos.recoverSmartSet();
+        try {
+          await photos.recoverSmartSet(signal);
+        } catch (recoveryError) {
+          cause = recoveryError;
+        }
         await tick();
         if (freezeRecovery?.signal === signal) freezeRecovery = undefined;
       }

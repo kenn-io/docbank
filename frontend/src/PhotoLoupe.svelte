@@ -71,7 +71,10 @@
   let urls: string[] = [];
   let rank = -1;
   let largeStarted = false;
-  const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
+  const requests = { grid: 0, fit: 0, large: 0 };
+  const identity = $derived(
+    photo ? `${photo.asset_id}:${photo.display_file_id}:${photo.content_version_id}` : "",
+  );
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);
@@ -147,6 +150,7 @@
     void identity;
     void reloadRevision;
     const selected = untrack(() => photo);
+    untrack(() => image?.reset());
     url = "";
     quality = "";
     failure = undefined;
@@ -158,7 +162,7 @@
     controller = new AbortController();
     const active = controller;
     if (!selected) return () => active.abort();
-    void load(selected, "grid", active);
+    untrack(() => void load(selected, "grid", active));
     const timer = setTimeout(() => void load(selected, "fit", active), 150);
     void tick().then(() => {
       if (!active.signal.aborted && image?.isZoomed()) zoom();
@@ -167,8 +171,32 @@
     return () => {
       clearTimeout(timer);
       active.abort();
-      for (const objectURL of ownedURLs.splice(0)) URL.revokeObjectURL(objectURL);
+      for (const objectURL of [...ownedURLs]) release(objectURL, ownedURLs);
     };
+  });
+  let previousPreview = "";
+  let previousResource = "";
+  let previousCache: PhotoPreviewCache | undefined;
+  $effect(() => {
+    const selected = photo;
+    const previewCache = cache;
+    untrack(() => {
+      const resource = identity;
+      const preview = JSON.stringify(selected?.previews);
+      if (
+        selected &&
+        resource === previousResource &&
+        (preview !== previousPreview || previewCache !== previousCache) &&
+        quality !== "original"
+      ) {
+        void load(selected, "grid", controller);
+        void load(selected, "fit", controller);
+        if (largeStarted) void load(selected, "large", controller);
+      }
+      previousResource = resource;
+      previousPreview = preview;
+      previousCache = previewCache;
+    });
   });
   $effect(() => {
     const neighbors =
@@ -194,7 +222,20 @@
       active.abort();
     };
   });
-  async function show(blobURL: string, level: number, label: string, active: AbortController) {
+  function release(blobURL: string, ownedURLs: string[]) {
+    const index = ownedURLs.indexOf(blobURL);
+    if (index >= 0) {
+      ownedURLs.splice(index, 1);
+      URL.revokeObjectURL(blobURL);
+    }
+  }
+  async function show(
+    blobURL: string,
+    level: number,
+    label: string,
+    active: AbortController,
+    current = () => !active.signal.aborted,
+  ) {
     const ownedURLs = urls;
     ownedURLs.push(blobURL);
     try {
@@ -202,19 +243,20 @@
       decoded.src = blobURL;
       await decoded.decode();
     } catch (cause) {
-      const index = ownedURLs.indexOf(blobURL);
-      if (index >= 0) {
-        ownedURLs.splice(index, 1);
-        URL.revokeObjectURL(blobURL);
-      }
+      release(blobURL, ownedURLs);
       throw cause;
     }
-    if (!active.signal.aborted && level >= rank) {
-      rank = level;
-      url = blobURL;
-      quality = label;
-      if (failure && failure.rank <= level) failure = undefined;
+    if (!current() || level < rank) {
+      release(blobURL, ownedURLs);
+      return;
     }
+    const previous = url;
+    rank = level;
+    url = blobURL;
+    quality = label;
+    if (failure && failure.rank <= level) failure = undefined;
+    await tick();
+    release(previous, ownedURLs);
   }
   function fail(result: NonNullable<typeof failure>, active: AbortController) {
     untrack(() => {
@@ -228,12 +270,16 @@
     active: AbortController,
     reload = false,
   ) {
+    if (active.signal.aborted) return;
+    const request = ++requests[size];
+    const current = () => !active.signal.aborted && requests[size] === request;
     if (size === "large") largeStarted = true;
     const signal = AbortSignal.any([active.signal, AbortSignal.timeout(30_000)]);
     const level = size === "grid" ? 0 : size === "fit" ? 1 : 2;
     try {
       const slot =
         size === "grid" ? selected.previews.grid : await photos.preview(selected, size, signal);
+      if (!current()) return;
       if (slot.state !== "ready" || !slot.generation_id) {
         if (slot.state !== "missing")
           fail(
@@ -249,10 +295,11 @@
         return;
       }
       const blob = await cache.get(selected.asset_id, slot.generation_id, signal, reload);
-      if (active.signal.aborted) return;
+      if (!current()) return;
       const objectURL = URL.createObjectURL(blob);
-      await show(objectURL, level, size, active);
+      await show(objectURL, level, size, active, current);
     } catch (cause) {
+      if (!current()) return;
       const reload =
         cause instanceof APIError &&
         (cause.code === "photo_display_changed" || cause.status === 404);

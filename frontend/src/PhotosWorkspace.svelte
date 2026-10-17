@@ -18,8 +18,10 @@
   } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
+  import { APIError } from "./api-transport.js";
   import { photoSearchSort } from "./photoSearch.js";
   import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
+  import type { PhotoEventBatch } from "./photoEvents.js";
   import { groupPhotos, monthLabel, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
@@ -72,6 +74,7 @@
     onexport,
     onadd,
     uploadChannelError = "",
+    concealed = false,
   }: {
     photos: Photos;
     cache: PhotoPreviewCache;
@@ -102,13 +105,20 @@
     onexport?: (input: ExportInput) => void;
     onadd?: () => void;
     uploadChannelError?: string;
+    concealed?: boolean;
   } = $props();
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
-  const actionDisabled = $derived(photos.loading || photos.hiding || photos.trashing);
+  const actionDisabled = $derived(concealed || photos.loading || photos.hiding || photos.trashing);
+  const metadataDisabled = $derived(
+    concealed ||
+      photos.hiding ||
+      photos.trashing ||
+      (photos.loading && !editor.validating && !editor.comparing),
+  );
   const editCount = $derived(
     photoID ? 1 : editor.count || (photos.allResults ? photos.total : photos.selectedIDs.size),
   );
@@ -182,7 +192,14 @@
   }
   function edit(patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[], rotationDelta?: 90) {
     if (!editCount) return;
-    if (actionDisabled || editor.conflict || editor.busy || editor.loading || editor.concealed) {
+    if (
+      actionDisabled ||
+      editor.conflict ||
+      editor.busy ||
+      editor.loading ||
+      editor.validating ||
+      editor.concealed
+    ) {
       unavailable();
       return;
     }
@@ -191,7 +208,14 @@
   }
   function undoShortcut() {
     if (!editor.receiptID) return;
-    if (actionDisabled || editor.conflict || editor.busy || editor.loading || editor.concealed) {
+    if (
+      actionDisabled ||
+      editor.conflict ||
+      editor.busy ||
+      editor.loading ||
+      editor.validating ||
+      editor.concealed
+    ) {
       unavailable();
       return;
     }
@@ -244,7 +268,10 @@
     };
   });
   let alive = true;
-  onDestroy(() => (alive = false));
+  onDestroy(() => {
+    alive = false;
+    detailController?.abort();
+  });
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
   let renaming = $state(false);
   let renameAlbum = $state<PhotoAlbumItem>();
@@ -268,8 +295,12 @@
   let trashOpen = $state(false);
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
+  export function displaysDetailError(message: string) {
+    return !!photoID && !concealed && detailError === message;
+  }
   let detailLoading = $state(false);
-  let reload = $state.raw<{ id: string }>();
+  let reload = $state.raw<{ id: string; automatic?: boolean }>();
+  let detailRequest: Promise<void> = Promise.resolve();
   let consumedReload = $state.raw<typeof reload>();
   let reloadedRow: Photos["items"][number] | undefined;
   let reloadRevision = $state(0);
@@ -300,6 +331,7 @@
       if (fromGrid) void restoreGrid();
       return;
     }
+    detailRequest = Promise.resolve();
     const controller = new AbortController();
     detailController = controller;
     const explicit =
@@ -317,39 +349,60 @@
       detailLoading = false;
       return () => controller.abort();
     }
+    if (explicit && reload?.automatic && listedDetail) {
+      direct = listedRow as PhotoBrowseRow;
+      detailError = "";
+      detailLoading = false;
+      consumedReload = reload;
+      return () => controller.abort();
+    }
     if (!explicit) {
-      if (!photos.projection || untrack(() => direct?.asset_id) !== id) direct = undefined;
+      if (untrack(() => direct?.asset_id) !== id) direct = undefined;
       detailError = "";
     }
     if (!explicit && fromGrid && listedDetail) {
+      direct = listedRow as PhotoBrowseRow;
       detailLoading = false;
       return () => controller.abort();
     }
     detailLoading = true;
     const request = reload;
     const version = untrack(() => current?.content_version_id);
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-    void (photos.projection && explicit ? photos.reload(id, signal) : photos.lookup(id, signal))
+    const manual = explicit && !request?.automatic;
+    const deadline = AbortSignal.timeout(30_000);
+    const signal = AbortSignal.any([controller.signal, deadline]);
+    detailRequest = (
+      photos.projection && manual ? photos.reload(id, signal) : photos.lookup(id, signal)
+    )
       .then((photo) => {
-        if (!signal.aborted) {
-          if (!photos.projection)
-            photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
-          direct = photo;
-          detailError = "";
-          if (explicit) {
-            if (!photos.projection || photo.content_version_id === version) reloadRevision++;
-            reloadedRow = untrack(() => listedRow);
-            consumedReload = request;
-          }
+        signal.throwIfAborted();
+        if (!photos.projection)
+          photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
+        direct = photo;
+        detailError = "";
+        if (explicit) {
+          if (manual && (!photos.projection || photo.content_version_id === version))
+            reloadRevision++;
+          reloadedRow = untrack(() => listedRow);
+          consumedReload = request;
         }
       })
       .catch((cause) => {
-        if (!controller.signal.aborted)
-          detailError = cause instanceof Error ? cause.message : String(cause);
+        controller.signal.throwIfAborted();
+        if (deadline.aborted) cause = new Error("Loading the photo took too long.");
+        detailError = cause instanceof Error ? cause.message : String(cause);
+        if (cause instanceof APIError && cause.status === 404) {
+          direct = undefined;
+          photos.items = photos.items.filter((item) => item.asset_id !== id);
+          return;
+        }
+        throw cause;
       })
       .finally(() => {
         if (!controller.signal.aborted) detailLoading = false;
       });
+    // Navigation reads show their error locally; live refresh also awaits the rejection.
+    void detailRequest.catch(() => {});
     return () => {
       controller.abort();
       if (explicit) consumedReload = request;
@@ -444,8 +497,22 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
-  export function refresh() {
-    return photos.refresh(preserve);
+  export async function refresh(changes?: PhotoEventBatch) {
+    const id = photoID;
+    const refreshed = await photos.refreshChanges(changes, preserve);
+    if (!refreshed) {
+      if (changes && photos.error) throw new Error(photos.error);
+      return false;
+    }
+    if (changes) await editor.reconcile();
+    if (photoID !== id) return false;
+    if (id && (!changes || changes.refetch || changes.assets.has(id))) {
+      if (!fromGrid || !listed) reload = { id, automatic: true };
+      await tick();
+      await detailRequest;
+      if (photoID !== id) return false;
+    }
+    return true;
   }
   async function setHidden(id: string) {
     if (photos.hiding || photos.trashing) return;
@@ -562,7 +629,7 @@
     }
   }
   async function refreshView() {
-    await Promise.all([refresh(), albums?.load()]);
+    await Promise.allSettled([refresh(), albums?.load()]);
   }
   async function remove() {
     if (!albums || !album) return;
@@ -638,7 +705,12 @@
 {/snippet}
 
 <svelte:window onkeydown={escape} />
-<main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
+<main
+  class="photos-workspace"
+  class:concealed
+  inert={concealed}
+  aria-label={albumID ? "Photo album" : "Photo library"}
+>
   {#if mapMode && !tiles.tile_url}
     <EmptyState
       title="Maps are disabled"
@@ -1065,7 +1137,12 @@
                 </div>{/if}
             </div>
             {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
-                <PhotoInspector {editor} {actionDisabled} count={editCount} onedit={edit} />
+                <PhotoInspector
+                  {editor}
+                  actionDisabled={metadataDisabled}
+                  count={editCount}
+                  onedit={edit}
+                />
               </aside>{/if}
           </div>
           {#if !photoID}
@@ -1152,7 +1229,7 @@
   {#if photoID}<PhotoLoupe
       bind:metadataOpen={loupeMetadata}
       {editor}
-      {actionDisabled}
+      actionDisabled={metadataDisabled}
       onedit={edit}
       onundo={() => void editor.undo(metadataRefresh)}
       photo={current}
@@ -1160,7 +1237,9 @@
       note={membershipNote}
       reloading={detailLoading}
       {reloadRevision}
-      onreload={() => (reload = { id: photoID })}
+      onreload={() => {
+        reload = { id: photoID };
+      }}
       onretry={retryNavigation}
       {photos}
       {cache}
@@ -1307,6 +1386,9 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+  }
+  .photos-workspace.concealed {
+    visibility: hidden;
   }
   .photos-workspace {
     position: relative;

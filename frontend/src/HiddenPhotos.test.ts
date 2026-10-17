@@ -46,7 +46,7 @@ it("waits for a held leave lock before redisplaying on return", async () => {
         unlocked = false;
         return Response.json(state(false));
       }
-      if (url.endsWith("/photos/hidden")) {
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden") {
         reads++;
         return Response.json(state(unlocked));
       }
@@ -95,7 +95,8 @@ it("conceals Hidden on the next poll while an unhide batch is held", async () =>
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (url.endsWith("/photos/hidden")) return Response.json(hidden);
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+        return Response.json(hidden);
       if (url.endsWith("/unhide")) return new Promise<Response>((resolve) => (finish = resolve));
       if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
       return Response.json({});
@@ -442,7 +443,7 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])(
         hidden = state(false);
         return problem(403, "Hidden locked");
       }
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return failed ? problem(503, "Access unavailable") : Response.json(hidden);
       if (url.includes("/assets/query"))
         return denied
@@ -472,7 +473,11 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])(
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     await fireEvent(document, new Event("visibilitychange"));
     await waitFor(() =>
-      expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden"))).toHaveLength(3),
+      expect(
+        fetcher.mock.calls.filter(
+          ([url]) => new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden",
+        ),
+      ).toHaveLength(3),
     );
     expect(screen.getByRole("main", { name: "Photo library" })).toBe(grid);
     expect(screen.getByText("1 selected photo")).toBeTruthy();
@@ -521,7 +526,8 @@ it("counts down from server-relative seconds when the browser clock runs ahead",
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (url.endsWith("/photos/hidden")) return Response.json(unlocked);
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+        return Response.json(unlocked);
       if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
       return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
     }),
@@ -549,7 +555,8 @@ it("moves focus to the successor control after unlock and lock", async () => {
         unlocked = false;
         return Response.json(state(false));
       }
-      if (url.endsWith("/photos/hidden")) return Response.json(state(unlocked));
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+        return Response.json(state(unlocked));
       if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
       return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
     }),
@@ -579,7 +586,7 @@ it("conceals the passcode form and grid while lockError is set, then offers the 
         actionSignal = options?.signal ?? undefined;
         return new Promise<Response>((resolve) => (settle = resolve));
       }
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return failing ? problem(503, "Access unavailable") : Response.json(state(unlocked));
       return Response.json({ items: [photo(1)], total: 1 });
     }),

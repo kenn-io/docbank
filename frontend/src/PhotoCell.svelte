@@ -101,17 +101,20 @@
       document.removeEventListener("pointercancel", cancel, true);
     };
   });
+  const previewAssetID = $derived(photo.asset_id);
+  const previewState = $derived(photo.previews.grid.state);
+  const previewGenerationID = $derived(photo.previews.grid.generation_id);
+  const previewCache = $derived(cache);
   $effect(() => {
-    const slot = photo.previews.grid;
     void retry;
     url = "";
     failed = false;
     errorMessage = "";
-    if (slot.state !== "ready" || !slot.generation_id) return;
+    if (previewState !== "ready" || !previewGenerationID) return;
     return previewObjectURL(
-      cache,
-      photo.asset_id,
-      slot.generation_id,
+      previewCache,
+      previewAssetID,
+      previewGenerationID,
       (value) => (url = value),
       (cause) => {
         failed = true;

@@ -736,3 +736,160 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   expect(editor.busy).toBe(false);
   editor.dispose();
 });
+
+it.each(["unchanged", "asset", "file", "node", "membership"])(
+  "rechecks an ID-free refresh with %s targets while retaining a draft",
+  async (change) => {
+    const editor = editorWithTargets();
+    editor.stage({ caption: "Draft caption" });
+    const latest = structuredClone(targets);
+    if (change === "asset") latest[0]!.asset_revision++;
+    if (change === "file") latest[0]!.revision++;
+    if (change === "node") latest[0]!.node_revision++;
+    if (change === "membership") latest.pop();
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [asset], targets: latest });
+    const changes = {
+      assets: new Map<string, number>(),
+      refetch: true,
+    };
+    editor.changedElsewhere(changes);
+    expect(editor.conflict).toBe(false);
+    const reconciling = editor.reconcile();
+    expect(editor.conflict).toBe(false);
+    await reconciling;
+    expect(editor.patch.caption).toBe("Draft caption");
+    expect(editor.conflict).toBe(change !== "unchanged");
+    expect(editor.targets).toEqual(targets);
+    if (change === "unchanged") {
+      const edit = vi
+        .spyOn(api, "editPhotoAuthored")
+        .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+      await editor.edit({}, {}, false, vi.fn());
+      expect(edit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targets: targets.map(
+            ({ asset_id, asset_revision, file_id, revision, node_revision }) => ({
+              asset_id,
+              asset_revision,
+              file_id,
+              revision,
+              node_revision,
+            }),
+          ),
+        }),
+        expect.anything(),
+      );
+    }
+    editor.dispose();
+  },
+);
+
+it.each([
+  { failure: "initial", query: false },
+  { failure: "follow-up", query: false },
+  { failure: "initial", query: true },
+])("reloads retained scope after failed preparation, %j", async ({ failure, query }) => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const scope = query ? { query: { text: "photo" } } : { asset_ids: ["asset"] };
+  const prepare = vi.spyOn(api, "preparePhotoAuthored");
+  let finish!: () => void;
+  if (failure === "follow-up")
+    prepare.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => (finish = resolve));
+      return { assets: [asset], targets };
+    });
+  prepare
+    .mockRejectedValueOnce(new Error("Metadata unavailable"))
+    .mockResolvedValue({ assets: [asset], targets });
+  const pending = editor.prepare(scope);
+  if (failure === "follow-up") {
+    editor.changedElsewhere({ assets: new Map(), refetch: true });
+    const reconciled = editor.reconcile(scope);
+    finish();
+    await pending;
+    await reconciled;
+  } else await pending;
+  expect(editor.error).toBe("Metadata unavailable");
+  expect(editor.canReload).toBe(true);
+  ui(editor);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled).toBe(
+    false,
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+  expect(prepare.mock.calls.at(-1)![0]).toMatchObject(scope);
+  expect(editor.targets).toEqual(targets);
+  if (query) await fireEvent.click(screen.getByRole("button", { name: "Use reviewed members" }));
+  expect(editor.conflict).toBe(false);
+  editor.dispose();
+});
+
+it.each(["assigned lookup", "definition refresh", "receipt refresh"])(
+  "keeps deleted keywords out after a delayed %s",
+  async (path) => {
+    const editor = editorWithTargets();
+    const tag = { id: "deleted-tag", name: "Deleted keyword", revision: 1 } as Tag;
+    const retained = { id: "retained-tag", name: "Retained keyword", revision: 1 } as Tag;
+    editor.targets[0].tags = [tag.id];
+    let release!: (value: Response) => void;
+    let remove!: (value: Response) => void;
+    let reads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith(`/tags/${tag.id}`)) {
+          reads++;
+          if (reads === 1 && path !== "assigned lookup")
+            return new Promise<Response>((resolve) => {
+              remove = resolve;
+            });
+          if (reads === 2 && path === "receipt refresh") return response(tag);
+          if (reads === 1 || (reads === 2 && path !== "assigned lookup"))
+            return new Promise<Response>((resolve) => {
+              release = resolve;
+            });
+          return response({ detail: "Keyword deleted" }, 404);
+        }
+        if (url.endsWith(`/tags/${retained.id}`))
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        return response({
+          receipt_id: "edit",
+          before: targets,
+          after: [{ ...targets[0], tags: [tag.id] }],
+          keywords: [
+            { node_id: 1, tag_id: tag.id, before: false, after: true },
+            ...(path === "receipt refresh"
+              ? [{ tag_id: retained.id, before: false, after: true }]
+              : []),
+          ],
+        });
+      }),
+    );
+    const notify = vi.fn();
+    const deleted = vi.fn();
+    editor.onTagDeleted = deleted;
+    if (path === "receipt refresh") void editor.refreshAssignedTags();
+    else editor.catalog([]);
+    let pending: Promise<unknown> | undefined;
+    if (path === "assigned lookup") await editor.refreshAssignedTags();
+    else {
+      if (path === "definition refresh") pending = editor.refreshAssignedTags();
+      else pending = editor.edit({}, {}, false, notify, [{ tag_id: tag.id, assign: true }]);
+      await vi.waitFor(() => expect(reads).toBe(2));
+      if (path === "receipt refresh")
+        await vi.waitFor(() => expect(editor.tags.map((value) => value.id)).toContain(tag.id));
+      remove(response({ detail: "Keyword deleted" }, 404));
+    }
+    await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith(tag.id));
+    editor.stage({ caption: "keep draft" });
+    release(response(path === "receipt refresh" ? retained : tag));
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(editor.tags.map((value) => value.id)).not.toContain(tag.id);
+    if (path === "definition refresh") expect(await pending).toEqual([]);
+    if (path === "receipt refresh") expect(notify.mock.calls[0]?.[1]).toEqual([retained]);
+    expect(editor.patch).toEqual({ caption: "keep draft" });
+    editor.dispose();
+  },
+);

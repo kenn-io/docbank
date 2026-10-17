@@ -47,12 +47,13 @@ func WithPhotoHiddenToken(ctx context.Context, token string) context.Context {
 // PhotoHiddenState reports deadlines both as server timestamps and as whole
 // seconds remaining, so clients can count down without trusting their clock.
 type PhotoHiddenState struct {
-	ChangeID    string  `json:"change_id,omitzero"`
-	Configured  bool    `json:"configured"`
-	ExpiresAt   *string `json:"expires_at,omitzero"`
-	ExpiresIn   *int64  `json:"expires_in,omitzero"`
-	LockedUntil *string `json:"locked_until,omitzero"`
-	LockedFor   *int64  `json:"locked_for,omitzero"`
+	ChangeCursor string  `json:"change_cursor,omitzero"`
+	ChangeID     string  `json:"change_id,omitzero"`
+	Configured   bool    `json:"configured"`
+	ExpiresAt    *string `json:"expires_at,omitzero"`
+	ExpiresIn    *int64  `json:"expires_in,omitzero"`
+	LockedUntil  *string `json:"locked_until,omitzero"`
+	LockedFor    *int64  `json:"locked_for,omitzero"`
 }
 
 func hiddenSecondsUntil(now, deadline time.Time) *int64 {
@@ -134,8 +135,10 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (time.Time
 	return until, nil
 }
 
-func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
+// PhotoHiddenState reads Hidden access. Only watching reads renew photo change capture.
+func (s *Store) PhotoHiddenState(ctx context.Context, watch bool) (PhotoHiddenState, error) {
 	var state PhotoHiddenState
+	var unlocked bool
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts WHERE rowid IN (SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='unhide') ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -160,6 +163,7 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		}
 		expiry, err := s.hiddenSession(ctx, tx)
 		if err == nil {
+			unlocked = true
 			state.ExpiresAt = new(expiry.Format(timestampLayout))
 			state.ExpiresIn = hiddenSecondsUntil(s.hiddenNow(), expiry)
 		} else if !errors.Is(err, ErrHiddenLocked) {
@@ -167,6 +171,9 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		}
 		return nil
 	})
+	if err == nil {
+		state.ChangeCursor = s.photoChangeCursor(unlocked, watch)
+	}
 	return state, err
 }
 
@@ -287,15 +294,22 @@ func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string,
 	}
 	if denial == nil {
 		s.photoHiddenSessionsMu.Lock()
-		for digest, until := range s.photoHiddenSessions {
-			if !until.After(s.hiddenNow()) {
-				delete(s.photoHiddenSessions, digest)
-			}
-		}
+		s.scanPhotoHiddenSessions()
 		s.photoHiddenSessions[hiddenTokenDigest(token)] = expiry
 		s.photoHiddenSessionsMu.Unlock()
 	}
 	return token, expiry, denial
+}
+
+// Caller holds photoHiddenSessionsMu.
+func (s *Store) scanPhotoHiddenSessions() {
+	now := s.hiddenNow()
+	for digest, until := range s.photoHiddenSessions {
+		if until.After(now) {
+			continue
+		}
+		delete(s.photoHiddenSessions, digest)
+	}
 }
 
 func (s *Store) ChangePhotoHidden(ctx context.Context, old, next string) error {
@@ -393,8 +407,9 @@ func (s *Store) LockPhotoHidden(ctx context.Context) error {
 
 func (s *Store) clearHiddenSessions() {
 	s.photoHiddenSessionsMu.Lock()
-	defer s.photoHiddenSessionsMu.Unlock()
 	clear(s.photoHiddenSessions)
+	s.photoHiddenSessionsMu.Unlock()
+	s.publishPhotoChanges([]PhotoEvent{{Refetch: true}})
 }
 
 func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int64, hidden bool) (PhotoAsset, error) {

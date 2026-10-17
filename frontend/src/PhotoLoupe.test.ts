@@ -58,7 +58,7 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("shows grid, fit and large and preserves zoom", async () => {
+it("shows grid, fit and large, keeping zoom until reload", async () => {
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);
   await screen.findByText("Grid preview");
@@ -81,6 +81,10 @@ it("shows grid, fit and large and preserves zoom", async () => {
   await fireEvent.doubleClick(viewport);
   expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(1);
   await view.rerender({ ...props, reloadRevision: 2 });
+  await screen.findByText("Fit preview");
+  expect(viewport.dataset.zoomed).toBeUndefined();
+  expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(1);
+  await fireEvent.doubleClick(viewport, { clientX: 0, clientY: 0 });
   await waitFor(() =>
     expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2),
   );

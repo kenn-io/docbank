@@ -1,6 +1,17 @@
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+import type { PhotoEventBatch } from "./photoEvents.js";
+
+const prepareTimeout = 60_000;
+
+export function mergePhotoTags(current: api.Tag[], incoming: api.Tag[]) {
+  const merged = new Map(current.map((tag) => [tag.id, tag]));
+  for (const tag of incoming)
+    if (!merged.has(tag.id) || (merged.get(tag.id)!.revision ?? 0) <= (tag.revision ?? 0))
+      merged.set(tag.id, tag);
+  return [...merged.values()];
+}
 
 export class PhotoUndoState {
   receiptID = $state("");
@@ -19,6 +30,7 @@ export class PhotoAuthoredEditor {
   rotationDelta = $state<api.PhotoAuthoredEditRequest["rotation_delta"]>();
   keywords = $state<api.PhotoKeywordEdit[]>([]);
   loading = $state(false);
+  comparing = $state(false);
   validating = $state(false);
   concealed = $state(false);
   busy = $state(false);
@@ -37,34 +49,91 @@ export class PhotoAuthoredEditor {
   loadTags?: () => Promise<void>;
   loadMoreTags?: () => Promise<void>;
   catalog(tags: api.Tag[]) {
-    const assigned = new Set(this.targets.flatMap((target) => target.tags)),
-      supplied = new Set(tags.map((tag) => tag.id));
-    this.tags = [
-      ...tags,
-      ...this.tags.filter((tag) => assigned.has(tag.id) && !supplied.has(tag.id)),
-    ];
+    for (const tag of tags) if (this.deletedTags.has(tag.id)) this.onTagDeleted?.(tag.id);
+    tags = tags.filter((tag) => !this.deletedTags.has(tag.id));
+    const assigned = new Set([
+      ...this.targets.flatMap((target) => target.tags),
+      ...this.keywords.map((keyword) => keyword.tag_id),
+    ]);
+    this.tags = mergePhotoTags(
+      tags,
+      this.tags.filter((tag) => assigned.has(tag.id)),
+    );
     void this.resolveAssignedTags();
+  }
+  private definitionRefresh = 0;
+  async refreshAssignedTags() {
+    const generation = ++this.definitionRefresh;
+    const ids = [
+      ...new Set([
+        ...this.targets.flatMap((target) => target.tags),
+        ...this.keywords.map((keyword) => keyword.tag_id),
+      ]),
+    ];
+    const results = await Promise.allSettled(
+      ids.map(async (id) => {
+        try {
+          return await this.request(() => api.getTag(id, this.boundedOptions()));
+        } catch (cause) {
+          if (!(cause instanceof APIError && cause.status === 404)) throw cause;
+          if (generation === this.definitionRefresh && !this.controller.signal.aborted)
+            this.deleteTag(id);
+        }
+      }),
+    );
+    if (generation !== this.definitionRefresh || this.controller.signal.aborted) return [];
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) {
+      this.tagsError =
+        failed.reason instanceof Error ? failed.reason.message : String(failed.reason);
+      throw failed.reason;
+    }
+    const retained = results.flatMap((result) => {
+      if (result.status !== "fulfilled" || !result.value) return [];
+      const tag = result.value;
+      return ids.includes(tag.id) && !this.deletedTags.has(tag.id) ? [tag] : [];
+    });
+    this.tags = mergePhotoTags(this.tags, retained);
+    this.tagsError = "";
+    return this.tags.filter((tag) => ids.includes(tag.id) && !this.deletedTags.has(tag.id));
+  }
+  onTagDeleted?: (id: string) => void;
+  private deletedTags = new Set<string>();
+  private deleteTag(id: string) {
+    const name = this.tags.find((tag) => tag.id === id)?.name;
+    if (this.keywords.some((keyword) => keyword.tag_id === id)) {
+      this.keywords = this.keywords.filter((keyword) => keyword.tag_id !== id);
+      this.notice = `${name ? `“${name}”` : "A keyword"} was deleted. Its staged edit was removed.`;
+      this.noticeTone = "warning";
+    }
+    this.deletedTags.add(id);
+    this.pendingTags.delete(id);
+    this.tags = this.tags.filter((tag) => tag.id !== id);
+    this.onTagDeleted?.(id);
   }
   private pendingTags = new Map<string, Promise<void>>();
   private async resolveAssignedTags() {
     const known = new Set(this.tags.map((tag) => tag.id));
     const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
-      (id) => !known.has(id) && !this.pendingTags.has(id),
+      (id) => !known.has(id) && !this.deletedTags.has(id) && !this.pendingTags.has(id),
     );
     for (const id of missing) {
-      const request = this.request(() => api.getTag(id, this.options()))
+      const request = this.request(() => api.getTag(id, this.boundedOptions()))
         .then((tag) => {
           if (
             this.pendingTags.get(id) === request &&
             !this.controller.signal.aborted &&
+            !this.deletedTags.has(id) &&
             this.targets.some((target) => target.tags.includes(id)) &&
             !this.tags.some((value) => value.id === id)
           )
             this.tags = [...this.tags, tag];
         })
         .catch((cause) => {
-          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
-            this.tagsError = this.failure(cause);
+          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted) {
+            if (cause instanceof APIError && cause.status === 404) this.deleteTag(id);
+            else this.tagsError = this.failure(cause);
+          }
         })
         .finally(() => {
           if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
@@ -80,8 +149,8 @@ export class PhotoAuthoredEditor {
     const refreshed = await Promise.all(
       [...changed].map(async (id) => {
         try {
-          const tag = await this.request(() => api.getTag(id, this.options()));
-          if (this.controller.signal.aborted) return;
+          const tag = await this.request(() => api.getTag(id, this.boundedOptions()));
+          if (this.controller.signal.aborted || this.deletedTags.has(id)) return;
           if (this.tags.some((value) => value.id === id))
             this.tags = this.tags.map((value) => (value.id === id ? tag : value));
           else if (this.targets.some((target) => target.tags.includes(id)))
@@ -92,11 +161,18 @@ export class PhotoAuthoredEditor {
         }
       }),
     );
-    return refreshed.filter((tag): tag is api.Tag => !!tag);
+    return refreshed.filter((tag): tag is api.Tag => !!tag && !this.deletedTags.has(tag.id));
   }
   private controller = new AbortController();
   private read = new AbortController();
   private scope?: api.PhotoAuthoredPrepareRequest;
+  private preparing?: {
+    scope: api.PhotoAuthoredPrepareRequest;
+    done: Promise<void>;
+    finish: () => void;
+    followup?: Promise<void>;
+    refreshedScope?: api.PhotoAuthoredPrepareRequest;
+  };
   constructor(
     private session: string,
     private onfailure: (cause: unknown) => void,
@@ -109,6 +185,11 @@ export class PhotoAuthoredEditor {
   private options(signal = this.controller.signal) {
     return { session: this.session, signal };
   }
+  private boundedOptions() {
+    return this.options(
+      AbortSignal.any([this.controller.signal, AbortSignal.timeout(prepareTimeout)]),
+    );
+  }
   private failure(cause: unknown) {
     this.onfailure(cause);
     return cause instanceof Error ? cause.message : String(cause);
@@ -120,7 +201,85 @@ export class PhotoAuthoredEditor {
     return ++this.writes;
   }
   private endWrite(write: number) {
-    if (write === this.writes) this.busy = false;
+    if (write !== this.writes) return;
+    this.busy = false;
+    void this.reconcile();
+  }
+  // Another writer changed a target. Writes reconcile once they settle; unsaved drafts keep the conflict.
+  // A change stays pending until a read that started after it succeeds.
+  private remoteChange = false;
+  private membershipConflict = false;
+  private remoteChanges = 0;
+  private failedComparison?: number;
+  private reconciling?: { read: AbortController; done: Promise<void>; change: number };
+  get preparingQuery() {
+    return this.preparing?.scope.query;
+  }
+  affectedBy(changes: PhotoEventBatch) {
+    const pending = this.preparing?.scope;
+    return (
+      ((!!pending || !!this.targets.length) && changes.refetch) ||
+      !!pending?.asset_ids?.some((id) => changes.assets.has(id)) ||
+      (!!pending?.query && !!changes.assets.size) ||
+      this.targets.some((target) => changes.assets.has(target.asset_id))
+    );
+  }
+  changedElsewhere(changes?: PhotoEventBatch) {
+    if (!changes || this.targets.some((target) => changes.assets.has(target.asset_id)))
+      this.conflict = true;
+    this.remoteChange = true;
+    this.remoteChanges++;
+  }
+  async reconcile(scope?: api.PhotoAuthoredPrepareRequest) {
+    if (!this.remoteChange || this.busy || this.failedComparison === this.remoteChanges) return;
+    const preparing = this.preparing;
+    if (preparing) {
+      // Only a successful list refresh supplies the current scope for this one follow-up.
+      if (preparing.followup) return preparing.followup;
+      if (scope) preparing.refreshedScope = scope;
+      if (!preparing.refreshedScope) return;
+      await preparing.done;
+      if (
+        this.preparing !== preparing ||
+        this.controller.signal.aborted ||
+        this.concealed ||
+        this.validating
+      )
+        return;
+      if (!preparing.followup) {
+        preparing.followup = this.prepare(preparing.refreshedScope, false, this.dirty, true);
+      }
+      await preparing.followup;
+      if (this.preparing === preparing) {
+        this.preparing = undefined;
+        if (this.read.signal.aborted) {
+          if (!this.concealed && !this.validating) await this.reconcile();
+          return;
+        }
+        if (this.remoteChange) {
+          this.conflict = true;
+          this.failedComparison = this.remoteChanges;
+        }
+      }
+      return;
+    }
+    if (!this.targets.length) {
+      this.remoteChange = false;
+      this.conflict = this.dirty || this.membershipChanged;
+      return;
+    }
+    // Share a live reconcile; a failed one waits for Reload metadata or the next change.
+    if (!this.reconciling || this.reconciling.read.signal.aborted) {
+      const change = this.remoteChanges;
+      const done = this.prepare(this.reloadScope(), true, true);
+      this.reconciling = { read: this.read, done, change };
+    }
+    const reconciling = this.reconciling;
+    await reconciling.done;
+    if (this.reconciling === reconciling) {
+      this.reconciling = undefined;
+      if (this.remoteChanges !== reconciling.change) await this.reconcile();
+    }
   }
   canChangeTarget() {
     if (this.loading) {
@@ -137,6 +296,10 @@ export class PhotoAuthoredEditor {
   }
   reset() {
     this.read.abort();
+    this.preparing = undefined;
+    this.remoteChange = false;
+    this.failedComparison = undefined;
+    this.membershipConflict = false;
     this.targets = [];
     this.asset = undefined;
     this.fileID = "";
@@ -148,20 +311,23 @@ export class PhotoAuthoredEditor {
     this.conflict = false;
     this.membershipChanged = false;
     this.loading = false;
+    this.comparing = false;
     this.validating = false;
     this.concealed = false;
   }
   conceal() {
     this.read.abort();
     this.loading = false;
+    this.comparing = false;
     this.concealed = true;
     this.validating = true;
   }
-  revalidate(eligible: Set<string>) {
+  revalidate(eligible: Set<string>, scope?: api.PhotoAuthoredPrepareRequest) {
     const targets = this.targets.filter((target) => eligible.has(target.asset_id));
     if (targets.length !== this.targets.length) {
       this.fileID = "";
       if (this.dirty || this.busy) {
+        this.membershipConflict = true;
         this.membershipChanged = false;
         this.conflict = true;
       }
@@ -170,21 +336,67 @@ export class PhotoAuthoredEditor {
     if (this.asset && !eligible.has(this.asset.id)) this.asset = undefined;
     this.validating = false;
     this.concealed = false;
+    // A list refresh conceals the editor and aborts its reads, including a pending reconcile.
+    void this.reconcile(scope);
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false) {
+  async prepare(
+    scope: api.PhotoAuthoredPrepareRequest,
+    reload = false,
+    compare = false,
+    followup = false,
+  ) {
     this.read.abort();
+    if (!followup) {
+      this.preparing = undefined;
+      if (!reload && !compare) {
+        let finish!: () => void;
+        const done = new Promise<void>((resolve) => (finish = resolve));
+        this.scope = scope;
+        this.preparing = { scope, done, finish };
+      }
+    }
+    const preparing = this.preparing;
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
+    // A stalled read would hold a live refresh and leave Reload metadata unavailable.
+    const deadline = AbortSignal.timeout(prepareTimeout);
     this.loading = true;
+    this.comparing = compare;
     this.error = "";
-    const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
+    const previous =
+      reload && (this.targets.length || this.scope?.query)
+        ? new Set(this.targets.map((target) => target.file_id))
+        : undefined;
+    const change = this.remoteChanges;
     try {
-      const prepared = await this.request(() =>
-        api.preparePhotoAuthored(scope, this.options(signal)),
-      );
+      const prepared =
+        scope.asset_ids?.length === 0
+          ? { assets: [], targets: [] }
+          : await this.request(() =>
+              api.preparePhotoAuthored(scope, this.options(AbortSignal.any([signal, deadline]))),
+            );
       if (!Array.isArray(prepared.assets) || !Array.isArray(prepared.targets))
         throw new Error("Metadata response was incomplete. Reload metadata.");
       if (signal.aborted) return;
+      if (compare) {
+        const same =
+          prepared.targets.length === this.targets.length &&
+          this.targets.every((base) =>
+            prepared.targets.some(
+              (target) =>
+                target.file_id === base.file_id &&
+                target.asset_id === base.asset_id &&
+                target.node_id === base.node_id &&
+                target.asset_revision === base.asset_revision &&
+                target.revision === base.revision &&
+                target.node_revision === base.node_revision,
+            ),
+          );
+        if (change === this.remoteChanges) this.remoteChange = false;
+        this.conflict =
+          this.membershipChanged || this.membershipConflict || !same || this.remoteChange;
+        if (this.dirty) return;
+      }
       if (
         previous &&
         (prepared.targets.length !== previous.size ||
@@ -193,9 +405,10 @@ export class PhotoAuthoredEditor {
         this.membershipChanged = true;
         if (!prepared.targets.some((target) => target.file_id === this.fileID)) this.fileID = "";
       }
-      this.targets = previous
-        ? prepared.targets.filter((target) => previous.has(target.file_id))
-        : prepared.targets;
+      this.targets =
+        previous && !this.scope?.query
+          ? prepared.targets.filter((target) => previous.has(target.file_id))
+          : prepared.targets;
       const asset = prepared.assets.length === 1 ? prepared.assets[0] : undefined;
       this.asset = asset
         ? {
@@ -205,33 +418,55 @@ export class PhotoAuthoredEditor {
             ),
           }
         : undefined;
-      this.scope = scope;
-      this.conflict = this.membershipChanged;
+      this.membershipConflict = false;
+      if (change === this.remoteChanges) this.remoteChange = false;
+      this.conflict = this.membershipChanged || this.remoteChange;
       void this.resolveAssignedTags();
       if (!this.tags.length && !this.tagsLoading && !this.tagsError)
         void this.loadTags?.().catch((cause) => {
           if (!signal.aborted) this.tagsError = this.failure(cause);
         });
     } catch (cause) {
-      if (!signal.aborted) this.error = this.failure(cause);
+      if (!signal.aborted) {
+        if (compare || reload || followup || scope.query || scope.asset_ids?.length) {
+          this.conflict = true;
+          this.failedComparison = change;
+        }
+        this.error = deadline.aborted
+          ? "Metadata timed out. Reload metadata."
+          : this.failure(cause);
+      }
     } finally {
-      if (!signal.aborted) this.loading = false;
+      if (!followup && preparing) {
+        preparing.finish();
+        if (this.preparing === preparing && !this.remoteChange) this.preparing = undefined;
+      }
+      if (!signal.aborted) {
+        this.loading = false;
+        this.comparing = false;
+      }
     }
   }
+  get canReload() {
+    return !!this.scope?.query || !!this.scope?.asset_ids?.length || !!this.targets.length;
+  }
   async reload() {
-    if (this.busy || this.loading || !this.targets.length) return;
+    if (this.busy || this.loading || !this.canReload) return;
     await this.prepare(
-      {
-        asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
-        hidden: this.scope?.hidden,
-        skip_unavailable: true,
-      },
+      this.scope?.query || !this.targets.length ? this.scope! : this.reloadScope(),
       true,
     );
   }
+  private reloadScope(): api.PhotoAuthoredPrepareRequest {
+    return {
+      asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
+      hidden: this.scope?.hidden,
+      skip_unavailable: true,
+    };
+  }
   reviewMembers() {
     this.membershipChanged = false;
-    this.conflict = false;
+    this.conflict = this.remoteChange || this.membershipConflict;
   }
   private selectedFiles = $derived(
     this.targets.filter((target) => !this.fileID || target.file_id === this.fileID),
@@ -334,7 +569,7 @@ export class PhotoAuthoredEditor {
       this.unavailable("Reload metadata before editing.");
       return;
     }
-    if (this.busy || this.loading || this.concealed) {
+    if (this.busy || this.loading || this.validating || this.concealed) {
       this.unavailable();
       return;
     }
@@ -394,14 +629,14 @@ export class PhotoAuthoredEditor {
       if (!this.controller.signal.aborted) {
         this.error = this.failure(cause);
         if (cause instanceof APIError && cause.errors.length) this.error = cause.errors.join("; ");
-        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+        this.conflict ||= cause instanceof APIError && [404, 409, 412].includes(cause.status);
       }
     } finally {
       this.endWrite(write);
     }
   }
   async undo(refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>) {
-    if (this.busy || this.loading || this.concealed) {
+    if (this.busy || this.loading || this.validating || this.concealed) {
       this.unavailable();
       return;
     }

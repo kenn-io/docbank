@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
   photoMetadataResponse,
@@ -10,11 +10,18 @@ import {
   savedSmartSet,
   storage,
 } from "./photo-test-fixtures.js";
+import * as api from "./generated/docbank.js";
+import * as photoEvents from "./photoEvents.js";
+import * as photoWorkspace from "./PhotosWorkspace.svelte";
 import App from "./App.svelte";
+import { compile } from "svelte/compiler";
+import workspaceSource from "./PhotosWorkspace.svelte?raw";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
+
+beforeEach(() => vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue(() => {}));
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
@@ -47,7 +54,9 @@ const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObje
 afterEach(() => {
   cleanup();
   map.props = undefined;
-  document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach((meta) => meta.remove());
+  document
+    .querySelectorAll('meta[name="docbank-map-tiles"], style[data-photo-workspace]')
+    .forEach((element) => element.remove());
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -72,7 +81,7 @@ it("removes a delayed direct-link photo fragment on tab switch without history.b
   let finish!: (response: Response) => void;
   stubPhotoFetch(
     vi.fn(async (url: string) => {
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return new Promise<Response>((resolve) => (finish = resolve));
       return Response.json({ items: [], total: 0 });
     }),
@@ -245,7 +254,7 @@ it.each(["unhide", "trash", "rejects"])(
           completed.push("lock");
           return Response.json({});
         }
-        if (url.endsWith("/photos/hidden"))
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
           return Response.json({
             configured: true,
             expires_at: "2099-01-01T00:00:00Z",
@@ -345,7 +354,7 @@ it("renders no hidden photo buttons after a failed leave lock and return", async
         await new Promise<void>((resolve) => (finish = resolve));
         unlocked = false;
       }
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return Response.json({
           configured: true,
           ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}),
@@ -399,7 +408,8 @@ it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lo
           return Response.json({ detail: "Lock unavailable" }, { status: 503 });
         return Response.json({ configured: true });
       }
-      if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+        return Response.json({ configured: true });
       if (url.endsWith("/photos/assets/query"))
         return Response.json({ items: [photo(1)], total: 1 });
       const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
@@ -867,7 +877,7 @@ it.each([false, true])(
     }));
     stubPhotoFetch(
       vi.fn(async (url: string, options?: RequestInit) => {
-        if (url.endsWith("/photos/hidden"))
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
           return Response.json({
             configured: true,
             expires_at: "2099-01-01T00:00:00Z",
@@ -989,7 +999,7 @@ it.each([false, true])(
     };
     stubPhotoFetch(
       vi.fn(async (url: string, options?: RequestInit) => {
-        if (url.endsWith("/photos/hidden"))
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
           return Response.json({ configured: true, change_id: changed ? "second" : "first" });
         if (url.endsWith("/assets/query")) {
           reads++;
@@ -1086,7 +1096,7 @@ it.each(["change", "failure", "background", "delayed page", "album route", "unre
     let finish!: (response: Response) => void;
     stubPhotoFetch(
       vi.fn(async (url: string, init: RequestInit) => {
-        if (url.endsWith("/photos/hidden")) {
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden") {
           statusReads++;
           if (changed && kind === "failure" && accessFailed) throw new Error("Status unavailable");
           return Response.json({
@@ -1216,7 +1226,7 @@ it("refreshes a remounted Hidden grid after a delayed unhide", async () => {
     vi.fn(async (url: string, options?: RequestInit) => {
       const metadata = photoMetadataResponse(url, options);
       if (metadata) return metadata;
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return Response.json({
           configured: true,
           expires_at: "2099-01-01T00:00:00Z",
@@ -1276,7 +1286,7 @@ it("clears previews on sidebar and history departure while retaining eligible se
   let changed = false;
   const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/photos/albums")) return new Response("[]");
-    if (url.endsWith("/photos/hidden"))
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
       return Response.json({ configured: true, change_id: changed ? "second" : "first" });
     if (url.includes("/photos/assets/query")) {
       if (JSON.parse(init!.body as string).facets?.length)
@@ -1385,7 +1395,7 @@ it.each([false, true])(
         unlocked = false;
         return Response.json({});
       }
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return Response.json({
           configured: true,
           ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}),
@@ -1480,6 +1490,13 @@ it.each([false, true])(
 it.each([false, true])(
   "keeps direct links and history scoped and conceals a mounted viewer when access changes, hidden=%s",
   async (hidden) => {
+    // Vitest omits component styles; include them to observe pending concealment.
+    const style = document.createElement("style");
+    style.dataset.photoWorkspace = "";
+    style.textContent = compile(workspaceSource, {
+      filename: "src/PhotosWorkspace.svelte",
+    }).css!.code;
+    document.head.append(style);
     const path = hidden ? "/photos/hidden" : "/photos";
     history.replaceState(
       null,
@@ -1525,7 +1542,7 @@ it.each([false, true])(
       vi.fn(async (url: string, options?: RequestInit) => {
         const metadata = photoMetadataResponse(url, options);
         if (metadata) return metadata;
-        if (url.endsWith("/photos/hidden")) {
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden") {
           statusReads++;
           if (unavailable) throw new Error("Status unavailable");
           return Response.json({
@@ -1564,6 +1581,14 @@ it.each([false, true])(
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());
     history.forward();
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    changeID = "membership-change";
+    holdRefresh = true;
+    await fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(finishRefresh).toBeTypeOf("function"));
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    finishRefresh(Response.json({ items: [item], total: 1 }));
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    finishRefresh = undefined!;
     const before = revoke.mock.calls.length;
     if (hidden) {
       await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
@@ -1599,7 +1624,7 @@ it.each([false, true])(
       await fireEvent(document, new Event("visibilitychange"));
       await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
       await screen.findByText("Fit preview");
-      expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeTruthy();
+      await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
       expect(location.hash).toBe("#photo=photo-1");
       const shown = revoke.mock.calls.length;
       refreshed = queries();
@@ -1608,7 +1633,7 @@ it.each([false, true])(
       await fireEvent(document, new Event("visibilitychange"));
       await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
       await screen.findByText("This photo is no longer in the refreshed result.");
-      expect(screen.queryByText("Fit preview")).toBeNull();
+      await waitFor(() => expect(screen.queryByText("Fit preview")).toBeNull());
       expect(revoke.mock.calls.length).toBeGreaterThan(shown);
       return;
     }
@@ -1672,7 +1697,7 @@ it.each([
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return Response.json({
           configured: true,
           change_id: changed ? "second" : cause.includes("before first hide") ? undefined : "first",
@@ -1786,7 +1811,7 @@ it.each(["retry", "poll", "changed authority"])(
     });
     stubPhotoFetch(
       vi.fn(async (url: string, init: RequestInit) => {
-        if (url.endsWith("/photos/hidden"))
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
           return Response.json({ configured: true, change_id: changeID });
         if (url.endsWith("/photos/assets/query")) {
           const request = JSON.parse(String(init.body));
@@ -1850,7 +1875,7 @@ it("re-pages Library on return with an unchanged hidden change ID", async () => 
   );
   stubPhotoFetch(
     vi.fn(async (url: string) => {
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return Response.json({ configured: true, change_id: "first" });
       if (url.endsWith("/photos/assets/query")) {
         if (++pages > 1) return new Promise<Response>((resolve) => (finish = resolve));
@@ -1894,7 +1919,8 @@ it("shows Album not found for an unknown album Map", async () => {
   stubPhotoFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/photos/albums")) return albumResponse([]);
-      if (url.endsWith("/photos/hidden")) return albumResponse({ configured: true });
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+        return albumResponse({ configured: true });
       return albumResponse({
         items: [],
         map_items: [],
@@ -1958,7 +1984,7 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
     stubPhotoFetch(
       vi.fn(async (url: string, init: RequestInit) => {
         if (url.endsWith("/photos/albums")) return albumResponse([album]);
-        if (url.endsWith("/photos/hidden"))
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
           return albumResponse({
             configured: true,
             expires_at: "2099-01-01T00:00:00Z",
@@ -2159,7 +2185,7 @@ it.each([undefined, "first"])(
     let albumReads = 0;
     stubPhotoFetch(
       vi.fn(async (url: string, init: RequestInit) => {
-        if (url.endsWith("/photos/hidden"))
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
           return Response.json({ configured: true, change_id: changed ? "second" : initial });
         if (url.endsWith("/photos/albums")) {
           albumReads++;
@@ -2219,7 +2245,7 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
         total: 100,
       });
     }
-    if (url.endsWith("/photos/hidden"))
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
       return Response.json({ configured: true, change_id: "first" });
     if (url.includes("/nodes/1"))
       return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
@@ -2520,7 +2546,8 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   stubPhotoFetch(async (url) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+      return Response.json({ configured: false });
     if (url.endsWith("/photos/assets/query"))
       return Response.json({ items: [photo(1)], total: 1, facets: [] });
     return Response.json({ items: [], total: 0 });
@@ -2577,7 +2604,8 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   stubPhotoFetch(async (url) => {
     if (url.endsWith("/photos/assets/query"))
       return Response.json({ items: [photo(1), photo(2)], total: 2 });
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+      return Response.json({ configured: false });
     if (url.startsWith("/api/v1/path?") || url === "/api/v1/nodes/1") return Response.json(root);
     if (url.startsWith("/api/v1/nodes/1/children"))
       return Response.json({ directory: root, items: [], total: 0 });
@@ -2626,7 +2654,8 @@ it("closes the viewer to the grid after refusing a typed photo hash", async () =
   stubPhotoFetch(async (url) => {
     if (url.endsWith("/photos/assets/query"))
       return Response.json({ items: [photo(1), photo(2)], total: 2 });
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+      return Response.json({ configured: false });
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
   });
   render(App);
@@ -2862,7 +2891,8 @@ it("discards shared photo Undo when signing into a replacement web session", asy
         enabled: true,
         session: { token: `session-${++sessions}`, upload_secret: "synthetic-proof" },
       });
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+      return Response.json({ configured: false });
     if (url.endsWith("/photos/assets/query"))
       return Response.json({ items: [photo(1)], total: 1, facets: [] });
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
@@ -2962,7 +2992,7 @@ it("guards a Hidden draft while a status failure conceals its workspace", async 
   Element.prototype.scrollIntoView = vi.fn();
   let unavailable = false;
   stubPhotoFetch(async (url) => {
-    if (url.endsWith("/photos/hidden"))
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
       return unavailable
         ? Response.json({ detail: "Status unavailable" }, { status: 503 })
         : Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
@@ -3009,7 +3039,7 @@ it("keeps a Hidden viewer's return point while a status failure refuses to close
   Element.prototype.scrollIntoView = vi.fn();
   let unavailable = false;
   stubPhotoFetch(async (url) => {
-    if (url.endsWith("/photos/hidden"))
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
       return unavailable
         ? Response.json({ detail: "Status unavailable" }, { status: 503 })
         : Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
@@ -3062,9 +3092,9 @@ it.each(["while open", "after a status failure"])(
         locked = true;
         return Response.json({ configured: true });
       }
-      if (url.endsWith("/photos/hidden") && unavailable)
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden" && unavailable)
         return Response.json({ detail: "Status unavailable" }, { status: 503 });
-      if (url.endsWith("/photos/hidden"))
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
         return Response.json(
           locked
             ? { configured: true }
@@ -3124,7 +3154,7 @@ it("resume requests Map authored revalidation", async () => {
   });
   document.head.append(meta);
   const fetcher = vi.fn(async (url: string) => {
-    if (url.endsWith("/photos/hidden"))
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
       return Response.json({ configured: true, change_id: "same" });
     if (url.endsWith("/photos/assets/query")) {
       return Response.json({ items: [], map_items: [mapPhoto(1)], total: 1, facets: [] });
@@ -3201,7 +3231,7 @@ it.each([false, true])(
             limit: 1000,
             offset: 0,
           });
-        if (url.endsWith("/photos/hidden"))
+        if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
           return Response.json({
             configured: true,
             change_id: "synthetic",
@@ -3323,3 +3353,314 @@ it.each([false, true])(
     ]);
   },
 );
+
+async function watcherFixture({
+  configured = false,
+  expiry,
+}: { configured?: boolean; expiry?: string } = {}) {
+  const album = photoAlbum();
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  storage();
+  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
+  let fail!: Parameters<typeof photoEvents.watchPhotoEvents>[2];
+  let connected!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[3]>;
+  let recovered!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[4]>;
+  const stop = vi.fn();
+  const cursors = vi.fn();
+  const watch = vi
+    .spyOn(photoEvents, "watchPhotoEvents")
+    .mockImplementation(
+      (_session, liveRefresh, onfailure, onconnected, onrefreshed, pollCursor) => {
+        pollCursor?.(cursors);
+        recovered = onrefreshed!;
+        refresh = liveRefresh;
+        fail = onfailure;
+        connected = onconnected!;
+        return stop;
+      },
+    );
+  const access = {
+    configured,
+    change_id: "first",
+    change_cursor: "initial",
+    expires_at: expiry,
+    expires_in: 300,
+  };
+  const rows = [photo(1)];
+  const hiddenRows = [photo(2)];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+        return albumResponse(access);
+      if (url.endsWith("/photos/albums")) return albumResponse([album]);
+      if (url.includes("/nodes/1"))
+        return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+      return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  const stores = vi
+    .spyOn(Photos.prototype, "refresh")
+    .mockImplementation(async function (this: Photos) {
+      this.started = true;
+      this.items = this.hidden ? hiddenRows : rows;
+      this.authored.revalidate(new Set(this.items.map((item) => item.asset_id)));
+      return true;
+    });
+  vi.spyOn(Photos.prototype, "reloadCounts").mockResolvedValue(undefined);
+  const workspaceRefresh = vi.fn().mockResolvedValue(undefined);
+  let workspaceProps!: Parameters<typeof photoWorkspace.default>[1];
+  const mounts = vi.spyOn(photoWorkspace, "default");
+  mounts.mockImplementation((_anchor, inputs) => {
+    workspaceProps = inputs;
+    return {
+      refresh: workspaceRefresh.bind(inputs.photos),
+      captureReturn: vi.fn(),
+      displaysDetailError: () => false,
+    };
+  });
+  render(App);
+  await waitFor(() => expect(mounts).toHaveBeenCalledOnce());
+  workspaceProps.photos.started = true;
+  workspaceProps.photos.items = rows;
+  return {
+    album,
+    access,
+    cursors,
+    rows,
+    stores,
+    workspaceRefresh,
+    mounts,
+    watch,
+    stop,
+    get workspaceProps() {
+      return workspaceProps;
+    },
+    get refresh() {
+      return refresh;
+    },
+    get fail() {
+      return fail;
+    },
+    get connected() {
+      return connected;
+    },
+    get recovered() {
+      return recovered;
+    },
+  };
+}
+
+it("shows a detail refresh failure once and clears the live notice after recovery", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos/map#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+  );
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const meta = document.createElement("meta");
+  meta.name = "docbank-map-tiles";
+  meta.content = JSON.stringify({ tile_url: "/tiles/{z}/{x}/{y}", host: "example.org" });
+  document.head.append(meta);
+  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
+  let fail!: Parameters<typeof photoEvents.watchPhotoEvents>[2];
+  let recovered!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[4]>;
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockImplementation(
+    (_session, callback, onfailure, _onconnected, onrefreshed) => {
+      refresh = callback;
+      fail = onfailure;
+      recovered = onrefreshed!;
+      return () => {};
+    },
+  );
+  stubPhotoFetch(async (url, init) => {
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden")
+      return Response.json({ configured: false, change_id: "first", change_cursor: "initial" });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/assets/query")) {
+      if (JSON.parse(String(init.body)).query.filters.asset_ids) {
+        return Response.json({ items: [photo(1)], total: 1 });
+      }
+      return Response.json({ items: [], map_items: [mapPhoto(1)], total: 1 });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  vi.spyOn(Photos.prototype, "lookup").mockRejectedValueOnce(new Error("Detail unavailable"));
+  const error = await refresh({ assets: new Map([["photo-1", 2]]), refetch: false }).catch(
+    (error) => error,
+  );
+  expect(error).toBeInstanceOf(Error);
+  await act(() => fail(error));
+  expect(screen.getAllByText("Detail unavailable")).toHaveLength(1);
+  await act(() => recovered());
+  await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+  expect(screen.queryByText("Detail unavailable")).toBeNull();
+});
+
+it("retains a failed metadata comparison through the same batch's access check", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  storage();
+  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockImplementation((_session, callback) => {
+    refresh = callback;
+    return () => {};
+  });
+  let compares = 0;
+  let live = false;
+  let finishEdit!: (response: Response) => void;
+  let finishCompare!: (response: Response) => void;
+  let finishAccess!: (response: Response) => void;
+  const access = { configured: false, change_id: "first", change_cursor: "initial" };
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/authored/edit"))
+      return new Promise<Response>((resolve) => {
+        finishEdit = resolve;
+      });
+    if (url.endsWith("/photos/authored/prepare")) {
+      compares++;
+      if (compares === 2)
+        return new Promise<Response>((resolve) => {
+          finishCompare = resolve;
+        });
+      if (compares > 2) return Response.json({ detail: "Comparison unavailable" }, { status: 503 });
+    }
+    const metadata = photoMetadataResponse(url, init);
+    if (metadata) return metadata;
+    if (new URL(url, "https://example.test").pathname === "/api/v1/photos/hidden") {
+      if (live)
+        return new Promise<Response>((resolve) => {
+          finishAccess = resolve;
+        });
+      return Response.json(access);
+    }
+    if (url.endsWith("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await waitFor(() => expect(compares).toBe(1));
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Caption" }).hasAttribute("disabled")).toBe(false),
+  );
+  await fireEvent.input(screen.getByRole("textbox", { name: "Caption" }), {
+    target: { value: "Draft caption" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(finishEdit).toBeTypeOf("function"));
+  live = true;
+  const refreshed = refresh({ assets: new Map(), refetch: true });
+  await waitFor(() => expect(finishAccess).toBeTypeOf("function"));
+  finishEdit(Response.json({ detail: "Write unavailable" }, { status: 503 }));
+  await waitFor(() => expect(finishCompare).toBeTypeOf("function"));
+  finishCompare(Response.json({ detail: "Comparison unavailable" }, { status: 503 }));
+  await screen.findByText("Comparison unavailable");
+  finishAccess(Response.json(access));
+  await refreshed;
+  expect(compares).toBe(2);
+});
+
+it.each(["viewer open", "Albums"])("forwards metadata changes with %s", async (view) => {
+  const fixture = await watcherFixture();
+  const library = fixture.workspaceProps.photos;
+  if (view === "viewer open") {
+    await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
+    await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
+    library.authored.targets = [preparedPhoto(1)];
+  } else {
+    library.selectedIDs = new Set(["photo-1"]);
+    library.authored.targets = [preparedPhoto(1)];
+    await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+    await screen.findByRole("main", { name: "Albums" });
+  }
+  const changed = vi.spyOn(library.authored, "changedElsewhere");
+  const reconcile = vi.spyOn(library.authored, "reconcile").mockResolvedValue(undefined);
+  if (view === "viewer open") fixture.access.change_id = "second";
+  const batch =
+    view === "viewer open"
+      ? { assets: new Map<string, number>(), refetch: true }
+      : { assets: new Map([["photo-1", 8]]), refetch: false };
+  await act(async () => fixture.refresh(batch));
+  expect(changed).toHaveBeenCalledWith(batch);
+  expect(reconcile).toHaveBeenCalled();
+  if (view === "Albums") {
+    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await waitFor(() => expect(fixture.workspaceProps.photos).toBe(library));
+    expect(library.selectedIDs.has("photo-1")).toBe(true);
+  }
+});
+
+it("propagates album refresh failures and shows a later refresh", async () => {
+  const fixture = await watcherFixture();
+  const load = vi
+    .spyOn(api, "listPhotoAlbums")
+    .mockRejectedValueOnce(new Error("Albums unavailable"))
+    .mockResolvedValue([{ ...fixture.album, name: "Updated album" }]);
+  const batch = { assets: new Map([["photo-1", 1]]), refetch: false };
+  await act(async () => expect(fixture.refresh(batch)).rejects.toThrow());
+  await act(async () => fixture.refresh(batch));
+  expect(load).toHaveBeenCalledTimes(2);
+  await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+  await screen.findByRole("button", { name: /Updated album/ });
+});
+
+it("forwards the Hidden view access poll cursor", async () => {
+  const fixture = await watcherFixture({
+    configured: true,
+    expiry: new Date(Date.now() + 300000).toISOString(),
+  });
+  expect(
+    vi.mocked(fetch).mock.calls.some(([url]) => {
+      const request = new URL(String(url), "https://example.test");
+      return (
+        request.pathname === "/api/v1/photos/hidden" && request.searchParams.get("watch") === "true"
+      );
+    }),
+  ).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await waitFor(() => expect(fixture.workspaceProps.photos.hidden).toBe(true));
+  fixture.access.change_cursor = "hidden-change";
+  await waitFor(() => expect(fixture.cursors).toHaveBeenCalledWith("hidden-change"), {
+    timeout: 4000,
+  });
+});
+
+it("routes row-only changes to an active direct viewer outside loaded rows", async () => {
+  const fixture = await watcherFixture();
+  await act(async () => fixture.workspaceProps.onphotochange?.("photo-2", "open"));
+  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-2"));
+  expect(fixture.workspaceProps.photos.items.map((item) => item.asset_id)).toEqual(["photo-1"]);
+  const batch = { assets: new Map([["photo-2", 1]]), refetch: false };
+  await act(async () => fixture.refresh(batch));
+  expect(fixture.workspaceRefresh).toHaveBeenCalledWith(batch);
+});

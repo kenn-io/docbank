@@ -74,7 +74,7 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import { photoNavigationGuard } from "./photoNavigation.js";
-  import { PhotoUndoState } from "./photoAuthored.svelte.js";
+  import { PhotoUndoState, mergePhotoTags } from "./photoAuthored.svelte.js";
   import { mapTiles } from "./photoMap.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
@@ -85,6 +85,7 @@
   import TargetIcon from "@lucide/svelte/icons/target";
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos, type PhotoReturn } from "./photos.svelte.js";
+  import { watchPhotoEvents, type PhotoEventBatch } from "./photoEvents.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import {
     concealPhotoWorkspace,
@@ -153,7 +154,7 @@
   import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
   import { type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
   import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
-  import { listSavedQueries } from "./savedQueries.js";
+  import { definitionsChanged, listSavedQueries } from "./savedQueries.js";
   import type { RenditionObservation } from "./renditionText.js";
   import {
     clearSelection,
@@ -434,13 +435,19 @@
   let photoState = $state<PhotoWorkspace>();
   let photoValidated = $state(false);
   let photoAccessError = $state("");
+  let photoEventError = $state("");
   let photoChangeID: string | undefined;
+  let photoUnlockExpiry = $state<string>();
+  let photoRechecking = $state(false);
+  let photoRecheck = 0;
+  let photoRecheckRun: Promise<boolean> | undefined;
   let revalidatedChangeID: string | undefined | null = null;
   let photoAccessChecked = false;
   let photoConcealed = false;
   let photoAccessVersion = 0;
   const maxPhotoAccessFailures = 3;
-  let checkPhotoAccess: (() => Promise<void>) | undefined;
+  let photoCursorChanged: ((cursor?: string) => void) | undefined;
+  let checkPhotoAccess: ((live?: boolean) => Promise<Photos | undefined>) | undefined;
   function discardLibrary() {
     revalidatedChangeID = null;
     photoAccessVersion++;
@@ -476,12 +483,59 @@
     state.cache = view.cache;
     return revalidated;
   }
+  // Hidden membership changed. The open viewer stays mounted to keep its zoom, but shows
+  // nothing until a full refresh confirms which photos, including the open one, remain visible.
+  // Returns false when the caller should stop because the view or tab changed.
+  function recheckOpenPhoto(state: PhotoWorkspace, workspace: PhotosWorkspace) {
+    const run = recheckOpenPhotoNow(state, workspace);
+    photoRecheckRun = run;
+    return run;
+  }
+  async function recheckOpenPhotoNow(state: PhotoWorkspace, workspace: PhotosWorkspace) {
+    const version = photoAccessVersion,
+      recheck = ++photoRecheck,
+      focused = document.activeElement;
+    const current = () =>
+      state === photoState && workspace === libraryWorkspace && version === photoAccessVersion;
+    photoRechecking = true;
+    try {
+      await state.cache.dispose();
+      if (!current() || document.visibilityState !== "visible") return false;
+      state.cache = new PhotoPreviewCache(webSession, handleFailure);
+      const completed = await workspace.refresh({
+        assets: new Map(),
+        refetch: true,
+      });
+      // Another refresh replaced this one before it confirmed visibility. Conceal the library
+      // and let the caller revalidate it from scratch.
+      if (!completed) {
+        if (!current()) return false;
+        await invalidateLibrary(false);
+        return true;
+      }
+    } catch (cause) {
+      if (current()) await invalidateLibrary(false);
+      throw cause;
+    } finally {
+      if (recheck === photoRecheck) photoRechecking = false;
+    }
+    if (!current()) return false;
+    await tick();
+    if (focused instanceof HTMLElement && focused.isConnected && document.activeElement !== focused)
+      focused.focus({ preventScroll: true });
+    return true;
+  }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
-    const changed = result.change_id !== photoChangeID;
-    // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
-    if (photoState && changed) await invalidateLibrary(false);
-    // Hiding or unhiding changes album counts and covers. The server omits change_id until the first hide.
-    if (photoAccessChecked && changed) void photoAlbums?.load();
+    let refreshed: Photos | undefined;
+    photoUnlockExpiry = result.expires_at ?? undefined;
+    if (photoAccessChecked && result.change_id !== photoChangeID) void photoAlbums?.load();
+    if (photoState && result.change_id !== photoChangeID) {
+      if (photoID && photoValidated && libraryWorkspace && !hiddenMode) {
+        const photos = activePhotos();
+        if (!(await recheckOpenPhoto(photoState, libraryWorkspace))) return;
+        refreshed = photos;
+      } else await invalidateLibrary(false);
+    }
     photoAccessChecked = true;
     photoChangeID = result.change_id;
     if (!photoMode || hiddenMode) return;
@@ -517,6 +571,7 @@
           !valid()
         )
           return;
+        refreshed = photos;
         revalidatedChangeID = result.change_id;
       }
     }
@@ -532,12 +587,14 @@
     photoConcealed = false;
     photoValidated = true;
     photoAccessError = "";
+    return refreshed;
   }
 
   $effect(() => {
     if (!webSession) return;
     return () => {
       hiddenPhotoActionError = "";
+      tagCatalogController?.abort();
       discardLibrary();
       photoValidated = false;
       photoChangeID = undefined;
@@ -628,25 +685,31 @@
     const conceal = () => {
       void invalidateLibrary(false);
     };
-    const check = async () => {
+    const check = async (live = false) => {
       if (pending || hidden || document.visibilityState !== "visible") return;
       pending = true;
       controller = new AbortController();
       try {
-        const result = await generated.getPhotoHiddenState({
-          session,
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
-        });
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]);
+        const result = await generated.getPhotoHiddenState({ watch: true }, { session, signal });
         failures = 0;
-        if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
+        if (current && !controller.signal.aborted) {
+          const source = await acceptPhotoAccess(result);
+          photoCursorChanged?.(result.change_cursor);
+          return source;
+        }
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
         // Library photos are not secret; conceal on denial, or once transient failures persist.
-        if (!denied && ++failures < maxPhotoAccessFailures && photoValidated) return;
+        if (!denied && ++failures < maxPhotoAccessFailures && photoValidated) {
+          if (live) throw cause;
+          return;
+        }
         if (denied || !photoConcealed || !mapPhotos?.staged) void invalidateLibrary(denied);
         photoAccessError = cause instanceof Error ? cause.message : String(cause);
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        if (live) throw cause;
       } finally {
         pending = false;
       }
@@ -671,6 +734,65 @@
       if (!hidden) void invalidateLibrary(false);
     };
   });
+  $effect(() => {
+    const session = webSession;
+    if (!session || !photoMode) return;
+    void photoUnlockExpiry;
+    let refreshFailed = false;
+    const owner = new AbortController();
+    const stop = watchPhotoEvents(
+      session,
+      async (changes) => {
+        // Access refreshes abort pending reads. Retain their affected scope before that happens.
+        invalidatePhotoMetadata(changes);
+        const source = changes.refetch ? await checkPhotoAccess?.(true) : undefined;
+        // A Hidden recheck owns the open viewer until it confirms visibility. It handles its own
+        // failure by concealing the library, so this refresh only waits for it to finish.
+        await photoRecheckRun?.catch(() => {});
+        if (session !== webSession || document.visibilityState !== "visible") return;
+        const results = await Promise.allSettled([
+          refreshPhotoChanges(changes, source, owner.signal),
+          hiddenWorkspace?.refresh(changes),
+        ]);
+        const failed = results.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        if (failed) throw failed.reason;
+      },
+      (cause) => {
+        // A refresh 403, such as a locked Hidden view, stays a photo notice and retries.
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else {
+          if (
+            !(
+              cause instanceof APIError &&
+              cause.status === 429 &&
+              cause.code === "photo_event_stream_limit"
+            )
+          )
+            refreshFailed = true;
+          photoEventError = cause instanceof Error ? cause.message : String(cause);
+        }
+      },
+      () => {
+        if (!refreshFailed) photoEventError = "";
+      },
+      () => {
+        refreshFailed = false;
+        photoEventError = "";
+      },
+      (receive) => {
+        photoCursorChanged = receive;
+      },
+    );
+    return () => {
+      owner.abort();
+      photoCursorChanged = undefined;
+      stop();
+      photoEventError = "";
+    };
+  });
+
   function clearPhotoNotice() {
     if (photoAlbums) {
       photoAlbums.notice = "";
@@ -807,6 +929,7 @@
   let auditGeneration = 0;
   let tagGeneration = 0;
   let tagCatalogGeneration = 0;
+  let tagCatalogController: AbortController | undefined;
   let tagHotkeyGeneration = 0;
   let naturalSearchController: AbortController | undefined;
   let pendingSelectionRange = false;
@@ -2091,7 +2214,14 @@
     }
   }
 
-  async function loadTagCatalog(append = false): Promise<void> {
+  async function loadTagCatalog(append = false, live = false, owner?: AbortSignal): Promise<void> {
+    tagCatalogController?.abort();
+    const controller = (tagCatalogController = new AbortController());
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(60_000),
+      ...(owner ? [owner] : []),
+    ]);
     const request = ++tagCatalogGeneration;
     const session = webSession;
     const selectedTagID = tagFilterID;
@@ -2100,7 +2230,7 @@
     try {
       const page = await generated.listTags(
         { limit: 1000, offset: append ? tagCatalogListed : 0 },
-        { session },
+        { session, signal },
       );
       if (request !== tagCatalogGeneration || session !== webSession) return;
       let items = append
@@ -2114,7 +2244,7 @@
       ) {
         if (page.total > page.items.length) {
           try {
-            const selectedTag = await generated.getTag(selectedTagID, { session });
+            const selectedTag = await generated.getTag(selectedTagID, { session, signal });
             if (request !== tagCatalogGeneration || session !== webSession) return;
             items = [selectedTag, ...items];
           } catch (cause) {
@@ -2135,28 +2265,32 @@
       );
       tagCatalogTotal = page.total;
       tagCatalogListed = (append ? tagCatalogListed : 0) + page.items.length;
-      if (selectedMissing && tagFilterID === selectedTagID) {
-        const rerunSearch = Boolean(activeQuery || searchPending);
-        const leaveTagBrowse = activeQuery === "" && activeTagID === selectedTagID;
-        clearBulkSelection();
-        tagFilterID = "";
-        activeTagID = "";
-        taggedInspected = 0;
-        taggedTotal = 0;
-        taggedTrashed = 0;
-        if (rerunSearch && searchQuery.trim()) void runSearch();
-        else if (leaveTagBrowse && directory) void loadDirectory(directory.id, false);
-      }
+      if (selectedMissing && tagFilterID === selectedTagID) clearMissingTagFilter(selectedTagID);
     } catch (cause) {
       if (request !== tagCatalogGeneration || session !== webSession) return;
-      if (cause instanceof APIError && cause.status === 401) {
+      if (cause instanceof APIError && cause.status === 401 && !live) {
         handleFailure(cause);
         return;
       }
       tagCatalogError = cause instanceof Error ? cause.message : String(cause);
+      // A live refresh rejects so its watcher retries.
+      if (live) throw cause;
     } finally {
       if (request === tagCatalogGeneration) tagCatalogLoading = false;
     }
+  }
+
+  function clearMissingTagFilter(selectedTagID: string): void {
+    const rerunSearch = Boolean(activeQuery || searchPending);
+    const leaveTagBrowse = activeQuery === "" && activeTagID === selectedTagID;
+    clearBulkSelection();
+    tagFilterID = "";
+    activeTagID = "";
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    if (rerunSearch && searchQuery.trim()) void runSearch();
+    else if (leaveTagBrowse && directory) void loadDirectory(directory.id, false);
   }
 
   function inspectorRequestCurrent(
@@ -2261,14 +2395,71 @@
     else void loadRoot();
   }
 
+  function invalidatePhotoMetadata(changes: PhotoEventBatch) {
+    for (const editor of [
+      photoState?.photos.authored,
+      albumPhotos?.authored,
+      mapPhotos?.authored,
+      hiddenWorkspace?.retainedEditor(),
+    ]) {
+      if (editor?.affectedBy(changes)) editor.changedElsewhere(changes);
+    }
+  }
+
+  async function refreshPhotoChanges(
+    changes: PhotoEventBatch,
+    source?: Photos,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await Promise.all([
+      changes.refetch ? refreshPhotoDefinitions(signal) : undefined,
+      photosChanged(source, undefined, changes),
+    ]);
+  }
+
+  async function refreshPhotoDefinitions(signal?: AbortSignal): Promise<void> {
+    const session = webSession;
+    // The catalog page shows unassigned renames; assigned definitions may sit outside that page.
+    const [tags] = await Promise.all([
+      assignedPhotoTags(),
+      loadTagCatalog(false, true, signal),
+      definitionsChanged(session, signal),
+    ]);
+    if (session === webSession) tagCatalog = sortTags(mergePhotoTags(tagCatalog, tags));
+  }
+
+  $effect(() => {
+    for (const photos of [
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ]) {
+      if (photos)
+        photos.authored.onTagDeleted = (id) => {
+          tagCatalog = tagCatalog.filter((tag) => tag.id !== id);
+        };
+    }
+  });
+
+  async function assignedPhotoTags(): Promise<Tag[]> {
+    const retained = new Set([
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ]);
+    const tags = await Promise.all(
+      [...retained].map((photos) => photos?.authored.refreshAssignedTags() ?? []),
+    );
+    return tags.flat();
+  }
+
   function handlePhotoMetadataChanged(
     receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
     tags: Tag[],
   ): void {
-    const refreshed = new Map(tags.map((tag) => [tag.id, tag]));
-    for (const tag of tagCatalog)
-      if ((refreshed.get(tag.id)?.revision ?? 0) < tag.revision) refreshed.set(tag.id, tag);
-    tagCatalog = sortTags([...refreshed.values()]);
+    tagCatalog = sortTags(mergePhotoTags(tagCatalog, tags));
     if (
       receipt.after.some((after) =>
         receipt.before.some(
@@ -2561,24 +2752,51 @@
     void loadTagCatalog();
   }
 
-  async function photosChanged(source?: Photos, affectedAlbumID?: string): Promise<void> {
+  async function photosChanged(
+    source?: Photos,
+    affectedAlbumID?: string,
+    changes?: PhotoEventBatch,
+  ): Promise<void> {
     const visible = albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
+    const displayed = libraryWorkspace && (!changes || photoValidated) ? visible : undefined;
     const loaded = [photoState?.photos, albumPhotos, mapPhotos].filter(
       (photos): photos is Photos => !!(photos?.started || photos?.loading),
     );
-    const stale = loaded.filter(
-      (photos) =>
-        photos !== source &&
-        (!affectedAlbumID || photos.query.filters?.set_ids?.includes(affectedAlbumID)),
-    );
     await Promise.all([
-      affectedAlbumID ? undefined : photoAlbums?.load(),
-      ...stale.map((photos) =>
-        libraryWorkspace && photos === visible ? libraryWorkspace.refresh() : photos.refresh(),
-      ),
-      // A membership change moves Albums counts even where the photo list itself stays current.
-      ...(affectedAlbumID
-        ? loaded.filter((photos) => !stale.includes(photos)).map((photos) => photos.reloadCounts())
+      changes || !affectedAlbumID
+        ? photoAlbums?.load().then((loaded) => {
+            if (changes && loaded === false) throw new Error(photoAlbums?.loadError);
+          })
+        : undefined,
+      ...loaded
+        .filter(
+          (photos) =>
+            photos !== source &&
+            (!changes ||
+              changes.refetch ||
+              photos === displayed ||
+              photos.items.some((row) => changes.assets.has(row.asset_id))) &&
+            (changes ||
+              !affectedAlbumID ||
+              photos.query.filters?.set_ids?.includes(affectedAlbumID)),
+        )
+        .map(async (photos) => {
+          if (libraryWorkspace && photos === displayed) return libraryWorkspace.refresh(changes);
+          const refreshed = await photos.refreshChanges(changes);
+          if (!refreshed) {
+            if (changes && photos.error) throw new Error(photos.error);
+            return;
+          }
+          if (changes) await photos.reconcileMetadata();
+        }),
+      changes ? source?.reconcileMetadata() : undefined,
+      ...(!changes && affectedAlbumID
+        ? loaded
+            .filter(
+              (photos) =>
+                photos === source || !photos.query.filters?.set_ids?.includes(affectedAlbumID),
+            )
+            .map((photos) => photos.reloadCounts())
         : []),
     ]);
   }
@@ -3194,6 +3412,11 @@
           >
         </div>{/if}
       {#if photoMode}
+        {#if photoEventError && !libraryWorkspace?.displaysDetailError(photoEventError)}<p
+            role="alert"
+          >
+            {photoEventError}
+          </p>{/if}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
             access={hiddenAccess}
             undoState={photoUndo}
@@ -3212,6 +3435,7 @@
             onphotochange={changePhoto}
             onconceal={clearPhoto}
             onstate={(result) => {
+              photoCursorChanged?.(result.change_cursor);
               void acceptPhotoAccess(result).catch((cause) => {
                 void invalidateLibrary();
                 photoAccessError = cause instanceof Error ? cause.message : String(cause);
@@ -3230,6 +3454,7 @@
             photoActionError={hiddenPhotoActionError}
           />{:else if photoValidated && photoState}
           {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
+          {#if photoRechecking}<Spinner />{/if}
           {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex
                 albums={photoAlbums}
                 cache={photoState.cache}
@@ -3251,6 +3476,7 @@
                   onmetadatachanged={handlePhotoMetadataChanged}
                   shortcuts={shortcutManager}
                   bind:this={libraryWorkspace}
+                  concealed={photoRechecking}
                   onexport={requestExport}
                   photos={albumPhotos}
                   cache={photoState.cache}
@@ -3296,6 +3522,7 @@
                   {mapMode}
                   {tiles}
                   bind:this={libraryWorkspace}
+                  concealed={photoRechecking}
                   onexport={requestExport}
                   photos={mapPhotos}
                   cache={photoState.cache}
@@ -3326,6 +3553,7 @@
                 {mapMode}
                 {tiles}
                 bind:this={libraryWorkspace}
+                concealed={photoRechecking}
                 onexport={requestExport}
                 photos={photoState.photos}
                 cache={photoState.cache}

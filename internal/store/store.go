@@ -4,9 +4,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	_ "embed"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -30,6 +32,7 @@ type Store struct {
 	providerEgressMu      sync.RWMutex
 	laneControlsMu        sync.Mutex
 	photoExportSlot       chan struct{}
+	photoEvents           photoEventFeed
 	photoHiddenNow        func() time.Time
 	photoHiddenAuthMu     sync.Mutex // Serialize session creation and revocation across database commits.
 	photoHiddenSessionsMu sync.Mutex
@@ -237,7 +240,10 @@ func (s *Store) PrimaryBlobStoreID() string { return s.primaryStoreID }
 func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 
 // Close closes both database pools.
-func (s *Store) Close() error { return errors.Join(s.db.Close(), s.writeDB.Close()) }
+func (s *Store) Close() error {
+	s.closePhotoEvents()
+	return errors.Join(s.db.Close(), s.writeDB.Close())
+}
 
 // Checkpoint truncates the WAL after all application writes have completed.
 // Portable restore uses it before closing a freshly imported database so the
@@ -272,7 +278,20 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err != nil {
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
-	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
+	active, epoch := s.photoCaptureState()
+	closeConn := sync.OnceValue(func() error {
+		if active {
+			if _, err := conn.ExecContext(context.WithoutCancel(ctx), `UPDATE docbank_photo_capture SET enabled=0`); err != nil {
+				s.warnPhotoCapture(err)
+				// A writer with an unknown capture flag must never return to the pool.
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+				return nil
+			}
+		}
+		return conn.Close()
+	})
+	defer func() { retErr = errors.Join(retErr, closeConn()) }()
+	capture := s.preparePhotoChanges(ctx, conn, active)
 	// Own cancellation so a mutation cannot return while database/sql is
 	// still rolling back and closing a connection in another goroutine.
 	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
@@ -305,10 +324,35 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, tx.Rollback())
 	}
+	var events []PhotoEvent
+	var sources []photoSourceChange
+	if active {
+		events, sources = s.readPhotoChanges(ctx, tx, capture)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
+	if err := closeConn(); err != nil {
+		return err
+	}
+	s.publishCommittedPhotoChanges(ctx, events, sources, active, epoch)
 	return nil
+}
+
+func (s *Store) publishCommittedPhotoChanges(ctx context.Context, events []PhotoEvent, sources []photoSourceChange, active bool, epoch uint64) {
+	if watching, current := s.photoCaptureState(); watching && current != epoch && !active {
+		events = []PhotoEvent{{Refetch: true}}
+	}
+	for _, event := range s.resolvePhotoSources(ctx, sources) {
+		if event.Refetch && event.AssetID == "" {
+			events = []PhotoEvent{event}
+			break
+		}
+		if !slices.Contains(events, event) {
+			events = append(events, event)
+		}
+	}
+	s.publishPhotoChanges(events)
 }
 
 // withLogicalTx runs an ordinary metadata mutation. Once audit authority

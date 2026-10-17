@@ -2900,3 +2900,85 @@ it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
     photos.dispose();
   },
 );
+
+it("bounds targeted row refreshes, retries and ignores an abandoned view", async () => {
+  for (const broad of [false, true]) {
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    photos.total = 2;
+    const untouched = photos.items[1];
+    const changed = {
+      ...photo(1),
+      previews: { ...photo(1).previews, grid: { state: "unsupported" as const } },
+    };
+    const wholeQueries = vi.fn();
+    stubPhotoFetch(async (_url, init) => {
+      const request = JSON.parse(String(init.body));
+      if (request.query.filters.asset_ids) {
+        expect(request.query.filters.asset_ids).toEqual(["photo-1"]);
+        return response([changed]);
+      }
+      wholeQueries(request);
+      return response([changed, photo(2), photo(3)]);
+    });
+    await photos.refreshChanges({ assets: new Map([["photo-1", 1]]), refetch: broad });
+    expect(photos.items[0].previews.grid).toEqual({ state: "unsupported" });
+    if (broad) {
+      expect(wholeQueries).toHaveBeenCalledOnce();
+      expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
+      expect(photos.total).toBe(3);
+    } else {
+      expect(wholeQueries).not.toHaveBeenCalled();
+      expect(photos.items[1]).toBe(untouched);
+      expect(photos.total).toBe(2);
+    }
+    photos.dispose();
+  }
+  vi.useFakeTimers();
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), ms);
+    return controller.signal;
+  });
+  let finish!: (value: Response) => void;
+  const fetcher = vi
+    .fn()
+    .mockImplementationOnce(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+        }),
+    )
+    .mockResolvedValueOnce(response([{ ...photo(1), name: "updated.jpg" }]))
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("session", vi.fn());
+  photos.items = [photo(1)];
+  photos.started = true;
+  photos.view = "timeline";
+  const timeline = vi.spyOn(photos, "loadTimeline");
+  const batch = { assets: new Map([["photo-1", photo(1).revision]]), refetch: false };
+  const pending = expect(photos.refreshChanges(batch)).rejects.toThrow("Timed out");
+  await vi.advanceTimersByTimeAsync(60_000);
+  await pending;
+  expect(photos.items[0].name).toBe(photo(1).name);
+  await photos.refreshChanges(batch);
+  expect(photos.items[0].name).toBe("updated.jpg");
+  expect(timeline).not.toHaveBeenCalled();
+  expect(
+    fetcher.mock.calls.every(
+      ([, init]) => JSON.parse(init.body).query.filters.asset_ids[0] === "photo-1",
+    ),
+  ).toBe(true);
+  const abandoned = photos.refreshChanges(batch);
+  photos.dispose();
+  finish(response([{ ...photo(1), name: "late.jpg" }]));
+  expect(await abandoned).toBe(false);
+  expect(photos.items[0].name).toBe("updated.jpg");
+});

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import * as api from "./generated/docbank.js";
 import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { Photos } from "./photos.svelte.js";
@@ -13,7 +14,7 @@ import {
   savedSmartSet,
 } from "./photo-test-fixtures.js";
 import { parseQuery, queryFingerprint } from "./query.js";
-import { createSavedQuery } from "./savedQueries.js";
+import { createSavedQuery, definitionsChanged } from "./savedQueries.js";
 
 beforeEach(() =>
   vi.stubGlobal(
@@ -454,9 +455,10 @@ it("renders unavailable card observations and omits an unknown count from deleti
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Delete album…" }));
   expect(screen.getByText('Delete "Trip"? Its photos stay in your library.')).toBeTruthy();
   cleanup();
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotoAlbumsIndex, {
     albums,
-    cache: new PhotoPreviewCache("scoped", vi.fn()),
+    cache,
     onnavigate: vi.fn(),
   });
   expect(screen.getByText("Count unavailable")).toBeTruthy();
@@ -465,6 +467,27 @@ it("renders unavailable card observations and omits an unknown count from deleti
   albums.items = [{ ...album, included_count: 0 }];
   await screen.findByText("0 photos");
   await screen.findByText("No cover yet");
+  const preview = vi.spyOn(api, "readPhotoPreview").mockResolvedValue(new Response("preview"));
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:cover"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  albums.items = [
+    { ...album, effective_cover_asset_id: "photo-1", cover_generation_id: "new-preview" },
+  ];
+  await waitFor(() =>
+    expect(preview).toHaveBeenCalledWith(
+      "photo-1",
+      "new-preview",
+      undefined,
+      expect.objectContaining({ session: "scoped" }),
+    ),
+  );
+  await waitFor(() =>
+    expect(document.querySelector(".album-cover img")?.getAttribute("src")).toBe("blob:cover"),
+  );
+  await cache.dispose();
 });
 
 it("deduplicates shifted pages of smart sets", async () => {
@@ -690,4 +713,107 @@ it("retains one error and selection when a failed membership completes after rem
   await screen.findByText("Add unavailable");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(photos.selection.selectedIDs.size).toBe(2);
+});
+
+it.each([
+  "success",
+  "first-page failure",
+  "later-page failure",
+  "shorter result",
+  "load more in flight",
+])("retains two smart-set pages through definition refresh: %s", async (outcome) => {
+  const payload = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const fingerprint = await queryFingerprint(payload);
+  const saved = (index: number, renamed = false) =>
+    savedSmartSet(payload, fingerprint, {
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `${renamed ? "Renamed" : "Smart"} set ${index}`,
+    });
+  let refreshing = false;
+  let failing = outcome.endsWith("page failure");
+  let release!: (response: Response) => void;
+  let finish!: (response: Response) => void;
+  const offsets: number[] = [];
+  const page = (offset: number, renamed = refreshing) => {
+    const total = outcome === "shorter result" && refreshing ? 50 : 300;
+    return Response.json({
+      items: Array.from({ length: Math.min(100, total - offset) }, (_, i) =>
+        saved(offset + i, renamed),
+      ),
+      total,
+      limit: 100,
+      offset,
+    });
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const offset = Number(
+        new URL(String(input), "https://example.test").searchParams.get("offset"),
+      );
+      if (outcome === "load more in flight" && offset === 200 && !refreshing)
+        return new Promise<Response>((resolve) => (finish = resolve));
+      if (refreshing) {
+        offsets.push(offset);
+        if (!offsets.slice(0, -1).includes(0))
+          return new Promise<Response>((resolve) => (release = resolve));
+        if (offset === 100 && failing)
+          return Response.json({ detail: "Second page unavailable" }, { status: 503 });
+      }
+      return page(offset);
+    }),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+  await screen.findByRole("button", { name: "Smart set 99" });
+  await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+  await screen.findByRole("button", { name: "Smart set 199" });
+  if (outcome === "load more in flight") {
+    await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+  }
+  refreshing = true;
+  const refreshed = definitionsChanged("scoped").catch(() => {});
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  expect(screen.getByRole("button", { name: "Smart set 199" })).toBeTruthy();
+  release(
+    outcome === "first-page failure"
+      ? Response.json({ detail: "Definitions unavailable" }, { status: 503 })
+      : page(0),
+  );
+  await refreshed;
+  if (failing) {
+    await screen.findByText(
+      outcome === "first-page failure" ? "Definitions unavailable" : "Second page unavailable",
+    );
+    expect(screen.getByRole("button", { name: "Smart set 199" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Renamed set 99" })).toBeNull();
+    failing = false;
+    await fireEvent.click(screen.getByRole("button", { name: "Retry smart sets" }));
+  }
+  await screen.findByRole("button", {
+    name: outcome === "shorter result" ? "Renamed set 49" : "Renamed set 199",
+  });
+  expect(screen.queryByRole("button", { name: "Smart set 199" })).toBeNull();
+  expect(screen.queryByText("Definitions unavailable")).toBeNull();
+  expect(offsets).toEqual(
+    outcome === "shorter result"
+      ? [0]
+      : outcome === "later-page failure"
+        ? [0, 100, 0, 100]
+        : outcome === "first-page failure"
+          ? [0, 0, 100]
+          : [0, 100],
+  );
+  if (outcome === "shorter result")
+    expect(screen.queryByRole("button", { name: "Load more smart sets" })).toBeNull();
+  if (outcome === "load more in flight") {
+    finish(page(200, false));
+    await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+    await screen.findByRole("button", { name: "Renamed set 299" });
+    expect(screen.queryByRole("button", { name: "Smart set 299" })).toBeNull();
+  }
+  albums.dispose();
+  await cache.dispose();
 });

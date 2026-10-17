@@ -36,15 +36,23 @@ export interface SavedQueryPatch {
   payload?: Query | HighlightSet;
 }
 
-const definitionListeners = new Set<(session: string) => void>();
-export function subscribeSavedQueries(listener: (session: string) => void) {
+type DefinitionListener = (session: string, signal: AbortSignal) => void | Promise<void>;
+const definitionListeners = new Set<DefinitionListener>();
+export function subscribeSavedQueries(listener: DefinitionListener) {
   definitionListeners.add(listener);
   return () => {
     definitionListeners.delete(listener);
   };
 }
-function definitionsChanged(session: string) {
-  for (const listener of definitionListeners) listener(session);
+export async function definitionsChanged(session: string, caller?: AbortSignal): Promise<void> {
+  const deadline = AbortSignal.timeout(30_000);
+  const signal = caller ? AbortSignal.any([caller, deadline]) : deadline;
+  const results = await Promise.allSettled(
+    [...definitionListeners].map(async (listener) => listener(session, signal)),
+  );
+  signal.throwIfAborted();
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -168,6 +176,7 @@ export async function listSavedQueries(
   offset = 0,
   limit = 100,
   photos = false,
+  signal?: AbortSignal,
 ): Promise<SavedQueryPage> {
   if (
     !Number.isSafeInteger(offset) ||
@@ -180,7 +189,7 @@ export async function listSavedQueries(
   const page = object(
     await generated.listSavedQueries(
       { limit, offset, kind, ...(photos ? { photos: true } : {}) },
-      { session },
+      { session, signal },
     ),
   );
   requireReceipt(
@@ -209,9 +218,13 @@ export async function listSavedQueries(
   return { items, total: page.total, limit, offset };
 }
 
-export async function getSavedQuery(session: string, id: string): Promise<SavedQuery> {
+export async function getSavedQuery(
+  session: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<SavedQuery> {
   validateID(id);
-  const saved = await readResponse(await generated.getSavedQuery(id, { session }));
+  const saved = await readResponse(await generated.getSavedQuery(id, { session, signal }));
   requireReceipt(saved.id === id);
   return saved;
 }
@@ -227,7 +240,7 @@ export async function createSavedQuery(
   };
   const saved = await readResponse(await generated.createSavedQuery(expected, { session }));
   requireReceipt(saved.revision === 1 && sameDefinition(saved, expected));
-  definitionsChanged(session);
+  void definitionsChanged(session).catch(() => {});
   return saved;
 }
 
@@ -273,7 +286,7 @@ export async function updateSavedQuery(
       saved.created_at === observed.created_at &&
       sameDefinition(saved, expected),
   );
-  definitionsChanged(session);
+  void definitionsChanged(session).catch(() => {});
   return saved;
 }
 
@@ -289,6 +302,6 @@ export async function deleteSavedQuery(session: string, observed: SavedQuery): P
       saved.updated_at === observed.updated_at &&
       sameDefinition(saved, observed),
   );
-  definitionsChanged(session);
+  void definitionsChanged(session).catch(() => {});
   return saved;
 }
