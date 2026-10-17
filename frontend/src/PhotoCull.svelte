@@ -2,6 +2,7 @@
   import { onDestroy, onMount, untrack, tick } from "svelte";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
+  import { patchPhotoRows } from "./photoRows.js";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import { Button, Modal, Notice } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -176,7 +177,7 @@
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
     const changes = photos.metadataChanged(receipt);
-    if (photos.started && photos.reloadsAfter(changes)) await photos.refresh();
+    if (photos.started && photos.reloadsAfter(changes)) void photos.refresh();
     reconcile(receipt.after, receipt.representatives);
     if (
       receipt.after.some((after) => {
@@ -192,23 +193,9 @@
     targets: PhotoAuthoredSnapshot[],
     representatives: PhotoAuthoredReceipt["representatives"] = [],
   ) {
-    const updated = (row: PhotoBrowseRow) => {
-      const after = targets.find((file) => file.file_id === row.display_file_id);
-      const choice = representatives?.find((change) => change.asset_id === row.asset_id);
-      return after || choice
-        ? {
-            ...row,
-            ...(after && {
-              flag: after.values.flag,
-              rating: after.values.rating,
-              rotation: after.values.rotation,
-            }),
-            ...(choice && { revision: choice.after_revision }),
-          }
-        : row;
-    };
-    if (photo) photo = updated(photo);
-    neighbors = neighbors.map(updated);
+    const receipt = { after: targets, representatives };
+    if (photo) [photo] = patchPhotoRows([photo], receipt);
+    neighbors = patchPhotoRows(neighbors, receipt);
   }
   async function decide(patch: PhotoAuthoredPatch) {
     if (
@@ -357,13 +344,16 @@
   function close() {
     if (canChangeTarget()) onclose();
   }
+  function keepCurrent() {
+    return cull.currentStack ? decideStack("current") : decide({ flag: "pick" });
+  }
   function key(event: KeyboardEvent) {
     const action = cullKey(event);
     if (action === undefined) return;
     event.preventDefault();
     event.stopPropagation();
     if (action === "close") close();
-    else if (action === "keep-current") void decideStack("current");
+    else if (action === "keep-current") void keepCurrent();
     else if (action === "previous-stack" && canChangeTarget()) cull.moveStack(-1);
     else if (action === "next-stack" && canChangeTarget()) cull.moveStack(1);
     else if (action === "previous-frame" && canChangeTarget()) cull.moveFrame(-1);

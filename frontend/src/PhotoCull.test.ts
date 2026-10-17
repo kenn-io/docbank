@@ -45,6 +45,7 @@ it.each(
     { key: "4", patch: { rating: 4 }, announcement: "4 stars", next: "photo-1" },
     { key: "5", patch: { rating: 5 }, announcement: "5 stars", next: "photo-1" },
     { key: "p", patch: { flag: "pick" }, announcement: "pick", next: "photo-2" },
+    { key: "Enter", patch: { flag: "pick" }, announcement: "pick", next: "photo-2" },
     { key: "x", patch: { flag: "reject" }, announcement: "reject", next: "photo-2" },
     { key: "u", patch: { flag: "" }, announcement: "flag cleared", next: "photo-2" },
   ].flatMap((decision) =>
@@ -1137,3 +1138,45 @@ it.each(["decision", "representative", "unchanged"])(
     expect(screen.queryByRole("button", { name: "Reload photo" })).toBeNull();
   },
 );
+
+it("finishes a Cull decision while the affected Library stack refresh is held", async () => {
+  const before = preparedPhoto(1);
+  vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "picked",
+    before: [before],
+    after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+  });
+  const rows = [photo(1), photo(2)];
+  const { cull, photos } = await reviewPhoto(rows[0], true);
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+  const stack = { asset_ids: ["photo-1", "photo-3"], representative_id: "photo-1" };
+  photos.items = [
+    { ...photo(1), stack },
+    { ...photo(3), stack },
+  ];
+  photos.started = true;
+  let release!: (value: boolean) => void;
+  const refresh = vi.spyOn(photos, "refresh").mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  try {
+    await fireEvent.click(await readyButton("Pick (P)"));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await waitFor(() => expect(cull.currentID).toBe("photo-2"));
+    await readyButton("Pick (P)");
+  } finally {
+    await act(() => release(true));
+  }
+});

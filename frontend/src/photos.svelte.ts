@@ -1,4 +1,4 @@
-import { patchPhotoRows, photoRows, type PhotoBrowseRow } from "./photoRows.js";
+import { patchPhotoRows, photoRows, photoStacksChanged, type PhotoBrowseRow } from "./photoRows.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { photoSearchSort } from "./photoSearch.js";
@@ -938,10 +938,7 @@ export class Photos {
         );
     } else {
       const rows = this.items as PhotoBrowseRow[];
-      stacksUnresolved =
-        rows.some((row) => row.stack) &&
-        (!!receipt.representatives?.length ||
-          receipt.after.some((file) => before.get(file.file_id)?.values.flag !== file.values.flag));
+      stacksUnresolved = photoStacksChanged(rows, receipt, this.authored, this.cullEditor);
       this.items = patchPhotoRows(rows, receipt);
     }
     if (
@@ -1494,13 +1491,17 @@ export class Photos {
     }
     this.selection = { ...this.selection, selectedIDs: selected };
   }
+  private burstFailure(cause: unknown) {
+    this.authFailure(cause);
+    return cause instanceof Error ? cause.message : String(cause);
+  }
   async checkBurstGap(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.projection || this.query.sort.field !== "capture_time") return;
     try {
       const settings = await getPhotoSettings({ session: this.session });
       if (settings.burst_gap_seconds !== this.burstGapSeconds) await this.refresh(preserve);
     } catch (cause) {
-      this.actionError = cause instanceof Error ? cause.message : String(cause);
+      this.actionError = this.burstFailure(cause);
     }
   }
   async setBurstGap(gap: number, preserve?: () => (() => Promise<void>) | undefined) {
@@ -1521,8 +1522,7 @@ export class Photos {
       this.expandedStacks = new Set();
       await this.refresh(preserve);
     } catch (cause) {
-      this.authFailure(cause);
-      this.actionError = cause instanceof Error ? cause.message : String(cause);
+      this.actionError = this.burstFailure(cause);
     }
   }
   select(id: string, event: MouseEvent, orderedIDs: string[]) {

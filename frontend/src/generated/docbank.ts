@@ -7221,6 +7221,8 @@ export interface SetPhotoSettingsRequest {
      * @nullable
      */
   preference?: SetPhotoSettingsRequestPreference;
+  /** Reset the display preference, including when changing the burst gap. Conflicts with preference. */
+  reset_preference?: boolean;
 }
 
 export interface SourceRequest {

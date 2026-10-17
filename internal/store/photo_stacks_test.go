@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"os"
@@ -823,4 +824,34 @@ func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {
 	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Hidden: true, Stacks: true, Query: captureRequest(t, "asc").Query}, nil)
 	require.NoError(t, err)
 	require.Equal(t, ids, page.Stacks[0].AssetIDs)
+}
+
+func TestPhotoStackRepresentativeRefusesAuditedChoiceAndUndo(t *testing.T) {
+	t.Parallel()
+	for _, undo := range []bool{false, true} {
+		t.Run(fmt.Sprintf("undo=%t", undo), func(t *testing.T) {
+			s := newTestStore(t)
+			ids := burstPhotos(t, s, 2)
+			request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[1], Decision: "representative"}
+			var receipt PhotoAuthoredReceipt
+			var err error
+			if undo {
+				receipt, err = s.DecidePhotoStack(t.Context(), request)
+				require.NoError(t, err)
+			}
+			seedInitialAuditAuthority(t, s, s.RootID())
+			var beforeRank, afterRank sql.NullInt64
+			var beforeRevision, afterRevision int64
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT representative_rank, revision FROM photo_assets WHERE asset_id=?`, ids[1]).Scan(&beforeRank, &beforeRevision))
+			if undo {
+				_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
+			} else {
+				_, err = s.DecidePhotoStack(t.Context(), request)
+			}
+			require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT representative_rank, revision FROM photo_assets WHERE asset_id=?`, ids[1]).Scan(&afterRank, &afterRevision))
+			require.Equal(t, beforeRank, afterRank)
+			require.Equal(t, beforeRevision, afterRevision)
+		})
+	}
 }

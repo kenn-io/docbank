@@ -221,17 +221,13 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		IfMatch string `header:"If-Match"`
 		Body    SetPhotoSettingsRequest
 	}) (*photoSettingsOutput, error) {
-		revision, err := parseIfMatch(in.IfMatch)
+		revision, update, err := in.Body.update(ctx, in.IfMatch)
 		if err != nil {
 			return nil, err
 		}
-		keepPreference := in.Body.Preference == nil && in.Body.BurstGapSeconds != nil
-		if browserSessionRequest(ctx) && !keepPreference {
-			return nil, huma.Error403Forbidden("Changing the display preference requires the API key")
-		}
 		var out *photoSettingsOutput
 		err = g.mutate(func() error {
-			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, store.PhotoSettingsUpdate{Preference: in.Body.Preference, KeepPreference: keepPreference, BurstGapSeconds: in.Body.BurstGapSeconds})
+			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, update)
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
@@ -252,4 +248,20 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{Groups: groups, UnavailableIDs: unavailable, BurstGapSeconds: gap}}, nil
 	})
+}
+
+// update validates the settings intent before either field can change.
+func (in SetPhotoSettingsRequest) update(ctx context.Context, ifMatch string) (int64, store.PhotoSettingsUpdate, error) {
+	update := store.PhotoSettingsUpdate{Preference: in.Preference, KeepPreference: in.Preference == nil && !in.ResetPreference && in.BurstGapSeconds != nil, BurstGapSeconds: in.BurstGapSeconds}
+	revision, err := parseIfMatch(ifMatch)
+	if err != nil {
+		return 0, update, err
+	}
+	if in.ResetPreference && in.Preference != nil {
+		return 0, update, huma.Error422UnprocessableEntity("Set preference or reset_preference, rather than both")
+	}
+	if browserSessionRequest(ctx) && !update.KeepPreference {
+		return 0, update, huma.Error403Forbidden("Changing the display preference requires the API key")
+	}
+	return revision, update, nil
 }

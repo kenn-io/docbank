@@ -3253,3 +3253,42 @@ it("updates the burst gap through general settings and shows regrouped Library p
   ]);
   photos.dispose();
 });
+
+it("recovers the session when checking the Library burst gap returns 401", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ detail: "Session expired" }, { status: 401 })),
+  );
+  const recover = vi.fn();
+  const photos = new Photos("session", recover);
+  await photos.checkBurstGap();
+  expect(recover).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it.each(["unloaded", "singleton", "stack", "unknown"])(
+  "refreshes loaded stacks only when the edited frame belongs to a stack: %s",
+  (kind) => {
+    const photos = new Photos("session", vi.fn());
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+    photos.items = [{ ...photo(1), stack }, { ...photo(2), stack }, photo(3)];
+    vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+    const target = preparedPhoto(
+      kind === "unloaded" || kind === "unknown" ? 4 : kind === "singleton" ? 3 : 2,
+    );
+    if (kind !== "unknown") photos.authored.targets = [target];
+    const before = {
+      file_id: target.file_id,
+      node_id: target.node_id,
+      revision: target.revision,
+      values: target.values,
+    };
+    const changes = photos.metadataChanged({
+      receipt_id: "pick",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+    });
+    expect(photos.reloadsAfter(changes)).toBe(kind === "stack" || kind === "unknown");
+    photos.dispose();
+  },
+);

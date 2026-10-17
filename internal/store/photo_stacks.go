@@ -359,7 +359,28 @@ func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, sta
 // setPhotoRepresentativeTx changes one asset's rank and revision. A
 // non-negative revision is the precondition an undo checks.
 func setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, rank *int64) (PhotoRepresentativeChange, error) {
+	change, err := photoRepresentativeStateTx(ctx, tx, assetID, rank)
+	if err != nil {
+		return change, err
+	}
+	if revision >= 0 && change.BeforeRevision != revision {
+		return change, ErrStaleRevision
+	}
+	change.AfterRevision = change.BeforeRevision + 1
+	_, err = tx.ExecContext(ctx, `UPDATE photo_assets SET representative_rank=?,revision=?,updated_at=? WHERE asset_id=?`, nullablePhotoInt(rank), change.AfterRevision, nowRFC3339(), assetID)
+	return change, err
+}
+
+// photoRepresentativeStateTx refuses choices and undo until they have an audited writer.
+func photoRepresentativeStateTx(ctx context.Context, tx *sql.Tx, assetID string, rank *int64) (PhotoRepresentativeChange, error) {
 	change := PhotoRepresentativeChange{AssetID: assetID, After: rank}
+	active, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return change, err
+	}
+	if active {
+		return change, ErrAuditMutationUnsupported
+	}
 	var before sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT revision,representative_rank FROM photo_assets WHERE asset_id=?`, assetID).Scan(&change.BeforeRevision, &before); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -367,15 +388,10 @@ func setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, r
 		}
 		return change, err
 	}
-	if revision >= 0 && change.BeforeRevision != revision {
-		return change, ErrStaleRevision
-	}
 	if before.Valid {
 		change.Before = new(before.Int64)
 	}
-	change.AfterRevision = change.BeforeRevision + 1
-	_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET representative_rank=?,revision=?,updated_at=? WHERE asset_id=?`, nullablePhotoInt(rank), change.AfterRevision, nowRFC3339(), assetID)
-	return change, err
+	return change, nil
 }
 
 func nullablePhotoInt(value *int64) any {

@@ -430,7 +430,15 @@ revise this envelope.
 
 Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
-revision, and selected or overridden display pointers. `photo_files` owns the
+revision, a nullable `representative_rank`, and selected or overridden display pointers.
+The highest representative rank within a burst records its latest explicit choice;
+a choice or its Undo advances the asset revision and leaves file flags unchanged.
+`photo_settings` owns the vault-wide display preference, `burst_gap_seconds`
+(default 2, range 1–30), and their shared revision. One settings update can
+change both values; API callers use `reset_preference: true` to reset the
+preference while changing the gap. Audited vaults refuse burst-gap changes,
+representative choices, and representative Undo until these operations have
+audited writers. `photo_files` owns the
 role, revision, authored decisions, and same-asset sidecar relationship for each
 node. Detached rows have NULL asset membership and no sidecar pointer; reattachment
 reuses their stable identity and decisions. A sidecar never
@@ -515,7 +523,14 @@ the embedded Natural Earth map has no matching country or simplified boundary.
 
 ### Photo timeline
 
-Schema 37 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the earliest observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
+Schema 37 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the earliest observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key.
+Schema 38 also stores a nullable `folder_key` for burst grouping.
+`docbank_photo_folder_v1(source_kind, source_desc, original_path)` derives a
+SHA-256 folder key, normalizing Windows drive and UNC separators while
+preserving POSIX path bytes. Push and watch sources include their kind and
+description in the key. Missing source paths return SQL NULL. The timeline
+prefixes the capture-time zone lane and leaves the key NULL when a precise
+EXIF clock or a unique source folder is unavailable. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
 
 ### Photo quality signals
 

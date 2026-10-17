@@ -24,6 +24,7 @@ export class PhotoCull {
   run = $state.raw<CullRun & { groups?: string[][]; burstGapSeconds?: number }>();
   private stackIndex = new WeakMap<string[][], ReadonlyMap<string, string[]>>();
   private stackRead?: AbortController;
+  private passGroups?: { pass: string[]; source?: string[][]; groups: string[][] };
   stackError = $state("");
   stackLoading = $state(false);
   busy = $state(false);
@@ -56,9 +57,12 @@ export class PhotoCull {
     private storage: CullStorage,
     private onauthfailure?: (cause: unknown) => void,
   ) {}
-  private apiFailure(cause: unknown) {
+  private sessionFailure(cause: unknown) {
     if (cause instanceof APIError && cause.status === 401) this.onauthfailure?.(cause);
-    this.error = failure(cause);
+    return failure(cause);
+  }
+  private apiFailure(cause: unknown) {
+    this.error = this.sessionFailure(cause);
   }
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
@@ -84,7 +88,7 @@ export class PhotoCull {
       const settings = await getPhotoSettings({ session: this.session });
       if (settings.burst_gap_seconds !== this.run.burstGapSeconds) await this.regroup();
     } catch (cause) {
-      this.stackError = failure(cause);
+      this.stackError = this.sessionFailure(cause);
     }
   }
   /** Recompute all frozen IDs and merge into the latest active checkpoint. */
@@ -109,15 +113,22 @@ export class PhotoCull {
           burstGapSeconds: regrouped.burst_gap_seconds,
         };
     } catch (cause) {
-      if (!controller.signal.aborted) this.stackError = failure(cause);
+      if (!controller.signal.aborted) this.stackError = this.sessionFailure(cause);
     } finally {
       if (this.stackRead === controller) this.stackLoading = false;
     }
   }
   private passStacks() {
+    const pass = this.run?.checkpoint.pass ?? [],
+      source = this.run?.groups;
+    if (this.passGroups?.pass !== pass || this.passGroups.source !== source)
+      this.passGroups = { pass, source, groups: this.groupPass(pass) };
+    return this.passGroups.groups;
+  }
+  private groupPass(pass: string[]) {
     const groups: string[][] = [];
     const byKey = new Map<string, string[]>();
-    for (const id of this.run?.checkpoint.pass ?? []) {
+    for (const id of pass) {
       const key = this.stacks.get(id)?.[0] ?? id;
       let group = byKey.get(key);
       if (!group) {

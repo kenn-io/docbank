@@ -194,7 +194,7 @@ docbank photos faces key <content-version-id> [--face ID] --person ID --revision
 docbank photos faces withdraw-rejection <content-version-id> --face ID --person ID --revision REV
 docbank photos faces undo <receipt-id>
 docbank photos settings show
-docbank photos settings set raw|image [--revision REV]
+docbank photos settings set [raw|image] [--burst-gap-seconds SECONDS] [--revision REV]
 docbank photos settings reset [--revision REV]
 docbank photos hidden setup|change|disable|lock|state|reset
 docbank photos assets hide <asset-id> [--revision REV]
