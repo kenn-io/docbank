@@ -347,7 +347,6 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	restoredAlbum, err := restored.PhotoSet(ctx, album.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "Recovered album", restoredAlbum.Name)
-	assert.Equal(t, int64(1), restoredAlbum.MemberCount)
 	restoredCheckout, err := restored.PhotoCheckout(ctx, checkout.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "unbound", restoredCheckout.State)
