@@ -415,3 +415,35 @@ it.each([0, 64 * 1024 * 1024 + 1])(
     expect(fetcher).not.toHaveBeenCalled();
   },
 );
+
+it("counts interaction with an automatic selection and a verified download", async () => {
+  const bytes = new TextEncoder().encode("Synthetic inspected text");
+  const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
+  const events: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) === "/api/daemon/telemetry/events") {
+      events.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 202 });
+    }
+    if (init?.method === "POST") return ready(selected, "synthetic");
+    if (String(input).endsWith("ticket=synthetic")) return body(selected, bytes);
+    throw new Error(`Unexpected request ${String(input)}`);
+  });
+  // The browser handoff uses a prepared link; suppress jsdom navigation only.
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  render(VerifiedPreview, {
+    session: "visit-session",
+    source: selected,
+    authorizationRevision: 3,
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("Synthetic inspected text");
+  expect(events).toEqual([]);
+  await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
+  await waitFor(() =>
+    expect(events).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Download verified original" }));
+  await screen.findByText(/browser save started/);
+  expect(events).toHaveLength(2);
+});

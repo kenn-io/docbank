@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -21,6 +22,7 @@
   type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
   let {
     session,
+    deliberate = false,
     source,
     authorizationRevision,
     profileName = "",
@@ -39,6 +41,7 @@
     onauthfailure,
   }: {
     session: string;
+    deliberate?: boolean;
     source: SelectedSource;
     authorizationRevision: number;
     profileName?: string;
@@ -85,6 +88,24 @@
     return cancelNavigation;
   });
 
+  $effect(() => {
+    if (displayedSource && (deliberate || duplicateSource || relatedSource))
+      reportAction(session, "document_opened");
+  });
+  function inspect(): void {
+    reportAction(session, "document_opened");
+  }
+
+  function inspection(element: HTMLElement) {
+    element.addEventListener("pointerdown", inspect);
+    element.addEventListener("keydown", inspect);
+    return {
+      destroy() {
+        element.removeEventListener("pointerdown", inspect);
+        element.removeEventListener("keydown", inspect);
+      },
+    };
+  }
   function cancelNavigation(): void {
     ++navigationEpoch;
     navigationController?.abort();
@@ -152,6 +173,7 @@
 </script>
 
 <section
+  use:inspection
   class="verified-preview"
   aria-label={`Verified content of ${displayedSource.name}`}
   data-source-version={displayedSource.versionID}

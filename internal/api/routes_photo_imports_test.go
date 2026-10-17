@@ -18,11 +18,16 @@ import (
 )
 
 func TestPhotoImportRoutes(t *testing.T) {
-	t.Parallel()
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
+	t.Setenv("TELEMETRY_ENABLED", "1")
+	capture := newActionCollector(t)
+	var supervisor *jobs.Supervisor
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
 	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Imports = capture.imports
 		d.Jobs = jobs.New(t.Context(), nil)
+		supervisor = d.Jobs
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -34,6 +39,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader(body))
 	require.NoError(t, err)
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Docbank-Surface", "cli")
 	response, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	defer func() { _ = response.Body.Close() }()
@@ -75,6 +81,9 @@ func TestPhotoImportRoutes(t *testing.T) {
 	var receipt store.PhotoImportReceipt
 	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
 	assert.Equal(t, int64(1), receipt.Added)
+	// Shutdown waits for the runner's terminal accounting callback too.
+	require.NoError(t, supervisor.Shutdown(pollCtx))
+	capture.requireAddition(t)
 
 	for _, test := range []struct{ source, message string }{
 		{"relative", "absolute daemon-host path"},

@@ -39,7 +39,16 @@ func handlePackageImport(w http.ResponseWriter, r *http.Request, d Deps, g *gate
 		writeError(w, problem)
 		return
 	}
-	result, err := AdmitPackageImport(r.Context(), d, g, owner, request)
+	var result PackageImportJob
+	err := d.Imports.Admit(actionSurface(r), func() (string, bool, error) {
+		_, existing := d.Store.PackageImportJob(r.Context(), owner, request.OperationID)
+		var err error
+		result, err = AdmitPackageImport(r.Context(), d, g, owner, request)
+		if existing == nil || err != nil || result.Committed > 0 || result.State != "queued" && result.State != "running" {
+			return "", false, err
+		}
+		return "package:" + result.JobID, true, nil
+	})
 	if err != nil {
 		writePackageError(w, err)
 		return
@@ -184,7 +193,13 @@ func handlePackageImportCancel(w http.ResponseWriter, r *http.Request, d Deps, g
 		writePackageError(w, err)
 		return
 	}
-	writePackageImportStatus(r.Context(), w, d.Store, job, http.StatusOK)
+	result, err := packageImportStatus(r.Context(), d.Store, job)
+	if err != nil {
+		writePackageError(w, err)
+		return
+	}
+	d.Imports.Result("package:"+job.ID, result.Committed > 0, job.State != "queued" && job.State != "running")
+	writeJSON(w, http.StatusOK, result)
 }
 
 func writePackageImportStatus(ctx context.Context, w http.ResponseWriter, catalog *store.Store, job store.PackageImportJob, status int) {

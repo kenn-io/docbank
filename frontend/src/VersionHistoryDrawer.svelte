@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import HistoryIcon from "@lucide/svelte/icons/history";
@@ -139,7 +140,10 @@
                 level="default"
                 padding="sm"
                 selected={version.id === selectedVersionID}
-                onclick={() => (selectedVersionID = version.id)}
+                onclick={() => {
+                  selectedVersionID = version.id;
+                  reportAction(session, "document_opened");
+                }}
                 ariaLabel={`${transitionLabel(version.transition_kind)} at ${formatDate(version.recorded_at)}`}
                 eyebrow={transitionLabel(version.transition_kind)}
                 meta={formatDate(version.recorded_at)}

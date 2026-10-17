@@ -29,6 +29,7 @@ const (
 
 // PackageImportConfig binds the background worker to one daemon-owned vault.
 type PackageImportConfig struct {
+	ImportResult  func(string, bool, bool)
 	Catalog       *store.Store
 	Blobs         *blob.Store
 	Mutate        func(context.Context, func() error) error
@@ -155,6 +156,9 @@ func (w *PackageImportWorker) ProcessOnce(ctx context.Context) (more bool, err e
 			return failErr
 		})
 		finishCancel()
+		if finishErr == nil && w.cfg.ImportResult != nil {
+			w.cfg.ImportResult(job.ID, false, true)
+		}
 		if finishErr != nil && !errors.Is(finishErr, store.ErrPackageConflict) {
 			err = errors.Join(err, finishErr)
 		}
@@ -401,10 +405,14 @@ func (w *PackageImportWorker) processClaim(ctx context.Context, job store.Packag
 	if gaps > 0 {
 		state = "partial"
 	}
-	return w.cfg.Mutate(ctx, func() error {
+	err = w.cfg.Mutate(ctx, func() error {
 		_, finishErr := w.cfg.Catalog.FinishPackageImportJob(ctx, job.ID, job.Epoch, job.Token, state, snapshotID, spool)
 		return finishErr
 	})
+	if err == nil && w.cfg.ImportResult != nil {
+		w.cfg.ImportResult(job.ID, false, true)
+	}
+	return err
 }
 
 func (w *PackageImportWorker) loadManifest(ctx context.Context, pkg store.Package) (loadfile.Manifest, error) {
@@ -891,6 +899,9 @@ func (w *PackageImportWorker) importRecord(ctx context.Context, job store.Packag
 	})
 	if err != nil {
 		return store.PackageImportReceipt{}, err
+	}
+	if w.cfg.ImportResult != nil {
+		w.cfg.ImportResult(job.ID, committed.State == "committed", false)
 	}
 	return committed, nil
 }

@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 	"go.kenn.io/docbank/internal/version"
 	"go.kenn.io/docbank/report"
 )
@@ -88,6 +89,7 @@ type Deps struct {
 	DocumentCursorNow func() time.Time
 	PageRuntime       *pagerender.Runtime // nil reports optional page rendering unavailable
 	Exports           *exporter.Worker
+	Imports           *telemetry.Imports
 	TelemetryCapture  http.Handler // nil leaves POST /api/daemon/telemetry/events unregistered
 }
 

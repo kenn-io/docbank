@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { reportAction } from "./action-events.js";
+  import { onMount, tick } from "svelte";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import XIcon from "@lucide/svelte/icons/x";
@@ -36,6 +37,9 @@
       const next = await renditionArtifact(session, attachmentID);
       if (request !== generation) return;
       rendition = next;
+      await tick();
+      if (request !== generation) return;
+      reportAction(session, "document_opened");
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {

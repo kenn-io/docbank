@@ -3,6 +3,7 @@ package telemetry
 import (
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -71,9 +72,17 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, posthog.ErrUnsupportedEvent.Error(), http.StatusBadRequest)
 		return
 	}
-	if event == EventScreenViewed {
-		h.serveScreen(w, request.Properties)
-		return
+	if event == EventScreenViewed || event == EventSearchRun || event == EventDocumentOpened || event == EventDocumentAdded {
+		props, err := h.reporter.SanitizeProperties(event, request.Properties)
+		if err != nil || props["surface"] == nil || event == EventSearchRun && props["search_type"] == nil || event == EventScreenViewed && props["screen"] == nil {
+			http.Error(w, "event requires allowed properties", http.StatusBadRequest)
+			return
+		}
+		if event != EventDocumentAdded {
+			h.serveDaily(w, event, props)
+			return
+		}
+		request.Properties = props
 	}
 	if !h.reporter.Enabled() {
 		writeCaptureStatus(w, "disabled")
@@ -105,14 +114,7 @@ func decodeCaptureRequest(w http.ResponseWriter, r *http.Request) (captureReques
 	return request, true
 }
 
-func (h *captureHandler) serveScreen(w http.ResponseWriter, raw map[string]any) {
-	properties, err := h.reporter.SanitizeProperties(EventScreenViewed, raw)
-	screen, validScreen := properties["screen"].(string)
-	surface, validSurface := properties["surface"].(string)
-	if err != nil || !validScreen || !validSurface {
-		http.Error(w, "screen_viewed requires an allowed screen and surface", http.StatusBadRequest)
-		return
-	}
+func (h *captureHandler) serveDaily(w http.ResponseWriter, event string, properties map[string]any) {
 	if !h.reporter.Enabled() {
 		writeCaptureStatus(w, "disabled")
 		return
@@ -122,12 +124,18 @@ func (h *captureHandler) serveScreen(w http.ResponseWriter, raw map[string]any) 
 	if h.claims.Day != h.now().UTC().Format(time.DateOnly) {
 		h.claims = h.load()
 	}
-	key := screen + "|" + surface
+	key := event + "|" + fmt.Sprint(properties["surface"])
+	if event == EventScreenViewed {
+		key = fmt.Sprint(properties["screen"]) + "|" + fmt.Sprint(properties["surface"])
+	}
+	if event == EventSearchRun {
+		key += "|" + fmt.Sprint(properties["search_type"])
+	}
 	if h.claims.Screens[key] {
 		writeCaptureStatus(w, "queued")
 		return
 	}
-	if err := h.reporter.Capture(EventScreenViewed, properties); err != nil {
+	if err := h.reporter.Capture(event, properties); err != nil {
 		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
 		return
 	}

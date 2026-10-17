@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import { tick, untrack } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
@@ -72,6 +73,17 @@
   let rank = -1;
   let largeStarted = false;
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
+  let reportedAssetID = "";
+  $effect(() => {
+    const id = photo?.asset_id;
+    if (id && id !== reportedAssetID) {
+      reportedAssetID = id;
+      reportAction(
+        untrack(() => photos.session),
+        "document_opened",
+      );
+    }
+  });
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);

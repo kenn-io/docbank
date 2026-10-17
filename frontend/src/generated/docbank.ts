@@ -7391,6 +7391,18 @@ export const TelemetryEventPropertiesScreen = {
 } as const;
 
 /**
+ * The executed search type.
+ */
+export type TelemetryEventPropertiesSearchType = typeof TelemetryEventPropertiesSearchType[keyof typeof TelemetryEventPropertiesSearchType];
+
+
+export const TelemetryEventPropertiesSearchType = {
+  text: 'text',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+} as const;
+
+/**
  * The interface that sent the event.
  */
 export type TelemetryEventPropertiesSurface = typeof TelemetryEventPropertiesSurface[keyof typeof TelemetryEventPropertiesSurface];
@@ -7399,6 +7411,7 @@ export type TelemetryEventPropertiesSurface = typeof TelemetryEventPropertiesSur
 export const TelemetryEventPropertiesSurface = {
   web: 'web',
   tui: 'tui',
+  cli: 'cli',
 } as const;
 
 export interface TelemetryEventProperties {
@@ -7406,6 +7419,8 @@ export interface TelemetryEventProperties {
   duration_bucket?: TelemetryEventPropertiesDurationBucket;
   /** The screen shown. Other values return 400 for screen_viewed. */
   screen?: TelemetryEventPropertiesScreen;
+  /** The executed search type. */
+  search_type?: TelemetryEventPropertiesSearchType;
   /** The interface that sent the event. */
   surface?: TelemetryEventPropertiesSurface;
 }
@@ -7834,7 +7849,7 @@ export type ReportTelemetryEventBody = {
      * @minLength 1
      */
   event: string;
-  /** Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket. */
+  /** Event properties. Actions require surface; search_run also requires search_type; screen_viewed requires screen and surface; session_ended takes surface and duration_bucket. */
   properties?: TelemetryEventProperties;
 };
 
@@ -8612,6 +8627,10 @@ export type UnhidePhotoAssetHeaders = {
 
 export type UndoPhotoFaceDecisionParams = {
 operation_id?: string;
+};
+
+export type StartPhotoImportHeaders = {
+'X-Docbank-Surface'?: string;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -16478,7 +16497,8 @@ export const getStartPhotoImportUrl = () => {
 /**
  * @summary Import grouped camera files from a daemon-host folder
  */
-export const startPhotoImport = async (photoImportStartRequest: NonReadonly<PhotoImportStartRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
+export const startPhotoImport = async (photoImportStartRequest: NonReadonly<PhotoImportStartRequest>,
+    headers?: StartPhotoImportHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16498,7 +16518,7 @@ return sessionJSON<StorageOperation>(getStartPhotoImportUrl(),
   {
     ...options,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(photoImportStartRequest)
   }
 );}

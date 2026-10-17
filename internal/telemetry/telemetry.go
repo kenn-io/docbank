@@ -11,12 +11,15 @@ import (
 
 const (
 	// EnabledEnv set to "0" turns off docbank's anonymous usage telemetry.
-	EnabledEnv         = "DOCBANK_TELEMETRY_ENABLED"
-	EventDaemonStarted = "daemon_started"
-	EventDaemonActive  = posthog.EventDaemonActive
-	EventAppOpened     = "app_opened"
-	EventScreenViewed  = "screen_viewed"
-	EventSessionEnded  = "session_ended"
+	EnabledEnv          = "DOCBANK_TELEMETRY_ENABLED"
+	EventDaemonStarted  = "daemon_started"
+	EventDaemonActive   = posthog.EventDaemonActive
+	EventAppOpened      = "app_opened"
+	EventScreenViewed   = "screen_viewed"
+	EventSessionEnded   = "session_ended"
+	EventDocumentAdded  = "document_added"
+	EventSearchRun      = "search_run"
+	EventDocumentOpened = "document_opened"
 	// HeartbeatJobName is the supervised job that sends daemon_started and daemon_active.
 	HeartbeatJobName = "telemetry:heartbeat"
 
@@ -66,6 +69,9 @@ func New(opts Options) *Reporter {
 		Commit:      opts.Commit,
 		Source:      "daemon",
 	},
+		posthog.WithAllowedEvent(EventDocumentAdded, posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui", "cli"))),
+		posthog.WithAllowedEvent(EventSearchRun, posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui", "cli")), posthog.AllowProperty("search_type", posthog.AllowStringValues("text", "semantic", "hybrid"))),
+		posthog.WithAllowedEvent(EventDocumentOpened, posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui", "cli"))),
 		posthog.WithAllowedEvent(EventDaemonStarted),
 		posthog.WithAllowedEvent(EventDaemonActive),
 		posthog.WithAllowedEvent(EventAppOpened),

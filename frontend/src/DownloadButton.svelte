@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { reportAction } from "./action-events.js";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Chip, Spinner } from "@kenn-io/kit-ui";
@@ -96,6 +97,7 @@
         return;
       }
       offerPreparedDownload(prepared);
+      reportAction(session, "document_opened");
       outcome = `Verified ${formatBytes(prepared.size)}; browser save started.`;
     } catch (cause) {
       if (controller !== active) return;

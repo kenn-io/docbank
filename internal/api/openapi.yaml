@@ -17725,11 +17725,19 @@ components:
             - packages
             - operations
           type: string
+        search_type:
+          description: The executed search type.
+          enum:
+            - text
+            - semantic
+            - hybrid
+          type: string
         surface:
           description: The interface that sent the event.
           enum:
             - web
             - tui
+            - cli
           type: string
       type: object
       x-go-type: api.TelemetryEventProperties
@@ -19180,7 +19188,7 @@ paths:
                   type: string
                 properties:
                   $ref: "#/components/schemas/TelemetryEventProperties"
-                  description: Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket.
+                  description: Event properties. Actions require surface; search_run also requires search_type; screen_viewed requires screen and surface; session_ended takes surface and duration_bucket.
               required:
                 - event
               type: object
@@ -25766,6 +25774,11 @@ paths:
   /api/v1/photos/imports:
     post:
       operationId: startPhotoImport
+      parameters:
+        - in: header
+          name: X-Docbank-Surface
+          schema:
+            type: string
       requestBody:
         content:
           application/json:

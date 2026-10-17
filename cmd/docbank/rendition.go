@@ -58,6 +58,7 @@ func runRenditionGet(cmd *cobra.Command, c *daemonconn.Connection, attachmentID 
 	if copyErr != nil {
 		return fmt.Errorf("reading rendition %s: %w", attachmentID, copyErr)
 	}
+	reportOpened(cmd, c)
 	if closeErr != nil {
 		return fmt.Errorf("closing rendition %s: %w", attachmentID, closeErr)
 	}

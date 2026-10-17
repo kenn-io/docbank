@@ -1,3 +1,4 @@
+import { reportAction } from "./action-events.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { photoSearchSort } from "./photoSearch.js";
@@ -217,7 +218,7 @@ export class Photos {
   }
   openSmartSet(saved: SavedQuery) {
     if (saved.kind !== "query" || this.disposed || this.hiding || this.trashing) return false;
-    const applied = this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) });
+    const applied = this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) }, true);
     if (!applied) return false;
     this.rememberSmartSet(saved);
     return true;
@@ -559,7 +560,7 @@ export class Photos {
 
   // setQuery replaces the search, filter, or album scope. It clears the selected
   // date and the timeline counts, which describe the previous scope.
-  setQuery(query: Query) {
+  setQuery(query: Query, intent = false) {
     if (this.disposed || this.hiding || this.trashing || !this.authored.canChangeTarget()) return;
     this.cancelPending();
     let next: Query;
@@ -589,7 +590,11 @@ export class Photos {
     this.scrollTop = 0;
     this.clearSelection();
     if (this.view === "timeline") void this.loadTimeline();
-    return this.loadMore();
+    const requested = this.query;
+    return this.loadMore().then(() => {
+      if (intent && this.query === requested && !this.error && this.started)
+        reportAction(this.session, "search_run", "text");
+    });
   }
 
   setDensity(value: Density) {

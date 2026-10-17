@@ -120,6 +120,7 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 		return err
 	}
 	published = true
+	reportOpened(cmd, c)
 
 	receipt := getReceipt{
 		NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash,

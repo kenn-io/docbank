@@ -303,14 +303,14 @@ func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
 }
 
 func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
+	var events []api.TelemetryEventRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
 		var request api.TelemetryEventRequest
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-		assert.Equal(t, "screen_viewed", request.Event)
-		assert.Equal(t, &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}, request.Properties)
+		events = append(events, request)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
@@ -320,4 +320,11 @@ func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
 		return daemonconn.New(server.URL, "synthetic-key"), nil
 	}}
 	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
+	require.NoError(t, backend.ReportAction(t.Context(), "search_run", "version"))
+	require.NoError(t, backend.ReportAction(t.Context(), "document_opened", "image"))
+	require.Equal(t, []api.TelemetryEventRequest{
+		{Event: "screen_viewed", Properties: &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}},
+		{Event: "search_run", Properties: &api.TelemetryEventProperties{SearchType: "text", Surface: "tui"}},
+		{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "tui"}},
+	}, events)
 }

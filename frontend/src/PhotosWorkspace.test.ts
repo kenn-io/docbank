@@ -27,6 +27,9 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
   vi.stubGlobal(
     "fetch",
     (url: string, init: RequestInit) =>
+      (url === "/api/daemon/telemetry/events"
+        ? Promise.resolve(new Response(null, { status: 202 }))
+        : undefined) ??
       photoMetadataResponse(url, init) ??
       (url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length
         ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))
@@ -260,7 +263,11 @@ it("restores applied search after a facet click and keeps empty-library guidance
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Canon, 1 photos" }));
   await waitFor(() => expect(search.value).toBe(""));
-  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.text).toBe("");
+  expect(
+    JSON.parse(
+      fetcher.mock.calls.find(([url]) => String(url).endsWith("/photos/assets/query"))![1].body,
+    ).query.text,
+  ).toBe("");
   await waitFor(() => expect(photos.loading).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
@@ -276,6 +283,11 @@ it("restores applied search after a facet click and keeps empty-library guidance
       /Choose a folder or files with Add photos\. Large camera cards on the daemon's own disk import faster with docbank photos import\./,
     ),
   ).toBeTruthy();
+  expect(
+    fetcher.mock.calls
+      .filter(([url]) => url === "/api/daemon/telemetry/events")
+      .map(([, init]) => JSON.parse(init.body)),
+  ).toEqual([{ event: "search_run", properties: { search_type: "text", surface: "web" } }]);
   photos.dispose();
   await cache.dispose();
 });

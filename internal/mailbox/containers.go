@@ -16,10 +16,11 @@ import (
 )
 
 type Service struct {
-	Store  *store.Store
-	Blobs  *blob.Store
-	Spool  string
-	Logger *slog.Logger
+	ImportResult func(string, bool, bool)
+	Store        *store.Store
+	Blobs        *blob.Store
+	Spool        string
+	Logger       *slog.Logger
 	// Mutate coordinates background publication with maintenance. HTTP and
 	// embedded callers already hold their owner gate and leave this nil.
 	Mutate func(context.Context, func() error) error

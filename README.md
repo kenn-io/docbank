@@ -145,6 +145,8 @@ names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` to turn
 telemetry off. See
 [anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).
 
+See [document action counts and exclusions](docs/configuration.md#document-actions).
+
 ## Documentation
 
 - [Documentation homepage](https://docbank.ai) and [visual tour](docs/tour.md)

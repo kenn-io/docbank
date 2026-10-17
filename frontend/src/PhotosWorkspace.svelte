@@ -845,12 +845,15 @@
               class="photo-search"
               onsubmit={(event) => {
                 event.preventDefault();
-                void photos.setQuery({
-                  ...photos.baseQuery,
-                  text: search,
-                  syntax,
-                  sort: photoSearchSort({ text: search, syntax }),
-                });
+                void photos.setQuery(
+                  {
+                    ...photos.baseQuery,
+                    text: search,
+                    syntax,
+                    sort: photoSearchSort({ text: search, syntax }),
+                  },
+                  Boolean(search.trim()),
+                );
               }}
             >
               <SelectDropdown
@@ -959,7 +962,9 @@
                   facets={photos.facets}
                   query={photos.baseQuery}
                   unit="photos"
-                  onchange={(value) => void photos.setQuery(value)}
+                  onchange={(value) => {
+                    void photos.setQuery(value, true);
+                  }}
                 />
               </div>
             {/if}

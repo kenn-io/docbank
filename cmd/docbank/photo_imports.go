@@ -38,7 +38,7 @@ var photoImportCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		operation, err := connection.StartPhotoImport(cmd.Context(), root, destination)
+		operation, err := interactiveImport(cmd, connection).StartPhotoImport(cmd.Context(), root, destination)
 		if err != nil {
 			return err
 		}

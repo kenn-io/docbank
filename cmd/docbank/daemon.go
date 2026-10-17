@@ -221,6 +221,7 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	telemetryReporter := telemetry.New(telemetry.Options{Dir: layout.Root, Version: version.Version, Commit: version.Commit, Logger: logger})
+	imports := telemetry.NewImports(telemetryReporter)
 	// Registered before the supervisor's drain defer so it runs after the heartbeat has finished.
 	defer func() {
 		if err := telemetryReporter.Close(); err != nil {
@@ -251,7 +252,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return err
 	}
-	if err := startMailboxJobs(sigCtx, jobSupervisor, s, blobs, layout.BlobTmpDir(), operationGate, logger); err != nil {
+	if err := startMailboxJobs(sigCtx, jobSupervisor, s, blobs, layout.BlobTmpDir(), operationGate, logger, imports); err != nil {
 		return err
 	}
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
@@ -462,7 +463,8 @@ func runServe(ctx context.Context) (retErr error) {
 	packageMailbox := mailbox.Service{Store: s, Blobs: blobs}
 	packageWorker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
 		Catalog: s, Blobs: blobs, Mutate: operationGate.MutateContext,
-		Owner: "daemon-package-import-worker", LeaseDuration: 5 * time.Minute,
+		ImportResult: func(id string, added, terminal bool) { imports.Result("package:"+id, added, terminal) },
+		Owner:        "daemon-package-import-worker", LeaseDuration: 5 * time.Minute,
 		IdleDelay: time.Second, OpenContainer: func(ctx context.Context, owner, id string) (io.ReaderAt, int64, error) {
 			container, err := s.MailboxContainer(ctx, owner, id)
 			if err != nil {
@@ -505,7 +507,7 @@ func runServe(ctx context.Context) (retErr error) {
 	stop := func() { stopOnce.Do(func() { close(stopCh) }) }
 
 	tracker := api.NewActivityTracker()
-	photoImports := api.NewPhotoImportRunner(api.Deps{Store: s, Blobs: blobs, Gate: operationGate, Tracker: tracker})
+	photoImports := api.NewPhotoImportRunner(api.Deps{Store: s, Blobs: blobs, Gate: operationGate, Tracker: tracker, Imports: imports})
 	if err := photoImports.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
 	}
@@ -528,6 +530,7 @@ func runServe(ctx context.Context) (retErr error) {
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
+		Imports:               imports,
 		TelemetryCapture:      telemetry.CaptureHandler(telemetryReporter, layout.Root),
 	})
 	defer srv.Close()

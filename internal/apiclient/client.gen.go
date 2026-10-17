@@ -21015,7 +21015,8 @@ func (o *UnlockPhotoHiddenRequestOptions) GetHeader() (map[string]string, error)
 
 // StartPhotoImportRequestOptions is the options needed to make a request to StartPhotoImport.
 type StartPhotoImportRequestOptions struct {
-	Body *StartPhotoImportBody
+	Body   *StartPhotoImportBody
+	Header *StartPhotoImportHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -21038,7 +21039,13 @@ func (o *StartPhotoImportRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *StartPhotoImportRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // GetPhotoAssetByNodeRequestOptions is the options needed to make a request to GetPhotoAssetByNode.
@@ -23975,6 +23982,10 @@ type TrashPhotoAssetHeaders struct {
 
 type UnhidePhotoAssetHeaders struct {
 	IfMatch string `json:"If-Match"`
+}
+
+type StartPhotoImportHeaders struct {
+	XDocbankSurface *string `json:"X-Docbank-Surface,omitempty"`
 }
 
 type PromotePhotoNodeHeaders struct {

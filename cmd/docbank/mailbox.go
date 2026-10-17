@@ -96,7 +96,7 @@ Output: JSON receipts; watch streams NDJSON, cancel prints no receipt.`,
 					Preview     any    `json:"preview"`
 				}{id, hash, sample})
 			}
-			job, err := c.BeginMailboxJob(cmd.Context(), store.MailboxJobRequest{ID: jobID, ContainerID: id, ContainerSHA256: hash, Settings: store.MailboxSettings{Dialect: dialect, DestinationID: dir.ID, LabelTags: labelTags}})
+			job, err := interactiveImport(cmd, c).BeginMailboxJob(cmd.Context(), store.MailboxJobRequest{ID: jobID, ContainerID: id, ContainerSHA256: hash, Settings: store.MailboxSettings{Dialect: dialect, DestinationID: dir.ID, LabelTags: labelTags}})
 			if err != nil {
 				return err
 			}
@@ -157,7 +157,7 @@ Output: JSON receipts; watch streams NDJSON, cancel prints no receipt.`,
 					return err
 				}
 				if action == "resume" || action == "continue" {
-					job, err = c.ResumeMailboxJob(cmd.Context(), job.MailboxJobRequest, action == "continue")
+					job, err = interactiveImport(cmd, c).ResumeMailboxJob(cmd.Context(), job.MailboxJobRequest, action == "continue")
 					if err != nil {
 						return err
 					}

@@ -24,6 +24,7 @@ import (
 type fakeBackend struct {
 	screenErr                 error
 	screens                   []string
+	actions                   [][2]string
 	nodes                     map[string]api.Node
 	children                  map[int64]api.NodePage
 	search                    api.SearchReport
@@ -2850,4 +2851,49 @@ func TestVisibleScreensAreAllowlisted(t *testing.T) {
 		seen[screen] = true
 	}
 	assert.Len(t, seen, 10)
+}
+
+func (f *fakeBackend) ReportAction(_ context.Context, event, value string) error {
+	f.actions = append(f.actions, [2]string{event, value})
+	return nil
+}
+
+func TestActionSearchIntentAndSettledInspection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fake := newFakeBackend()
+		fake.profiles = nil
+		model, err := New(t.Context(), fake)
+		require.NoError(t, err)
+		model = runModelCommand(t, model, model.Init())
+		var cmd tea.Cmd
+		model, cmd = updateModel(t, model, runeKey('/'))
+		model = runModelCommand(t, model, cmd)
+		model.searchInput.SetValue("report")
+		entered, enterCmd := model.update(key(tea.KeyEnter))
+		var enterOK bool
+		model, enterOK = entered.(Model)
+		require.True(t, enterOK)
+		cmd = enterCmd
+		batchSearch, batchOK := cmd().(tea.BatchMsg)
+		require.True(t, batchOK)
+		model, cmd = updateModel(t, model, batchSearch[1]())
+		if cmd != nil {
+			model = runModelCommand(t, model, cmd)
+		}
+		require.Equal(t, [][2]string{{"search_run", "text"}}, fake.actions)
+		// Shared refresh does not create another user action.
+		raw, cmd := model.startSearch("report")
+		var ok bool
+		model, ok = raw.(Model)
+		require.True(t, ok)
+		model = runModelCommand(t, model, cmd)
+		require.Len(t, fake.actions, 1)
+		model.rows = []row{{node: fake.nodes["/README.txt"], path: "/README.txt"}}
+		model.cursor = 0
+		raw, cmd = model.openDetail()
+		model, ok = raw.(Model)
+		require.True(t, ok)
+		model = runModelCommand(t, model, cmd)
+		require.Equal(t, [][2]string{{"search_run", "text"}, {"document_opened", ""}}, fake.actions)
+	})
 }

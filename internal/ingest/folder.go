@@ -101,8 +101,10 @@ func (source watchSource) digest(ctx context.Context, expected watchFingerprint)
 // FolderScanner shares watched-inbox traversal, literal exclusions, mount
 // boundaries and stability observations without opening a local vault.
 type FolderScanner struct {
-	watcher *Watcher
-	scans   uint64
+	// AfterScan runs after each scan, including a partial scan that returns an error.
+	AfterScan func()
+	watcher   *Watcher
+	scans     uint64
 }
 
 // NewFolderScanner creates a read-only client-side scanner. ScanOnce admits
@@ -273,6 +275,9 @@ func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
 		cancel(err)
 	}
 	join()
+	if s.AfterScan != nil {
+		s.AfterScan()
+	}
 	if err := context.Cause(ctx); err != nil {
 		return fmt.Errorf("scanning folder: %w", err)
 	}
@@ -312,7 +317,11 @@ func (s *FolderScanner) Run(ctx context.Context) error {
 	s.watcher.observations = make(map[string]watchObservation)
 	s.watcher.rejected = make(map[string]struct{})
 	s.scans++
-	if err := s.watcher.scan(ctx, root); err != nil {
+	err = s.watcher.scan(ctx, root)
+	if s.AfterScan != nil {
+		s.AfterScan()
+	}
+	if err != nil {
 		return err
 	}
 	ticker := time.NewTicker(s.watcher.config.ScanInterval.Std())
@@ -323,7 +332,11 @@ func (s *FolderScanner) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			s.scans++
-			if err := s.watcher.scan(ctx, root); err != nil {
+			err = s.watcher.scan(ctx, root)
+			if s.AfterScan != nil {
+				s.AfterScan()
+			}
+			if err != nil {
 				return err
 			}
 		}

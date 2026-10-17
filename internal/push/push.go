@@ -30,10 +30,12 @@ var ErrFilesFailed = errors.New("some files were not pushed")
 // Progress receives each acknowledged outcome and Failure each file the run
 // skipped after the daemon or the local source rejected it.
 type Options struct {
-	Folder   config.WatchConfig
-	Watch    bool
-	Progress func(ref, outcome string) error
-	Failure  func(ref string, err error) error
+	// AddedBatch runs once, after the first scan with a confirmed addition.
+	AddedBatch func()
+	Folder     config.WatchConfig
+	Watch      bool
+	Progress   func(ref, outcome string) error
+	Failure    func(ref string, err error) error
 }
 
 // Report counts only independently acknowledged file outcomes, plus the files
@@ -65,6 +67,15 @@ func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (
 	scanner, err := ingest.NewFolderScanner(opts.Folder, p.process, p.reject)
 	if err != nil {
 		return report, err
+	}
+	reportedAddition := false
+	scanner.AfterScan = func() {
+		if !reportedAddition && report.Added > 0 {
+			reportedAddition = true
+			if opts.AddedBatch != nil {
+				opts.AddedBatch()
+			}
+		}
 	}
 	p.cursors, err = connection.PushCursors(ctx, opts.Folder.Name)
 	if err != nil && (!opts.Watch || stopsRun(err) || !retryable(err)) {

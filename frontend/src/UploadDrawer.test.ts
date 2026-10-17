@@ -10,6 +10,9 @@ afterEach(() => {
 
 describe("upload documents drawer", () => {
   it("hashes and uploads selected files before refreshing the directory", async () => {
+    const capture = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 202 }));
     const hash = "a".repeat(64);
     vi.spyOn(upload, "hashFile").mockImplementation(async (file, _signal, onprogress) => {
       onprogress({ processed: file.size, total: file.size });
@@ -47,6 +50,7 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
+      session: "import-session",
       channel,
       directory: {
         id: 3,
@@ -75,6 +79,9 @@ describe("upload documents drawer", () => {
     expect(screen.getByText(/Created node 8, revision 1/)).toBeTruthy();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
     expect(upload.hashFile).toHaveBeenCalledOnce();
+    expect(capture.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { event: "document_added", properties: { surface: "web" } },
+    ]);
     expect(channel.uploadFile).toHaveBeenCalledWith(
       3,
       file,
@@ -109,6 +116,7 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
+      session: "import-session",
       channel,
       directory: {
         id: 3,
@@ -156,6 +164,7 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
+      session: "import-session",
       channel,
       directory: {
         id: 3,
@@ -205,6 +214,7 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
+      session: "import-session",
       channel,
       directory: {
         id: 3,

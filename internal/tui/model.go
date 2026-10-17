@@ -56,6 +56,7 @@ const (
 // Backend is the bounded daemon surface needed by the TUI.
 // The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
+	ReportAction(ctx context.Context, event, value string) error
 	ReportScreen(ctx context.Context, screen string) error
 	Stat(ctx context.Context, path string) (api.Node, error)
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
@@ -370,6 +371,8 @@ type Model struct {
 
 	searchInput            textinput.Model
 	searching              bool
+	searchIntent           bool
+	searchIntentID         uint64
 	searchQuery            string
 	submittedSearchQuery   string
 	submittedSearchID      uint64
@@ -741,6 +744,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.processingSimilarBusy, m.processingSimilarErr = false, msg.err
 		if msg.err == nil {
 			m.processingSimilarReport = &msg.report
+			return m, m.reportAction("search_run", "semantic")
 		}
 		return m, nil
 	case processingCoverageLoadedMsg:
@@ -761,6 +765,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.processingSearchErr = msg.err
 		if msg.err == nil {
 			m.processingSearchReport = &msg.report
+			return m, m.reportAction("search_run", msg.report.ActualMode)
 		}
 		return m, nil
 	case processingStartedMsg:
@@ -826,6 +831,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.processingRendition = &msg.rendition
 			m.wrapProcessingRendition()
+			return m, m.reportAction("document_opened", "")
 		}
 		return m, nil
 	case trashLoadedMsg:
@@ -989,6 +995,7 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.searching = false
 		m.searchInput.Blur()
+		m.searchIntent = true
 		return m.startSearch(query)
 	default:
 		var cmd tea.Cmd
@@ -1746,9 +1753,13 @@ func (m Model) openDetail() (tea.Model, tea.Cmd) {
 	m.detailTagsLoading = true
 	m.detailTagsErr = nil
 	m.detailRequestID++
-	return m, m.loadDetailTags(
+	var opened tea.Cmd
+	if selected.node.Kind == "file" {
+		opened = m.reportAction("document_opened", "")
+	}
+	return m, tea.Batch(opened, m.loadDetailTags(
 		selected.node.ID, selected.node.Revision, m.detailRequestID,
-	)
+	))
 }
 
 func (m Model) loadDetailTags(nodeID, revision int64, requestID uint64) tea.Cmd {
@@ -2051,14 +2062,20 @@ func (m Model) loadDirectory(
 }
 
 func (m Model) startSearch(query string) (tea.Model, tea.Cmd) {
+	pendingIntent := m.searchIntentID == m.requestID && m.loading
 	m.loading = true
 	m.err = nil
 	m.requestID++
 	m.naturalSearchID++
+	if m.searchIntent || pendingIntent {
+		m.searchIntentID = m.requestID
+	}
+	m.searchIntent = false
 	m.submittedSearchQuery, m.submittedSearchID = query, m.requestID
 	m.naturalRerankPending = false
 	m.naturalSearchNote = ""
-	return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
+	load := m.loadSearch(query, m.requestID)
+	return m, tea.Batch(m.startSpinner(), load)
 }
 
 func (m Model) activeSearchQuery() string {
@@ -2080,6 +2097,7 @@ func (m Model) updateNaturalSearchSetting(key string) (tea.Model, tea.Cmd) {
 	}
 	if m.naturalMode != mode || m.naturalRerank != rerank {
 		if query := m.activeSearchQuery(); query != "" {
+			m.searchIntent = key == keyTab && m.naturalMode != mode
 			return m.startSearch(query)
 		}
 	}
@@ -2397,7 +2415,8 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.err = nil
 	m.clampSelection()
-	return m, nil
+	action := m.acceptSearch(msg.requestID, "text")
+	return m, action
 }
 
 func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model, tea.Cmd) {
@@ -2416,17 +2435,18 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
 	m.naturalResultMode = msg.naturalMode
+	action := m.acceptSearch(msg.requestID, msg.report.ActualMode)
 	if len(msg.request.Fence.ContentVersionIDs) == 0 {
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
-		return m, nil
+		return m, action
 	}
 	m.naturalSearchNote = naturalSearchReportNote(msg.report)
 	profile := m.selectedNaturalProfile()
 	if m.naturalRerank && profile != nil && profile.RerankingAvailable {
 		m.naturalRerankPending = true
-		return m, m.loadNaturalRerank(msg.requestID, msg.searchID, msg.request, msg.naturalMode)
+		return m, tea.Batch(action, m.loadNaturalRerank(msg.requestID, msg.searchID, msg.request, msg.naturalMode))
 	}
-	return m, nil
+	return m, action
 }
 
 func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.Model, tea.Cmd) {
@@ -3093,4 +3113,20 @@ func (m Model) visibleScreen() string {
 	default:
 		return "browse"
 	}
+}
+
+func (m Model) reportAction(event, value string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.ctx, 100*time.Millisecond)
+		defer cancel()
+		_ = m.backend.ReportAction(ctx, event, value)
+		return nil
+	}
+}
+func (m *Model) acceptSearch(id uint64, mode string) tea.Cmd {
+	if id != m.searchIntentID {
+		return nil
+	}
+	m.searchIntentID = 0
+	return m.reportAction("search_run", mode)
 }

@@ -1055,6 +1055,18 @@ it("reruns the active query when the search mode or rerank toggle changes", asyn
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await screen.findByText("lexical excerpt");
   expect(harness.postBodies.at(-1)?.rerank).toBeUndefined();
+  await submitSearch("annual report");
+  await waitFor(() => {
+    const events = harness.fetchMock.mock.calls
+      .filter(([url]) => String(url) === "/api/daemon/telemetry/events")
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.event === "search_run");
+    expect(events).toEqual([
+      { event: "search_run", properties: { search_type: "hybrid", surface: "web" } },
+      { event: "search_run", properties: { search_type: "text", surface: "web" } },
+      { event: "search_run", properties: { search_type: "text", surface: "web" } },
+    ]);
+  });
 });
 
 it("preserves the chosen sort on a natural search refresh", async () => {

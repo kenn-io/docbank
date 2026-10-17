@@ -392,6 +392,8 @@ func TestPushWatchUploadsSettledChangesAndStopsOnCancellation(t *testing.T) {
 	opts.Watch = true
 	opts.Folder.SettleTime = config.Duration(time.Second)
 	opts.Folder.ScanInterval = config.Duration(100 * time.Millisecond)
+	var addedBatches atomic.Int64
+	opts.AddedBatch = func() { addedBatches.Add(1) }
 	events := make(chan string, 4)
 	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
 	ctx, cancel := context.WithCancel(t.Context())
@@ -403,10 +405,14 @@ func TestPushWatchUploadsSettledChangesAndStopsOnCancellation(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("changed"), 0600))
 	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
 	assert.Equal(t, "updated", <-events)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "later.txt"), []byte("automatic later addition"), 0600))
+	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
+	require.Equal(t, "added", <-events)
 	cancel()
 	require.Eventually(t, func() bool { return len(done) > 0 }, 30*time.Second, 20*time.Millisecond)
 	require.ErrorIs(t, <-done, context.Canceled)
-	assert.EqualValues(t, 2, f.uploads.Load())
+	assert.EqualValues(t, 3, f.uploads.Load())
+	require.EqualValues(t, 1, addedBatches.Load())
 }
 
 func TestPushWatchUploadsEqualLengthEditsWithRestoredMtime(t *testing.T) {

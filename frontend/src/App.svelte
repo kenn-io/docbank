@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -762,6 +763,8 @@
   let inspectorGeneration = $state(0);
   let loading = $state(false);
   let searchPending = $state(false);
+  let searchIntent = false;
+  let deliberateNodeID = $state<number | undefined>();
   let naturalProfiles = $state<ProcessingProfileSummary[]>([]);
   let naturalSearchMode = $state<NaturalSearchMode>("names");
   let naturalRerank = $state(false);
@@ -1619,13 +1622,17 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
+    const intent = searchIntent;
+    searchIntent = false;
     if (!query) {
       submittedSearchQuery = "";
       naturalSearchController?.abort();
       naturalSearchNote = "";
       naturalRerankPending = false;
-      if (tagFilterID) await loadTaggedNodes(tagFilterID);
-      else if (directory) await loadDirectory(directory.id, false);
+      if (tagFilterID) {
+        await loadTaggedNodes(tagFilterID);
+        if (intent && !error) reportAction(webSession, "search_run", "text");
+      } else if (directory) await loadDirectory(directory.id, false);
       return;
     }
     const request = ++generation;
@@ -1639,6 +1646,16 @@
     const mode = naturalSearchMode;
     const profile = naturalProfile;
     let accepted = false;
+    const reportAccepted = (type: string) => {
+      if (
+        intent &&
+        accepted &&
+        request === generation &&
+        session === webSession &&
+        !controller.signal.aborted
+      )
+        reportAction(session, "search_run", type);
+    };
     searchPending = true;
     loading = true;
     error = "";
@@ -1655,6 +1672,7 @@
           session,
           controller.signal,
         );
+        reportAccepted("text");
         return;
       }
       const mapped = naturalSearchRequest(mode, profile);
@@ -1668,6 +1686,7 @@
       if (resolution.fence.content_version_ids.length === 0) {
         applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
         accepted = true;
+        reportAccepted("text");
         naturalSearchNote = "No live documents match the current filter.";
         loading = false;
         return;
@@ -1702,6 +1721,7 @@
         refreshing,
       );
       accepted = true;
+      reportAccepted(baseReport.actual_mode);
       naturalSearchNote =
         baseReport.degradations.length > 0
           ? `Search note: ${baseReport.degradations.join(", ")}`
@@ -1794,6 +1814,7 @@
             controller.signal,
             note,
           );
+          reportAccepted("text");
         } catch (fallbackCause) {
           if (request === generation && session === webSession && !controller.signal.aborted)
             handleFailure(fallbackCause);
@@ -2025,9 +2046,11 @@
   function changeNaturalSearchMode(value: string): void {
     naturalProfileDefaultPending = null;
     naturalSearchMode = value as NaturalSearchMode;
+    searchIntent = true;
     if (naturalSearchMode === "names") naturalRerank = false;
     const query = searchPending ? submittedSearchQuery : activeQuery;
     if (query) void runSearch(selectedID, query);
+    else searchIntent = false;
   }
 
   function changeNaturalRerank(checked: boolean): void {
@@ -2039,19 +2062,25 @@
 
   function changeTagFilter(tagID: string): void {
     tagFilterID = tagID;
-    if (activeQuery || searchPending) void runSearch();
-    else if (tagID) void loadTaggedNodes(tagID);
+    if (activeQuery || searchPending) {
+      searchIntent = true;
+      void runSearch();
+    } else if (tagID)
+      void loadTaggedNodes(tagID).then(() => {
+        if (!error && tagID === tagFilterID) reportAction(webSession, "search_run", "text");
+      });
     else if (directory) void loadDirectory(directory.id, false);
   }
 
   function activate(row: Row): void {
-    selectNode(row.node.id);
+    selectNode(row.node.id, true);
     if (row.node.kind === "dir") {
       void loadDirectory(row.node.id, true);
     }
   }
 
-  function selectNode(nodeID: number | undefined): void {
+  function selectNode(nodeID: number | undefined, deliberate = false): void {
+    deliberateNodeID = deliberate ? nodeID : undefined;
     // Reclicking a live file keeps its resolved inspector and pending tag action.
     if (selectedID === nodeID && pendingTagHotkey) return;
     if (selectedID === nodeID && selectedSource?.kind === "live") {
@@ -2362,7 +2391,8 @@
     }
   }
 
-  function runSnapshot(query: Query, options: SnapshotOptions): void {
+  function runSnapshot(query: Query, options: SnapshotOptions, intent = true): void {
+    deliberateNodeID = undefined;
     if (batchTagsContext === "snapshot") batchTagsTargets = null;
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -2371,7 +2401,10 @@
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
     keepQueryDraft(query);
-    void snapshot.run(query, options);
+    void snapshot.run(query, options).then(() => {
+      if (intent && snapshot.state.status === "ready")
+        reportAction(webSession, "search_run", query.text ? query.mode : "text");
+    });
   }
 
   function runSnapshotAgain(): void {
@@ -2395,7 +2428,11 @@
         : field === "name" || field === "path" || field === "media_type"
           ? "asc"
           : "desc";
-    changeSnapshotQuery(parseQuery(JSON.stringify({ ...query, sort: { field, direction } })));
+    runSnapshot(
+      parseQuery(JSON.stringify({ ...query, sort: { field, direction } })),
+      snapshot.state.options,
+      false,
+    );
   }
 
   function openSelectedReport(): void {
@@ -3112,6 +3149,7 @@
                 class="search"
                 onsubmit={(event) => {
                   event.preventDefault();
+                  searchIntent = true;
                   void runSearch();
                 }}
               >
@@ -3477,9 +3515,15 @@
                               tabindex="0"
                               data-snapshot-node={row.node_id}
                               aria-selected={row.node_id === snapshot.selectedID}
-                              onclick={() => (snapshot.selectedID = row.node_id)}
+                              onclick={() => {
+                                deliberateNodeID = row.node_id;
+                                snapshot.selectedID = row.node_id;
+                              }}
                               onkeydown={(event) => {
-                                if (event.key === "Enter") snapshot.selectedID = row.node_id;
+                                if (event.key === "Enter") {
+                                  deliberateNodeID = row.node_id;
+                                  snapshot.selectedID = row.node_id;
+                                }
                               }}
                             >
                               <td
@@ -3775,7 +3819,7 @@
                         tabindex="0"
                         aria-selected={row.node.id === selectedID}
                         ondblclick={() => activate(row)}
-                        onclick={() => selectNode(row.node.id)}
+                        onclick={() => selectNode(row.node.id, true)}
                         onkeydown={(event) => {
                           if (event.key === "Enter") {
                             event.preventDefault();
@@ -4047,6 +4091,7 @@
                       bind:activeTab={inspectorContentTab}
                       session={webSession}
                       source={selectedSource}
+                      deliberate={selectedSource.nodeID === deliberateNodeID}
                       authorizationRevision={currentInspectorNode.revision}
                       profileName={snapshot.state.options?.profile ?? ""}
                       observed={selectedRenditionObservation}
@@ -4061,7 +4106,10 @@
                         selectedSnapshotPosition !== undefined &&
                         selectedSnapshotPosition + 1 < (snapshotPage?.total ?? 0)}
                       snapshotExpired={snapshot.state.status === "expired"}
-                      onnavigate={(direction) => snapshot.navigateDocument(direction)}
+                      onnavigate={async (direction) => {
+                        await snapshot.navigateDocument(direction);
+                        deliberateNodeID = snapshot.selectedID;
+                      }}
                       onreturnfocus={() =>
                         document
                           .querySelector<HTMLElement>(
@@ -4258,6 +4306,7 @@
                           highlightSets={inspectorHighlightSets}
                           session={webSession}
                           source={selectedSource}
+                          deliberate={selectedSource.nodeID === deliberateNodeID}
                           authorizationRevision={currentInspectorNode.revision}
                           onreturnfocus={() =>
                             document
@@ -4528,14 +4577,15 @@
         >
           <div class="telemetry-note">
             <p>
-              Docbank reports when the daemon runs, the web app opens, and you open a screen so the
-              team can count vaults in use. It also reports how long a browser or terminal session
-              lasted, as a rough bucket. Reporting is on by default.
+              Docbank reports when the daemon runs, an interface opens, and you open a screen, add
+              documents, run a search, or inspect a document. Imports count once after an addition.
+              Searches and inspections count daily per interface; searches include text, semantic,
+              or hybrid type. Session lengths use rough buckets. Reporting is on by default.
             </p>
             <p>
               Reports go to PostHog with a random ID for this vault, the app version, operating
               system, and install age. They never include document content, filenames, paths, tags,
-              or searches.
+              or search queries.
             </p>
             <p>
               To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment
@@ -4568,6 +4618,7 @@
       {/if}
       {#if panel.kind === "photoImport" && uploadChannel}
         <PhotoImportDrawer
+          session={webSession}
           channel={uploadChannel}
           disabledReason={uploadChannelError}
           onclose={closePanel(panel)}
@@ -4589,6 +4640,7 @@
       {/if}
       {#if panel.kind === "upload" && uploadChannel}
         <UploadDrawer
+          session={webSession}
           channel={uploadChannel}
           directory={panel.target}
           disabledReason={uploadChannelError}

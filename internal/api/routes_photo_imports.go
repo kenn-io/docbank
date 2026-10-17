@@ -22,8 +22,9 @@ type photoImportStartOutput struct {
 // photo import operations.
 func NewPhotoImportRunner(d Deps) ingest.PhotoImportRunner {
 	runner := ingest.PhotoImportRunner{
-		Ingester: &ingest.Ingester{Store: d.Store, Blobs: d.Blobs},
-		Options:  ingest.PhotoImportOptions{SettleInterval: ingest.DefaultPhotoImportSettleInterval},
+		Ingester:     &ingest.Ingester{Store: d.Store, Blobs: d.Blobs},
+		ImportResult: func(id string, added, terminal bool) { d.Imports.Result("photos:"+id, added, terminal) },
+		Options:      ingest.PhotoImportOptions{SettleInterval: ingest.DefaultPhotoImportSettleInterval},
 	}
 	if d.Gate != nil {
 		runner.Options.Mutate = d.Gate.MutateContext
@@ -42,7 +43,10 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "startPhotoImport", Method: http.MethodPost,
 		Path: "/api/v1/photos/imports", Summary: "Import grouped camera files from a daemon-host folder",
 		DefaultStatus: http.StatusAccepted,
-	}, func(ctx context.Context, in *struct{ Body PhotoImportStartRequest }) (*photoImportStartOutput, error) {
+	}, func(ctx context.Context, in *struct {
+		Body    PhotoImportStartRequest
+		Surface string `header:"X-Docbank-Surface"`
+	}) (*photoImportStartOutput, error) {
 		if !filepath.IsAbs(in.Body.SourceRoot) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "source_root must be an absolute daemon-host path")
 		}
@@ -60,7 +64,19 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		operation, err := d.Store.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, string(request))
+		var operation store.StorageOperation
+		surface := ""
+		if in.Surface == "cli" {
+			surface = "cli"
+		}
+		err = d.Imports.Admit(surface, func() (string, bool, error) {
+			err := g.MutateContext(ctx, func() error {
+				var createErr error
+				operation, createErr = d.Store.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, string(request))
+				return createErr
+			})
+			return "photos:" + operation.ID, true, err
+		})
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

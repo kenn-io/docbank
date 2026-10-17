@@ -998,7 +998,7 @@ Secrets are resolved once per process; restart to rotate them.
 ## Anonymous usage telemetry
 
 The daemon reports anonymous usage events so the Docbank team can count
-active vaults, web app opens, and screens used in the browser and terminal UI.
+active vaults, app opens, screens, and deliberate document actions.
 Counts are per vault, not per person: one person with three vaults counts three
 times. The daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
 project 434713). The browser never contacts PostHog: the web app posts its
@@ -1032,6 +1032,39 @@ event, that screen remains eligible for another attempt. Remote delivery is
 best effort.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
+
+### Document actions
+
+Each action requires `surface` as `web`, `tui`, or `cli`. `search_run` also
+requires `search_type` as `text`, `semantic`, or `hybrid`. Other properties
+are dropped. Missing or unsupported required values return HTTP 400.
+
+`document_added` counts each user-started import once, after its first confirmed
+addition, including partial failures. Skipped files, replacements, preflight,
+agent calls and unattended ingestion stay silent. Closing a browser drawer
+preserves attribution for mailbox, load-file and daemon-host Photos jobs.
+The daemon keeps at most 256 active import attributions in memory. At capacity,
+imports proceed without attribution. Restarting the daemon can lose an
+in-flight count. Jobs resumed without original attribution stay silent.
+
+`search_run` counts successful submitted searches, including empty results,
+facets and Smart Sets, once per surface and search type each UTC day.
+Names, tags, lexical and Photos searches use `text`; vector-only and similar
+searches use `semantic`; combined ranking uses `hybrid`. Automatic mode and
+fallback use the executed path. Hidden searches use the same type as Photos.
+Failed requests, sorting, paging, reranking, refresh and restored state stay silent.
+
+`document_opened` counts deliberate inspections once per surface each UTC day.
+Interaction with an automatically selected file counts; automatic selection
+and cursor movement stay silent. Single-document retrievals such as `get`
+count as inspections. Multi-document exports and reports stay silent.
+Search and open claims share the persisted daily screen-claim file, so daemon
+restarts preserve the day's counts.
+
+CLI actions require terminal output and exclude `search --agent`. Scripts
+that inherit terminal output may count. Local reporting has a 100 ms deadline;
+remote push reporting has a 1.5-second deadline. Reporting never changes
+command results.
 
 Each event carries these fields:
 

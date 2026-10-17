@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import { onDestroy } from "svelte";
   import FileUpIcon from "@lucide/svelte/icons/file-up";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -37,6 +38,7 @@
   }
 
   interface Props {
+    session: string;
     channel: UploadTransport;
     directory: Node;
     disabledReason?: string;
@@ -46,6 +48,7 @@
   }
 
   let {
+    session,
     channel,
     directory,
     disabledReason = "",
@@ -57,6 +60,7 @@
   let items = $state<UploadItem[]>([]);
   let running = $state(false);
   let controller: AbortController | null = null;
+  let reportedAddition = false;
   let nextID = 1;
 
   const pending = $derived(
@@ -76,6 +80,7 @@
 
   function addFiles(event: Event): void {
     const selected = Array.from((event.currentTarget as HTMLInputElement).files ?? []);
+    reportedAddition = false;
     items = [
       ...items,
       ...selected.map((file) => ({
@@ -138,6 +143,10 @@
             progressFor(queued.id, progress);
           },
         );
+        if (receipt.status === "added" && !reportedAddition) {
+          reportedAddition = true;
+          reportAction(session, "document_added", "upload");
+        }
         updateItem(queued.id, {
           state: receipt.status,
           receipt,

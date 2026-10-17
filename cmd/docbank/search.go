@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -49,6 +50,7 @@ type documentSearchCLIOptions struct {
 	Rerank            bool
 	JSON              bool
 	Agent             bool
+	Intent            bool
 }
 
 var searchCmd = &cobra.Command{
@@ -96,7 +98,7 @@ See docs/usage/search.md.`,
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
 			}
-			options := documentSearchCLIOptions{Mode: "semantic", Profile: searchProfile, BindingID: searchBinding, ContentVersionIDs: searchSourceVersions, Limit: searchLimit, JSON: searchJSON, Agent: searchAgent}
+			options := documentSearchCLIOptions{Mode: "semantic", Profile: searchProfile, BindingID: searchBinding, ContentVersionIDs: searchSourceVersions, Limit: searchLimit, JSON: searchJSON, Agent: searchAgent, Intent: true}
 			if !cmd.Flags().Changed("limit") {
 				options.Limit = 20
 			}
@@ -126,7 +128,7 @@ See docs/usage/search.md.`,
 			options := documentSearchCLIOptions{
 				Mode: searchMode, Profile: searchProfile, BindingID: searchBinding,
 				ContentVersionIDs: searchSourceVersions, Limit: searchLimit,
-				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON, Agent: searchAgent,
+				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON, Agent: searchAgent, Intent: true,
 			}
 			if err := validateDocumentSearchOptions(strings.Join(args, " "), options); err != nil {
 				return err
@@ -206,8 +208,10 @@ See docs/usage/search.md.`,
 			return err
 		}
 		if automatic.report != nil {
+			reportAction(cmd, c, "search_run", automatic.report.ActualMode, 100*time.Millisecond)
 			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
 		}
+		reportAction(cmd, c, "search_run", "text", 100*time.Millisecond)
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
@@ -319,6 +323,9 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if err != nil {
 		return err
 	}
+	if options.Intent {
+		reportAction(cmd, c, "search_run", "semantic", 100*time.Millisecond)
+	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}
@@ -383,6 +390,9 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	})
 	if err != nil {
 		return err
+	}
+	if options.Intent {
+		reportAction(cmd, c, "search_run", report.ActualMode, 100*time.Millisecond)
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)

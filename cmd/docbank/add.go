@@ -8,6 +8,7 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 var (
@@ -104,6 +106,9 @@ Exit 1 if any file failed (each failure is listed).`,
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
 			rep, err = c.IngestStream(cmd.Context(), abs, addDest, opts, renderer.handle)
+		}
+		if rep.Added > 0 {
+			reportAction(cmd, c, telemetry.EventDocumentAdded, "add", 100*time.Millisecond)
 		}
 		if err != nil {
 			return err
