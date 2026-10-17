@@ -48,7 +48,7 @@ import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 import type { PhotoCull } from "./photoCull.svelte.js";
 import { fittedPhotoView, type PhotoView } from "./photoView.js";
-import type { PhotoFaces } from "./photoFaces.svelte.js";
+import { PhotoFaces } from "./photoFaces.svelte.js";
 
 export const maxComparePhotos = 8;
 export const photoQuery = parseQuery(
@@ -192,7 +192,8 @@ interface PhotosOptions {
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
   cullEditor = $state.raw<PhotoAuthoredEditor>();
-  faceEditor = $state.raw<PhotoFaces>();
+  readonly faceEditor: PhotoFaces;
+  faceAssetID = "";
   cull?: PhotoCull;
   cullVaultID = "";
   culling = $state(false);
@@ -430,6 +431,13 @@ export class Photos {
   ) {
     this.projection = projection;
     this.hiddenAccess = hiddenAccess;
+    this.faceEditor = new PhotoFaces(
+      session,
+      onauthfailure,
+      hidden,
+      undefined,
+      hidden ? hiddenAccess : undefined,
+    );
     this.authored = new PhotoAuthoredEditor(
       session,
       (cause) => {
@@ -1651,6 +1659,7 @@ export class Photos {
   dispose() {
     this.clearFrozen();
     this.authored.dispose();
+    this.faceEditor.dispose();
     this.cullEditor?.dispose();
     this.cull?.cancel();
     this.viewerReturn = undefined;

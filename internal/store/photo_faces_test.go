@@ -39,6 +39,8 @@ func TestPhotoFaceManualAndInvalidZeroAreaBox(t *testing.T) {
 	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, faces, 2)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{}, person.PersonID)
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
 	t.Run("returns names for curated and retired people", func(t *testing.T) {
 		_, _, people, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 		require.NoError(t, err)
@@ -49,8 +51,6 @@ func TestPhotoFaceManualAndInvalidZeroAreaBox(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []PhotoFacePerson{{PersonID: person.PersonID, DisplayName: "Ada", State: "retired"}}, people)
 	})
-	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{}, person.PersonID)
-	require.ErrorIs(t, err, ErrInvalidPhotoFace)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
 

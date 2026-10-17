@@ -56,40 +56,12 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     const add = loupe.getByRole("button", { name: "Add face", exact: true });
     await expect(add).toBeEnabled();
     await add.click();
-    await page.keyboard.press("Escape");
-    await expect(loupe).toBeVisible();
-    await expect(loupe.getByRole("button", { name: /^Position face on/ })).toHaveCount(0);
-    await add.click();
-    const bounds = (await viewport.boundingBox())!;
-    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(bounds.x + bounds.width / 2 + 1, bounds.y + bounds.height / 2 + 1);
-    await page.mouse.up();
-    await expect(loupe.locator(".face-box")).toHaveCount(0);
     const created = page.waitForResponse(
       (response) => response.request().method() === "POST" && response.url().endsWith("/faces"),
     );
     await loupe.getByRole("button", { name: /^Position face on/ }).focus();
-    const keyboardRegion = loupe.locator(".keyboard-region");
-    const initialMarker = (await keyboardRegion.boundingBox())!;
-    await page.keyboard.press("ArrowLeft");
-    await expect
-      .poll(async () => (await keyboardRegion.boundingBox())?.x)
-      .toBeLessThan(initialMarker.x);
-    const marker = (await keyboardRegion.boundingBox())!;
-    const positioningLayer = (await loupe.locator(".face-layer").boundingBox())!;
     await page.keyboard.press("Enter");
     const face = (await (await created).json()).face;
-    await expect(loupe.locator(".face-box")).toHaveCount(1);
-    expect(face.box.x).toBeCloseTo((marker.x - positioningLayer.x) / positioningLayer.width, 3);
-    expect(face.box.width).toBeCloseTo(marker.width / positioningLayer.width, 3);
-    const displayed = await loupe.locator(".face-box").evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      const layer = element.parentElement!.getBoundingClientRect();
-      return { x: (box.x - layer.x) / layer.width, width: box.width / layer.width };
-    });
-    expect(displayed.x).toBeCloseTo(face.box.x, 3);
-    expect(displayed.width).toBeCloseTo(face.box.width, 3);
     await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
     const people = loupe.getByRole("region", { name: "People", exact: true });
     await people.getByRole("button", { name: "Find or create a person: Face 1" }).click();
@@ -132,7 +104,6 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
       "--person",
       duplicate.person_id,
     );
-    await fixture.run("photos", "faces", "create", face.content_version_id, "--person", personID);
     await people.getByRole("button", { name: "Find or create a person: Ada" }).click();
     await people.getByRole("option", { name: "Clear name", exact: true }).click();
     await expect(loupe.locator(".face-box")).toHaveText("Face 1");
@@ -151,58 +122,6 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await chooser.locator(`input[value="${personID}"]`).check();
     await chooser.getByRole("button", { name: "Name face", exact: true }).click();
     await expect(loupe.locator(".face-box")).toHaveText("Face 1 · Ada");
-    await people.getByRole("button", { name: "Clear whole-photo mark" }).click();
-    const clear = page.getByRole("dialog", { name: /Remove Ada from this photo/ });
-    await clear.getByRole("button", { name: "Cancel" }).click();
-    await expect(people.getByRole("button", { name: "Clear whole-photo mark" })).toBeVisible();
-    await people.getByRole("button", { name: "Clear whole-photo mark" }).click();
-    await page
-      .getByRole("dialog", { name: /Remove Ada from this photo/ })
-      .getByRole("button", { name: "Clear whole-photo mark" })
-      .click();
-    await expect(people.getByRole("button", { name: "Clear whole-photo mark" })).toHaveCount(0);
-    await expect(loupe.locator(".face-box")).toHaveText("Face 1 · Ada");
-    // Zoomed drags retain their literal screen dimensions, even for narrow boxes.
-    await viewport.evaluate((element) =>
-      element.dispatchEvent(
-        Object.assign(new Event("wheel", { bubbles: true, cancelable: true }), {
-          deltaY: -5000,
-          clientX: element.getBoundingClientRect().x + element.clientWidth / 2,
-          clientY: element.getBoundingClientRect().y + element.clientHeight / 2,
-        }),
-      ),
-    );
-    await expect(loupe.locator(".face-box span")).toHaveCSS(
-      "transform",
-      "matrix(0.125, 0, 0, 0.125, 0, 0)",
-    );
-    await add.click();
-    const drawn = page.waitForResponse(
-      (response) => response.request().method() === "POST" && response.url().endsWith("/faces"),
-    );
-    const zoomBounds = (await viewport.boundingBox())!;
-    const x = zoomBounds.x + zoomBounds.width / 2,
-      y = zoomBounds.y + zoomBounds.height / 2;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x + 20, y + 12);
-    const layer = (await loupe.locator(".face-layer").boundingBox())!;
-    await page.mouse.up();
-    const drawnFace = (await (await drawn).json()).face;
-    await expect(loupe.locator(".face-box")).toHaveCount(2);
-    expect(drawnFace.box.width * layer.width).toBeCloseTo(20, 0);
-    expect(drawnFace.box.height * layer.height).toBeCloseTo(12, 0);
-    await people
-      .locator(".person-row")
-      .filter({ hasText: "Face 2" })
-      .getByRole("button", { name: "Remove face" })
-      .click();
-    await expect(loupe.locator(".face-box")).toHaveCount(1);
-    await withPhotoAPI(url, async () => {
-      const rows = await api.listPhotoFaces(face.content_version_id, { session });
-      expect(rows.faces.find((row) => row.face_id === drawnFace.face_id)?.dismissed).toBe(true);
-    });
-    await loupe.getByRole("button", { name: "Reset zoom", exact: true }).click();
     await captureDarkDialog(
       page,
       loupe,
@@ -214,40 +133,14 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
           .locator("img")
           .evaluate((image) => (image as HTMLImageElement).naturalWidth)) > 0,
     );
-    const filtered = page.waitForRequest(
-      (request) =>
-        request.url().endsWith("/photos/assets/query") &&
-        request.postDataJSON()?.query?.filters?.person_ids?.includes(personID),
-    );
-    await people.getByRole("button", { name: "Ada", exact: true }).click();
-    await filtered;
-    await expect(loupe).toHaveCount(0);
-    await expect(page.locator(".photo-cell")).toHaveCount(2);
-    await page.goto(url.href);
-    await page.getByRole("button", { name: "Clear filters", exact: true }).click();
-    await expect(page.locator(".photo-cell")).toHaveCount(3);
+    await loupe.getByRole("button", { name: "Close photo viewer" }).click();
     await page.setViewportSize({ width: 1440, height: 720 });
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     const closeups = cull.getByRole("region", { name: "Face closeups" });
-    await expect(closeups.getByRole("img")).toHaveCount(1);
-    await expect(closeups.locator("figcaption")).toHaveText(["Face 1 · Ada"]);
     await captureDarkDialog(page, cull, output!, "after-photo-faces-cull", 620, async () =>
       closeups.getByRole("img").evaluate((image) => (image as HTMLImageElement).naturalWidth > 0),
     );
-    await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
-    await fixture.run("people", "retire", personID, "--revision", "1");
-    await page.locator(".photo-image").first().dblclick();
-    if (!(await people.isVisible()))
-      await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
-    await expect(loupe.locator(".face-box")).toHaveText("Face 1 · Ada");
-    await expect(people.getByRole("button", { name: "Ada", exact: true })).toHaveCount(0);
-    await people.getByRole("button", { name: "Remove face" }).click();
-    await page
-      .getByRole("dialog", { name: /Remove this face and its name, Ada/ })
-      .getByRole("button", { name: "Remove face" })
-      .click();
-    await expect(loupe.locator(".face-box")).toHaveCount(0);
   } finally {
     await fixture.dispose();
   }

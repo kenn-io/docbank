@@ -32,7 +32,6 @@
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoSmartSet from "./PhotoSmartSet.svelte";
   import PhotoGrid from "./PhotoGrid.svelte";
-  import { PhotoFaces } from "./photoFaces.svelte.js";
   import PhotoInspector from "./PhotoInspector.svelte";
   import type {
     PhotoAuthoredPatch,
@@ -192,20 +191,16 @@
     const owner = photos,
       changed = onfacedecision,
       actionError = onactionerror;
-    return (owner.faceEditor = new PhotoFaces(
-      owner.session,
-      owner.onauthfailure,
-      owner.hidden,
-      (error = "", refresh = true) => {
-        owner.actionError = error;
-        actionError?.(error);
-        if (refresh) {
-          if (owner.dependsOnPeople) void owner.refresh(alive ? preserve : undefined);
-          changed?.(owner);
-        }
-      },
-      owner.hidden ? owner.hiddenAccess : undefined,
-    ));
+    const faces = owner.faceEditor;
+    faces.ondecision = (error = "", refresh = true) => {
+      owner.actionError = error;
+      actionError?.(error);
+      if (refresh) {
+        if (owner.dependsOnPeople) void owner.refresh(alive ? preserve : undefined);
+        changed?.(owner);
+      }
+    };
+    return faces;
   });
   $effect(() => {
     const filter = photos.personFilter;
@@ -213,7 +208,6 @@
     if (filter && person && filter.name !== person.display_name)
       photos.personFilter = { id: filter.id, name: person.display_name };
   });
-  let faceAssetID = "";
   $effect(() => {
     const id =
       photoID ||
@@ -227,7 +221,8 @@
         const version = row?.kind === "photo" ? row.content_version_id : "";
         if (version !== inspectorFaces.version) void inspectorFaces.load(version);
       };
-      if (id !== faceAssetID) target(undefined);
+      if (!id && inspectorFaces.busy) return;
+      if (id !== photos.faceAssetID) target(undefined);
       if (row && row.asset_id === id && "content_version_id" in row) target(row);
       else {
         if (id && !photoID)
@@ -241,13 +236,9 @@
                 inspectorFaces.error = cause instanceof Error ? cause.message : String(cause);
             });
       }
-      faceAssetID = id ?? "";
+      photos.faceAssetID = id ?? "";
     });
     return () => controller.abort();
-  });
-  onDestroy(() => {
-    inspectorFaces.dispose();
-    if (photos.faceEditor === inspectorFaces) photos.faceEditor = undefined;
   });
   let editing = $state(false);
   let loupeMetadata = $state(false);

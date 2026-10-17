@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -306,25 +305,6 @@ func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPerson)
 }
 
-func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	grace, err := s.CreatePerson(ctx, "Grace Hopper", "operator")
-	require.NoError(t, err)
-	secondGrace, err := s.CreatePerson(ctx, "GRACE Murray Hopper", "operator")
-	require.NoError(t, err)
-
-	page, err := s.PeopleByDisplayName(ctx, "grace", "", "", 1, false)
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	require.Equal(t, grace.PersonID, page[0].PersonID)
-	next, err := s.PeopleByDisplayName(ctx, "grace", page[0].DisplayNameFolded, page[0].PersonID, 10, false)
-	require.NoError(t, err)
-	require.Len(t, next, 1)
-	require.Equal(t, secondGrace.PersonID, next[0].PersonID)
-}
-
 func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -429,84 +409,26 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	for _, p := range next {
 		require.NotEqual(t, candidate.PersonID, p.PersonID)
 	}
-}
-
-func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Alice Blacksmith", "Alice Smith%"} {
-		_, err := s.CreatePerson(ctx, name, "operator")
-		require.NoError(t, err)
-	}
-	page, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 1, false)
+	hiddenNode, visibleNode := hidden, visible
+	retainedHidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
 	require.NoError(t, err)
-	require.Equal(t, "Alice Smith", page[0].DisplayName)
-	next, err := s.PeopleByDisplayName(ctx, "Smith", page[0].DisplayNameFolded, page[0].PersonID, 10, false)
+	retainedVisible, err := s.CreatePerson(ctx, "Visible Lin", "operator")
 	require.NoError(t, err)
-	require.Equal(t, []string{"Alice Smith%", "John Smith", "Smith Jones"}, []string{next[0].DisplayName, next[1].DisplayName, next[2].DisplayName})
-	literal, err := s.PeopleByDisplayName(ctx, "Smith%", "", "", 10, false)
+	_, err = s.MarkPersonInPhoto(unlocked, hiddenNode.CurrentVersionID, retainedHidden.PersonID)
 	require.NoError(t, err)
-	require.Len(t, literal, 1)
-	require.Equal(t, "Alice Smith%", literal[0].DisplayName)
-}
-
-func BenchmarkPeopleByDisplayNameHiddenCatalog(b *testing.B) {
-	s, err := Open(filepath.Join(b.TempDir(), "people.db"))
-	require.NoError(b, err)
-	b.Cleanup(func() { require.NoError(b, s.Close()) })
-	ctx := b.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", fakeHash("benchmark-hidden"), 12, "image/jpeg")
-	require.NoError(b, err)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(b, err)
-	require.NoError(b, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(b, err)
-	_, err = s.db.ExecContext(ctx, `WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<20000) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) SELECT printf('00000000-0000-4000-8000-%012d',n),printf('Alex %05d',n),printf('alex %05d',n),'operator','curated',?,? FROM seq`, nowRFC3339(), nowRFC3339())
-	require.NoError(b, err)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at) SELECT person_id,?,person_id,'depicted','suppress','',? FROM persons WHERE display_name_folded<'alex 10001'`, node.CurrentVersionID, nowRFC3339())
-	require.NoError(b, err)
-	for b.Loop() {
-		people, err := s.PeopleByDisplayName(ctx, "Alex", "", "", 100, true)
-		require.NoError(b, err)
-		require.Len(b, people, 100)
-		require.Equal(b, "Alex 10001", people[0].DisplayName)
-	}
-}
-
-func TestPeopleByDisplayNameAvoidsOverFilteringRetainedEvidence(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	hiddenNode := browsePhotoNode(t, s, "hidden-person.jpg", fakeHash("hidden-person"), "image/jpeg")
-	visibleNode := browsePhotoNode(t, s, "visible-person.jpg", fakeHash("visible-person"), "image/jpeg")
-	hidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
+	retainedHidden, _, err = s.PersonByID(ctx, retainedHidden.PersonID)
 	require.NoError(t, err)
-	visible, err := s.CreatePerson(ctx, "Visible Lin", "operator")
-	require.NoError(t, err)
-	free, err := s.CreatePerson(ctx, "Free Grace", "operator")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(ctx, hiddenNode.CurrentVersionID, hidden.PersonID)
-	require.NoError(t, err)
-	hidden, _, err = s.PersonByID(ctx, hidden.PersonID)
-	require.NoError(t, err)
-	_, err = s.AddPersonIdentity(ctx, hidden.PersonID, hidden.Revision, PersonIdentity{
+	_, err = s.AddPersonIdentity(ctx, retainedHidden.PersonID, retainedHidden.Revision, PersonIdentity{
 		Kind: "email", ValueDisplay: "ada@example.test", Origin: "operator",
 		EvidenceKind: "operator_assertion", EvidenceID: "visible-derived-author", Confidence: "operator_asserted",
 	})
 	require.NoError(t, err)
 	derivedVersion := seedDocumentPeopleEvent(t, s, "visible-person-author.txt", "d9", nil)
 	derived := publishLifecycleDocumentPeople(t, s, derivedVersion.ID)
-	require.Equal(t, hidden.PersonID, derived.PersonID)
-	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, visible.PersonID)
+	require.Equal(t, retainedHidden.PersonID, derived.PersonID)
+	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, retainedVisible.PersonID)
 	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, hiddenNode.ID)
-	require.NoError(t, err)
-	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	locked, err := s.PeopleByDisplayName(ctx, "", "", "", 100, true)
+	locked, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, true)
 	require.NoError(t, err)
 	personIDs := func(people []Person) []string {
 		ids := make([]string, 0, len(people))
@@ -515,29 +437,27 @@ func TestPeopleByDisplayNameAvoidsOverFilteringRetainedEvidence(t *testing.T) {
 		}
 		return ids
 	}
-	require.Equal(t, []string{free.PersonID, hidden.PersonID, visible.PersonID}, personIDs(locked))
-	all, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false)
+	require.Equal(t, []string{retainedHidden.PersonID}, personIDs(locked))
+	all, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, false)
 	require.NoError(t, err)
-	require.Equal(t, []string{free.PersonID, hidden.PersonID, visible.PersonID}, personIDs(all))
-	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.Equal(t, []string{retainedHidden.PersonID}, personIDs(all))
+	withAccess, err := s.PeopleByDisplayName(unlocked, "Hidden Ada", "", "", 100, true)
 	require.NoError(t, err)
-	unlocked, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), "", "", "", 100, true)
-	require.NoError(t, err)
-	require.Equal(t, personIDs(all), personIDs(unlocked))
+	require.Equal(t, personIDs(locked), personIDs(withAccess))
 	for _, action := range []string{"suppress", "withdrawn"} {
-		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,photo_mark=0 WHERE person_id=?`, action, hidden.PersonID)
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,photo_mark=0 WHERE person_id=?`, action, retainedHidden.PersonID)
 		require.NoError(t, err)
 		visibleDerived, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
 		require.NoError(t, err)
 		require.Len(t, visibleDerived, 1)
-		require.Equal(t, hidden.PersonID, visibleDerived[0].PersonID)
+		require.Equal(t, retainedHidden.PersonID, visibleDerived[0].PersonID)
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE document_people_heads SET node_revision=node_revision+1 WHERE content_version_id=?`, derivedVersion.ID)
 	require.NoError(t, err)
 	stale, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, stale, 1)
-	require.Equal(t, hidden.PersonID, stale[0].PersonID)
+	require.Equal(t, retainedHidden.PersonID, stale[0].PersonID)
 	for _, state := range []string{"stale", "trashed"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)
@@ -557,9 +477,45 @@ func TestPeopleByDisplayNameAvoidsOverFilteringRetainedEvidence(t *testing.T) {
 			all, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, false)
 			require.NoError(t, err)
 			require.Len(t, all, 1)
-			visible, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
+			retainedVisible, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
 			require.NoError(t, err)
-			require.Equal(t, all, visible)
+			require.Equal(t, all, retainedVisible)
 		})
+	}
+}
+
+func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Alice Blacksmith", "Alice Smith%", "Grace Hopper", "GRACE Murray Hopper", "Straße", "STRASSE"} {
+		_, err := s.CreatePerson(ctx, name, "operator")
+		require.NoError(t, err)
+	}
+	page, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 1, false)
+	require.NoError(t, err)
+	require.Equal(t, "Alice Smith", page[0].DisplayName)
+	next, err := s.PeopleByDisplayName(ctx, "Smith", page[0].DisplayNameFolded, page[0].PersonID, 10, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Alice Smith%", "John Smith", "Smith Jones"}, []string{next[0].DisplayName, next[1].DisplayName, next[2].DisplayName})
+	literal, err := s.PeopleByDisplayName(ctx, "Smith%", "", "", 10, false)
+	require.NoError(t, err)
+	require.Len(t, literal, 1)
+	require.Equal(t, "Alice Smith%", literal[0].DisplayName)
+	for _, query := range []string{"grace", "strasse"} {
+		first, err := s.PeopleByDisplayName(ctx, query, "", "", 1, false)
+		require.NoError(t, err)
+		require.Len(t, first, 1)
+		second, err := s.PeopleByDisplayName(ctx, query, first[0].DisplayNameFolded, first[0].PersonID, 10, false)
+		require.NoError(t, err)
+		require.Len(t, second, 1)
+		if query == "grace" {
+			require.Equal(t, "Grace Hopper", first[0].DisplayName)
+			require.Equal(t, "GRACE Murray Hopper", second[0].DisplayName)
+		} else {
+			require.Equal(t, "strasse", first[0].DisplayNameFolded)
+			require.Equal(t, "strasse", second[0].DisplayNameFolded)
+			require.ElementsMatch(t, []string{"Straße", "STRASSE"}, []string{first[0].DisplayName, second[0].DisplayName})
+		}
 	}
 }

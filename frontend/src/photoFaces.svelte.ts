@@ -28,7 +28,7 @@ export class PhotoFaces {
     private session: string,
     readonly onauthfailure: (cause: unknown) => void,
     readonly hidden = false,
-    private ondecision: (error?: string, refresh?: boolean) => void = () => {},
+    public ondecision: (error?: string, refresh?: boolean) => void = () => {},
     readonly hiddenAccess?: HiddenAccess,
   ) {}
   private request<T>(request: () => Promise<T>) {
@@ -65,6 +65,7 @@ export class PhotoFaces {
     const changed = version !== this.version;
     if (changed) {
       this.writer?.abort();
+      this.busy = false;
       this.pending = undefined;
     }
     const controller = (this.controller = new AbortController());
@@ -76,7 +77,6 @@ export class PhotoFaces {
     }
     this.error = "";
     this.loading = !!version;
-    this.busy = false;
     if (!version) return;
     try {
       const page = await listPhotoFaces(version, {
@@ -113,13 +113,11 @@ export class PhotoFaces {
     try {
       await this.request(() => action(version, controller.signal));
       if (controller.signal.aborted) return false;
-      this.busy = false;
       this.ondecision();
       if (this.version === version) await this.load(version);
       return true;
     } catch (cause) {
       if (!controller.signal.aborted) {
-        this.busy = false;
         await this.load(version);
         this.failed(cause);
         this.ondecision(this.error, !(cause instanceof APIError) || cause.status >= 500);

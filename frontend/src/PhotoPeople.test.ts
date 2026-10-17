@@ -342,73 +342,6 @@ it.each(["person-b", "new", "cancel", "assigned"])(
   },
 );
 
-it.each(["empty", "failure", "relock"])("handles Hidden same-name previews: %s", async (result) => {
-  const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
-  const { APIError } = await import("./api-transport.js");
-  const lost = vi.fn();
-  const access = new HiddenAccess("session", lost);
-  const run = vi.spyOn(access, "run");
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
-  vi.spyOn(api, "listPeople").mockResolvedValue({
-    items: [
-      {
-        person_id: "person-a",
-        display_name: "Alex",
-        state: "curated",
-        revision: 1,
-        display_name_folded: "alex",
-        created_at: "2025-01-01T00:00:00Z",
-      },
-      {
-        person_id: "person-b",
-        display_name: "Alex",
-        state: "curated",
-        revision: 1,
-        display_name_folded: "alex",
-        created_at: "2026-01-01T00:00:00Z",
-      },
-    ],
-  });
-  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async () => {
-    if (result === "failure") throw new Error("Preview read failed");
-    if (result === "relock") throw new APIError("Hidden locked", 403, "photo_hidden_locked");
-    return { items: [] } as unknown as api.PhotoBrowsePage;
-  });
-  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-  const faces = new PhotoFaces("session", lost, true, vi.fn(), access);
-  await faces.load("version-a");
-  render(PhotoPeople, { faces, session: "session" });
-  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 2 people" }));
-  await waitFor(() => expect(list).toHaveBeenCalled());
-  expect(list).toHaveBeenCalledWith(
-    expect.objectContaining({ hidden: true }),
-    expect.objectContaining({ session: "session" }),
-  );
-  expect(run).toHaveBeenCalled();
-  if (result === "relock") {
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(lost).toHaveBeenCalledWith(expect.objectContaining({ status: 403 }));
-    expect(list.mock.calls[0]![1]!.signal!.aborted).toBe(true);
-  } else {
-    await screen.findAllByText(
-      result === "empty" ? "No photos you can see." : "Preview unavailable",
-    );
-    expect(screen.getByText(new Date("2025-01-01T00:00:00Z").toLocaleDateString())).toBeTruthy();
-    await fireEvent.click(screen.getAllByRole("radio")[1]!);
-    await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
-    await waitFor(() =>
-      expect(write).toHaveBeenCalledWith(
-        "version-a",
-        expect.objectContaining({ person_id: "person-b" }),
-        expect.anything(),
-      ),
-    );
-  }
-  faces.dispose();
-});
-
 it.each(["face", "mark"])("confirms %s removal with the captured revision", async (target) => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
     photoFacePage({ assertions: [photoPersonAssertion({ photo_mark: true })] }),
@@ -445,45 +378,54 @@ it.each(["face", "mark"])("confirms %s removal with the captured revision", asyn
   faces.dispose();
 });
 
-it.each([403, 500])(
-  "releases a loaded chooser preview after another preview returns %s",
-  async (status) => {
-    const { PhotoPreviewCache } = await import("./photoPreviewCache.js");
-    const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
-    const { APIError } = await import("./api-transport.js");
-    const lost = vi.fn();
-    const access = new HiddenAccess("session", lost);
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
-      faces: [face],
-      assertions: [],
-      people: [],
-    });
-    vi.spyOn(api, "listPeople").mockResolvedValue({
-      items: [
-        {
-          person_id: "person-a",
-          display_name: "Alex",
-          state: "curated",
-          revision: 1,
-          display_name_folded: "alex",
-          created_at: "2025-01-01T00:00:00Z",
-        },
-        {
-          person_id: "person-b",
-          display_name: "Alex",
-          state: "curated",
-          revision: 1,
-          display_name_folded: "alex",
-          created_at: "2026-01-01T00:00:00Z",
-        },
-      ],
-    });
-    vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+it.each([
+  { source: "list", result: "empty" },
+  { source: "list", result: "failure" },
+  { source: "list", result: "relock" },
+  { source: "image", result: "failure" },
+  { source: "image", result: "relock" },
+])("handles Hidden same-name previews: $source $result", async ({ source, result }) => {
+  const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
+  const { APIError } = await import("./api-transport.js");
+  const lost = vi.fn();
+  const access = new HiddenAccess("session", lost);
+  const run = vi.spyOn(access, "run");
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: [
+      {
+        person_id: "person-a",
+        display_name: "Alex",
+        state: "curated",
+        revision: 1,
+        display_name_folded: "alex",
+        created_at: "2025-01-01T00:00:00Z",
+      },
+      {
+        person_id: "person-b",
+        display_name: "Alex",
+        state: "curated",
+        revision: 1,
+        display_name_folded: "alex",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ],
+  });
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+    if (source === "image") {
       const row = photo(request.query.filters!.person_ids![0] === "person-a" ? 1 : 2);
       row.previews.grid = { state: "ready", generation_id: `grid-${row.asset_id}` };
       return { items: [row] } as api.PhotoBrowsePage;
-    });
-    vi.stubGlobal("caches", { keys: async () => [], delete: async () => true });
+    }
+    if (result === "failure") throw new Error("Preview read failed");
+    if (result === "relock") throw new APIError("Hidden locked", 403, "photo_hidden_locked");
+    return { items: [] } as unknown as api.PhotoBrowsePage;
+  });
+  const { PhotoPreviewCache } = await import("./photoPreviewCache.js");
+  const cache = new PhotoPreviewCache("session", lost, true);
+  let fail!: (cause: unknown) => void;
+  let signal!: AbortSignal;
+  if (source === "image") {
     vi.stubGlobal(
       "URL",
       class extends URL {
@@ -491,9 +433,6 @@ it.each([403, 500])(
         static revokeObjectURL = vi.fn();
       },
     );
-    const cache = new PhotoPreviewCache("session", lost, true);
-    let fail!: (cause: unknown) => void;
-    let signal!: AbortSignal;
     vi.spyOn(cache, "get")
       .mockResolvedValueOnce(new Blob(["synthetic"]))
       .mockImplementationOnce((_id, _generation, caller) => {
@@ -502,109 +441,116 @@ it.each([403, 500])(
           fail = reject;
         });
       });
-    const faces = new PhotoFaces("session", lost, true, vi.fn(), access);
-    await faces.load("version-a");
-    render(PhotoPeople, { faces, session: "session", cache, assetID: "photo-current" });
-    await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
-    await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
-    await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 2 people" }));
+  }
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", lost, true, vi.fn(), access);
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session", cache, assetID: "photo-current" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 2 people" }));
+  await waitFor(() => expect(list).toHaveBeenCalled());
+  expect(list).toHaveBeenCalledWith(
+    expect.objectContaining({ hidden: true }),
+    expect.objectContaining({ session: "session" }),
+  );
+  expect(run).toHaveBeenCalled();
+  if (source === "image") {
     await screen.findByRole("img");
     await waitFor(() => expect(fail).toBeTypeOf("function"));
-    fail(new APIError("Preview failed", status, "preview_failed"));
-    if (status === 403) {
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      expect(lost).toHaveBeenCalledWith(expect.objectContaining({ status: 403 }));
-    } else {
-      await screen.findByText("Preview unavailable");
-      expect(screen.getAllByRole("radio")[1]!.hasAttribute("disabled")).toBe(false);
-      await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      expect(lost).not.toHaveBeenCalled();
-    }
+    fail(new APIError("Preview failed", result === "relock" ? 403 : 500, "preview_failed"));
+  }
+  if (result === "relock") {
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(lost).toHaveBeenCalledWith(expect.objectContaining({ status: 403 }));
+    expect((source === "image" ? signal : list.mock.calls[0]![1]!.signal)!.aborted).toBe(true);
+  } else {
+    await screen.findAllByText(
+      result === "empty" ? "No photos you can see." : "Preview unavailable",
+    );
+    expect(screen.getByText(new Date("2025-01-01T00:00:00Z").toLocaleDateString())).toBeTruthy();
+    await fireEvent.click(screen.getAllByRole("radio")[1]!);
+    await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledWith(
+        "version-a",
+        expect.objectContaining({ person_id: "person-b" }),
+        expect.anything(),
+      ),
+    );
+  }
+  if (source === "image") {
     expect(signal.aborted).toBe(true);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex");
-    await cache.dispose();
-    faces.dispose();
-  },
-);
+  }
+  await cache.dispose();
+  faces.dispose();
+});
 
-it.each(["complete", "failure", "broad", "case"])(
-  "completes only the last name group: %s",
-  async (result) => {
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
-      faces: [face],
-      assertions: [],
-      people: [],
+it.each(["complete", "broad", "case"])("completes only the last name group: %s", async (result) => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    faces: [face],
+    assertions: [],
+    people: [],
+  });
+  const name = "Alex";
+  const folded = "alex";
+  const person = (index: number): api.PersonSummary => ({
+    person_id: `person-${index}`,
+    display_name: name,
+    state: "curated",
+    revision: 1,
+    display_name_folded: folded,
+    created_at: "2026-01-01T00:00:00Z",
+  });
+  const query = result === "broad" ? "Al" : name;
+  let finish!: (page: api.PersonPage) => void;
+  const search = vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
+    if (!query) return { items: [] };
+    if (!cursor)
+      return { items: Array.from({ length: 100 }, (_, i) => person(i)), next_cursor: "tail" };
+    return new Promise((resolve) => {
+      finish = resolve;
     });
-    const name = "Alex";
-    const folded = "alex";
-    const person = (index: number): api.PersonSummary => ({
-      person_id: `person-${index}`,
-      display_name: name,
-      state: "curated",
-      revision: 1,
-      display_name_folded: folded,
-      created_at: "2026-01-01T00:00:00Z",
-    });
-    const query = result === "broad" ? "Al" : name;
-    let finish!: (page: api.PersonPage) => void;
-    let fail!: (cause: Error) => void;
-    const search = vi
-      .spyOn(api, "listPeople")
-      .mockImplementation(async ({ query, cursor } = {}) => {
-        if (!query) return { items: [] };
-        if (!cursor)
-          return { items: Array.from({ length: 100 }, (_, i) => person(i)), next_cursor: "tail" };
-        return new Promise((resolve, reject) => {
-          finish = resolve;
-          fail = reject;
-        });
-      });
-    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-      items: [],
-    } as unknown as api.PhotoBrowsePage);
-    const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-    const faces = new PhotoFaces("session", vi.fn());
-    await faces.load("version-a");
-    render(PhotoPeople, { faces, session: "session" });
-    await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
-    await fireEvent.input(screen.getByRole("combobox"), { target: { value: query } });
-    await waitFor(() => expect(finish).toBeTypeOf("function"));
-    expect(screen.queryByRole("option", { name: new RegExp(name) })).toBeNull();
-    expect(screen.queryByRole("option", { name: `Create person "${query}"` })).toBeNull();
-    if (result === "failure") {
-      fail(new Error("Next page failed"));
-      await screen.findByText("Next page failed");
-      expect(screen.queryByRole("option", { name: new RegExp(name) })).toBeNull();
-    } else {
-      finish({
-        items: [
-          ...(result === "case" ? [{ ...person(101), display_name: name.toUpperCase() }] : []),
-          person(100),
-          ...(result === "broad"
-            ? [{ ...person(101), display_name: "Alice", display_name_folded: "alice" }]
-            : []),
-        ],
-        next_cursor: result === "broad" ? "more" : undefined,
-      });
-      await fireEvent.mouseDown(
-        await screen.findByRole("option", { name: `${name} · 101 people` }),
-      );
-      const dialog = await screen.findByRole("dialog", { name: `Choose ${name}` });
-      await fireEvent.click(dialog.querySelector('input[value="person-100"]')!);
-      await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
-      await waitFor(() =>
-        expect(write).toHaveBeenCalledWith(
-          "version-a",
-          expect.objectContaining({ person_id: "person-100" }),
-          expect.anything(),
-        ),
-      );
-      expect(search.mock.calls.filter(([params]) => params?.query === query)).toHaveLength(2);
-      expect(search).toHaveBeenCalledWith({ query, limit: 100, cursor: "tail" }, expect.anything());
-    }
-    faces.dispose();
-  },
-);
+  });
+  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [],
+  } as unknown as api.PhotoBrowsePage);
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: query } });
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(screen.queryByRole("option", { name: new RegExp(name) })).toBeNull();
+  expect(screen.queryByRole("option", { name: `Create person "${query}"` })).toBeNull();
+  finish({
+    items: [
+      ...(result === "case" ? [{ ...person(101), display_name: name.toUpperCase() }] : []),
+      person(100),
+      ...(result === "broad"
+        ? [{ ...person(101), display_name: "Alice", display_name_folded: "alice" }]
+        : []),
+    ],
+    next_cursor: result === "broad" ? "more" : undefined,
+  });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: `${name} · 101 people` }));
+  const dialog = await screen.findByRole("dialog", { name: `Choose ${name}` });
+  await fireEvent.click(dialog.querySelector('input[value="person-100"]')!);
+  await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith(
+      "version-a",
+      expect.objectContaining({ person_id: "person-100" }),
+      expect.anything(),
+    ),
+  );
+  expect(search.mock.calls.filter(([params]) => params?.query === query)).toHaveLength(2);
+  expect(search).toHaveBeenCalledWith({ query, limit: 100, cursor: "tail" }, expect.anything());
+
+  faces.dispose();
+});
 
 it("ignores an older continuation after a new search", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });

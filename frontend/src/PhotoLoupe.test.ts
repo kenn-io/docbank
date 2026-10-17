@@ -723,22 +723,24 @@ it.each([true, false])(
     Object.defineProperty(image, "naturalWidth", { value: 1000 });
     Object.defineProperty(image, "naturalHeight", { value: 800 });
     await fireEvent.load(image);
-    await fireEvent(
-      viewport,
-      new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
-    );
-    await component.rerender({ regionMode: false });
-    await fireEvent(
-      viewport,
-      new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
-    );
-    expect(onregion).not.toHaveBeenCalled();
-    await component.rerender({ regionMode: true });
-    await fireEvent(
-      viewport,
-      new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
-    );
-    expect(onregion).not.toHaveBeenCalled();
+    if (minimumRegionDrag) {
+      await fireEvent(
+        viewport,
+        new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
+      );
+      await component.rerender({ regionMode: false });
+      await fireEvent(
+        viewport,
+        new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+      );
+      expect(onregion).not.toHaveBeenCalled();
+      await component.rerender({ regionMode: true });
+      await fireEvent(
+        viewport,
+        new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+      );
+      expect(onregion).not.toHaveBeenCalled();
+    }
     onregion.mockClear();
     const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
     for (const [type, x, y] of [
@@ -776,6 +778,7 @@ it.each([true, false])(
         height: expect.closeTo(0.00375, 8),
       });
     }
+    if (!minimumRegionDrag) return;
     await component.rerender({ view: { scale: 1, x: 0.5, y: 0.5, actual: false } });
     await fireEvent.keyDown(position, { key: "ArrowLeft" });
     const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;

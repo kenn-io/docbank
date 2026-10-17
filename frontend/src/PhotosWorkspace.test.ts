@@ -10,13 +10,7 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { idbRequest, transactionDone } from "./indexedDB.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import {
-  Photos,
-  photoQuery,
-  mapPhotoLimit,
-  refreshPersonPhotoViews,
-  type MapView,
-} from "./photos.svelte.js";
+import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoFace,
@@ -3324,7 +3318,7 @@ it("keeps faces when opening Loupe and clears them before failed Map navigation"
   expect(read).toHaveBeenCalledOnce();
 });
 
-it("refreshes the expression source and reports an uncertain clear after remount", async () => {
+it("reports an uncertain clear after remount", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -3353,24 +3347,14 @@ it("refreshes the expression source and reports an uncertain clear after remount
     committed = true;
     throw new Error("Response lost");
   });
-  const sourceReads: unknown[] = [];
   stubPhotoFetch(async (url, init) => {
     if (!url.endsWith("/photos/assets/query")) return Response.json({ state: "unsupported" });
     const query = JSON.parse(String(init.body ?? "{}")).query;
-    if (!query?.filters?.asset_ids && !query.filters.person_ids?.length) sourceReads.push(query);
     const dependent = !!query.filters.person_ids?.length || !!query.text;
     const rows = committed && dependent && !query?.filters?.asset_ids ? [] : [row];
     return Response.json({ items: rows, total: rows.length, facets: [] });
   });
-  const query = {
-    ...photoQuery,
-    filters: { person_ids: ["person-a"] },
-  };
   const photos = new Photos("session", vi.fn(), false, { ...photoQuery, text: "person:Ada" });
-  const sibling = new Photos("session", vi.fn(), false, query);
-  sibling.items = [row];
-  sibling.total = 1;
-  sibling.started = true;
   photos.items = [row];
   photos.total = 1;
   photos.started = true;
@@ -3380,7 +3364,6 @@ it("refreshes the expression source and reports an uncertain clear after remount
     cache,
     photoID: row.asset_id,
     onphotochange: vi.fn(),
-    onfacedecision: (source: Photos) => void refreshPersonPhotoViews(source, [sibling]),
   };
   let view = render(PhotosWorkspace, props);
   const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
@@ -3395,14 +3378,9 @@ it("refreshes the expression source and reports an uncertain clear after remount
   cache = new PhotoPreviewCache("session", vi.fn());
   finish();
   await waitFor(() => expect(photos.total).toBe(0));
-  await waitFor(() => expect(sibling.total).toBe(0));
-  expect(photos.items).toEqual([]);
-  expect(sibling.items).toEqual([]);
   view = render(PhotosWorkspace, { ...props, cache, photoID: "" });
   expect((await screen.findAllByText("Response lost")).length).toBeGreaterThan(0);
   await screen.findByText("No matching photos");
-  expect(sourceReads).toHaveLength(1);
   photos.dispose();
-  sibling.dispose();
   await cache.dispose();
 });

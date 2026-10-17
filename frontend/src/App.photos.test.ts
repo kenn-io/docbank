@@ -3588,7 +3588,7 @@ it.each([
   },
 );
 
-it.each(["next photo", "workspace", "inspector"])(
+it.each(["next photo", "workspace", "inspector", "browser tab"])(
   "keeps a pending clear alive when navigating to %s",
   async (target) => {
     history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
@@ -3603,11 +3603,19 @@ it.each(["next photo", "workspace", "inspector"])(
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
     const rows = [photo(1), photo(2)];
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
-      faces: [photoFace({ content_version_id: rows[0]!.content_version_id })],
-      assertions: [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
+    let committed = false;
+    vi.spyOn(api, "listPhotoFaces").mockImplementation(async () => ({
+      faces: [
+        photoFace({
+          content_version_id: rows[0]!.content_version_id,
+          ...(committed ? { assertion_id: undefined } : {}),
+        }),
+      ],
+      assertions: committed
+        ? []
+        : [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
       people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
-    });
+    }));
     let finish!: (response: Response) => void;
     let signal!: AbortSignal;
     stubPhotoFetch(async (url, init) => {
@@ -3640,6 +3648,26 @@ it.each(["next photo", "workspace", "inspector"])(
     );
     await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
     await waitFor(() => expect(finish).toBeTypeOf("function"));
+    if (target === "browser tab") {
+      const visibility = vi.spyOn(document, "visibilityState", "get");
+      visibility.mockReturnValue("hidden");
+      await fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull(),
+      );
+      visibility.mockReturnValue("visible");
+      await fireEvent(document, new Event("visibilitychange"));
+      const restored = within(await screen.findByRole("dialog", { name: /^Photo viewer,/ }));
+      await fireEvent.click(restored.getByRole("button", { name: "Metadata" }));
+      const control = await restored.findByRole("button", { name: "Find or create a person: Ada" });
+      expect(control.hasAttribute("disabled")).toBe(true);
+      expect(signal.aborted).toBe(false);
+      committed = true;
+      finish(Response.json({ receipt_id: "receipt-a" }));
+      await restored.findByRole("button", { name: "Find or create a person: Face 1" });
+      expect(restored.queryByRole("button", { name: "Find or create a person: Ada" })).toBeNull();
+      return;
+    }
     const before = location.href;
     const navigate = async () => {
       if (target === "inspector") {
