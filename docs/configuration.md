@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-17
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -216,6 +216,13 @@ and seal one pack so each pass can make progress. Repeated
 the interval is too short. Automatic packing does not delete logical content
 and does not run GC or repack. An operator still has to request those
 reclamation operations.
+
+### Kata connection
+
+The optional `[integrations.kata]` section connects document citations to a
+Kata project. It is disabled by default and validates only when a Kata
+operation uses it. See [Cite documents in Kata](usage/kata-evidence.md#connect-kata)
+for fields, credential sources and endpoint restrictions.
 
 ### MCP HTTP credential
 

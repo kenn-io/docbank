@@ -39,6 +39,7 @@ type ServerOptions struct {
 	AllowPhotoEdits    bool
 	AllowExportWrites  bool
 	AllowReportWrites  bool
+	AllowKataWrites    bool
 	Logger             *slog.Logger
 }
 
@@ -48,7 +49,7 @@ func NewServer() *Server {
 }
 
 // NewServerWithOptions creates an exact-version server with a process-fixed
-// catalog. Processing and package writes each require an explicit opt-in.
+// catalog. Each family of write tools requires an explicit opt-in.
 func NewServerWithOptions(options ServerOptions) *Server {
 	return newServerWithOptions(&sdkmcp.Implementation{
 		Name:        "docbank",

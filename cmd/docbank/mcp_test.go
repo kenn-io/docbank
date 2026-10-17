@@ -93,7 +93,7 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
 	assert.ElementsMatch(t, []string{
 		"allow-report-writes", "allow-export-writes", "allow-photo-edits", "allow-processing",
-		"allow-package-writes", "allowed-host", "listen", "transport",
+		"allow-package-writes", "allow-kata-writes", "allowed-host", "listen", "transport",
 	}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
@@ -110,13 +110,14 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		os.Exit(0)
 	}
 	for _, test := range []struct {
-		args                                   string
-		processing, packages, exports, reports bool
+		args                                         string
+		processing, packages, exports, reports, kata bool
 	}{
 		{args: "mcp"},
 		{args: "mcp --allow-processing", processing: true},
 		{args: "mcp --allow-export-writes", exports: true},
 		{args: "mcp --allow-report-writes", reports: true},
+		{args: "mcp --allow-kata-writes", kata: true},
 		{args: "mcp --allow-package-writes", packages: true},
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
 	} {
@@ -152,6 +153,8 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
 			assert.Equal(t, test.processing, names["start_processing"])
+			assert.True(t, names["get_kata_context"])
+			assert.Equal(t, test.kata, names["cite_kata_evidence"])
 			assert.True(t, names["get_report_summary"])
 			assert.True(t, names["get_report_dates"])
 			for _, name := range []string{"create_report", "revise_report", "download_report"} {

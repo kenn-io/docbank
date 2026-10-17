@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-10
+last_edited: 2026-10-17
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -85,7 +85,8 @@ Both transports have the fixed read catalog described below.
 changes. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
-and explicit release. Each flag is independent. Enable the combination you need at startup.
+and explicit release. `--allow-kata-writes` permits quoting verified passages
+into Kata issues. Each flag is independent. Enable the combination you need at startup.
 
 ## Connect over a trusted network
 
@@ -183,6 +184,7 @@ resource links, is capped at 1 MiB.
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
+| `get_kata_context` | Reads an issue's [Docbank evidence and current source states](kata-evidence.md). |
 | `get_text_outline` | Reads the headings and whole-section bounds of [retained text](#read-complete-retained-sections). |
 | `read_text_section` | Reads an exact page of a retained section, with explicit completion. |
 | `read_rendition_text` | Reads the exact vault/node/version/attachment tuple described under [Resources](#resources-and-rendition-windows). |
