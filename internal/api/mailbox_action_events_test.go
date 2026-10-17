@@ -25,8 +25,8 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				gate := api.NewOperationGate()
 				server, catalog := newTestServer(t, func(d *api.Deps) { d.Imports = capture.imports; d.Gate = gate })
 				owner := "vault:" + catalog.VaultID()
-				raw := []byte("From sender@example.test Sat Sep 12 10:00:00 2026\nSubject: Synthetic archive\nContent-Type: text/plain\n\nSynthetic body.\n")
-				raw = append(raw, []byte("From sender@example.test Sat Sep 12 10:01:00 2026\nSubject: Second synthetic message\nContent-Type: text/plain\n\nSecond synthetic body.\n")...)
+				raw := []byte("From sender@example.com Sat Sep 12 10:00:00 2026\nSubject: Synthetic archive\nContent-Type: text/plain\n\nSynthetic body.\n")
+				raw = append(raw, []byte("From sender@example.com Sat Sep 12 10:01:00 2026\nSubject: Second synthetic message\nContent-Type: text/plain\n\nSecond synthetic body.\n")...)
 				digest := sha256.Sum256(raw)
 				container := store.MailboxContainerRequest{ID: "synthetic-source", Owner: owner, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(raw)), Format: "mbox"}
 				_, err := catalog.BeginMailboxContainer(t.Context(), container)
