@@ -291,10 +291,26 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	asset, err = fixture.metadata.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
 	preference := "image"
 	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, &preference)
+	require.NoError(t, err)
+
+	album, err := fixture.metadata.CreatePhotoSet(ctx, "Recovered album")
+	require.NoError(t, err)
+	_, err = fixture.metadata.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	checkout, _, _, err := fixture.metadata.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, filepath.Join(t.TempDir(), "checkout"), "synthetic-destination", 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, checkout.ID)
+	asset, err = fixture.metadata.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.NoError(t, fixture.metadata.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	token, _, err := fixture.metadata.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	ctx = store.WithPhotoHiddenToken(ctx, token)
+	asset, err = fixture.metadata.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	_, err = fixture.metadata.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
 	require.NoError(t, err)
 
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
@@ -302,22 +318,55 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	_, err = backupapp.Create(ctx, repo, "photo-round-trip", fixture.metadata, fixture.blobs,
 		backup.CreateOptions{})
 	require.NoError(t, err)
+	require.NoError(t, fixture.blobs.Close())
+	require.NoError(t, fixture.metadata.Close())
+	require.NoError(t, os.RemoveAll(fixture.root))
+
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(ctx, repo, "photo-round-trip", backup.RestoreOptions{TargetDir: target})
 	require.NoError(t, err)
 	restored, err := store.Open(filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-
+	_, err = restored.PhotoAssetByID(ctx, asset.ID)
+	require.ErrorIs(t, err, store.ErrHiddenLocked, "the source unlock token must not unlock the restored asset")
+	token, _, err = restored.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	ctx = store.WithPhotoHiddenToken(ctx, token)
 	restoredAsset, err := restored.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
-	assert.Equal(t, asset.ID, restoredAsset.ID)
 	assert.NotNil(t, restoredAsset.ExcludedAt)
+	assert.NotNil(t, restoredAsset.HiddenAt)
+	restoredNode, err := restored.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, restoredNode.TrashedAt)
 	settings, err := restored.PhotoSettings(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, settings.Preference)
 	assert.Equal(t, "image", *settings.Preference)
-	assert.Contains(t, string(exportMetadata(t, restored)), `"photo_change_receipt"`)
+	restoredAlbum, err := restored.PhotoSet(ctx, album.ID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Recovered album", restoredAlbum.Name)
+	restoredCheckout, err := restored.PhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "unbound", restoredCheckout.State)
+	assert.Empty(t, restoredCheckout.Destination)
+	exported := string(exportMetadata(t, restored))
+	assert.Contains(t, exported, `"type":"photo_change_receipt"`)
+	var foundMember bool
+	for line := range strings.SplitSeq(exported, "\n") {
+		var member struct {
+			SetID   string `json:"set_id"`
+			AssetID string `json:"asset_id"`
+		}
+		if strings.Contains(line, `"type":"photo_set_member"`) {
+			require.NoError(t, json.Unmarshal([]byte(line), &member))
+			assert.Equal(t, album.ID, member.SetID)
+			assert.Equal(t, asset.ID, member.AssetID)
+			foundMember = true
+		}
+	}
+	assert.True(t, foundMember, "restored album contains the asset")
 }
 
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
@@ -3052,4 +3101,205 @@ func TestOverwriteCleanupFailurePreservesPublishedOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	assert.Equal(t, content, got)
+}
+
+func TestSnapshotCoverageRestoreProofAndHistoricalManifest(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(t.Context(), repo, "coverage", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	require.NotNil(t, stats.Coverage)
+	stats.Coverage.Excluded = []string{"historical_exclusion"}
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	recordedID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	recorded, err := backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: recordedID, TargetDir: filepath.Join(t.TempDir(), "recorded")})
+	require.NoError(t, err)
+	assert.FileExists(t, recorded.DBPath)
+	stats.Coverage.Version = 2
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	unsupportedID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	unsupportedTarget := filepath.Join(t.TempDir(), "unsupported")
+	_, err = backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: unsupportedID, TargetDir: unsupportedTarget})
+	require.ErrorContains(t, err, "unsupported backup coverage version 2")
+	assert.NoFileExists(t, filepath.Join(unsupportedTarget, "docbank.db"))
+	stats.Coverage.Version = 1
+	stats.Coverage.Included.PhotoAssets = 99
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	badID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "rejected")
+	_, err = backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: badID, TargetDir: target})
+	require.ErrorContains(t, err, "do not match manifest stats")
+	assert.NoFileExists(t, filepath.Join(target, "docbank.db"))
+
+	stats.Coverage = nil
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	historicalID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	restored, err := backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: historicalID, TargetDir: filepath.Join(t.TempDir(), "historical")})
+	require.NoError(t, err)
+	assert.FileExists(t, restored.DBPath)
+}
+
+func TestBackupCoverageCountsPartiallyTrashedPhotoAsset(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	rawHash, rawSize, err := fixture.blobs.Write(strings.NewReader("raw bytes"))
+	require.NoError(t, err)
+	raw, err := fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo.raw", rawHash, rawSize, "application/octet-stream")
+	require.NoError(t, err)
+	imageHash, imageSize, err := fixture.blobs.Write(strings.NewReader("jpeg bytes"))
+	require.NoError(t, err)
+	image, err := fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo.jpg", imageHash, imageSize, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := fixture.metadata.PhotoAssetForNode(t.Context(), image.ID)
+	require.NoError(t, err)
+	_, err = fixture.metadata.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, raw.ID, store.PhotoRoleRAW, nil)
+	require.NoError(t, err)
+	album, err := fixture.metadata.CreatePhotoSet(t.Context(), "Covered album")
+	require.NoError(t, err)
+	_, err = fixture.metadata.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	checkout, _, _, err := fixture.metadata.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, filepath.Join(t.TempDir(), "checkout"), "synthetic-destination", 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, checkout.ID)
+	_, _, err = fixture.metadata.Trash(t.Context(), raw.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	raw, err = fixture.metadata.NodeByID(t.Context(), raw.ID)
+	require.NoError(t, err)
+	require.NotNil(t, raw.TrashedAt)
+	image, err = fixture.metadata.NodeByID(t.Context(), image.ID)
+	require.NoError(t, err)
+	require.Nil(t, image.TrashedAt)
+	_, err = fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo-copy.jpg", imageHash, imageSize, "image/jpeg")
+	require.NoError(t, err)
+	require.NoError(t, fixture.metadata.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	token, _, err := fixture.metadata.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	ctx := store.WithPhotoHiddenToken(t.Context(), token)
+	asset, err = fixture.metadata.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	_, err = fixture.metadata.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(t.Context(), repo, "partial-trash", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	require.NotNil(t, stats.Coverage)
+	assert.Equal(t, 1, stats.Coverage.Version)
+	c := stats.Coverage.Included
+	assert.Equal(t, int64(2), c.PhotoAssets)
+	assert.Equal(t, int64(3), c.PhotoFiles)
+	assert.Equal(t, int64(len("raw bytes")+len("jpeg bytes")), c.PhotoBlobBytes)
+	assert.Equal(t, int64(1), c.Albums)
+	assert.Equal(t, int64(1), c.AlbumMembers)
+	assert.Equal(t, int64(1), c.HiddenPhotos)
+	assert.Equal(t, int64(1), c.TrashedPhotos)
+	assert.Equal(t, int64(1), c.CheckoutDefinitions)
+	assert.Equal(t, int64(2), c.CheckoutEntries)
+	assert.Positive(t, c.RetainedReceipts)
+}
+
+func TestParseStatsCoverageVersionsAndMalformedPayloads(t *testing.T) {
+	stats, err := backupapp.ParseStats(jsontext.Value(`{"files":3,"coverage":{"version":2,"included":["future"]}}`))
+	var unsupported *backupapp.UnsupportedCoverageVersionError
+	require.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, 2, unsupported.Version)
+	assert.Equal(t, int64(3), stats.Files)
+	assert.Nil(t, stats.Coverage)
+	for _, raw := range []string{
+		`{"files":"bad","coverage":{"version":2}}`,
+		`{"coverage":{"version":1,"included":["bad"]}}`,
+		`{"coverage":{"version":"bad"}}`,
+	} {
+		_, err := backupapp.ParseStats(jsontext.Value(raw))
+		require.Error(t, err)
+		assert.NotErrorAs(t, err, &unsupported)
+	}
+}
+
+func TestStatsCoverageV1EncodingGolden(t *testing.T) {
+	stats := backupapp.Stats{Nodes: 1, Files: 2, Directories: 3, TrashedNodes: 4, Blobs: 5, BlobBytes: 6, ContentVersions: 7, Ingests: 8, Provenance: 9, Tags: 10, NodeTags: 11, ExtractedText: 12,
+		Coverage: &backupapp.BackupCoverage{Version: 1, Included: backupapp.CoverageIncluded{PhotoAssets: 13, PhotoFiles: 14, PhotoBlobBytes: 15, Albums: 16, AlbumMembers: 17, HiddenPhotos: 18, TrashedPhotos: 19, CheckoutDefinitions: 20, CheckoutEntries: 21, RetainedReceipts: 22}, Excluded: []string{"browser_sessions", "photo_technical_metadata"}}}
+	encoded, err := json.Marshal(stats)
+	require.NoError(t, err)
+	const golden = `{"nodes":1,"files":2,"directories":3,"trashed_nodes":4,"blobs":5,"blob_bytes":6,"content_versions":7,"ingests":8,"provenance":9,"tags":10,"node_tags":11,"extracted_text":12,"coverage":{"version":1,"included":{"photo_assets":13,"photo_files":14,"photo_blob_bytes":15,"albums":16,"album_members":17,"hidden_photos":18,"trashed_photos":19,"checkout_definitions":20,"checkout_entries":21,"retained_receipts":22},"excluded":["browser_sessions","photo_technical_metadata"]}}`
+	assert.Equal(t, golden, string(encoded))
+}
+
+func TestVerifyReportsUnsupportedCoverage(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(t.Context(), repo, "coverage", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	supportedID := manifest.SnapshotID
+	manifest.Stats = jsontext.Value(`{"coverage":{"version":2,"included":["future"]}}`)
+	futureID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	for _, quick := range []bool{false, true} {
+		for _, all := range []bool{false, true} {
+			opts := backup.VerifyOptions{Quick: quick, All: all, Jobs: 1}
+			if !all {
+				opts.SnapshotID = futureID
+			}
+			result, err := backupapp.Verify(t.Context(), repo, "test", opts)
+			require.NoError(t, err)
+			if all {
+				assert.ElementsMatch(t, []string{supportedID, futureID}, result.Snapshots)
+			} else {
+				assert.Equal(t, []string{futureID}, result.Snapshots)
+			}
+			assert.Equal(t, []backup.Problem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, result.Problems)
+		}
+	}
+	for _, change := range []string{"removed", "corrupted"} {
+		t.Run(change, func(t *testing.T) {
+			manifestPath := repo.Path("snapshots", supportedID+".mvmanifest")
+			original, err := os.ReadFile(manifestPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, os.WriteFile(manifestPath, original, 0o600)) })
+			result, err := backupapp.Verify(t.Context(), repo, "test", backup.VerifyOptions{
+				Quick: true, All: true,
+				Progress: func(event backup.ProgressEvent) {
+					if !event.Final {
+						return
+					}
+					// Kit has finished its checks. Change the manifest before the wrapper reloads it.
+					if change == "removed" {
+						require.NoError(t, os.Remove(manifestPath))
+					} else {
+						require.NoError(t, os.WriteFile(manifestPath, []byte("{"), 0o600))
+					}
+				},
+			})
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []string{supportedID, futureID}, result.Snapshots)
+			assert.Positive(t, result.BlobsChecked)
+			assert.Positive(t, result.BytesRead)
+			assert.Contains(t, result.Problems, backup.Problem{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"})
+			if change == "removed" {
+				assert.Len(t, result.Problems, 1)
+			} else {
+				require.Len(t, result.Problems, 2)
+				for _, problem := range result.Problems {
+					if problem.SnapshotID == futureID {
+						continue
+					}
+					assert.Equal(t, supportedID, problem.SnapshotID)
+					assert.Contains(t, problem.Detail, "loading verified backup manifest: backup: parsing snapshot "+supportedID)
+				}
+			}
+		})
+	}
 }

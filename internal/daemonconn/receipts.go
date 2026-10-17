@@ -450,7 +450,10 @@ var codeToTypedErr = map[string]error{
 
 func decodeError(resp *http.Response) error {
 	var e api.Error
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &responseError{status: resp.StatusCode, err: fmt.Errorf("reading daemon error response: %w", err)}
+	}
 	if err := json.Unmarshal(body, &e); err != nil || e.Status == 0 {
 		return &responseError{status: resp.StatusCode,
 			err: fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))}
@@ -491,7 +494,11 @@ func apiProblemError(e api.Error) error {
 	} else {
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
-	return &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
+	problem := &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
+	if e.BackupForget != nil || e.BackupPrune != nil {
+		return &BackupCleanupError{Forget: e.BackupForget, Prune: e.BackupPrune, err: problem}
+	}
+	return problem
 }
 
 // Children fetches every page. Callers that need bounded traversal should use

@@ -18,7 +18,7 @@ for Go integration.
 ## Which entry point owns the operation?
 
 Standalone `docbank backup init`, `backup create`, `backup list`, `backup
-verify`, and `backup restore` use the authenticated daemon API. See the
+verify`, `backup restore`, `backup forget`, and `backup prune` use the authenticated daemon API. See the
 [Backup user guide](../usage/backup.md). Applications that own an embedded
 vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
 directly. See [Embed in Go](../embedding.md#back-up-and-restore-an-embedded-vault).
@@ -88,7 +88,7 @@ rebuilds document–person links from those records after rebuilding document
 events. In audited vaults, this rebuild does not create people or candidates.
 Actors without a retained match remain unresolved.
 
-It omits rebuildable full-text and vector indexes, `photo_quality_signals`, `photo_timeline`, and physical pack mappings.
+It omits rebuildable full-text and vector indexes, `photo_quality_signals`, `photo_timeline`, `photo_technical_metadata`, and physical pack mappings.
 Restore rebuilds full-text search and vector indexes from retained records.
 When a vector source cannot be rebuilt locally, restore records that missing
 coverage instead of calling an external provider. Restore grants physical
@@ -104,6 +104,14 @@ without materializing a second database or a JSONL temporary file.
 The header also preserves the node-ID allocation high-water mark, including
 IDs whose rows were later deleted. Restore therefore never reuses a value that
 an external reference may remember.
+
+## How does coverage survive restore?
+
+Manifest `Stats.coverage` records a versioned, bounded inventory of photo assets and files, distinct verified logical bytes, albums and members, hidden and trash decisions, checkout definitions and entries, and retained receipts. The trash count includes an asset when any managed file is trashed. Its exclusions name sessions, storage-operation records, checkout bindings, and rebuildable projections, including `photo_technical_metadata`. Total verified bytes remain in top-level `Stats.blob_bytes`. Capture computes it in the same frozen transaction as metadata and blob membership. Coverage reads retained photo and checkout records and sums catalog sizes, so its cost grows with catalog and history rows without reading photo payload bytes.
+
+Restore resolves one exact manifest before starting. Kit's existing stats proof recomputes coverage from the staged database and compares it before publication. It preserves the manifest's recorded exclusions when recounting, so later exclusion-list changes preserve version-1 restore compatibility. Coverage version 1 is supported; restore rejects other recorded versions with upgrade guidance before creating the target database. Quick and full verification check manifest consistency and report unsupported coverage versions; full verification also checks physical content. Verification does not recount photo coverage. Snapshot listing preserves base statistics and IDs for unsupported coverage versions, omits the uninterpreted payload, and adds a per-snapshot warning. Historical manifests without coverage retain their original stats representation. Metadata import validates photo relationships and receipts; checkout import restores definitions and entries with inactive, unbound defaults. Hidden passcode and lockout records survive, while process-memory unlock sessions clear.
+
+Forget and prune reuse Kit's exclusive repository lock without opening the source vault. Operator routes and CLI output retain partial reports on error, including exact selected, planned, and completed item identities. Unknown selected snapshot IDs return 404; filesystem I/O failures remain server errors. The [user guide](../usage/backup.md#recover-on-a-fresh-installation) describes recovery with a fresh daemon home and a disjoint target.
 
 ## When does copied content become trusted?
 
@@ -278,8 +286,7 @@ candidates. Only wholly dead packs and packs below half-live encoded payload
 are reclaimed or rewritten. This leaves mostly-live packs partly unused.
 Removing snapshot records alone does not reclaim their stored bytes, and
 neither operation promises secure erasure. Scheduling and recovery-point
-selection belong to the embedding host. The daemon and CLI do not expose these
-cleanup operations.
+selection belong to the caller. The authenticated daemon exposes operator-only forget and prune routes, and the CLI calls them through `backup forget` and `backup prune`.
 
 Backup and live packed storage share Kit's physical formats and verification
 primitives, but Docbank remains responsible for which catalog rows belong in a

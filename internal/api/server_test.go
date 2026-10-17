@@ -368,7 +368,8 @@ func TestWebApplication(t *testing.T) {
 
 func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
 	document := createFileWithContent(t, ts, s, "/return.txt", "return")
@@ -566,10 +567,28 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{"jobs": 1})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
 	resp = webRequest(http.MethodGet, "/api/v1/backup/snapshots")
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode,
-		"the read-only route is admitted even when no repository is configured")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var browserSnapshots struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.UnmarshalRead(resp.Body, &browserSnapshots))
 	require.NoError(t, resp.Body.Close())
+	require.Len(t, browserSnapshots.Items, 1)
+	assert.NotContains(t, browserSnapshots.Items[0], "coverage")
+
+	resp, body = get(t, ts, "/api/v1/backup/snapshots", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var masterSnapshots api.BackupSnapshotList
+	require.NoError(t, json.Unmarshal([]byte(body), &masterSnapshots))
+	require.Len(t, masterSnapshots.Items, 1)
+	require.NotNil(t, masterSnapshots.Items[0].Coverage)
+	assert.Equal(t, 1, masterSnapshots.Items[0].Coverage.Version)
 
 	resp = webRequest(http.MethodGet, "/api/v1/backup/snapshots?repo=/tmp/other")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode,

@@ -3,10 +3,13 @@ package docbank_test
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	docbank "go.kenn.io/docbank/docbank"
+	"go.kenn.io/kit/backup"
 )
 
 func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
@@ -170,7 +174,7 @@ func TestEmbeddedBackupPreparationPanicReleasesMutationGate(t *testing.T) {
 	}
 }
 
-func TestEmbeddedBackupRoundTrip(t *testing.T) {
+func TestEmbeddedBackup(t *testing.T) {
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -190,32 +194,72 @@ func TestEmbeddedBackupRoundTrip(t *testing.T) {
 	require.Len(t, snapshots, 1)
 	require.Equal(t, snapshot.ID, snapshots[0].ID)
 
-	verified, err := repository.Verify(t.Context(), docbank.BackupVerifyOptions{SnapshotID: snapshot.ID})
-	require.NoError(t, err)
-	require.Equal(t, []string{snapshot.ID}, verified.Snapshots)
-	require.Empty(t, verified.Problems)
-
-	target := filepath.Join(t.TempDir(), "restored")
-	restored, err := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
-		SnapshotID: snapshot.ID,
-		Target:     target,
+	t.Run("verify-error", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := repository.Verify(ctx, docbank.BackupVerifyOptions{SnapshotID: snapshot.ID})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, strings.Count(err.Error(), "verifying backup repository"))
 	})
-	require.NoError(t, err)
-	require.Equal(t, snapshot.ID, restored.SnapshotID)
-	require.True(t, restored.Proof.ContentVerified)
-	require.True(t, restored.Proof.SQLiteIntegrity)
-	require.True(t, restored.Proof.ManifestStats)
 
-	restoredVault, err := docbank.New(t.Context(), docbank.Config{Root: target})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restoredVault.Close()) })
-	opened, err := restoredVault.OpenVersionContent(t.Context(), created.Version.ID)
-	require.NoError(t, err)
-	got, err := io.ReadAll(opened.Reader)
-	require.NoError(t, err)
-	require.NoError(t, opened.Reader.Verify())
-	require.NoError(t, opened.Reader.Close())
-	require.Equal(t, content, got)
+	t.Run("round-trip", func(t *testing.T) {
+		verified, err := repository.Verify(t.Context(), docbank.BackupVerifyOptions{SnapshotID: snapshot.ID})
+		require.NoError(t, err)
+		require.Equal(t, []string{snapshot.ID}, verified.Snapshots)
+		require.Empty(t, verified.Problems)
+
+		target := filepath.Join(t.TempDir(), "restored")
+		restored, err := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
+			SnapshotID: snapshot.ID,
+			Target:     target,
+		})
+		require.NoError(t, err)
+		require.Equal(t, snapshot.ID, restored.SnapshotID)
+		require.True(t, restored.Proof.ContentVerified)
+		require.True(t, restored.Proof.SQLiteIntegrity)
+		require.True(t, restored.Proof.ManifestStats)
+
+		restoredVault, err := docbank.New(t.Context(), docbank.Config{Root: target})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, restoredVault.Close()) })
+		opened, err := restoredVault.OpenVersionContent(t.Context(), created.Version.ID)
+		require.NoError(t, err)
+		got, err := io.ReadAll(opened.Reader)
+		require.NoError(t, err)
+		require.NoError(t, opened.Reader.Verify())
+		require.NoError(t, opened.Reader.Close())
+		require.Equal(t, content, got)
+	})
+	t.Run("unsupported-coverage", func(t *testing.T) {
+		physical, err := backup.Open(repository.Root())
+		require.NoError(t, err)
+		manifest, err := physical.LoadManifest(snapshot.ID)
+		require.NoError(t, err)
+		var stats map[string]any
+		require.NoError(t, json.Unmarshal(manifest.Stats, &stats))
+		stats["coverage"] = map[string]any{"version": 2, "included": []string{"future-shape"}}
+		manifest.Stats, err = json.Marshal(stats)
+		require.NoError(t, err)
+		futureID, err := physical.WriteManifest(manifest)
+		require.NoError(t, err)
+		snapshots, err := repository.Snapshots()
+		require.NoError(t, err)
+		require.Len(t, snapshots, 2)
+		originalIdx := slices.IndexFunc(snapshots, func(s docbank.BackupSnapshot) bool { return s.ID == snapshot.ID })
+		require.GreaterOrEqual(t, originalIdx, 0)
+		require.NotNil(t, snapshots[originalIdx].Coverage)
+		require.Equal(t, snapshot.Coverage, snapshots[originalIdx].Coverage)
+		require.Empty(t, snapshots[originalIdx].CoverageWarning)
+		idx := slices.IndexFunc(snapshots, func(s docbank.BackupSnapshot) bool { return s.ID == futureID })
+		require.GreaterOrEqual(t, idx, 0)
+		require.Equal(t, snapshot.BlobBytes, snapshots[idx].BlobBytes)
+		require.Nil(t, snapshots[idx].Coverage)
+		require.Contains(t, snapshots[idx].CoverageWarning, "version 2")
+		verified, err := repository.Verify(t.Context(), docbank.BackupVerifyOptions{SnapshotID: futureID, Quick: true})
+		require.NoError(t, err)
+		require.Equal(t, []string{futureID}, verified.Snapshots)
+		require.Equal(t, []docbank.BackupVerifyProblem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, verified.Problems)
+	})
 }
 
 func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
