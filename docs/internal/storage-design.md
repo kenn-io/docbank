@@ -529,7 +529,7 @@ the embedded Natural Earth map has no matching country or simplified boundary.
 ### Photo timeline
 
 Schema 37 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the earliest observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key.
-Schema 38 also stores a nullable `folder_key` for burst grouping.
+Schema 39 also stores a nullable `folder_key` for burst grouping.
 `docbank_photo_folder_v1(source_kind, source_desc, original_path)` derives a
 SHA-256 folder key, normalizing Windows drive and UNC separators while
 preserving POSIX path bytes. Push and watch sources include their kind and

@@ -236,6 +236,19 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 	if len(slices.Compact(unique)) != len(request.AssetIDs) {
 		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
 	}
+	var representativeSeed int64
+	if request.Decision == "representative" {
+		// Portable snapshots omit the sequence. Read retained ranks before
+		// acquiring the writer; a concurrent choice supplies its own sequence.
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE((SELECT representative_sequence FROM photo_library_settings WHERE singleton=1),(
+ SELECT COALESCE(MAX(rank),0) FROM (
+ SELECT representative_rank AS rank FROM photo_assets
+ UNION ALL SELECT json_extract(entry.value,'$.before') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
+ UNION ALL SELECT json_extract(entry.value,'$.after') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
+ )))`).Scan(&representativeSeed); err != nil {
+			return PhotoAuthoredReceipt{}, err
+		}
+	}
 	var result PhotoAuthoredReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if request.Hidden {
@@ -301,7 +314,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			}
 		}
 		if request.Decision == "representative" {
-			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID])
+			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID], representativeSeed)
 			return err
 		}
 		flagged := map[string]bool{}
@@ -344,19 +357,12 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 
 // choosePhotoRepresentativeTx stores an explicit choice with the next rank.
 // Flags stay unchanged, so every frame keeps its picks and rejects.
-func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, frame photoStackFrame) (PhotoAuthoredReceipt, error) {
-	// Portable snapshots omit the internal sequence. Seed it once from live
-	// ranks and both sides of receipts, including choices hidden by Undo.
+func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, frame photoStackFrame, seed int64) (PhotoAuthoredReceipt, error) {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,updated_at) VALUES(1,?) ON CONFLICT(singleton) DO NOTHING`, nowRFC3339()); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	var rank int64
-	if err := tx.QueryRowContext(ctx, `UPDATE photo_library_settings SET representative_sequence=COALESCE(representative_sequence,(
- SELECT COALESCE(MAX(rank),0) FROM (
- SELECT representative_rank AS rank FROM photo_assets
- UNION ALL SELECT json_extract(entry.value,'$.before') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
- UNION ALL SELECT json_extract(entry.value,'$.after') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
- )))+1 WHERE singleton=1 RETURNING representative_sequence`).Scan(&rank); err != nil {
+	if err := tx.QueryRowContext(ctx, `UPDATE photo_library_settings SET representative_sequence=COALESCE(representative_sequence,?)+1 WHERE singleton=1 RETURNING representative_sequence`, seed).Scan(&rank); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	change, err := setPhotoRepresentativeTx(ctx, tx, frame.AssetID, -1, &rank)
