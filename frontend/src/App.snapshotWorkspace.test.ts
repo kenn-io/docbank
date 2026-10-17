@@ -101,7 +101,7 @@ function snapshot(
   };
 }
 
-it("navigates frozen documents within their boundaries and reports submitted searches", async () => {
+async function renderFrozenSnapshotWorkspace(expireNextPage = false) {
   history.replaceState(
     null,
     "",
@@ -137,9 +137,7 @@ it("navigates frozen documents within their boundaries and reports submitted sea
       headers: { "Content-Type": "application/json" },
     });
   const cursors: string[] = [];
-  let highlightRequests = 0;
-  const searches: unknown[] = [];
-  let failRun = false;
+  const state = { highlightRequests: 0, searches: [] as unknown[], failRun: false };
   const payload: HighlightSet = { v: 1, terms: [{ text: "evidence", color: "#ffcc00" }] };
   const highlightSet = {
     id: "44444444-4444-4444-8444-444444444444",
@@ -156,7 +154,7 @@ it("navigates frozen documents within their boundaries and reports submitted sea
     const url = String(input);
     if (url === "/api/daemon/telemetry/events") {
       const event = JSON.parse(String(init?.body));
-      if (event.event === "search_run") searches.push(event);
+      if (event.event === "search_run") state.searches.push(event);
       return json({}, 202);
     }
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -175,7 +173,7 @@ it("navigates frozen documents within their boundaries and reports submitted sea
         dependencies: [],
       });
     if (url === "/api/v1/queries/highlights") {
-      highlightRequests++;
+      state.highlightRequests++;
       return json({
         query_fingerprint: first.query_fingerprint,
         dependencies: [],
@@ -183,7 +181,7 @@ it("navigates frozen documents within their boundaries and reports submitted sea
       });
     }
     if (url === "/api/v1/workspace/queries")
-      return failRun ? json({ detail: "Synthetic query unavailable" }, 422) : json(first);
+      return state.failRun ? json({ detail: "Synthetic query unavailable" }, 422) : json(first);
     if (url === "/api/v1/renditions/text") {
       const request = JSON.parse(String(init?.body));
       return json({
@@ -205,7 +203,7 @@ it("navigates frozen documents within their boundaries and reports submitted sea
     if (url === `/api/v1/workspace/queries/${first.snapshot_id}/pages`) {
       const { cursor } = JSON.parse(String(init?.body));
       cursors.push(cursor);
-      return cursor === "next"
+      return cursor === "next" && !expireNextPage
         ? json(last)
         : json({ code: "snapshot_gone", detail: "Snapshot expired" }, 410);
     }
@@ -236,8 +234,12 @@ it("navigates frozen documents within their boundaries and reports submitted sea
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
-  await waitFor(() => expect(highlightRequests).toBe(1));
-  await waitFor(() => expect(searches).toHaveLength(1));
+  return { first, cursors, state };
+}
+
+it("navigates frozen documents within their boundaries", async () => {
+  const { cursors, state } = await renderFrozenSnapshotWorkspace();
+  await waitFor(() => expect(state.highlightRequests).toBe(1));
   await fireEvent.click(screen.getByRole("cell", { name: "/records/report-100.pdf" }));
   await screen.findByText("Document 100 of 101");
   await fireEvent.click(
@@ -268,25 +270,34 @@ it("navigates frozen documents within their boundaries and reports submitted sea
     );
   }
   expect(cursors).toEqual(["next", "previous"]);
-  expect(highlightRequests).toBe(1);
+  expect(state.highlightRequests).toBe(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   const choices = await screen.findByRole("combobox", { name: "Saved highlight set" });
   expect(within(choices).getByRole("option", { name: "Review terms" })).toBeTruthy();
+});
+
+it("reports submitted frozen searches while keeping snapshot retries silent", async () => {
+  const { first, state } = await renderFrozenSnapshotWorkspace(true);
+  expect(state.searches).toHaveLength(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByText(
+    "This frozen snapshot expired. Run the query again to continue navigation.",
+  );
 
   await fireEvent.click(screen.getAllByRole("button", { name: "Run again" })[0]);
   await screen.findByText("Document 1 of 101");
-  expect(searches).toHaveLength(1);
+  expect(state.searches).toHaveLength(1);
 
   first.snapshot_id = "1123456789abcdef0123456789abcdef";
   await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
-  await waitFor(() => expect(highlightRequests).toBe(2));
-  await waitFor(() => expect(searches).toHaveLength(2));
-  failRun = true;
+  await waitFor(() => expect(state.highlightRequests).toBe(2));
+  await waitFor(() => expect(state.searches).toHaveLength(2));
+  state.failRun = true;
   await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));
   await screen.findByText("Synthetic query unavailable");
-  expect(searches).toHaveLength(3);
+  expect(state.searches).toHaveLength(3);
 });
 
 it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {

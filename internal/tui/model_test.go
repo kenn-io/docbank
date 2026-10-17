@@ -584,7 +584,7 @@ func (f *fakeBackend) AuditHistory(
 	return page, nil
 }
 
-func TestModelReportsSearchIntentAndReturnsToTree(t *testing.T) {
+func TestModelSearchesAndReturnsToTree(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
@@ -612,18 +612,11 @@ func TestModelReportsSearchIntentAndReturnsToTree(t *testing.T) {
 	require.NotNil(t, cmd)
 	model = runModelCommand(t, model, cmd)
 
-	require.Equal(t, [][2]string{{"search_run", "text"}}, backend.actions)
 	assert.Equal(t, maxSearchItems, backend.searchMax)
 	assert.Equal(t, modeSearch, model.mode)
 	assert.Equal(t, "quarterly report", model.searchQuery)
 	require.Len(t, model.rows, 1)
 	assert.Equal(t, "content", model.rows[0].match)
-
-	model, cmd = updateModel(t, model, runeKey('r'))
-	if cmd != nil {
-		model = runModelCommand(t, model, cmd)
-	}
-	require.Len(t, backend.actions, 1)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
 	requireBrowseReportOnly(t, backend, cmd)

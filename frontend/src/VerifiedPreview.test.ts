@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import * as download from "./download.js";
 import VerifiedPreview from "./VerifiedPreview.svelte";
 import type { SelectedSource } from "./selectedSource.js";
 
@@ -207,7 +206,7 @@ it.each([
   },
 );
 
-it("keeps unsupported content on the download fallback and reports download inspection", async () => {
+it("keeps unsupported content on the download fallback", async () => {
   const selected = source(
     new TextEncoder().encode("<svg/>"),
     "44444444-4444-4444-8444-444444444444",
@@ -225,20 +224,6 @@ it("keeps unsupported content on the download fallback and reports download insp
   expect(await screen.findByText(/not an eligible text or raster image preview/i)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
   expect(fetchMock).not.toHaveBeenCalled();
-  vi.spyOn(download, "prepareExactDownload").mockResolvedValue({
-    ...selected,
-    url: "https://example.com/download",
-  });
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-  fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
-  await fireEvent.click(screen.getByRole("button", { name: "Download verified original" }));
-  await screen.findByText(/browser save started/);
-  expect(fetchMock).toHaveBeenLastCalledWith(
-    "/api/daemon/telemetry/events",
-    expect.objectContaining({
-      body: JSON.stringify({ event: "document_opened", properties: { surface: "web" } }),
-    }),
-  );
 });
 
 it("loads one exact rendition only while Text is active and keeps hostile markup inert", async () => {

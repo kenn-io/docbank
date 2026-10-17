@@ -104,7 +104,7 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 	invalid := request
 	invalid.OperationID = "invalid"
 	require.Equal(t, http.StatusUnprocessableEntity, srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, invalid), nil).Code)
-	first := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
+	first := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), map[string]string{api.ActionSurfaceHeader: "cli"})
 	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
 	var job api.PackageImportJob
 	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &job))
@@ -116,6 +116,7 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 	stored, err := catalog.PackageImportJob(t.Context(), "vault:"+catalog.VaultID(), request.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, job.JobID, stored.ID)
+	require.Equal(t, "cli", stored.ActionSurface)
 	read := srv.get(t, "/api/v1/packages/imports/"+request.OperationID)
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	browserRead := srv.call(t, http.MethodGet, "/api/v1/packages/imports/"+request.OperationID, "",
@@ -136,13 +137,10 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 }
 
 func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
-	t.Setenv("TELEMETRY_ENABLED", "1")
 	for _, afterPublication := range []bool{false, true} {
 		t.Run(fmt.Sprintf("after_publication_%t", afterPublication), func(t *testing.T) {
-			capture := newActionCollector(t)
 			gate := api.NewOperationGate()
-			server, catalog := newTestServer(t, func(d *api.Deps) { d.Gate = gate; d.TelemetryCapture = capture.capture })
+			server, catalog := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 			srv := &testServer{ts: server}
 			response := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
 				Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: syntheticPackageRoot(t),
@@ -153,7 +151,7 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 			require.False(t, preview.Blocking)
 			request := api.PackageImportRequest{PreflightID: preview.PreflightID, Into: "/",
 				Name: "cancellation-snapshot", OperationID: uuid.NewString()}
-			response = srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), map[string]string{"X-Docbank-Surface": "cli"})
+			response = srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
 			require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 			var admitted api.PackageImportJob
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &admitted))
@@ -164,7 +162,6 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 			var attempted atomic.Bool
 			worker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
 				Catalog: catalog.Store, Blobs: catalog.Blobs, Owner: "synthetic-worker",
-				ImportResult: capture.capture.DocumentAdded,
 				Mutate: func(ctx context.Context, fn func() error) error {
 					if err := gate.MutateContext(ctx, fn); err != nil {
 						return err
@@ -196,7 +193,6 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 			require.NoError(t, err)
 			_, workerErr := worker.ProcessOnce(t.Context())
 			require.True(t, attempted.Load())
-			capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
 			pkg, err := catalog.Package(t.Context(), admitted.PackageID)
 			require.NoError(t, err)
 			progress, err := catalog.PackageImportProgress(t.Context(), admitted.PackageID)

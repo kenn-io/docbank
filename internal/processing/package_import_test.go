@@ -263,7 +263,7 @@ func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing
 	require.Equal(t, "CASE000002", assigned[1].Label)
 }
 
-func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
+func TestPackageImportWorkerReportsAdditionOnceAcrossResume(t *testing.T) {
 	t.Parallel()
 	env := newPackageImportTestEnv(t, 2, false)
 	injected := errors.New("synthetic interruption before second record")

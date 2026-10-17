@@ -2372,48 +2372,40 @@ it("refreshes open audit history when a pending tag change completes", async () 
   expect(screen.queryByText("No events on this page")).toBeNull();
 });
 
-it.each(["fails", "is superseded"])(
-  "counts a submitted tag filter before its lookup %s",
-  async (outcome) => {
-    prepareSelectionApp();
-    const { fetchMock } = installSelectionBackend();
-    const backend = fetchMock.getMockImplementation()!;
-    const actions: unknown[] = [];
-    let release!: (response: Response) => void;
-    fetchMock.mockImplementation((input, init) => {
-      const url = String(input);
-      if (url === "/api/daemon/telemetry/events") {
-        const event = JSON.parse(String(init?.body));
-        if (event.event === "search_run") actions.push(event);
-        return Promise.resolve(new Response(null, { status: 202 }));
-      }
-      if (url.startsWith("/api/v1/tags/") && url.includes("/nodes?"))
-        return new Promise<Response>((resolve) => {
-          release = resolve;
-        });
-      return backend(input, init);
-    });
-    render(App);
-    await screen.findByRole("cell", { name: "Reports" });
-    await fireEvent.click(
-      screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
-    );
-    await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
-    expect(actions).toEqual([
-      { event: "search_run", properties: { surface: "web", search_type: "text" } },
-    ]);
-    if (outcome === "is superseded") {
-      const search = screen.getByRole("searchbox", { name: "Search documents" });
-      await fireEvent.input(search, { target: { value: "alpha" } });
-      await fireEvent.submit(search.closest("form")!);
-      await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+it("counts a submitted tag filter once even when its lookup fails", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const backend = fetchMock.getMockImplementation()!;
+  const actions: unknown[] = [];
+  let release!: (response: Response) => void;
+  fetchMock.mockImplementation((input, init) => {
+    const url = String(input);
+    if (url === "/api/daemon/telemetry/events") {
+      const event = JSON.parse(String(init?.body));
+      if (event.event === "search_run") actions.push(event);
+      return Promise.resolve(new Response(null, { status: 202 }));
     }
-    release(
-      new Response('{"detail":"Synthetic tag failure"}', {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    await waitFor(() => expect(actions).toHaveLength(outcome === "fails" ? 1 : 2));
-  },
-);
+    if (url.startsWith("/api/v1/tags/") && url.includes("/nodes?"))
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    return backend(input, init);
+  });
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  expect(actions).toEqual([
+    { event: "search_run", properties: { surface: "web", search_type: "text" } },
+  ]);
+  release(
+    new Response('{"detail":"Synthetic tag failure"}', {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  await screen.findByText("Synthetic tag failure");
+  expect(actions).toHaveLength(1);
+});

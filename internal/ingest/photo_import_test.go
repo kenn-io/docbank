@@ -289,7 +289,7 @@ func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
 	assert.Equal(t, int64(1), finished.CompletedObjects)
 }
 
-func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
+func TestPhotoImportRunnerReportsAdditionOnceAcrossCancelAndResume(t *testing.T) {
 	ing := newTestIngester(t)
 	root := t.TempDir()
 	for i := range 3 {

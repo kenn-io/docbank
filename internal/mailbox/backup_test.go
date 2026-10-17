@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
+func TestMailboxPortableBackupRetainsSourceChildrenTombstoneAndImportReportingState(t *testing.T) {
 	f := mailboxFixture(t)
 	var surfaces []string
 	f.ImportResult = func(surface string) { surfaces = append(surfaces, surface) }

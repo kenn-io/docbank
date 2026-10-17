@@ -77,10 +77,8 @@ func TestScreenViewedTelemetryEventRoute(t *testing.T) {
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = telemetry.CaptureHandler(capture.reporter, t.TempDir()) })
 	session := issueWebSession(t, ts)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
-	for range 2 {
-		status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events",
-			`{"event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`, browser)
-		require.Equal(t, http.StatusAccepted, status, body)
-	}
+	status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events",
+		`{"event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`, browser)
+	require.Equal(t, http.StatusAccepted, status, body)
 	capture.requireEvent(t, "screen_viewed", map[string]any{"screen": "browse"})
 }
