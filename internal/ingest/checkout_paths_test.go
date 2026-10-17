@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -183,36 +181,4 @@ func TestWatcherReleasesEveryRetiredCheckoutOfReusedFolder(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tc.destination, current.Destination)
 	}
-}
-
-func TestWaitingWatchReportsCheckoutReasonAndClearsIt(t *testing.T) {
-	ing := newTestIngester(t)
-	watchRoot := t.TempDir()
-	destination := filepath.Join(watchRoot, "checkout")
-	require.NoError(t, os.Mkdir(destination, 0o700))
-	node, err := ing.Store.CreateFile(t.Context(), ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := ing.Store.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	checkout, op, _, err := ing.Store.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-	require.NoError(t, err)
-	require.NoError(t, ing.Store.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-	_, err = ing.Store.RetirePhotoCheckout(t.Context(), checkout.ID)
-	require.NoError(t, err)
-	copyPath := filepath.Join(destination, "edited.jpg")
-	require.NoError(t, os.WriteFile(copyPath, []byte("copy"), 0o600))
-	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: watchRoot, Destination: "/inbox", ScanInterval: config.Duration(time.Hour)}, runTestMutation, nil)
-	require.NoError(t, err)
-	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	require.NoError(t, supervisor.Start("watch:inbox", watcher.Run))
-	require.Eventually(t, func() bool {
-		snapshot := supervisor.Snapshot()[0]
-		return snapshot.Status == jobs.StatusRunning && strings.Contains(snapshot.Error, destination) && strings.Contains(snapshot.Error, checkout.ID) && strings.Contains(snapshot.Error, "clear or move")
-	}, 3*time.Second, 10*time.Millisecond)
-	require.NoError(t, os.Remove(copyPath))
-	require.Eventually(t, func() bool {
-		snapshot := supervisor.Snapshot()[0]
-		return snapshot.Status == jobs.StatusRunning && snapshot.Error == ""
-	}, 5*time.Second, 10*time.Millisecond)
 }

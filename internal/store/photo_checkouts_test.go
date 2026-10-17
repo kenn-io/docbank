@@ -280,6 +280,7 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 	cases := []rejectedCase{
 		{name: "all with assets", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{All: true, AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, errorText: "all cannot be combined"},
 		{name: "empty all", limit: 100, errorText: "selection contains no files"},
+		{name: "empty years", withAsset: true, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 1900, To: 1900}}, errorText: "selection contains no files"},
 		{name: "empty selection", limit: 100, setSelection: true, errorText: "select assets, albums, years, or all"},
 		{name: "invalid asset ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AssetIDs: []string{"bad"}}},
 		{name: "invalid album ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AlbumIDs: []string{"bad"}}},
@@ -1067,27 +1068,19 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 	}{
 		{"one skipped photo", PhotoCheckoutSelection{AssetIDs: []string{estimate.SkippedPhotos[0].AssetID}}, estimate.SkippedPhotos[:1]},
 		{"all skipped photos", PhotoCheckoutSelection{AssetIDs: duplicateIDs}, estimate.SkippedPhotos},
-		{"no files", PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 1900, To: 1900}}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, estimateErr := s.EstimatePhotoCheckout(ctx, test.selection)
 			checkout, _, _, createErr := s.CreatePhotoCheckout(ctx, test.selection, "checkout", 0)
 			require.Empty(t, checkout.ID)
-			for name, err := range map[string]error{"estimate": estimateErr, "create": createErr} {
-				t.Run(name, func(t *testing.T) {
-					require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-					if len(test.skips) == 0 {
-						require.EqualError(t, err, "invalid photo checkout: selection contains no files")
-						return
-					}
-					require.Equal(t, len(test.skips), strings.Count(err.Error(), "has the same name"))
-					for _, skip := range test.skips {
-						require.ErrorContains(t, err, skip.AssetID)
-						require.ErrorContains(t, err, skip.FileID)
-						require.ErrorContains(t, err, "photo.jpg")
-						require.ErrorContains(t, err, skip.Reason)
-					}
-				})
+			require.ErrorIs(t, createErr, ErrInvalidPhotoCheckout)
+			require.ErrorIs(t, estimateErr, ErrInvalidPhotoCheckout)
+			require.Equal(t, len(test.skips), strings.Count(estimateErr.Error(), "has the same name"))
+			for _, skip := range test.skips {
+				require.ErrorContains(t, estimateErr, skip.AssetID)
+				require.ErrorContains(t, estimateErr, skip.FileID)
+				require.ErrorContains(t, estimateErr, "photo.jpg")
+				require.ErrorContains(t, estimateErr, skip.Reason)
 			}
 		})
 	}

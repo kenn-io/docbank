@@ -449,13 +449,10 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	}
 }
 
-func recordCheckoutPublication(t *testing.T, s Service, op store.StorageOperation, entry store.PhotoCheckoutEntry, publication string) {
+func recordCheckoutPublication(t *testing.T, s Service, entry store.PhotoCheckoutEntry, publication string) {
 	t.Helper()
-	switch publication {
-	case "published":
+	if publication == "published" {
 		require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entry, func() (bool, error) { return true, nil }))
-	case "in flight":
-		require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entry.FileID, 0, 0, 0, "{}"))
 	}
 }
 
@@ -481,7 +478,7 @@ func TestCheckoutRecoveryFinishesReplacedDirectories(t *testing.T) {
 			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
-			recordCheckoutPublication(t, s, op, entries[0], test.publication)
+			recordCheckoutPublication(t, s, entries[0], test.publication)
 			require.NoError(t, root.Close())
 			replaced := parent
 			if test.location == "entry subdirectory" {

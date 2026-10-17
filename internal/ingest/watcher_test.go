@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -564,6 +565,11 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				destination := t.TempDir()
+				watchSource := destination
+				if tc.files {
+					destination = filepath.Join(watchSource, "checkout")
+					require.NoError(t, os.Mkdir(destination, 0o700))
+				}
 				node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
 				require.NoError(t, err)
 				asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
@@ -580,28 +586,40 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 					require.NoError(t, os.WriteFile(partial, []byte("edits"), 0o600))
 				}
 				var log bytes.Buffer
-				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: destination, Destination: "/inbox"}, runTestMutation, slog.New(slog.NewTextHandler(&log, nil)))
+				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: watchSource, Destination: "/inbox", ScanInterval: config.Duration(time.Hour)}, runTestMutation, slog.New(slog.NewTextHandler(&log, nil)))
 				require.NoError(t, err)
 				done := make(chan error, 1)
-				go func() {
-					root, err := watcher.openRoot(ctx)
-					if err == nil {
-						err = root.Close()
-					}
-					done <- err
-				}()
+				var supervisor *jobs.Supervisor
+				if tc.files {
+					supervisor = jobs.New(ctx, nil)
+					defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+					require.NoError(t, supervisor.Start("watch:inbox", watcher.Run))
+				} else {
+					go func() {
+						root, err := watcher.openRoot(ctx)
+						if err == nil {
+							err = root.Close()
+						}
+						done <- err
+					}()
+				}
 				synctest.Wait()
 				if !tc.retired || tc.files {
-					select {
-					case err := <-done:
-						t.Fatalf("watch stopped before checkout cleared: %v", err)
-					default:
-					}
 					if !tc.retired {
+						select {
+						case err := <-done:
+							t.Fatalf("watch stopped before checkout cleared: %v", err)
+						default:
+						}
 						cancel()
 						require.ErrorIs(t, <-done, context.Canceled)
 						return
 					}
+					snapshot := supervisor.Snapshot()[0]
+					require.Equal(t, jobs.StatusRunning, snapshot.Status)
+					require.Contains(t, snapshot.Error, destination)
+					require.Contains(t, snapshot.Error, checkout.ID)
+					require.Contains(t, snapshot.Error, "clear or move")
 					time.Sleep(2 * time.Minute)
 					synctest.Wait()
 					require.Equal(t, 1, strings.Count(log.String(), "watch is waiting"))
@@ -615,7 +633,14 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 					}
 				}
 				if tc.files {
-					require.NoError(t, <-done)
+					time.Sleep(30 * time.Second)
+					synctest.Wait()
+					snapshot := supervisor.Snapshot()[0]
+					require.Equal(t, jobs.StatusRunning, snapshot.Status)
+					require.Empty(t, snapshot.Error)
+					released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
+					require.NoError(t, err)
+					require.Empty(t, released.Destination)
 				}
 			})
 		})

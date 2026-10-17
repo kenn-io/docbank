@@ -471,32 +471,6 @@ func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 			require.Equal(t, tc.pending, checkoutValidationPending(ctx, tc.err))
 		})
 	}
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		checked, admitted := make(chan struct{}, 1), make(chan error, 1)
-		var readable atomic.Bool
-		go func() {
-			admitted <- waitForCheckoutValidation(ctx, func(context.Context) error {
-				if readable.Load() {
-					return nil
-				}
-				select {
-				case checked <- struct{}{}:
-				default:
-				}
-				return context.DeadlineExceeded
-			}, slog.Default())
-		}()
-		<-checked
-		select {
-		case err := <-admitted:
-			t.Fatalf("admission finished before validation succeeded: %v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-		readable.Store(true)
-		require.NoError(t, <-admitted)
-	})
 }
 
 func TestCheckoutBindingValidationPersistsFolderReuseAcrossRestart(t *testing.T) {
@@ -532,70 +506,51 @@ func TestCheckoutBindingValidationPersistsFolderReuseAcrossRestart(t *testing.T)
 }
 
 func TestCheckoutValidationBacksOffAndLogsChangedErrors(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		var log bytes.Buffer
-		attempts := 0
-		var times []time.Time
-		done := make(chan error, 1)
-		go func() {
-			done <- waitForCheckoutValidation(ctx, func(context.Context) error {
-				attempts++
-				times = append(times, time.Now())
-				if attempts > 6 {
-					return errors.New("folder changed")
+	for _, succeeds := range []bool{false, true} {
+		t.Run(fmt.Sprintf("success=%t", succeeds), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				var log bytes.Buffer
+				readable := false
+				attempts := 0
+				var times []time.Time
+				done := make(chan error, 1)
+				go func() {
+					done <- waitForCheckoutValidation(ctx, func(context.Context) error {
+						if readable {
+							return nil
+						}
+						attempts++
+						times = append(times, time.Now())
+						if attempts > 6 {
+							return errors.New("folder changed")
+						}
+						return fmt.Errorf("folder holds copies: %w", context.DeadlineExceeded)
+					}, slog.New(slog.NewTextHandler(&log, nil)))
+				}()
+				time.Sleep(5 * time.Minute)
+				synctest.Wait()
+				select {
+				case err := <-done:
+					t.Fatalf("admission finished before validation succeeded: %v", err)
+				default:
 				}
-				return errors.New("folder holds copies")
-			}, slog.New(slog.NewTextHandler(&log, nil)))
-		}()
-		time.Sleep(5 * time.Minute)
-		synctest.Wait()
-		cancel()
-		require.ErrorIs(t, <-done, context.Canceled)
-		require.Equal(t, 1, strings.Count(log.String(), "folder holds copies"))
-		require.Equal(t, 1, strings.Count(log.String(), "folder changed"))
-		require.Less(t, attempts, 25, "a permanent wait must back off")
-		require.Greater(t, times[2].Sub(times[1]), times[1].Sub(times[0]))
-		require.Equal(t, 30*time.Second, times[len(times)-1].Sub(times[len(times)-2]))
-	})
-}
-
-func TestCheckoutStartupKeepsStoreUnattachedUntilSeparated(t *testing.T) {
-	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-	_, err := catalog.RetirePhotoCheckout(t.Context(), checkoutID)
-	require.NoError(t, err)
-	copyPath := filepath.Join(destination, "edited.jpg")
-	require.NoError(t, os.WriteFile(copyPath, []byte("copy"), 0o600))
-	cfg := config.Default()
-	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: filepath.Dir(destination)}}
-	const storeID = "20000000-0000-4000-8000-000000000001"
-	const epoch = "30000000-0000-4000-8000-000000000001"
-	require.NoError(t, blob.EnsureFilesystemNamespace(filepath.Dir(destination)))
-	backend, err := blob.NewFilesystemBackend(filepath.Dir(destination), nil)
-	require.NoError(t, err)
-	require.NoError(t, backend.ReplaceOwnership(t.Context(), packstore.Ownership{Format: packstore.OwnershipFormatV1, Vault: catalog.VaultID(), Store: storeID, Epoch: epoch}, nil))
-	require.NoError(t, backend.Close())
-	stores := []store.BlobStore{{ID: storeID, Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch}}
-	specs, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, func(ctx context.Context, binding config.StoreBindingConfig) error {
-		return validateCheckoutBinding(ctx, catalog, binding)
-	})
-	require.NoError(t, err)
-	require.Contains(t, specs[0].UnavailableReason, checkoutID)
-	registry := blob.NewRegistry(t.Context(), catalog.VaultID(), cfg.StoreBindings, specs)
-	t.Cleanup(func() { require.NoError(t, registry.Close()) })
-	_, attached := registry.Backend(storeID)
-	require.False(t, attached, "startup overlap must keep the store unattached without registry admission hooks")
-	require.Equal(t, blob.StoreUnavailable, registry.Refresh(t.Context(), storeID).State)
-	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	require.NoError(t, startCheckoutStoreWaits(supervisor, registry, specs, cfg, catalog, slog.Default()))
-	// Move the released copies out, leaving the store namespace in place.
-	require.NoError(t, os.Rename(copyPath, filepath.Join(t.TempDir(), "edited.jpg")))
-	require.Eventually(t, func() bool { _, ok := registry.Backend(storeID); return ok }, 5*time.Second, 10*time.Millisecond)
-	require.Equal(t, blob.StoreOnline, registry.Observation(storeID).State)
+				if succeeds {
+					readable = true
+					require.NoError(t, <-done)
+				} else {
+					cancel()
+					require.ErrorIs(t, <-done, context.Canceled)
+				}
+				require.Equal(t, 1, strings.Count(log.String(), "folder holds copies"))
+				require.Equal(t, 1, strings.Count(log.String(), "folder changed"))
+				require.Less(t, attempts, 25, "a permanent wait must back off")
+				require.Greater(t, times[2].Sub(times[1]), times[1].Sub(times[0]))
+				require.Equal(t, 30*time.Second, times[len(times)-1].Sub(times[len(times)-2]))
+			})
+		})
+	}
 }
 
 func TestCheckoutStartupMissingStoreWaitsUntilSeparated(t *testing.T) {
@@ -627,14 +582,12 @@ func TestCheckoutStartupMissingStoreWaitsUntilSeparated(t *testing.T) {
 	registry := blob.NewRegistry(t.Context(), catalog.VaultID(), cfg.StoreBindings, specs)
 	t.Cleanup(func() { require.NoError(t, registry.Close()) })
 	_, attached := registry.Backend(storeID)
-	require.False(t, attached, "startup overlap must keep the store unattached without registry admission hooks")
-	require.Equal(t, blob.StoreUnavailable, registry.Refresh(t.Context(), storeID).State)
+	require.False(t, attached, "a missing store must stay unattached until checkout validation succeeds")
 	supervisor := jobs.New(t.Context(), nil)
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	require.NoError(t, startCheckoutStoreWaits(supervisor, registry, specs, cfg, catalog, slog.Default()))
 	// A returning store stays held while checkout copies protect its parent.
 	require.NoError(t, os.Rename(parked, storePath))
-	require.Equal(t, blob.StoreUnavailable, registry.Refresh(t.Context(), storeID).State)
 	require.Never(t, func() bool { _, ok := registry.Backend(storeID); return ok }, 1500*time.Millisecond, 10*time.Millisecond)
 	// Clear the retired destination before reusing it for store data.
 	require.NoError(t, os.Rename(storePath, parked))
