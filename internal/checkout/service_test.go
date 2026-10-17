@@ -246,6 +246,46 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	}
 }
 
+func TestCheckoutRetiredCopiesProtectDestinationUntilCleared(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
+	destination := t.TempDir()
+	c, _, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
+	require.NoError(t, err)
+	require.NoError(t, s.Run(t.Context(), c, root))
+	require.NoError(t, root.Close())
+	retired, err := s.Store.RetirePhotoCheckout(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.True(t, retired.RetentionReleased)
+	status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.PublishedFiles)
+
+	sub := filepath.Join(destination, "nested")
+	require.NoError(t, os.Mkdir(sub, 0o700))
+	created, _, _, root, err := s.Prepare(t.Context(), selection, sub, 0)
+	if root != nil {
+		require.NoError(t, root.Close())
+	}
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	require.Empty(t, created.ID)
+
+	children, err := os.ReadDir(destination)
+	require.NoError(t, err)
+	for _, child := range children {
+		require.NoError(t, os.RemoveAll(filepath.Join(destination, child.Name())))
+	}
+	created, _, _, root, err = s.Prepare(t.Context(), selection, destination, 0)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	require.NoError(t, s.Run(t.Context(), created, root))
+	status, err = s.Store.PhotoCheckoutStatus(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.PublishedFiles)
+}
+
 func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"nil supervisor", "stopped supervisor"} {

@@ -112,7 +112,14 @@ func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]strin
 		return nil, err
 	}
 	for _, c := range checkouts {
-		if c.ID != excludedID && c.Destination != "" && !c.RetentionReleased {
+		if c.ID == excludedID {
+			continue
+		}
+		protected, err := ingest.PhotoCheckoutProtectsDestination(c)
+		if err != nil {
+			return nil, err
+		}
+		if protected {
 			roots = append(roots, c.Destination)
 		}
 	}

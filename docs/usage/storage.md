@@ -97,6 +97,10 @@ stores may not use equal or nested prefixes under the same canonical endpoint
 and bucket. The ownership marker is the authoritative check. Path and prefix
 comparisons reject obvious aliases before Docbank contacts the backend.
 
+Watches and filesystem stores that overlap checkout folders wait and log a
+warning. Released checkout folders stay protected while they contain files
+or Docbank can't inspect them. See [Create writable copies](photos.md#create-writable-copies).
+
 `storage list` and `storage status` separate catalog authority from observed
 availability. `authoritative_objects` counts verified locations recorded for a
 store. `unreadable_objects` counts objects for which every authorized location
