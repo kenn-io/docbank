@@ -10,15 +10,26 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-beforeEach(() =>
+beforeEach(() => {
+  vi.stubGlobal(
+    "Image",
+    class {
+      naturalWidth = 1000;
+      naturalHeight = 800;
+      src = "";
+      decode() {
+        return Promise.resolve();
+      }
+    },
+  );
   vi.stubGlobal(
     "ResizeObserver",
     class {
       observe() {}
       disconnect() {}
     },
-  ),
-);
+  );
+});
 const face = photoFace({ revision: 3, assertion_id: undefined });
 it("explains that removed faces keep their place in the photo limit", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
@@ -167,7 +178,7 @@ it.each(["person-b", "new", "cancel", "assigned"])(
           state: "curated",
           revision: 1,
           display_name_folded: "alex",
-          created_at: "2025-01-01T00:00:00Z",
+          created_at: "2026-01-01T00:00:00Z",
         },
         {
           person_id: "person-b",
@@ -179,11 +190,62 @@ it.each(["person-b", "new", "cancel", "assigned"])(
         },
       ],
     });
+    vi.mocked(api.listPhotoFaces).mockImplementation(async (version) =>
+      version === "version-1"
+        ? {
+            faces: [
+              photoFace({
+                face_id: "left",
+                assertion_id: "left",
+                box: { x: 0.1, y: 0.2, width: 0.1, height: 0.1 },
+              }),
+              photoFace({
+                face_id: "right",
+                assertion_id: "right",
+                box: { x: 0.7, y: 0.2, width: 0.1, height: 0.1 },
+              }),
+              photoFace({
+                face_id: "withdrawn",
+                assertion_id: "old",
+                box: { x: 0, y: 0, width: 1, height: 1 },
+              }),
+              photoFace({
+                face_id: "small",
+                assertion_id: "left",
+                box: { x: 0, y: 0, width: 0.05, height: 0.05 },
+              }),
+              photoFace({
+                face_id: "z-tied",
+                assertion_id: "left",
+                box: { x: 0.5, y: 0.2, width: 0.1, height: 0.1 },
+              }),
+              photoFace({
+                face_id: "dismissed",
+                assertion_id: "left",
+                dismissed: true,
+                box: { x: 0, y: 0, width: 1, height: 1 },
+              }),
+            ],
+            assertions: [
+              photoPersonAssertion({ assertion_id: "left" }),
+              photoPersonAssertion({ assertion_id: "right", person_id: "person-b" }),
+              photoPersonAssertion({ assertion_id: "old", action: "retract" }),
+            ],
+            people: [],
+          }
+        : {
+            faces: [assigned ? { ...face, assertion_id: "assertion-a" } : face],
+            assertions: assigned ? [photoPersonAssertion()] : [],
+            people: assigned
+              ? [{ person_id: "person-a", display_name: "Alex", state: "curated" }]
+              : [],
+          },
+    );
     const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
-      const id = request.query.filters!.person_ids![0] === "person-a" ? 1 : 2;
-      const row = photo(id);
-      row.rotation = id === 1 ? 90 : 270;
-      row.previews.grid = { state: "ready", generation_id: `grid-${id}` };
+      expect(request.query.filters!.person_ids![0]).toMatch(/^person-[ab]$/);
+      const row = photo(1);
+      row.rotation = 90;
+      row.previews.grid = { state: "ready", generation_id: "grid-1" };
       return {
         items: [
           { ...row, asset_id: "photo-current", content_version_id: "version-current-raw" },
@@ -238,13 +300,22 @@ it.each(["person-b", "new", "cancel", "assigned"])(
     );
     expect(screen.getAllByRole("img").map((image) => image.style.transform)).toEqual([
       "translate(-50%,-50%) rotate(90deg)",
-      "translate(-50%,-50%) rotate(270deg)",
+      "translate(-50%,-50%) rotate(90deg)",
     ]);
     expect(list).toHaveBeenCalledWith(
       expect.objectContaining({ hidden: false, page_size: 4 }),
       expect.objectContaining({ session: "session" }),
     );
-    expect(read.mock.calls.map(([id]) => id)).toEqual(["photo-1", "photo-2"]);
+    expect(read.mock.calls.map(([id]) => id)).toEqual(["photo-1", "photo-1"]);
+    expect(api.listPhotoFaces).toHaveBeenCalledWith(
+      "version-1",
+      expect.objectContaining({ session: "session", signal: expect.any(AbortSignal) }),
+    );
+    const images = screen.getAllByRole("img");
+    expect(parseFloat(images[0]!.style.left)).toBeCloseTo(-48);
+    expect(parseFloat(images[1]!.style.left)).toBeCloseTo(-48);
+    expect(parseFloat(images[0]!.style.top)).toBeCloseTo(172);
+    expect(parseFloat(images[1]!.style.top)).toBeCloseTo(-68);
     if (selection === "cancel")
       await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     else {
@@ -273,90 +344,110 @@ it.each(["person-b", "new", "cancel", "assigned"])(
   },
 );
 
-it.each(["select", "cancel", "scope"])(
-  "bounds namesake preview reads within Hidden access: %s",
-  async (mode) => {
-    const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
-    const access = new HiddenAccess("session", vi.fn());
-    access.acceptState({ configured: true, expires_in: 60 }, Date.now());
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
-      faces: [face],
-      assertions: [],
-      people: [],
-    });
-    vi.spyOn(api, "listPeople").mockResolvedValue({
-      items: Array.from({ length: 6 }, (_, index) => ({
-        person_id: `person-${index}`,
-        display_name: "Alex",
-        display_name_folded: "alex",
-        state: "curated",
-        revision: 1,
-        created_at: "2026-01-01T00:00:00Z",
-      })),
-    });
-    let active = 0;
-    let maximum = 0;
-    const pending = new Map<string, { finish: (fail?: boolean) => void; signal: AbortSignal }>();
-    const list = vi.spyOn(api, "listPhotoAssets").mockImplementation((request, options) => {
-      const id = request.query.filters!.person_ids![0]!;
-      expect(request.hidden).toBe(true);
-      active++;
-      maximum = Math.max(maximum, active);
-      return new Promise((resolve, reject) => {
-        pending.set(id, {
-          signal: options!.signal!,
-          finish(fail) {
-            active--;
-            pending.delete(id);
-            if (fail) reject(new Error("Preview read failed"));
-            else resolve({ items: [] } as unknown as api.PhotoBrowsePage);
-          },
-        });
+it.each(
+  ["select", "cancel", "scope"].flatMap((mode) =>
+    ["list", "faces"].map((source) => ({ mode, source })),
+  ),
+)("bounds namesake preview reads within Hidden access: $mode $source", async ({ mode, source }) => {
+  const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
+  const access = new HiddenAccess("session", vi.fn());
+  access.acceptState({ configured: true, expires_in: 60 }, Date.now());
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    faces: [face],
+    assertions: [],
+    people: [],
+  });
+  vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: Array.from({ length: 6 }, (_, index) => ({
+      person_id: `person-${index}`,
+      display_name: "Alex",
+      display_name_folded: "alex",
+      state: "curated",
+      revision: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    })),
+  });
+  let active = 0;
+  let maximum = 0;
+  const pending = new Map<string, { finish: (fail?: boolean) => void; signal: AbortSignal }>();
+  const pendingRead = (id: string, options?: { signal?: AbortSignal | null }) => {
+    active++;
+    maximum = Math.max(maximum, active);
+    return new Promise<api.PhotoBrowsePage & api.PhotoFacePage>((resolve, reject) => {
+      pending.set(id, {
+        signal: options!.signal!,
+        finish(fail) {
+          active--;
+          pending.delete(id);
+          if (fail) reject(new Error("Preview read failed"));
+          else
+            resolve({
+              items: [],
+              facets: [],
+              total: 0,
+              relevance_available: false,
+              faces: [],
+              assertions: [],
+              people: [],
+            });
+        },
       });
     });
-    const lockRequest = vi.spyOn(api, "lockPhotoHidden").mockResolvedValue({ configured: true });
-    const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-    const faces = new PhotoFaces("session", vi.fn(), true, vi.fn(), access);
-    await faces.load("version-a");
-    render(PhotoPeople, { faces, session: "session" });
-    await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
-    await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
-    const group = await screen.findByRole("option", { name: "Alex · 6 people" });
-    await fireEvent.mouseDown(group);
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(4));
+  };
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request, options) => {
+    const id = request.query.filters!.person_ids![0]!;
+    expect(request.hidden).toBe(true);
+    return source === "list"
+      ? pendingRead(id, options)
+      : ({ items: [{ ...photo(1), content_version_id: id }] } as api.PhotoBrowsePage);
+  });
+  const lockRequest = vi.spyOn(api, "lockPhotoHidden").mockResolvedValue({ configured: true });
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn(), true, vi.fn(), access);
+  await faces.load("version-a");
+  const { PhotoPreviewCache } = await import("./photoPreviewCache.js");
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  if (source === "faces") vi.mocked(api.listPhotoFaces).mockImplementation(pendingRead);
+  render(PhotoPeople, { faces, session: "session", cache });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+  const group = await screen.findByRole("option", { name: "Alex · 6 people" });
+  await fireEvent.mouseDown(group);
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(4));
+  expect(maximum).toBe(4);
+  if (mode === "select") {
+    await act(() => pending.get("person-0")!.finish(true));
+    await screen.findByText("Preview unavailable");
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(5));
+    await act(() => pending.get("person-1")!.finish());
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(6));
+    await waitFor(() => expect(pending.size).toBe(4));
+    await act(async () => {
+      for (const read of pending.values()) read.finish();
+      await access.settled();
+    });
     expect(maximum).toBe(4);
-    if (mode === "select") {
-      await act(() => pending.get("person-0")!.finish(true));
-      await screen.findByText("Preview unavailable");
-      await waitFor(() => expect(list).toHaveBeenCalledTimes(5));
-      await act(() => pending.get("person-1")!.finish());
-      await waitFor(() => expect(list).toHaveBeenCalledTimes(6));
-      await act(async () => {
-        for (const read of pending.values()) read.finish();
-        await access.settled();
-      });
-      expect(maximum).toBe(4);
-    } else {
-      const lock = access.lock();
-      const reads = [...pending.values()];
-      if (mode === "cancel") await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      else await act(() => access.acceptState({ configured: true }, Date.now() + 1));
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      expect(reads.every((read) => read.signal.aborted)).toBe(true);
-      await act(() => reads[0]!.finish(true));
-      expect(lockRequest).not.toHaveBeenCalled();
-      await act(async () => {
-        for (const read of reads.slice(1)) read.finish();
-        await lock;
-      });
-      expect(lockRequest).toHaveBeenCalledOnce();
-      expect(list).toHaveBeenCalledTimes(4);
-      expect(write).not.toHaveBeenCalled();
-    }
-    access.dispose();
-    faces.dispose();
-  },
-);
+  } else {
+    const lock = access.lock();
+    const reads = [...pending.values()];
+    if (mode === "cancel") await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    else await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(reads.every((read) => read.signal.aborted)).toBe(true);
+    await act(() => reads[0]!.finish(true));
+    expect(lockRequest).not.toHaveBeenCalled();
+    await act(async () => {
+      for (const read of reads.slice(1)) read.finish();
+      await lock;
+    });
+    expect(lockRequest).toHaveBeenCalledOnce();
+    expect(list).toHaveBeenCalledTimes(4);
+    expect(write).not.toHaveBeenCalled();
+  }
+  await cache.dispose();
+  access.dispose();
+  faces.dispose();
+});
 
 it.each([
   {
@@ -489,6 +580,8 @@ it.each([
   { source: "list", result: "empty" },
   { source: "list", result: "relock" },
   { source: "image", result: "failure" },
+  { source: "faces", result: "failure" },
+  { source: "faces", result: "relock" },
   { source: "image", result: "relock" },
 ])("handles Hidden same-name previews: $source $result", async ({ source, result }) => {
   const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
@@ -496,7 +589,23 @@ it.each([
   const lost = vi.fn();
   const access = new HiddenAccess("session", lost);
   const run = vi.spyOn(access, "run");
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  vi.spyOn(api, "listPhotoFaces").mockImplementation(async (version) => {
+    if (version !== "version-a" && source === "faces")
+      throw new APIError("Face read failed", result === "relock" ? 403 : 500, "face_read_failed");
+    return {
+      faces: [face],
+      assertions:
+        version === "version-a"
+          ? []
+          : [
+              photoPersonAssertion({
+                person_id: version === "version-1" ? "person-a" : "person-b",
+                photo_mark: true,
+              }),
+            ],
+      people: [],
+    };
+  });
   vi.spyOn(api, "listPeople").mockResolvedValue({
     items: [
       {
@@ -518,7 +627,7 @@ it.each([
     ],
   });
   const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
-    if (source === "image") {
+    if (source === "image" || source === "faces") {
       const row = photo(request.query.filters!.person_ids![0] === "person-a" ? 1 : 2);
       row.previews.grid = { state: "ready", generation_id: `grid-${row.asset_id}` };
       return { items: [row] } as api.PhotoBrowsePage;
@@ -631,7 +740,7 @@ it("keeps 100 loaded people and retries a later page to find an exact person", a
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
   const more = await screen.findByRole("option", { name: "Load more" });
   expect(search.mock.calls.some(([params]) => params?.cursor)).toBe(false);
-  expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
+  expect(screen.getByRole("option", { name: 'Create person "Alex"' })).toBeTruthy();
   await fireEvent.mouseDown(more);
   await screen.findByText("People search unavailable");
   expect(screen.getByRole("option", { name: "Aaron 0 Alex" })).toBeTruthy();

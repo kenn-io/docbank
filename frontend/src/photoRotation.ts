@@ -71,3 +71,18 @@ export function photoFaceCrop(box: NormalizedBox, width: number, height: number,
   );
   return { x, y, side, ...size };
 }
+
+export function photoFaceCropStyle(
+  box: NormalizedBox | undefined,
+  width: number,
+  height: number,
+  rotation: number,
+  edge: number,
+) {
+  const size = rotatedDimensions(width, height, rotation);
+  const crop = box ? photoFaceCrop(box, width, height, rotation) : undefined;
+  const scale = edge / (crop?.side ?? Math.max(size.width, size.height));
+  const left = edge / 2 + (crop ? (size.width / 2 - crop.x - crop.side / 2) * scale : 0);
+  const top = edge / 2 + (crop ? (size.height / 2 - crop.y - crop.side / 2) * scale : 0);
+  return `width:${width * scale}px;height:${height * scale}px;left:${left}px;top:${top}px;transform:${photoRotationTransform(rotation)}`;
+}

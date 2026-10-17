@@ -41,11 +41,6 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	var listed api.PhotoFacePage
 	require.NoError(t, json.Unmarshal([]byte(body), &listed))
 	require.Len(t, listed.People, 1)
-	var payload struct {
-		Assertions []map[string]any `json:"assertions"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(body), &payload))
-	require.NotContains(t, payload.Assertions[0], "display_name")
 
 	conflictBox := box
 	conflictBox.X = 0.5

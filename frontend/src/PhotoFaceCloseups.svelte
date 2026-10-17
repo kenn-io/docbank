@@ -2,7 +2,7 @@
   import { Button } from "@kenn-io/kit-ui";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   import type { PhotoBrowseRow, FaceBox } from "./generated/docbank.js";
-  import { photoFaceCrop, photoRotationTransform, rotatedDimensions } from "./photoRotation.js";
+  import { photoFaceCropStyle } from "./photoRotation.js";
   let {
     photo,
     faces,
@@ -35,12 +35,7 @@
   ]);
   function style(box?: FaceBox) {
     if (!source) return "";
-    const size = rotatedDimensions(source.width, source.height, photo.rotation);
-    const crop = box ? photoFaceCrop(box, source.width, source.height, photo.rotation) : undefined;
-    const scale = 128 / (crop?.side ?? Math.max(size.width, size.height));
-    const left = crop ? 64 + (size.width / 2 - crop.x - crop.side / 2) * scale : 64;
-    const top = crop ? 64 + (size.height / 2 - crop.y - crop.side / 2) * scale : 64;
-    return `width:${source.width * scale}px;height:${source.height * scale}px;left:${left}px;top:${top}px;transform:${photoRotationTransform(photo.rotation)}`;
+    return photoFaceCropStyle(box, source.width, source.height, photo.rotation, 128);
   }
 </script>
 

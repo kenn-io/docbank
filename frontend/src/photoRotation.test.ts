@@ -1,5 +1,10 @@
 import { expect, it } from "vite-plus/test";
-import { photoRotationStyle, rotatePhotoBox, photoFaceCrop } from "./photoRotation.js";
+import {
+  photoRotationStyle,
+  rotatePhotoBox,
+  photoFaceCrop,
+  photoFaceCropStyle,
+} from "./photoRotation.js";
 
 it.each([
   [90, 200, 300],
@@ -39,4 +44,24 @@ it.each([
   const centered = photoFaceCrop({ x: 0.3, y: 0.3, width: 0.1, height: 0.1 }, 1000, 800, rotation);
   expect(centered.x + centered.side / 2).toBeCloseTo(x!);
   expect(centered.y + centered.side / 2).toBeCloseTo(y!);
+});
+
+it.each([
+  [0, 172, 112],
+  [90, -48, 172],
+  [180, -108, -48],
+  [270, 112, -108],
+])("positions a 64px crop on a nonsquare image at %i degrees", (rotation, left, top) => {
+  const style = photoFaceCropStyle(
+    { x: 0.1, y: 0.2, width: 0.1, height: 0.1 },
+    1000,
+    800,
+    rotation,
+    64,
+  );
+  const image = document.createElement("img");
+  image.style.cssText = style;
+  expect(parseFloat(image.style.left)).toBeCloseTo(left!);
+  expect(parseFloat(image.style.top)).toBeCloseTo(top!);
+  expect(style).toContain("width:400px;height:320px");
 });

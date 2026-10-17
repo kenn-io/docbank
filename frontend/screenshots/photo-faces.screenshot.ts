@@ -212,9 +212,11 @@ test("pages to an existing person and shows authored namesake rotation", async (
         "photos",
         "faces",
         "create",
-        previews[index]!.content_version_id,
+        previews[1]!.content_version_id,
         "--person",
         person.person_id,
+        "--box",
+        `${index === 0 ? 0.15 : 0.65},0.3,0.2,0.2`,
       );
     await page.goto(url.href);
     await page.locator(".photo-image").first().dblclick();
@@ -225,7 +227,7 @@ test("pages to an existing person and shows authored namesake rotation", async (
     await people.getByRole("combobox").fill("Smith");
     await expect(people.getByRole("option", { name: "Load more", exact: true })).toBeVisible();
     await expect(people.getByRole("option", { name: "Smith", exact: true })).toHaveCount(0);
-    await expect(people.getByRole("option", { name: 'Create person "Smith"' })).toHaveCount(0);
+    await expect(people.getByRole("option", { name: 'Create person "Smith"' })).toBeVisible();
     await people.getByRole("option", { name: "Load more", exact: true }).click();
     const existing = people.getByRole("option", { name: "Smith", exact: true });
     await existing.scrollIntoViewIfNeeded();
@@ -246,7 +248,8 @@ test("pages to an existing person and shows authored namesake rotation", async (
     await people.getByRole("option", { name: "Robin · 2 people", exact: true }).click();
     const chooser = page.getByRole("dialog", { name: "Choose Robin" });
     await expect(chooser.getByRole("img")).toHaveCount(2);
-    await expect(chooser.locator('img[style*="rotate(90deg)"]')).toHaveCount(1);
+    await expect(chooser.locator('img[style*="rotate(90deg)"]')).toHaveCount(2);
+    await expect(chooser.getByRole("img").first()).toHaveAttribute("src", /^blob:/);
     await captureDarkDialog(page, chooser, output!, "after-photo-people-rotation", 760, async () =>
       chooser
         .getByRole("img")

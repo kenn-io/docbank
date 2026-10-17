@@ -3,6 +3,7 @@
   import {
     listPeople,
     listPhotoAssets,
+    listPhotoFaces,
     type PhotoFace,
     type PersonSummary,
     type PhotoPersonAssertion,
@@ -11,7 +12,7 @@
   import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { APIError } from "./api-transport.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
-  import { photoRotationStyle } from "./photoRotation.js";
+  import { photoFaceCropStyle } from "./photoRotation.js";
   let {
     faces,
     session,
@@ -44,7 +45,7 @@
     Record<
       string,
       {
-        images: { url: string; rotation: number }[];
+        images: { url: string; style: string; wholePhoto: boolean }[];
         loading: boolean;
         failed: boolean;
       }
@@ -125,49 +126,97 @@
             failed: rows.length > 0 && !cache,
           },
         };
+        let remaining = rows.length;
+        const finish = (cause?: unknown) => {
+          if (request.signal.aborted) return;
+          if (cause) previewFailure(cause);
+          if (request.signal.aborted) return;
+          const state = previews[person.person_id]!;
+          previews = {
+            ...previews,
+            [person.person_id]: {
+              ...state,
+              loading: --remaining > 0,
+              failed: state.failed || !!cause,
+            },
+          };
+        };
         for (const row of rows) {
           if (!cache) continue;
-          if (!row.previews.grid.generation_id) {
-            previews = {
-              ...previews,
-              [person.person_id]: { ...previews[person.person_id]!, loading: false, failed: true },
-            };
-            continue;
+          try {
+            const metadata = await listPhotoFaces(row.content_version_id, {
+              session,
+              signal: request.signal,
+            });
+            if (request.signal.aborted) return;
+            const assertions = metadata.assertions.filter(
+              (assertion) =>
+                assertion.person_id === person.person_id &&
+                assertion.action === "assert" &&
+                assertion.role === "depicted",
+            );
+            const matching = metadata.faces
+              .filter(
+                (face) =>
+                  !face.dismissed &&
+                  assertions.some((assertion) => assertion.assertion_id === face.assertion_id),
+              )
+              .sort(
+                (a, b) =>
+                  b.box.width * b.box.height - a.box.width * a.box.height ||
+                  a.face_id.localeCompare(b.face_id),
+              );
+            const box = matching[0]?.box;
+            if (!box && !assertions.some((assertion) => assertion.photo_mark)) {
+              finish();
+              continue;
+            }
+            if (!row.previews.grid.generation_id) throw new Error("Preview unavailable");
+            releases.push(
+              previewObjectURL(
+                cache,
+                row.asset_id,
+                row.previews.grid.generation_id,
+                (url) => {
+                  const image = new Image();
+                  image.src = url;
+                  void image
+                    .decode()
+                    .then(() => {
+                      if (request.signal.aborted) return;
+                      const state = previews[person.person_id]!;
+                      previews = {
+                        ...previews,
+                        [person.person_id]: {
+                          ...state,
+                          images: [
+                            ...state.images,
+                            {
+                              url,
+                              style: photoFaceCropStyle(
+                                box,
+                                image.naturalWidth,
+                                image.naturalHeight,
+                                row.rotation ?? 0,
+                                64,
+                              ),
+                              wholePhoto: !box,
+                            },
+                          ],
+                        },
+                      };
+                      finish();
+                    })
+                    .catch(finish);
+                },
+                finish,
+                false,
+                faces.hiddenAccess,
+              ),
+            );
+          } catch (cause) {
+            finish(cause);
           }
-          releases.push(
-            previewObjectURL(
-              cache,
-              row.asset_id,
-              row.previews.grid.generation_id,
-              (url) => {
-                if (request.signal.aborted) return;
-                const state = previews[person.person_id]!;
-                previews = {
-                  ...previews,
-                  [person.person_id]: {
-                    ...state,
-                    loading: false,
-                    images: [...state.images, { url, rotation: row.rotation ?? 0 }],
-                  },
-                };
-              },
-              (cause) => {
-                if (request.signal.aborted) return;
-                previewFailure(cause);
-                if (!request.signal.aborted)
-                  previews = {
-                    ...previews,
-                    [person.person_id]: {
-                      ...previews[person.person_id]!,
-                      loading: false,
-                      failed: true,
-                    },
-                  };
-              },
-              false,
-              faces.hiddenAccess,
-            ),
-          );
         }
       } catch (cause) {
         if (request.signal.aborted) return;
@@ -373,11 +422,7 @@
             ? [{ name: "\0more", label: "Load more" }]
             : []),
         ]}
-        allowCustom={activeFace === face.face_id &&
-          !!query.trim() &&
-          !searching &&
-          !nextCursor &&
-          !error}
+        allowCustom={activeFace === face.face_id && !!query.trim() && !searching && !error}
         customLabel={'Create person "{query}"'}
         loading={activeFace === face.face_id && searching}
         allowClear={!!person}
@@ -436,8 +481,8 @@
             ><img
               src={image.url}
               alt={`Photos of ${person.display_name}`}
-              style={photoRotationStyle(image.rotation, 64, 64)}
-            /></span
+              style={image.style}
+            />{#if image.wholePhoto}<small class="whole-photo">Whole photo</small>{/if}</span
           >{/each}
         {#if preview?.loading}<span>Loading photos…</span>
         {:else if preview?.failed}<span>Preview unavailable</span>
@@ -479,7 +524,12 @@
     position: absolute;
     top: 50%;
     left: 50%;
-    object-fit: cover;
+    max-width: none;
+  }
+  .whole-photo {
+    position: absolute;
+    bottom: 0;
+    background: var(--bg-inset);
   }
   .people {
     display: flex;

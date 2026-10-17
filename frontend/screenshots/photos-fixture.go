@@ -112,6 +112,25 @@ func main() {
 				frame.SetRGBA(x, y, shade)
 			}
 		}
+		if *faceSearch {
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					for faceIndex, center := range []float64{0.25, 0.75} {
+						dx, dy := float64(x)/float64(width)-center, float64(y)/float64(height)-0.4
+						if dx*dx/0.01+dy*dy/0.01 < 1 {
+							shade := color.RGBA{240, 180, 100, 255}
+							if faceIndex == 1 {
+								shade = color.RGBA{120, 190, 240, 255}
+							}
+							if (math.Abs(dx-0.035) < 0.012 || math.Abs(dx+0.035) < 0.012) && math.Abs(dy+0.03) < 0.015 || math.Abs(dx) < 0.045 && math.Abs(dy-0.06) < 0.01 {
+								shade = color.RGBA{25, 30, 40, 255}
+							}
+							frame.SetRGBA(x, y, shade)
+						}
+					}
+				}
+			}
+		}
 		var encoded bytes.Buffer
 		check(jpeg.Encode(&encoded, frame, &jpeg.Options{Quality: 85}))
 		hash, size, err := blobs.Write(bytes.NewReader(encoded.Bytes()))
