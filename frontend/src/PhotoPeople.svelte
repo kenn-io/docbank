@@ -34,6 +34,9 @@
   let choosing = $state(false);
   let confirmation = $state<PhotoCullConfirmation>();
   let duplicate = $state.raw<{ face: PhotoFace; name: string; people: PersonSummary[] }>();
+  const detail = (person: PersonSummary) =>
+    person.identity_label || new Date(person.created_at).toLocaleDateString();
+  const duplicateDetails = $derived(duplicate?.people.map(detail) ?? []);
   let selection = $state("");
   let previews = $state.raw<Record<string, { urls: string[]; loading: boolean; failed: boolean }>>(
     {},
@@ -383,9 +386,10 @@
       <label class="duplicate-person">
         <input type="radio" name="person" value={person.person_id} bind:group={selection} />
         <span
-          >{person.display_name}<small
-            >{person.identity_label || new Date(person.created_at).toLocaleDateString()}</small
-          ></span
+          >{person.display_name}<small>{detail(person)}</small>
+          {#if duplicateDetails.indexOf(detail(person)) !== duplicateDetails.lastIndexOf(detail(person))}
+            <small>{person.person_id}</small>
+          {/if}</span
         >
         {#each preview?.urls ?? [] as url}<img
             src={url}

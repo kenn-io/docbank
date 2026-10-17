@@ -386,6 +386,49 @@ it("distinguishes namesakes with the same date and no photos by identity", async
   faces.dispose();
 });
 
+it.each([
+  { label: "same creation time", identity: "", secondTime: "12:00:00" },
+  { label: "same displayed date", identity: "", secondTime: "13:00:00" },
+  { label: "shared identity", identity: "alex@example.test", secondTime: "13:00:00" },
+])("distinguishes namesakes by visible ID for $label", async ({ identity, secondTime }) => {
+  const ids = ["person-alex-a", "person-alex-b", "person-alex-c"];
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: ids.map((person_id, index) => ({
+      person_id,
+      display_name: "Alex",
+      display_name_folded: "alex",
+      created_at: `2026-01-01T${index === 1 ? secondTime : "12:00:00"}Z`,
+      identity_label: index === 2 ? "other@example.test" : identity,
+      revision: 1,
+      state: "curated",
+    })),
+  });
+  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [],
+  } as unknown as api.PhotoBrowsePage);
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 3 people" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
+  expect(dialog.getByText("person-alex-a")).toBeTruthy();
+  expect(dialog.queryByText("person-alex-c")).toBeNull();
+  expect(dialog.getByText("other@example.test")).toBeTruthy();
+  await fireEvent.click(dialog.getByRole("radio", { name: /person-alex-b/ }));
+  await fireEvent.click(dialog.getByRole("button", { name: "Name face" }));
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith(
+      "version-a",
+      expect.objectContaining({ person_id: "person-alex-b" }),
+      expect.anything(),
+    ),
+  );
+  faces.dispose();
+});
+
 it.each(["face", "mark"])("confirms %s removal with the captured revision", async (target) => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
     photoFacePage({ assertions: [photoPersonAssertion({ photo_mark: true })] }),
