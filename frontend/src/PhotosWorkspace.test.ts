@@ -1305,6 +1305,131 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
+it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "followup", "early"])(
+  "revalidates pending initial metadata after a live %s change",
+  async (scenario) => {
+    const photos = workspaceWithPreparedPhoto();
+    photos.authored.targets = [];
+    const queryScope = ["query", "album", "early"].includes(scenario);
+    const album = "11111111-1111-4111-8111-111111111111";
+    if (scenario === "album") photos.query.filters = { set_ids: [album] };
+    if (queryScope) photos.selectAllResults();
+    else photos.selectLoaded();
+    const before = preparedPhoto(1, { values: { ...preparedPhoto(1).values, caption: "Before" } });
+    const current = preparedPhoto(1, {
+      revision: 7,
+      values: { ...before.values, caption: "After" },
+    });
+    const unloaded = preparedPhoto(2);
+    const replies: ((value: Awaited<ReturnType<typeof api.preparePhotoAuthored>>) => void)[] = [];
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockImplementation(() => new Promise((resolve) => replies.push(resolve)));
+    const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+      receipt_id: "",
+      before: [],
+      after: [],
+    });
+    let failList = scenario === "failure";
+    let finishList!: () => void;
+    stubPhotoFetch(async (url) => {
+      if (!url.endsWith("/photos/assets/query")) throw new Error(`Unexpected request: ${url}`);
+      if (failList) throw new Error("Listing failed");
+      if (scenario === "early" && !finishList)
+        await new Promise<void>((resolve) => (finishList = resolve));
+      return Response.json({
+        items: scenario === "removed" ? [] : [photo(1)],
+        total: queryScope ? 2 : scenario === "removed" ? 0 : 1,
+        facets: [],
+      });
+    });
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    const changes = {
+      assets: new Map(scenario === "album" || scenario === "refetch" ? [] : [["photo-1", 2]]),
+      albums: new Map(scenario === "album" ? [[album, 2]] : []),
+      refetch: scenario === "refetch",
+    };
+    const refreshing = view.component.refresh(changes);
+    await tick();
+    expect(
+      screen.queryByText("No photos are available to review. Clear edits to discard this draft."),
+    ).toBeNull();
+    if (scenario === "failure") {
+      await expect(refreshing).rejects.toThrow("Listing failed");
+      replies[0]!({ assets: [], targets: [before] });
+      await waitFor(() => expect(photos.authored.loading).toBe(false));
+      expect(photos.authored.conflict).toBe(true);
+      expect(
+        screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
+      ).toBe(false);
+      expect(prepare).toHaveBeenCalledOnce();
+      failList = false;
+    } else if (scenario === "early") {
+      await waitFor(() => expect(finishList).toBeTypeOf("function"));
+      replies[0]!({ assets: [], targets: [before, unloaded] });
+      await waitFor(() => expect(photos.authored.loading).toBe(false));
+      finishList();
+    } else {
+      await waitFor(() => expect(photos.loading).toBe(false));
+      expect(photos.authored.loading).toBe(true);
+      expect(prepare).toHaveBeenCalledOnce();
+    }
+    const retry =
+      scenario === "failure" || scenario === "burst" ? view.component.refresh(changes) : undefined;
+    if (!["failure", "early"].includes(scenario)) replies[0]!({ assets: [], targets: [before] });
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
+    const scope = prepare.mock.calls[1]![0];
+    if (queryScope) {
+      expect(scope.query).toEqual(photos.query);
+      expect(scope.asset_ids).toBeUndefined();
+    } else expect(scope.asset_ids).toEqual(scenario === "removed" ? [] : ["photo-1"]);
+    if (scenario === "followup") await view.component.refresh(changes);
+    replies[1]!({
+      assets: [],
+      targets:
+        scenario === "removed"
+          ? []
+          : scenario === "followup"
+            ? [before]
+            : queryScope
+              ? [current, unloaded]
+              : [current],
+    });
+    if (scenario !== "failure") await refreshing;
+    await retry;
+    await tick();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(photos.authored.loading).toBe(false);
+    if (scenario === "followup") {
+      expect(photos.authored.conflict).toBe(true);
+      expect(
+        screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
+      ).toBe(false);
+    } else if (scenario === "removed") expect(photos.authored.targets).toEqual([]);
+    else {
+      expect(photos.authored.value("caption")).toBe(queryScope ? undefined : "After");
+      await photos.authored.edit({}, { rating: 5 }, false, vi.fn());
+      expect(edit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targets: expect.arrayContaining([
+            expect.objectContaining({ file_id: current.file_id, revision: 7 }),
+          ]),
+        }),
+        expect.anything(),
+      );
+      if (queryScope) expect(edit.mock.calls[0]![0].targets).toHaveLength(2);
+    }
+    view.unmount();
+    photos.dispose();
+  },
+);
+
 it("keeps metadata focus and selection through an unrelated live list and comparison", async () => {
   const target = preparedPhoto(1);
   const photos = workspaceWithPreparedPhoto(target);

@@ -164,6 +164,13 @@ export class PhotoAuthoredEditor {
   private controller = new AbortController();
   private read = new AbortController();
   private scope?: api.PhotoAuthoredPrepareRequest;
+  private preparing?: {
+    scope: api.PhotoAuthoredPrepareRequest;
+    done: Promise<void>;
+    finish: () => void;
+    followup: boolean;
+    refreshedScope?: api.PhotoAuthoredPrepareRequest;
+  };
   constructor(
     private session: string,
     private onfailure: (cause: unknown) => void,
@@ -203,8 +210,17 @@ export class PhotoAuthoredEditor {
   private remoteChanges = 0;
   private failedComparison?: number;
   private reconciling?: { read: AbortController; done: Promise<void>; change: number };
-  affectedBy(changes: PhotoEventBatch) {
-    return this.targets.some((target) => changes.refetch || changes.assets.has(target.asset_id));
+  get preparingQuery() {
+    return !!this.preparing?.scope.query;
+  }
+  affectedBy(changes: PhotoEventBatch, albumsAffected = false) {
+    const pending = this.preparing?.scope;
+    return (
+      ((!!pending || !!this.targets.length) && changes.refetch) ||
+      !!pending?.asset_ids?.some((id) => changes.assets.has(id)) ||
+      (!!pending?.query && (!!changes.assets.size || albumsAffected)) ||
+      this.targets.some((target) => changes.assets.has(target.asset_id))
+    );
   }
   changedElsewhere(changes?: PhotoEventBatch) {
     if (!changes || this.targets.some((target) => changes.assets.has(target.asset_id)))
@@ -212,8 +228,36 @@ export class PhotoAuthoredEditor {
     this.remoteChange = true;
     this.remoteChanges++;
   }
-  async reconcile() {
+  async reconcile(scope?: api.PhotoAuthoredPrepareRequest) {
     if (!this.remoteChange || this.busy || this.failedComparison === this.remoteChanges) return;
+    const preparing = this.preparing;
+    if (preparing) {
+      // Only a successful list refresh supplies the current scope for this one follow-up.
+      if (!scope || preparing.followup) return;
+      preparing.refreshedScope = scope;
+      await preparing.done;
+      if (
+        this.preparing !== preparing ||
+        preparing.followup ||
+        this.read.signal.aborted ||
+        this.controller.signal.aborted
+      )
+        return;
+      preparing.followup = true;
+      await this.prepare(preparing.refreshedScope, false, this.dirty, true);
+      if (this.preparing === preparing) {
+        this.preparing = undefined;
+        if (this.read.signal.aborted) {
+          if (!this.concealed && !this.validating) await this.reconcile();
+          return;
+        }
+        if (this.remoteChange) {
+          this.conflict = true;
+          this.failedComparison = this.remoteChanges;
+        }
+      }
+      return;
+    }
     if (!this.targets.length) {
       this.remoteChange = false;
       this.conflict = this.dirty || this.membershipChanged;
@@ -247,6 +291,7 @@ export class PhotoAuthoredEditor {
   }
   reset() {
     this.read.abort();
+    this.preparing = undefined;
     this.remoteChange = false;
     this.failedComparison = undefined;
     this.membershipConflict = false;
@@ -289,8 +334,22 @@ export class PhotoAuthoredEditor {
     // A list refresh conceals the editor and aborts its reads, including a pending reconcile.
     void this.reconcile();
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false, compare = false) {
+  async prepare(
+    scope: api.PhotoAuthoredPrepareRequest,
+    reload = false,
+    compare = false,
+    followup = false,
+  ) {
     this.read.abort();
+    if (!followup) {
+      this.preparing = undefined;
+      if (!reload && !compare) {
+        let finish!: () => void;
+        const done = new Promise<void>((resolve) => (finish = resolve));
+        this.preparing = { scope, done, finish, followup: false };
+      }
+    }
+    const preparing = this.preparing;
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
     // A stalled read would hold a live refresh and leave Reload metadata unavailable.
@@ -322,7 +381,8 @@ export class PhotoAuthoredEditor {
             ),
           );
         if (change === this.remoteChanges) this.remoteChange = false;
-        this.conflict = this.membershipChanged || this.membershipConflict || !same;
+        this.conflict =
+          this.membershipChanged || this.membershipConflict || !same || this.remoteChange;
         if (this.dirty) return;
       }
       if (
@@ -365,6 +425,11 @@ export class PhotoAuthoredEditor {
           : this.failure(cause);
       }
     } finally {
+      if (!followup && preparing) {
+        preparing.finish();
+        if (this.preparing === preparing && (!this.remoteChange || signal.aborted))
+          this.preparing = undefined;
+      }
       if (!signal.aborted) {
         this.loading = false;
         this.comparing = false;

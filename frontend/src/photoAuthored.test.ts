@@ -796,6 +796,96 @@ it.each([
 );
 
 it.each([false, true])(
+  "preserves drafts through an initial live follow-up, changed=$0",
+  async (changed) => {
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    let finish!: () => void;
+    const remote = changed ? targets.map((target) => ({ ...target, revision: 8 })) : targets;
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => (finish = resolve));
+        return { assets: [asset], targets };
+      })
+      .mockResolvedValue({ assets: [asset], targets: remote });
+    const first = editor.prepare({ asset_ids: ["asset"] });
+    const changes = { assets: new Map([["asset", 2]]), albums: new Map(), refetch: false };
+    expect(editor.affectedBy(changes)).toBe(true);
+    expect(editor.affectedBy({ ...changes, assets: new Map([["unrelated", 2]]) })).toBe(false);
+    editor.changedElsewhere(changes);
+    editor.stage({ caption: "Local draft" });
+    const refreshing = editor.reconcile({ asset_ids: ["asset"] });
+    expect(prepare).toHaveBeenCalledOnce();
+    finish();
+    await first;
+    await refreshing;
+    expect(editor.value("caption")).toBe("Local draft");
+    expect(editor.conflict).toBe(changed);
+    if (changed) {
+      await editor.reload();
+      expect(editor.value("caption")).toBe("Local draft");
+      expect(editor.targets[0]!.revision).toBe(8);
+      expect(editor.conflict).toBe(false);
+    }
+    editor.dispose();
+  },
+);
+
+it("uses the latest refreshed selection after a burst during initial preparation", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  let finish!: () => void;
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => (finish = resolve));
+      return { assets: [asset], targets };
+    })
+    .mockResolvedValue({ assets: [], targets: [] });
+  const initial = editor.prepare({ asset_ids: ["asset"] });
+  editor.changedElsewhere();
+  const first = editor.reconcile({ asset_ids: ["asset"] });
+  editor.changedElsewhere();
+  const second = editor.reconcile({ asset_ids: [] });
+  finish();
+  await Promise.all([initial, first, second]);
+  expect(prepare).toHaveBeenCalledTimes(2);
+  expect(prepare.mock.calls[1]![0]).toEqual({ asset_ids: [] });
+  expect(editor.targets).toEqual([]);
+  editor.dispose();
+});
+
+it("retries an initial follow-up aborted while the editor is concealed", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  let finishInitial!: () => void;
+  let finishFollowup!: () => void;
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => (finishInitial = resolve));
+      return { assets: [asset], targets };
+    })
+    .mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => (finishFollowup = resolve));
+      return { assets: [asset], targets };
+    })
+    .mockResolvedValue({ assets: [asset], targets });
+  const initial = editor.prepare({ asset_ids: ["asset"] });
+  editor.changedElsewhere();
+  const refreshing = editor.reconcile({ asset_ids: ["asset"] });
+  finishInitial();
+  await initial;
+  await vi.waitFor(() => expect(finishFollowup).toBeTypeOf("function"));
+  editor.conceal();
+  editor.revalidate(new Set(["asset"]));
+  finishFollowup();
+  await refreshing;
+  expect(prepare).toHaveBeenCalledTimes(3);
+  expect(editor.conflict).toBe(false);
+  expect(editor.loading).toBe(false);
+  editor.dispose();
+});
+
+it.each([false, true])(
   "reconciles a newer event after a shared read settles, failed=$0",
   async (failed) => {
     const editor = editorWithTargets();

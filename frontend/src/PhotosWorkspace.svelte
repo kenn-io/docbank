@@ -576,7 +576,8 @@
     const id = photoID;
     const revision = changes?.assets.get(id);
     const affected = !changes || changes.refetch || revision !== undefined;
-    const metadataAffected = changes && editor.affectedBy(changes);
+    const metadataAffected =
+      changes && editor.affectedBy(changes, photos.dependsOnAlbums(changes.albums.keys()));
     if (metadataAffected) editor.changedElsewhere(changes);
     if (affected) detailRequest?.controller.abort();
     if (current) direct = current;
@@ -598,7 +599,16 @@
       return false;
     }
     try {
-      if (refreshed && metadataAffected) await editor.reconcile();
+      if (refreshed && metadataAffected)
+        await editor.reconcile({
+          ...(photoID
+            ? { asset_ids: [photoID] }
+            : photos.allResults || editor.preparingQuery
+              ? { query: structuredClone(photos.query) }
+              : { asset_ids: [...photos.selection.selectedIDs] }),
+          hidden: photos.hidden,
+          skip_unavailable: true,
+        });
       if (photos.projection) await tick();
       if (replaced()) return false;
       if (id && photoID === id) {
