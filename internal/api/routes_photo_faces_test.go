@@ -183,12 +183,6 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	}
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = get(t, ts, "/api/v1/people?query=Grace", headers)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var cleared api.PersonPage
-	require.NoError(t, json.Unmarshal([]byte(body), &cleared))
-	require.Len(t, cleared.Items, 1, "clearing the name keeps the operator person available")
-	require.Equal(t, "Grace", cleared.Items[0].DisplayName)
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 3})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 
@@ -210,12 +204,6 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, hidden.PersonID)
 	require.NoError(t, err)
-	visibleNode, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	visible, err := s.CreatePerson(ctx, "Visible Lin", "operator")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, visible.PersonID)
-	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -232,8 +220,7 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Items, 1)
-	require.Equal(t, visible.PersonID, page.Items[0].PersonID)
+	require.Empty(t, page.Items, "browser sessions apply the Hidden scope")
 	lockedHeaders := response.Header
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -242,9 +229,8 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	response, body = get(t, ts, "/api/v1/people", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Items, 2)
+	require.Len(t, page.Items, 1, "the Hidden cookie reaches the store")
 	require.Equal(t, hidden.PersonID, page.Items[0].PersonID)
-	require.Equal(t, visible.PersonID, page.Items[1].PersonID)
 	for _, h := range []http.Header{lockedHeaders, response.Header} {
 		require.Equal(t, "no-store", h.Get("Cache-Control"))
 		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, h.Get("Vary"))

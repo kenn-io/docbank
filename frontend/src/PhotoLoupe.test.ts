@@ -64,7 +64,7 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("requires decode, cancels placement, and maps a keyboard face box through rotation", async () => {
+it("gates keyboard face placement on decode, cancels with Escape, and maps a rotated box", async () => {
   const { props } = setup();
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);

@@ -366,6 +366,8 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
+	var hiddenOnlyID string
+	var hiddenFallbackIDs, visibleIDs []string
 	for _, action := range []string{"assert", "suppress", "withdrawn"} {
 		for _, version := range []string{hidden.CurrentVersionID, visible.CurrentVersionID} {
 			prefix := "Alex Z"
@@ -376,16 +378,32 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.AssertDocumentPerson(unlocked, PersonDocumentAssertion{ContentVersionID: version, PersonID: p.PersonID, Role: "depicted", Action: action, Revision: 1})
 			require.NoError(t, err)
-			people, err := s.PeopleByDisplayName(ctx, p.DisplayName, "", "", 10, true)
-			require.NoError(t, err)
-			if version == hidden.CurrentVersionID && action == "assert" {
-				require.Empty(t, people)
+			if version == hidden.CurrentVersionID {
+				if action == "assert" {
+					hiddenOnlyID = p.PersonID
+				} else {
+					hiddenFallbackIDs = append(hiddenFallbackIDs, p.PersonID)
+				}
 			} else {
-				require.Len(t, people, 1)
-				require.Equal(t, p.PersonID, people[0].PersonID)
+				visibleIDs = append(visibleIDs, p.PersonID)
 			}
 		}
 	}
+	afterName, afterID := "", ""
+	for _, id := range append(hiddenFallbackIDs, visibleIDs...) {
+		page, err := s.PeopleByDisplayName(ctx, "Alex", afterName, afterID, 1, true)
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		require.Equal(t, id, page[0].PersonID)
+		afterName, afterID = page[0].DisplayNameFolded, page[0].PersonID
+	}
+	last, err := s.PeopleByDisplayName(ctx, "Alex", afterName, afterID, 1, true)
+	require.NoError(t, err)
+	require.Empty(t, last)
+	withHiddenPhoto, err := s.PeopleByDisplayName(unlocked, "Alex", "", "", 1, true)
+	require.NoError(t, err)
+	require.Len(t, withHiddenPhoto, 1)
+	require.Equal(t, hiddenOnlyID, withHiddenPhoto[0].PersonID)
 	candidate, err := s.CreatePerson(ctx, "Alex Candidate", "operator")
 	require.NoError(t, err)
 	face, _, err := s.CreatePhotoFace(unlocked, hidden.CurrentVersionID, "11111111-1111-4111-8111-111111111111", document.FaceBox{Width: .2, Height: .2}, "")

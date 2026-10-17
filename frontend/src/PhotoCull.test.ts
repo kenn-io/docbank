@@ -622,7 +622,6 @@ it("reloads stale content after a 412 without reapplying the decision", async ()
 });
 
 it("keeps rail thumbnails while loading and shows rail errors", async () => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
   const { cull, photos } = await reviewPhoto();
   await screen.findByRole("button", { name: "Show Photo 1.jpg" });
   let fail!: (cause: Error) => void;

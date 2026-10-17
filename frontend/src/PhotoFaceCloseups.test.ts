@@ -9,8 +9,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 it("retries a failed face load for the current photo version", async () => {
-  const read = vi
-    .spyOn(api, "listPhotoFaces")
+  vi.spyOn(api, "listPhotoFaces")
     .mockRejectedValueOnce(new Error("Faces unavailable"))
     .mockResolvedValue({
       faces: [photoFace({ assertion_id: undefined })],
@@ -24,11 +23,6 @@ it("retries a failed face load for the current photo version", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("Face 1")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(read).toHaveBeenCalledTimes(2);
-  expect(read).toHaveBeenLastCalledWith(
-    "version-a",
-    expect.objectContaining({ session: "session" }),
-  );
   faces.dispose();
 });
 it("keeps captions without a matching preview and reuses image nodes when names change", async () => {

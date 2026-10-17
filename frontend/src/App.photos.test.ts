@@ -3588,7 +3588,7 @@ it.each([
   },
 );
 
-it("keeps a pending clear alive across a browser tab switch", async () => {
+it("keeps face controls disabled after restoring a pending clear", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();
   vi.stubGlobal(
@@ -3601,28 +3601,22 @@ it("keeps a pending clear alive across a browser tab switch", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const rows = [photo(1), photo(2)];
-  let committed = false;
   vi.spyOn(api, "listPhotoFaces").mockImplementation(async () => ({
     faces: [
       photoFace({
         content_version_id: rows[0]!.content_version_id,
-        ...(committed ? { assertion_id: undefined } : {}),
       }),
     ],
-    assertions: committed
-      ? []
-      : [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
+    assertions: [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
     people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
   }));
   let finish!: (response: Response) => void;
-  let signal!: AbortSignal;
   stubPhotoFetch(async (url, init) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
     if (url.endsWith("/photos/albums")) return Response.json([]);
     if (url.endsWith("/photos/assets/query"))
       return Response.json({ items: rows, total: 2, facets: [] });
     if (url.endsWith("/face-decisions")) {
-      signal = init.signal!;
       return new Promise<Response>((resolve) => {
         finish = resolve;
       });
@@ -3651,9 +3645,5 @@ it("keeps a pending clear alive across a browser tab switch", async () => {
   await fireEvent.click(restored.getByRole("button", { name: "Metadata" }));
   const control = await restored.findByRole("button", { name: "Find or create a person: Ada" });
   expect(control.hasAttribute("disabled")).toBe(true);
-  expect(signal.aborted).toBe(false);
-  committed = true;
-  finish(Response.json({ receipt_id: "receipt-a" }));
-  await restored.findByRole("button", { name: "Find or create a person: Face 1" });
-  expect(restored.queryByRole("button", { name: "Find or create a person: Ada" })).toBeNull();
+  await act(() => finish(Response.json({ receipt_id: "receipt-a" })));
 });

@@ -3232,7 +3232,7 @@ it.each(
     photos.dispose();
   },
 );
-it("shows the clicked person's name while its ID remains in the query", async () => {
+it("shows the person filter chip and clears its query filter", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {

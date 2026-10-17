@@ -36,7 +36,7 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 	}
 }
 
-func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
+func TestWebSessionAllowsPeopleAndPhotoReviewRoutes(t *testing.T) {
 	t.Parallel()
 	album := "/api/v1/photos/albums/11111111-1111-4111-8111-111111111111"
 	version := "/api/v1/photos/versions/11111111-1111-4111-8111-111111111111"

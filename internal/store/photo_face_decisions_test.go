@@ -1061,6 +1061,18 @@ func TestPhotoFaceDecisionValidatesNamesAndReplaysOperations(t *testing.T) {
 				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM persons WHERE display_name='Grace'`).Scan(&count))
 				require.Equal(t, 1, count)
 				require.Empty(t, undo.After.Faces[0].AssertionID)
+				named, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{
+					FaceID: f.FaceID, PersonID: first.After.Assertions[0].PersonID, Action: "name", Revision: undo.After.Faces[0].Revision,
+				})
+				require.NoError(t, err)
+				_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{
+					FaceID: f.FaceID, Action: "retract", Revision: named.After.Faces[0].Revision,
+				})
+				require.NoError(t, err)
+				cleared, err := s.PeopleByDisplayName(ctx, "Grace", "", "", 10, true)
+				require.NoError(t, err)
+				require.Len(t, cleared, 1, "clearing the name keeps the operator person available")
+				require.Equal(t, "Grace", cleared[0].DisplayName)
 			}
 			require.NoError(t, s.ValidateMetadata(ctx))
 		})
