@@ -318,6 +318,9 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	_, err = backupapp.Create(ctx, repo, "photo-round-trip", fixture.metadata, fixture.blobs,
 		backup.CreateOptions{})
 	require.NoError(t, err)
+	require.NoError(t, fixture.blobs.Close())
+	require.NoError(t, fixture.metadata.Close())
+	require.NoError(t, os.RemoveAll(fixture.root))
 
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(ctx, repo, "photo-round-trip", backup.RestoreOptions{TargetDir: target})
@@ -325,6 +328,8 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	restored, err := store.Open(filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	_, err = restored.PhotoAssetByID(ctx, asset.ID)
+	require.ErrorIs(t, err, store.ErrHiddenLocked, "the source unlock token must not unlock the restored asset")
 	token, _, err = restored.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	ctx = store.WithPhotoHiddenToken(ctx, token)
