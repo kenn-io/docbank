@@ -1,7 +1,6 @@
 package store
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -9,7 +8,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -226,13 +224,39 @@ const photoXMPFenceTokenSQL = photoSidecarMemberRevisionsSQL + ` || '|' ||
 const photoXMPExtractorSQL = `COALESCE((SELECT h.generation_id FROM content_versions xv
  JOIN source_metadata_heads h ON h.source_sha256=xv.blob_hash WHERE xv.version_id=n.current_version_id),'')`
 
-// photoXMPFenceCurrentSQL is true while the original's settled work still
-// describes every sync input. Authored edits, keywords, renames, versions,
-// observations and trash advance node revisions; attachment advances the
-// photo revision; extraction publishes a new head generation.
-const photoXMPFenceCurrentSQL = `EXISTS(SELECT 1 FROM photo_sidecar_considered c WHERE c.sidecar_file_id=f.file_id
- AND c.asset_id=f.asset_id AND c.asset_revision=a.revision AND c.version_id=n.current_version_id
- AND c.extractor_fingerprint=` + photoXMPExtractorSQL + ` AND c.member_revisions=` + photoXMPFenceTokenSQL + `)`
+// photoXMPFenceMatchesSQL is true while fence row c still describes every
+// sync input. Authored edits, keywords, renames, versions, observations and
+// trash advance node revisions; attachment advances the photo revision;
+// extraction publishes a new head generation.
+const photoXMPFenceMatchesSQL = `c.asset_id=f.asset_id AND c.asset_revision=a.revision AND c.version_id=n.current_version_id
+ AND c.extractor_fingerprint=` + photoXMPExtractorSQL + ` AND c.member_revisions=` + photoXMPFenceTokenSQL
+
+// photoXMPFenceCurrentSQL is true while the original's settled work is
+// current. The photo_sidecar_considered triggers delete the row when an input
+// changes, so its presence stands for photoXMPFenceMatchesSQL.
+const photoXMPFenceCurrentSQL = `EXISTS(SELECT 1 FROM photo_sidecar_considered c WHERE c.sidecar_file_id=f.file_id)`
+
+// photoXMPUnfencedSQL joins each photo file f that lacks a fence row. It probes
+// fence rows from the file ID index alone, in key order, before reading f.
+const photoXMPUnfencedSQL = `photo_files d CROSS JOIN photo_files f ON f.file_id=d.file_id
+ AND NOT EXISTS(SELECT 1 FROM photo_sidecar_considered c WHERE c.sidecar_file_id=d.file_id)`
+
+// RepairPhotoXMPFences deletes fence rows whose stored token no longer
+// matches, such as rows settled under an older token definition. The daemon
+// runs it once before the sync worker starts.
+func (s *Store) RepairPhotoXMPFences(ctx context.Context) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM photo_sidecar_considered WHERE sidecar_file_id NOT IN (SELECT c.sidecar_file_id
+ FROM photo_sidecar_considered c JOIN photo_files f ON f.file_id=c.sidecar_file_id JOIN photo_assets a ON a.asset_id=f.asset_id
+ JOIN nodes n ON n.id=f.node_id WHERE `+photoXMPFenceMatchesSQL+`)`)
+		return err
+	})
+}
+
+// photoXMPSyncedNodesSQL lists originals with an XMP sync receipt from the
+// receipt index alone, so a conflict search seeks them instead of every file.
+const photoXMPSyncedNodesSQL = `SELECT json_extract(xr.after_json,'$.node_id') FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_node
+ WHERE xr.operation='xmp_sync'`
 
 // photoXMPLatestStateSQL is the outcome of the original's latest receipt.
 const photoXMPLatestStateSQL = `(SELECT json_extract(xr.after_json,'$.state') FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_node
@@ -574,16 +598,16 @@ func (w PhotoXMPWork) conflict(id string) error {
 }
 
 // PhotoXMPTargetsAfter lists unsettled, extracted originals with sync work
-// after a node ID cursor.
+// after a file ID cursor. File ID order follows the fence key, so an idle scan
+// probes fence rows in index order.
 func (s *Store) PhotoXMPTargetsAfter(ctx context.Context, after string, limit int) ([]PhotoSidecarTarget, error) {
-	cursor, err := strconv.ParseInt(cmp.Or(after, "0"), 10, 64)
-	if err != nil || limit < 1 || limit > maxBatchTagTargets {
+	if limit < 1 || limit > maxBatchTagTargets {
 		return nil, ErrInvalidPhotoAsset
 	}
 	result := []PhotoSidecarTarget{}
-	err = queryRows(ctx, s.db, `SELECT f.file_id,f.node_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id
- WHERE f.node_id>? AND `+photoXMPSignalsSQL+` AND NOT `+photoXMPFenceCurrentSQL+` AND `+photoXMPExtractorSQL+`<>''
- ORDER BY f.node_id LIMIT ?`, []any{cursor, limit}, func(rows *sql.Rows) error {
+	err := queryRows(ctx, s.db, `SELECT f.file_id,f.node_id FROM `+photoXMPUnfencedSQL+` JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id
+ WHERE d.file_id>? AND `+photoXMPSignalsSQL+` AND `+photoXMPExtractorSQL+`<>''
+ ORDER BY d.file_id LIMIT ?`, []any{after, limit}, func(rows *sql.Rows) error {
 		var t PhotoSidecarTarget
 		if err := rows.Scan(&t.FileID, &t.NodeID); err != nil {
 			return err

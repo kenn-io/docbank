@@ -158,7 +158,7 @@ func TestPhotoSidecarSourceMetadataWiring(t *testing.T) {
 		name, packet string
 		valid        bool
 	}{
-		{"valid", photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter, true},
+		{"valid", "\xef\xbb\xbf" + `<?xml version="1.0"?><?xpacket begin=""?>` + photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter + `<?xpacket end="w"?>`, true},
 		{"invalid", "<broken", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

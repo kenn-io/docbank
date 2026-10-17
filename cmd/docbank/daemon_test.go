@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
@@ -81,6 +83,37 @@ func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
 	assert.InDelta(t, 1, signals.Brightness, 0.01)
 	assert.InDelta(t, 0, signals.Focus, 0.01)
 	assert.InDelta(t, 1, signals.Blur, 0.01)
+}
+
+func TestPhotoSidecarBackfillRepairsFencesBeforeListing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	catalog, err := store.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "one.jpg", strings.Repeat("a", 64), 4, "image/jpeg")
+	require.NoError(t, err)
+	_, err = catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	db, err := store.DefaultSQLiteDriver().Open(path, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	// A rated, extracted photo whose fence row was settled under another token.
+	for _, statement := range []string{
+		`UPDATE photo_files SET confirmed_fields=1,rating=3`,
+		`INSERT INTO source_metadata_generations(generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at)
+ SELECT lower(hex(randomblob(16))),hash,'v1','` + strings.Repeat("e", 64) + `',x'7b7d','',created_at FROM blobs`,
+		`INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) SELECT source_sha256,generation_id,created_at FROM source_metadata_generations`,
+		`INSERT INTO photo_sidecar_considered(sidecar_file_id,asset_id,asset_revision,member_revisions,version_id,extractor_fingerprint)
+ SELECT f.file_id,f.asset_id,0,'stale',n.current_version_id,'' FROM photo_files f JOIN nodes n ON n.id=f.node_id`,
+	} {
+		_, err = db.ExecContext(t.Context(), statement)
+		require.NoError(t, err)
+	}
+	backfill := newPhotoSidecarBackfill(catalog, nil, api.NewOperationGate(), slog.Default())
+	targets, err := backfill.List(t.Context(), "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.Equal(t, node.ID, targets[0].NodeID)
 }
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {

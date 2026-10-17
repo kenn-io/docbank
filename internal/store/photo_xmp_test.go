@@ -70,6 +70,14 @@ func settleXMP(t *testing.T, s *Store, fileID string) PhotoXMPState {
 	return xmpState(t, s, fileID)
 }
 
+// xmpFenced reports whether an original has a stored settled-work row.
+func xmpFenced(t *testing.T, s *Store, fileID string) bool {
+	t.Helper()
+	var fenced bool
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM photo_sidecar_considered WHERE sidecar_file_id=?)`, fileID).Scan(&fenced))
+	return fenced
+}
+
 func TestPhotoXMPInvalidation(t *testing.T) {
 	t.Parallel()
 	type fixture struct {
@@ -206,15 +214,66 @@ func TestPhotoXMPInvalidation(t *testing.T) {
 			require.NoError(t, err)
 			raw, err = photoFileByIDQuery(t.Context(), s.db, raw.ID)
 			require.NoError(t, err)
+			require.True(t, xmpFenced(t, s, raw.ID))
 			tc.mutate(fixture{t, s, asset, raw, sidecar, tag})
 			want := PhotoXMPStateSynced
 			if tc.pending {
 				want = PhotoXMPStatePending
 			}
+			assert.Equal(t, !tc.pending, xmpFenced(t, s, raw.ID), "the change clears the stored fence row")
 			assert.Equal(t, want, xmpState(t, s, raw.ID).State)
 			assert.Equal(t, tc.settled, settleXMP(t, s, raw.ID).State)
 		})
 	}
+}
+
+func TestPhotoXMPOwnWriteSettles(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s, _, raw, _ := xmpSidecarPhoto(t)
+	work, run, err := s.ClassifyPhotoXMP(ctx, raw.ID)
+	require.NoError(t, err)
+	require.True(t, run)
+	values := PhotoAuthored{Rating: 2, Confirmed: PhotoConfirmedRating}
+	packet := PhotoXMPPacket{Values: values}
+	_, err = s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Import: true, Write: true}, fakeHash("d7"), 4, BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 4, Created: true})
+	require.NoError(t, err)
+	assert.True(t, xmpFenced(t, s, raw.ID), "the settle follows Docbank's own sidecar version")
+	targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+	assert.Equal(t, PhotoXMPStateSynced, xmpState(t, s, raw.ID).State)
+}
+
+func TestPhotoXMPOriginalDetachClearsFence(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s, asset, raw, _ := xmpSidecarPhoto(t)
+	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
+	asset, err := s.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{ClearDependentSidecars: true})
+	require.NoError(t, err)
+	assert.False(t, xmpFenced(t, s, raw.ID), "leaving the photo clears the original's fence")
+}
+
+func TestPhotoXMPRepairFences(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s, _, raw, _ := xmpSidecarPhoto(t)
+	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
+	require.NoError(t, s.RepairPhotoXMPFences(ctx))
+	require.True(t, xmpFenced(t, s, raw.ID), "repair keeps a current fence")
+
+	// A row whose token no longer matches, such as one written under an older
+	// token definition, is cleared by the startup repair.
+	_, err := s.db.ExecContext(ctx, `UPDATE photo_sidecar_considered SET member_revisions='stale' WHERE sidecar_file_id=?`, raw.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.RepairPhotoXMPFences(ctx))
+	assert.False(t, xmpFenced(t, s, raw.ID))
+	targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []PhotoSidecarTarget{{FileID: raw.ID, NodeID: raw.NodeID}}, targets)
 }
 
 func TestPhotoXMPClassificationWaitsAndRetries(t *testing.T) {
@@ -278,6 +337,7 @@ func TestPhotoXMPClassificationWaitsAndRetries(t *testing.T) {
 			targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
 			require.NoError(t, err)
 			assert.Empty(t, targets, "a blocked photo settles until the blocker changes")
+			require.True(t, xmpFenced(t, s, raw.ID))
 			if release == "rename" {
 				_, _, err = s.Move(ctx, blocker.ID, s.RootID(), "elsewhere.xmp", blocker.Revision)
 			} else {
@@ -287,6 +347,7 @@ func TestPhotoXMPClassificationWaitsAndRetries(t *testing.T) {
 			targets, err = s.PhotoXMPTargetsAfter(ctx, "", 10)
 			require.NoError(t, err)
 			assert.Equal(t, []PhotoSidecarTarget{{FileID: raw.ID, NodeID: raw.NodeID}}, targets, release)
+			assert.False(t, xmpFenced(t, s, raw.ID), release)
 		}
 		_, run, err := s.ClassifyPhotoXMP(ctx, raw.ID)
 		require.NoError(t, err)
@@ -415,6 +476,7 @@ func TestPhotoXMPQueryFilters(t *testing.T) {
 	assert.Equal(t, []string{asset.ID}, match("xmp:conflict"))
 	assert.Empty(t, match("xmp:pending"))
 	assert.Equal(t, []string{asset.ID}, match("NOT xmp:pending"))
+	assert.Equal(t, []string{asset.ID}, match("xmp:pending OR xmp:conflict"))
 	conflict := xmpState(t, s, raw.ID).ConflictID
 	_, err = s.PhotoXMPConflict(ctx, raw.ID, conflict)
 	require.NoError(t, err)
@@ -461,6 +523,32 @@ func TestPhotoXMPPurgeRemovesSyncReceipts(t *testing.T) {
 			require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&receipts))
 			assert.Zero(t, receipts)
 			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
+
+func TestPhotoXMPAssetSeekPreservesBooleanQueries(t *testing.T) {
+	t.Parallel()
+	s, pending, _, _ := xmpSidecarPhoto(t)
+	other := albumAsset(t, s, "other.jpg")
+	for _, tc := range []struct {
+		text string
+		want []string
+	}{
+		{"xmp:pending AND NOT name:other.jpg", []string{pending.ID}},
+		{"xmp:pending OR name:other.jpg", []string{pending.ID, other.ID}},
+		{"NOT xmp:pending", []string{other.ID}},
+		{"(xmp:pending OR name:other.jpg) AND name:other.jpg", []string{other.ID}},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			t.Parallel()
+			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: tc.text, Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)
+			require.NoError(t, err)
+			ids := []string{}
+			for _, item := range page.Items {
+				ids = append(ids, item.AssetID)
+			}
+			assert.ElementsMatch(t, tc.want, ids)
 		})
 	}
 }

@@ -2371,6 +2371,54 @@ CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
     extractor_fingerprint TEXT NOT NULL
 );
 
+-- A missing fence row means the original needs sync. These triggers only
+-- delete rows, each when an input of the fence token changes; the daemon
+-- rechecks the full token once on start.
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_member
+AFTER UPDATE OF revision, current_version_id, name, parent_id, trashed_at ON nodes BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN
+        (SELECT o.file_id FROM photo_files m JOIN photo_files o ON o.asset_id=m.asset_id WHERE m.node_id=new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_blocker_insert
+AFTER INSERT ON nodes WHEN substr(new.name,-4)='.xmp' BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN (SELECT f.file_id FROM nodes o JOIN photo_files f ON f.node_id=o.id
+        WHERE o.parent_id=new.parent_id AND o.name=substr(new.name,1,length(new.name)-4));
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_blocker_update
+AFTER UPDATE OF name, parent_id, trashed_at ON nodes WHEN substr(old.name,-4)='.xmp' OR substr(new.name,-4)='.xmp' BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN (SELECT f.file_id FROM nodes o JOIN photo_files f ON f.node_id=o.id
+        WHERE o.parent_id=old.parent_id AND o.name=substr(old.name,1,length(old.name)-4));
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN (SELECT f.file_id FROM nodes o JOIN photo_files f ON f.node_id=o.id
+        WHERE o.parent_id=new.parent_id AND o.name=substr(new.name,1,length(new.name)-4));
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_asset
+AFTER UPDATE OF revision ON photo_assets BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN (SELECT file_id FROM photo_files WHERE asset_id=new.asset_id);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_moved
+AFTER UPDATE OF asset_id ON photo_files BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id=old.file_id;
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_audit_insert
+AFTER INSERT ON audit_memberships BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN
+        (SELECT o.file_id FROM photo_files m JOIN photo_files o ON o.asset_id=m.asset_id WHERE m.node_id=new.node_id);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_authority_insert
+AFTER INSERT ON audit_authority BEGIN
+    DELETE FROM photo_sidecar_considered;
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_head_insert
+AFTER INSERT ON source_metadata_heads BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN
+        (SELECT f.file_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.blob_hash=new.source_sha256);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_sidecar_considered_head_update
+AFTER UPDATE OF generation_id ON source_metadata_heads BEGIN
+    DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN
+        (SELECT f.file_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.blob_hash=new.source_sha256);
+END;
+
 CREATE TABLE IF NOT EXISTS photo_library_settings (
     singleton    INTEGER PRIMARY KEY,
     preference   TEXT,

@@ -69,13 +69,15 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		state := photoXMPSignalsSQL + ` AND NOT ` + photoXMPFenceCurrentSQL
+		originals := `SELECT f.node_id,f.asset_id FROM ` + photoXMPUnfencedSQL + ` JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE ` + photoXMPSignalsSQL
 		if value == PhotoXMPStateConflict {
-			state = photoXMPLatestStateSQL + `='conflict' AND ` + photoXMPFenceCurrentSQL
+			originals = `SELECT f.node_id,f.asset_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id
+ WHERE f.node_id IN (` + photoXMPSyncedNodesSQL + `) AND f.role IN ('raw','image') AND ` + photoXMPFenceCurrentSQL + ` AND ` + photoXMPLatestStateSQL + `='conflict'`
 		}
-		originals := `SELECT f.node_id,f.asset_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE f.role IN ('raw','image') AND ` + state
 		if c.photoDisplayMetadata {
-			return compiledQueryFragment{sql: `n.id IN (SELECT pf.node_id FROM (` + originals + `) xf JOIN photo_files pf ON pf.asset_id=xf.asset_id)`}, nil
+			// A member matches only inside a matching asset, so the asset set is implied.
+			return compiledQueryFragment{sql: `n.id IN (SELECT pf.node_id FROM (` + originals + `) xf JOIN photo_files pf ON pf.asset_id=xf.asset_id)`,
+				assets: `SELECT asset_id FROM (` + originals + `)`}, nil
 		}
 		return compiledQueryFragment{sql: `n.id IN (SELECT node_id FROM (` + originals + `))`}, nil
 	case "rating", "rating_min", "rating_max":

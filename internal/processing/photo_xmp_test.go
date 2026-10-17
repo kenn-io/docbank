@@ -766,3 +766,107 @@ func TestPhotoXMPEditOfDocbankVersionImports(t *testing.T) {
 	e.state(store.PhotoXMPStateSynced)
 	assert.Equal(t, 4, e.raw().Rating)
 }
+
+func TestPhotoXMPOutsideSourceReturnsToEarlierRating(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
+	e.drain()
+	for _, rating := range []string{"3", "4"} {
+		e.importFiles(xmpSidecar(` xmp:Rating="`+rating+`"`, ""))
+		e.drain()
+		e.state(store.PhotoXMPStateSynced)
+		want, err := strconv.Atoi(rating)
+		require.NoError(t, err)
+		require.Equal(t, want, e.raw().Rating, "outside editor restored rating %s", rating)
+	}
+	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
+	e.drain()
+	managed, _, _ := e.packet()
+	e.importFiles(xmpSidecar(` xmp:Rating="4"`, ""))
+	e.drain()
+	current, _, _ := e.packet()
+	assert.Equal(t, 5, e.raw().Rating, "unchanged source preserves the catalog edit")
+	assert.Equal(t, managed.CurrentVersionID, current.CurrentVersionID)
+}
+
+func TestPhotoXMPKeywordConflictChoices(t *testing.T) {
+	t.Parallel()
+	for _, choice := range []string{"catalog", "sidecar"} {
+		t.Run(choice, func(t *testing.T) {
+			t.Parallel()
+			e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, `<dc:subject><rdf:Bag/></dc:subject>`))
+			e.drain()
+			tag, err := e.catalog.CreateTag(t.Context(), "Travel")
+			require.NoError(t, err)
+			e.edit(store.PhotoAuthoredPatch{}, store.PhotoKeywordEdit{TagID: tag.ID, Assign: true})
+			e.drain()
+			e.importFiles(xmpSidecar(` xmp:Rating="3"`, `<dc:subject><rdf:Bag/></dc:subject>`))
+			e.drain()
+			require.Equal(t, []string{"Travel"}, e.keywords())
+			e.edit(store.PhotoAuthoredPatch{}, store.PhotoKeywordEdit{TagID: tag.ID, Assign: false})
+			e.importFiles(xmpSidecar(` xmp:Rating="3" xmp:Label="Red"`, `<dc:subject><rdf:Bag><rdf:li>Travel</rdf:li></rdf:Bag></dc:subject>`))
+			e.drain()
+			conflict := e.state(store.PhotoXMPStateConflict)
+			require.Equal(t, []store.PhotoXMPRow{{Field: "Keywords", Catalog: "", Sidecar: "Travel"}}, conflict.Rows)
+			err = ResolvePhotoXMP(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID, conflict.ConflictID, choice)
+			require.NoError(t, err)
+			e.drain()
+			e.state(store.PhotoXMPStateSynced)
+			_, _, packet := e.packet()
+			if choice == "catalog" {
+				assert.Empty(t, e.keywords())
+				assert.Empty(t, packet.Keywords)
+			} else {
+				assert.Equal(t, []string{"Travel"}, e.keywords())
+				assert.Equal(t, []string{"Travel"}, packet.Keywords)
+			}
+		})
+	}
+}
+
+func TestPhotoXMPHiddenConflictRequiresUnlock(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="3"`, ""))
+	e.drain()
+	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
+	e.drain()
+	e.importFiles(xmpSidecar(` xmp:Rating="4"`, ""))
+	raw, asset := e.raw(), e.asset()
+	require.NoError(t, e.catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	token, _, err := e.catalog.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := store.WithPhotoHiddenToken(t.Context(), token)
+	_, err = e.catalog.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	e.drain()
+	prepared, err := e.catalog.PreparePhotoAuthored(unlocked, store.PhotoSetSelection{AssetIDs: []string{asset.ID}, Hidden: true})
+	require.NoError(t, err)
+	require.Len(t, prepared.Targets, 1)
+	conflict := prepared.Targets[0].XMP
+	require.Equal(t, store.PhotoXMPStateConflict, conflict.State)
+	ing := &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}
+	err = ResolvePhotoXMP(t.Context(), ing, raw.ID, conflict.ConflictID, "sidecar")
+	require.ErrorIs(t, err, store.ErrHiddenLocked)
+	err = ResolvePhotoXMP(unlocked, ing, raw.ID, conflict.ConflictID, "sidecar")
+	require.NoError(t, err)
+	prepared, err = e.catalog.PreparePhotoAuthored(unlocked, store.PhotoSetSelection{AssetIDs: []string{asset.ID}, Hidden: true})
+	require.NoError(t, err)
+	require.Len(t, prepared.Targets, 1)
+	assert.Equal(t, 4, prepared.Targets[0].Values.Rating)
+	assert.Equal(t, store.PhotoXMPStateSynced, prepared.Targets[0].XMP.State)
+}
+
+func TestPhotoXMPSyncsEachQualifiedPacket(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t,
+		photoGroupFile{"capture.JPG", store.PhotoRoleImage, "image/jpeg", "synthetic JPEG"},
+		photoGroupFile{"capture.ARW.xmp", store.PhotoRoleSidecar, "application/rdf+xml", photoSidecarHeader + ` xmp:Rating="5">` + photoSidecarFooter},
+		photoGroupFile{"capture.JPG.xmp", store.PhotoRoleSidecar, "application/rdf+xml", photoSidecarHeader + ` xmp:Rating="2">` + photoSidecarFooter},
+	)
+	e.drain()
+	assert.Equal(t, 5, e.raw().Rating)
+	jpeg := e.member(store.PhotoRoleImage)
+	assert.Equal(t, 2, jpeg.Rating)
+	e.state(store.PhotoXMPStateSynced)
+	e.stateOf(jpeg.ID, store.PhotoXMPStateSynced)
+}

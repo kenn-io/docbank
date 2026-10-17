@@ -1395,6 +1395,43 @@ func sourceMetadataTestSpool(t *testing.T) string {
 	return root
 }
 
+func TestSourceMetadataWorkerRefusesNestedXMP(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, `<metadata><rdf:RDF><rdf:Description xmp:Rating="1"/></rdf:RDF></metadata>`))
+	targets, err := e.catalog.MissingSourceMetadataTargetsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	completed, err := BackfillSourceMetadataTargets(t.Context(), e.catalog, e.blobs, sourceMetadataTestSpool(t), targets)
+	require.NoError(t, err)
+	require.Positive(t, completed)
+	_, metadata, err := e.catalog.ActiveSourceMetadata(t.Context(), e.sidecars()[0].BlobHash)
+	require.NoError(t, err)
+	_, valid := sourceMetadataBoolean(metadata, "image.xmp.packet_valid")
+	assert.False(t, valid, "refused nested RDF must not publish a valid packet")
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+}
+
+func TestSourceMetadataWorkerReschedulesPreviousXMPParser(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
+	sidecar := e.sidecars()[0]
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1})
+	require.NoError(t, err)
+	previous := fingerprintSourceMetadataExtractor("docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v20", emailmime.Recipe())
+	_, err = e.catalog.PublishSourceMetadata(t.Context(), sidecar.BlobHash, previous, canonical)
+	require.NoError(t, err)
+	targets, err := e.catalog.MissingSourceMetadataTargetsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Contains(t, targets, store.SourceMetadataTarget{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size})
+	completed, err := BackfillSourceMetadataTargets(t.Context(), e.catalog, e.blobs, sourceMetadataTestSpool(t), targets)
+	require.NoError(t, err)
+	require.Positive(t, completed)
+	_, metadata, err := e.catalog.ActiveSourceMetadata(t.Context(), sidecar.BlobHash)
+	require.NoError(t, err)
+	rating, found := sourceMetadataInteger(metadata, "image.xmp.rating")
+	assert.True(t, found)
+	assert.Equal(t, int64(4), rating)
+}
+
 func TestBackfillSourceMetadataRetriesEmailSpoolFailure(t *testing.T) { //nolint:paralleltest // t.Setenv rewrites TMPDIR, TMP, and TEMP
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "message.eml", "Subject: Synthetic message\r\n\r\nbody", "message/rfc822")

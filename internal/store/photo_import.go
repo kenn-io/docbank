@@ -162,12 +162,12 @@ func photoImportRoleFilter(role string) (string, []any) {
 	}
 }
 
-// photoImportAcceptedSQL names the member's bytes (?2) when an XMP sync of
-// sidecar node n accepted them as its outside packet. n.id+0 drops the
+// photoImportAcceptedSQL names the member's bytes (?2) when the latest XMP sync of
+// sidecar node n retains them as its outside packet. n.id+0 drops the
 // column affinity that would keep SQLite from seeking the json_extract index.
-const photoImportAcceptedSQL = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_sidecar
+const photoImportAcceptedSQL = `CASE WHEN (SELECT json_extract(xr.after_json,'$.sync.source_sha256') FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_sidecar
  WHERE xr.operation='xmp_sync' AND json_extract(xr.after_json,'$.sync.sidecar.node_id')=n.id+0
- AND json_extract(xr.after_json,'$.sync.source_sha256')=?2) THEN ?2 ELSE '' END`
+ ORDER BY xr.after_revision DESC LIMIT 1)=?2 THEN ?2 ELSE '' END`
 
 // photoImportSidecarCandidatesQuery finds sidecars by source path (?1) first:
 // a rescan can supply the outside bytes Docbank accepted before writing a

@@ -75,14 +75,18 @@ func BenchmarkPhotoXMPStatus100k(b *testing.B) {
 			require.NoError(b, err)
 		})
 		for b.Loop() {
+			started := time.Now()
 			targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
 			require.NoError(b, err)
 			require.Empty(b, targets)
+			require.LessOrEqual(b, time.Since(started), 150*time.Millisecond, "idle worker latency budget")
 		}
 	})
 	b.Run("pending page", func(b *testing.B) {
 		for b.Loop() {
+			started := time.Now()
 			page(b, "xmp:pending")
+			require.LessOrEqual(b, time.Since(started), 500*time.Millisecond, "pending page latency budget")
 		}
 	})
 	b.Run("conflict page", func(b *testing.B) {

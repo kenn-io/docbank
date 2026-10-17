@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -41,6 +42,9 @@ type compiledQueryFragment struct {
 	sql       string
 	args      []any
 	relations compiledQueryRelations
+	// assets selects, without arguments, every photo asset_id a display-mode
+	// match can belong to. Photo browsing seeks it; only AND keeps it.
+	assets string
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
@@ -619,6 +623,7 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 	var args []any
 	var relations compiledQueryRelations
 	var lexical []lexicalOperand
+	var assets string
 	for _, part := range parts {
 		if part.sql == "" {
 			continue
@@ -627,8 +632,11 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 		args = append(args, part.args...)
 		relations |= part.relations
 		lexical = append(lexical, part.lexical...)
+		if operator == ` AND ` {
+			assets = cmp.Or(assets, part.assets)
+		}
 	}
-	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical}
+	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical, assets: assets}
 }
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {
