@@ -81,7 +81,7 @@ var photoEventCaptureRules = []photoEventCaptureRule{
 	{"photo_quality_signals", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},
 	{"visual_preview_generations", metadataContentVersionIDField, metadataContentVersionIDField, photoChangePreview, ""},
 	{"visual_preview_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangePreview, "generation_id"},
-	{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangePreview, "attachment_id"},
+	{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, "attachment_id"},
 	{"rendition_job_waiters", "waiter_id", "content_version_id", photoChangePreview, "job_id,content_version_id,profile_fingerprint,state"},
 	{"rendition_jobs", "job_id", "job_id", "job", "state,updated_at"},
 	{"person_document_assertions", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},

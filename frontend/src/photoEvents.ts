@@ -85,7 +85,7 @@ export async function readPhotoEvents(
   }
 }
 
-// One visible tab holds the stream and broadcasts an ID-free refetch for every event.
+// One visible tab holds the stream; other tabs use their own audience cursor.
 const photoEventLock = "docbank-photo-events";
 type PhotoEventOptions = NonNullable<Parameters<typeof photoEvents>[0]> & { signal: AbortSignal };
 
@@ -94,7 +94,7 @@ async function consumePhotoEvents(
   schedule: (event: PhotoEvent) => void,
   connected: () => void,
 ): Promise<void> {
-  const consume = async (channel?: BroadcastChannel, signal = options.signal) => {
+  const consume = async (handoff = false) => {
     const connecting = new AbortController();
     const deadline = setTimeout(
       () => connecting.abort(new Error("Photo event stream did not respond")),
@@ -103,41 +103,27 @@ async function consumePhotoEvents(
     try {
       const response = await photoEvents({
         ...options,
-        signal: AbortSignal.any([signal, connecting.signal]),
+        signal: AbortSignal.any([options.signal, connecting.signal]),
       });
       clearTimeout(deadline);
-      if (signal.aborted) return;
+      if (options.signal.aborted) return;
       if (!response.body || !response.headers.get("Content-Type")?.startsWith("text/event-stream"))
         throw new Error("Photo event stream unavailable");
       connected();
-      await readPhotoEvents(response.body, signal, (event) => {
-        schedule(event);
-        channel?.postMessage("refetch");
-      });
+      if (handoff) schedule({ refetch: true });
+      await readPhotoEvents(response.body, options.signal, schedule);
     } finally {
       clearTimeout(deadline);
     }
   };
-  if (typeof BroadcastChannel === "undefined") return;
-  const channel = new BroadcastChannel(photoEventLock);
-  try {
-    let held = false;
-    await navigator.locks.request(photoEventLock, { ifAvailable: true }, async (lock) => {
-      if (!lock) return;
-      held = true;
-      await consume(channel);
-    });
-    if (held || options.signal.aborted) return;
-    channel.onmessage = () => schedule({ refetch: true });
-    connected();
-    schedule({ refetch: true });
-    // Wait for the holder to leave, then reconnect while owning the lock.
-    await navigator.locks.request(photoEventLock, { signal: options.signal }, () =>
-      consume(channel),
-    );
-  } finally {
-    channel.close();
-  }
+  let held = false;
+  await navigator.locks.request(photoEventLock, { ifAvailable: true }, async (lock) => {
+    if (!lock) return;
+    held = true;
+    await consume();
+  });
+  if (!held && !options.signal.aborted)
+    await navigator.locks.request(photoEventLock, { signal: options.signal }, () => consume(true));
 }
 
 export function watchPhotoEvents(
@@ -148,7 +134,8 @@ export function watchPhotoEvents(
   onrefreshed: () => void = () => {},
   pollCursor?: (receive: (cursor?: string) => void) => void,
 ): () => void {
-  const polling = typeof navigator.locks === "undefined" || typeof BroadcastChannel === "undefined";
+  const polling = typeof navigator.locks === "undefined";
+  let established = false;
   let cursor: string | undefined;
   let stopped = false;
   let controller: AbortController | undefined;
@@ -219,6 +206,7 @@ export function watchPhotoEvents(
         },
         schedule,
         () => {
+          established = true;
           onconnected();
           connectedAt = Date.now();
         },
@@ -234,13 +222,17 @@ export function watchPhotoEvents(
       if (cause instanceof APIError && cause.status === 429 && !current.signal.aborted && !stopped)
         onfailure(cause);
     } finally {
-      if (controller === current) controller = undefined;
+      if (controller === current) {
+        controller = undefined;
+        established = false;
+      }
     }
     if (connectedAt !== undefined && Date.now() - connectedAt >= 30_000) failures = 0;
     if (!stopped && !current.signal.aborted)
       retry = setTimeout(() => void connect(), Math.min(30_000, 1000 * 2 ** failures++));
   };
   const visibility = () => {
+    established = false;
     controller?.abort();
     clearTimeout(retry);
     clearTimeout(timer);
@@ -251,17 +243,17 @@ export function watchPhotoEvents(
       if (hasPending()) schedule();
     }
   };
-  if (polling)
-    pollCursor?.((next) => {
-      if (next && next !== cursor) {
-        cursor = next;
-        schedule({ refetch: true });
-      }
-    });
+  pollCursor?.((next) => {
+    if (next && next !== cursor) {
+      cursor = next;
+      if (!established) schedule({ refetch: true });
+    }
+  });
   document.addEventListener("visibilitychange", visibility);
   void connect();
   const dispose = () => {
     stopped = true;
+    established = false;
     controller?.abort();
     clearTimeout(retry);
     clearTimeout(timer);

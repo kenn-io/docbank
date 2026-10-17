@@ -91,11 +91,11 @@ export class PhotoAuthoredEditor {
     const retained = results.flatMap((result) => {
       if (result.status !== "fulfilled" || !result.value) return [];
       const tag = result.value;
-      return ids.includes(tag.id) ? [tag] : [];
+      return ids.includes(tag.id) && !this.deletedTags.has(tag.id) ? [tag] : [];
     });
     this.tags = mergePhotoTags(this.tags, retained);
     this.tagsError = "";
-    return this.tags.filter((tag) => ids.includes(tag.id));
+    return this.tags.filter((tag) => ids.includes(tag.id) && !this.deletedTags.has(tag.id));
   }
   onTagDeleted?: (id: string) => void;
   private deletedTags = new Set<string>();
@@ -107,6 +107,7 @@ export class PhotoAuthoredEditor {
       this.noticeTone = "warning";
     }
     this.deletedTags.add(id);
+    this.pendingTags.delete(id);
     this.tags = this.tags.filter((tag) => tag.id !== id);
     this.onTagDeleted?.(id);
   }
@@ -122,6 +123,7 @@ export class PhotoAuthoredEditor {
           if (
             this.pendingTags.get(id) === request &&
             !this.controller.signal.aborted &&
+            !this.deletedTags.has(id) &&
             this.targets.some((target) => target.tags.includes(id)) &&
             !this.tags.some((value) => value.id === id)
           )
@@ -148,7 +150,7 @@ export class PhotoAuthoredEditor {
       [...changed].map(async (id) => {
         try {
           const tag = await this.request(() => api.getTag(id, this.boundedOptions()));
-          if (this.controller.signal.aborted) return;
+          if (this.controller.signal.aborted || this.deletedTags.has(id)) return;
           if (this.tags.some((value) => value.id === id))
             this.tags = this.tags.map((value) => (value.id === id ? tag : value));
           else if (this.targets.some((target) => target.tags.includes(id)))
@@ -159,7 +161,7 @@ export class PhotoAuthoredEditor {
         }
       }),
     );
-    return refreshed.filter((tag): tag is api.Tag => !!tag);
+    return refreshed.filter((tag): tag is api.Tag => !!tag && !this.deletedTags.has(tag.id));
   }
   private controller = new AbortController();
   private read = new AbortController();

@@ -2763,7 +2763,7 @@
       (photos): photos is Photos => !!(photos?.started || photos?.loading),
     );
     await Promise.all([
-      changes || !affectedAlbumID
+      (changes ? changes.refetch : !affectedAlbumID)
         ? photoAlbums?.load().then((loaded) => {
             if (changes && loaded === false) throw new Error(photoAlbums?.loadError);
           })
@@ -2772,6 +2772,9 @@
         .filter(
           (photos) =>
             photos !== source &&
+            (!changes ||
+              changes.refetch ||
+              photos.items.some((row) => changes.assets.has(row.asset_id))) &&
             (changes ||
               !affectedAlbumID ||
               photos.query.filters?.set_ids?.includes(affectedAlbumID)),

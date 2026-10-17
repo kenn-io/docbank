@@ -269,6 +269,9 @@ func TestPhotoEventsViewSources(t *testing.T) {
 			} else {
 				event := nextPhotoEvent(t, events)
 				require.Equal(t, asset.ID, event.AssetID)
+				if source.table == "visual_preview_generations" || source.table == "visual_preview_heads" {
+					require.False(t, event.Refetch, "visual previews only change loaded rows")
+				}
 				if source.table == "nodes" {
 					visible, err := s.VisiblePhotoEvents(ctx, []PhotoEvent{event})
 					require.NoError(t, err)
@@ -317,7 +320,11 @@ func TestPhotoEventsRenditionSources(t *testing.T) {
 				require.EqualValues(t, 1, rows)
 				return nil
 			}))
-			require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+			event := nextPhotoEvent(t, events)
+			require.Equal(t, asset.ID, event.AssetID)
+			if source.table == "rendition_heads" {
+				require.True(t, event.Refetch, "rendition text affects search membership")
+			}
 			noPhotoEvent(t, events)
 		})
 	}

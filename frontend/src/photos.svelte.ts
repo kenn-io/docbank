@@ -881,14 +881,15 @@ export class Photos {
     preserve?: () => (() => Promise<void>) | undefined,
   ): Promise<boolean> {
     const query = this.query;
-    const signal = this.controller.signal;
+    const controller = this.controller;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
     const ids = assetIDs.filter((id) => this.items.some((item) => item.asset_id === id));
     if (this.disposed || !ids.length) return !this.disposed;
     const page = await this.page(
       { ...query, filters: { ...query.filters, asset_ids: ids } },
       signal,
     ).catch((cause) => {
-      if (!signal.aborted) this.authFailure(cause);
+      if (!controller.signal.aborted) this.authFailure(cause);
       throw cause;
     });
     if (this.disposed || signal.aborted || this.query !== query) return false;

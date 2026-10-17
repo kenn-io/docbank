@@ -9,6 +9,12 @@ import {
 } from "../src/generated/docbank.js";
 import { photoFixture, repository } from "./photo-fixture.js";
 
+declare global {
+  interface Window {
+    photoEventFrames: string[];
+  }
+}
+
 test.use({ launchOptions: { args: ["--host-resolver-rules=MAP archive.example.test 127.0.0.1"] } });
 
 test.skip(
@@ -58,6 +64,29 @@ async function sixVisiblePhotoTabs(
         : new URL(await fixture.run("web", "--no-browser"));
       let session = new URLSearchParams(url.hash.slice(1)).get("web_session") ?? "";
       const page = await context.newPage();
+      await page.addInitScript(() => {
+        const fetchResponse = window.fetch;
+        const frames: string[] = [];
+        window.photoEventFrames = frames;
+        window.fetch = async (...args) => {
+          const response = await fetchResponse(...args);
+          if (
+            new URL(String(args[0]), location.href).pathname !== "/api/v1/photos/events" ||
+            !response.body
+          )
+            return response;
+          const decoder = new TextDecoder();
+          const body = response.body.pipeThrough(
+            new TransformStream({
+              transform(chunk, controller) {
+                frames.push(decoder.decode(chunk, { stream: true }));
+                controller.enqueue(chunk);
+              },
+            }),
+          );
+          return new Response(body, { status: response.status, headers: response.headers });
+        };
+      });
       const tab = { page, session };
       tabs.push(tab);
       page.on("request", (request) => {
@@ -149,21 +178,31 @@ async function sixVisiblePhotoTabs(
     const first = await tabs[0]!.page.locator("[data-asset]").first().getAttribute("data-asset");
     {
       const lockedHolder = holder;
+      let lockedPolls = 0;
+      const daemonFetch = globalThis.fetch;
       // Keep this tab's access checks locked while the follower acquires a shared cookie.
       if (lockedHolder)
-        await lockedHolder.route("**/api/v1/photos/hidden", async (route) => {
-          const headers = route.request().headers();
-          headers.cookie = "";
-          const response = await fetch(route.request().url(), { headers });
-          const body = await response.text();
-          expect(JSON.parse(body).expires_at).toBeUndefined();
-          await route.fulfill({ status: response.status, contentType: "application/json", body });
-        });
+        await lockedHolder.route(
+          (url) => url.pathname === "/api/v1/photos/hidden",
+          async (route) => {
+            const headers = route.request().headers();
+            headers.cookie = "";
+            const response = await daemonFetch(route.request().url(), { headers });
+            const body = await response.text();
+            expect(JSON.parse(body).expires_at).toBeUndefined();
+            lockedPolls++;
+            await route.fulfill({ status: response.status, contentType: "application/json", body });
+          },
+        );
       const follower = tabs.find(({ page }) => page !== holder)!;
       await follower.page.getByRole("button", { name: "Hidden", exact: true }).click();
       await follower.page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
       await follower.page.getByRole("button", { name: "Set passcode", exact: true }).click();
       await expect(follower.page.getByText(/Locks in/)).toBeVisible();
+      if (lockedHolder) {
+        const before = lockedPolls;
+        await expect.poll(() => lockedPolls).toBeGreaterThan(before);
+      }
       await follower.page.getByRole("button", { name: "Library", exact: true }).click();
       await follower.page
         .locator(`[data-asset="${first}"]`)
@@ -174,6 +213,10 @@ async function sixVisiblePhotoTabs(
       await expect(follower.page.locator(`[data-asset="${first}"]`)).toBeVisible();
       expect(holder).toBe(lockedHolder);
       expect(streams.size).toBe(insecureHTTP ? 0 : 1);
+      if (lockedHolder)
+        await lockedHolder.evaluate(() => {
+          window.photoEventFrames.length = 0;
+        });
       const originalFetch = globalThis.fetch;
       let status = 0;
       // Send generated requests from the follower so they retain its Hidden unlock cookie.
@@ -214,6 +257,10 @@ async function sixVisiblePhotoTabs(
         globalThis.fetch = originalFetch;
       }
       await expect(follower.page.locator(`[data-asset="${first}"]`)).toHaveCount(0);
+      if (lockedHolder)
+        expect(await lockedHolder.evaluate(() => window.photoEventFrames.join(""))).not.toContain(
+          first,
+        );
       await follower.page.getByRole("button", { name: "Library", exact: true }).click();
     }
     for (const { page } of tabs) {

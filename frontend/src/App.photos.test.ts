@@ -3654,3 +3654,18 @@ it("forwards the Hidden view access poll cursor", async () => {
     timeout: 4000,
   });
 });
+
+it("limits row-only events to views containing the changed asset", async () => {
+  const fixture = await watcherFixture();
+  const albums = vi.spyOn(api, "listPhotoAlbums");
+  const rows = vi.spyOn(Photos.prototype, "refreshChanges");
+  const batch = { assets: new Map([["photo-1", 1]]), refetch: false };
+  await act(async () => fixture.refresh(batch));
+  expect(fixture.workspaceRefresh).toHaveBeenCalledWith(batch);
+  expect(albums).not.toHaveBeenCalled();
+  fixture.workspaceRefresh.mockClear();
+  await act(async () => fixture.refresh({ assets: new Map([["unloaded", 1]]), refetch: false }));
+  expect(fixture.workspaceRefresh).not.toHaveBeenCalled();
+  expect(rows).not.toHaveBeenCalled();
+  expect(albums).not.toHaveBeenCalled();
+});
