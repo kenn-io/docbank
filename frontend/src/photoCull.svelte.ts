@@ -8,8 +8,8 @@ import type {
   CullScope,
   CullStorage,
 } from "./photoCullStorage.js";
-import { lookupPhotoRows } from "./photos.svelte.js";
-import type { PhotoBrowseRowFlag } from "./generated/docbank.js";
+import { lookupPhotoRows, photoQuery } from "./photos.svelte.js";
+import { listPhotoAssets, type PhotoBrowseRowFlag } from "./generated/docbank.js";
 
 const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
@@ -165,9 +165,26 @@ export class PhotoCull {
     }
   }
   private async refreshFlags(signal: AbortSignal) {
-    const rows = await lookupPhotoRows(this.session, this.run!.ids, signal, (loaded, total) => {
-      this.progress = `Checking ${loaded} of ${total} photos…`;
-    });
+    const rows = await lookupPhotoRows(
+      this.session,
+      this.run!.ids,
+      signal,
+      (loaded, total) => {
+        this.progress = `Checking ${loaded} of ${total} photos…`;
+      },
+      false,
+      async (batch, signal) => {
+        const page = await listPhotoAssets(
+          {
+            query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+            page_size: 250,
+            hidden: false,
+          },
+          { session: this.session, signal },
+        );
+        return { items: page.items.map(({ asset_id, flag }) => ({ asset_id, flag })) };
+      },
+    );
     signal.throwIfAborted();
     return new Map(rows.map((row) => [row.asset_id, row.flag]));
   }
