@@ -2,18 +2,79 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestBrowserPhotoReimportKeepsOriginalBurst(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	destination, err := ing.Store.PrepareIngestDirectory(ctx, "/photos")
+	require.NoError(t, err)
+	commit := func(run store.IngestRun, importID, folder, name string) store.PhotoImportResult {
+		content := "synthetic browser photo " + name
+		digest := sha256.Sum256([]byte(content))
+		var result store.PhotoImportResult
+		err := ing.Blobs.WithMutation(ctx, func() error {
+			prepared, err := ing.PrepareUpload(ctx, ing.Store.RootID(), name, "image/jpeg", strings.NewReader(content), hex.EncodeToString(digest[:]), int64(len(content)))
+			if err != nil {
+				return err
+			}
+			result, err = ing.CommitPhotoGroup(ctx, PhotoGroupCommit{
+				Run: run, ImportID: importID, Destination: &destination,
+				Paths: []string{folder + "/" + name}, Mtimes: []string{"2024-06-10T12:00:00Z"},
+			}, []*PreparedUpload{prepared})
+			return err
+		})
+		require.NoError(t, err)
+		return result
+	}
+	run, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic first selection")
+	require.NoError(t, err)
+	ids := make([]string, 2)
+	for i := range ids {
+		result := commit(run, "selection-a", "camera", fmt.Sprintf("frame-%d.jpg", i))
+		require.True(t, result.Added)
+		ids[i] = result.Asset.ID
+		stamp := fmt.Sprintf("2024-06-10T12:00:0%dZ", i)
+		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{
+			Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{
+				Raw: stamp, Normalized: stamp, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneUTC,
+			}},
+		}}})
+		require.NoError(t, err)
+		digest := sha256.Sum256(canonical)
+		_, err = ing.Store.PublishSourceMetadata(ctx, result.Nodes[0].BlobHash, hex.EncodeToString(digest[:]), canonical)
+		require.NoError(t, err)
+	}
+	groups, unavailable, _, err := ing.Store.PhotoStackGroups(ctx, ids, false)
+	require.NoError(t, err)
+	require.Empty(t, unavailable)
+	require.Equal(t, [][]string{ids}, groups)
+	secondRun, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic second selection")
+	require.NoError(t, err)
+	reimported := commit(secondRun, "selection-b", "other", "frame-1.jpg")
+	require.True(t, reimported.Skipped)
+	require.Equal(t, ids[1], reimported.Asset.ID)
+	groups, unavailable, _, err = ing.Store.PhotoStackGroups(ctx, ids, false)
+	require.NoError(t, err)
+	require.Empty(t, unavailable)
+	require.Equal(t, [][]string{ids}, groups)
+}
 
 func TestPhotoImportGrouping(t *testing.T) {
 	root := t.TempDir()
