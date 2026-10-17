@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,20 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
+
+func TestPhotoInspectReportsInteractiveSuccess(t *testing.T) {
+	f := newImportActionDaemon(t)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "synthetic.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := f.catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	rootCmd.SetIn(actionTerminal(t))
+	defer rootCmd.SetIn(nil)
+	out, err := runCLI(t, "photos", "assets", "inspect", asset.ID)
+	require.NoError(t, err, out)
+	require.Len(t, f.requests, 1)
+	assert.Equal(t, api.TelemetryEventRequest{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "cli"}}, <-f.requests)
+}
 
 func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	terminal := actionTerminal(t)

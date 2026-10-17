@@ -165,13 +165,7 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 			var attempted atomic.Bool
 			worker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
 				Catalog: catalog.Store, Blobs: catalog.Blobs, Owner: "synthetic-worker",
-				ImportResult: func(job storepkg.PackageImportJob) {
-					current, err := catalog.PackageImportJob(t.Context(), job.Owner, job.OperationID)
-					require.NoError(t, err)
-					progress, err := catalog.PackageImportProgress(t.Context(), job.PackageID)
-					require.NoError(t, err)
-					capture.imports.Result("package:"+job.ID, progress.Committed > 0, current.State != "queued" && current.State != "running")
-				},
+				ImportResult: api.PackageImportResult(t.Context(), catalog.Store, gate, capture.imports),
 				Mutate: func(ctx context.Context, fn func() error) error {
 					if err := gate.MutateContext(ctx, fn); err != nil {
 						return err
@@ -203,8 +197,7 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 			require.NoError(t, err)
 			_, workerErr := worker.ProcessOnce(t.Context())
 			require.True(t, attempted.Load())
-			require.NoError(t, capture.reporter.Close())
-			require.Empty(t, capture.events)
+			capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
 			pkg, err := catalog.Package(t.Context(), admitted.PackageID)
 			require.NoError(t, err)
 			progress, err := catalog.PackageImportProgress(t.Context(), admitted.PackageID)
@@ -386,12 +379,7 @@ func TestSealedZIPPackagePreflightRetainsContainerBinding(t *testing.T) {
 			require.Equal(t, containerID, id)
 			return bytes.NewReader(archive.Bytes()), int64(archive.Len()), nil
 		},
-		ImportResult: func(job storepkg.PackageImportJob) {
-			require.NoError(t, capture.imports.Observe(t.Context(), "package:"+job.ID, gate.MutateContext, func() (int64, bool, error) {
-				current, err := api.ReadPackageImport(t.Context(), catalog.Store, job.Owner, job.OperationID)
-				return int64(current.Committed), current.State != "queued" && current.State != "running", err
-			}))
-		},
+		ImportResult: api.PackageImportResult(t.Context(), catalog.Store, gate, capture.imports),
 	})
 	require.NoError(t, err)
 	fast := packageAdmissionGate(func(ctx context.Context, mutate func() error) error {

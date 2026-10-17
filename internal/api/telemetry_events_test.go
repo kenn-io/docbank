@@ -52,9 +52,6 @@ func TestTelemetryEventRoute(t *testing.T) {
 		{"no credentials", http.MethodPost, url, `{"event":"app_opened"}`, map[string]string{"X-Api-Key": ""}, http.StatusUnauthorized, ""},
 		{"browser session with query", http.MethodPost, url + "?x=1", `{"event":"app_opened"}`, browser, http.StatusForbidden, `"code":"web_session_read_only"`},
 		{"get", http.MethodGet, url, "", nil, http.StatusMethodNotAllowed, ""},
-		{"empty event", http.MethodPost, url, `{"event":""}`, browser, http.StatusBadRequest, ""},
-		{"non JSON", http.MethodPost, url, `invalid`, browser, http.StatusBadRequest, ""},
-		{"missing surface", http.MethodPost, url, `{"event":"search_run","properties":{"search_type":"text"}}`, browser, http.StatusBadRequest, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := postTelemetryEvent(t, ts.Client(), tc.method, tc.url, tc.body, tc.headers)

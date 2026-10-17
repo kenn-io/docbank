@@ -31,17 +31,15 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				container := store.MailboxContainerRequest{ID: "synthetic-source", Owner: owner, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(raw)), Format: "mbox"}
 				_, err := catalog.BeginMailboxContainer(t.Context(), container)
 				require.NoError(t, err)
-				service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), ImportResult: func(id string) {
-					require.NoError(t, capture.imports.Observe(t.Context(), "mailbox:"+id, gate.MutateContext, func() (int64, bool, error) {
-						current, err := catalog.MailboxJob(t.Context(), owner, id)
-						return current.Imported, current.ScannedTail, err
-					}))
-				}}
+				service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), ImportResult: api.MailboxImportResult(t.Context(), catalog.Store, gate, capture.imports)}
 				require.NoError(t, service.UploadChunk(t.Context(), owner, container.ID, 0, container.SHA256, container.Size, bytes.NewReader(raw)))
 				_, err = service.Seal(t.Context(), owner, container.ID)
 				require.NoError(t, err)
 				request := api.MailboxJobInput{ID: "synthetic-job", ContainerID: container.ID, ContainerSHA256: container.SHA256, Settings: api.MailboxSettingsInput{DestinationID: catalog.RootID()}}
 				headers := map[string]string{"X-Docbank-Surface": "cli"}
+				if origin == "observed" {
+					headers = nil
+				}
 				if origin == "web" {
 					headers = map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, server)}
 				}
@@ -84,11 +82,11 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				job, err = catalog.ClaimMailboxJob(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, service.RunJob(t.Context(), job))
-				if origin != "web" {
+				if origin == "observed" {
 					require.NoError(t, capture.reporter.Close())
 					require.Empty(t, capture.events)
 				} else {
-					capture.requireEvent(t, "document_added", map[string]any{"surface": "web"})
+					capture.requireEvent(t, "document_added", map[string]any{"surface": origin})
 				}
 			})
 		}

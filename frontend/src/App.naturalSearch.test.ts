@@ -940,44 +940,52 @@ it("does not fall back to GET after a processing 401", async () => {
   ).toBe(0);
 });
 
-it("preserves submit intent when reranking replaces a pending search", async () => {
-  const file = node(2, "stale.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: true,
-      },
-    ],
-    files: [file],
-    baseReport: report("hybrid", [result(file, 1, "current excerpt")]),
-    basePending: true,
-  });
-  render(App);
-  await screen.findAllByText("stale.txt");
-  await submitSearch("old query");
-  await waitFor(() => expect(harness.postBodies).toHaveLength(1));
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
-  await screen.findByText("current excerpt");
-  await waitFor(() => {
-    const events = harness.fetchMock.mock.calls
-      .filter(([url]) => String(url) === "/api/daemon/telemetry/events")
-      .map(([, init]) => JSON.parse(String(init?.body)))
-      .filter((event) => event.event === "search_run");
-    expect(events).toEqual([
-      { event: "search_run", properties: { search_type: "hybrid", surface: "web" } },
-    ]);
-  });
-  harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(screen.queryByText("stale excerpt")).toBeNull();
-  expect(
-    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
-      .length,
-  ).toBe(0);
+it("ignores stale search completions after a new submit or rerank", async () => {
+  for (const replacement of ["submit", "rerank"]) {
+    const file = node(2, "stale.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [file],
+      baseReport: report("hybrid", [result(file, 1, "current excerpt")]),
+      basePending: true,
+    });
+    render(App);
+    await screen.findAllByText("stale.txt");
+    await submitSearch("old query");
+    await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+    if (replacement === "rerank")
+      await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+    else await submitSearch("new query");
+    await screen.findByText("current excerpt");
+    await waitFor(() => {
+      const events = harness.fetchMock.mock.calls
+        .filter(([url]) => String(url) === "/api/daemon/telemetry/events")
+        .map(([, init]) => JSON.parse(String(init?.body)))
+        .filter((event) => event.event === "search_run");
+      expect(events).toEqual([
+        { event: "search_run", properties: { search_type: "hybrid", surface: "web" } },
+      ]);
+    });
+    harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("stale excerpt")).toBeNull();
+    expect(
+      harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
+        .length,
+    ).toBe(0);
+    cleanup();
+    history.replaceState(null, "", "/");
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  }
 });
 
 it("shows why natural search controls could not load", async () => {

@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/push"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 func newPushCmd() *cobra.Command {
@@ -113,13 +114,22 @@ func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Op
 			runErr = fmt.Errorf("%w: %d failed", push.ErrFilesFailed, report.Failed)
 		}
 	}
-	_, outputErr := fmt.Fprintf(cmd.OutOrStdout(),
+	return errors.Join(runErr, writePushSummary(cmd, connection, opts, report))
+}
+
+// writePushSummary prints the run's counts, then counts a one-shot run that
+// added documents; updates and unchanged files are not additions.
+func writePushSummary(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options, report push.Report) error {
+	_, err := fmt.Fprintf(cmd.OutOrStdout(),
 		"added %d, updated %d, unchanged %d, failed %d\n",
 		report.Added, report.Updated, report.Skipped, report.Failed)
-	if outputErr != nil {
-		outputErr = fmt.Errorf("writing push summary: %w", outputErr)
+	if !opts.Watch && report.Added > 0 {
+		reportAction(cmd, connection, telemetry.EventDocumentAdded, "")
 	}
-	return errors.Join(runErr, outputErr)
+	if err != nil {
+		return fmt.Errorf("writing push summary: %w", err)
+	}
+	return nil
 }
 
 func init() { rootCmd.AddCommand(newPushCmd()) }

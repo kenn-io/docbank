@@ -38,3 +38,20 @@ func reportAction(cmd *cobra.Command, c *daemonconn.Connection, event, value str
 func reportOpened(cmd *cobra.Command, c *daemonconn.Connection) {
 	reportAction(cmd, c, telemetry.EventDocumentOpened, "")
 }
+
+// writeOpenedJSON prints an inspected record, then counts the deliberate open.
+func writeOpenedJSON(cmd *cobra.Command, c *daemonconn.Connection, v any) error {
+	if err := writeCLIJSON(cmd.OutOrStdout(), v); err != nil {
+		return err
+	}
+	reportOpened(cmd, c)
+	return nil
+}
+
+// actionContext attributes work an interactive command starts to the CLI.
+func actionContext(cmd *cobra.Command) context.Context {
+	if !interactiveAction(cmd) {
+		return cmd.Context()
+	}
+	return daemonconn.WithActionSurface(cmd.Context(), "cli")
+}

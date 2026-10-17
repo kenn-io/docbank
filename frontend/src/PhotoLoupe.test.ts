@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { APIError } from "./api-transport.js";
+import * as actionEvents from "./action-events.js";
 import PhotoLoupe from "./PhotoLoupe.svelte";
 import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
@@ -12,6 +13,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 function setup() {
   vi.stubGlobal(
@@ -59,27 +61,22 @@ function setup() {
   return { props, preview, get };
 }
 it("shows preview quality, preserves zoom and reports deliberate inspection", async () => {
-  const capture = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(new Response(null, { status: 202 }));
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "dailyAction").mockImplementation((event, session) => {
+    expect(event).toBe("document_opened");
+    expect(session()).toBe("scoped");
+    return inspect;
+  });
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);
   await screen.findByText("Grid preview");
   await screen.findByText("Fit preview");
-  await waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
-  capture.mockClear();
-  vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
+  await waitFor(() => expect(inspect).toHaveBeenCalledTimes(1));
+  inspect.mockClear();
   await fireEvent.wheel(screen.getByRole("dialog"), { deltaY: 100 });
   await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
   await fireEvent.pointerDown(screen.getByRole("dialog"));
-  await waitFor(() => expect(capture).toHaveBeenCalledTimes(3));
-  for (const [url, init] of capture.mock.calls) {
-    expect(url).toBe("/api/daemon/telemetry/events");
-    expect(JSON.parse(String(init?.body))).toEqual({
-      event: "document_opened",
-      properties: { surface: "web" },
-    });
-  }
+  expect(inspect).toHaveBeenCalledTimes(3);
   await view.rerender({ ...props, reloadRevision: 1 });
   await waitFor(() =>
     expect(

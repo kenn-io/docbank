@@ -216,7 +216,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		}
 		var j store.MailboxJob
 		err := g.mutate(func() error {
-			return d.Imports.Admit(browserActionSurface(r), func() (string, bool, error) {
+			return d.Imports.Admit(importActionSurface(r), func() (string, bool, error) {
 				_, existing := d.Store.MailboxJob(r.Context(), mailboxOwner(d), request.ID)
 				if existing != nil && !errors.Is(existing, store.ErrNotFound) {
 					return "", false, existing
@@ -274,13 +274,13 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		writeJSON(w, 200, out)
 	})
 	mux.HandleFunc("POST /api/v1/mailbox/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
-		err := d.Imports.Observe(r.Context(), "mailbox:"+r.PathValue("id"), func(_ context.Context, fn func() error) error { return g.mutate(fn) }, func() (int64, bool, error) {
-			if err := d.Store.CancelMailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id")); err != nil {
-				return 0, false, err
-			}
-			current, err := d.Store.MailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id"))
-			return current.Imported, current.ScannedTail, err
-		})
+		err := g.mutate(func() error { return d.Store.CancelMailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id")) })
+		if err == nil { // Attributed jobs then claim the stored progress the cancellation left.
+			err = d.Imports.Observe(r.Context(), "mailbox:"+r.PathValue("id"), func(_ context.Context, fn func() error) error { return g.mutate(fn) }, func() (int64, bool, error) {
+				current, err := d.Store.MailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id"))
+				return current.Imported, current.ScannedTail, err
+			})
+		}
 		if err != nil {
 			writeMailboxError(w, err)
 			return

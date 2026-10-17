@@ -92,7 +92,7 @@ func (c *Connection) BeginMailboxJob(ctx context.Context, r store.MailboxJobRequ
 	var out store.MailboxJob
 	var response *http.Response
 	input := mailboxJobInput(r)
-	_, err := c.apiWithResponse(&response).BeginMailboxJob(runtime.WithStreamingResponse(ctx), &apiclient.BeginMailboxJobRequestOptions{Body: &input}, limitMailboxRequest)
+	_, err := c.apiWithResponse(&response).BeginMailboxJob(runtime.WithStreamingResponse(ctx), &apiclient.BeginMailboxJobRequestOptions{Body: &input}, limitMailboxRequest, SendActionSurface)
 	if err == nil {
 		err = decodeMailbox(response, &out, 8<<20)
 	}

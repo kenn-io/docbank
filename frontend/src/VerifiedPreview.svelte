@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { dailyAction } from "./action-events.js";
   import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -92,7 +92,7 @@
     void displayedSource.key;
     if (deliberate || duplicateSource || relatedSource) inspect();
   });
-  const inspect = (): void => reportAction(session, "document_opened");
+  const inspect = dailyAction("document_opened", () => session);
 
   function inspectKey(event: KeyboardEvent): void {
     if (event.altKey || event.ctrlKey || event.metaKey) return;

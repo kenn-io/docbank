@@ -73,6 +73,14 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 			assert.Equal(t, tc.status, response.Code, response.Body.String())
 		})
 	}
+	for _, event := range []string{"document_added", "document_opened", "search_run"} {
+		for _, props := range []string{`{"search_type":"text"}`, `{"surface":"invalid","search_type":"text"}`, `{"surface":42,"search_type":"text"}`} {
+			require.Equal(t, 400, postEvent(t, handler, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
+		}
+	}
+	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
+		require.Equal(t, 400, postEvent(t, handler, `{"event":"search_run","properties":`+props+`}`).Code)
+	}
 	require.NoError(t, reporter.Close())
 	require.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
 	mu.Lock()
@@ -112,11 +120,28 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, 202, postEvent(t, handler, screenBody("search", "tui")).Code)
+	for _, event := range []string{"document_opened", "search_run"} {
+		for _, surface := range []string{"web", "tui", "cli"} {
+			values := []string{""}
+			if event == "search_run" {
+				values = []string{"text", "semantic", "hybrid"}
+			}
+			for _, value := range values {
+				body := fmt.Sprintf(`{"event":%q,"properties":{"surface":%q,"search_type":%q}}`, event, surface, value)
+				for range 2 {
+					require.Equal(t, 202, postEvent(t, handler, body).Code)
+				}
+			}
+		}
+	}
+	require.NoError(t, handler.Capture("document_opened", map[string]any{"surface": "web"}))
 	require.NoError(t, reporter.Close())
 	reporter, handler = makeHandler()
 	handler.now = func() time.Time { return now }
 	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "tui")).Code)
 	now = now.Add(time.Minute)
+	require.NoError(t, handler.Capture("search_run", map[string]any{"surface": "web", "search_type": "semantic"}))
+	require.NoError(t, handler.Capture("document_opened", map[string]any{"surface": "web"}))
 	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "tui")).Code)
 	require.NoError(t, reporter.Close())
 	require.NoError(t, os.Remove(filepath.Join(dir, posthog.InstallFileName)))
@@ -137,14 +162,14 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 		require.NoError(t, reporter.Close())
 		mu.Lock()
-		assert.Len(t, events, 6+i)
+		assert.Len(t, events, 20+i)
 		assert.Equal(t, "browse", events[len(events)-1]["screen"])
 		assert.Equal(t, "web", events[len(events)-1]["surface"])
 		mu.Unlock()
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 7)
+	require.Len(t, events, 21)
 	assert.Equal(t, "browse", events[0]["screen"])
 	assert.Equal(t, "web", events[0]["surface"])
 	assert.Equal(t, "browse", events[1]["screen"])

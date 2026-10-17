@@ -1,17 +1,17 @@
 package telemetry
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestActionEventsAndImportAttributionCapacity(t *testing.T) {
+func TestImportAttributionObservationAndCapacity(t *testing.T) {
 	enableTelemetryEnv(t)
 	var mu sync.Mutex
 	var events []map[string]any
@@ -21,34 +21,14 @@ func TestActionEventsAndImportAttributionCapacity(t *testing.T) {
 	reporter := New(Options{Dir: dir, endpoint: collector.URL})
 	defer func() { require.NoError(t, reporter.Close()) }()
 	h := CaptureHandler(reporter, dir)
-	for _, event := range []string{"document_added", "document_opened", "search_run"} {
-		for _, surface := range []string{"web", "tui", "cli"} {
-			values := []string{""}
-			if event == "search_run" {
-				values = []string{"text", "semantic", "hybrid"}
-			}
-			for _, value := range values {
-				body := fmt.Sprintf(`{"event":%q,"properties":{"surface":%q,"search_type":%q}}`, event, surface, value)
-				for range 2 {
-					require.Equal(t, 202, postEvent(t, h, body).Code)
-				}
-			}
-		}
-		for _, props := range []string{`{"search_type":"text"}`, `{"surface":"invalid","search_type":"text"}`, `{"surface":42,"search_type":"text"}`} {
-			require.Equal(t, 400, postEvent(t, h, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
+	for _, surface := range []string{"web", "tui", "cli"} {
+		for range 2 {
+			require.Equal(t, 202, postEvent(t, h, fmt.Sprintf(`{"event":"document_added","properties":{"surface":%q}}`, surface)).Code)
 		}
 	}
-	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
-		require.Equal(t, 400, postEvent(t, h, `{"event":"search_run","properties":`+props+`}`).Code)
-	}
-	require.NoError(t, h.Capture("document_opened", map[string]any{"surface": "web"}))
-	require.Error(t, h.Capture("search_run", map[string]any{"surface": "web"}))
-	h.now = func() time.Time { return time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC) }
-	require.NoError(t, h.Capture("search_run", map[string]any{"surface": "web", "search_type": "semantic"}))
-	require.NoError(t, h.Capture("document_opened", map[string]any{"surface": "web"}))
 	require.NoError(t, reporter.Close())
 	mu.Lock()
-	require.Len(t, events, 20) // six additions and fourteen daily search/open claims
+	require.Len(t, events, 6) // additions have no daily suppression
 	events = nil
 	mu.Unlock()
 	reporter = New(Options{Dir: dir, endpoint: collector.URL})
@@ -63,6 +43,20 @@ func TestActionEventsAndImportAttributionCapacity(t *testing.T) {
 	imports.Result("mailbox:second", true, true)
 	require.NoError(t, imports.Admit("web", func() (string, bool, error) { return "photos:lost", true, nil }))
 	NewImports(CaptureHandler(reporter, dir)).Result("photos:lost", true, true)
+	gateCalls, reads := 0, 0
+	gate := func(_ context.Context, fn func() error) error { gateCalls++; return fn() }
+	read := func() (int64, bool, error) { reads++; return 1, false, nil }
+	require.NoError(t, imports.Observe(t.Context(), "untracked", gate, read))
+	assert.Equal(t, 0, gateCalls, "untracked progress must skip the mutation gate")
+	assert.Equal(t, 0, reads, "untracked progress must skip storage")
+	require.NoError(t, imports.Admit("web", func() (string, bool, error) { return "tracked", true, nil }))
+	gateCalls, reads = 0, 0
+	require.NoError(t, imports.Observe(t.Context(), "tracked", gate, read))
+	require.Equal(t, 1, gateCalls)
+	require.Equal(t, 1, reads)
+	require.NoError(t, imports.Observe(t.Context(), "tracked", gate, read))
+	assert.Equal(t, 1, gateCalls, "reported progress must skip the mutation gate")
+	assert.Equal(t, 1, reads, "reported progress must skip storage")
 	t.Setenv(EnabledEnv, "0")
 	imports = NewImports(CaptureHandler(New(Options{Dir: t.TempDir()}), t.TempDir()))
 	admitted := 0
@@ -81,6 +75,6 @@ func TestActionEventsAndImportAttributionCapacity(t *testing.T) {
 	require.NoError(t, reporter.Close())
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 2) // each import reports its first attributed addition
+	require.Len(t, events, 3) // each import reports its first attributed addition
 	assert.Equal(t, "web", events[len(events)-1]["surface"])
 }

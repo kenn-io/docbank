@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import * as download from "./download.js";
 import VerifiedPreview from "./VerifiedPreview.svelte";
 import type { SelectedSource } from "./selectedSource.js";
 
@@ -223,6 +224,20 @@ it("keeps unsupported content on the verified-download fallback without a previe
   expect(await screen.findByText(/not an eligible text or raster image preview/i)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
   expect(fetchMock).not.toHaveBeenCalled();
+  vi.spyOn(download, "prepareExactDownload").mockResolvedValue({
+    ...selected,
+    url: "https://example.com/download",
+  });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download verified original" }));
+  await screen.findByText(/browser save started/);
+  expect(fetchMock).toHaveBeenLastCalledWith(
+    "/api/daemon/telemetry/events",
+    expect.objectContaining({
+      body: JSON.stringify({ event: "document_opened", properties: { surface: "web" } }),
+    }),
+  );
 });
 
 it("loads one exact rendition only while Text is active and keeps hostile markup inert", async () => {
@@ -450,10 +465,10 @@ it("reports inspection gestures across UTC days and ignores unrelated keys", asy
   const opened = { event: "document_opened", properties: { surface: "web" } };
   await waitFor(() => expect(events).toEqual([opened]));
   await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
-  await waitFor(() => expect(events).toEqual([opened, opened]));
+  expect(events).toEqual([opened]);
   vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
   await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "ArrowDown" });
-  await waitFor(() => expect(events).toEqual([opened, opened, opened]));
+  await waitFor(() => expect(events).toEqual([opened, opened]));
   await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
-  await waitFor(() => expect(events).toEqual([opened, opened, opened, opened]));
+  expect(events).toEqual([opened, opened]);
 });

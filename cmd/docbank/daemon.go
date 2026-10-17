@@ -464,13 +464,8 @@ func runServe(ctx context.Context) (retErr error) {
 	packageMailbox := mailbox.Service{Store: s, Blobs: blobs}
 	packageWorker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
 		Catalog: s, Blobs: blobs, Mutate: operationGate.MutateContext,
-		ImportResult: func(job store.PackageImportJob) {
-			_ = imports.Observe(sigCtx, "package:"+job.ID, operationGate.MutateContext, func() (int64, bool, error) {
-				current, err := api.ReadPackageImport(sigCtx, s, job.Owner, job.OperationID)
-				return int64(current.Committed), current.State != "queued" && current.State != "running", err
-			})
-		},
-		Owner: "daemon-package-import-worker", LeaseDuration: 5 * time.Minute,
+		ImportResult: api.PackageImportResult(sigCtx, s, operationGate, imports),
+		Owner:        "daemon-package-import-worker", LeaseDuration: 5 * time.Minute,
 		IdleDelay: time.Second, OpenContainer: func(ctx context.Context, owner, id string) (io.ReaderAt, int64, error) {
 			container, err := s.MailboxContainer(ctx, owner, id)
 			if err != nil {

@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import DownloadButton from "./DownloadButton.svelte";
-import * as download from "./download.js";
 import type { SelectedSource } from "./selectedSource.js";
 
 afterEach(() => {
@@ -25,11 +24,11 @@ function source(version: string, hash: string): SelectedSource {
   };
 }
 
-it("aborts stale downloads and reports a completed verified download", async () => {
+it("aborts an in-flight exact download on same-node version or session change", async () => {
   const first = source("11111111-1111-4111-8111-111111111111", "a".repeat(64));
   const second = source("22222222-2222-4222-8222-222222222222", "b".repeat(64));
   const signals: AbortSignal[] = [];
-  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_path, init) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_path, init) => {
     if (init?.method === "DELETE") return new Response(null, { status: 204 });
     if (init?.signal) signals.push(init.signal);
     return new Promise<Response>(() => undefined);
@@ -53,18 +52,4 @@ it("aborts stale downloads and reports a completed verified download", async () 
   expect(signals[0]?.aborted).toBe(true);
   expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
   expect(screen.queryByText(/Verified/)).toBeNull();
-  vi.spyOn(download, "prepareExactDownload").mockResolvedValue({
-    ...second,
-    url: "https://example.test/download",
-  });
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-  fetcher.mockResolvedValue(new Response(null, { status: 202 }));
-  await fireEvent.click(screen.getByRole("button", { name: "Download" }));
-  await screen.findByText(/browser save started/);
-  expect(fetcher).toHaveBeenLastCalledWith(
-    "/api/daemon/telemetry/events",
-    expect.objectContaining({
-      body: JSON.stringify({ event: "document_opened", properties: { surface: "web" } }),
-    }),
-  );
 });

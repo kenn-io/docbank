@@ -39,7 +39,7 @@ func handlePackageImport(w http.ResponseWriter, r *http.Request, d Deps, g *gate
 		writeError(w, problem)
 		return
 	}
-	result, err := AdmitPackageImport(r.Context(), d, g, owner, request, browserActionSurface(r))
+	result, err := AdmitPackageImport(r.Context(), d, g, owner, request, importActionSurface(r))
 	if err != nil {
 		writePackageError(w, err)
 		return

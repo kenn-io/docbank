@@ -25,8 +25,7 @@ type Imports struct {
 }
 
 type importAttribution struct {
-	surface  string
-	reported bool
+	surface string
 }
 
 func NewImports(reporter *Capture) *Imports {
@@ -61,15 +60,17 @@ func (r *Imports) Result(key string, added, terminal bool) {
 }
 
 // Observe claims stored progress under both locks, then delivers after release.
+// Untracked or already reported imports skip the gate and storage read.
 func (r *Imports) Observe(ctx context.Context, key string, mutate func(context.Context, func() error) error, read func() (int64, bool, error)) error {
+	if !r.pending(key) {
+		return nil
+	}
 	var deliver func()
 	err := mutate(ctx, func() error {
-		if r != nil {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
 		count, terminal, err := read()
-		if err == nil && r != nil {
+		if err == nil {
 			deliver = r.claim(key, count > 0, terminal)
 		}
 		return err
@@ -80,14 +81,23 @@ func (r *Imports) Observe(ctx context.Context, key string, mutate func(context.C
 	return err
 }
 
+// pending reports whether key still awaits its first counted addition.
+func (r *Imports) pending(key string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, exists := r.entries[key]
+	return exists
+}
+
 func (r *Imports) claim(key string, added, terminal bool) func() {
 	entry, exists := r.entries[key]
-	added = exists && added && !entry.reported
-	if terminal {
+	added = exists && added
+	if terminal || added {
+		// A counted import has nothing left to attribute.
 		delete(r.entries, key)
-	} else if added {
-		entry.reported = true
-		r.entries[key] = entry
 	}
 	return func() {
 		if added && entry.surface != "" {

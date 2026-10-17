@@ -18,3 +18,15 @@ export function reportAction(session: string, event: string, value = ""): void {
     signal: AbortSignal.timeout(3000),
   }).catch(() => undefined);
 }
+
+// dailyAction sends one request per session and UTC day; the daemon keeps the durable claim.
+export function dailyAction(event: string, session: () => string): () => void {
+  let claimed = "";
+  return () => {
+    const current = session();
+    const claim = `${current}:${new Date().toISOString().slice(0, 10)}`;
+    if (claim === claimed) return;
+    claimed = claim;
+    reportAction(current, event);
+  };
+}

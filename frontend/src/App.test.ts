@@ -1961,7 +1961,7 @@ async function configureFirstTagHotkey(): Promise<void> {
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 }
 
-it("reports keyboard inspections, keeps checkbox selection independent, and activates a row once", async () => {
+it("navigates the displayed page, keeps checkbox selection independent, and activates a row once", async () => {
   prepareKeyboardApp();
   const backend = installKeyboardBackend();
   render(App);
@@ -1985,7 +1985,6 @@ it("reports keyboard inspections, keeps checkbox selection independent, and acti
   expect(screen.getByLabelText("Document authority for zeta.txt")).toBeTruthy();
   await fireEvent.keyDown(window, { key: "k" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
-  await waitFor(() => expect(opened()).toHaveLength(2));
   await fireEvent.keyDown(window, { key: " " });
   expect(
     (
@@ -2010,7 +2009,6 @@ it("reports keyboard inspections, keeps checkbox selection independent, and acti
 
   await fireEvent.keyDown(window, { key: "j" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
-  await waitFor(() => expect(opened()).toHaveLength(3));
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 

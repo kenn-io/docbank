@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { dailyAction } from "./action-events.js";
   import { tick, untrack } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
@@ -73,7 +73,7 @@
   let rank = -1;
   let largeStarted = false;
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
-  const inspect = (): void => reportAction(photos.session, "document_opened");
+  const inspect = dailyAction("document_opened", () => photos.session);
   $effect(() => {
     if (photo?.asset_id) untrack(inspect);
   });

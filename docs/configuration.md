@@ -1039,19 +1039,21 @@ Each action requires `surface` as `web`, `tui`, or `cli`. `search_run` also
 requires `search_type` as `text`, `semantic`, or `hybrid`. Other properties
 are dropped. Missing or unsupported required values return HTTP 400.
 
-`document_added` counts each user-started import once, after its first confirmed
+`document_added` counts each tracked user-started import once, after its first confirmed
 addition, including partial failures. Skipped files, replacements, preflight,
 agent calls and unattended ingestion stay silent. Browser uploads and Photos
 groups report from the daemon after commit, even if the drawer closes before
 its receipt arrives. Mailbox and load-file jobs retain the surface that started
 them after their drawer closes. Resuming a mailbox job preserves its original attribution and never reports
 a second addition for the same import. Opening a
-drawer onto an existing job stays silent. CLI push, Photos, mailbox and
-load-file imports and their status commands stay silent; synchronous CLI
-`add` counts a confirmed addition. The browser Photos drawer uses upload groups.
+drawer onto an existing job stays silent. Interactive one-shot CLI `push`,
+mailbox and load-file package imports report once after a confirmed new addition.
+`push --watch`, API-key host-folder `photos import` and status commands stay
+silent. Synchronous CLI `add` counts confirmed additions. The browser Photos
+drawer uses upload groups.
 The daemon keeps at most 256 active import attributions in memory. At capacity,
 imports proceed without attribution. Restarting the daemon can lose an
-in-flight count. Resumes without original browser attribution stay silent.
+in-flight count. Resumes without original attribution stay silent.
 
 `search_run` counts successful submitted searches, including empty results,
 facets and Smart Sets, once per surface and search type each UTC day.
@@ -1063,7 +1065,8 @@ Failed requests, sorting, paging, reranking, refresh and restored state stay sil
 `document_opened` counts deliberate inspections once per surface each UTC day.
 Interaction with an automatically selected file counts; automatic selection
 and cursor movement stay silent. Single-document retrievals such as `get`
-count as inspections. Multi-document exports and reports stay silent.
+and deliberate photo inspections with `photos assets inspect` count as inspections.
+Multi-document exports and reports stay silent.
 Search and open claims share the persisted daily screen-claim file, so daemon
 restarts preserve the day's counts.
 
