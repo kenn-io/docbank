@@ -168,20 +168,14 @@
       checkingDecision = false;
     }
     const id = selected.asset_id;
-    await editor.edit(
-      { asset_ids: [id] },
-      retry ? {} : patch,
-      false,
-      refresh,
-      undefined,
-      undefined,
-      retry
+    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
+      viewed: retry
         ? undefined
         : {
             file_id: selected.display_file_id,
             content_version_id: selected.content_version_id,
           },
-    );
+    });
     await tick();
     if (editor.error || editor.dirty || editor.conflict) return;
     reconcile(editor.targets);

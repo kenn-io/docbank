@@ -132,9 +132,11 @@ it("binds only the viewed file to its displayed content version", async () => {
   const edit = vi
     .spyOn(api, "editPhotoAuthored")
     .mockResolvedValue({ receipt_id: "", before: [], after: [] });
-  await editor.edit({}, { flag: "pick" }, false, vi.fn(), undefined, undefined, {
-    file_id: "jpeg",
-    content_version_id: "viewed-version",
+  await editor.edit({}, { flag: "pick" }, false, vi.fn(), {
+    viewed: {
+      file_id: "jpeg",
+      content_version_id: "viewed-version",
+    },
   });
   expect(edit.mock.calls[0]![0].targets).toEqual([
     { asset_id: "asset", asset_revision: 1, file_id: "raw", revision: 1, node_revision: 1 },
@@ -155,9 +157,11 @@ it.each([{ prepared: [] }, { prepared: targets }])(
     const editor = new PhotoAuthoredEditor("session", vi.fn());
     vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: prepared });
     const edit = vi.spyOn(api, "editPhotoAuthored");
-    await editor.edit({}, { flag: "pick" }, false, vi.fn(), undefined, undefined, {
-      file_id: "missing",
-      content_version_id: "viewed-version",
+    await editor.edit({}, { flag: "pick" }, false, vi.fn(), {
+      viewed: {
+        file_id: "missing",
+        content_version_id: "viewed-version",
+      },
     });
     expect(editor.conflict).toBe(true);
     expect(editor.error).toBe("This photo changed. Reload the photo before deciding.");
@@ -210,7 +214,7 @@ it("sends keyboard rotation as one atomic relative edit for each member", async 
     }),
   );
   vi.stubGlobal("fetch", fetcher);
-  await editor.edit({ asset_ids: ["asset"] }, {}, false, vi.fn(), undefined, 90);
+  await editor.edit({ asset_ids: ["asset"] }, {}, false, vi.fn(), { rotationDelta: 90 });
   const sent = JSON.parse(fetcher.mock.calls[0][1].body);
   expect(sent.rotation_delta).toBe(90);
   expect(sent.patch).toEqual({});
@@ -338,12 +342,14 @@ async function reloadPreparedMembers(
     editor.revalidate(new Set(["asset"]));
     expect(editor.membershipChanged).toBe(false);
   } else
-    await editor.edit({ asset_ids: ["asset"] }, { caption: "River" }, false, vi.fn(), [
-      { tag_id: "tag", assign: true },
-    ]);
+    await editor.edit({ asset_ids: ["asset"] }, { caption: "River" }, false, vi.fn(), {
+      keywords: [{ tag_id: "tag", assign: true }],
+    });
   expect(editor.conflict).toBe(true);
   expect(editor.dirty).toBe(true);
-  await editor.edit({}, { rating: 5 }, false, vi.fn(), [{ tag_id: "other", assign: true }]);
+  await editor.edit({}, { rating: 5 }, false, vi.fn(), {
+    keywords: [{ tag_id: "other", assign: true }],
+  });
   expect(fetcher).toHaveBeenCalledTimes(writes);
   ui(editor);
   expect((screen.getByRole("combobox", { name: /Rating:/ }) as HTMLButtonElement).disabled).toBe(
@@ -665,10 +671,12 @@ it.each(["assigned tags", "edit counts", "Undo counts"])(
       await assertCount(/Beyond the catalog/, 1);
     } else {
       const notify = vi.fn();
-      await editor.edit({}, {}, false, notify, [
-        { tag_id: assigned, assign: true },
-        { tag_id: catalogID, assign: true },
-      ]);
+      await editor.edit({}, {}, false, notify, {
+        keywords: [
+          { tag_id: assigned, assign: true },
+          { tag_id: catalogID, assign: true },
+        ],
+      });
       if (behavior === "edit counts") {
         expect(notify.mock.calls[0]?.[1]).toEqual(
           expect.arrayContaining([

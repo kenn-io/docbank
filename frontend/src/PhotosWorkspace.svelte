@@ -252,7 +252,7 @@
       return;
     }
     const scope = photoID ? { asset_ids: [photoID] } : photos.scope();
-    void editor.edit(scope, patch, photos.hidden, metadataRefresh, keywords, rotationDelta);
+    void editor.edit(scope, patch, photos.hidden, metadataRefresh, { keywords, rotationDelta });
   }
   function undoShortcut() {
     if (!editor.receiptID) return;

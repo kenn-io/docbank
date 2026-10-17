@@ -327,9 +327,15 @@ export class PhotoAuthoredEditor {
     patch: api.PhotoAuthoredPatch,
     hidden: boolean,
     refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
-    keywords?: api.PhotoKeywordEdit[],
-    rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"],
-    viewed?: { file_id: string; content_version_id: string },
+    {
+      keywords,
+      rotationDelta,
+      viewed,
+    }: {
+      keywords?: api.PhotoKeywordEdit[];
+      rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"];
+      viewed?: { file_id: string; content_version_id: string };
+    } = {},
   ) {
     if (this.conflict) {
       this.unavailable("Reload metadata before editing.");
