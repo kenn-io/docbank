@@ -589,26 +589,29 @@ it("reports a failed flag lookup and clears its progress", async () => {
   expect(cull.busy).toBe(false);
 });
 
-it.each(["capture", "next pass", "remainder"])("recovers the session after a 401 during %s", async (site) => {
-  const store = storage();
-  const onauthfailure = vi.fn();
-  const cull = new PhotoCull("session", store, onauthfailure);
-  const cause = new APIError("Session expired", 401, "unauthorized");
-  const capture = vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
-    Response.json(await snapshot([photo(1).asset_id])),
-  );
-  if (site === "capture") {
-    capture.mockRejectedValueOnce(cause);
-    await cull.start(query);
-  } else {
-    await cull.start(query);
-    await cull.flush();
-    cull.move(1);
-    await cull.flush();
-    vi.spyOn(api, "listPhotoAssets").mockRejectedValueOnce(cause);
-    if (site === "next pass") await cull.nextPass();
-    else await cull.checkRemainder();
-  }
-  expect(onauthfailure).toHaveBeenCalledExactlyOnceWith(cause);
-  expect(cull.error).toBe("Session expired");
-});
+it.each(["capture", "next pass", "remainder"])(
+  "recovers the session after a 401 during %s",
+  async (site) => {
+    const store = storage();
+    const onauthfailure = vi.fn();
+    const cull = new PhotoCull("session", store, onauthfailure);
+    const cause = new APIError("Session expired", 401, "unauthorized");
+    const capture = vi
+      .spyOn(api, "createWorkspaceQuery")
+      .mockImplementation(async () => Response.json(await snapshot([photo(1).asset_id])));
+    if (site === "capture") {
+      capture.mockRejectedValueOnce(cause);
+      await cull.start(query);
+    } else {
+      await cull.start(query);
+      await cull.flush();
+      cull.move(1);
+      await cull.flush();
+      vi.spyOn(api, "listPhotoAssets").mockRejectedValueOnce(cause);
+      if (site === "next pass") await cull.nextPass();
+      else await cull.checkRemainder();
+    }
+    expect(onauthfailure).toHaveBeenCalledExactlyOnceWith(cause);
+    expect(cull.error).toBe("Session expired");
+  },
+);

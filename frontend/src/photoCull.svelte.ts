@@ -2,6 +2,7 @@ import { createSnapshot, captureSnapshotTargets } from "./snapshots.js";
 import type { Query } from "./query.js";
 import { randomUUID } from "./crypto.js";
 import { APIError } from "./api-transport.js";
+import { sameCheckpoint } from "./photoCullStorage.js";
 import type {
   CullCheckpoint,
   CullProgress,
@@ -49,6 +50,20 @@ export class PhotoCull {
   }
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
+  }
+  async verifyDecision() {
+    await this.writes;
+    if (!this.run || this.stale || this.busy) return false;
+    try {
+      const saved = await this.storage.saved();
+      if (!saved || !sameCheckpoint(saved, this.run.checkpoint))
+        throw new Error("Cull progress changed in another tab. Close and resume it.");
+      return true;
+    } catch (cause) {
+      this.stale = true;
+      this.error = `Progress could not be saved: ${failure(cause)}`;
+      return false;
+    }
   }
   get complete() {
     return !!this.run && !this.currentID;

@@ -56,7 +56,8 @@
   let loading = $state(false);
   let lookupAttempt = $state(0);
   const reloadController = new AbortController();
-  const busy = $derived(editor.loading || editor.busy);
+  let checkingDecision = $state(false);
+  const busy = $derived(editor.loading || editor.busy || checkingDecision);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let info = $state(0);
   let help = $state(false);
@@ -155,11 +156,17 @@
     neighbors = neighbors.map(updated);
   }
   async function decide(patch: PhotoAuthoredPatch) {
-    if (!photo || loading || cull.stale || cull.busy || !canChangeTarget()) return;
+    if (!photo || loading || busy || cull.stale || cull.busy || !canChangeTarget()) return;
     editor.reset();
     await applyDecision(photo, patch);
   }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
+    checkingDecision = true;
+    try {
+      if (!(await cull.verifyDecision())) return;
+    } finally {
+      checkingDecision = false;
+    }
     const id = selected.asset_id;
     await editor.edit(
       { asset_ids: [id] },

@@ -7,7 +7,8 @@ import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
 import { photo, preparedPhoto } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
-import type { CullRun } from "./photoCullStorage.js";
+import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as api from "./generated/docbank.js";
 import type { PhotoAuthoredReceipt } from "./generated/docbank.js";
 
@@ -79,7 +80,7 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     },
   };
   const cull = new PhotoCull("session", {
-    saved: vi.fn(),
+    saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => run,
     replace: vi.fn(),
     checkpoint: vi.fn(),
@@ -217,7 +218,7 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
   );
   const row = photo(1);
   const cull = new PhotoCull("session", {
-    saved: vi.fn(),
+    saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => undefined,
     replace: vi.fn(),
     checkpoint: vi.fn(),
@@ -305,7 +306,7 @@ it("refreshes the visible completion offer after Undo", async () => {
         : [],
   }));
   const cull = new PhotoCull("session", {
-    saved: vi.fn(),
+    saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => undefined,
     replace: vi.fn(),
     checkpoint: vi.fn(),
@@ -356,7 +357,7 @@ it("disables auto-advance changes while a decision is pending", async () => {
   );
   const rows = [photo(1), photo(2)];
   const cull = new PhotoCull("session", {
-    saved: vi.fn(),
+    saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => undefined,
     replace: vi.fn(),
     checkpoint: vi.fn(),
@@ -422,7 +423,7 @@ it("retries a failed lookup without leaving the current photo", async () => {
   );
   const row = photo(1);
   const cull = new PhotoCull("session", {
-    saved: vi.fn(),
+    saved: vi.fn(async () => cull.run?.checkpoint),
     load: vi.fn(),
     replace: vi.fn(),
     checkpoint: vi.fn(),
@@ -464,7 +465,11 @@ it("retries a failed lookup without leaving the current photo", async () => {
   expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
 });
 
-async function reviewPhoto(row = photo(1), autoAdvance = false) {
+async function reviewPhoto(
+  row = photo(1),
+  autoAdvance = false,
+  store?: ReturnType<typeof photoCullStorage>,
+) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -472,12 +477,15 @@ async function reviewPhoto(row = photo(1), autoAdvance = false) {
       disconnect() {}
     },
   );
-  const cull = new PhotoCull("session", {
-    saved: vi.fn(),
-    load: vi.fn(),
-    replace: vi.fn(),
-    checkpoint: vi.fn(),
-  });
+  const cull = new PhotoCull(
+    "session",
+    store ?? {
+      saved: vi.fn(async () => cull.run?.checkpoint),
+      load: vi.fn(),
+      replace: vi.fn(),
+      checkpoint: vi.fn(),
+    },
+  );
   cull.run = {
     ids: [row.asset_id],
     checkpoint: {
@@ -776,4 +784,23 @@ it("shows the restored rotation in the cull stage after Undo", async () => {
     expect(container.querySelector(".photo-stage [style*='rotate(0deg)']")).toBeTruthy(),
   );
   expect(container.querySelector(".photo-stage img")!.getAttribute("src")).toBe(preview);
+});
+
+it("refuses a stale tab decision before calling the edit API", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const store = photoCullStorage("synthetic-vault");
+  const { cull } = await reviewPhoto(photo(1), false, store);
+  await store.replace(cull.run!);
+  const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+  await other.restore();
+  other.move(1);
+  await other.flush();
+  const edit = vi.spyOn(api, "editPhotoAuthored");
+  await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
+  await screen.findByText(
+    "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
+  );
+  expect(cull.stale).toBe(true);
+  expect(edit).not.toHaveBeenCalled();
 });
