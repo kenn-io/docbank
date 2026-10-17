@@ -1665,7 +1665,10 @@ export async function refreshPersonPhotoViews(source: Photos, views: Iterable<Ph
     [...new Set(views)]
       .filter(
         (photos): photos is Photos =>
-          !!photos && photos !== source && photos.hidden === source.hidden && photos.started,
+          !!photos &&
+          photos !== source &&
+          photos.hidden === source.hidden &&
+          (photos.started || photos.loading),
       )
       .map((photos) => photos.refresh()),
   );

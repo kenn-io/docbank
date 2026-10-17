@@ -100,6 +100,10 @@
     viewport!.setPointerCapture(event.pointerId);
   }
   function endRegion(event: PointerEvent) {
+    if (!regionMode) {
+      origin = undefined;
+      return;
+    }
     if (!origin || !geometry) return;
     event.stopPropagation();
     event.preventDefault();
@@ -139,6 +143,7 @@
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      origin = undefined;
       oncancelregion?.();
     }
   }

@@ -3236,6 +3236,36 @@ it.each(["unloaded", "singleton", "stack", "unknown", "representative", "represe
   },
 );
 
+it("refreshes a person view whose initial page is still loading", async () => {
+  const person = "00000000-0000-4000-8000-000000000001";
+  let assigned = true;
+  let finish!: () => void;
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    expect(JSON.parse(String(init.body)).query.filters.person_ids).toEqual([person]);
+    const items = assigned ? [photo(1)] : [];
+    const page = Response.json({ items, total: items.length });
+    if (assigned) return new Promise<Response>((resolve) => (finish = () => resolve(page)));
+    return page;
+  });
+  stubPhotoFetch(fetcher);
+  const source = new Photos("session", vi.fn());
+  const personView = new Photos("session", vi.fn(), false, {
+    ...photoQuery,
+    filters: { person_ids: [person] },
+  });
+  const initial = personView.loadMore();
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  assigned = false;
+  await refreshPersonPhotoViews(source, [personView]);
+  finish();
+  await initial;
+  expect(personView.items).toEqual([]);
+  expect(personView.total).toBe(0);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  source.dispose();
+  personView.dispose();
+});
+
 it.each([false, true])(
   "refreshes old and new person results only in the decision's Hidden scope=%s",
   async (hidden) => {

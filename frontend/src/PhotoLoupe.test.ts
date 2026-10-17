@@ -88,6 +88,46 @@ it("shows the keyboard face target and saves the marked box", async () => {
   );
 });
 
+it("cancels an active face drag with Escape before the pointer is released", async () => {
+  const { props } = setup();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const add = vi.spyOn(props.faces, "add").mockResolvedValue(true);
+  const component = render(PhotoLoupe, { ...props, items: [] });
+  await screen.findByText("Fit preview");
+  const image = screen.getByRole("img", { name: "Photo 5.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
+  viewport.setPointerCapture = vi.fn();
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 1000,
+    bottom: 400,
+    width: 1000,
+    height: 400,
+    toJSON: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Add face" }));
+  const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
+  await fireEvent(
+    position,
+    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
+  );
+  await fireEvent.keyDown(position, { key: "Escape" });
+  expect(screen.queryByRole("button", { name: "Position face on Photo 5.jpg" })).toBeNull();
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(add).not.toHaveBeenCalled();
+  expect(props.onclose).not.toHaveBeenCalled();
+});
+
 it("shows grid, fit and large and preserves zoom", async () => {
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);
@@ -675,6 +715,56 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   expect(screen.getByText("Captured")).toBeTruthy();
   expect(screen.getByText("2023-11-04T18:22:03")).toBeTruthy();
   expect(screen.queryByText("File modified")).toBeNull();
+});
+
+it("discards a drag when region mode is disabled before pointer release", async () => {
+  setup();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const onregion = vi.fn();
+  const component = render(PhotoLoupeImage, {
+    url: "blob:synthetic",
+    name: "Portrait",
+    view: { scale: 1, x: 0.5, y: 0.5, actual: false },
+    onzoom: vi.fn(),
+    onmove: vi.fn(),
+    regionMode: true,
+    minimumRegionDrag: true,
+    onregion,
+  });
+  const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
+  viewport.setPointerCapture = vi.fn();
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 1000,
+    bottom: 400,
+    width: 1000,
+    height: 400,
+    toJSON: vi.fn(),
+  });
+  const image = screen.getByRole("img", { name: "Portrait" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
+  );
+  await component.rerender({ regionMode: false });
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(onregion).not.toHaveBeenCalled();
+  await component.rerender({ regionMode: true });
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(onregion).not.toHaveBeenCalled();
 });
 
 it.each([true, false])(
