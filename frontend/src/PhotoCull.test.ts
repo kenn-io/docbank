@@ -133,7 +133,7 @@ it.each(
   },
 );
 
-it.each(["restore", "replacement"])("ignores a settings failure after run %s", async (method) => {
+it("ignores a settings failure after restoring a run", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   const store = photoCullStorage("synthetic-vault");
@@ -160,18 +160,14 @@ it.each(["restore", "replacement"])("ignores a settings failure after run %s", a
     checkpoint: { ...cull.run!.checkpoint, runID: "relevance-run" },
   };
   await store.replace(run);
-  if (method === "restore") await act(() => cull.restore());
-  else
-    await act(() => {
-      cull.run = run;
-    });
+  await act(() => cull.restore());
   // The response still fails even if the transport ignores cancellation.
   await act(async () => {
     reject(new Error("Old settings failed"));
     await pending;
   });
   expect(cull.stackError).toBe("");
-  if (method === "restore") expect(signal?.aborted).toBe(true);
+  expect(signal?.aborted).toBe(true);
   expect(cull.run?.checkpoint.runID).toBe("relevance-run");
   expect(await cull.verifyDecision()).toBe(true);
   await fireEvent.click(await readyButton("Pick (P)"));

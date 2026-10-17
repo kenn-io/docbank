@@ -82,6 +82,14 @@ export class PhotoCull {
   get currentStack() {
     return this.currentID ? this.stacks.get(this.currentID) : undefined;
   }
+  private cancelStackReads() {
+    this.settingsRead?.abort();
+    this.stackRead?.abort();
+    this.settingsRead = undefined;
+    this.stackRead = undefined;
+    this.stackError = "";
+    this.stackLoading = false;
+  }
   /** Check whether the active run needs to regroup under a new gap. */
   async checkSettings() {
     const run = this.run;
@@ -112,20 +120,24 @@ export class PhotoCull {
     this.stackRead = controller;
     this.stackLoading = true;
     this.stackError = "";
+    const current = () =>
+      !controller.signal.aborted &&
+      this.run?.checkpoint.runID === run.checkpoint.runID &&
+      this.run.ids === run.ids;
     try {
       const regrouped = await groupPhotoStacks(
         { asset_ids: run.ids },
         { session: this.session, signal: controller.signal },
       );
       controller.signal.throwIfAborted();
-      if (this.run?.checkpoint.runID === run.checkpoint.runID && this.run.ids === run.ids)
+      if (current())
         this.run = {
-          ...this.run,
+          ...this.run!,
           groups: regrouped.groups,
           burstGapSeconds: regrouped.burst_gap_seconds,
         };
     } catch (cause) {
-      if (!controller.signal.aborted) this.stackError = this.sessionFailure(cause);
+      if (current()) this.stackError = this.sessionFailure(cause);
     } finally {
       if (this.stackRead === controller) this.stackLoading = false;
     }
@@ -229,11 +241,7 @@ export class PhotoCull {
         if (!checkpoint.pass.every((id) => captured.has(id)))
           throw new Error("Saved cull progress is invalid. Start a new cull.");
       }
-      this.settingsRead?.abort();
-      this.stackRead?.abort();
-      this.stackRead = undefined;
-      this.stackError = "";
-      this.stackLoading = false;
+      this.cancelStackReads();
       this.run = run;
       this.saved = !!run;
       if (this.run)
@@ -250,9 +258,8 @@ export class PhotoCull {
     }
   }
   cancel() {
-    this.settingsRead?.abort();
+    this.cancelStackReads();
     this.capture?.abort();
-    this.stackRead?.abort();
     if (this.flagRead) {
       this.flagRead.abort();
       this.finishFlagRead(this.flagRead);
@@ -318,11 +325,7 @@ export class PhotoCull {
       await this.storage.replace(run, controller.signal, previous);
       this.error = "";
       this.stale = false;
-      this.settingsRead?.abort();
-      this.stackRead?.abort();
-      this.stackRead = undefined;
-      this.stackError = "";
-      this.stackLoading = false;
+      this.cancelStackReads();
       this.run = run;
       this.saved = true;
       await this.regroup();

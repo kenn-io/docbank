@@ -1086,3 +1086,28 @@ it.each(["start", "restore"])(
     expect(cull.run?.groups).toBeUndefined();
   },
 );
+
+it("accepts decisions after start replaces a run with a late settings failure", async () => {
+  const ids = [photo(1).asset_id];
+  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async (request) =>
+    Response.json(await snapshot(ids, parseQuery(JSON.stringify(request.query)))),
+  );
+  const cull = new PhotoCull("session", storage());
+  expect(await cull.start(captureQuery)).toBe(true);
+  let reject!: (cause: Error) => void;
+  const settings = vi
+    .spyOn(api, "getPhotoSettings")
+    .mockReturnValueOnce(new Promise((_resolve, fail) => (reject = fail)));
+  const pending = cull.checkSettings();
+  const signal = settings.mock.calls[0]![0]!.signal!;
+  expect(signal.aborted).toBe(false);
+  const original = cull.run!.checkpoint.runID;
+  expect(await cull.start(query, () => true)).toBe(true);
+  expect(signal.aborted).toBe(true);
+  expect(cull.run!.checkpoint.runID).not.toBe(original);
+  expect(cull.run!.stackEligible).toBe(false);
+  reject(new Error("Old settings failed"));
+  await pending;
+  expect(cull.stackError).toBe("");
+  expect(await cull.verifyDecision()).toBe(true);
+});
