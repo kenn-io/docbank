@@ -394,7 +394,7 @@ func TestConfiguredCheckoutValidationDefersOnlyOverlappingBindings(t *testing.T)
 	err = check(t.Context(), cfg.StoreBindings["archive"])
 	require.ErrorIs(t, err, errCheckoutPathOverlap)
 	require.ErrorContains(t, err, checkoutID)
-	require.ErrorContains(t, err, fmt.Sprintf("%q", destination))
+	require.ErrorContains(t, err, fmt.Sprintf("\"%s\"", destination))
 }
 
 func TestConfiguredCheckoutStartupDefersSlowBinding(t *testing.T) {
