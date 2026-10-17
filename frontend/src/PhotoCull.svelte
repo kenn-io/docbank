@@ -166,7 +166,14 @@
     onmetadatachanged?.(receipt, tags);
     photos.metadataChanged(receipt);
     reconcile(receipt.after);
-    if (cull.complete) await cull.checkRemainder();
+    if (
+      cull.complete &&
+      receipt.after.some((after) => {
+        const before = receipt.before.find((before) => before.file_id === after.file_id);
+        return before && before.values.flag !== after.values.flag;
+      })
+    )
+      await cull.checkRemainder();
   }
   function reconcile(targets: PhotoAuthoredSnapshot[]) {
     const updated = (row: PhotoBrowseRow) => {

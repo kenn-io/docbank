@@ -388,9 +388,11 @@ it("refreshes the visible completion offer after Undo", async () => {
   await screen.findByRole("heading", { name: "Pass complete" });
   await waitFor(() => expect(list).toHaveBeenCalled());
   await waitFor(() => expect(cull.busy).toBe(false));
+  expect(list).toHaveBeenCalledOnce();
   expect(screen.queryByRole("button", { name: "Review unflagged remainder" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: /^Undo$/ }));
   await screen.findByRole("button", { name: "Review unflagged remainder" });
+  expect(list).toHaveBeenCalledTimes(2);
 });
 
 it("disables auto-advance changes while a decision is pending", async () => {
@@ -1134,5 +1136,47 @@ it.each(["held", "missing", "different version"])(
     await screen.findByText(kind === "held" ? "Photo 2.jpg" : "Looked up.jpg");
     if (kind === "held") expect(photos.lookup).not.toHaveBeenCalled();
     else expect(photos.lookup).toHaveBeenCalledExactlyOnceWith("photo-2", expect.any(AbortSignal));
+  },
+);
+
+it.each(["rating only", "same flag"])(
+  "skips the completed-pass flag read for a %s receipt",
+  async (kind) => {
+    const row = photo(1);
+    const flags = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+      items: [row],
+      total: 1,
+      facets: [],
+      relevance_available: false,
+    });
+    const before = preparedPhoto(1);
+    const undo = vi.spyOn(api, "undoPhotoAuthored").mockResolvedValue({
+      receipt_id: "undo",
+      before: [before],
+      after: [
+        {
+          ...before,
+          revision: 2,
+          values: {
+            ...before.values,
+            rating: kind === "rating only" ? 4 : before.values.rating,
+          },
+        },
+      ],
+    });
+    const { cull, photos } = await reviewPhoto(row);
+    await fireEvent.click(await readyButton("Next"));
+    await screen.findByRole("heading", { name: "Pass complete" });
+    await waitFor(() => expect(cull.busy).toBe(false));
+    expect(flags).toHaveBeenCalledOnce();
+    await act(() => {
+      photos.cullEditor!.receiptID = "previous-edit";
+      photos.cullEditor!.undoState.summary = "Previous edit";
+    });
+    await fireEvent.click(await readyButton(/^Undo$/));
+    await screen.findByText("Edit undone");
+    expect(undo).toHaveBeenCalledOnce();
+    expect(flags).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Review unflagged remainder" })).toBeTruthy();
   },
 );
