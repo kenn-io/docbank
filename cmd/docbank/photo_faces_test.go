@@ -142,3 +142,11 @@ func TestPhotoFaceKeyRequiresRevisionWithFace(t *testing.T) {
 		"--face", faceID, "--person", personID, "--person-revision", "1")
 	require.ErrorContains(t, err, "--revision is required when --face is set")
 }
+
+func TestPhotoFacesHelpExplainsBrowserAndHTTPScope(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	output, err := runCLI(t, "photos", "faces", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, output, "Name faces with a person ID; create people separately.")
+	assert.Contains(t, output, "Clear whole-photo marks in the browser or HTTP API.")
+}

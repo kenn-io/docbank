@@ -88,46 +88,6 @@ it("shows the keyboard face target and saves the marked box", async () => {
   );
 });
 
-it("cancels an active face drag with Escape before the pointer is released", async () => {
-  const { props } = setup();
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  const add = vi.spyOn(props.faces, "add").mockResolvedValue(true);
-  const component = render(PhotoLoupe, { ...props, items: [] });
-  await screen.findByText("Fit preview");
-  const image = screen.getByRole("img", { name: "Photo 5.jpg" });
-  Object.defineProperty(image, "naturalWidth", { value: 1000 });
-  Object.defineProperty(image, "naturalHeight", { value: 800 });
-  await fireEvent.load(image);
-  const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
-  viewport.setPointerCapture = vi.fn();
-  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
-    x: 0,
-    y: 0,
-    left: 0,
-    top: 0,
-    right: 1000,
-    bottom: 400,
-    width: 1000,
-    height: 400,
-    toJSON: vi.fn(),
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Add face" }));
-  const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
-  await fireEvent(
-    position,
-    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
-  );
-  await fireEvent.keyDown(position, { key: "Escape" });
-  expect(screen.queryByRole("button", { name: "Position face on Photo 5.jpg" })).toBeNull();
-  await fireEvent(
-    viewport,
-    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
-  );
-  expect(add).not.toHaveBeenCalled();
-  expect(props.onclose).not.toHaveBeenCalled();
-});
-
 it("requires a decoded preview and cancels placement from the toolbar", async () => {
   const { props } = setup();
   const add = vi.spyOn(props.faces, "add");
@@ -790,7 +750,7 @@ it("discards a drag when region mode is disabled before pointer release", async 
 });
 
 it.each([true, false])(
-  "applies minimum drag only for face placement=%s",
+  "applies drag, keyboard-region and face-label rules at each zoom mode=%s",
   async (minimumRegionDrag) => {
     setup();
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);

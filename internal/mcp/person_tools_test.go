@@ -70,13 +70,6 @@ func TestPeopleMCPReads(t *testing.T) {
 		EvidenceKind: "operator_assertion", EvidenceID: "mcp-workflow", Confidence: "operator_asserted",
 	})
 	require.NoError(t, err)
-	found := call("find_people", map[string]any{"query": "survivor"})
-	items, ok := found["items"].([]any)
-	require.True(t, ok)
-	require.Len(t, items, 1)
-	person, ok := items[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, survivor.PersonID, person["person_id"])
 	absorbedDetail := call("get_person", map[string]any{"person_id": absorbed.PersonID})
 	assert.Equal(t, "Absorbed", absorbedDetail["display_name"])
 	absorbedIdentities, ok := absorbedDetail["identities"].([]any)

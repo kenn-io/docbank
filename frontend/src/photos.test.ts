@@ -3236,42 +3236,15 @@ it.each(["unloaded", "singleton", "stack", "unknown", "representative", "represe
   },
 );
 
-it("refreshes a person view whose initial page is still loading", async () => {
-  const person = "00000000-0000-4000-8000-000000000001";
-  let assigned = true;
-  let finish!: () => void;
-  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
-    expect(JSON.parse(String(init.body)).query.filters.person_ids).toEqual([person]);
-    const items = assigned ? [photo(1)] : [];
-    const page = Response.json({ items, total: items.length });
-    if (assigned) return new Promise<Response>((resolve) => (finish = () => resolve(page)));
-    return page;
-  });
-  stubPhotoFetch(fetcher);
-  const source = new Photos("session", vi.fn());
-  const personView = new Photos("session", vi.fn(), false, {
-    ...photoQuery,
-    filters: { person_ids: [person] },
-  });
-  const initial = personView.loadMore();
-  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
-  assigned = false;
-  await refreshPersonPhotoViews(source, [personView]);
-  finish();
-  await initial;
-  expect(personView.items).toEqual([]);
-  expect(personView.total).toBe(0);
-  expect(fetcher).toHaveBeenCalledTimes(2);
-  source.dispose();
-  personView.dispose();
-});
 
 it.each([false, true])(
-  "refreshes old and new person results only in the decision's Hidden scope=%s",
+  "refreshes person results in the decision's Hidden scope=%s, including first-page loads",
   async (hidden) => {
     const ada = "00000000-0000-4000-8000-000000000001",
       grace = "00000000-0000-4000-8000-000000000002";
     let assigned = ada;
+    let holdAda = false;
+    let finishInitial!: (response: Response) => void;
     const requests: { hidden: boolean; query: Query }[] = [];
     stubPhotoFetch(async (_url, init) => {
       const request = JSON.parse(String(init.body));
@@ -3281,6 +3254,10 @@ it.each([false, true])(
         (request.query.text.startsWith("saved:")
           ? grace
           : request.query.text.slice("person:".length));
+      if (holdAda && id === ada) {
+        holdAda = false;
+        return new Promise<Response>((resolve) => (finishInitial = resolve));
+      }
       const items = id === assigned ? [photo(1)] : [];
       return Response.json({ items, total: items.length, facets: [] });
     });
@@ -3307,6 +3284,13 @@ it.each([false, true])(
       [source, oldPerson, newPerson, otherScope, unfiltered].map((view) => view.loadMore()),
     );
     expect([oldPerson.total, newPerson.total]).toEqual([1, 0]);
+    const loadingPerson = new Photos("session", vi.fn(), hidden, {
+      ...photoQuery,
+      filters: { person_ids: [ada] },
+    });
+    holdAda = true;
+    const initial = loadingPerson.loadMore();
+    await waitFor(() => expect(finishInitial).toBeTypeOf("function"));
     requests.length = 0;
     assigned = grace;
     await refreshPersonPhotoViews(source, [
@@ -3317,6 +3301,7 @@ it.each([false, true])(
       unopened,
       unfiltered,
       oldPerson,
+      loadingPerson,
     ]);
     expect([
       oldPerson.items.length,
@@ -3324,14 +3309,28 @@ it.each([false, true])(
       newPerson.items.length,
       newPerson.total,
     ]).toEqual([0, 0, 1, 1]);
+    expect(loadingPerson.items).toEqual([]);
+    expect(loadingPerson.total).toBe(0);
     expect(otherScope.total).toBe(1);
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(
       requests.filter((request) => !request.query.text && !request.query.filters.person_ids),
     ).toHaveLength(0);
     expect(unopened.started).toBe(false);
     expect(requests.every((request) => request.hidden === hidden)).toBe(true);
-    for (const view of [source, oldPerson, newPerson, otherScope, unopened, unfiltered])
+    finishInitial(Response.json({ items: [photo(2)], total: 1, facets: [] }));
+    await initial;
+    expect(loadingPerson.items).toEqual([]);
+    expect(loadingPerson.total).toBe(0);
+    for (const view of [
+      source,
+      oldPerson,
+      newPerson,
+      otherScope,
+      unopened,
+      unfiltered,
+      loadingPerson,
+    ])
       view.dispose();
   },
 );

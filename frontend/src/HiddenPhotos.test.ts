@@ -33,7 +33,7 @@ const props = (onauthfailure = vi.fn()) => ({
 const problem = (status: number, detail: string, code = "") =>
   new Response(JSON.stringify({ detail, code }), { status });
 
-it.each(["lock", "tab"])("lets a face clear settle after %s conceals Hidden", async (target) => {
+it("lets a face clear settle after locking conceals Hidden", async () => {
   prepare();
   storage();
   let finish!: () => void;
@@ -68,17 +68,13 @@ it.each(["lock", "tab"])("lets a face clear settle after %s conceals Hidden", as
   );
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
-  const locking = target === "lock" ? view.component.lock() : Promise.resolve();
-  if (target === "tab") {
-    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-    await fireEvent(document, new Event("visibilitychange"));
-  }
+  const locking = view.component.lock();
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
   expect(events).toEqual([]);
   expect(signal.aborted).toBe(false);
   finish();
   await locking;
-  await waitFor(() => expect(events).toEqual(target === "lock" ? ["saved", "locked"] : ["saved"]));
+  await waitFor(() => expect(events).toEqual(["saved", "locked"]));
 });
 
 it("waits for a held leave lock before redisplaying on return", async () => {

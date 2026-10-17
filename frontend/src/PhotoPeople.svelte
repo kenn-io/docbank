@@ -31,19 +31,20 @@
   async function search(faceID: string, value: string) {
     activeFace = faceID;
     query = value;
+    const normalized = value.trim();
     controller?.abort();
     const request = (controller = new AbortController());
     people = [];
     searching = true;
     error = "";
-    if (new TextEncoder().encode(value.trim()).length > 200) {
+    if (new TextEncoder().encode(normalized).length > 200) {
       error = "Name must be 200 bytes or fewer.";
       searching = false;
       return;
     }
     try {
       const page = await listPeople(
-        { query: value, limit: 100 },
+        { query: normalized, limit: 100 },
         { session, signal: request.signal },
       );
       if (!request.signal.aborted) people = page.items;

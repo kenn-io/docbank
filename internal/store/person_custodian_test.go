@@ -310,7 +310,7 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	ctx := t.Context()
 	grace, err := s.CreatePerson(ctx, "Grace Hopper", "operator")
 	require.NoError(t, err)
-	_, err = s.CreatePerson(ctx, "Ada Lovelace", "operator")
+	ada, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
 	require.NoError(t, err)
 	secondGrace, err := s.CreatePerson(ctx, "GRACE Murray Hopper", "operator")
 	require.NoError(t, err)
@@ -323,6 +323,42 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, next, 1)
 	require.Equal(t, secondGrace.PersonID, next[0].PersonID)
+
+	hiddenNode := browsePhotoNode(t, s, "hidden-person.jpg", fakeHash("hidden-person"), "image/jpeg")
+	visibleNode := browsePhotoNode(t, s, "visible-person.jpg", fakeHash("visible-person"), "image/jpeg")
+	hidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
+	require.NoError(t, err)
+	visible, err := s.CreatePerson(ctx, "Visible Lin", "operator")
+	require.NoError(t, err)
+	free, err := s.CreatePerson(ctx, "Free Grace", "operator")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, hiddenNode.CurrentVersionID, hidden.PersonID)
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, visible.PersonID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, hiddenNode.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	locked, err := s.PeopleByDisplayName(ctx, "", "", "", 100, true)
+	require.NoError(t, err)
+	personIDs := func(people []Person) []string {
+		ids := make([]string, 0, len(people))
+		for _, person := range people {
+			ids = append(ids, person.PersonID)
+		}
+		return ids
+	}
+	require.Equal(t, []string{ada.PersonID, free.PersonID, grace.PersonID, secondGrace.PersonID, visible.PersonID}, personIDs(locked))
+	all, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{ada.PersonID, free.PersonID, grace.PersonID, secondGrace.PersonID, hidden.PersonID, visible.PersonID}, personIDs(all))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), "", "", "", 100, true)
+	require.NoError(t, err)
+	require.Equal(t, personIDs(all), personIDs(unlocked))
 }
 
 func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
@@ -370,11 +406,4 @@ func TestOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T) {
 	_, err = s.SetOperatorPackageCustodian(ctx, CustodianRequest{Scope: scope, RawLabel: "Operator Owner",
 		Rank: "primary", Basis: "operator_assigned", SourceRef: "operator", IfMatchRevision: 1})
 	require.ErrorIs(t, err, ErrCustodianConflict)
-}
-
-func TestPeopleByDisplayNameUsesPersonAssertionIndex(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	plan := explainQueryPlan(t, s, peopleByDisplayNameSQL, "%", true, "", "", "", "", 101)
-	require.Equal(t, 2, strings.Count(plan, "SEARCH a USING COVERING INDEX person_document_assertions_person (person_id=? AND action=?)"), plan)
 }

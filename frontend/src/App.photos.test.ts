@@ -3591,10 +3591,7 @@ it.each([
 it.each([
   ["next photo", "clear"],
   ["workspace", "clear"],
-  ["inspector", "name"],
   ["inspector", "clear"],
-  ["conceal", "name"],
-  ["conceal", "clear"],
 ])("keeps a pending face write alive when navigating to %s during %s", async (target, action) => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();

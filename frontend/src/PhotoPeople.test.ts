@@ -43,6 +43,19 @@ it("chooses an existing person by ID and opens their photos from the person card
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "雪".repeat(67) } });
   await screen.findByText("Name must be 200 bytes or fewer.");
   expect(search.mock.calls.some(([params]) => params?.query === "雪".repeat(67))).toBe(false);
+  const normalized = "雪".repeat(66);
+  search.mockResolvedValue({ items: [] });
+  await fireEvent.input(screen.getByRole("combobox"), {
+    target: { value: normalized + "   " },
+  });
+  expect(await screen.findByRole("option", { name: `Create person "${normalized}"` })).toBeTruthy();
+  expect(search).toHaveBeenLastCalledWith(
+    { query: normalized, limit: 100 },
+    expect.objectContaining({ session: "session" }),
+  );
+  search.mockResolvedValue({
+    items: [{ person_id: "person-a", display_name: "Ada", revision: 1, state: "curated" }],
+  });
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ad" } });
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Ada" }));
   await waitFor(() => expect(name).toHaveBeenCalledWith(face, "person-a"));
