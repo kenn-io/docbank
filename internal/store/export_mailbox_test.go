@@ -22,7 +22,7 @@ func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
 	require.NoError(t, s.PutMailboxChunk(t.Context(), c.Owner, c.ID, MailboxChunk{Index: 0, SHA256: c.SHA256, Size: c.Size}))
 	_, err = s.SealMailboxContainer(t.Context(), c.Owner, c.ID, c.SHA256, c.Size)
 	require.NoError(t, err)
-	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
+	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}}, "")
 	require.NoError(t, err)
 	j, err := s.ClaimMailboxJob(t.Context())
 	require.NoError(t, err)
@@ -32,7 +32,8 @@ func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
 	location := MailboxLocation{ContainerID: c.ID, Entry: "source.mbox", EntrySHA256: c.SHA256, Sequence: 1, End: c.Size, RawSHA256: c.SHA256, EMLSHA256: c.SHA256, EMLSize: c.Size, Separator: "From synthetic", Labels: []string{}}
 	o := MailboxOccurrence{JobID: j.ID, Ordinal: 1, Location: location}
 	p := MailboxTransferPublication{Owner: c.Owner, Request: MailboxTransferRequest{ArchiveID: "mailbox:" + j.CollectionID, Reference: "0:1", SHA256: c.SHA256, Size: c.Size, Settings: settings, DestinationID: s.RootID(), Name: "message.eml"}, Email: f.publication, Location: &location}
-	require.NoError(t, s.CommitMailboxOccurrence(t.Context(), j.ID, j.Claim, o, &p))
+	_, commitErr := s.CommitMailboxOccurrence(t.Context(), j.ID, j.Claim, o, &p)
+	require.NoError(t, commitErr)
 	var r bundle.SourceRequest
 	request := func() bundle.SourceRequest {
 		raw := fmt.Sprintf(`{"operation_id":%q,"kind":"mailbox_collection","collection_id":%q}`, uuid.NewString(), j.CollectionID)

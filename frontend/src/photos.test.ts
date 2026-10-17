@@ -35,9 +35,11 @@ const stubPhotoFetch = (
   facets: unknown[] = [],
 ) =>
   vi.stubGlobal("fetch", (url: string, init: RequestInit) =>
-    url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).facets?.length
-      ? Promise.resolve(new Response(JSON.stringify({ facets })))
-      : fetcher(url, init),
+    url === "/api/daemon/telemetry/events"
+      ? Promise.resolve(new Response(null, { status: 202 }))
+      : url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).facets?.length
+        ? Promise.resolve(new Response(JSON.stringify({ facets })))
+        : fetcher(url, init),
   );
 const savedSmartSet = async (revision = 1, id = "00000000-0000-4000-8000-000000000001") => {
   const payload = parseQuery(

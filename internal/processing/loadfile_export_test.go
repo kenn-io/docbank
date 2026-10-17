@@ -270,7 +270,7 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 		ID: uuid.NewString(), Owner: owner, OperationID: uuid.NewString(), RequestSHA256: packageImportTestHash([]byte("fresh-round-trip")),
 		PreflightID: preflightID, PackageID: freshPackageID,
 		JobJSON: jobJSON,
-	})
+	}, "")
 	require.NoError(t, err)
 	freshWorker, err := NewPackageImportWorker(PackageImportConfig{Catalog: freshCatalog, Blobs: freshBlobs,
 		Owner: "fresh-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
@@ -500,7 +500,7 @@ func importVerifiedLoadFileArchive(t *testing.T, archive []byte, verified LoadFi
 		ManifestSHA256: written.Hash, ManifestBlobSHA256: written.Hash, IngestID: run.ID(), State: "importing", Volumes: volumes},
 		store.PackageImportJobRequest{ID: uuid.NewString(), Owner: owner, OperationID: uuid.NewString(),
 			RequestSHA256: packageImportTestHash([]byte("fresh-bates-round-trip")), PreflightID: preflightID,
-			PackageID: packageID, JobJSON: jobJSON})
+			PackageID: packageID, JobJSON: jobJSON}, "")
 	require.NoError(t, err)
 	worker, err := NewPackageImportWorker(PackageImportConfig{Catalog: catalog, Blobs: blobs, Owner: "fresh-worker",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Mutate: func(_ context.Context, fn func() error) error { return fn() }})

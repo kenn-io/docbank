@@ -286,7 +286,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   failRun = true;
   await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));
   await screen.findByText("Synthetic query unavailable");
-  expect(searches).toHaveLength(2);
+  expect(searches).toHaveLength(3);
 });
 
 it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {

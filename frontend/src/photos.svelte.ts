@@ -589,12 +589,9 @@ export class Photos {
     this.replacement = undefined;
     this.scrollTop = 0;
     this.clearSelection();
+    if (intent) reportAction(this.session, "search_run", "text");
     if (this.view === "timeline") void this.loadTimeline();
-    const requested = this.query;
-    return this.loadMore().then(() => {
-      if (intent && this.query === requested && !this.error && this.started)
-        reportAction(this.session, "search_run", "text");
-    });
+    return this.loadMore();
   }
 
   setDensity(value: Density) {

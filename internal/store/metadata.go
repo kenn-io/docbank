@@ -565,7 +565,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		if err := exportPackageMetadata(ctx, tx, write); err != nil {
 			return err
 		}
-		if err := exportPackageImportMetadata(ctx, tx, write); err != nil {
+		if err := exportPackageImportMetadata(ctx, tx, write, layout.schemaVersion); err != nil {
 			return err
 		}
 	}
@@ -636,7 +636,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 19 {
-		if err := exportMailboxMetadata(ctx, tx, write); err != nil {
+		if err := exportMailboxMetadata(ctx, tx, write, layout.schemaVersion); err != nil {
 			return err
 		}
 	}
@@ -1613,7 +1613,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= 19 {
-			if err := exportMailboxMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+			if err := exportMailboxMetadata(ctx, tx, func(any) error { return nil }, layout.schemaVersion); err != nil {
 				return err
 			}
 		}
@@ -1637,7 +1637,7 @@ func validateMetadataStateWithVaultIdentity(
 		if err := validatePackageMetadataState(ctx, tx, vaultID); err != nil {
 			return err
 		}
-		if err := validatePackageImportMetadataState(ctx, tx); err != nil {
+		if err := validatePackageImportMetadataState(ctx, tx, layout.schemaVersion); err != nil {
 			return err
 		}
 	}

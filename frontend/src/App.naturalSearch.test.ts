@@ -970,9 +970,12 @@ it("ignores stale search completions after a new submit or rerank", async () => 
         .filter(([url]) => String(url) === "/api/daemon/telemetry/events")
         .map(([, init]) => JSON.parse(String(init?.body)))
         .filter((event) => event.event === "search_run");
-      expect(events).toEqual([
-        { event: "search_run", properties: { search_type: "hybrid", surface: "web" } },
-      ]);
+      expect(events).toEqual(
+        Array.from({ length: replacement === "submit" ? 2 : 1 }, () => ({
+          event: "search_run",
+          properties: { search_type: "hybrid", surface: "web" },
+        })),
+      );
     });
     harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
     await new Promise((resolve) => setTimeout(resolve, 0));

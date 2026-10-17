@@ -1626,17 +1626,20 @@
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
     const intent = searchIntent;
+    searchIntent = false;
+    if (intent && (query || tagFilterID)) {
+      const mode = naturalProfile
+        ? naturalSearchRequest(naturalSearchMode, naturalProfile)?.mode
+        : undefined;
+      reportAction(webSession, "search_run", query ? (mode ?? "text") : "text");
+    }
     if (!query) {
       submittedSearchQuery = "";
       naturalSearchController?.abort();
       naturalSearchNote = "";
       naturalRerankPending = false;
       if (tagFilterID) {
-        const pending = loadTaggedNodes(tagFilterID),
-          request = generation;
-        await pending;
-        if (intent && !error && !photoMode && request === generation)
-          reportAction(webSession, "search_run", "text");
+        await loadTaggedNodes(tagFilterID);
       } else if (directory) await loadDirectory(directory.id, false);
       return;
     }
@@ -1651,18 +1654,6 @@
     const mode = naturalSearchMode;
     const profile = naturalProfile;
     let accepted = false;
-    const reportAccepted = (type: string) => {
-      if (
-        searchIntent &&
-        accepted &&
-        request === generation &&
-        session === webSession &&
-        !controller.signal.aborted
-      ) {
-        searchIntent = false;
-        reportAction(session, "search_run", type);
-      }
-    };
     searchPending = true;
     loading = true;
     error = "";
@@ -1679,7 +1670,6 @@
           session,
           controller.signal,
         );
-        reportAccepted("text");
         return;
       }
       const mapped = naturalSearchRequest(mode, profile);
@@ -1693,7 +1683,6 @@
       if (resolution.fence.content_version_ids.length === 0) {
         applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
         accepted = true;
-        reportAccepted("text");
         naturalSearchNote = "No live documents match the current filter.";
         loading = false;
         return;
@@ -1728,7 +1717,6 @@
         refreshing,
       );
       accepted = true;
-      reportAccepted(baseReport.actual_mode);
       naturalSearchNote =
         baseReport.degradations.length > 0
           ? `Search note: ${baseReport.degradations.join(", ")}`
@@ -1821,7 +1809,6 @@
             controller.signal,
             note,
           );
-          reportAccepted("text");
         } catch (fallbackCause) {
           if (request === generation && session === webSession && !controller.signal.aborted)
             handleFailure(fallbackCause);
@@ -2074,11 +2061,10 @@
     if (activeQuery || searchPending) {
       searchIntent = true;
       void runSearch();
-    } else if (tagID)
-      void loadTaggedNodes(tagID).then(() => {
-        if (!error && tagID === tagFilterID) reportAction(webSession, "search_run", "text");
-      });
-    else if (directory) void loadDirectory(directory.id, false);
+    } else if (tagID) {
+      reportAction(webSession, "search_run", "text");
+      void loadTaggedNodes(tagID);
+    } else if (directory) void loadDirectory(directory.id, false);
   }
 
   function activate(row: Row): void {
@@ -2410,10 +2396,8 @@
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
     keepQueryDraft(query);
-    void snapshot.run(query, options).then((accepted) => {
-      if (intent && accepted)
-        reportAction(webSession, "search_run", query.text ? query.mode : "text");
-    });
+    if (intent) reportAction(webSession, "search_run", query.text ? query.mode : "text");
+    void snapshot.run(query, options);
   }
 
   function runSnapshotAgain(): void {

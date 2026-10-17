@@ -89,8 +89,7 @@ type Deps struct {
 	DocumentCursorNow func() time.Time
 	PageRuntime       *pagerender.Runtime // nil reports optional page rendering unavailable
 	Exports           *exporter.Worker
-	Imports           *telemetry.Imports
-	TelemetryCapture  http.Handler // nil leaves POST /api/daemon/telemetry/events unregistered
+	TelemetryCapture  *telemetry.Capture // nil leaves POST /api/daemon/telemetry/events unregistered
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a

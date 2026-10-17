@@ -14,7 +14,7 @@ import (
 
 type actionCollector struct {
 	reporter *telemetry.Reporter
-	imports  *telemetry.Imports
+	capture  *telemetry.Capture
 	events   chan map[string]any
 }
 
@@ -39,7 +39,7 @@ func newActionCollector(t *testing.T) *actionCollector {
 	c.reporter, err = posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: server.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"}, posthog.WithAllowedEvent("document_added", posthog.AllowProperty("surface", posthog.AllowStringValues("web", "cli"))), posthog.WithAllowedEvent("screen_viewed", posthog.AllowProperty("screen", posthog.AllowStringValues("browse")), posthog.AllowProperty("surface", posthog.AllowStringValues("web"))))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.reporter.Close()) })
-	c.imports = telemetry.NewImports(telemetry.CaptureHandler(c.reporter, t.TempDir()))
+	c.capture = telemetry.CaptureHandler(c.reporter, t.TempDir())
 	return c
 }
 

@@ -33,13 +33,13 @@ func validateRetainedMailboxContainer(ctx context.Context, q metadataQuerier, c 
 	}
 	return nil
 }
-func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadataWrite, version int) error {
 	after := ""
 	for {
 		var id, owner string
 		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&id, &owner)
 		if errors.Is(err, sql.ErrNoRows) {
-			return exportMailboxTransfers(ctx, q, write)
+			return exportMailboxTransfers(ctx, q, write, version)
 		}
 		if err != nil {
 			return err
@@ -66,6 +66,12 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 var mailboxMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataMailboxJob]{record: metadataMailboxJob{Type: "mailbox_job"}, table: "mailbox_jobs",
 		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxJob) error {
+			if r.ActionSurface != nil {
+				r.Job.ActionSurface = *r.ActionSurface
+			}
+			if r.ActionAddedReported != nil {
+				r.Job.ActionAddedReported = *r.ActionAddedReported
+			}
 			return saveMailboxJob(ctx, tx, r.Job, true)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxOccurrence]{
@@ -118,7 +124,7 @@ type metadataMailboxTransfer struct {
 	Receipt MailboxTransferReceipt `json:"receipt"`
 }
 
-func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metadataWrite, version int) error {
 	after := ""
 	for {
 		var a MailboxArchive
@@ -142,7 +148,7 @@ func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metada
 		var id string
 		err := q.QueryRowContext(ctx, `SELECT id FROM mailbox_transfer_receipts WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
-			return exportMailboxJobs(ctx, q, write)
+			return exportMailboxJobs(ctx, q, write, version)
 		}
 		if err != nil {
 			return err

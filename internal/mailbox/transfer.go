@@ -79,6 +79,7 @@ func (s *Service) transferSource(ctx context.Context, owner string, run store.In
 	}
 	p := store.MailboxTransferPublication{Owner: owner, Run: run, Request: request, Email: store.EmailPublication{CanonicalJSON: canonical, Artifacts: []store.EmailPartArtifactRecord{}}, Location: location}
 	var receipt store.MailboxTransferReceipt
+	report := false
 	err = s.mutate(ctx, func() error {
 		return s.Blobs.WithMutation(ctx, func() error {
 			if _, err := source.Seek(0, io.SeekStart); err != nil {
@@ -99,13 +100,18 @@ func (s *Service) transferSource(ctx context.Context, owner string, run store.In
 				p.Email.Artifacts = append(p.Email.Artifacts, store.EmailPartArtifactRecord{PartPath: a.PartPath, Role: string(a.Reference.Role), BlobSHA256: a.Reference.SHA256, Size: a.Reference.Size})
 			}
 			if commit != nil {
-				return s.Store.CommitMailboxOccurrence(ctx, commit.job.ID, commit.job.Claim, commit.occurrence, &p)
+				var err error
+				report, err = s.Store.CommitMailboxOccurrence(ctx, commit.job.ID, commit.job.Claim, commit.occurrence, &p)
+				return err
 			}
 			var err error
 			receipt, err = s.Store.PublishMailboxTransfer(ctx, p)
 			return err
 		})
 	})
+	if err == nil && report && s.ImportResult != nil {
+		s.ImportResult(commit.job.ActionSurface)
+	}
 	return receipt, err
 }
 func (s *Service) stageBlob(ctx context.Context, r io.Reader, hash string, size int64) error {

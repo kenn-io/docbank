@@ -51,13 +51,15 @@ type PackageImportJobRequest struct {
 type PackageImportJob struct {
 	PackageImportJobRequest
 
-	State          string `json:"state"`
-	Epoch          int64  `json:"epoch"`
-	Token          string `json:"-"`
-	ClaimOwner     string `json:"-"`
-	LeaseExpiresAt string `json:"lease_expires_at"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ActionSurface       string `json:"action_surface,omitempty"`
+	ActionAddedReported bool   `json:"action_added_reported,omitempty"`
+	State               string `json:"state"`
+	Epoch               int64  `json:"epoch"`
+	Token               string `json:"-"`
+	ClaimOwner          string `json:"-"`
+	LeaseExpiresAt      string `json:"lease_expires_at"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at"`
 }
 
 const (
@@ -81,9 +83,9 @@ func validatePackageImportJobRequest(request PackageImportJobRequest) error {
 func loadPackageImportJobTx(ctx context.Context, q metadataQuerier, id string) (PackageImportJob, error) {
 	var job PackageImportJob
 	err := q.QueryRowContext(ctx, `SELECT id,owner,operation_id,request_sha256,preflight_id,package_id,
-		job_json,state,epoch,token,COALESCE(claim_owner,''),COALESCE(lease_expires_at,''),created_at,updated_at
+		action_surface,action_added_reported,job_json,state,epoch,token,COALESCE(claim_owner,''),COALESCE(lease_expires_at,''),created_at,updated_at
 		FROM package_import_jobs WHERE id=?`, id).Scan(&job.ID, &job.Owner, &job.OperationID,
-		&job.RequestSHA256, &job.PreflightID, &job.PackageID, &job.JobJSON, &job.State,
+		&job.RequestSHA256, &job.PreflightID, &job.PackageID, &job.ActionSurface, &job.ActionAddedReported, &job.JobJSON, &job.State,
 		&job.Epoch, &job.Token, &job.ClaimOwner, &job.LeaseExpiresAt, &job.CreatedAt, &job.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PackageImportJob{}, ErrNotFound
@@ -107,8 +109,11 @@ func packageImportJobByOperationTx(ctx context.Context, q metadataQuerier, owner
 // queued job in one logical transaction. A retry identified by owner and
 // operation returns the original job without creating another collection.
 func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg PackageRequest,
-	request PackageImportJobRequest,
+	request PackageImportJobRequest, surface string,
 ) (PackageImportJob, error) {
+	if !validActionSurface(surface) {
+		return PackageImportJob{}, ErrPackageConflict
+	}
 	if err := validatePackageImportJobRequest(request); err != nil {
 		return PackageImportJob{}, err
 	}
@@ -198,9 +203,9 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_jobs(
 			id,owner,operation_id,request_sha256,preflight_id,package_id,
-			state,epoch,token,job_json,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,'queued',0,'',?,?,?)`, request.ID, request.Owner, request.OperationID,
-			request.RequestSHA256, request.PreflightID, pkg.PackageID, request.JobJSON, now, now)
+			state,epoch,token,job_json,created_at,updated_at,action_surface
+		) VALUES(?,?,?,?,?,?,'queued',0,'',?,?,?,?)`, request.ID, request.Owner, request.OperationID,
+			request.RequestSHA256, request.PreflightID, pkg.PackageID, request.JobJSON, now, now, surface)
 		if err != nil {
 			return err
 		}

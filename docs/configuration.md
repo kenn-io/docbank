@@ -1044,23 +1044,23 @@ addition, including partial failures. Skipped files, replacements, preflight,
 agent calls and unattended ingestion stay silent. Browser uploads and Photos
 groups report from the daemon after commit, even if the drawer closes before
 its receipt arrives. Mailbox and load-file jobs retain the surface that started
-them after their drawer closes. Resuming a mailbox job preserves its original attribution and never reports
-a second addition for the same import. Opening a
-drawer onto an existing job stays silent. Interactive one-shot CLI `push`,
+them after their drawer closes or the daemon restarts. Resuming a mailbox job
+preserves its original attribution and reports one addition per import. Opening
+a drawer onto an existing job stays silent. Interactive one-shot CLI `push`,
 mailbox and load-file package imports report once after a confirmed new addition.
 `push --watch`, API-key host-folder `photos import` and status commands stay
 silent. Synchronous CLI `add` counts confirmed additions. The browser Photos
 drawer uses upload groups.
-The daemon keeps at most 256 active import attributions in memory. At capacity,
-imports proceed without attribution. Restarting the daemon can lose an
-in-flight count. Resumes without original attribution stay silent.
+Mailbox and load-file jobs store their original surface and first-addition claim
+with the job. Backups preserve both fields. Jobs restored from older released
+vaults have no attribution and stay silent.
 
-`search_run` counts successful submitted searches, including empty results,
+`search_run` counts submitted searches, including failed or superseded requests,
 facets and Smart Sets, once per surface and search type each UTC day.
 Names, tags, lexical and Photos searches use `text`; vector-only and similar
-searches use `semantic`; combined ranking uses `hybrid`. Automatic mode and
-fallback use the executed path. Hidden searches use the same type as Photos.
-Failed requests, sorting, paging, reranking, refresh and restored state stay silent.
+searches use `semantic`; combined ranking uses `hybrid`. Browser automatic mode
+uses the requested search path. CLI and TUI searches use the executed path. Hidden searches use the same type as Photos.
+Sorting, paging, reranking, refresh and restored state stay silent.
 
 `document_opened` counts deliberate inspections once per surface each UTC day.
 Interaction with an automatically selected file counts; automatic selection

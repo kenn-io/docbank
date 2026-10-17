@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json/v2"
 	"errors"
@@ -216,15 +215,9 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		}
 		var j store.MailboxJob
 		err := g.mutate(func() error {
-			return d.Imports.Admit(importActionSurface(r), func() (string, bool, error) {
-				_, existing := d.Store.MailboxJob(r.Context(), mailboxOwner(d), request.ID)
-				if existing != nil && !errors.Is(existing, store.ErrNotFound) {
-					return "", false, existing
-				}
-				var err error
-				j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest())
-				return "mailbox:" + j.ID, errors.Is(existing, store.ErrNotFound) && j.Imported == 0, err
-			})
+			var err error
+			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest(), importActionSurface(r))
+			return err
 		})
 		if err != nil {
 			writeMailboxError(w, err)
@@ -275,12 +268,6 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	})
 	mux.HandleFunc("POST /api/v1/mailbox/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		err := g.mutate(func() error { return d.Store.CancelMailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id")) })
-		if err == nil { // Attributed jobs then claim the stored progress the cancellation left.
-			err = d.Imports.Observe(r.Context(), "mailbox:"+r.PathValue("id"), func(_ context.Context, fn func() error) error { return g.mutate(fn) }, func() (int64, bool, error) {
-				current, err := d.Store.MailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id"))
-				return current.Imported, current.ScannedTail, err
-			})
-		}
 		if err != nil {
 			writeMailboxError(w, err)
 			return
@@ -298,11 +285,9 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		}
 		var j store.MailboxJob
 		err := g.mutate(func() error {
-			return d.Imports.Admit("", func() (string, bool, error) {
-				var err error
-				j, err = d.Store.ResumeMailboxJob(r.Context(), mailboxOwner(d), input.Request.storeRequest(), input.Continuation)
-				return "", false, err
-			})
+			var err error
+			j, err = d.Store.ResumeMailboxJob(r.Context(), mailboxOwner(d), input.Request.storeRequest(), input.Continuation)
+			return err
 		})
 		if err != nil {
 			writeMailboxError(w, err)

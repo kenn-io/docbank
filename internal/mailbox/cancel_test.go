@@ -22,7 +22,7 @@ func TestMailboxWorkerCancellationFencesPendingAndClosesSpools(t *testing.T) {
 	_, err = f.Seal(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
 	request := store.MailboxJobRequest{ID: "cancel-job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}}
-	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, request)
+	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, request, "")
 	require.NoError(t, err)
 	pending := make(chan struct{}, 1)
 	f.Mutate = func(ctx context.Context, fn func() error) error {

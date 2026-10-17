@@ -188,15 +188,12 @@ func (s *Service) importOccurrence(ctx context.Context, j store.MailboxJob, entr
 	if m.Rejection == "" {
 		request := store.MailboxTransferRequest{ArchiveID: "mailbox:" + j.CollectionID, Reference: fmt.Sprintf("%d:%d", entry.Index, m.Sequence), SHA256: m.EMLSHA256, Size: m.EMLSize, Settings: settings, DestinationID: j.Settings.DestinationID, Name: "message.eml"}
 		_, err := s.transferSource(ctx, j.Owner, j.IngestRun(), request, m.EML, &location, &occurrenceCommit{job: j, occurrence: o})
-		if err == nil && s.ImportResult != nil {
-			s.ImportResult(j.ID)
-		}
 		if !errors.Is(err, ErrRejected) {
 			return err
 		}
 		o.Reason = err.Error()
 	}
-	return s.mutate(ctx, func() error { return s.Store.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, nil) })
+	return s.mutate(ctx, func() error { _, err := s.Store.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, nil); return err })
 }
 
 func (s *Service) resumeCheckpoint(ctx context.Context, j store.MailboxJob, c store.MailboxContainer, entries []Entry) (store.MailboxLocation, error) {
@@ -297,9 +294,6 @@ func (s *Service) runCancelableJob(ctx context.Context, j store.MailboxJob) erro
 
 func (s *Service) finishJob(ctx context.Context, j store.MailboxJob, state, reason string, tail bool) error {
 	err := s.mutate(ctx, func() error { return s.Store.FinishMailboxJob(ctx, j.ID, j.Claim, state, reason, tail) })
-	if err == nil && s.ImportResult != nil {
-		s.ImportResult(j.ID)
-	}
 	return err
 }
 

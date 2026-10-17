@@ -10,8 +10,10 @@ import (
 )
 
 type metadataMailboxJob struct {
-	Type string     `json:"type"`
-	Job  MailboxJob `json:"job"`
+	Type                string     `json:"type"`
+	Job                 MailboxJob `json:"job"`
+	ActionSurface       *string    `json:"action_surface,omitempty"`
+	ActionAddedReported *bool      `json:"action_added_reported,omitempty"`
 }
 type metadataMailboxOccurrence struct {
 	Type       string            `json:"type"`
@@ -33,7 +35,7 @@ func insertMailboxOccurrence(ctx context.Context, tx *sql.Tx, o MailboxOccurrenc
 	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES(?,?,?,?)`, o.JobID, o.Ordinal, receipt, b)
 	return err
 }
-func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWrite, version int) error {
 	after := ""
 	for {
 		var owner, id string
@@ -44,7 +46,17 @@ func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWri
 		if err != nil {
 			return err
 		}
-		j, err := loadMailboxJob(ctx, q, owner, id)
+		var j MailboxJob
+		if version >= 39 {
+			j, err = loadMailboxJob(ctx, q, owner, id)
+		} else {
+			var state, claim, container string
+			var b []byte
+			err = q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json FROM mailbox_jobs WHERE id=? AND owner=?`, id, owner).Scan(&state, &claim, &container, &b)
+			if err == nil {
+				j, err = decodeMailboxJob(id, owner, state, claim, container, b)
+			}
+		}
 		if err != nil {
 			return err
 		}
@@ -55,7 +67,11 @@ func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWri
 		if c.State != mailboxContainerSealed || c.SHA256 != j.ContainerSHA256 {
 			return ErrMailboxInvalid
 		}
-		if err = write(metadataMailboxJob{Type: "mailbox_job", Job: j}); err != nil {
+		record := metadataMailboxJob{Type: "mailbox_job", Job: j}
+		if version >= 39 {
+			record.ActionSurface, record.ActionAddedReported = new(j.ActionSurface), new(j.ActionAddedReported)
+		}
+		if err = write(record); err != nil {
 			return err
 		}
 		var ordinal, imported, rejected, pending, canceled int64

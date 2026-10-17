@@ -55,7 +55,7 @@ func newImportActionDaemon(t *testing.T) *importActionDaemon {
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-key"
 	server := api.NewServer(api.Deps{Store: f.catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Jobs: f.jobs,
-		ShutdownToken: "synthetic-token", Imports: telemetry.NewImports(capture), TelemetryCapture: capture})
+		ShutdownToken: "synthetic-token", TelemetryCapture: capture})
 	t.Cleanup(server.Close)
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/daemon/telemetry/events" {

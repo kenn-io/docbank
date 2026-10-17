@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"path/filepath"
 	"testing"
 	"time"
 	"uuid"
@@ -64,7 +65,7 @@ func packageImportJobRequest(t *testing.T, s *Store, pkg PackageRequest) Package
 func seedReceivedPackage(t *testing.T, s *Store, name string) (Package, Node) {
 	t.Helper()
 	request, run, node := prepareReceivedPackage(t, s, name)
-	_, err := s.AdmitPackageImport(t.Context(), run, request, packageImportJobRequest(t, s, request))
+	_, err := s.AdmitPackageImport(t.Context(), run, request, packageImportJobRequest(t, s, request), "")
 	require.NoError(t, err)
 	pkg, err := s.Package(t.Context(), request.PackageID)
 	require.NoError(t, err)
@@ -73,8 +74,16 @@ func seedReceivedPackage(t *testing.T, s *Store, name string) (Package, Node) {
 
 func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	path := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	pkg, node := seedReceivedPackage(t, s, "alpha")
+	_, err = s.db.ExecContext(t.Context(), `UPDATE package_import_jobs SET action_surface='web' WHERE package_id=?`, pkg.PackageID)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	s, err = Open(path)
+	require.NoError(t, err)
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)
 	require.NoError(t, err)
 	key, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
@@ -100,8 +109,20 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 		State: "committed", ReceiptJSON: []byte(`{}`)}
 	first, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
 	require.NoError(t, err)
+	require.True(t, first.ReportAddition)
+	require.Equal(t, "web", job.ActionSurface)
+	_, err = s.ReleasePackageImportJob(t.Context(), job.ID, job.Epoch, job.Token)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	s, err = Open(path)
+	require.NoError(t, err)
+	job, err = s.ClaimPackageImportJob(t.Context(), "resumed-worker", time.Minute)
+	require.NoError(t, err)
+	require.True(t, job.ActionAddedReported)
 	second, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
 	require.NoError(t, err)
+	require.False(t, second.ReportAddition)
+	first.ReportAddition = false
 	require.Equal(t, first, second)
 	_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels SELECT * FROM package_labels
 		WHERE package_id=? AND endpoint='begin'`, pkg.PackageID)
@@ -245,7 +266,7 @@ func TestReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t *testing.T) {
 	secondRequest.PackageID, err = newUUIDv4()
 	require.NoError(t, err)
 	secondRequest.IngestID = run.ID()
-	_, err = s.AdmitPackageImport(t.Context(), run, secondRequest, packageImportJobRequest(t, s, secondRequest))
+	_, err = s.AdmitPackageImport(t.Context(), run, secondRequest, packageImportJobRequest(t, s, secondRequest), "")
 	require.NoError(t, err)
 	second, err := s.Package(t.Context(), secondRequest.PackageID)
 	require.NoError(t, err)

@@ -50,7 +50,7 @@ func TestPackageTimelineInputsPreserveRawDateAndDeclaredZone(t *testing.T) {
 	request.Direction, request.State, request.IngestID = "received", "importing", run.ID()
 	request.SnapshotID = ""
 	request.ManifestSHA256 = request.ManifestBlobSHA256
-	_, err = s.AdmitPackageImport(t.Context(), run, request, packageImportJobRequest(t, s, request))
+	_, err = s.AdmitPackageImport(t.Context(), run, request, packageImportJobRequest(t, s, request), "")
 	require.NoError(t, err)
 	job, err := s.ClaimPackageImportJob(t.Context(), "timeline-worker", time.Minute)
 	require.NoError(t, err)

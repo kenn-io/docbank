@@ -23,7 +23,7 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 			t.Run(fmt.Sprintf("origin=%s/before=%t", origin, beforeAddition), func(t *testing.T) {
 				capture := newActionCollector(t)
 				gate := api.NewOperationGate()
-				server, catalog := newTestServer(t, func(d *api.Deps) { d.Imports = capture.imports; d.Gate = gate })
+				server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture; d.Gate = gate })
 				owner := "vault:" + catalog.VaultID()
 				raw := []byte("From sender@example.com Sat Sep 12 10:00:00 2026\nSubject: Synthetic archive\nContent-Type: text/plain\n\nSynthetic body.\n")
 				raw = append(raw, []byte("From sender@example.com Sat Sep 12 10:01:00 2026\nSubject: Second synthetic message\nContent-Type: text/plain\n\nSecond synthetic body.\n")...)
@@ -31,7 +31,7 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				container := store.MailboxContainerRequest{ID: "synthetic-source", Owner: owner, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(raw)), Format: "mbox"}
 				_, err := catalog.BeginMailboxContainer(t.Context(), container)
 				require.NoError(t, err)
-				service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), ImportResult: api.MailboxImportResult(t.Context(), catalog.Store, gate, capture.imports)}
+				service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), ImportResult: capture.capture.DocumentAdded}
 				require.NoError(t, service.UploadChunk(t.Context(), owner, container.ID, 0, container.SHA256, container.Size, bytes.NewReader(raw)))
 				_, err = service.Seal(t.Context(), owner, container.ID)
 				require.NoError(t, err)
@@ -78,7 +78,6 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				require.Equal(t, http.StatusOK, response.StatusCode, body)
 				response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/resume", headers, api.MailboxResumeInput{Request: request})
 				require.Equal(t, http.StatusOK, response.StatusCode, body)
-				service.ImportResult(job.ID) // a delayed callback from the cancelled run sees the resumed job
 				job, err = catalog.ClaimMailboxJob(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, service.RunJob(t.Context(), job))

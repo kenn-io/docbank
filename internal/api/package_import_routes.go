@@ -117,28 +117,26 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 	}
 	var admitted store.PackageImportJob
 	err = g.MutateContext(ctx, func() error {
-		return d.Imports.Admit(surface, func() (string, bool, error) {
-			run, beginErr := d.Store.BeginIngest(ctx, "package:loadfile", preview.SourceRef)
-			if beginErr != nil {
-				return "", false, beginErr
-			}
-			pkg := store.PackageRequest{PackageID: uuid.NewString(), Direction: "received", State: "importing",
-				PackageName: request.Name, PartyLabel: request.Party, IngestID: run.ID(),
-				ProfileSHA256: preview.ProfileSHA256, ProfileJSON: preview.ProfileJSON,
-				MappingSHA256: preview.MappingSHA256, MappingJSON: preview.MappingJSON,
-				ManifestSHA256: preview.ManifestSHA256, ManifestBlobSHA256: preview.ManifestBlobSHA256,
-				Volumes: volumes}
-			jobID := uuid.NewString()
-			admitted, beginErr = d.Store.AdmitPackageImport(ctx, run, pkg, store.PackageImportJobRequest{
-				ID: jobID, Owner: owner, OperationID: request.OperationID,
-				RequestSHA256: requestHash, PreflightID: preview.PreflightID,
-				PackageID: pkg.PackageID, JobJSON: jobJSON,
-			})
-			if beginErr != nil {
-				return "", false, beginErr
-			}
-			return "package:" + admitted.ID, admitted.ID == jobID, nil
-		})
+		run, beginErr := d.Store.BeginIngest(ctx, "package:loadfile", preview.SourceRef)
+		if beginErr != nil {
+			return beginErr
+		}
+		pkg := store.PackageRequest{PackageID: uuid.NewString(), Direction: "received", State: "importing",
+			PackageName: request.Name, PartyLabel: request.Party, IngestID: run.ID(),
+			ProfileSHA256: preview.ProfileSHA256, ProfileJSON: preview.ProfileJSON,
+			MappingSHA256: preview.MappingSHA256, MappingJSON: preview.MappingJSON,
+			ManifestSHA256: preview.ManifestSHA256, ManifestBlobSHA256: preview.ManifestBlobSHA256,
+			Volumes: volumes}
+		jobID := uuid.NewString()
+		admitted, beginErr = d.Store.AdmitPackageImport(ctx, run, pkg, store.PackageImportJobRequest{
+			ID: jobID, Owner: owner, OperationID: request.OperationID,
+			RequestSHA256: requestHash, PreflightID: preview.PreflightID,
+			PackageID: pkg.PackageID, JobJSON: jobJSON,
+		}, surface)
+		if beginErr != nil {
+			return beginErr
+		}
+		return nil
 	})
 	if err != nil {
 		return PackageImportJob{}, err
@@ -195,7 +193,6 @@ func handlePackageImportCancel(w http.ResponseWriter, r *http.Request, d Deps, g
 		writePackageError(w, err)
 		return
 	}
-	d.Imports.Result("package:"+job.ID, result.Committed > 0, job.State != "queued" && job.State != "running")
 	writeJSON(w, http.StatusOK, result)
 }
 

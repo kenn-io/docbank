@@ -13,14 +13,14 @@ import (
 	"go.kenn.io/docbank/internal/telemetry"
 )
 
-func startMailboxJobs(ctx context.Context, supervisor *jobs.Supervisor, s *store.Store, b *blob.Store, spool string, gate *api.OperationGate, logger *slog.Logger, imports *telemetry.Imports) error {
+func startMailboxJobs(ctx context.Context, supervisor *jobs.Supervisor, s *store.Store, b *blob.Store, spool string, gate *api.OperationGate, logger *slog.Logger, capture *telemetry.Capture) error {
 	if err := s.CleanupMailboxContainers(ctx); err != nil {
 		return err
 	}
 	if err := s.ResetMailboxClaims(ctx); err != nil {
 		return err
 	}
-	service := &mailbox.Service{Store: s, Blobs: b, Spool: spool, Mutate: gate.MutateContext, Logger: logger, ImportResult: api.MailboxImportResult(ctx, s, gate, imports)}
+	service := &mailbox.Service{Store: s, Blobs: b, Spool: spool, Mutate: gate.MutateContext, Logger: logger, ImportResult: capture.DocumentAdded}
 	for i := range 2 {
 		if err := supervisor.Start(fmt.Sprintf("import:mailbox:%d", i+1), service.RunWorker); err != nil {
 			return err

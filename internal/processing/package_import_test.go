@@ -178,7 +178,7 @@ func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartia
 	job := store.PackageImportJobRequest{ID: uuid.NewString(), Owner: owner, OperationID: operationID,
 		RequestSHA256: packageImportTestHash([]byte("synthetic request")), PreflightID: preflightID,
 		PackageID: packageID, JobJSON: jobJSON}
-	_, err = catalog.AdmitPackageImport(ctx, run, request, job)
+	_, err = catalog.AdmitPackageImport(ctx, run, request, job, "web")
 	require.NoError(t, err)
 	return &packageImportTestEnv{Catalog: catalog, Blobs: blobs, Root: root,
 		PackageID: packageID, Owner: owner, OperationID: operationID, Contents: contents}
@@ -271,6 +271,8 @@ func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 	require.NoError(t, err)
 	var interrupted atomic.Bool
 	config := env.config()
+	var surfaces []string
+	config.ImportResult = func(surface string) { surfaces = append(surfaces, surface) }
 	config.Mutate = func(ctx context.Context, fn func() error) error {
 		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && interrupted.CompareAndSwap(false, true) {
 			return injected
@@ -284,12 +286,15 @@ func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 	firstReceipt, err := env.Catalog.PackageImportHead(t.Context(), env.PackageID, firstKey)
 	require.NoError(t, err)
 	require.Equal(t, "committed", firstReceipt.State)
+	require.Equal(t, []string{"web"}, surfaces)
 	secondKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 2, "DOC-B")
 	require.NoError(t, err)
 	_, err = env.Catalog.PackageImportHead(t.Context(), env.PackageID, secondKey)
 	require.ErrorIs(t, err, store.ErrNotFound)
 
-	resumed, err := NewPackageImportWorker(env.config())
+	resumedConfig := env.config()
+	resumedConfig.ImportResult = config.ImportResult
+	resumed, err := NewPackageImportWorker(resumedConfig)
 	require.NoError(t, err)
 	_, err = resumed.ProcessOnce(t.Context())
 	require.NoError(t, err)
@@ -300,6 +305,7 @@ func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "complete", pkg.State)
 	require.Equal(t, 2, pkg.MemberCount)
+	require.Equal(t, []string{"web"}, surfaces)
 }
 
 func TestPackageImportWorkerPersistsSuppliedTextGenerationInReceipt(t *testing.T) {
