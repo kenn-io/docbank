@@ -100,7 +100,7 @@ it("keeps separate vaults and reads only the saved header for the resume offer",
   expect((await a.load())?.checkpoint.runID).toBe("run");
 });
 
-it("refuses a newer saved format without replacing or checkpointing it", async () => {
+it("refuses a newer saved format until its replacement is authorized", async () => {
   const store = photoCullStorage("vault-a");
   const captured = run();
   await store.replace(captured);
@@ -116,6 +116,7 @@ it("refuses a newer saved format without replacing or checkpointing it", async (
     const cull = new PhotoCull("session", store);
     await cull.probe();
     expect(cull.saved).toBe(false);
+    expect(cull.error).toContain("unsupported format");
     expect(await cull.restore()).toBe(false);
     expect(cull.run).toBeUndefined();
     expect(cull.error).toContain("unsupported format");
@@ -137,6 +138,10 @@ it("refuses a newer saved format without replacing or checkpointing it", async (
       pass: captured.checkpoint.pass,
     });
     await readDone;
+    const refused = await store.saved().catch((cause) => cause.saved);
+    const replacement = run("replacement");
+    await store.replace(replacement, undefined, refused);
+    expect(await store.load()).toEqual(replacement);
   } finally {
     db.close();
   }

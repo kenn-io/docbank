@@ -17,12 +17,18 @@ export interface CullRun {
   checkpoint: CullCheckpoint;
 }
 type MarkerKind = "visited" | "skipped" | "unavailable";
-type Header = Pick<CullCheckpoint, "runID" | "revision" | "position" | "scope" | "autoAdvance">;
+type Header = Pick<CullCheckpoint, "runID" | "revision" | "position" | "scope" | "autoAdvance"> & {
+  formatVersion?: number;
+};
 const formatVersion = 1;
 type StoredHeader = Header & { formatVersion: number };
+export class CullFormatError extends Error {
+  constructor(readonly saved: StoredHeader) {
+    super("Saved cull progress uses an unsupported format. Update Docbank to resume it.");
+  }
+}
 function checkFormat(saved: StoredHeader | undefined) {
-  if (saved && saved.formatVersion !== formatVersion)
-    throw new Error("Saved cull progress uses an unsupported format. Update Docbank to resume it.");
+  if (saved && saved.formatVersion !== formatVersion) throw new CullFormatError(saved);
 }
 export interface CullProgress {
   runID: string;
@@ -141,8 +147,8 @@ export function photoCullStorage(vaultID: string): CullStorage {
           );
           if (
             current
-              ? current.formatVersion !== formatVersion ||
-                !expected ||
+              ? !expected ||
+                current.formatVersion !== (expected.formatVersion ?? formatVersion) ||
                 !sameCheckpoint(current, expected)
               : !!expected
           ) {

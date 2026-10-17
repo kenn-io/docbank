@@ -2,7 +2,7 @@ import { createSnapshot, captureSnapshotTargets } from "./snapshots.js";
 import type { Query } from "./query.js";
 import { randomUUID } from "./crypto.js";
 import { APIError } from "./api-transport.js";
-import { sameCheckpoint } from "./photoCullStorage.js";
+import { CullFormatError, sameCheckpoint } from "./photoCullStorage.js";
 import type {
   CullCheckpoint,
   CullProgress,
@@ -30,8 +30,10 @@ export class PhotoCull {
   async probe() {
     try {
       this.saved = !!(await this.storage.saved());
-    } catch {
+      this.error = "";
+    } catch (cause) {
       this.saved = false;
+      this.error = failure(cause);
     }
   }
   // nextPass snapshots the checkpoint revision, so no other update may bump it until the pass is saved.
@@ -131,7 +133,13 @@ export class PhotoCull {
     this.error = "";
     try {
       await this.writes;
-      const previous = await this.storage.saved();
+      const previous = await this.storage.saved().catch((cause) => {
+        if (cause instanceof CullFormatError) {
+          this.error = cause.message;
+          return cause.saved;
+        }
+        throw cause;
+      });
       if (previous && !(await confirm("Replace saved cull progress?"))) return false;
       this.progress = "Capturing photos…";
       const page = await createSnapshot(
@@ -172,6 +180,7 @@ export class PhotoCull {
       await this.writes;
       controller.signal.throwIfAborted();
       await this.storage.replace(run, controller.signal, previous);
+      this.error = "";
       this.stale = false;
       this.run = run;
       this.saved = true;
