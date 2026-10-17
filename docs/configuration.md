@@ -936,9 +936,7 @@ Active stores must use separate locations:
 - S3 prefixes must not be equal or nested within the same canonical endpoint
   and bucket.
 
-Watches and filesystem stores that overlap checkout folders wait and log a
-warning. Released checkout folders stay protected while they contain files
-or Docbank can't inspect them. See [Create writable copies](usage/photos.md#create-writable-copies).
+Watches check checkout separation when they start. Filesystem stores check at daemon start and at registration. An overlapping store stays unattached at startup until a background check confirms separation. Registration rejects overlapping roots. Released checkout folders stay protected while they contain files or Docbank can't inspect them. See [Create writable copies](usage/photos.md#create-writable-copies).
 
 Docbank also checks each store's ownership marker and epoch, a value that
 identifies the current ownership claim. These checks catch aliases that path

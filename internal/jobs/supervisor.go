@@ -43,6 +43,16 @@ type state struct {
 	Snapshot
 }
 
+type reportErrorKey struct{}
+
+// ReportError updates a running job's observable error. A nil error clears it.
+// Calls outside a supervised job have no effect.
+func ReportError(ctx context.Context, err error) {
+	if report, ok := ctx.Value(reportErrorKey{}).(func(error)); ok {
+		report(err)
+	}
+}
+
 // Supervisor owns a fixed set of uniquely named goroutines. Stop prevents new
 // jobs and cancels the shared root; Shutdown additionally waits for every job
 // to return before the daemon closes resources they may use.
@@ -104,7 +114,15 @@ func (s *Supervisor) run(job *state, run func(context.Context) error) {
 		}
 		s.finish(job, runErr)
 	}()
-	runErr = run(s.ctx)
+	ctx := context.WithValue(s.ctx, reportErrorKey{}, func(err error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		job.Error = ""
+		if err != nil {
+			job.Error = boundedError(err)
+		}
+	})
+	runErr = run(ctx)
 }
 
 func (s *Supervisor) finish(job *state, runErr error) {

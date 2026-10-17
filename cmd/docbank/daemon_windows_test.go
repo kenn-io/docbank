@@ -3,9 +3,9 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,13 +65,15 @@ func TestConfiguredCheckoutStartupDefersInaccessibleDestination(t *testing.T) {
 	cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: t.TempDir()}}
 	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: t.TempDir()}}
 	stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
-	admit := newCheckoutBindingAdmission(catalog, slog.New(slog.DiscardHandler))
-	pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, admit)
+	check := func(ctx context.Context, binding config.StoreBindingConfig) error {
+		return validateCheckoutBinding(ctx, catalog, binding)
+	}
+	pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, check)
 	require.NoError(t, err, "uncertain paths must not prevent daemon startup")
-	require.True(t, pending)
+	require.NotEmpty(t, pending[0].UnavailableReason)
 	require.NoError(t, windows.CloseHandle(handle))
 	handle = windows.InvalidHandle
-	pending, err = validateConfiguredCheckoutStartup(t.Context(), cfg, stores, admit)
+	pending, err = validateConfiguredCheckoutStartup(t.Context(), cfg, stores, check)
 	require.NoError(t, err)
-	require.False(t, pending)
+	require.Empty(t, pending[0].UnavailableReason)
 }

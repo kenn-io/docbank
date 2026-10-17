@@ -561,7 +561,7 @@ After a daemon restart, a started or paused creation reports failure with its ID
 
 Queued, running, and completed checkouts hold their frozen source versions against pruning and emptying trash. Completed checkouts keep their reservation until retirement. Clear any partial files before reusing a released destination.
 
-A configured watch or storage binding that overlaps checkout copies waits and logs a warning naming the checkout and path. The daemon and unrelated watches and bindings keep running. If Docbank can't inspect a checkout folder, watches and storage bindings wait until Docbank can read it again and check for overlap. Clear the released folder or remove the overlapping configuration to allow admission. A missing folder or a regular file replacing it or an ancestor also releases admission protection.
+Watches check separation from checkout folders when they start. Filesystem stores check at daemon start and at registration. At startup, an overlapping store stays unattached while the daemon checks in the background; unrelated stores keep running. Registration rejects overlapping roots. Released checkout folders stay protected while they contain copies or Docbank can't inspect them. Clear or move the copies from a released folder so the waiting watch or store can start. A missing folder or a regular file replacing it or an ancestor also releases protection. A waiting watch shows the checkout folder and the action needed in `docbank watch list`'s ERROR column and the watch API's `error` field. The reason clears when the wait ends.
 
 Status reports file and byte totals, published counts, and any failing relative path and file ID.
 

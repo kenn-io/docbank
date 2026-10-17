@@ -16,6 +16,7 @@ import (
 	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -350,12 +351,21 @@ func (w *Watcher) waitForCheckoutSeparation(ctx context.Context, root string) ([
 		}
 		id, overlaps, err := CheckoutPathOverlap(ctx, checkouts, root)
 		if err != nil || overlaps {
-			return fmt.Errorf("checkout %s overlaps watch %q at %q: %w", id, w.config.Name, root, errors.Join(err, errWatchCheckoutOverlap))
+			destination := ""
+			for _, checkout := range checkouts {
+				if checkout.ID == id {
+					destination = checkout.Destination
+					break
+				}
+			}
+			return fmt.Errorf("waiting for checkout %s folder %q; clear or move its copies from the released folder to start watch %q: %w", id, destination, w.config.Name, errors.Join(err, errWatchCheckoutOverlap))
 		}
 		return nil
 	}, func(err error) {
+		jobs.ReportError(ctx, err)
 		w.logger.Warn("watch is waiting for checkout separation", "watch", w.config.Name, "path", root, "error", err)
 	})
+	jobs.ReportError(ctx, nil)
 	return checkouts, err
 }
 

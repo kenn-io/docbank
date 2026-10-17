@@ -40,8 +40,7 @@ var errStoreOwnershipUnavailable = errors.New("store ownership is unavailable")
 
 var errRegistryProbeTimeout = errors.New("store ownership probe timed out")
 
-// RegistryProbeTimeout bounds startup admission and ownership probes.
-const RegistryProbeTimeout = 5 * time.Second
+const registryProbeTimeout = 5 * time.Second
 
 // StoreSpec is the catalog authority needed to bind one runtime backend.
 type StoreSpec struct {
@@ -51,6 +50,8 @@ type StoreSpec struct {
 	Lifecycle      string
 	Binding        string
 	OwnershipEpoch string
+	// UnavailableReason holds a startup check until CompleteStartupCheck clears it.
+	UnavailableReason string
 }
 
 // StoreObservation describes one process-local binding result.
@@ -65,14 +66,13 @@ type StoreObservation struct {
 // A missing or bad binding degrades only that store; it never prevents the
 // local metadata catalog or other stores from opening.
 type Registry struct {
-	mu            sync.RWMutex
-	vaultID       string
-	bindings      map[string]config.StoreBindingConfig
-	openBackend   configuredBackendFactory
-	openSalvage   configuredBackendFactory
-	admitBindings []func(context.Context, config.StoreBindingConfig) error
-	specs         map[packstore.StoreID]StoreSpec
-	backends      map[packstore.StoreID]packstore.Backend
+	mu          sync.RWMutex
+	vaultID     string
+	bindings    map[string]config.StoreBindingConfig
+	openBackend configuredBackendFactory
+	openSalvage configuredBackendFactory
+	specs       map[packstore.StoreID]StoreSpec
+	backends    map[packstore.StoreID]packstore.Backend
 	// Kit's backend registry has no release callback. Once a backend has been
 	// handed to a reader, keep a fenced or detached instance alive until daemon
 	// shutdown while immediately removing it from admission for new work.
@@ -85,17 +85,16 @@ type Registry struct {
 
 // NewRegistry binds every active secondary that can prove its expected
 // ownership marker. The caller supplies catalog rows, never deployment
-// endpoints from SQLite. Optional admission checks run before opening or reusing a binding.
+// endpoints from SQLite.
 func NewRegistry(
 	ctx context.Context,
 	vaultID string,
 	bindings map[string]config.StoreBindingConfig,
 	stores []StoreSpec,
-	admitBindings ...func(context.Context, config.StoreBindingConfig) error,
 ) *Registry {
 	return newRegistryWithFactories(
 		ctx, vaultID, bindings, stores,
-		newAttachedConfiguredBackend, newSalvageConfiguredBackend, admitBindings...,
+		newAttachedConfiguredBackend, newSalvageConfiguredBackend,
 	)
 }
 
@@ -159,11 +158,10 @@ func newRegistryWithFactories(
 	stores []StoreSpec,
 	openBackend configuredBackendFactory,
 	openSalvage configuredBackendFactory,
-	admitBindings ...func(context.Context, config.StoreBindingConfig) error,
 ) *Registry {
 	registry := &Registry{
 		vaultID: vaultID, bindings: bindings,
-		openBackend: openBackend, openSalvage: openSalvage, admitBindings: admitBindings,
+		openBackend: openBackend, openSalvage: openSalvage,
 		specs:        make(map[packstore.StoreID]StoreSpec, len(stores)),
 		backends:     make(map[packstore.StoreID]packstore.Backend, len(stores)),
 		observations: make(map[packstore.StoreID]StoreObservation, len(stores)),
@@ -178,18 +176,7 @@ func newRegistryWithFactories(
 	for _, spec := range stores {
 		ids = append(ids, spec.ID)
 	}
-	// All startup admissions share one budget. Later refreshes use their
-	// caller's full context so a large separation walk can finish.
-	admissionCtx, cancel := context.WithTimeout(ctx, RegistryProbeTimeout)
-	defer cancel()
-	registry.admitBindings = nil
-	for _, admit := range admitBindings {
-		registry.admitBindings = append(registry.admitBindings, func(_ context.Context, binding config.StoreBindingConfig) error {
-			return admit(admissionCtx, binding)
-		})
-	}
 	registry.RefreshStores(ctx, ids)
-	registry.admitBindings = admitBindings
 	return registry
 }
 
@@ -220,45 +207,27 @@ func (r *Registry) Observation(id string) StoreObservation {
 	return observation
 }
 
-// Refresh performs a fresh marker check for one cataloged store. Admission
-// (such as checkout separation validation) runs first, under the caller's
-// own context rather than the bounded ownership-probe deadline below: a
-// large library's admission scan can legitimately take longer than that
-// deadline without being stuck, and the deadline exists to bound the
-// ownership marker read, not admission.
+// Refresh performs a fresh marker check for one cataloged store.
 func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
-	if !r.admitRefresh(ctx, packstore.StoreID(id)) {
-		return r.Observation(id)
-	}
 	probeCtx, cancel := context.WithTimeoutCause(
-		ctx, RegistryProbeTimeout, errRegistryProbeTimeout,
+		ctx, registryProbeTimeout, errRegistryProbeTimeout,
 	)
 	defer cancel()
 	return r.refresh(probeCtx, id)
 }
 
-// RefreshStores performs fresh marker checks concurrently under one
-// deadline, after admission (see Refresh) runs for every store under the
-// caller's own context.
+// RefreshStores performs fresh marker checks concurrently under one deadline.
 func (r *Registry) RefreshStores(
 	ctx context.Context, ids []string,
 ) map[string]StoreObservation {
-	observations := make(map[string]StoreObservation, len(ids))
-	admitted := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if r.admitRefresh(ctx, packstore.StoreID(id)) {
-			admitted = append(admitted, id)
-		} else {
-			observations[id] = r.Observation(id)
-		}
-	}
 	probeCtx, cancel := context.WithTimeoutCause(
-		ctx, RegistryProbeTimeout, errRegistryProbeTimeout,
+		ctx, registryProbeTimeout, errRegistryProbeTimeout,
 	)
 	defer cancel()
+	observations := make(map[string]StoreObservation, len(ids))
 	var mu sync.Mutex
 	var wait sync.WaitGroup
-	for _, id := range admitted {
+	for _, id := range ids {
 		wait.Go(func() {
 			observation := r.refresh(probeCtx, id)
 			mu.Lock()
@@ -301,9 +270,6 @@ func (r *Registry) SalvageBackend(
 	if !bound || binding.Kind != spec.Kind {
 		return nil, fmt.Errorf("salvage store %s has no usable binding", id)
 	}
-	if err := r.admitBinding(ctx, binding); err != nil {
-		return nil, err
-	}
 	inspector, err := r.openBackend(ctx, binding, nil)
 	if err != nil {
 		return nil, fmt.Errorf("open salvage store %s for inspection: %w", id, err)
@@ -342,6 +308,19 @@ func (r *Registry) AttachSpec(ctx context.Context, spec StoreSpec) StoreObservat
 	r.refreshes[id]++
 	r.mu.Unlock()
 	return r.Refresh(ctx, spec.ID)
+}
+
+// CompleteStartupCheck releases a startup hold on the current catalog spec.
+// A store detached or removed during the wait keeps that decision.
+func (r *Registry) CompleteStartupCheck(ctx context.Context, id string) StoreObservation {
+	r.mu.Lock()
+	key := packstore.StoreID(id)
+	if spec, ok := r.specs[key]; ok {
+		spec.UnavailableReason = ""
+		r.specs[key] = spec
+	}
+	r.mu.Unlock()
+	return r.Refresh(ctx, id)
 }
 
 // DetachSpec immediately withdraws one catalog-detached store from runtime
@@ -413,6 +392,10 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 		r.observe(id, StoreDetached, "store is detached", 0)
 		return registryRefresh{}, false
 	}
+	if spec.UnavailableReason != "" {
+		r.observe(id, StoreUnavailable, spec.UnavailableReason, 0)
+		return registryRefresh{}, false
+	}
 	binding, ok := r.bindings[spec.Binding]
 	if !ok {
 		r.retireBackendLocked(id)
@@ -444,68 +427,6 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 	}
 	r.probes[id] = generation
 	return refresh, true
-}
-
-func (r *Registry) admitBinding(ctx context.Context, binding config.StoreBindingConfig) error {
-	for _, admit := range r.admitBindings {
-		if err := admit(ctx, binding); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// bindingFor resolves the catalog binding for a store with a read lock
-// only, so admission can run before any refresh bookkeeping begins.
-func (r *Registry) bindingFor(id packstore.StoreID) (config.StoreBindingConfig, int, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	spec, ok := r.specs[id]
-	if !ok || spec.Lifecycle == "detached" {
-		return config.StoreBindingConfig{}, 0, false
-	}
-	binding, ok := r.bindings[spec.Binding]
-	if !ok || binding.Kind != spec.Kind {
-		return config.StoreBindingConfig{}, 0, false
-	}
-	return binding, binding.Priority, true
-}
-
-// admitRefresh runs admission (such as checkout separation validation)
-// under ctx as given, before the ownership-probe deadline that follows
-// applies to anything. A store this can't resolve a binding for is left
-// to the normal refresh path, which already reports unbound or
-// misconfigured correctly; admitRefresh only short-circuits a resolvable
-// binding that admission itself rejects.
-func (r *Registry) admitRefresh(ctx context.Context, id packstore.StoreID) bool {
-	binding, priority, ok := r.bindingFor(id)
-	if !ok {
-		return true
-	}
-	if err := r.admitBinding(ctx, binding); err != nil {
-		if ctx.Err() != nil {
-			// The caller's own cancellation or deadline interrupted
-			// admission, not a rejection; leave any existing backend and
-			// observation as they were rather than treating an
-			// interrupted check as a failed one.
-			return false
-		}
-		r.mu.Lock()
-		// Admission runs before probing, so retire any existing backend here
-		// when its binding no longer passes checkout separation.
-		r.retireBackendLocked(id)
-		r.observe(id, StoreUnavailable, err.Error(), priority)
-		// Advance the generation too: a concurrent refresh that already
-		// passed admission and is mid-probe captured the generation this
-		// rejection leaves unchanged, so installProbe's staleness check
-		// would otherwise let that probe's result land after this
-		// rejection, re-reporting StoreOnline while the backend this just
-		// retired stays absent until another successful refresh.
-		r.refreshes[id]++
-		r.mu.Unlock()
-		return false
-	}
-	return true
 }
 
 func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) registryProbe {

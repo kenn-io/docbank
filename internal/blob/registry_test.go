@@ -778,224 +778,25 @@ func (r staticLocationResolver) ResolveLocations(
 	return r.resolution, nil
 }
 
-func TestRegistryAdmissionStaysClosedAcrossRefreshAndReattach(t *testing.T) {
-	const storeID = "20000000-0000-4000-8000-000000000001"
-	var blocked atomic.Bool
-	blocked.Store(true)
-	var openings atomic.Int32
-	spec := StoreSpec{ID: storeID, Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive", OwnershipEpoch: "epoch"}
-	admissionErr := errors.New("checkout destination cannot be inspected")
-	open := func(_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership) (packstore.Backend, error) {
-		openings.Add(1)
-		return &staticOwnershipBackend{ownership: *expected}, nil
-	}
-	registry := newRegistryWithFactories(t.Context(), "vault", map[string]config.StoreBindingConfig{
-		"archive": {Kind: "filesystem", Path: t.TempDir()},
-	}, []StoreSpec{spec}, open, open, func(context.Context, config.StoreBindingConfig) error {
-		if blocked.Load() {
-			return admissionErr
-		}
-		return nil
-	})
-	t.Cleanup(func() { require.NoError(t, registry.Close()) })
-	for _, observation := range []StoreObservation{registry.Observation(storeID), registry.Refresh(t.Context(), storeID), registry.AttachSpec(t.Context(), spec)} {
-		require.Equal(t, StoreUnavailable, observation.State)
-		require.Equal(t, admissionErr.Error(), observation.Detail)
-	}
-	require.Zero(t, openings.Load())
-	_, available := registry.Backend(storeID)
-	require.False(t, available)
-	require.Equal(t, "active", registry.specs[packstore.StoreID(storeID)].Lifecycle)
-
-	blocked.Store(false)
-	require.Equal(t, StoreOnline, registry.Refresh(t.Context(), storeID).State)
-	require.EqualValues(t, 1, openings.Load())
-	require.Equal(t, StoreOnline, registry.AttachSpec(t.Context(), spec).State)
-	require.EqualValues(t, 1, openings.Load())
-}
-
-func TestRegistryStartupDefersSlowAdmission(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		bindings := map[string]config.StoreBindingConfig{
-			"moderate":  {Kind: storeKindFilesystem, Path: "moderate"},
-			"slow":      {Kind: storeKindFilesystem, Path: "slow"},
-			"also-slow": {Kind: storeKindFilesystem, Path: "also-slow"},
-			"fast":      {Kind: storeKindFilesystem, Path: "fast"},
-		}
-		stores := []StoreSpec{
-			{ID: "moderate", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "moderate", OwnershipEpoch: "epoch"},
-			{ID: "slow", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "slow", OwnershipEpoch: "epoch"},
-			{ID: "also-slow", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "also-slow", OwnershipEpoch: "epoch"},
-			{ID: "fast", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "fast", OwnershipEpoch: "epoch"},
-		}
-		open := func(_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership) (packstore.Backend, error) {
-			return &staticOwnershipBackend{ownership: *expected}, nil
-		}
-		released := make(chan struct{})
-		admit := func(ctx context.Context, binding config.StoreBindingConfig) error {
-			if binding.Path == "moderate" {
-				select {
-				case <-time.After(300 * time.Millisecond):
-					return nil
-				case <-ctx.Done():
-					return ctx.Err()
-				}
+func TestRegistryStartupCompletionPreservesStoreWithdrawal(t *testing.T) {
+	for _, withdrawal := range []string{"detach", "remove"} {
+		t.Run(withdrawal, func(t *testing.T) {
+			spec := StoreSpec{ID: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive", OwnershipEpoch: "epoch", UnavailableReason: "checking separation from checkout copies"}
+			open := func(_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership) (packstore.Backend, error) {
+				return &staticOwnershipBackend{ownership: *expected}, nil
 			}
-			if binding.Path == "fast" {
-				return nil
+			registry := newRegistryWithFactories(t.Context(), "vault", map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: t.TempDir()}}, []StoreSpec{spec}, open, open)
+			t.Cleanup(func() { require.NoError(t, registry.Close()) })
+			want := StoreDetached
+			if withdrawal == "detach" {
+				registry.DetachSpec(spec.ID)
+			} else {
+				registry.RemoveSpec(spec.ID)
+				want = StoreUnbound
 			}
-			select {
-			case <-released:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		ready := make(chan *Registry, 1)
-		go func() {
-			ready <- newRegistryWithFactories(t.Context(), "vault", bindings, stores, open, open, admit)
-		}()
-		time.Sleep(RegistryProbeTimeout + time.Second)
-		synctest.Wait()
-		var registry *Registry
-		select {
-		case registry = <-ready:
-		default:
-			t.Fatal("slow admission blocked registry startup")
-		}
-		t.Cleanup(func() { require.NoError(t, registry.Close()) })
-		require.Equal(t, StoreUnavailable, registry.Observation("slow").State)
-		require.Equal(t, StoreUnavailable, registry.Observation("also-slow").State)
-		_, available := registry.Backend("slow")
-		require.False(t, available)
-		require.Equal(t, StoreOnline, registry.Observation("fast").State)
-		require.Equal(t, StoreOnline, registry.Observation("moderate").State)
-		_, available = registry.Backend("moderate")
-		require.True(t, available)
-
-		// The supervisor's refresh must allow a long admission to finish.
-		refreshed := make(chan StoreObservation, 1)
-		go func() { refreshed <- registry.Refresh(t.Context(), "slow") }()
-		time.Sleep(RegistryProbeTimeout + time.Second)
-		synctest.Wait()
-		select {
-		case <-refreshed:
-			t.Fatal("refresh interrupted a progressing admission")
-		default:
-		}
-		close(released)
-		require.Equal(t, StoreOnline, (<-refreshed).State)
-	})
-}
-
-func TestRegistryPreservesBackendWhenAdmissionIsCancelled(t *testing.T) {
-	const storeID = "40000000-0000-4000-8000-000000000001"
-	var interrupted atomic.Bool
-	spec := StoreSpec{
-		ID: storeID, Kind: "filesystem", Role: "secondary",
-		Lifecycle: "active", Binding: "archive", OwnershipEpoch: "epoch",
-	}
-	open := func(
-		_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership,
-	) (packstore.Backend, error) {
-		return &staticOwnershipBackend{ownership: *expected}, nil
-	}
-	registry := newRegistryWithFactories(t.Context(), "vault", map[string]config.StoreBindingConfig{
-		"archive": {Kind: "filesystem", Path: t.TempDir()},
-	}, []StoreSpec{spec}, open, open, func(ctx context.Context, _ config.StoreBindingConfig) error {
-		if !interrupted.Load() {
-			return nil
-		}
-		<-ctx.Done()
-		return ctx.Err()
-	})
-	t.Cleanup(func() { require.NoError(t, registry.Close()) })
-	require.Equal(t, StoreOnline, registry.Observation(storeID).State)
-
-	interrupted.Store(true)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	observation := registry.Refresh(ctx, storeID)
-	require.Equal(t, StoreOnline, observation.State,
-		"an interrupted admission must not be treated as a rejection")
-	_, available := registry.Backend(storeID)
-	require.True(t, available,
-		"the existing backend must survive an interrupted admission check")
-}
-
-// TestRegistryRejectionDuringProbeInvalidatesStaleOnlineReport covers a
-// refresh whose ownership probe is already in flight, reusing the prior
-// backend, when a second, concurrent refresh's admission check rejects and
-// retires that backend. The in-flight probe's generation predates the
-// rejection, so without bumping the generation on rejection too, its late,
-// successful keepPrior result would land afterward and report StoreOnline
-// while the backend it refers to stays removed until another refresh.
-func TestRegistryRejectionDuringProbeInvalidatesStaleOnlineReport(t *testing.T) {
-	const (
-		vaultID = "10000000-0000-4000-8000-000000000001"
-		storeID = "20000000-0000-4000-8000-000000000001"
-		epoch   = "30000000-0000-4000-8000-000000000001"
-	)
-	root := t.TempDir()
-	require.NoError(t, EnsureFilesystemNamespace(root))
-	expected := packstore.Ownership{
-		Format: packstore.OwnershipFormatV1, Vault: vaultID,
-		Store: storeID, Epoch: epoch,
-	}
-	unattached, err := NewFilesystemBackend(root, nil)
-	require.NoError(t, err)
-	require.NoError(t, unattached.ReplaceOwnership(t.Context(), expected, nil))
-	require.NoError(t, unattached.Close())
-
-	probeStarted := make(chan struct{})
-	releaseProbe := make(chan struct{})
-	var rejectAdmission atomic.Bool
-	registry := newRegistryWithFactories(t.Context(), vaultID,
-		map[string]config.StoreBindingConfig{"archive": {Kind: storeKindFilesystem, Path: root}},
-		[]StoreSpec{{
-			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
-			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
-		}}, func(
-			ctx context.Context, binding config.StoreBindingConfig, ownership *packstore.Ownership,
-		) (packstore.Backend, error) {
-			backend, openErr := NewConfiguredBackend(ctx, binding, ownership)
-			if openErr != nil {
-				return nil, openErr
-			}
-			return &blockingOwnershipBackend{
-				Backend: backend, probeStarted: probeStarted, releaseProbe: releaseProbe,
-			}, nil
-		}, nil, func(ctx context.Context, _ config.StoreBindingConfig) error {
-			if rejectAdmission.Load() {
-				return errors.New("checkout inspection failed")
-			}
-			return nil
+			require.Equal(t, want, registry.CompleteStartupCheck(t.Context(), spec.ID).State)
+			_, attached := registry.Backend(packstore.StoreID(spec.ID))
+			require.False(t, attached)
 		})
-	t.Cleanup(func() { require.NoError(t, registry.Close()) })
-	require.Equal(t, StoreOnline, registry.Observation(storeID).State)
-
-	// This refresh reuses the construction-time backend as prior and blocks
-	// on its second ownership read, mid-probe, having already passed
-	// admission while it was still permissive.
-	probeDone := make(chan StoreObservation, 1)
-	go func() { probeDone <- registry.Refresh(t.Context(), storeID) }()
-	<-probeStarted
-
-	// A second, concurrent refresh now has admission reject it and retire
-	// the backend the blocked probe above is still reading from.
-	rejectAdmission.Store(true)
-	rejected := registry.Refresh(t.Context(), storeID)
-	require.Equal(t, StoreUnavailable, rejected.State)
-	_, available := registry.Backend(storeID)
-	require.False(t, available, "rejection must retire the backend immediately")
-
-	close(releaseProbe)
-	stale := <-probeDone
-	require.Equal(t, StoreUnavailable, stale.State,
-		"a probe that started before the rejection must not resurrect a stale online report")
-	final := registry.Observation(storeID)
-	require.Equal(t, StoreUnavailable, final.State)
-	_, stillAvailable := registry.Backend(storeID)
-	require.False(t, stillAvailable,
-		"observation must not report online while no backend is installed")
+	}
 }
