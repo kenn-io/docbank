@@ -593,14 +593,14 @@ it("reports a failed flag lookup and clears its progress", async () => {
   expect(cull.busy).toBe(false);
 });
 
-it("groups frozen rows, projects interleaved passes and stops at frame edges", async () => {
-  const rows = [photo(1), photo(3), photo(2)].map((row, i) => ({
+it("groups frozen rows around a missing member and stops at frame edges", async () => {
+  const frozen = [photo(1), photo(2), photo(3), photo(4)].map((row, i) => ({
     ...row,
-    source_folder_key: i < 2 ? "burst" : "other",
-    capture_time: i === 1 ? "2025-06-01T12:00:02" : "2025-06-01T12:00:00",
+    source_folder_key: i < 3 ? "burst" : "other",
+    capture_time: `2025-06-01T12:00:0${i}`,
   }));
-  const ids = rows.map((row) => row.asset_id),
-    pass = [ids[0]!, ids[2]!, ids[1]!];
+  const rows = [frozen[0]!, frozen[2]!, frozen[3]!];
+  const ids = frozen.map((row) => row.asset_id);
   const store = storage();
   await store.replace({
     ids,
@@ -609,7 +609,7 @@ it("groups frozen rows, projects interleaved passes and stops at frame edges", a
       runID: "run",
       passID: "pass",
       revision: 0,
-      pass,
+      pass: ids,
       position: 0,
       visited: [],
       skipped: [],
@@ -627,7 +627,8 @@ it("groups frozen rows, projects interleaved passes and stops at frame edges", a
   const cull = new PhotoCull("session", store);
   await cull.restore();
   await cull.regroup();
-  expect(cull.currentStack?.asset_ids).toEqual([ids[0], ids[1]]);
+  expect(cull.currentStack?.asset_ids).toEqual([ids[0], ids[2]]);
+  expect(cull.stacks.has(ids[1]!)).toBe(false);
   cull.stackLoading = true;
   cull.moveFrame(1);
   cull.moveStack(1);
@@ -636,11 +637,12 @@ it("groups frozen rows, projects interleaved passes and stops at frame edges", a
   cull.moveFrame(-1);
   expect(cull.currentID).toBe(ids[0]);
   cull.moveFrame(1);
-  expect(cull.currentID).toBe(ids[1]);
-  cull.moveFrame(1);
-  expect(cull.currentID).toBe(ids[1]);
-  cull.moveStack(1);
   expect(cull.currentID).toBe(ids[2]);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(ids[2]);
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(ids[1]);
+  expect(cull.currentStack).toBeUndefined();
   cull.moveStack(-1);
   expect(cull.currentID).toBe(ids[0]);
   list.mockClear();
@@ -651,13 +653,21 @@ it("groups frozen rows, projects interleaved passes and stops at frame edges", a
   await cull.checkSettings();
   expect(list).not.toHaveBeenCalled();
   expect(cull.currentStack?.asset_ids).toEqual([ids[0]]);
-  expect(cull.stacks.get(ids[1]!)?.asset_ids).toEqual([ids[1]]);
+  expect(cull.stacks.get(ids[2]!)?.asset_ids).toEqual([ids[2]]);
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(ids[1]);
   cull.moveStack(1);
   expect(cull.currentID).toBe(ids[2]);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(ids[2]);
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(ids[3]);
   await cull.flush();
   const resumed = new PhotoCull("session", store);
   await resumed.restore();
   expect(resumed.run?.captureTimeOrder).toBe("asc");
+  expect(resumed.run?.checkpoint.pass).toEqual(ids);
+  expect(resumed.currentID).toBe(ids[3]);
 });
 
 it("keeps filename-sorted cull passes flat and preserves their captured order", async () => {

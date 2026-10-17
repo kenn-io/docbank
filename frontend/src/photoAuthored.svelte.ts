@@ -456,11 +456,9 @@ export class PhotoAuthoredEditor {
         this.conflict = true;
         return;
       }
-      this.scope = { asset_ids: request.asset_ids, hidden: request.hidden };
-      this.targets =
-        request.decision === "selected"
-          ? prepared.targets.filter((target) => request.selected_ids?.includes(target.asset_id))
-          : prepared.targets;
+      const selectedIDs = request.selected_ids ?? [request.current_id];
+      this.scope = { asset_ids: selectedIDs, hidden: request.hidden };
+      this.targets = prepared.targets.filter((target) => selectedIDs.includes(target.asset_id));
       const decide = () =>
         this.request(() =>
           api.decidePhotoStack(

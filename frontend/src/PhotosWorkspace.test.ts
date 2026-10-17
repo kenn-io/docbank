@@ -2937,54 +2937,73 @@ it("keeps a reloaded stage photo in its collapsed stack when returning to the gr
   photos.dispose();
 });
 
-it("keeps the same selected frames across repeated Keep selected decisions", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const rows = [photo(1), photo(2), photo(3)];
-  const stack = { asset_ids: rows.map((row) => row.asset_id), representative_id: "photo-1" };
-  stubPhotoFetch(async () =>
-    Response.json({
-      items: rows.map((row) => ({ ...row, source_folder_key: "folder" })),
-      total: 3,
-      facets: [],
-      relevance_available: false,
-    }),
-  );
-  const decide = vi
-    .spyOn(api, "decidePhotoStack")
-    .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
-  const photos = new Photos("scoped", vi.fn());
-  photos.items = rows.map((row) => ({ ...row, stack }));
-  photos.total = 3;
-  photos.started = true;
-  photos.expandedStacks = new Set(["photo-1"]);
-  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
-  vi.spyOn(photos, "resume").mockResolvedValue();
-  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
-  for (let i = 1; i <= 2; i++) {
-    const button = await screen.findByRole("button", { name: "Keep selected" });
-    await waitFor(() => expect(button.matches(":disabled")).toBe(false));
-    await fireEvent.click(button);
-    await waitFor(() => expect(decide).toHaveBeenCalledTimes(i));
-    await waitFor(() => expect(photos.authored.busy).toBe(false));
-    expect([...photos.selectedIDs]).toEqual(["photo-1"]);
-  }
-  expect(decide.mock.calls.map(([request]) => request.selected_ids)).toEqual([
-    ["photo-1"],
-    ["photo-1"],
-  ]);
-  expect(decide.mock.calls.map(([request]) => Object.values(request.targets).length)).toEqual([
-    3, 3,
-  ]);
-  photos.dispose();
-});
+it.each(["Keep all", "Keep selected", "Choose representative"])(
+  "preserves selected frames after %s followed by Keep selected",
+  async (firstAction) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const rows = [photo(1), photo(2), photo(3)];
+    const stack = { asset_ids: rows.map((row) => row.asset_id), representative_id: "photo-1" };
+    stubPhotoFetch(async () =>
+      Response.json({
+        items: rows.map((row) => ({ ...row, source_folder_key: "folder" })),
+        total: 3,
+        facets: [],
+        relevance_available: false,
+      }),
+    );
+    const decide = vi
+      .spyOn(api, "decidePhotoStack")
+      .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = rows.map((row) => ({ ...row, stack }));
+    photos.total = 3;
+    photos.started = true;
+    photos.expandedStacks = new Set(["photo-1"]);
+    photos.selection = { selectedIDs: new Set(["photo-2"]), anchorID: "photo-2" };
+    vi.spyOn(photos, "resume").mockResolvedValue();
+    render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+    for (let i = 1; i <= 2; i++) {
+      const button = await screen.findByRole("button", {
+        name: i === 1 ? firstAction : "Keep selected",
+      });
+      await waitFor(() => expect(button.matches(":disabled")).toBe(false));
+      await fireEvent.click(button);
+      await waitFor(() => expect(decide).toHaveBeenCalledTimes(i));
+      await waitFor(() => expect(photos.authored.busy).toBe(false));
+      expect([...photos.selectedIDs]).toEqual(["photo-2"]);
+      expect(photos.scope()).toEqual({ asset_ids: ["photo-2"] });
+      expect(photos.authored.targets.map((target) => target.asset_id)).toEqual(["photo-2"]);
+    }
+    expect(decide.mock.calls.map(([request]) => request.selected_ids)).toEqual([
+      ["photo-2"],
+      ["photo-2"],
+    ]);
+    expect(decide.mock.calls.map(([request]) => request.current_id)).toEqual([
+      "photo-2",
+      "photo-2",
+    ]);
+    expect(decide.mock.calls.map(([request]) => request.decision)).toEqual([
+      firstAction === "Keep all"
+        ? "all"
+        : firstAction === "Keep selected"
+          ? "selected"
+          : "representative",
+      "selected",
+    ]);
+    expect(decide.mock.calls.map(([request]) => Object.values(request.targets).length)).toEqual([
+      3, 3,
+    ]);
+    photos.dispose();
+  },
+);
 
 it("range selects in rendered month order across offset dates and a collapsed stack", async () => {
   vi.stubGlobal(

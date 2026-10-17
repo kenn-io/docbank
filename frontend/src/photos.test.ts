@@ -56,6 +56,43 @@ const savedSmartSet = async (revision = 1, id = "00000000-0000-4000-8000-0000000
 const savedSmartSetResponse = (saved: { revision: number }) =>
   Response.json(saved, { headers: { ETag: `"${saved.revision}"` } });
 
+it("restarts Library paging after a burst gap invalidates its cursor", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ code: "invalid_photo_cursor" }, { status: 422 }))
+    .mockResolvedValueOnce(response([photo(1), photo(2)], "fresh-next"))
+    .mockResolvedValueOnce(response([photo(3)], "fresh-tail"))
+    .mockResolvedValueOnce(response([photo(4)]));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)];
+  photos.total = 4;
+  photos.started = true;
+  photos.cursor = "old-gap";
+  photos.selectLoaded(["photo-2"]);
+  await photos.loadMore();
+  expect(photos.error).toBeTruthy();
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+  await photos.retry();
+  expect(photos.error).toBe("");
+  expect(photos.cursor).toBe("fresh-tail");
+  await photos.loadMore();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([
+    "old-gap",
+    undefined,
+    "fresh-next",
+    "fresh-tail",
+  ]);
+  expect(photos.items.map((row) => row.asset_id)).toEqual([
+    "photo-1",
+    "photo-2",
+    "photo-3",
+    "photo-4",
+  ]);
+  expect([...photos.selectedIDs]).toEqual(["photo-2"]);
+  photos.dispose();
+});
+
 it("moves compare backward locally after its next page fails, then retries that page", async () => {
   const fetcher = vi
     .fn()
@@ -388,26 +425,6 @@ it.each(["refresh", "expiry"])(
     photos.dispose();
   },
 );
-
-it("retries the same Library page after an invalid cursor", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(response([photo(1)], "bad"))
-    .mockResolvedValueOnce(Response.json({ code: "invalid_photo_cursor" }, { status: 422 }))
-    .mockResolvedValueOnce(response([photo(2)]));
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore();
-  await photos.loadMore();
-  await photos.retry();
-  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([
-    undefined,
-    "bad",
-    "bad",
-  ]);
-  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-  photos.dispose();
-});
 
 it.each([undefined, "map"] as const)(
   "revalidates absent selection with the %s selection scope",

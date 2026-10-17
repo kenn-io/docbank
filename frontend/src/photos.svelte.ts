@@ -794,8 +794,7 @@ export class Photos {
       this.authFailure(cause);
       this.expired =
         cause instanceof APIError &&
-        (cause.code === "cursor_expired" ||
-          (!!this.projection && cause.code === "invalid_photo_cursor"));
+        ["cursor_expired", "invalid_photo_cursor"].includes(cause.code);
       this.error =
         this.projection &&
         (signal.aborted || (cause instanceof Error && cause.name === "TimeoutError"))
