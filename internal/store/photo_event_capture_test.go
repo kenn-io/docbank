@@ -61,6 +61,7 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 				})
 			case "tag assignment":
 				_, err = s.AssignTag(ctx, tag.ID, photo.ID, photo.Revision)
+				generic = true
 			case "album":
 				_, err = s.CreatePhotoSet(ctx, "Album")
 				generic = true

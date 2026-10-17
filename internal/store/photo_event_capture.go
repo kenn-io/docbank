@@ -62,48 +62,61 @@ const photoChangeRefetch = "refetch"
 // Related keys survive deletion of the row that originally linked a worker result to a photo.
 type photoEventCaptureRule struct{ table, key, relation, kind, columns string }
 
-func photoEventCaptureRules() []photoEventCaptureRule {
-	return []photoEventCaptureRule{
-		{"photo_assets", "asset_id", "asset_id", "asset", "revision,hidden_at,excluded_at,display_file_id"},
-		{"photo_files", "file_id", "asset_id", "asset", "file_id,node_id,asset_id,revision,rating,flag,label,caption,creator,copyright,rotation,role,sidecar_of_file_id"},
-		{"nodes", "id", "id", "node", "revision,name,parent_id,current_version_id,trashed_at,created_at,modified_at"},
-		{"node_tags", "node_id", "node_id", "node", ""},
-		{metadataProvenanceType, "node_id", "node_id", "node", ""},
-		{"extracted_text", "blob_hash", "blob_hash", "source", "status,text"},
-		{"text_searchable_versions", "version_id", "version_id", "current_version", ""},
-		{"source_metadata_heads", "source_sha256", "source_sha256", "source", "generation_id"},
-		{"photo_technical_metadata", "generation_id", "generation_id", "generation", ""},
-		{"photo_faces", "face_id", "content_version_id", "current_version", "content_version_id,x,y,width,height,revision,assertion_id"},
-		{"photo_quality_signals", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
-		{"visual_preview_generations", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
-		{"visual_preview_heads", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", "generation_id"},
-		{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", "attachment_id"},
-		{"person_document_assertions", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
-		{"photo_sets", "set_id", "set_id", photoChangeRefetch, ""},
-		{"photo_set_members", "set_id", "asset_id", photoChangeRefetch, ""},
-		{"tags", "id", "id", photoChangeRefetch, "name"},
-		{"saved_queries", "id", "id", photoChangeRefetch, ""},
-		{"collection_labels", "ingest_id", "ingest_id", photoChangeRefetch, ""},
-		{"person_aliases", "retired_person_id", "retired_person_id", photoChangeRefetch, ""},
-		{"persons", "person_id", "person_id", photoChangeRefetch, "display_name_folded,state,revision"},
-		{"photo_library_settings", "singleton", "singleton", photoChangeRefetch, ""},
-		{"photo_hidden_credentials", "singleton", "singleton", photoChangeRefetch, ""},
-	}
+var photoEventCaptureRules = []photoEventCaptureRule{
+	{"photo_assets", "asset_id", "asset_id", "asset", "revision,hidden_at,excluded_at,display_file_id"},
+	{"photo_files", "file_id", "asset_id", "asset", "file_id,node_id,asset_id,revision,rating,flag,label,caption,creator,copyright,rotation,role,sidecar_of_file_id"},
+	{"nodes", "id", "id", "node", "revision,name,parent_id,current_version_id,trashed_at,created_at,modified_at"},
+	{"node_tags", "node_id", "node_id", "node", ""},
+	{metadataProvenanceType, "node_id", "node_id", "node", ""},
+	{"extracted_text", "blob_hash", "blob_hash", "source", "status,text"},
+	{"text_searchable_versions", "version_id", "version_id", "current_version", ""},
+	{"source_metadata_heads", "source_sha256", "source_sha256", "source", "generation_id"},
+	{"photo_technical_metadata", "generation_id", "generation_id", "generation", ""},
+	{"photo_faces", "face_id", "content_version_id", "current_version", "content_version_id,x,y,width,height,revision,assertion_id"},
+	{"photo_quality_signals", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
+	{"visual_preview_generations", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
+	{"visual_preview_heads", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", "generation_id"},
+	{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", "attachment_id"},
+	{"rendition_job_waiters", "waiter_id", "content_version_id", "current_version", "job_id,content_version_id,profile_fingerprint,state"},
+	{"rendition_jobs", "job_id", "job_id", "job", "state,updated_at"},
+	{"person_document_assertions", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
+	{"photo_sets", "set_id", "set_id", photoChangeRefetch, ""},
+	{"photo_set_members", "set_id", "asset_id", photoChangeRefetch, ""},
+	{"tags", "id", "id", photoChangeRefetch, "name,revision"},
+	{"saved_queries", "id", "id", photoChangeRefetch, ""},
+	{"collection_labels", "ingest_id", "ingest_id", photoChangeRefetch, ""},
+	{"person_aliases", "retired_person_id", "retired_person_id", photoChangeRefetch, ""},
+	{"persons", "person_id", "person_id", photoChangeRefetch, "display_name_folded,state,revision"},
+	{"photo_library_settings", "singleton", "singleton", photoChangeRefetch, ""},
+	{"photo_hidden_credentials", "singleton", "singleton", photoChangeRefetch, ""},
+}
+
+// Filters keep rows that cannot reach a photo from consuming the capture budget; $ is the related key.
+var photoChangeFilters = map[string]string{
+	"node": "EXISTS(SELECT 1 FROM photo_files WHERE node_id=$ AND asset_id IS NOT NULL)",
+	"job":  "EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE w.job_id=$)",
+}
+
+// The 65th distinct key represents overflow. Further rows do no capture work.
+func photoChangeRecord(source, key, related string) string {
+	return `INSERT INTO docbank_photo_changes SELECT '` + source + `',CAST(` + key + ` AS TEXT),CAST(` + related + ` AS TEXT) WHERE ` + related + ` IS NOT NULL AND (SELECT count(*) FROM docbank_photo_changes)<65 ON CONFLICT DO NOTHING;`
+}
+
+// Duplicate results change only when some photo file shares the content hash.
+func photoHashRecord(hash, node string) string {
+	shared := "EXISTS(SELECT 1 FROM content_versions v INDEXED BY content_versions_blob JOIN photo_files f ON f.node_id=v.node_id AND f.asset_id IS NOT NULL WHERE v.blob_hash=" + hash + ")"
+	return strings.Replace(photoChangeRecord("hash", hash, node), " WHERE "+node+" IS NOT NULL", " WHERE "+shared+" AND "+node+" IS NOT NULL", 1)
 }
 
 func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE docbank_photo_capture(enabled INTEGER); INSERT INTO docbank_photo_capture VALUES(0); CREATE TEMP TABLE docbank_photo_changes(source TEXT,key TEXT,related TEXT,PRIMARY KEY(source,key,related)) WITHOUT ROWID`); err != nil {
 		return err
 	}
-	// The 65th distinct key represents overflow. Further rows do no capture work.
-	record := func(source, key, related string) string {
-		return `INSERT OR IGNORE INTO docbank_photo_changes SELECT '` + source + `',CAST(` + key + ` AS TEXT),CAST(` + related + ` AS TEXT) WHERE ` + related + ` IS NOT NULL AND (SELECT count(*) FROM docbank_photo_changes)<65;`
-	}
 	install := func(name, action, table, when, body string) error {
 		_, err := tx.ExecContext(ctx, `CREATE TEMP TRIGGER photo_events_`+name+` BEFORE `+action+` ON main.`+table+` WHEN (SELECT enabled FROM docbank_photo_capture) AND (SELECT count(*) FROM docbank_photo_changes)<65 AND (`+when+`) BEGIN `+body+` END`)
 		return err
 	}
-	for _, r := range photoEventCaptureRules() {
+	for _, r := range photoEventCaptureRules {
 		for _, action := range []string{"INSERT", "UPDATE", "DELETE"} {
 			refs := []string{"NEW"}
 			if action == "DELETE" {
@@ -122,9 +135,9 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 			}
 			var body strings.Builder
 			for _, ref := range refs {
-				insert := record(r.table, ref+"."+r.key, ref+"."+r.relation)
-				if r.kind == "node" {
-					insert = strings.Replace(insert, " WHERE ", " WHERE EXISTS(SELECT 1 FROM photo_files WHERE node_id="+ref+"."+r.relation+" AND asset_id IS NOT NULL) AND ", 1)
+				insert := photoChangeRecord(r.table, ref+"."+r.key, ref+"."+r.relation)
+				if filter, ok := photoChangeFilters[r.kind]; ok {
+					insert = strings.Replace(insert, " WHERE ", " WHERE "+strings.ReplaceAll(filter, "$", ref+"."+r.relation)+" AND ", 1)
 				}
 				body.WriteString(insert)
 			}
@@ -133,10 +146,10 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 			}
 		}
 	}
-	if err := install("hide", "UPDATE", "photo_assets", "OLD.hidden_at IS NULL AND NEW.hidden_at IS NOT NULL", record(photoChangeRefetch, "''", "''")); err != nil {
+	if err := install("hide", "UPDATE", "photo_assets", "OLD.hidden_at IS NULL AND NEW.hidden_at IS NOT NULL", photoChangeRecord(photoChangeRefetch, "''", "''")); err != nil {
 		return err
 	}
-	if err := install("directory", "UPDATE", "nodes", "OLD.kind='dir' AND (OLD.name IS NOT NEW.name OR OLD.parent_id IS NOT NEW.parent_id)", record(photoChangeRefetch, "''", "''")); err != nil {
+	if err := install("directory", "UPDATE", "nodes", "OLD.kind='dir' AND (OLD.name IS NOT NEW.name OR OLD.parent_id IS NOT NEW.parent_id)", photoChangeRecord(photoChangeRefetch, "''", "''")); err != nil {
 		return err
 	}
 	for _, action := range []string{"INSERT", "UPDATE", "DELETE"} {
@@ -149,7 +162,7 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 		}
 		var body strings.Builder
 		for _, ref := range refs {
-			body.WriteString(record("hash", "(SELECT blob_hash FROM content_versions WHERE version_id="+ref+".current_version_id)", ref+".id"))
+			body.WriteString(photoHashRecord("(SELECT blob_hash FROM content_versions WHERE version_id="+ref+".current_version_id)", ref+".id"))
 		}
 		when := "1"
 		if action == "UPDATE" {
@@ -159,7 +172,16 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
-	return install("initial_hash", "INSERT", "content_versions", "EXISTS(SELECT 1 FROM nodes WHERE id=NEW.node_id AND current_version_id=NEW.version_id)", record("hash", "NEW.blob_hash", "NEW.node_id"))
+	return install("initial_hash", "INSERT", "content_versions", "EXISTS(SELECT 1 FROM nodes WHERE id=NEW.node_id AND current_version_id=NEW.version_id)", photoHashRecord("NEW.blob_hash", "NEW.node_id"))
+}
+
+var photoChangeSelections = map[string]string{
+	"asset":           `SELECT keys.value,COALESCE(a.revision,0) FROM json_each(?) keys LEFT JOIN photo_assets a ON a.asset_id=keys.value`,
+	"node":            `SELECT a.asset_id,a.revision FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
+	"current_version": `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
+	"source":          `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.blob_hash IN (SELECT value FROM json_each(?))`,
+	"generation":      `SELECT a.asset_id,a.revision FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE g.generation_id IN (SELECT value FROM json_each(?))`,
+	"job":             `SELECT a.asset_id,a.revision FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE w.job_id IN (SELECT value FROM json_each(?))`,
 }
 
 type photoHashChange struct{ hash, node string }
@@ -176,7 +198,7 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 	}
 	defer func() { _ = rows.Close() }()
 	kinds := map[string]string{}
-	for _, r := range photoEventCaptureRules() {
+	for _, r := range photoEventCaptureRules {
 		kinds[r.table] = r.kind
 	}
 	keys := map[string][]string{}
@@ -208,17 +230,10 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 	}
 	var events []PhotoEvent
 	seen := map[string]bool{}
-	selections := map[string]string{
-		"asset":           `SELECT keys.value,COALESCE(a.revision,0) FROM json_each(?) keys LEFT JOIN photo_assets a ON a.asset_id=keys.value`,
-		"node":            `SELECT a.asset_id,a.revision FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
-		"current_version": `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
-		"source":          `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.blob_hash IN (SELECT value FROM json_each(?))`,
-		"generation":      `SELECT a.asset_id,a.revision FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE g.generation_id IN (SELECT value FROM json_each(?))`,
-	}
 	resolved := 0
 	for kind, values := range keys {
 		encoded, _ := json.Marshal(values)
-		rows, err := tx.QueryContext(ctx, selections[kind]+" LIMIT ?", string(encoded), 65-resolved)
+		rows, err := tx.QueryContext(ctx, photoChangeSelections[kind]+" LIMIT ?", string(encoded), 65-resolved)
 		if err != nil {
 			s.warnPhotoCapture(err)
 			return fallback, hashes
