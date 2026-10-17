@@ -93,10 +93,27 @@ func (s *Store) photoCaptureState() (bool, bool, uint64) {
 	defer f.Unlock()
 	hidden := false
 	now := s.hiddenNow()
-	for _, digest := range f.subscribers {
-		hidden = hidden || s.photoHiddenSessions[digest].After(now)
+	for digest, until := range s.photoHiddenSessions {
+		if until.After(now) {
+			hidden = true
+		} else {
+			delete(s.photoHiddenSessions, digest)
+		}
 	}
 	return len(f.subscribers) > 0, hidden, f.epoch
+}
+
+func (s *Store) hasActivePhotoHiddenSession() bool {
+	s.photoHiddenSessionsMu.Lock()
+	defer s.photoHiddenSessionsMu.Unlock()
+	now := s.hiddenNow()
+	for digest, until := range s.photoHiddenSessions {
+		if until.After(now) {
+			return true
+		}
+		delete(s.photoHiddenSessions, digest)
+	}
+	return false
 }
 
 func (s *Store) closePhotoEvents() {
@@ -148,9 +165,12 @@ func (s *Store) publishPhotoChanges(events []PhotoEvent) {
 // VisiblePhotoEvent returns current revisions, or an empty event when Hidden access suppresses delivery.
 func (s *Store) VisiblePhotoEvent(ctx context.Context, event PhotoEvent) (PhotoEvent, error) {
 	audience := event.audiences()
-	if audience == photoHidden {
+	if audience&photoHidden != 0 {
 		if _, err := s.hiddenSession(ctx, s.db); err != nil {
 			if errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrHiddenNotConfigured) {
+				if audience&photoPublic != 0 || s.hasActivePhotoHiddenSession() {
+					return PhotoEvent{Refetch: true}, nil
+				}
 				return PhotoEvent{}, nil
 			}
 			return PhotoEvent{}, err

@@ -67,7 +67,10 @@ func TestPhotoEventsPartialInstallRollbackAndRetry(t *testing.T) {
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 	_, err = s.writeDB.ExecContext(ctx, `DROP TRIGGER photo_events_nodes_INSERT`)
 	require.NoError(t, err)
-	require.Zero(t, photoCaptureObjects(t, s))
+	var peers, changes int
+	require.NoError(t, s.writeDB.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_peers'),(SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_changes')`).Scan(&peers, &changes))
+	require.Equal(t, 1, peers)
+	require.Zero(t, changes)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
@@ -172,9 +175,12 @@ func TestPhotoEventsSubscriptionRacesWithWrites(t *testing.T) {
 				wait(cancelled)
 				require.NotEmpty(t, event.AlbumID)
 			case "hidden":
-				require.True(t, event.Refetch)
+				require.Equal(t, assetID, event.AssetID)
+				require.False(t, event.Refetch)
 				require.Equal(t, photoHidden, event.audience)
-				require.Equal(t, photoHidden, (nextPhotoEventWithAudience(t, prior)).audience)
+				priorEvent := nextPhotoEventWithAudience(t, prior)
+				require.Equal(t, assetID, priorEvent.AssetID)
+				require.Equal(t, photoHidden, priorEvent.audience)
 			}
 		})
 	}

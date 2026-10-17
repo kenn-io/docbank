@@ -154,6 +154,32 @@ func (s *Store) preparePhotoChanges(ctx context.Context, tx *sql.Tx, hidden bool
 	return err == nil && s.preparePhotoAudience(ctx, tx, hidden)
 }
 
+func (s *Store) preparePhotoPeers(ctx context.Context, conn *sql.Conn) bool {
+	var present int
+	if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_peers'`).Scan(&present); err != nil {
+		s.warnPhotoCapture(err)
+		return false
+	}
+	if present != 0 {
+		return true
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		s.warnPhotoCapture(err)
+		return false
+	}
+	if err := installPhotoPeerCapture(ctx, tx); err != nil {
+		s.warnPhotoCapture(err)
+		_ = tx.Rollback()
+		return false
+	}
+	if err := tx.Commit(); err != nil {
+		s.warnPhotoCapture(err)
+		return false
+	}
+	return true
+}
+
 func (s *Store) preparePhotoAudience(ctx context.Context, tx *sql.Tx, hidden bool) bool {
 	if hidden {
 		return true
@@ -169,45 +195,53 @@ func photoEventNodeSelection(value string) string {
 	return `SELECT 'asset',asset_id FROM photo_files WHERE node_id=` + value + ` AND asset_id IS NOT NULL`
 }
 
+type photoEventCaptureRule struct {
+	table, key, columns string
+	selectIDs           func(string) string
+}
+
+func photoEventCaptureRules() []photoEventCaptureRule {
+	return []photoEventCaptureRule{
+		{"photo_assets", "asset_id", "revision,hidden_at,excluded_at,display_file_id", func(v string) string { return `SELECT 'asset',` + v }},
+		{"photo_files", "asset_id", "asset_id,revision,rating,flag,label,caption,creator,copyright,rotation,role,sidecar_of_file_id", func(v string) string { return `SELECT 'asset',` + v + ` WHERE ` + v + ` IS NOT NULL` }},
+		{"photo_sets", "set_id", "name,starred,cover_asset_id,deleted_at", func(v string) string { return `SELECT 'album',` + v }},
+		{"photo_set_members", "set_id", "", func(v string) string { return `SELECT 'album',` + v }},
+		{"nodes", "id", "revision,name,parent_id,current_version_id,trashed_at,created_at,modified_at", photoEventNodeSelection},
+		{"node_tags", "node_id", "", photoEventNodeSelection},
+		{"tags", "id", "name", func(string) string { return `SELECT 'refetch',''` }},
+		{"saved_queries", "id", "", func(string) string { return `SELECT 'refetch',''` }},
+		{"collection_labels", "ingest_id", "", func(string) string { return `SELECT 'refetch',''` }},
+		{metadataProvenanceType, "node_id", "", photoEventNodeSelection},
+		{"extracted_text", "blob_hash", "status,text", photoEventSourceSelection},
+		{"text_searchable_versions", "version_id", "", photoEventVersionSelection},
+		{"source_metadata_heads", "source_sha256", "generation_id", photoEventSourceSelection},
+		{"photo_technical_metadata", "generation_id", "", photoEventMetadataSelection},
+		{"photo_faces", "face_id", "content_version_id,x,y,width,height,revision,assertion_id", photoFaceSelection},
+		{"photo_quality_signals", metadataContentVersionIDField, "", photoEventVersionSelection},
+		{"visual_preview_generations", metadataContentVersionIDField, "", photoEventVersionSelection},
+		{"visual_preview_heads", metadataContentVersionIDField, "generation_id", photoEventVersionSelection},
+		{"rendition_heads", metadataContentVersionIDField, "attachment_id", photoEventVersionSelection},
+		{"person_document_assertions", metadataContentVersionIDField, "", photoEventVersionSelection},
+		{"person_aliases", "retired_person_id", "", func(string) string { return `SELECT 'refetch',''` }},
+		{"photo_library_settings", "singleton", "", func(string) string { return `SELECT 'refetch',''` }},
+		{"photo_hidden_credentials", "singleton", "", func(string) string { return `SELECT 'refetch',''` }},
+	}
+}
+
+func photoFaceSelection(faceID string) string {
+	return `SELECT 'asset',f.asset_id FROM photo_faces changed
+ JOIN content_versions v ON v.version_id=changed.content_version_id
+ JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
+ JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE changed.face_id=` + faceID
+}
+
 func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 	const nodeTable = "nodes"
 	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE docbank_photo_changes(kind TEXT,id TEXT,audience INTEGER,PRIMARY KEY(audience,kind,id)) WITHOUT ROWID`); err != nil {
 		return err
 	}
-	if err := installPhotoPeerCapture(ctx, tx); err != nil {
-		return err
-	}
-	node := photoEventNodeSelection
-	version := photoEventVersionSelection
-	source := photoEventSourceSelection
-	global := func(_ string) string { return `SELECT 'refetch',''` }
-	rules := []struct {
-		table, key, columns string
-		selectIDs           func(string) string
-	}{
-		{"photo_assets", "asset_id", "revision,hidden_at,excluded_at,display_file_id", func(v string) string { return `SELECT 'asset',` + v }},
-		{"photo_files", "asset_id", "asset_id,revision,rating,flag,label,caption,creator,copyright,rotation,role,sidecar_of_file_id", func(v string) string { return `SELECT 'asset',` + v + ` WHERE ` + v + ` IS NOT NULL` }},
-		{"photo_sets", "set_id", "name,starred,cover_asset_id,deleted_at", func(v string) string { return `SELECT 'album',` + v }},
-		{"photo_set_members", "set_id", "", func(v string) string { return `SELECT 'album',` + v }},
-		{nodeTable, "id", "revision,name,parent_id,current_version_id,trashed_at,created_at,modified_at", node},
-		{"node_tags", "node_id", "", node},
-		{"tags", "id", "name", global},
-		{"saved_queries", "id", "", global},
-		{"collection_labels", "ingest_id", "", global},
-		{metadataProvenanceType, "node_id", "", node},
-		{"extracted_text", "blob_hash", "status,text", source},
-		{"text_searchable_versions", "version_id", "", version},
-		{"source_metadata_heads", "source_sha256", "generation_id", source},
-		{"photo_technical_metadata", "generation_id", "", photoEventMetadataSelection},
-		{"photo_quality_signals", metadataContentVersionIDField, "", version},
-		{"visual_preview_generations", metadataContentVersionIDField, "", version},
-		{"visual_preview_heads", metadataContentVersionIDField, "generation_id", version},
-		{"rendition_heads", metadataContentVersionIDField, "attachment_id", version},
-		{"person_document_assertions", metadataContentVersionIDField, "", version},
-		{"person_aliases", "retired_person_id", "", global},
-		{"photo_library_settings", "singleton", "", global},
-		{"photo_hidden_credentials", "singleton", "", global},
-	}
+	rules := photoEventCaptureRules()
+	global := func(string) string { return `SELECT 'refetch',''` }
 	// Each audience keeps 64 identities and one overflow marker.
 	done := func(bucket int) string {
 		predicate := "kind='refetch'"
@@ -277,7 +311,7 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 					// in the member's audience; clearing a retained cover is a public album edit.
 					visibility = "CASE WHEN OLD.name IS NEW.name AND OLD.starred IS NEW.starred AND OLD.deleted_at IS NEW.deleted_at AND NEW.cover_asset_id IS NULL AND NOT EXISTS(SELECT 1 FROM photo_set_members WHERE set_id=OLD.set_id AND asset_id=OLD.cover_asset_id) THEN (SELECT hidden_at FROM photo_assets WHERE asset_id=OLD.cover_asset_id) END"
 				}
-				indirect := rule.table == metadataProvenanceType || rule.table == "extracted_text" || rule.table == "text_searchable_versions" || rule.table == "source_metadata_heads" || rule.table == "photo_technical_metadata" || rule.table == "photo_quality_signals" || rule.table == "visual_preview_generations" || rule.table == "visual_preview_heads" || rule.table == "rendition_heads" || rule.table == "person_document_assertions"
+				indirect := rule.table == metadataProvenanceType || rule.table == "extracted_text" || rule.table == "text_searchable_versions" || rule.table == "source_metadata_heads" || rule.table == "photo_technical_metadata" || rule.table == "photo_faces" || rule.table == "photo_quality_signals" || rule.table == "visual_preview_generations" || rule.table == "visual_preview_heads" || rule.table == "rendition_heads" || rule.table == "person_document_assertions"
 				body.WriteString(insert(rule.selectIDs(ref+"."+rule.key), visibility, indirect))
 			}
 			statement := fmt.Sprintf("CREATE TEMP TRIGGER photo_events_%s_%s %s %s ON main.%s%s BEGIN %s END", rule.table, action, timing, action, rule.table, when, body.String())
@@ -409,7 +443,7 @@ func photoEventPeerSelection(version string) string {
 
 func installPhotoPeerCapture(ctx context.Context, tx *sql.Tx) error {
 	// This writer-local projection gives duplicate capture a photo-only hash index.
-	// It follows the capture's transaction and connection lifetime.
+	// It is built before the write transaction and follows the connection lifetime.
 	selection := `SELECT f.node_id,v.blob_hash,v.size,f.asset_id FROM photo_files f
  CROSS JOIN nodes n ON n.id=f.node_id AND n.trashed_at IS NULL
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id WHERE f.asset_id IS NOT NULL`

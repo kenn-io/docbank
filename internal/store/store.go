@@ -277,6 +277,8 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
+	active, hidden, epoch := s.photoCaptureState()
+	peersReady := !active || s.preparePhotoPeers(ctx, conn)
 	// Own cancellation so a mutation cannot return while database/sql is
 	// still rolling back and closing a connection in another goroutine.
 	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
@@ -300,9 +302,8 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(retErr, err)
 		}
 	}()
-	active, hidden, epoch := s.photoCaptureState()
 	cleaned := !active && s.prepareIdlePhotoCleanup(ctx, tx)
-	capture := active && s.preparePhotoChanges(ctx, tx, hidden)
+	capture := active && peersReady && s.preparePhotoChanges(ctx, tx, hidden)
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)

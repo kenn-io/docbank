@@ -1,6 +1,11 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
-import { photoEventIdleTimeout, readPhotoEvents, watchPhotoEvents } from "./photoEvents.js";
+import {
+  photoEventIdleTimeout,
+  readPhotoEvents,
+  type PhotoEventBatch,
+  watchPhotoEvents,
+} from "./photoEvents.js";
 
 const encoder = new TextEncoder();
 function stream(chunks: string[]) {
@@ -16,6 +21,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+beforeEach(() => {
+  const value = {
+    request: async (_name: string, _options: unknown, run: (lock: Lock) => unknown) =>
+      run({ name: "docbank-photo-events" } as Lock),
+  };
+  vi.stubGlobal("navigator", { locks: value });
 });
 
 it("parses event frames, rejects invalid data and cancels reads", async () => {
@@ -378,4 +391,120 @@ it("broadcasts one ID-free pulse from the holder's parsed change", async () => {
   stop();
   await vi.advanceTimersByTimeAsync(0);
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("elects one HTTP stream, relays ID-free pulses, and hands off after release", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", {});
+  let nextID = 1;
+  vi.stubGlobal("crypto", {
+    getRandomValues(bytes: Uint8Array) {
+      bytes.fill(nextID++);
+      return bytes;
+    },
+  });
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const channels = new Set<{
+    name: string;
+    closed: boolean;
+    onmessage: ((event: MessageEvent<unknown>) => void) | null;
+  }>();
+  const messages: unknown[] = [];
+  class TestBroadcastChannel {
+    closed = false;
+    onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+
+    constructor(readonly name: string) {
+      channels.add(this);
+    }
+
+    postMessage(data: unknown) {
+      messages.push(data);
+      for (const target of channels) {
+        if (target === this || target.closed || target.name !== this.name) continue;
+        setTimeout(() => target.onmessage?.({ data } as MessageEvent<unknown>), 5);
+      }
+    }
+
+    close() {
+      this.closed = true;
+      channels.delete(this);
+    }
+  }
+  vi.stubGlobal("BroadcastChannel", TestBroadcastChannel);
+  const streams: {
+    session: string;
+    signal: AbortSignal;
+    writer: ReadableStreamDefaultController<Uint8Array>;
+  }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((_, init) => {
+    const signal = init?.signal as AbortSignal;
+    return Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(writer) {
+            streams.push({
+              session: new Headers(init?.headers).get("X-Docbank-Web-Session") ?? "",
+              signal,
+              writer,
+            });
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+  });
+
+  const sessions = ["tab-a", "tab-b", "tab-c"];
+  const refreshes = sessions.map(() => vi.fn(async (_batch: PhotoEventBatch) => {}));
+  const stops = sessions.map((session, index) =>
+    watchPhotoEvents(session, refreshes[index]!, vi.fn()),
+  );
+  const activeStreams = () => streams.filter(({ signal }) => !signal.aborted);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(streams.length).toBeGreaterThan(1);
+  expect(activeStreams()).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(activeStreams()).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(100);
+  const holder = activeStreams()[0]!;
+  const holderIndex = sessions.indexOf(holder.session);
+  expect(refreshes[holderIndex]).not.toHaveBeenCalled();
+  for (const [index, refresh] of refreshes.entries()) {
+    if (index === holderIndex) continue;
+    expect(refresh.mock.lastCall?.[0]).toEqual({
+      assets: new Map(),
+      albums: new Map(),
+      refetch: true,
+    });
+  }
+  refreshes.forEach((refresh) => refresh.mockClear());
+  holder.writer.enqueue(encoder.encode('data: {"asset_id":"private-photo","revision":7}\n\n'));
+  await vi.advanceTimersByTimeAsync(110);
+  expect(refreshes[holderIndex]!.mock.lastCall?.[0]).toEqual({
+    assets: new Map([["private-photo", 7]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  for (const [index, refresh] of refreshes.entries()) {
+    if (index === holderIndex) continue;
+    expect(refresh.mock.lastCall?.[0]).toEqual({
+      assets: new Map(),
+      albums: new Map(),
+      refetch: true,
+    });
+  }
+  for (const message of messages) {
+    expect(message).not.toHaveProperty("asset_id");
+    expect(message).not.toHaveProperty("revision");
+    if (typeof message === "string") expect(["probe", "refetch"]).toContain(message);
+    else expect(["lease", "release"]).toContain(Object.keys(message as object)[0]);
+  }
+
+  stops[holderIndex]!();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(activeStreams()).toHaveLength(1);
+  expect(activeStreams()[0]!.session).not.toBe(holder.session);
+  for (const stop of stops) stop();
+  await vi.advanceTimersByTimeAsync(10);
 });

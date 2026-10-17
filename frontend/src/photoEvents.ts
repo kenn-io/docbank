@@ -90,16 +90,36 @@ export async function readPhotoEvents(
 
 // HTTP/1.1 allows six connections per origin, and a stream per tab would exhaust them. One visible
 // tab holds the stream and forwards an ID-free refetch pulse; other tabs refresh with their own
-// session, so Hidden identifiers and revisions never cross tabs.
+// session, so Hidden identifiers and revisions never cross tabs. A BroadcastChannel lease elects
+// the holder where Web Locks are unavailable.
 const photoEventLock = "docbank-photo-events";
+const photoLeaseHeartbeat = 2_000;
+const photoLeaseTimeout = 5_000;
+const photoLeaseSettle = 500;
 type PhotoEventOptions = NonNullable<Parameters<typeof photoEvents>[0]> & { signal: AbortSignal };
+
+function photoEventTabID(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+function photoLeaseDelay(): number {
+  return photoLeaseSettle + Math.floor(Math.random() * 251);
+}
+
+function photoMessageID(value: unknown, field: "lease" | "release"): string | undefined {
+  if (typeof value !== "object" || value === null || !(field in value)) return;
+  const id = (value as Record<"lease" | "release", unknown>)[field];
+  return typeof id === "string" ? id : undefined;
+}
 
 async function consumePhotoEvents(
   options: PhotoEventOptions,
   schedule: (event: PhotoEvent) => void,
   connected: () => void,
 ): Promise<void> {
-  const consume = async (channel?: BroadcastChannel) => {
+  const consume = async (channel?: BroadcastChannel, signal = options.signal) => {
     const connecting = new AbortController();
     const deadline = setTimeout(
       () => connecting.abort(new Error("Photo event stream did not respond")),
@@ -108,14 +128,14 @@ async function consumePhotoEvents(
     try {
       const response = await photoEvents({
         ...options,
-        signal: AbortSignal.any([options.signal, connecting.signal]),
+        signal: AbortSignal.any([signal, connecting.signal]),
       });
       clearTimeout(deadline);
-      if (options.signal.aborted) return;
+      if (signal.aborted) return;
       if (!response.body || !response.headers.get("Content-Type")?.startsWith("text/event-stream"))
         throw new Error("Photo event stream unavailable");
       connected();
-      await readPhotoEvents(response.body, options.signal, (event) => {
+      await readPhotoEvents(response.body, signal, (event) => {
         schedule(event);
         channel?.postMessage("refetch");
       });
@@ -123,8 +143,134 @@ async function consumePhotoEvents(
       clearTimeout(deadline);
     }
   };
-  if (typeof navigator.locks === "undefined" || typeof BroadcastChannel === "undefined")
-    return consume();
+  if (typeof navigator.locks === "undefined") {
+    if (typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(photoEventLock);
+    const id = photoEventTabID();
+    let holderID: string | undefined;
+    let lastLease = 0;
+    let claimAfter = Date.now() + photoLeaseDelay();
+    let holding = false;
+    let following = false;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let streamController: AbortController | undefined;
+    let wake: (() => void) | undefined;
+    const wakeLoop = () => wake?.();
+    const release = () => {
+      if (!holding) return;
+      holding = false;
+      clearInterval(heartbeat);
+      heartbeat = undefined;
+      streamController?.abort();
+      channel.postMessage({ release: id });
+    };
+    const postLease = () => {
+      lastLease = Date.now();
+      channel.postMessage({ lease: id });
+    };
+    const followHolder = () => {
+      if (!holding && holderID !== undefined && holderID !== id && !following) {
+        following = true;
+        connected();
+        schedule({ refetch: true });
+      }
+    };
+    channel.onmessage = ({ data }: MessageEvent<unknown>) => {
+      if (data === "refetch") {
+        schedule({ refetch: true });
+        return;
+      }
+      if (data === "probe") {
+        if (holding) postLease();
+        return;
+      }
+      const lease = photoMessageID(data, "lease");
+      if (lease) {
+        if (lease === id) return;
+        if (holding && lease < id) {
+          holderID = lease;
+          lastLease = Date.now();
+          release();
+        } else if (!holding && (holderID === undefined || lease < holderID)) {
+          holderID = lease;
+          lastLease = Date.now();
+        } else if (lease === holderID) {
+          lastLease = Date.now();
+        }
+        followHolder();
+        wakeLoop();
+        return;
+      }
+      const released = photoMessageID(data, "release");
+      if (released && released === holderID) {
+        holderID = undefined;
+        lastLease = 0;
+        following = false;
+        claimAfter = Date.now() + photoLeaseDelay();
+        wakeLoop();
+      }
+    };
+    channel.postMessage("probe");
+    const waitForLeaseChange = (delay: number) =>
+      new Promise<void>((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          options.signal.removeEventListener("abort", finish);
+          if (wake === finish) wake = undefined;
+          resolve();
+        };
+        const timer = setTimeout(finish, delay);
+        wake = finish;
+        options.signal.addEventListener("abort", finish, { once: true });
+      });
+    try {
+      while (!options.signal.aborted) {
+        if (holderID === undefined) {
+          await waitForLeaseChange(Math.max(0, claimAfter - Date.now()));
+          if (options.signal.aborted || holderID !== undefined || Date.now() < claimAfter) continue;
+          holding = true;
+          following = false;
+          holderID = id;
+          streamController = new AbortController();
+          postLease();
+          heartbeat = setInterval(postLease, photoLeaseHeartbeat);
+          try {
+            await consume(channel, AbortSignal.any([options.signal, streamController.signal]));
+          } catch (cause) {
+            if (!options.signal.aborted && !streamController.signal.aborted) throw cause;
+          } finally {
+            const wasHolding = holding;
+            holding = false;
+            clearInterval(heartbeat);
+            heartbeat = undefined;
+            streamController = undefined;
+            if (wasHolding) {
+              holderID = undefined;
+              lastLease = 0;
+              channel.postMessage({ release: id });
+              claimAfter = Date.now() + photoLeaseDelay();
+            }
+          }
+          continue;
+        }
+        const untilStale = lastLease + photoLeaseTimeout - Date.now();
+        if (untilStale <= 0) {
+          holderID = undefined;
+          lastLease = 0;
+          following = false;
+          claimAfter = Date.now() + photoLeaseDelay();
+          continue;
+        }
+        await waitForLeaseChange(untilStale);
+      }
+    } finally {
+      release();
+      channel.onmessage = null;
+      channel.close();
+    }
+    return;
+  }
+  if (typeof BroadcastChannel === "undefined") return;
   const channel = new BroadcastChannel(photoEventLock);
   try {
     let held = false;

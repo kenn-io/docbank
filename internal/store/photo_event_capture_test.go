@@ -13,7 +13,7 @@ import (
 
 func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 	t.Parallel()
-	for _, rule := range []string{"asset exclusion", "album membership", "tags", "tags/create", "tags/delete", "provenance", "metadata and indexing", "extraction", "directory refetch", "collection coverage", "visual previews", "global settings and Hidden credentials refetch"} {
+	for _, rule := range []string{"asset exclusion", "album membership", "tags", "tags/create", "tags/delete", "provenance", "metadata and indexing", "extraction", "directory refetch", "photo faces", "collection coverage", "visual previews", "global settings and Hidden credentials refetch"} {
 		t.Run(rule, func(t *testing.T) {
 			ctx := t.Context()
 			if rule == "collection coverage" {
@@ -151,6 +151,12 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 				noPhotoEvent(t, events)
 
+			case "photo faces":
+				_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, "11111111-1111-4111-8111-111111111111", document.FaceBox{X: 0.1, Y: 0.2, Width: 0.3, Height: 0.4}, "")
+				require.NoError(t, err)
+				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+				noPhotoEvent(t, events)
+
 			case "visual previews":
 				canonical := readyVisualPreview(t, node.BlobHash, fakeHash("22"), 9)
 				physical := &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9}
@@ -168,6 +174,79 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 			}
 		})
+	}
+}
+
+func TestPhotoEventCaptureCoversPhotoSchemaTables(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	events, cancel := s.SubscribePhotoEvents(t.Context())
+	defer cancel()
+	_, err := s.CreateTag(t.Context(), "capture schema check")
+	require.NoError(t, err)
+	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+
+	triggers, err := s.writeDB.QueryContext(t.Context(), `SELECT name FROM temp.sqlite_schema WHERE type='trigger' AND name LIKE 'photo_events_%'`)
+	require.NoError(t, err)
+	defer func() { _ = triggers.Close() }()
+	triggerNames := make(map[string]bool)
+	for triggers.Next() {
+		var name string
+		require.NoError(t, triggers.Scan(&name))
+		triggerNames[name] = true
+	}
+	require.NoError(t, triggers.Err())
+
+	captured := make(map[string]bool)
+	for _, rule := range photoEventCaptureRules() {
+		for _, action := range []string{"INSERT", "UPDATE", "DELETE"} {
+			trigger := fmt.Sprintf("photo_events_%s_%s", rule.table, action)
+			require.True(t, triggerNames[trigger], "capture rule %q must install %s", rule.table, action)
+		}
+		if strings.HasPrefix(rule.table, "photo_") {
+			captured[rule.table] = true
+		}
+	}
+
+	quiet := map[string]string{
+		"photo_change_receipts":          "operation receipts are read by the action that created them",
+		"photo_authored_fts":             "FTS projection maintained by photo_files triggers",
+		"photo_authored_fts_config":      "FTS projection maintained by photo_files triggers",
+		"photo_authored_fts_content":     "FTS projection maintained by photo_files triggers",
+		"photo_authored_fts_data":        "FTS projection maintained by photo_files triggers",
+		"photo_authored_fts_docsize":     "FTS projection maintained by photo_files triggers",
+		"photo_authored_fts_idx":         "FTS projection maintained by photo_files triggers",
+		"photo_hidden_failures":          "authentication failure bookkeeping",
+		"photo_hidden_lockout":           "authentication lockout bookkeeping",
+		"photo_metadata_fts":             "FTS projection maintained by photo_technical_metadata triggers",
+		"photo_metadata_fts_config":      "FTS projection maintained by photo_technical_metadata triggers",
+		"photo_metadata_fts_content":     "FTS projection maintained by photo_technical_metadata triggers",
+		"photo_metadata_fts_data":        "FTS projection maintained by photo_technical_metadata triggers",
+		"photo_metadata_fts_docsize":     "FTS projection maintained by photo_technical_metadata triggers",
+		"photo_metadata_fts_idx":         "FTS projection maintained by photo_technical_metadata triggers",
+		"photo_sidecar_considered":       "import bookkeeping",
+		"photo_technical_metadata_state": "projection recipe bookkeeping",
+		"photo_timeline":                 "derived browse index maintained with its source writes",
+		"photo_timeline_pending":         "derived browse index bookkeeping",
+	}
+	tables, err := s.db.QueryContext(t.Context(), `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'photo_%'`)
+	require.NoError(t, err)
+	defer func() { _ = tables.Close() }()
+	schemaTables := make(map[string]bool)
+	for tables.Next() {
+		var name string
+		require.NoError(t, tables.Scan(&name))
+		schemaTables[name] = true
+		if reason, ok := quiet[name]; ok {
+			require.NotEmpty(t, reason)
+			require.False(t, captured[name], "quiet table %q also has capture rules", name)
+			continue
+		}
+		require.True(t, captured[name], "photo table %q needs capture rules or a documented quiet reason", name)
+	}
+	require.NoError(t, tables.Err())
+	for table := range quiet {
+		require.True(t, schemaTables[table], "quiet table %q must still exist in the schema", table)
 	}
 }
 
@@ -418,7 +497,7 @@ func TestPhotoEventsHiddenAlbumMembership(t *testing.T) {
 		event := nextPhotoEventWithAudience(t, lockedEvents)
 		visible, err := s.VisiblePhotoEvent(ctx, event)
 		require.NoError(t, err)
-		require.Zero(t, visible)
+		require.Equal(t, PhotoEvent{Refetch: true}, visible)
 		visible, err = s.VisiblePhotoEvent(unlocked, nextPhotoEventWithAudience(t, openEvents))
 		require.NoError(t, err)
 		require.Equal(t, PhotoEvent{AlbumID: album.ID, Revision: album.Revision}, visible)
@@ -454,11 +533,7 @@ func TestPhotoEventsHiddenAlbumMembership(t *testing.T) {
 		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "updated"}))
 		event, err := s.VisiblePhotoEvent(ctx, nextPhotoEventWithAudience(t, lockedEvents))
 		require.NoError(t, err)
-		if node.ID == hidden.ID {
-			require.Zero(t, event)
-		} else {
-			require.Equal(t, PhotoEvent{Refetch: true}, event)
-		}
+		require.Equal(t, PhotoEvent{Refetch: true}, event)
 		event, err = s.VisiblePhotoEvent(unlocked, nextPhotoEventWithAudience(t, openEvents))
 		require.NoError(t, err)
 		require.Equal(t, PhotoEvent{Refetch: true}, event)

@@ -1366,7 +1366,7 @@ encoding. The path must be absolute (leading `/`), and `?path=/`
 resolves the root. The server applies the store's existing NFC name
 normalization and validation and returns `422` for an invalid path.
 
-`GET /photos/events` returns `text/event-stream`. Each `change` event contains JSON with an `asset_id` or `album_id` and its current `revision`, or `{ "refetch": true }` for a full refresh. The first event requests a refresh. Events publish after commit and recheck Hidden access before delivery. Changes to existing hidden assets are omitted for locked or unconfigured viewers; missing assets request a full refresh. Each subscription buffers 64 events; overflow requests a full refresh. Reconnects start from current state rather than replaying history.
+`GET /photos/events` returns `text/event-stream`. Each `change` event contains JSON with an `asset_id` or `album_id` and its current `revision`, or `{ "refetch": true }` for a full refresh. The first event requests a refresh. Events publish after commit and recheck Hidden access before delivery. Hidden IDs and revisions reach only unlocked requests; a locked stream receives a generic refetch while a Hidden session is active so an unlocked tab can refresh through the stream holder. Missing assets request a full refresh. Each subscription buffers 64 events; overflow requests a full refresh. Reconnects start from current state rather than replaying history.
 
 Each daemon accepts up to 128 concurrent photo event streams across browser sessions and API clients. Further requests return `429` with the standard problem JSON and code `photo_event_stream_limit`. Closing a stream releases its slot.
 
