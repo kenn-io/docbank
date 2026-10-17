@@ -21,7 +21,7 @@ const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 export class PhotoCull {
-  run = $state.raw<CullRun>();
+  run = $state.raw<CullRun & { groups?: string[][]; burstGapSeconds?: number }>();
   private stackIndex = new WeakMap<string[][], ReadonlyMap<string, string[]>>();
   private stackRead?: AbortController;
   stackError = $state("");
@@ -60,7 +60,7 @@ export class PhotoCull {
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
   }
-  /** Each saved burst by member ID. */
+  /** Current grouping of the frozen IDs. */
   get stacks(): ReadonlyMap<string, string[]> {
     const groups = this.run?.groups;
     if (!groups) return new Map();
@@ -74,9 +74,9 @@ export class PhotoCull {
   get currentStack() {
     return this.currentID ? this.stacks.get(this.currentID) : undefined;
   }
-  /** Regroup after a burst gap change elsewhere; saved groups otherwise stay. */
+  /** Check whether the active run needs to regroup under a new gap. */
   async checkSettings() {
-    if (!this.run?.captureTimeOrder || this.stackLoading) return;
+    if (!this.run || this.stackLoading) return;
     try {
       const settings = await getPhotoSettings({ session: this.session });
       if (settings.burst_gap_seconds !== this.run.burstGapSeconds) await this.regroup();
@@ -84,41 +84,26 @@ export class PhotoCull {
       this.stackError = failure(cause);
     }
   }
-  /**
-   * Regroup the frozen IDs, or only ids when recovering one stale burst. Order
-   * and the checkpoint stay unchanged, and no ID outside the run can join.
-   */
-  async regroup(ids?: string[]) {
+  /** Recompute all frozen IDs and merge into the latest active checkpoint. */
+  async regroup() {
     const run = this.run;
-    if (!run?.captureTimeOrder || this.stale) return;
+    if (!run || this.stale) return;
     const controller = new AbortController();
     this.stackRead?.abort();
     this.stackRead = controller;
     this.stackLoading = true;
     this.stackError = "";
     try {
-      const settings = await getPhotoSettings({ session: this.session, signal: controller.signal });
       const regrouped = await groupPhotoStacks(
-        { asset_ids: ids ?? run.ids },
+        { asset_ids: run.ids },
         { session: this.session, signal: controller.signal },
       );
       controller.signal.throwIfAborted();
-      let groups = regrouped.groups;
-      if (ids) {
-        const position = new Map(run.ids.map((id, index) => [id, index]));
-        const replaced = new Set(ids);
-        groups = [
-          ...(run.groups ?? []).filter((group) => !group.some((id) => replaced.has(id))),
-          ...groups,
-        ].sort((a, b) => position.get(a[0]!)! - position.get(b[0]!)!);
-      }
-      await this.storage.regroup(groups, settings.burst_gap_seconds, run.checkpoint);
-      if (this.run === run)
+      if (this.run?.checkpoint.runID === run.checkpoint.runID && this.run.ids === run.ids)
         this.run = {
-          ...run,
-          groups,
-          burstGapSeconds: settings.burst_gap_seconds,
-          checkpoint: { ...run.checkpoint, revision: run.checkpoint.revision + 1 },
+          ...this.run,
+          groups: regrouped.groups,
+          burstGapSeconds: regrouped.burst_gap_seconds,
         };
     } catch (cause) {
       if (!controller.signal.aborted) this.stackError = failure(cause);
@@ -143,7 +128,7 @@ export class PhotoCull {
   }
   /** A lone frame is its own group, so H/L visits each group's first frame in the pass. */
   moveStack(direction: -1 | 1) {
-    if (!this.run || this.busy || this.stale || this.stackLoading) return;
+    if (!this.run || this.busy || this.stale) return;
     const groups = this.passStacks();
     const index = groups.findIndex((group) => group.includes(this.currentID!));
     const next = groups[index + direction];
@@ -151,7 +136,7 @@ export class PhotoCull {
     else if (direction === 1) this.update({ position: this.run.checkpoint.pass.length });
   }
   moveFrame(direction: -1 | 1) {
-    if (!this.run || this.busy || this.stale || this.stackLoading) return;
+    if (!this.run || this.busy || this.stale) return;
     if (!this.currentStack) {
       this.move(direction);
       return;
@@ -162,7 +147,7 @@ export class PhotoCull {
   }
   async verifyDecision() {
     await this.writes;
-    if (!this.run || this.stale || this.busy) return false;
+    if (!this.run || this.stale || this.busy || this.stackLoading || this.stackError) return false;
     try {
       const saved = await this.storage.saved();
       if (!saved || !sameCheckpoint(saved, this.run.checkpoint))
@@ -187,9 +172,6 @@ export class PhotoCull {
         if (
           !run ||
           !checkpoint ||
-          (run.captureTimeOrder !== undefined &&
-            run.captureTimeOrder !== "asc" &&
-            run.captureTimeOrder !== "desc") ||
           typeof checkpoint.runID !== "string" ||
           !checkpoint.runID.trim() ||
           !Number.isSafeInteger(checkpoint.revision) ||
@@ -209,15 +191,7 @@ export class PhotoCull {
         )
           throw new Error("Saved cull progress is invalid. Start a new cull.");
         const captured = new Set(run.ids);
-        if (
-          !checkpoint.pass.every((id) => captured.has(id)) ||
-          (run.groups !== undefined &&
-            (!Array.isArray(run.groups) ||
-              !run.groups.every(
-                (group) =>
-                  Array.isArray(group) && group.length > 1 && group.every((id) => captured.has(id)),
-              )))
-        )
+        if (!checkpoint.pass.every((id) => captured.has(id)))
           throw new Error("Saved cull progress is invalid. Start a new cull.");
       }
       this.run = run;
@@ -228,6 +202,7 @@ export class PhotoCull {
           this.marked.set(list, new Set(list));
         }
       this.stale = false;
+      if (this.run) await this.regroup();
       return !!this.run;
     } catch (cause) {
       this.error = failure(cause);
@@ -261,10 +236,6 @@ export class PhotoCull {
       });
       if (previous && !(await confirm("Replace saved cull progress?"))) return false;
       this.progress = "Capturing photos…";
-      const grouped = query.sort.field === "capture_time";
-      const settings = grouped
-        ? await getPhotoSettings({ session: this.session, signal: controller.signal })
-        : undefined;
       const page = await createSnapshot(
         this.session,
         query,
@@ -285,23 +256,8 @@ export class PhotoCull {
         return member.asset_id;
       });
       const flags = new Map(captured.members.map((member) => [member.asset_id!, member.flag!]));
-      // The snapshot marks each burst member with its stack; groups keep frozen order.
-      const groups = new Map<string, string[]>();
-      for (const member of captured.members) {
-        if (!member.stack_id) continue;
-        const group = groups.get(member.stack_id) ?? [];
-        groups.set(member.stack_id, group);
-        group.push(member.asset_id!);
-      }
       const run: CullRun = {
         ids,
-        ...(settings
-          ? {
-              captureTimeOrder: query.sort.direction,
-              groups: [...groups.values()],
-              burstGapSeconds: settings.burst_gap_seconds,
-            }
-          : {}),
         checkpoint: {
           runID: randomUUID(),
           revision: 0,
@@ -322,6 +278,7 @@ export class PhotoCull {
       this.stale = false;
       this.run = run;
       this.saved = true;
+      await this.regroup();
       this.visit();
       return true;
     } catch (cause) {

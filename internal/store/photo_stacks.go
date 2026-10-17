@@ -23,12 +23,9 @@ const photoStackKeyLayout = "2006-01-02T15:04:05.000000000"
 var ErrStalePhotoStack = errors.New("photo stack changed; refresh photos before deciding")
 
 // PhotoStack is one burst of at least two frames in ascending capture order.
-// Ranks and picks let a client re-derive the representative after its own edits.
 type PhotoStack struct {
-	AssetIDs            []string
-	RepresentativeID    string
-	PickedIDs           []string
-	RepresentativeRanks map[string]int64
+	AssetIDs         []string
+	RepresentativeID string
 }
 
 // photoStackFrame is one live asset's grouping input. Folder is empty when the
@@ -39,6 +36,7 @@ type photoStackFrame struct {
 	SortKey string
 	Rank    int64
 	Picked  bool
+	Files   int
 }
 
 func comparePhotoStackFrames(a, b photoStackFrame) int {
@@ -78,12 +76,21 @@ func groupPhotoStackFrames(frames []photoStackFrame, gap int) [][]photoStackFram
 		for end < len(frames) && photoStackChained(frames[end-1], frames[end], gap) {
 			end++
 		}
-		if size := end - start; size > 1 && size <= MaxPhotoStackFrames {
+		if eligiblePhotoStack(frames[start:end]) {
 			groups = append(groups, frames[start:end])
 		}
 		start = end
 	}
 	return groups
+}
+
+// eligiblePhotoStack keeps every exposed stack within one authored edit.
+func eligiblePhotoStack(frames []photoStackFrame) bool {
+	files := 0
+	for _, frame := range frames {
+		files += frame.Files
+	}
+	return len(frames) >= 2 && len(frames) <= MaxPhotoStackFrames && files <= maxBatchTagTargets
 }
 
 // newPhotoStack applies the representative rule: the latest explicit choice,
@@ -96,16 +103,11 @@ func newPhotoStack(group []photoStackFrame) PhotoStack {
 		frame := &group[i]
 		stack.AssetIDs[i] = frame.AssetID
 		if frame.Rank > 0 {
-			if stack.RepresentativeRanks == nil {
-				stack.RepresentativeRanks = map[string]int64{}
-			}
-			stack.RepresentativeRanks[frame.AssetID] = frame.Rank
 			if chosen == nil || frame.Rank > chosen.Rank {
 				chosen = frame
 			}
 		}
 		if frame.Picked {
-			stack.PickedIDs = append(stack.PickedIDs, frame.AssetID)
 			picked = frame
 			picks++
 		}
@@ -127,14 +129,16 @@ const photoStackChoiceColumns = `COALESCE(a.representative_rank,0),
  EXISTS(SELECT 1 FROM photo_files pick JOIN nodes pn ON pn.id=pick.node_id WHERE pick.asset_id=a.asset_id AND pick.role!='sidecar' AND pn.trashed_at IS NULL AND pick.flag='pick')`
 
 // The display file's timeline row decides grouping. Only photos join stacks.
-const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackChoiceColumns
+const photoStackFileCount = `(SELECT COUNT(*) FROM photo_files live JOIN nodes ln ON ln.id=live.node_id WHERE live.asset_id=a.asset_id AND live.role!='sidecar' AND ln.trashed_at IS NULL)`
+
+const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackChoiceColumns + `,` + photoStackFileCount
 
 // photoStackFrames reads the live, visible members of ids. Missing IDs are unavailable.
 func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
 	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+` FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
-		if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.Rank, &frame.Picked); err != nil {
+		if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.Rank, &frame.Picked, &frame.Files); err != nil {
 			return err
 		}
 		frames[frame.AssetID] = frame
@@ -146,14 +150,14 @@ func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidd
 // PhotoStackGroups groups an explicit ID set, such as a frozen Cull run, under
 // the current gap. Groups keep request order inside and are ordered by their
 // first member; IDs that are no longer live and visible are unavailable.
-func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool) (groups [][]string, unavailable []string, err error) {
+func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool) (groups [][]string, unavailable []string, gap int, err error) {
 	if len(ids) > MaxPhotoStackGroupIDs {
-		return nil, nil, ErrInvalidPhotoAsset
+		return nil, nil, 0, ErrInvalidPhotoAsset
 	}
 	position := make(map[string]int, len(ids))
 	for i, id := range ids {
 		if _, duplicate := position[id]; duplicate || validateUUIDv4(id) != nil {
-			return nil, nil, ErrInvalidPhotoAsset
+			return nil, nil, 0, ErrInvalidPhotoAsset
 		}
 		position[id] = i
 	}
@@ -167,6 +171,7 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool)
 		if err != nil {
 			return err
 		}
+		gap = settings.BurstGapSeconds
 		frames, err := photoStackFrames(ctx, tx, ids, hidden)
 		if err != nil {
 			return err
@@ -180,7 +185,7 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool)
 		groups = photoStackRequestGroups(slices.Collect(maps.Values(frames)), settings.BurstGapSeconds, position)
 		return nil
 	})
-	return groups, unavailable, err
+	return groups, unavailable, gap, err
 }
 
 // photoStackRequestGroups orders each group's members, and the groups, by request position.
@@ -199,19 +204,20 @@ func photoStackRequestGroups(frames []photoStackFrame, gap int, position map[str
 }
 
 type PhotoStackDecision struct {
-	Hidden      bool
-	AssetIDs    []string
-	Targets     []PhotoAuthoredEditTarget
-	Decision    string
-	CurrentID   string
-	SelectedIDs []string
+	BurstGapSeconds int
+	Hidden          bool
+	AssetIDs        []string
+	Targets         []PhotoAuthoredEditTarget
+	Decision        string
+	CurrentID       string
+	SelectedIDs     []string
 }
 
 // DecidePhotoStack applies one decision to an observed stack in one
 // transaction. The submitted members must still form one stack under the
 // stored folder and capture keys, and every file must keep its observed revision.
 func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision) (PhotoAuthoredReceipt, error) {
-	if len(request.AssetIDs) == 0 || len(request.AssetIDs) > MaxPhotoStackFrames || len(request.Targets) == 0 || len(request.Targets) > maxBatchTagTargets {
+	if len(request.AssetIDs) < 2 || len(request.AssetIDs) > MaxPhotoStackFrames || len(request.Targets) == 0 || len(request.Targets) > maxBatchTagTargets {
 		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
 	}
 	if !slices.Contains([]string{"current", "all", "selected", "representative"}, request.Decision) || !slices.Contains(request.AssetIDs, request.CurrentID) || request.Decision == "selected" && len(request.SelectedIDs) == 0 {
@@ -238,6 +244,9 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		if err != nil {
 			return err
 		}
+		if settings.BurstGapSeconds != request.BurstGapSeconds {
+			return ErrStalePhotoStack
+		}
 		// Only the observed query or frozen run defines membership, so unseen
 		// neighboring imports stay untouched.
 		found, err := photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden)
@@ -248,11 +257,11 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			return ErrStalePhotoStack
 		}
 		frames := slices.SortedFunc(maps.Values(found), comparePhotoStackFrames)
-		for i := 1; i < len(frames); i++ {
-			if !photoStackChained(frames[i-1], frames[i], settings.BurstGapSeconds) {
-				return ErrStalePhotoStack
-			}
+		groups := groupPhotoStackFrames(frames, settings.BurstGapSeconds)
+		if len(groups) != 1 || len(groups[0]) != len(frames) {
+			return ErrStalePhotoStack
 		}
+
 		// Prepare every live source file inside the transaction, so a client
 		// cannot omit a sibling or one half of a RAW/JPEG pair.
 		preparation := PhotoAuthoredPreparation{}
@@ -388,6 +397,7 @@ type photoStackPager struct {
 	probes     [2]*sql.Stmt
 	args       []any
 	components map[string]*photoStackComponent
+	fileCounts map[string]int
 }
 
 type photoStackComponent struct {
@@ -414,13 +424,13 @@ func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrows
 	if !ok {
 		return nil, errors.New("photo stack paging requires a statement-preparing connection")
 	}
-	pager := &photoStackPager{q: q, scope: scope, gap: gap, descending: descending, components: map[string]*photoStackComponent{}}
+	pager := &photoStackPager{q: q, scope: scope, gap: gap, descending: descending, components: map[string]*photoStackComponent{}, fileCounts: map[string]int{}}
 	// Each probe reads the in-scope frames after one frame, up to a window bound.
 	for i, bounds := range [2]string{
 		`pl.sort_key<=? AND pl.sort_key>=? AND (pl.sort_key<? OR a.asset_id<?) ORDER BY pl.sort_key DESC,a.asset_id DESC LIMIT ?`,
 		`pl.sort_key>=? AND pl.sort_key<=? AND (pl.sort_key>? OR a.asset_id>?) ORDER BY pl.sort_key ASC,a.asset_id ASC LIMIT ?`,
 	} {
-		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key FROM ` + photoStackProbeFrom + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND ` + bounds)
+		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key,` + photoStackFileCount + ` FROM ` + photoStackProbeFrom + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND ` + bounds)
 		if err == nil {
 			pager.args = args
 			pager.probes[i], err = preparer.PrepareContext(ctx, statement) //nolint:sqlclosecheck // Close releases both probes when the page ends.
@@ -464,7 +474,7 @@ func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, wi
 	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
 		next := photoStackFrame{Folder: current.Folder}
-		if err := rows.Scan(&next.AssetID, &next.SortKey); err != nil {
+		if err := rows.Scan(&next.AssetID, &next.SortKey, &next.Files); err != nil {
 			return nil, err
 		}
 		frames = append(frames, next)
@@ -516,7 +526,7 @@ func (p *photoStackPager) component(ctx context.Context, frame photoStackFrame) 
 }
 
 func (p *photoStackPager) remember(component *photoStackComponent) {
-	component.oversized = len(component.frames) > MaxPhotoStackFrames
+	component.oversized = len(component.frames) > 1 && !eligiblePhotoStack(component.frames)
 	slices.SortFunc(component.frames, comparePhotoStackFrames)
 	for _, member := range component.frames {
 		p.components[member.AssetID] = component
@@ -527,9 +537,25 @@ func (p *photoStackPager) remember(component *photoStackComponent) {
 // lies strictly between its edges: after, the position it was read after, and
 // its last known key unless the keyset ended. A chain whose gap reach stays
 // inside both edges is complete; one that touches an edge is left for probes.
-func (p *photoStackPager) prime(batch []PhotoBrowseRow, after *PhotoBrowsePosition, exhausted bool) {
+func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, after *PhotoBrowsePosition, exhausted bool) error {
+	ids := make([]string, len(batch))
+	for i, row := range batch {
+		ids[i] = row.AssetID
+	}
+	if err := queryInChunks(ctx, p.q, `SELECT a.asset_id,`+photoStackFileCount+` FROM photo_assets a WHERE a.asset_id IN (`, ids, func(rows *sql.Rows) error {
+		var id string
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return err
+		}
+		p.fileCounts[id] = count
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	if after != nil && after.Missing {
-		return
+		return nil
 	}
 	folders := map[string][]photoStackFrame{}
 	open, last := !exhausted, ""
@@ -540,7 +566,7 @@ func (p *photoStackPager) prime(batch []PhotoBrowseRow, after *PhotoBrowsePositi
 		}
 		last = row.position.Key
 		if row.folderKey != "" {
-			folders[row.folderKey] = append(folders[row.folderKey], photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, SortKey: row.position.Key})
+			folders[row.folderKey] = append(folders[row.folderKey], photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, SortKey: row.position.Key, Files: p.fileCounts[row.AssetID]})
 		}
 	}
 	start, end := "", ""
@@ -582,12 +608,13 @@ func (p *photoStackPager) prime(batch []PhotoBrowseRow, after *PhotoBrowsePositi
 			}
 		}
 	}
+	return nil
 }
 
 // classify returns the frames a raw row emits: the row alone, its whole stack
 // at the first member in scan order, or nothing for any other member.
 func (p *photoStackPager) classify(ctx context.Context, row PhotoBrowseRow) ([]photoStackFrame, error) {
-	frame := photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, SortKey: row.position.Key}
+	frame := photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, SortKey: row.position.Key, Files: p.fileCounts[row.AssetID]}
 	if frame.Folder == "" || row.position.Missing {
 		return []photoStackFrame{frame}, nil
 	}
@@ -708,7 +735,9 @@ func (s *Store) listPhotoStackPage(
 			return err
 		}
 		exhausted := len(batch) < limit
-		pager.prime(batch, after, exhausted)
+		if err := pager.prime(ctx, batch, after, exhausted); err != nil {
+			return err
+		}
 		for _, row := range batch {
 			scanned[row.AssetID] = row
 		}

@@ -74,7 +74,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
 		}
 		for _, stack := range page.Stacks {
-			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID, PickedIDs: append([]string{}, stack.PickedIDs...), RepresentativeRanks: stack.RepresentativeRanks})
+			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID})
 		}
 		if in.Body.Projection == "map" {
 			wire.Items = []PhotoBrowseRow{}

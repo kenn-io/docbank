@@ -308,7 +308,7 @@ it("expands a burst without selecting or opening a photo", async () => {
   render(PhotoCell, {
     photo: {
       ...photo(1),
-      stack: { asset_ids: ["a", "b", "c"], representative_id: "b", picked_ids: [] },
+      stack: { asset_ids: ["a", "b", "c"], representative_id: "b" },
     },
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
     selected: false,

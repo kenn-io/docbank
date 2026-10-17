@@ -14,10 +14,6 @@ export interface CullCheckpoint {
 }
 export interface CullRun {
   ids: string[];
-  captureTimeOrder?: "asc" | "desc";
-  /** Bursts of two or more frozen IDs, each in frozen order, grouped with burstGapSeconds. */
-  groups?: string[][];
-  burstGapSeconds?: number;
   checkpoint: CullCheckpoint;
 }
 type Membership = Omit<CullRun, "checkpoint"> & { pass: string[] };
@@ -47,8 +43,6 @@ export interface CullStorage {
   saved(): Promise<Header | undefined>;
   load(): Promise<CullRun | undefined>;
   replace(run: CullRun, signal?: AbortSignal, expected?: Header): Promise<void>;
-  /** Replace the saved bursts and advance the checkpoint revision atomically. */
-  regroup(groups: string[][], burstGapSeconds: number, expected: Header): Promise<void>;
   checkpoint(value: CullProgress): Promise<void>;
 }
 
@@ -133,8 +127,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         keys.forEach((key, index) =>
           checkpoint[(key as [string, MarkerKind, number])[1]].push(values[index]!),
         );
-        const { pass: _, ...run } = membership;
-        return { ...run, checkpoint };
+        return { ids: membership.ids, checkpoint };
       } finally {
         db.close();
       }
@@ -162,35 +155,12 @@ export function photoCullStorage(vaultID: string): CullStorage {
             await done.catch(() => {});
             throw new Error("Cull progress changed in another tab. Resume before replacing it.");
           }
-          const { checkpoint: _, ...membership } = run;
-          tx.objectStore("members").put({ ...membership, pass: run.checkpoint.pass }, vaultID);
+          tx.objectStore("members").put({ ids: run.ids, pass: run.checkpoint.pass }, vaultID);
           savePass(tx, run.checkpoint);
           await done;
         } finally {
           signal?.removeEventListener("abort", cancel);
         }
-      } finally {
-        db.close();
-      }
-    },
-    async regroup(groups, burstGapSeconds, expected) {
-      const db = await open();
-      try {
-        const tx = db.transaction(["members", "checkpoints"], "readwrite"),
-          done = transactionDone(tx);
-        const current = await idbRequest<Header | undefined>(
-          tx.objectStore("checkpoints").get(vaultID),
-        );
-        if (!current || !sameCheckpoint(current, expected)) {
-          tx.abort();
-          await done.catch(() => {});
-          throw new Error("Cull progress changed in another tab. Close and resume it.");
-        }
-        const members = tx.objectStore("members");
-        const membership = await idbRequest<Membership>(members.get(vaultID));
-        members.put({ ...membership, groups, burstGapSeconds }, vaultID);
-        tx.objectStore("checkpoints").put({ ...current, revision: current.revision + 1 }, vaultID);
-        await done;
       } finally {
         db.close();
       }

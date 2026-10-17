@@ -18,6 +18,16 @@ async function readyButton(name: string | RegExp) {
   return button;
 }
 beforeEach(() => {
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
   vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async (scope) =>
     photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
   );
@@ -138,7 +148,6 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
     saved,
     load: vi.fn(),
     replace: vi.fn(),
-    regroup: vi.fn(async () => {}),
     checkpoint: vi.fn(),
   });
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
@@ -283,12 +292,12 @@ async function reviewPhoto(
       saved: vi.fn(async () => cull.run?.checkpoint),
       load: vi.fn(),
       replace: vi.fn(),
-      regroup: vi.fn(async () => {}),
       checkpoint: vi.fn(),
     },
   );
   cull.run = {
     ids: [row.asset_id],
+    burstGapSeconds: 2,
     checkpoint: {
       runID: "run",
       revision: 0,
@@ -944,7 +953,7 @@ it("decides the whole saved stack from a later pass and refuses a stale checkpoi
     cull.run = {
       ...cull.run!,
       ids,
-      captureTimeOrder: "asc",
+
       groups: [ids.slice(0, 3)],
       burstGapSeconds: 2,
       checkpoint: { ...cull.run!.checkpoint, pass, scope: "unflagged" },
@@ -997,7 +1006,7 @@ it.each(["preparation", "submission"])(
       cull.run = {
         ...cull.run!,
         ids: rows.map((row) => row.asset_id),
-        captureTimeOrder: "asc",
+
         groups: [["photo-1", "photo-2", "photo-3"]],
         checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id), position: 1 },
       };
@@ -1090,7 +1099,7 @@ it.each(["decision", "representative", "unchanged"])(
       cull.run = {
         ...cull.run!,
         ids: rows.map((row) => row.asset_id),
-        captureTimeOrder: "asc",
+
         groups: [
           ["photo-1", "photo-2"],
           ["photo-3", "photo-4"],

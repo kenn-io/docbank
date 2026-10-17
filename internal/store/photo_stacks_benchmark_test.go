@@ -34,7 +34,7 @@ func BenchmarkPhotoStackBrowse250K(b *testing.B) {
 	if os.Getenv("DOCBANK_PHOTO_STACK_SCALE") != "1" {
 		b.Skip("set DOCBANK_PHOTO_STACK_SCALE=1 for the 250k burst measurements")
 	}
-	dir := filepath.Join("..", "..", ".superpowers", "photo-stack-scale")
+	dir := filepath.Join("..", "..", ".superpowers", fmt.Sprintf("photo-stack-scale-v%d", currentStorageSchemaVersion))
 	require.NoError(b, os.MkdirAll(dir, 0o700))
 	// Bursts: 25 folders capture five frames one second apart at the same
 	// instants, so every page interleaves stacks from many folders with tied

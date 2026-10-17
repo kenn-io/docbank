@@ -2577,6 +2577,16 @@ it("disables selected export when a metadata draft keeps an empty selection open
 it.each([false, true])(
   "reconciles grid selection after cull (one unavailable: %s)",
   async (oneUnavailable) => {
+    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+      revision: 1,
+      preference: null,
+      burst_gap_seconds: 2,
+    });
+    vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+      groups: [],
+      unavailable_ids: [],
+      burst_gap_seconds: 2,
+    });
     vi.stubGlobal("indexedDB", new IDBFactory());
     vi.stubGlobal("IDBKeyRange", IDBKeyRange);
     vi.stubGlobal(
@@ -2915,7 +2925,7 @@ it("keeps a reloaded stage photo in its collapsed stack when returning to the gr
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
   const photos = new Photos("scoped", vi.fn());
-  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1", picked_ids: [] };
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
   photos.items = [photo(1), photo(2)].map((row) => ({ ...row, stack }));
   photos.total = 2;
   photos.started = true;
@@ -2960,7 +2970,6 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
     const stack = {
       asset_ids: rows.map((row) => row.asset_id),
       representative_id: "photo-1",
-      picked_ids: [],
     };
     stubPhotoFetch(
       async (url, init) =>
@@ -3037,7 +3046,7 @@ it("range selects in rendered month order across offset dates and a collapsed st
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
   const photos = new Photos("scoped", vi.fn());
-  const stack = { asset_ids: ["photo-2", "photo-3"], representative_id: "photo-2", picked_ids: [] };
+  const stack = { asset_ids: ["photo-2", "photo-3"], representative_id: "photo-2" };
   photos.items = [
     photo(1, "2025-02-28T23:59:59-12:00"),
     { ...photo(2, "2025-03-01T00:00:02+14:00"), stack },
@@ -3055,6 +3064,7 @@ it("range selects in rendered month order across offset dates and a collapsed st
       .map((button) => button.getAttribute("aria-label")),
   ).toEqual(["Select Photo 2.jpg", "Select Photo 4.jpg", "Select Photo 1.jpg"]);
   await fireEvent.click(first);
+  await waitFor(() => expect(photos.authored.stackLoading).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Select Photo 1.jpg" }), {
     shiftKey: true,
   });

@@ -17,6 +17,7 @@ import {
   savedSmartSet as savedSmartSetFixture,
 } from "./photo-test-fixtures.js";
 import type { Query } from "./query.js";
+import type { PhotoAuthoredReceipt } from "./generated/docbank.js";
 import * as snapshots from "./snapshots.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 
@@ -3071,7 +3072,6 @@ it("selects collapsed bursts and expanded frames, including range selection and 
     stack: {
       asset_ids: i < 3 ? ids.slice(0, 3) : ids.slice(3),
       representative_id: i < 3 ? ids[1]! : ids[4]!,
-      picked_ids: [],
     },
   }));
   photos.select(ids[1]!, new MouseEvent("click", { button: 0 }), ids);
@@ -3096,7 +3096,6 @@ it("attaches server-described stacks and requests them only for capture-time pag
   const stack = {
     asset_ids: ["photo-1", "photo-2"],
     representative_id: "photo-2",
-    picked_ids: ["photo-2"],
   };
   const requests: { stacks?: boolean }[] = [];
   stubPhotoFetch(async (_url, init) => {
@@ -3118,17 +3117,14 @@ it("attaches server-described stacks and requests them only for capture-time pag
   photos.dispose();
 });
 
-it("patches loaded stacks from receipts and reloads only for unknown companion flags", async () => {
+it("refreshes server representatives after a companion pick, explicit choice, and Undo", async () => {
   const rows = [photo(1), photo(2), photo(3)];
+  let representativeID = "photo-1";
   stubPhotoFetch(async () =>
     Response.json({
       items: rows,
       stacks: [
-        {
-          asset_ids: ["photo-1", "photo-2", "photo-3"],
-          representative_id: "photo-1",
-          picked_ids: [],
-        },
+        { asset_ids: ["photo-1", "photo-2", "photo-3"], representative_id: representativeID },
       ],
       total: 3,
       facets: [],
@@ -3138,54 +3134,37 @@ it("patches loaded stacks from receipts and reloads only for unknown companion f
   const photos = new Photos("session", vi.fn());
   await photos.resume();
   vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
-  const representative = () =>
-    photos.items.map((row) => "stack" in row && row.stack?.representative_id);
-  // The editor holds both files of photo-2, so a pick on its companion RAW is known.
-  const jpeg = preparedPhoto(2),
-    raw = preparedPhoto(4, { asset_id: "photo-2", display_file_id: "file-2" });
-  photos.authored.targets = [
-    jpeg,
-    { ...raw, revision: 2, values: { ...raw.values, flag: "pick" } },
+  const raw = preparedPhoto(4, { asset_id: "photo-2", display_file_id: "file-2" });
+  const receipts: PhotoAuthoredReceipt[] = [
+    {
+      receipt_id: "pick",
+      before: [raw],
+      after: [{ ...raw, revision: 2, values: { ...raw.values, flag: "pick" } }],
+    },
+    {
+      receipt_id: "choose",
+      before: [],
+      after: [],
+      representatives: [{ asset_id: "photo-3", before_revision: 1, after_revision: 2, after: 7 }],
+    },
+    {
+      receipt_id: "undo",
+      before: [],
+      after: [],
+      representatives: [{ asset_id: "photo-3", before_revision: 2, after_revision: 3, before: 7 }],
+    },
   ];
-  let changes = photos.metadataChanged({
-    receipt_id: "pick",
-    before: [{ file_id: raw.file_id, node_id: 4, revision: 1, values: raw.values }],
-    after: [
-      { file_id: raw.file_id, node_id: 4, revision: 2, values: { ...raw.values, flag: "pick" } },
-    ],
-  });
-  expect(photos.reloadsAfter(changes)).toBe(false);
-  expect(representative()).toEqual(["photo-2", "photo-2", "photo-2"]);
-  changes = photos.metadataChanged({
-    receipt_id: "choose",
-    before: [],
-    after: [],
-    representatives: [{ asset_id: "photo-3", before_revision: 1, after_revision: 2, after: 7 }],
-  });
-  expect(photos.reloadsAfter(changes)).toBe(false);
-  expect(representative()).toEqual(["photo-3", "photo-3", "photo-3"]);
-  expect(photos.items[2]!.revision).toBe(2);
-  photos.metadataChanged({
-    receipt_id: "undo",
-    before: [],
-    after: [],
-    representatives: [{ asset_id: "photo-3", before_revision: 2, after_revision: 3, before: 7 }],
-  });
-  expect(representative()).toEqual(["photo-2", "photo-2", "photo-2"]);
-  photos.authored.targets = [];
-  changes = photos.metadataChanged({
-    receipt_id: "elsewhere",
-    before: [{ file_id: "unknown-raw", node_id: 9, revision: 1, values: raw.values }],
-    after: [
-      {
-        file_id: "unknown-raw",
-        node_id: 9,
-        revision: 2,
-        values: { ...raw.values, flag: "reject" },
-      },
-    ],
-  });
-  expect(photos.reloadsAfter(changes)).toBe(true);
+  for (const [index, expected] of ["photo-2", "photo-3", "photo-2"].entries()) {
+    const changes = photos.metadataChanged(receipts[index]!);
+    expect(photos.reloadsAfter(changes)).toBe(true);
+    representativeID = expected;
+    await photos.refresh();
+    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
+      expected,
+      expected,
+      expected,
+    ]);
+  }
   photos.dispose();
 });
 
@@ -3195,7 +3174,6 @@ it.each([false, true])(
     const stack = {
       asset_ids: ["photo-1", "photo-2"],
       representative_id: "photo-2",
-      picked_ids: ["photo-2"],
     };
     const rows = [photo(1), photo(2)];
     stubPhotoFetch(async () =>
@@ -3223,16 +3201,12 @@ it.each([false, true])(
       before: [jpeg],
       after: [{ ...jpeg, revision: 2, values: { ...jpeg.values, flag: "reject" } }],
     });
-    expect(photos.reloadsAfter(changes)).toBe(!held);
+    expect(photos.reloadsAfter(changes)).toBe(true);
     expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
       "photo-2",
       "photo-2",
     ]);
-    expect(photos.items.map((row) => "stack" in row && row.stack?.picked_ids)).toEqual([
-      ["photo-2"],
-      ["photo-2"],
-    ]);
-    if (!held) await photos.refresh();
+    await photos.refresh();
     expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
       "photo-2",
       "photo-2",
@@ -3265,9 +3239,7 @@ it("updates the burst gap through general settings and shows regrouped Library p
       relevance_available: false,
       burst_gap_seconds: gap,
       stacks:
-        gap === 5
-          ? [{ asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1", picked_ids: [] }]
-          : [],
+        gap === 5 ? [{ asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" }] : [],
     });
   });
   const photos = new Photos("session", vi.fn());

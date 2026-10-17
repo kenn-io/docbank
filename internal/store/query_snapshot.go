@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -69,7 +68,6 @@ type SnapshotRow struct {
 	SnapshotMember
 
 	Flag                   *string       `json:"flag,omitzero"`
-	StackID                string        `json:"stack_id,omitzero"`
 	Name                   string        `json:"name"`
 	Path                   string        `json:"path"`
 	MIMEType               string        `json:"mime_type"`
@@ -471,11 +469,6 @@ func materializeSnapshotRows(
 		return fmt.Errorf("closing query snapshot rows: %w", err)
 	}
 	projection.Total = int64(len(projection.Rows))
-	if options.Photos && compiled.Query.Sort.Field == "capture_time" {
-		if err := groupSnapshotPhotoStacks(ctx, q, compiled.photoHidden, options, projection); err != nil {
-			return err
-		}
-	}
 	if options.Photos {
 		slices.SortFunc(projection.Rows, func(a, b SnapshotRow) int { return strings.Compare(a.SortKey, b.SortKey) })
 	} else {
@@ -595,37 +588,5 @@ func chargeSnapshotMaterialization(
 		return err
 	}
 	*used += bytes
-	return nil
-}
-
-// groupSnapshotPhotoStacks marks each captured burst with its first frame's
-// asset ID, using only the captured members.
-func groupSnapshotPhotoStacks(ctx context.Context, q metadataQuerier, hidden bool, options snapshotMaterializeOptions, projection *SnapshotProjection) error {
-	settings, err := photoSettingsTx(ctx, q)
-	if err != nil {
-		return err
-	}
-	ids := make([]string, len(projection.Rows))
-	for i, row := range projection.Rows {
-		ids[i] = row.AssetID
-	}
-	frames, err := photoStackFrames(ctx, q, ids, hidden)
-	if err != nil {
-		return err
-	}
-	stacks := map[string]string{}
-	for _, group := range groupPhotoStackFrames(slices.Collect(maps.Values(frames)), settings.BurstGapSeconds) {
-		for _, frame := range group {
-			stacks[frame.AssetID] = group[0].AssetID
-		}
-	}
-	for i := range projection.Rows {
-		row := &projection.Rows[i]
-		if row.StackID = stacks[row.AssetID]; row.StackID != "" {
-			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, int64(len(`,"stack_id":""`)+len(row.StackID))); err != nil {
-				return err
-			}
-		}
-	}
 	return nil
 }

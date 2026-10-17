@@ -306,10 +306,7 @@ it.each(["collapsed", "expanded", "selected"])(
     const photos = new Photos("session", vi.fn());
     photos.items = rows.map((row, i) => ({
       ...row,
-      stack:
-        i < 3
-          ? { asset_ids: ids.slice(0, 3), representative_id: ids[1]!, picked_ids: [] }
-          : undefined,
+      stack: i < 3 ? { asset_ids: ids.slice(0, 3), representative_id: ids[1]! } : undefined,
     }));
     if (mode === "expanded") photos.toggleStack(ids[1]!);
     if (mode === "selected") {

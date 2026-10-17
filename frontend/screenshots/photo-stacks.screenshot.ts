@@ -84,6 +84,9 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
       cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
     ).toBeVisible();
     await expect(cull.locator(".photo-stage img")).toBeVisible();
+    await expect(
+      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
+    ).toBeEnabled();
     const first = await cull.locator("header strong").innerText();
     await page.keyboard.press("j");
     await expect(cull.locator("header strong")).not.toHaveText(first);
@@ -91,8 +94,14 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     await expect(cull.locator("header strong")).toHaveText(first);
     await page.keyboard.press("l");
     await expect(cull.locator("header strong")).not.toHaveText(first);
+    await expect(
+      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
+    ).toBeEnabled();
     await page.keyboard.press("h");
     await expect(cull.locator("header strong")).toHaveText(first);
+    await expect(
+      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
+    ).toBeEnabled();
     await expect(cull.locator(".stack-divider").first()).toBeVisible();
     await page.screenshot({
       path: path.join(output!, "web-photo-cull-stacks.png"),
