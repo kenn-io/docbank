@@ -65,7 +65,7 @@ export function lookupPhotoRows<Row extends { asset_id: string }>(
   signal: AbortSignal | undefined,
   onprogress: ((loaded: number, total: number) => void) | undefined,
   hidden: boolean,
-  read: (batch: string[], signal: AbortSignal) => Promise<{ items: Row[] }>,
+  project: (row: PhotoBrowseRow) => Row,
 ): Promise<Row[]>;
 export async function lookupPhotoRows(
   session: string,
@@ -73,7 +73,7 @@ export async function lookupPhotoRows(
   signal?: AbortSignal,
   onprogress?: (loaded: number, total: number) => void,
   hidden = false,
-  read?: (batch: string[], signal: AbortSignal) => Promise<{ items: { asset_id: string }[] }>,
+  project?: (row: PhotoBrowseRow) => { asset_id: string },
 ): Promise<{ asset_id: string }[]> {
   const controller = new AbortController();
   signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -86,18 +86,16 @@ export async function lookupPhotoRows(
         while (offset < ids.length) {
           signal?.throwIfAborted();
           const batch = ids.slice(offset, (offset += 64));
-          const page = read
-            ? await read(batch, signal!)
-            : await listPhotoAssets(
-                {
-                  query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
-                  page_size: 250,
-                  hidden,
-                },
-                { session, signal },
-              );
+          const page = await listPhotoAssets(
+            {
+              query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+              page_size: 250,
+              hidden,
+            },
+            { session, signal },
+          );
           signal?.throwIfAborted();
-          rows.push(...page.items);
+          rows.push(...(project ? page.items.map(project) : page.items));
           loaded += batch.length;
           onprogress?.(loaded, ids.length);
         }

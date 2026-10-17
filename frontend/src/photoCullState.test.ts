@@ -40,6 +40,24 @@ function browsePage(rows: api.PhotoBrowseRow[], request: api.PhotoBrowseRequest)
   );
   return { items, total: items.length, facets: [], relevance_available: false };
 }
+
+it("retains only asset IDs and flags from a cull flag refresh", async () => {
+  const rows = [photo(1), { ...photo(2), flag: "pick" as const }];
+  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
+    Response.json(await snapshot(rows.map((row) => row.asset_id))),
+  );
+  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => browsePage(rows, request));
+  const lookup = vi.spyOn(photoQueries, "lookupPhotoRows");
+  const cull = new PhotoCull("session", storage());
+  await cull.start(query);
+  await cull.nextPass(false, () => true);
+  expect(cull.run?.checkpoint.pass).toEqual([rows[1]!.asset_id]);
+  expect(lookup).toHaveBeenCalledOnce();
+  expect(await lookup.mock.results[0]!.value).toEqual([
+    { asset_id: "00000000-0000-4000-8000-000000000001", flag: "" },
+    { asset_id: "00000000-0000-4000-8000-000000000002", flag: "pick" },
+  ]);
+});
 it("probes saved headers and replaces a run without loading its membership", async () => {
   const store = storage(),
     original = new PhotoCull("session", store);
