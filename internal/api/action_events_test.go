@@ -36,7 +36,10 @@ func newActionCollector(t *testing.T) *actionCollector {
 	}))
 	t.Cleanup(server.Close)
 	var err error
-	c.reporter, err = posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: server.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"}, posthog.WithAllowedEvent("document_added", posthog.RequireProperty("surface", posthog.AllowStringValues("web", "cli"))), posthog.WithAllowedEvent("screen_viewed", posthog.RequireProperty("screen", posthog.AllowStringValues("browse")), posthog.RequireProperty("surface", posthog.AllowStringValues("web"))))
+	c.reporter, err = posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: server.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"}, posthog.WithAllowedEvent("document_added", posthog.RequireProperty("surface", posthog.AllowStringValues("web", "cli"))),
+		posthog.WithAllowedEvent("screen_viewed", posthog.RequireProperty("screen", posthog.AllowStringValues("browse")), posthog.RequireProperty("surface", posthog.AllowStringValues("web"))),
+		posthog.WithAllowedEvent("search_run", posthog.RequireProperty("surface", posthog.AllowStringValues("web", "tui", "cli")), posthog.RequireProperty("search_type", posthog.AllowStringValues("text", "semantic", "hybrid"))),
+		posthog.WithAllowedEvent("document_opened", posthog.RequireProperty("surface", posthog.AllowStringValues("web", "tui", "cli"))))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.reporter.Close()) })
 	c.capture = telemetry.CaptureHandler(c.reporter, t.TempDir())

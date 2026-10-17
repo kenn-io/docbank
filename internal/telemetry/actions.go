@@ -3,7 +3,10 @@ package telemetry
 import (
 	_ "embed"
 	"encoding/json/v2"
+	"slices"
 )
+
+const maxTrackedImports = 256
 
 //go:embed search_types.json
 var searchTypesJSON []byte
@@ -35,6 +38,9 @@ func (c *Capture) DocumentAdded(surface string) {
 // TrackImport remembers the interface that started import id while this
 // daemon runs. A later call for the same id keeps the first surface, and a
 // restart forgets every import, so resumed work reports nothing.
+// The registry keeps at most 256 entries. Under pressure it evicts the oldest
+// completed claim, or drops new attribution while every entry is active.
+// An evicted ID can count again if its client submits more additions later.
 func (c *Capture) TrackImport(id, surface string) {
 	if c == nil || id == "" || surface == "" {
 		return
@@ -44,9 +50,17 @@ func (c *Capture) TrackImport(id, surface string) {
 	if c.imports == nil {
 		c.imports = make(map[string]string)
 	}
-	if _, ok := c.imports[id]; !ok {
-		c.imports[id] = surface
+	if _, ok := c.imports[id]; ok {
+		return
 	}
+	if len(c.imports) >= maxTrackedImports {
+		if len(c.completedImports) == 0 {
+			return
+		}
+		delete(c.imports, c.completedImports[0])
+		c.completedImports = c.completedImports[1:]
+	}
+	c.imports[id] = surface
 }
 
 // ImportAdded reports the first new document of a tracked import once, even
@@ -59,6 +73,7 @@ func (c *Capture) ImportAdded(id string) {
 	surface := c.imports[id]
 	if surface != "" {
 		c.imports[id] = ""
+		c.completedImports = append(c.completedImports, id)
 	}
 	c.importsMu.Unlock()
 	if surface != "" {
@@ -74,4 +89,7 @@ func (c *Capture) ForgetImport(id string) {
 	c.importsMu.Lock()
 	defer c.importsMu.Unlock()
 	delete(c.imports, id)
+	if index := slices.Index(c.completedImports, id); index >= 0 {
+		c.completedImports = slices.Delete(c.completedImports, index, index+1)
+	}
 }

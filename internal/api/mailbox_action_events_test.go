@@ -104,11 +104,40 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 			}
 			response, body := do(t, server, http.MethodPost, "/api/v1/mailbox/jobs", headers, request)
 			require.Equal(t, http.StatusCreated, response.StatusCode, body)
-			_, err = catalog.ClaimMailboxJob(t.Context())
+			synctest.Test(t, func(t *testing.T) {
+				claimed, release := make(chan struct{}), make(chan struct{})
+				first := true
+				service.Mutate = func(_ context.Context, fn func() error) error {
+					err := fn()
+					if first {
+						first = false
+						close(claimed)
+						<-release
+					}
+					return err
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- service.RunWorker(ctx) }()
+				<-claimed
+				canceled := httptest.NewRecorder()
+				r := httptest.NewRequest(http.MethodPost, server.URL+"/api/v1/mailbox/jobs/synthetic-job/cancel", nil)
+				r.Header.Set("X-Api-Key", testAPIKey)
+				catalog.Server.Handler().ServeHTTP(canceled, r)
+				require.Equal(t, http.StatusNoContent, canceled.Code, canceled.Body.String())
+				close(release)
+				synctest.Wait()
+				cancel()
+				require.ErrorIs(t, <-done, context.Canceled)
+			})
+			service.Mutate = nil
+			paused, err := catalog.MailboxJob(t.Context(), owner, request.ID)
 			require.NoError(t, err)
-			response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/cancel", nil, nil)
-			require.Equal(t, http.StatusNoContent, response.StatusCode, body)
-			if origin != "cli" {
+			require.Zero(t, paused.Checkpoint)
+			require.Empty(t, capture.events)
+			headers = map[string]string{"X-Docbank-Surface": "cli"}
+			if origin == "cli" || origin == "observed" {
 				headers = map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, server)}
 			}
 			response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/resume", headers, api.MailboxResumeInput{Request: request})

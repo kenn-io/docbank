@@ -356,6 +356,7 @@ const screenRetryDelay = 30 * time.Second
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
 	reportedDay   string
+	inspectionDay string
 	screenRetryAt time.Time
 	ctx           context.Context
 	backend       Backend
@@ -847,7 +848,8 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.processingRendition = &msg.rendition
 			m.wrapProcessingRendition()
-			return m, m.reportAction("document_opened", "")
+			cmd := m.reportAction("document_opened", "")
+			return m, cmd
 		}
 		return m, nil
 	case trashLoadedMsg:
@@ -1460,6 +1462,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	inspection := false
 	switch msg.String() {
 	case "q", keyCtrlC:
 		m.cancelProcessingStream()
@@ -1535,20 +1538,26 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.processingRenditionID++
 		return m, tea.Batch(m.startSpinner(), m.loadProcessingRendition(*m.processingPlan, m.processingRequestID))
 	case "up", "k":
+		inspection = true
 		m.processingOffset--
 		m.clampProcessingOffset()
 	case keyDown, "j":
+		inspection = true
 		m.processingOffset++
 		m.clampProcessingOffset()
 	case keyPageUp:
+		inspection = true
 		m.processingOffset -= m.processingViewportHeight()
 		m.clampProcessingOffset()
 	case keyPageDown:
+		inspection = true
 		m.processingOffset += m.processingViewportHeight()
 		m.clampProcessingOffset()
 	case keyHome, "g":
+		inspection = true
 		m.processingOffset = 0
 	case keyEnd, "G":
+		inspection = true
 		m.processingOffset = max(len(m.processingLines(m.width))-m.processingViewportHeight(), 0)
 	case "/":
 		if m.processingPlan == nil {
@@ -1558,6 +1567,10 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetValue("")
 		m.searchInput.Placeholder = "search this exact document version"
 		return m, m.searchInput.Focus()
+	}
+	if inspection && m.processingRendition != nil {
+		cmd := m.reportAction("document_opened", "")
+		return m, cmd
 	}
 	return m, nil
 }
@@ -1725,6 +1738,7 @@ func (m Model) updateHistoryDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 }
 
 func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	inspection := false
 	switch msg.String() {
 	case "q", keyCtrlC:
 		m.quitting = true
@@ -1737,21 +1751,31 @@ func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.detailOffset = 0
 		m.detailRequestID++
 	case "up", "k":
+		inspection = true
 		m.detailOffset--
 		m.clampDetailOffset()
 	case keyDown, "j":
+		inspection = true
 		m.detailOffset++
 		m.clampDetailOffset()
 	case keyPageUp:
+		inspection = true
 		m.detailOffset -= m.detailViewportHeight()
 		m.clampDetailOffset()
 	case keyPageDown:
+		inspection = true
 		m.detailOffset += m.detailViewportHeight()
 		m.clampDetailOffset()
 	case keyHome, "g":
+		inspection = true
 		m.detailOffset = 0
 	case keyEnd, "G":
+		inspection = true
 		m.detailOffset = max(len(m.expandedDetailLines(m.width))-m.detailViewportHeight(), 0)
+	}
+	if inspection && m.detailNode.node.Kind == "file" {
+		cmd := m.reportAction("document_opened", "")
+		return m, cmd
 	}
 	return m, nil
 }
@@ -3130,7 +3154,14 @@ func (m Model) visibleScreen() string {
 	}
 }
 
-func (m Model) reportAction(event, value string) tea.Cmd {
+func (m *Model) reportAction(event, value string) tea.Cmd {
+	if event == "document_opened" {
+		day := time.Now().UTC().Format(time.DateOnly)
+		if m.inspectionDay == day {
+			return nil
+		}
+		m.inspectionDay = day
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.ctx, 100*time.Millisecond)
 		defer cancel()

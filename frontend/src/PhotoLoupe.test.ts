@@ -138,16 +138,30 @@ it.each(["wheel", "i", "pointerdown"])(
     const inspect = vi.fn();
     vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
     const { props } = setup();
-    render(PhotoLoupe, props);
+    const view = render(PhotoLoupe, props);
     await screen.findByText("Fit preview");
     expect(inspect).not.toHaveBeenCalled();
     const dialog = screen.getByRole("dialog");
-    if (gesture === "wheel") await fireEvent.wheel(dialog, { deltaY: 100 });
+    const viewport = view.container.querySelector(".photo-viewport")!;
+    if (gesture === "wheel") await fireEvent.wheel(viewport, { deltaY: 100 });
     else if (gesture === "i") await fireEvent.keyDown(dialog, { key: "i" });
-    else await fireEvent.pointerDown(dialog);
+    else await fireEvent.pointerDown(viewport);
     expect(inspect).toHaveBeenCalledOnce();
   },
 );
+
+it("closes without reporting an inspection", async () => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+  const { props } = setup();
+  render(PhotoLoupe, props);
+  await screen.findByText("Fit preview");
+  const close = screen.getByRole("button", { name: "Close photo viewer" });
+  await fireEvent.pointerDown(close);
+  await fireEvent.click(close);
+  expect(props.onclose).toHaveBeenCalledOnce();
+  expect(inspect).not.toHaveBeenCalled();
+});
 
 it.each([
   ["ArrowLeft", -1],

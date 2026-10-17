@@ -126,8 +126,13 @@ func TestCaptureClassifiesSearchesAndClaimsAcrossInterfacesRestartsAndDays(t *te
 		id := "synthetic-import-" + surface
 		handler.TrackImport(id, surface)
 		handler.TrackImport(id, "web")
-		handler.ImportAdded(id)
-		handler.ImportAdded(id)
+		for range 12 {
+			wg.Go(func() {
+				handler.TrackImport(id, "web")
+				handler.ImportAdded(id)
+			})
+		}
+		wg.Wait()
 		handler.TrackImport(id, "web")
 		handler.ImportAdded(id)
 		handler.ForgetImport(id)
@@ -218,4 +223,32 @@ func TestCaptureClassifiesSearchesAndClaimsAcrossInterfacesRestartsAndDays(t *te
 		"search_run/tui/text": 1, "search_run/tui/semantic": 1, "search_run/tui/hybrid": 1,
 		"search_run/cli/text": 1, "search_run/cli/semantic": 1, "search_run/cli/hybrid": 1,
 	}, counts)
+}
+
+func TestImportClaimsBoundCompletedRunsAndPreserveActiveOrigins(t *testing.T) {
+	t.Setenv(EnabledEnv, "0")
+	reporter := New(Options{Dir: t.TempDir()})
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+	handler := CaptureHandler(reporter, t.TempDir())
+	handler.TrackImport("active-mailbox", "web")
+	for i := range maxTrackedImports * 2 {
+		id := fmt.Sprintf("push:synthetic-run-%d", i)
+		handler.TrackImport(id, "cli")
+		handler.ImportAdded(id)
+		handler.TrackImport(id, "web")
+		handler.ImportAdded(id)
+		require.Contains(t, handler.imports, id)
+		require.Empty(t, handler.imports[id])
+		require.LessOrEqual(t, len(handler.imports), maxTrackedImports)
+		require.LessOrEqual(t, len(handler.completedImports), maxTrackedImports-1)
+	}
+	require.Equal(t, "web", handler.imports["active-mailbox"])
+	handler.ForgetImport("active-mailbox")
+	for i := range maxTrackedImports {
+		handler.TrackImport(fmt.Sprintf("active-%d", i), "cli")
+	}
+	handler.TrackImport("overflow", "web")
+	require.NotContains(t, handler.imports, "overflow")
+	require.Len(t, handler.imports, maxTrackedImports)
+	require.Empty(t, handler.completedImports)
 }

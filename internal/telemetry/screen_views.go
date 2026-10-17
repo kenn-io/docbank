@@ -50,8 +50,9 @@ type Capture struct {
 	now      func() time.Time
 	claims   screenClaims
 
-	importsMu sync.Mutex
-	imports   map[string]string // import ID to admitting surface; "" once claimed
+	importsMu        sync.Mutex
+	imports          map[string]string // import ID to admitting surface; "" once claimed
+	completedImports []string
 }
 
 // CaptureHandler serves interface events with shared validation and claims.

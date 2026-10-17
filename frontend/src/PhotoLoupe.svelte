@@ -376,8 +376,12 @@
   aria-label={photo ? `Photo viewer, ${photo.name}` : "Photo viewer"}
   tabindex="-1"
   onkeydown={key}
-  onpointerdown={inspect}
-  onwheel={inspect}
+  onpointerdown={(event) => {
+    if ((event.target as Element).closest(".photo-viewport")) inspect();
+  }}
+  onwheel={(event) => {
+    if ((event.target as Element).closest(".photo-viewport")) inspect();
+  }}
   {@attach trapFocus}
 >
   <header class="loupe-toolbar">

@@ -1617,6 +1617,51 @@ func TestExpandedDetailReportsInspectionAndExposesCompleteAuthority(t *testing.T
 	assert.False(t, model.detailOpen)
 }
 
+func TestInspectionScrollReportsAgainAfterUTCDateChanges(t *testing.T) {
+	for _, tc := range []struct {
+		view   string
+		scroll tea.KeyPressMsg
+	}{
+		{"detail", runeKey('j')}, {"detail", runeKey('k')}, {"detail", key(tea.KeyPgDown)},
+		{"rendition", runeKey('j')}, {"rendition", runeKey('k')}, {"rendition", key(tea.KeyPgDown)},
+	} {
+		t.Run(tc.view+"/"+tc.scroll.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				backend := newFakeBackend()
+				model, err := New(t.Context(), backend)
+				require.NoError(t, err)
+				model.width, model.height = 80, 12
+				var cmd tea.Cmd
+				if tc.view == "detail" {
+					model.rows = []row{{node: api.Node{ID: 3, Kind: "file", Name: "report.txt"}}}
+					model, cmd = updateModel(t, model, key(tea.KeyEnter))
+				} else {
+					model.processingOpen = true
+					model, cmd = updateModel(t, model, processingRenditionLoadedMsg{
+						requestID: model.processingRequestID, renditionID: model.processingRenditionID,
+						rendition: Rendition{Markdown: strings.Repeat("Synthetic document line.\n", 80)},
+					})
+				}
+				model = runModelCommand(t, model, cmd)
+				require.Equal(t, [][2]string{{"document_opened", ""}}, backend.actions)
+				model, cmd = updateModel(t, model, tc.scroll)
+				if cmd != nil {
+					model = runModelCommand(t, model, cmd)
+				}
+				require.Len(t, backend.actions, 1)
+				time.Sleep(24 * time.Hour)
+				for range 3 {
+					model, cmd = updateModel(t, model, tc.scroll)
+					if cmd != nil {
+						model = runModelCommand(t, model, cmd)
+					}
+				}
+				require.Equal(t, [][2]string{{"document_opened", ""}, {"document_opened", ""}}, backend.actions)
+			})
+		})
+	}
+}
+
 func TestProcessingRunErrorPreservesCoverage(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
