@@ -421,6 +421,15 @@ func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *test
 	assert.Equal(t, last.CurrentVersionID, refreshedLast.Rows[0].ContentVersionID)
 }
 
+func TestWorkspacePhotoSnapshotRejectsFacets(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	headers := map[string]string{"X-Api-Key": testAPIKey}
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, `{"photos":true,"query":{},"facets":["flag"]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	assert.Equal(t, "validation", decodeProblem(t, body).Code)
+}
+
 func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
