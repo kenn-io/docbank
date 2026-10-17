@@ -676,3 +676,68 @@ it.each(["left at first", "current thumbnail", "right after completion", "next p
     expect(other.error).toContain("Close and resume it.");
   },
 );
+
+it("reads a pass remainder once until a flag change and lets Previous cancel the read", async () => {
+  const rows = [photo(1), photo(2)],
+    ids = rows.map((row) => row.asset_id);
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(Response.json(await snapshot(ids)));
+  const list = vi
+    .spyOn(api, "listPhotoAssets")
+    .mockImplementation(async (request) => browsePage(rows, request));
+  const cull = new PhotoCull("session", storage());
+  await cull.start(query);
+  cull.move(1);
+  cull.move(1);
+  await cull.checkRemainder();
+  await cull.checkRemainder();
+  expect(list).toHaveBeenCalledOnce();
+  expect(cull.remainder).toBe(true);
+  rows[0]!.flag = "pick";
+  rows[1]!.flag = "pick";
+  cull.flagsChanged();
+  await cull.checkRemainder();
+  expect(list).toHaveBeenCalledTimes(2);
+  expect(cull.remainder).toBe(false);
+
+  cull.flagsChanged();
+  list.mockImplementation(
+    (_request, options) =>
+      new Promise((_resolve, reject) =>
+        options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason)),
+      ),
+  );
+  const pending = cull.checkRemainder();
+  await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(3));
+  expect(cull.checkingRemainder).toBe(true);
+  cull.move(-1);
+  await pending;
+  expect(list.mock.calls[2]![1]!.signal!.aborted).toBe(true);
+  expect(cull.currentID).toBe(ids[1]);
+  expect(cull.busy).toBe(false);
+  expect(cull.error).toBe("");
+});
+
+it("verifies a decision against progress queued before the check", async () => {
+  const ids = [photo(1).asset_id, photo(2).asset_id],
+    store = storage();
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(Response.json(await snapshot(ids)));
+  const cull = new PhotoCull("session", store);
+  await cull.start(query);
+  await cull.flush();
+  const read = photoCullStorage("synthetic-vault").saved;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.mocked(store.saved).mockImplementationOnce(async () => {
+    const saved = await read();
+    await gate;
+    return saved;
+  });
+  const verified = cull.verifyDecision();
+  await vi.waitFor(() => expect(store.saved).toHaveBeenCalled());
+  cull.unavailable(ids[1]!);
+  release();
+  expect(await verified).toBe(true);
+  await cull.flush();
+  expect(cull.stale).toBe(false);
+  expect((await store.load())!.checkpoint.unavailable).toEqual([ids[1]]);
+});

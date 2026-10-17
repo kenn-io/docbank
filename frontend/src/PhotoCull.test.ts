@@ -710,6 +710,9 @@ it("keeps shown-file narrowing on retry and resets it for a fresh decision", asy
       "Photo 1.jpg: pick (shown file only)",
     ),
   );
+  expect(screen.getByRole("alert").textContent?.trim()).toBe(
+    "Photo 1.jpg: changed only the shown file. Its paired file has a different flag.",
+  );
   expect(edit.mock.calls[1]![0]).toEqual(edit.mock.calls[0]![0]);
   await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "4" });
   await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));

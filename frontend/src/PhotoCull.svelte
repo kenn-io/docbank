@@ -174,13 +174,14 @@
     photos.metadataChanged(receipt);
     reconcile(receipt.after);
     if (
-      cull.complete &&
       receipt.after.some((after) => {
         const before = receipt.before.find((before) => before.file_id === after.file_id);
         return before && before.values.flag !== after.values.flag;
       })
-    )
-      await cull.checkRemainder();
+    ) {
+      cull.flagsChanged();
+      if (cull.complete) await cull.checkRemainder();
+    }
   }
   function reconcile(targets: PhotoAuthoredSnapshot[]) {
     const updated = (row: PhotoBrowseRow) => {
@@ -238,7 +239,11 @@
       patch.flag !== undefined
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
         : `${selected.name}: ${patch.rating} stars`;
-    if (editor.fileID) announcement += " (shown file only)";
+    if (editor.fileID) {
+      announcement += " (shown file only)";
+      editor.noticeTone = "warning";
+      editor.notice = `${selected.name}: changed only the shown file. Its paired file has a different ${patch.flag !== undefined ? "flag" : "rating"}.`;
+    }
     if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   async function retryDecision() {
@@ -356,8 +361,9 @@
               disabled={cull.busy || cull.stale || busy}
               onclick={() => void nextPass(true)}>Review unflagged remainder</Button
             >{/if}
-          <Button disabled={busy || cull.busy || cull.stale} onclick={() => move(-1)}
-            >Previous</Button
+          <Button
+            disabled={busy || (cull.busy && !cull.checkingRemainder) || cull.stale}
+            onclick={() => move(-1)}>Previous</Button
           >
           <Button disabled={busy} onclick={close}>Back to photos</Button>
         </section>

@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
-import { IDBFactory, IDBKeyRange, IDBDatabase } from "fake-indexeddb";
+import { IDBFactory, IDBKeyRange, IDBDatabase, IDBObjectStore } from "fake-indexeddb";
 import { idbRequest, transactionDone } from "./indexedDB.js";
 import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
 
@@ -137,4 +137,30 @@ it("refuses a newer saved format until its replacement is authorized", async () 
   } finally {
     db.close();
   }
+});
+
+it("cancels a replacement mid-read without an unhandled rejection", async () => {
+  const store = photoCullStorage("vault-a");
+  await store.replace(run());
+  const expected = await store.saved();
+  const controller = new AbortController();
+  const get = IDBObjectStore.prototype.get;
+  vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(
+    function (this: IDBObjectStore, key) {
+      const request = get.call(this, key);
+      controller.abort();
+      return request;
+    },
+  );
+  const unhandled = vi.fn();
+  process.on("unhandledRejection", unhandled);
+  try {
+    await expect(store.replace(run("other"), controller.signal, expected)).rejects.toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    process.off("unhandledRejection", unhandled);
+    vi.restoreAllMocks();
+  }
+  expect(unhandled).not.toHaveBeenCalled();
+  expect((await store.load())?.checkpoint.runID).toBe("run");
 });

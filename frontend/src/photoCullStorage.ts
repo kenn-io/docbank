@@ -50,6 +50,13 @@ export const sameCheckpoint = (
   b: Pick<CullCheckpoint, "runID" | "revision">,
 ) => a.runID === b.runID && a.revision === b.revision;
 
+// A failed request rejects before anyone awaits completion; keep that rejection handled.
+function settled(tx: IDBTransaction) {
+  const done = transactionDone(tx);
+  done.catch(() => {});
+  return done;
+}
+
 const stores = ["members", "checkpoints", "markers"];
 const markerKinds: MarkerKind[] = ["visited", "skipped", "unavailable"];
 const header = ({
@@ -90,7 +97,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
       const db = await open();
       try {
         const tx = db.transaction("checkpoints", "readonly"),
-          done = transactionDone(tx);
+          done = settled(tx);
         const saved = await idbRequest<StoredHeader | undefined>(
           tx.objectStore("checkpoints").get(vaultID),
         );
@@ -105,7 +112,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
       const db = await open();
       try {
         const tx = db.transaction(stores, "readonly"),
-          done = transactionDone(tx);
+          done = settled(tx);
         const [membership, saved, keys, values] = await Promise.all([
           idbRequest<{ ids: string[]; pass: string[] } | undefined>(
             tx.objectStore("members").get(vaultID),
@@ -137,7 +144,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
       const db = await open();
       try {
         const tx = db.transaction(stores, "readwrite"),
-          done = transactionDone(tx);
+          done = settled(tx);
         const cancel = () => tx.abort();
         signal?.addEventListener("abort", cancel, { once: true });
         try {
@@ -170,7 +177,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
       const db = await open();
       try {
         const tx = db.transaction(value.pass ? stores : ["checkpoints", "markers"], "readwrite"),
-          done = transactionDone(tx);
+          done = settled(tx);
         const store = tx.objectStore("checkpoints");
         const current = await idbRequest<StoredHeader | undefined>(store.get(vaultID));
         if (
