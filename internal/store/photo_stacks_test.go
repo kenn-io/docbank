@@ -49,17 +49,6 @@ func burstPhotos(t *testing.T, s *Store, count int) []string {
 	return ids
 }
 
-func stackTargets(t *testing.T, s *Store, ids []string) []PhotoAuthoredEditTarget {
-	t.Helper()
-	prepared, err := s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
-	require.NoError(t, err)
-	targets := make([]PhotoAuthoredEditTarget, len(prepared.Targets))
-	for i, target := range prepared.Targets {
-		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
-	}
-	return targets
-}
-
 func stackIndexes(t *testing.T, s *Store, ids []string) [][]int {
 	t.Helper()
 	groups, unavailable, _, err := s.PhotoStackGroups(t.Context(), ids, false)
@@ -106,6 +95,54 @@ func rowIDs(rows []PhotoBrowseRow) []string {
 		ids[i] = row.AssetID
 	}
 	return ids
+}
+
+func TestPhotoStackRelevancePage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic ranked bursts")
+	require.NoError(t, err)
+	first := stackPhoto(t, s, run, "/shots/frame-1.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond)
+	single := stackPhoto(t, s, run, "/other/frame-2.jpg", "2024-06-10T12:00:01Z", document.SourceMetadataPrecisionSecond)
+	last := stackPhoto(t, s, run, "/shots/frame-3.jpg", "2024-06-10T12:00:02Z", document.SourceMetadataPrecisionSecond)
+	request := PhotoBrowseRequest{Stacks: true, PageSize: 3, Query: snapshotTestQuery(t, `{"text":"frame","sort":{"field":"relevance","direction":"desc"}}`)}
+	page, err := s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{last, first, single}, rowIDs(page.Items))
+	require.Equal(t, []PhotoStack{{AssetIDs: []string{first, last}, RepresentativeID: first}}, page.Stacks)
+	require.Nil(t, page.Next)
+
+	// Relevance has a single bounded page. A sibling outside it stays out of
+	// both the shown stack and the decision membership.
+	request.PageSize = 2
+	page, err = s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{last, single}, rowIDs(page.Items))
+	require.Empty(t, page.Stacks)
+	require.EqualValues(t, 3, page.Total)
+
+	groups, unavailable, _, err := s.PhotoStackGroups(t.Context(), []string{last, single, first}, false)
+	require.NoError(t, err)
+	require.Empty(t, unavailable)
+	require.Equal(t, [][]string{{last, first}}, groups)
+}
+
+func TestPhotoStackOtherKeysetSortsKeepIndividualRows(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ids := burstPhotos(t, s, 3)
+	for _, field := range []string{"name", "import_time"} {
+		t.Run(field, func(t *testing.T) {
+			request := PhotoBrowseRequest{Stacks: true, PageSize: 1, Query: snapshotTestQuery(t, `{"sort":{"field":"`+field+`","direction":"asc"}}`)}
+			pages, stacks := stackPages(t, s, request)
+			require.Empty(t, stacks)
+			require.Len(t, pages, 3)
+			for _, page := range pages {
+				require.Len(t, page, 1)
+			}
+			require.ElementsMatch(t, ids, slices.Concat(pages...))
+		})
+	}
 }
 
 func TestPhotoStackDescendingTimestampTies(t *testing.T) {
@@ -545,7 +582,7 @@ func TestPhotoStackPagesCapConnectedRuns(t *testing.T) {
 		require.Len(t, items[0], 500)
 		require.Len(t, stacks, 1)
 	}
-	receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[:500], Targets: stackTargets(t, s, ids[:500]), CurrentID: ids[0], Decision: "all"})
+	receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[:500], Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[:500], Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "all"})
 	require.NoError(t, err)
 	require.Len(t, receipt.After, 500)
 }
@@ -574,7 +611,7 @@ func TestPhotoStackFileLimit(t *testing.T) {
 	require.Equal(t, [][]int{indexes}, stackIndexes(t, s, ids))
 	_, err = s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: ids})
 	require.ErrorIs(t, err, ErrPhotoEditFileLimit)
-	targets := stackTargets(t, s, ids)
+	targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 	require.Len(t, targets, 1002)
 	receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, CurrentID: ids[0], Decision: "all"})
 	require.NoError(t, err)
@@ -590,7 +627,7 @@ func TestPhotoStackFileLimit(t *testing.T) {
 		_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, node.ID, PhotoRoleRAW, nil)
 		require.NoError(t, err)
 		if i == 1999 {
-			for chunk := range slices.Chunk(stackTargets(t, s, ids), 1000) {
+			for chunk := range slices.Chunk(preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), 1000) {
 				edits := make([]PhotoAuthoredTarget, len(chunk))
 				for j, target := range chunk {
 					edits[j] = PhotoAuthoredTarget{FileID: target.FileID, Revision: target.Revision, Patch: PhotoAuthoredPatch{Creator: new(strings.Repeat("c", 100)), Copyright: new(strings.Repeat("r", 100))}}
@@ -598,7 +635,7 @@ func TestPhotoStackFileLimit(t *testing.T) {
 				_, err = editPhotoAuthored(t.Context(), s, edits)
 				require.NoError(t, err)
 			}
-			targets = stackTargets(t, s, ids)
+			targets = preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 			require.Len(t, targets, 2000)
 			receipt, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, CurrentID: ids[0], Decision: "all"})
 			require.NoError(t, err)
@@ -629,9 +666,9 @@ func TestPhotoStackDecisionsAndUndo(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
 			ids := burstPhotos(t, s, 3)
-			_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: stackTargets(t, s, ids[:1]), Patch: PhotoAuthoredPatch{Flag: new(tc.seed)}})
+			_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[:1], Limit: MaxPhotoStackTargets}), Patch: PhotoAuthoredPatch{Flag: new(tc.seed)}})
 			require.NoError(t, err)
-			request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: tc.decision, CurrentID: ids[1], SelectedIDs: []string{ids[2]}}
+			request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: tc.decision, CurrentID: ids[1], SelectedIDs: []string{ids[2]}}
 			receipt, err := s.DecidePhotoStack(t.Context(), request)
 			require.NoError(t, err)
 			require.NotEmpty(t, receipt.ReceiptID)
@@ -648,7 +685,7 @@ func TestPhotoStackDecisionsAndUndo(t *testing.T) {
 				return result
 			}
 			require.Equal(t, tc.want, flags())
-			request.Targets = stackTargets(t, s, ids)
+			request.Targets = preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 			noop, err := s.DecidePhotoStack(t.Context(), request)
 			require.NoError(t, err)
 			require.Empty(t, noop.ReceiptID)
@@ -664,7 +701,7 @@ func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 3)
-	targets := stackTargets(t, s, ids)
+	targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[:2], Targets: targets, Decision: "current", CurrentID: ids[0]}
 	_, err := s.DecidePhotoStack(t.Context(), request)
 	require.ErrorIs(t, err, ErrStalePhotoStack)
@@ -703,7 +740,7 @@ func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "reject", kept.Files[0].Flag)
 	// A wider gap leaves membership intact, so only the observed-gap precondition refuses it.
-	request = PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "all"}
+	request = PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "all"}
 	_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: new(5)})
 	require.NoError(t, err)
 	_, err = s.DecidePhotoStack(t.Context(), request)
@@ -722,7 +759,7 @@ func TestPhotoStackAuditsOneDecisionAndRollsBackTogether(t *testing.T) {
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 3)
 	seedInitialAuditAuthority(t, s, s.RootID())
-	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: "current", CurrentID: ids[1]}
+	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "current", CurrentID: ids[1]}
 	receipt, err := s.DecidePhotoStack(t.Context(), request)
 	require.NoError(t, err)
 	require.Len(t, receipt.After, 3)
@@ -733,7 +770,7 @@ func TestPhotoStackAuditsOneDecisionAndRollsBackTogether(t *testing.T) {
 	}
 	_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
 	require.NoError(t, err)
-	request.Targets = stackTargets(t, s, ids)
+	request.Targets = preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 	_, err = s.db.Exec(`CREATE TRIGGER reject_stack_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced stack audit failure'); END`)
 	require.NoError(t, err)
 	_, err = s.DecidePhotoStack(t.Context(), request)
@@ -764,7 +801,7 @@ func TestPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T) {
 			rawFlag := "pick"
 			_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: rawFile.ID, Revision: rawFile.Revision, Patch: PhotoAuthoredPatch{Flag: new(rawFlag)}}})
 			require.NoError(t, err)
-			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: decision, CurrentID: ids[1], SelectedIDs: ids[1:]})
+			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: decision, CurrentID: ids[1], SelectedIDs: ids[1:]})
 			require.NoError(t, err)
 			kept, err := photoFileByIDQuery(t.Context(), s.db, rawFile.ID)
 			require.NoError(t, err)
@@ -799,7 +836,7 @@ func TestPhotoStackReturnReplacesRejectedRepresentative(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 3)
-	choice, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: "representative", CurrentID: ids[0]})
+	choice, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: ids[0]})
 	require.NoError(t, err)
 	require.Empty(t, choice.After)
 	require.Len(t, choice.Representatives, 1)
@@ -809,7 +846,7 @@ func TestPhotoStackReturnReplacesRejectedRepresentative(t *testing.T) {
 	for _, row := range page.Items {
 		require.Empty(t, row.Flag)
 	}
-	decision, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: "current", CurrentID: ids[1]})
+	decision, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "current", CurrentID: ids[1]})
 	require.NoError(t, err)
 	require.Empty(t, decision.Representatives)
 	page, err = s.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
@@ -817,7 +854,7 @@ func TestPhotoStackReturnReplacesRejectedRepresentative(t *testing.T) {
 	require.Equal(t, ids[1], page.Stacks[0].RepresentativeID)
 	require.Equal(t, []string{"reject", "pick", "reject"}, []string{page.Items[0].Flag, page.Items[1].Flag, page.Items[2].Flag})
 	// Clearing the rejection restores the retained choice without a new choice receipt.
-	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: stackTargets(t, s, ids[:1]), Patch: PhotoAuthoredPatch{Flag: new("")}})
+	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[:1], Limit: MaxPhotoStackTargets}), Patch: PhotoAuthoredPatch{Flag: new("")}})
 	require.NoError(t, err)
 	page, err = s.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
 	require.NoError(t, err)
@@ -831,9 +868,9 @@ func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 4)
 	// Two picks use the first picked frame until someone chooses.
-	_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: stackTargets(t, s, ids[1:3]), Patch: PhotoAuthoredPatch{Flag: new("pick")}})
+	_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[1:3], Limit: MaxPhotoStackTargets}), Patch: PhotoAuthoredPatch{Flag: new("pick")}})
 	require.NoError(t, err)
-	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: stackTargets(t, s, ids[3:]), Patch: PhotoAuthoredPatch{Flag: new("reject")}})
+	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[3:], Limit: MaxPhotoStackTargets}), Patch: PhotoAuthoredPatch{Flag: new("reject")}})
 	require.NoError(t, err)
 	representative := func() (string, []string) {
 		page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Stacks: true, Query: captureRequest(t, "asc").Query}, nil)
@@ -848,7 +885,7 @@ func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
 	chosen, flags := representative()
 	require.Equal(t, ids[1], chosen)
 	choose := func(id string) PhotoAuthoredReceipt {
-		receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: "representative", CurrentID: id})
+		receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: id})
 		require.NoError(t, err)
 		return receipt
 	}
@@ -894,7 +931,7 @@ func TestPhotoStackLatestChoiceWinsWhenGapMergesStacks(t *testing.T) {
 		ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/A/frame-%d.jpg", i), fmt.Sprintf("2024-06-10T12:00:0%dZ", offset), document.SourceMetadataPrecisionSecond))
 	}
 	for _, choice := range []struct{ members []string }{{ids[2:]}, {ids[:2]}} {
-		_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: choice.members, Targets: stackTargets(t, s, choice.members), Decision: "representative", CurrentID: choice.members[1]})
+		_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: choice.members, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: choice.members, Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: choice.members[1]})
 		require.NoError(t, err)
 	}
 	_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: new(3)})
@@ -989,7 +1026,7 @@ func TestPhotoRepresentativeSequenceSurvivesUndoAndRestore(t *testing.T) {
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 3)
 	choose := func(s *Store, id string) PhotoAuthoredReceipt {
-		r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: id, Decision: "representative"})
+		r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: id, Decision: "representative"})
 		require.NoError(t, err)
 		return r
 	}
@@ -1030,7 +1067,7 @@ func TestPhotoRepresentativeImportRejectsSequenceBehindRanks(t *testing.T) {
 			// A retained high-water mark can outlive all current choices.
 			_, err := s.db.Exec(`INSERT INTO photo_library_settings(singleton,updated_at,representative_sequence) VALUES(1,'',9)`)
 			require.NoError(t, err)
-			receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[1], Decision: "representative"})
+			receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[1], Decision: "representative"})
 			require.NoError(t, err)
 			require.Equal(t, int64(10), *receipt.Representatives[0].After)
 			if receiptOnly {
@@ -1056,7 +1093,7 @@ func TestPhotoRepresentativeReceiptRequiresAsset(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 2)
-	r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "representative"})
+	r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
 	require.NoError(t, err)
 	_, err = s.db.Exec(`UPDATE photo_change_receipts SET after_json=replace(after_json,?,?) WHERE receipt_id=?`, ids[0], "00000000-0000-4000-8000-000000000001", r.ReceiptID)
 	require.NoError(t, err)
@@ -1071,7 +1108,7 @@ func TestPhotoRepresentativeKeepsDefaultSettingsTimestamp(t *testing.T) {
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_library_settings`).Scan(&count))
 	require.Zero(t, count)
-	_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "representative"})
+	_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
 	require.NoError(t, err)
 	settings, err := s.PhotoSettings(t.Context())
 	require.NoError(t, err)

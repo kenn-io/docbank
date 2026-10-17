@@ -143,6 +143,61 @@ func newPhotoStack(group []photoStackFrame) PhotoStack {
 	return stack
 }
 
+// groupRankedPhotoPage groups only the returned relevance matches. Each burst
+// occupies its highest-ranked member's position, keeping rank order within it.
+func groupRankedPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, hidden bool, gap int) error {
+	ids := make([]string, len(page.Items))
+	rows := make(map[string]PhotoBrowseRow, len(page.Items))
+	for i, row := range page.Items {
+		ids[i], rows[row.AssetID] = row.AssetID, row
+	}
+	frames, err := photoStackFrames(ctx, q, ids, hidden)
+	if err != nil {
+		return err
+	}
+	err = queryInChunks(ctx, q, `SELECT a.asset_id,`+photoStackChoiceColumns+` FROM photo_assets a WHERE a.asset_id IN (`, ids, func(rows *sql.Rows) error {
+		var id string
+		var choice photoStackFrame
+		if err := rows.Scan(&id, &choice.Rank, &choice.Picked, &choice.Rejected); err != nil {
+			return err
+		}
+		frame := frames[id]
+		frame.Rank, frame.Picked, frame.Rejected = choice.Rank, choice.Picked, choice.Rejected
+		frames[id] = frame
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]PhotoStack)
+	for _, group := range groupPhotoStackFrames(slices.Collect(maps.Values(frames)), gap) {
+		stack := newPhotoStack(group)
+		for _, id := range stack.AssetIDs {
+			byID[id] = stack
+		}
+	}
+	page.Items = make([]PhotoBrowseRow, 0, len(ids))
+	emitted := make(map[string]bool)
+	for _, id := range ids {
+		stack, ok := byID[id]
+		if !ok {
+			page.Items = append(page.Items, rows[id])
+			continue
+		}
+		if emitted[stack.RepresentativeID] {
+			continue
+		}
+		emitted[stack.RepresentativeID] = true
+		page.Stacks = append(page.Stacks, stack)
+		for _, member := range ids {
+			if byID[member].RepresentativeID == stack.RepresentativeID {
+				page.Items = append(page.Items, rows[member])
+			}
+		}
+	}
+	return nil
+}
+
 // photoStackChoiceColumns are the representative inputs: the explicit rank and
 // whether any live non-sidecar file is picked or rejected.
 const photoStackChoiceColumns = `COALESCE(a.representative_rank,0),

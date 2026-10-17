@@ -12,7 +12,7 @@ import (
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
-	Stacks     bool                   `json:"stacks,omitempty" doc:"Group capture-time pages into whole bursts of matching photos. A page can exceed page_size by up to 499 frames to finish its last burst."`
+	Stacks     bool                   `json:"stacks,omitempty" doc:"Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows."`
 	Projection string                 `json:"projection,omitempty" enum:"map"`
 	Hidden     bool                   `json:"hidden,omitempty"`
 	Query      QueryPayload           `json:"query"`

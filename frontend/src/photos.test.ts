@@ -18,6 +18,7 @@ import {
 } from "./photo-test-fixtures.js";
 import type { Query } from "./query.js";
 import type { PhotoAuthoredReceipt } from "./generated/docbank.js";
+import * as api from "./generated/docbank.js";
 import * as snapshots from "./snapshots.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 
@@ -3091,7 +3092,7 @@ it("selects collapsed bursts and expanded frames, including range selection and 
   expect(photos.selectedIDs.size).toBe(0);
 });
 
-it("attaches server-described stacks and requests them only for capture-time pages", async () => {
+it("attaches server-described stacks and requests them for capture-time and relevance pages", async () => {
   const rows = [photo(1), photo(2), photo(3)];
   const stack = {
     asset_ids: ["photo-1", "photo-2"],
@@ -3113,7 +3114,9 @@ it("attaches server-described stacks and requests them only for capture-time pag
   expect(photos.items.map((row) => "stack" in row && row.stack)).toEqual([stack, stack, undefined]);
   photos.query = parseQuery('{"sort":{"field":"name","direction":"asc"}}');
   await photos.refresh();
-  expect(requests.map((request) => request.stacks)).toEqual([true, false]);
+  photos.query = parseQuery('{"text":"photo","sort":{"field":"relevance","direction":"desc"}}');
+  await photos.refresh();
+  expect(requests.map((request) => request.stacks)).toEqual([true, false, true]);
   photos.dispose();
 });
 
@@ -3153,6 +3156,21 @@ it("updates the burst gap through general settings and shows regrouped Library p
     ["photo-1", "photo-2"],
     ["photo-1", "photo-2"],
   ]);
+  photos.dispose();
+});
+
+it("refreshes relevance stacks when the shared burst gap changes", async () => {
+  const settings = vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 2,
+    preference: null,
+    burst_gap_seconds: 5,
+  });
+  const photos = new Photos("session", vi.fn());
+  photos.query = parseQuery('{"text":"photo","sort":{"field":"relevance","direction":"desc"}}');
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  await photos.checkBurstGap();
+  expect(settings).toHaveBeenCalledOnce();
+  expect(refresh).toHaveBeenCalledOnce();
   photos.dispose();
 });
 

@@ -13,7 +13,6 @@ export interface CullCheckpoint {
   autoAdvance: boolean;
 }
 export interface CullRun {
-  stackEligible?: boolean;
   ids: string[];
   checkpoint: CullCheckpoint;
 }
@@ -135,7 +134,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         keys.forEach((key, index) =>
           checkpoint[(key as [string, MarkerKind, number])[1]].push(values[index]!),
         );
-        return { ids: membership.ids, stackEligible: membership.stackEligible, checkpoint };
+        return { ids: membership.ids, checkpoint };
       } finally {
         db.close();
       }
@@ -163,10 +162,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
             await done.catch(() => {});
             throw new Error("Cull progress changed in another tab. Resume before replacing it.");
           }
-          tx.objectStore("members").put(
-            { ids: run.ids, stackEligible: run.stackEligible, pass: run.checkpoint.pass },
-            vaultID,
-          );
+          tx.objectStore("members").put({ ids: run.ids, pass: run.checkpoint.pass }, vaultID);
           savePass(tx, run.checkpoint);
           await done;
         } finally {

@@ -93,7 +93,7 @@ export class PhotoCull {
   /** Check whether the active run needs to regroup under a new gap. */
   async checkSettings() {
     const run = this.run;
-    if (!run?.stackEligible || this.stackLoading) return;
+    if (!run || this.stackLoading) return;
     const controller = new AbortController();
     this.settingsRead?.abort();
     this.settingsRead = controller;
@@ -114,7 +114,7 @@ export class PhotoCull {
   /** Recompute all frozen IDs and merge into the latest active checkpoint. */
   async regroup() {
     const run = this.run;
-    if (!run?.stackEligible || this.stale) return;
+    if (!run || this.stale) return;
     const controller = new AbortController();
     this.stackRead?.abort();
     this.stackRead = controller;
@@ -306,7 +306,6 @@ export class PhotoCull {
       const flags = new Map(captured.members.map((member) => [member.asset_id!, member.flag!]));
       const run: CullRun = {
         ids,
-        stackEligible: query.sort?.field === "capture_time",
         checkpoint: {
           runID: randomUUID(),
           revision: 0,

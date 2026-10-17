@@ -609,7 +609,7 @@ export class Photos {
       {
         query,
         projection: this.projection,
-        stacks: !this.projection && query.sort.field === "capture_time",
+        stacks: !this.projection && ["capture_time", "relevance"].includes(query.sort.field),
         hidden: this.hidden,
         facets: [],
         page_size: this.projection ? 1000 : 250,
@@ -1496,7 +1496,7 @@ export class Photos {
     return cause instanceof Error ? cause.message : String(cause);
   }
   async checkBurstGap(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.projection || this.query.sort.field !== "capture_time") return;
+    if (this.projection || !["capture_time", "relevance"].includes(this.query.sort.field)) return;
     try {
       const settings = await getPhotoSettings({ session: this.session });
       if (settings.burst_gap_seconds !== this.burstGapSeconds) await this.refresh(preserve);

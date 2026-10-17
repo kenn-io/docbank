@@ -5685,7 +5685,7 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
-  /** Group capture-time pages into whole bursts of matching photos. A page can exceed page_size by up to 499 frames to finish its last burst. */
+  /** Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows. */
   stacks?: boolean;
 }
 

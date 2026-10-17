@@ -145,7 +145,6 @@ it("ignores a settings failure after restoring a run", async () => {
     after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
   });
   vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
-  cull.run = { ...cull.run!, stackEligible: true };
   let reject!: (cause: Error) => void;
   const settings = vi.mocked(api.getPhotoSettings).mockReturnValueOnce(
     new Promise((_resolve, fail) => {
@@ -156,7 +155,6 @@ it("ignores a settings failure after restoring a run", async () => {
   const signal = settings.mock.calls.at(-1)?.[0]?.signal;
   const run = {
     ...cull.run!,
-    stackEligible: false,
     checkpoint: { ...cull.run!.checkpoint, runID: "relevance-run" },
   };
   await store.replace(run);
@@ -183,7 +181,6 @@ it("announces regrouping while keyboard decisions wait", async () => {
   vi.mocked(api.groupPhotoStacks).mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
   let pending: Promise<void>;
   await act(() => {
-    cull.run = { ...cull.run!, stackEligible: true };
     pending = cull.regroup();
   });
   expect((await screen.findByRole("status")).textContent).toBe("Grouping bursts...");
@@ -1321,6 +1318,11 @@ it("finishes a Cull decision while the affected Library stack refresh is held", 
 
 it("reloads cached stack siblings after preparation loses a member", async () => {
   const { cull, photos } = await reviewPhoto();
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [["photo-1", "photo-2"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
   const rows = [photo(1), photo(2)];
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
     rows.filter((row) => ids.includes(row.asset_id)),

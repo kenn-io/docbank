@@ -22,7 +22,7 @@ func TestPhotoBurstAuditEnrollmentAndRestore(t *testing.T) {
 				ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shots/frame-%d.jpg", i), fmt.Sprintf("2024-06-10T12:00:0%dZ", i*2), document.SourceMetadataPrecisionSecond))
 			}
 			choose := func(s *Store, id string) PhotoAuthoredReceipt {
-				r, err := s.DecidePhotoStack(ctx, PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: id, Decision: "representative"})
+				r, err := s.DecidePhotoStack(ctx, PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: id, Decision: "representative"})
 				require.NoError(t, err)
 				return r
 			}
@@ -97,7 +97,7 @@ func TestPhotoBurstAuditRollback(t *testing.T) {
 			ids := burstPhotos(t, s, 2)
 			seedInitialAuditAuthority(t, s, s.RootID())
 			choose := func() (PhotoAuthoredReceipt, error) {
-				return s.DecidePhotoStack(ctx, PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[1], Decision: "representative"})
+				return s.DecidePhotoStack(ctx, PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[1], Decision: "representative"})
 			}
 			var receipt PhotoAuthoredReceipt
 			if action == "undo" {
@@ -135,7 +135,7 @@ func TestPhotoBurstAuditDetectsUnexplainedState(t *testing.T) {
 			s := newTestStore(t)
 			ids := burstPhotos(t, s, 2)
 			seedInitialAuditAuthority(t, s, s.RootID())
-			_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[1], Decision: "representative"})
+			_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[1], Decision: "representative"})
 			require.NoError(t, err)
 			require.NoError(t, s.ValidateMetadata(t.Context()))
 			_, err = s.db.Exec(mutation)

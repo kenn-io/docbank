@@ -210,6 +210,11 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
+			if request.Stacks {
+				if err := groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds); err != nil {
+					return err
+				}
+			}
 			return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 		}
 		primary, comparison := "ASC", ">"
