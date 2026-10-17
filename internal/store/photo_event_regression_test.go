@@ -29,7 +29,7 @@ func TestPhotoEventsRenditionRecovery(t *testing.T) {
 	reopened, _, err := s.EnqueueRenditionJob(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, RenditionJobQueued, reopened.State)
-	require.Equal(t, PhotoEvent{AssetID: asset.ID, Revision: asset.Revision}, nextPhotoEvent(t, ch))
+	require.Equal(t, PhotoEvent{AssetID: asset.ID}, nextPhotoEvent(t, ch))
 }
 
 func TestPhotoEventsTagAssignmentDefinitions(t *testing.T) {

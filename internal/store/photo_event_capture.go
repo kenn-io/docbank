@@ -98,20 +98,12 @@ var photoEventCaptureRules = []photoEventCaptureRule{
 var photoChangeFilters = map[string]string{
 	"node":                    "EXISTS(SELECT 1 FROM photo_files WHERE node_id=$ AND asset_id IS NOT NULL)",
 	photoChangeCurrentVersion: "EXISTS(SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE n.current_version_id=$)",
-	"source":                  "EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE v.blob_hash=$)",
-	"generation":              "EXISTS(SELECT 1 FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE g.generation_id=$)",
 	"job":                     "EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE w.job_id=$)",
 }
 
 // The 65th distinct key represents overflow. Further rows do no capture work.
 func photoChangeRecord(source, key, related string) string {
-	return `INSERT INTO docbank_photo_changes SELECT '` + source + `',CAST(` + key + ` AS TEXT),CAST(` + related + ` AS TEXT) WHERE ` + related + ` IS NOT NULL AND (SELECT count(*) FROM docbank_photo_changes)<65 ON CONFLICT DO NOTHING;`
-}
-
-// Duplicate results change only when some photo file shares the content hash.
-func photoHashRecord(hash, node string) string {
-	shared := "EXISTS(SELECT 1 FROM content_versions v INDEXED BY content_versions_blob JOIN photo_files f ON f.node_id=v.node_id AND f.asset_id IS NOT NULL WHERE v.blob_hash=" + hash + ")"
-	return strings.Replace(photoChangeRecord("hash", hash, node), " WHERE "+node+" IS NOT NULL", " WHERE "+shared+" AND "+node+" IS NOT NULL", 1)
+	return `INSERT INTO docbank_photo_changes SELECT '` + source + `',CAST(` + key + ` AS TEXT),CAST(` + related + ` AS TEXT) WHERE ` + key + ` IS NOT NULL AND ` + related + ` IS NOT NULL AND (SELECT count(*) FROM docbank_photo_changes)<65 ON CONFLICT DO NOTHING;`
 }
 
 func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
@@ -168,7 +160,7 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 		}
 		var body strings.Builder
 		for _, ref := range refs {
-			body.WriteString(photoHashRecord("(SELECT blob_hash FROM content_versions WHERE version_id="+ref+".current_version_id)", ref+".id"))
+			body.WriteString(photoChangeRecord("hash", "(SELECT blob_hash FROM content_versions WHERE version_id="+ref+".current_version_id)", ref+".id"))
 		}
 		when := "1"
 		if action == "UPDATE" {
@@ -178,21 +170,19 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
-	return install("initial_hash", "INSERT", "content_versions", "EXISTS(SELECT 1 FROM nodes WHERE id=NEW.node_id AND current_version_id=NEW.version_id)", photoHashRecord("NEW.blob_hash", "NEW.node_id"))
+	return install("initial_hash", "INSERT", "content_versions", "EXISTS(SELECT 1 FROM nodes WHERE id=NEW.node_id AND current_version_id=NEW.version_id)", photoChangeRecord("hash", "NEW.blob_hash", "NEW.node_id"))
 }
 
 var photoChangeSelections = map[string]string{
-	"asset":                   `SELECT keys.value,COALESCE(a.revision,0) FROM json_each(?) keys LEFT JOIN photo_assets a ON a.asset_id=keys.value`,
-	"node":                    `SELECT a.asset_id,a.revision FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
-	photoChangeCurrentVersion: `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
-	"source":                  `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.blob_hash IN (SELECT value FROM json_each(?))`,
-	"generation":              `SELECT a.asset_id,a.revision FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE g.generation_id IN (SELECT value FROM json_each(?))`,
-	"job":                     `SELECT a.asset_id,a.revision FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE w.job_id IN (SELECT value FROM json_each(?))`,
+	"asset":                   `SELECT value FROM json_each(?)`,
+	"node":                    `SELECT a.asset_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
+	photoChangeCurrentVersion: `SELECT a.asset_id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
+	"job":                     `SELECT a.asset_id FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE w.job_id IN (SELECT value FROM json_each(?))`,
 }
 
-type photoHashChange struct{ hash, node string }
+type photoSourceChange struct{ kind, key, node string }
 
-func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) ([]PhotoEvent, []photoHashChange) {
+func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) ([]PhotoEvent, []photoSourceChange) {
 	fallback := []PhotoEvent{{Refetch: true}}
 	if !capture {
 		return fallback, nil
@@ -208,7 +198,7 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		kinds[r.table] = r.kind
 	}
 	keys := map[string][]string{}
-	var hashes []photoHashChange
+	var sources []photoSourceChange
 	count := 0
 	refetch := false
 	for rows.Next() {
@@ -218,8 +208,12 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		}
 		count++
 		kind := kinds[source]
-		if source == "hash" {
-			hashes = append(hashes, photoHashChange{key, related})
+		if source == "hash" || kind == "source" || kind == "generation" {
+			if source == "hash" {
+				sources = append(sources, photoSourceChange{source, key, related})
+			} else {
+				sources = append(sources, photoSourceChange{kind, related, ""})
+			}
 		} else if source == photoChangeRefetch || kind == photoChangeRefetch {
 			refetch = true
 		} else {
@@ -232,7 +226,7 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		return fallback, nil
 	}
 	if count > 64 || refetch {
-		return fallback, hashes
+		return fallback, nil
 	}
 	var events []PhotoEvent
 	seen := map[string]bool{}
@@ -242,18 +236,18 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		rows, err := tx.QueryContext(ctx, photoChangeSelections[kind]+" LIMIT ?", string(encoded), 65-resolved)
 		if err != nil {
 			s.warnPhotoCapture(err)
-			return fallback, hashes
+			return fallback, nil
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var event PhotoEvent
-			if err = rows.Scan(&event.AssetID, &event.Revision); err != nil {
+			if err = rows.Scan(&event.AssetID); err != nil {
 				break
 			}
 			resolved++
 			if resolved == 65 {
 				_ = rows.Close()
-				return fallback, hashes
+				return fallback, nil
 			}
 			if !seen[event.AssetID] {
 				seen[event.AssetID] = true
@@ -263,31 +257,70 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		err = errors.Join(err, rows.Err(), rows.Close())
 		if err != nil {
 			s.warnPhotoCapture(err)
-			return fallback, hashes
+			return fallback, nil
 		}
 	}
-	return events, hashes
+	return events, sources
 }
 
-func (s *Store) photoDuplicateChanged(ctx context.Context, hashes []photoHashChange) bool {
-	if len(hashes) == 0 {
-		return false
+// Resolve hash-based keys only after releasing the writer. Materialize the 64+1
+// candidates before checking current membership, including ordinary and old versions.
+func (s *Store) resolvePhotoSources(ctx context.Context, sources []photoSourceChange) []PhotoEvent {
+	if len(sources) == 0 {
+		return nil
 	}
-	values := make([][2]string, 0, len(hashes))
-	for _, h := range hashes {
-		values = append(values, [2]string{h.hash, h.node})
+	values := make([][3]string, 0, len(sources))
+	for _, source := range sources {
+		values = append(values, [3]string{source.kind, source.key, source.node})
 	}
 	encoded, _ := json.Marshal(values)
-	var found bool
-	// Hash lookup starts at the existing blob index; current membership rejects historical versions.
-	err := s.db.QueryRowContext(ctx, `WITH `+CurrentContentMembershipCTE+` SELECT EXISTS(
- SELECT 1 FROM json_each(?) changed JOIN content_versions v INDEXED BY content_versions_blob ON v.blob_hash=json_extract(changed.value,'$[0]')
- JOIN current_content_members current ON current.version_id=v.version_id
+	rows, err := s.db.QueryContext(ctx, `WITH raw AS (
+ SELECT json_extract(value,'$[0]') kind,json_extract(value,'$[1]') key,json_extract(value,'$[2]') node FROM json_each(?)
+ ), changed AS (
+ SELECT kind,key hash,node FROM raw WHERE kind<>'generation'
+ UNION ALL SELECT raw.kind,g.source_sha256,raw.node FROM raw JOIN source_metadata_generations g ON g.generation_id=raw.key WHERE raw.kind='generation'
+ ), candidates AS MATERIALIZED (
+ SELECT changed.kind,changed.node,v.version_id,v.node_id FROM changed
+ CROSS JOIN content_versions v INDEXED BY content_versions_blob ON v.blob_hash=changed.hash LIMIT 65
+ ), `+CurrentContentMembershipCTE+`
+ SELECT c.kind,(SELECT f.asset_id FROM current_content_members current
  JOIN photo_files f ON f.node_id=current.node_id AND f.asset_id IS NOT NULL
- WHERE current.node_id<>CAST(json_extract(changed.value,'$[1]') AS INTEGER))`, string(encoded)).Scan(&found)
+ WHERE current.node_id=c.node_id AND current.version_id=c.version_id
+ AND (c.kind<>'hash' OR current.node_id<>CAST(c.node AS INTEGER)) LIMIT 1)
+ FROM candidates c`, string(encoded))
+	fallback := []PhotoEvent{{Refetch: true}}
 	if err != nil {
 		s.warnPhotoCapture(err)
-		return true
+		return fallback
 	}
-	return found
+	defer func() { _ = rows.Close() }()
+	var events []PhotoEvent
+	seen := map[string]bool{}
+	count := 0
+	for rows.Next() {
+		var kind string
+		var asset sql.NullString
+		if err = rows.Scan(&kind, &asset); err != nil {
+			break
+		}
+		count++
+		if count > 64 {
+			return fallback
+		}
+		if !asset.Valid {
+			continue
+		}
+		if kind == "hash" {
+			return fallback
+		}
+		if !seen[asset.String] {
+			seen[asset.String] = true
+			events = append(events, PhotoEvent{AssetID: asset.String})
+		}
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		s.warnPhotoCapture(err)
+		return fallback
+	}
+	return events
 }

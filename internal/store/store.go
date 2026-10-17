@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -313,9 +314,9 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return errors.Join(err, tx.Rollback())
 	}
 	var events []PhotoEvent
-	var hashes []photoHashChange
+	var sources []photoSourceChange
 	if active {
-		events, hashes = s.readPhotoChanges(ctx, tx, capture)
+		events, sources = s.readPhotoChanges(ctx, tx, capture)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
@@ -323,16 +324,22 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := closeConn(); err != nil {
 		return err
 	}
-	s.publishCommittedPhotoChanges(ctx, events, hashes, active, epoch)
+	s.publishCommittedPhotoChanges(ctx, events, sources, active, epoch)
 	return nil
 }
 
-func (s *Store) publishCommittedPhotoChanges(ctx context.Context, events []PhotoEvent, hashes []photoHashChange, active bool, epoch uint64) {
+func (s *Store) publishCommittedPhotoChanges(ctx context.Context, events []PhotoEvent, sources []photoSourceChange, active bool, epoch uint64) {
 	if watching, current := s.photoCaptureState(); watching && current != epoch && !active {
 		events = []PhotoEvent{{Refetch: true}}
 	}
-	if s.photoDuplicateChanged(ctx, hashes) {
-		events = []PhotoEvent{{Refetch: true}}
+	for _, event := range s.resolvePhotoSources(ctx, sources) {
+		if event.Refetch {
+			events = []PhotoEvent{event}
+			break
+		}
+		if !slices.ContainsFunc(events, func(existing PhotoEvent) bool { return existing.AssetID == event.AssetID }) {
+			events = append(events, event)
+		}
 	}
 	s.publishPhotoChanges(events)
 }

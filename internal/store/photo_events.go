@@ -79,12 +79,14 @@ func (s *Store) photoChangeCursor(unlocked bool) string {
 		f.cursorID = uuid.New()
 	}
 	now := s.hiddenNow()
-	if !now.Before(f.pollUntil) {
-		f.epoch++
-		f.visibleCursor++
-		f.hiddenCursor++
+	if len(f.subscribers) == 0 {
+		if !now.Before(f.pollUntil) {
+			f.epoch++
+			f.visibleCursor++
+			f.hiddenCursor++
+		}
+		f.pollUntil = now.Add(30 * time.Second)
 	}
-	f.pollUntil = now.Add(30 * time.Second)
 	if unlocked {
 		return fmt.Sprintf("%s:hidden:%d", f.cursorID, f.hiddenCursor)
 	}
@@ -92,17 +94,14 @@ func (s *Store) photoChangeCursor(unlocked bool) string {
 }
 
 // Caller holds photoHiddenSessionsMu. Expiry cleanup is shared with unlock.
-func (s *Store) scanPhotoHiddenSessions() bool {
+func (s *Store) scanPhotoHiddenSessions() {
 	now := s.hiddenNow()
-	active := false
 	for digest, until := range s.photoHiddenSessions {
 		if until.After(now) {
-			active = true
 			continue
 		}
 		delete(s.photoHiddenSessions, digest)
 	}
-	return active
 }
 
 func (s *Store) closePhotoEvents() {

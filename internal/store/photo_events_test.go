@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/stretchr/testify/require"
-	"strings"
 	"testing"
 	"time"
 )
@@ -144,7 +143,7 @@ func TestPhotoEventsOverflow(t *testing.T) {
 	noPhotoEvent(t, ch)
 	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{AssetID: asset.ID, Revision: asset.Revision}, nextPhotoEvent(t, ch))
+	require.Equal(t, PhotoEvent{AssetID: asset.ID}, nextPhotoEvent(t, ch))
 	noPhotoEvent(t, ch)
 }
 
@@ -165,7 +164,6 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 		t.Helper()
 		state, err := s.PhotoHiddenState(viewer)
 		require.NoError(t, err)
-		require.Equal(t, state.ExpiresAt != nil, strings.Contains(state.ChangeCursor, ":hidden:"))
 		return state.ChangeCursor
 	}
 	write := func() {
@@ -248,7 +246,7 @@ func TestPhotoEventsKeepCommittedBatch(t *testing.T) {
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
 		require.NoError(t, err)
-		want = append(want, PhotoEvent{AssetID: asset.ID, Revision: asset.Revision + 1})
+		want = append(want, PhotoEvent{AssetID: asset.ID})
 	}
 	ch, stop := s.SubscribePhotoEvents()
 	defer stop()
@@ -263,4 +261,29 @@ func TestPhotoEventsKeepCommittedBatch(t *testing.T) {
 		t.Fatal("missing committed batch")
 	}
 	noPhotoEvent(t, ch)
+}
+
+func TestPhotoEventsStreamDoesNotRenewPollingInterest(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	now := time.Now().UTC()
+	s.photoHiddenNow = func() time.Time { return now }
+	_, err := s.PhotoHiddenState(t.Context())
+	require.NoError(t, err)
+	_, stop := s.SubscribePhotoEvents()
+	defer stop()
+	cursor, err := s.PhotoHiddenState(t.Context())
+	require.NoError(t, err)
+	epoch, lease := s.photoEvents.epoch, s.photoEvents.pollUntil
+	now = now.Add(time.Minute)
+	current, err := s.PhotoHiddenState(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, cursor.ChangeCursor, current.ChangeCursor)
+	require.Equal(t, epoch, s.photoEvents.epoch)
+	require.Equal(t, lease, s.photoEvents.pollUntil)
+	stop()
+	resumed, err := s.PhotoHiddenState(t.Context())
+	require.NoError(t, err)
+	require.NotEqual(t, current.ChangeCursor, resumed.ChangeCursor)
+	require.True(t, s.photoEvents.pollUntil.After(now))
 }

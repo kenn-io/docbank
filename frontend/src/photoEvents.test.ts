@@ -246,3 +246,99 @@ it.each(["locks", "channel"])("uses cursor polling when %s is unavailable", asyn
   expect(refresh).toHaveBeenCalledTimes(2);
   stop();
 });
+
+it("coalesces 1,000 import events into two serialized refresh requests", async () => {
+  vi.useFakeTimers();
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  let release!: (response: Response) => void;
+  let requests = 0;
+  let active = 0;
+  let peak = 0;
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).endsWith("/photos/events"))
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            writer = controller;
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+    requests++;
+    if (requests === 1) return new Promise<Response>((resolve) => (release = resolve));
+    return Response.json({ items: [], total: 0 });
+  });
+  const refresh = vi.fn(async () => {
+    peak = Math.max(peak, ++active);
+    try {
+      await fetch("/api/v1/photos/assets/query", { method: "POST" });
+    } finally {
+      active--;
+    }
+  });
+  const stop = watchPhotoEvents("synthetic", refresh, vi.fn());
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    const send = (start: number) =>
+      writer.enqueue(
+        encoder.encode(
+          Array.from(
+            { length: 500 },
+            (_, i) => `data: {"asset_id":"photo-${start + i}","revision":1}\n\n`,
+          ).join(""),
+        ),
+      );
+    send(0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(requests).toBe(1);
+    send(500);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(requests).toBe(1);
+    release(Response.json({ items: [], total: 0 }));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(requests).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(requests).toBe(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(peak).toBe(1);
+    expect(refresh.mock.calls).toHaveLength(2);
+  } finally {
+    stop();
+  }
+});
+
+it("limits 1,000 events paced over one minute to 60 refresh batches", async () => {
+  vi.useFakeTimers();
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          writer = controller;
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    ),
+  );
+  const times: number[] = [];
+  const batches: PhotoEventBatch[] = [];
+  const refresh = vi.fn(async (batch: PhotoEventBatch) => {
+    times.push(Date.now());
+    batches.push(batch);
+  });
+  const stop = watchPhotoEvents("synthetic", refresh, vi.fn());
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 1000; i++) {
+      writer.enqueue(encoder.encode(`data: {"asset_id":"photo-${i}","revision":1}\n\n`));
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    expect(refresh).toHaveBeenCalledTimes(60);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(refresh).toHaveBeenCalledTimes(61);
+    expect(batches.reduce((total, batch) => total + batch.assets.size, 0)).toBe(1000);
+    expect(times.slice(1).every((time, index) => time - times[index] >= 1000)).toBe(true);
+  } finally {
+    stop();
+  }
+});

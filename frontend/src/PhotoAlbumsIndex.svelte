@@ -28,36 +28,45 @@
   let smartTotal = $state(0);
   let smartLoading = $state(false);
   let smartGeneration = 0;
+  let smartRetryReset = false;
   async function loadSmartSets(reset = false, signal?: AbortSignal) {
     if (smartLoading && !reset) return;
     const generation = reset ? ++smartGeneration : smartGeneration;
-    if (reset) {
-      smartSets = [];
-      smartOffset = 0;
-      smartTotal = 0;
-    }
+    const session = albums.session;
+    const current = () => alive && generation === smartGeneration && session === albums.session;
+    const target = reset ? Math.max(100, smartOffset) : smartOffset + 100;
+    let offset = reset ? 0 : smartOffset;
+    let total = smartTotal;
+    const replacement = reset ? [] : [...smartSets];
+    const seen = new Set(replacement.map((saved) => saved.id));
     smartLoading = true;
     smartError = "";
     try {
-      const page = await listSavedQueries(albums.session, "query", smartOffset, 100, true, signal);
-      signal?.throwIfAborted();
-      if (!alive || generation !== smartGeneration) return;
-      const seen = new Set(smartSets.map((saved) => saved.id));
-      for (const saved of page.items)
-        if (!seen.has(saved.id)) {
-          seen.add(saved.id);
-          smartSets.push(saved);
-        }
-      smartOffset += page.items.length;
-      smartTotal = page.items.length ? page.total : smartOffset;
+      do {
+        const page = await listSavedQueries(session, "query", offset, 100, true, signal);
+        signal?.throwIfAborted();
+        if (!current()) return;
+        for (const saved of page.items)
+          if (!seen.has(saved.id)) {
+            seen.add(saved.id);
+            replacement.push(saved);
+          }
+        offset += page.items.length;
+        total = page.items.length ? page.total : offset;
+      } while (reset && offset < target && offset < total);
+      smartSets = replacement;
+      smartOffset = offset;
+      smartTotal = total;
+      smartRetryReset = false;
     } catch (cause) {
-      if (alive && generation === smartGeneration) {
+      if (current()) {
         if (cause instanceof APIError && cause.status === 401) albums.onauthfailure(cause);
         smartError = cause instanceof Error ? cause.message : String(cause);
+        smartRetryReset = reset;
       }
       throw cause;
     } finally {
-      if (alive && generation === smartGeneration) smartLoading = false;
+      if (current()) smartLoading = false;
     }
   }
   onMount(() => {
@@ -117,7 +126,7 @@
           </li>{/each}
       </ul>{/if}
     {#if smartError}<p role="alert">
-        {smartError}<Button onclick={() => void loadSmartSets().catch(() => {})}
+        {smartError}<Button onclick={() => void loadSmartSets(smartRetryReset).catch(() => {})}
           >Retry smart sets</Button
         >
       </p>{/if}

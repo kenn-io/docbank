@@ -98,9 +98,6 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 				require.Equal(t, PhotoEvent{Refetch: true}, event)
 			} else {
 				require.Equal(t, asset.ID, event.AssetID)
-				current, e := s.PhotoAssetByID(ctx, asset.ID)
-				require.NoError(t, e)
-				require.Equal(t, current.Revision, event.Revision)
 			}
 			noPhotoEvent(t, ch)
 		})
@@ -116,7 +113,6 @@ func TestPhotoEventsMetadataBudget(t *testing.T) {
 					s := newTestStore(t)
 					ctx := t.Context()
 					hashes := []string{fakeHash("11")}
-					var assetID string
 					if fixture == "photo sharers" {
 						run, err := s.BeginIngest(ctx, "cli", "Synthetic")
 						require.NoError(t, err)
@@ -125,11 +121,8 @@ func TestPhotoEventsMetadataBudget(t *testing.T) {
 							require.NoError(t, err)
 						}
 					} else {
-						photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", hashes[0], 4, "image/jpeg")
+						_, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", hashes[0], 4, "image/jpeg")
 						require.NoError(t, err)
-						asset, err := s.PhotoAssetForNode(ctx, photo.ID)
-						require.NoError(t, err)
-						assetID = asset.ID
 						for i := range 70 {
 							hash := browseHash(fmt.Sprintf("document-metadata-%d", i))
 							_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("document-%d.txt", i), hash, 4, "text/plain")
@@ -152,12 +145,7 @@ func TestPhotoEventsMetadataBudget(t *testing.T) {
 						_, err := tx.ExecContext(ctx, mutation)
 						return err
 					}))
-					event := nextPhotoEvent(t, events)
-					if fixture == "photo sharers" {
-						require.Equal(t, PhotoEvent{Refetch: true}, event)
-					} else {
-						require.Equal(t, assetID, event.AssetID)
-					}
+					require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 					noPhotoEvent(t, events)
 				})
 			}
@@ -165,7 +153,7 @@ func TestPhotoEventsMetadataBudget(t *testing.T) {
 	}
 }
 
-func TestPhotoEventsBulkDocumentWritesQuiet(t *testing.T) {
+func TestPhotoEventsBulkDocumentWrites(t *testing.T) {
 	t.Parallel()
 	for _, operation := range []string{"seeding", "trash"} {
 		t.Run(operation, func(t *testing.T) {
@@ -198,6 +186,9 @@ func TestPhotoEventsBulkDocumentWritesQuiet(t *testing.T) {
 			} else {
 				_, _, err = s.Trash(ctx, parent, UnconditionalRev)
 				require.NoError(t, err)
+			}
+			if operation == "trash" {
+				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 			}
 			noPhotoEvent(t, events)
 			if operation == "seeding" {
@@ -319,6 +310,68 @@ func TestPhotoEventsRenditionSources(t *testing.T) {
 			}))
 			require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
 			noPhotoEvent(t, events)
+		})
+	}
+}
+
+func TestPhotoEventsSourceCandidateBudget(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"hash", "source", "generation"} {
+		t.Run(kind, func(t *testing.T) {
+			for _, fixture := range []string{"64 ordinary", "65 ordinary", "historical", "trashed"} {
+				t.Run(fixture, func(t *testing.T) {
+					s := newTestStore(t)
+					ctx := t.Context()
+					hash := fakeHash("11")
+					photoHash := hash
+					if fixture == "64 ordinary" || fixture == "65 ordinary" {
+						photoHash = fakeHash("22")
+					}
+					photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", photoHash, 4, "image/jpeg")
+					require.NoError(t, err)
+					switch fixture {
+					case "historical":
+						_, _, err = s.ReplaceContent(ctx, photo.ID, photo.Revision, fakeHash("22"), 4, "image/jpeg")
+						require.NoError(t, err)
+					case "trashed":
+						_, _, err = s.Trash(ctx, photo.ID, photo.Revision)
+						require.NoError(t, err)
+					}
+					count := 1
+					if fixture == "64 ordinary" {
+						count = 64
+					}
+					if fixture == "65 ordinary" {
+						count = 65
+					}
+					var doc Node
+					for i := range count {
+						doc, err = s.CreateFile(ctx, s.RootID(), fmt.Sprintf("document-%d.txt", i), hash, 4, "text/plain")
+						require.NoError(t, err)
+					}
+					generation, err := s.PublishSourceMetadata(ctx, hash, fakeHash("f1"), photoCanonical(t,
+						photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(200))))
+					require.NoError(t, err)
+					events, stop := s.SubscribePhotoEvents()
+					defer stop()
+					switch kind {
+					case "hash":
+						_, _, err = s.Trash(ctx, doc.ID, doc.Revision)
+					case "source":
+						err = s.RecordExtraction(ctx, ExtractionResult{BlobHash: hash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "Changed document"})
+					case "generation":
+						err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+							_, err := tx.ExecContext(ctx, `UPDATE photo_technical_metadata SET iso=400 WHERE generation_id=?`, generation.GenerationID)
+							return err
+						})
+					}
+					require.NoError(t, err)
+					if fixture == "65 ordinary" {
+						require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+					}
+					noPhotoEvent(t, events)
+				})
+			}
 		})
 	}
 }

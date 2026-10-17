@@ -720,3 +720,125 @@ it("shows a failed smart-set notification and reloads the rendered list on recov
   albums.dispose();
   await cache.dispose();
 });
+
+it.each(["success", "later-page failure", "shorter result"])(
+  "retains two smart-set pages through definition refresh: %s",
+  async (outcome) => {
+    const payload = parseQuery('{"filters":{"kinds":["photo"]}}');
+    const fingerprint = await queryFingerprint(payload);
+    const saved = (index: number, renamed = false) =>
+      savedSmartSet(payload, fingerprint, {
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        name: `${renamed ? "Renamed" : "Smart"} set ${index}`,
+      });
+    let refreshing = false;
+    let failing = outcome === "later-page failure";
+    let release!: (response: Response) => void;
+    const offsets: number[] = [];
+    const page = (offset: number) => {
+      const total = outcome === "shorter result" && refreshing ? 50 : 300;
+      return Response.json({
+        items: Array.from({ length: Math.min(100, total - offset) }, (_, i) =>
+          saved(offset + i, refreshing),
+        ),
+        total,
+        limit: 100,
+        offset,
+      });
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const offset = Number(
+          new URL(String(input), "https://example.test").searchParams.get("offset"),
+        );
+        if (refreshing) {
+          offsets.push(offset);
+          if (!offsets.slice(0, -1).includes(0))
+            return new Promise<Response>((resolve) => (release = resolve));
+          if (offset === 100 && failing)
+            return Response.json({ detail: "Second page unavailable" }, { status: 503 });
+        }
+        return page(offset);
+      }),
+    );
+    const albums = new PhotoAlbums("scoped", vi.fn());
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+    await screen.findByRole("button", { name: "Smart set 99" });
+    await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+    await screen.findByRole("button", { name: "Smart set 199" });
+    refreshing = true;
+    const refreshed = definitionsChanged("scoped").catch(() => {});
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(screen.getByRole("button", { name: "Smart set 199" })).toBeTruthy();
+    release(page(0));
+    await refreshed;
+    if (failing) {
+      await screen.findByText("Second page unavailable");
+      expect(screen.getByRole("button", { name: "Smart set 199" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Renamed set 99" })).toBeNull();
+      failing = false;
+      await fireEvent.click(screen.getByRole("button", { name: "Retry smart sets" }));
+    }
+    await screen.findByRole("button", {
+      name: outcome === "shorter result" ? "Renamed set 49" : "Renamed set 199",
+    });
+    expect(screen.queryByRole("button", { name: "Smart set 199" })).toBeNull();
+    expect(offsets).toEqual(
+      outcome === "shorter result"
+        ? [0]
+        : outcome === "later-page failure"
+          ? [0, 100, 0, 100]
+          : [0, 100],
+    );
+    if (outcome === "shorter result")
+      expect(screen.queryByRole("button", { name: "Load more smart sets" })).toBeNull();
+    albums.dispose();
+    await cache.dispose();
+  },
+);
+
+it("discards pagination that finishes after a definition refresh", async () => {
+  const payload = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const fingerprint = await queryFingerprint(payload);
+  const page = (offset: number, renamed: boolean) =>
+    Response.json({
+      items: Array.from({ length: 100 }, (_, i) =>
+        savedSmartSet(payload, fingerprint, {
+          id: `00000000-0000-4000-8000-${String(offset + i).padStart(12, "0")}`,
+          name: `${renamed ? "Renamed" : "Smart"} set ${offset + i}`,
+        }),
+      ),
+      total: 200,
+      limit: 100,
+      offset,
+    });
+  let refreshing = false;
+  let finish!: (response: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const offset = Number(
+        new URL(String(input), "https://example.test").searchParams.get("offset"),
+      );
+      if (offset && !refreshing) return new Promise<Response>((resolve) => (finish = resolve));
+      return page(offset, refreshing);
+    }),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+  await screen.findByRole("button", { name: "Smart set 99" });
+  await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  refreshing = true;
+  await definitionsChanged("scoped");
+  await screen.findByRole("button", { name: "Renamed set 99" });
+  finish(page(100, false));
+  await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+  await screen.findByRole("button", { name: "Renamed set 199" });
+  expect(screen.queryByRole("button", { name: "Smart set 199" })).toBeNull();
+  albums.dispose();
+  await cache.dispose();
+});
