@@ -20,7 +20,6 @@ import {
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoFace,
-  photoPersonAssertion,
   photoMetadataResponse,
   photoPreparation,
   photoFacePage,
