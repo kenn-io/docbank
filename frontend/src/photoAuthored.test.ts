@@ -828,6 +828,7 @@ it.each(["assigned lookup", "definition refresh", "receipt refresh"])(
   async (path) => {
     const editor = editorWithTargets();
     const tag = { id: "deleted-tag", name: "Deleted keyword", revision: 1 } as Tag;
+    const retained = { id: "retained-tag", name: "Retained keyword", revision: 1 } as Tag;
     editor.targets[0].tags = [tag.id];
     let release!: (value: Response) => void;
     let remove!: (value: Response) => void;
@@ -841,17 +842,27 @@ it.each(["assigned lookup", "definition refresh", "receipt refresh"])(
             return new Promise<Response>((resolve) => {
               remove = resolve;
             });
+          if (reads === 2 && path === "receipt refresh") return response(tag);
           if (reads === 1 || (reads === 2 && path !== "assigned lookup"))
             return new Promise<Response>((resolve) => {
               release = resolve;
             });
           return response({ detail: "Keyword deleted" }, 404);
         }
+        if (url.endsWith(`/tags/${retained.id}`))
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
         return response({
           receipt_id: "edit",
           before: targets,
           after: [{ ...targets[0], tags: [tag.id] }],
-          keywords: [{ node_id: 1, tag_id: tag.id, before: false, after: true }],
+          keywords: [
+            { node_id: 1, tag_id: tag.id, before: false, after: true },
+            ...(path === "receipt refresh"
+              ? [{ tag_id: retained.id, before: false, after: true }]
+              : []),
+          ],
         });
       }),
     );
@@ -866,59 +877,19 @@ it.each(["assigned lookup", "definition refresh", "receipt refresh"])(
       if (path === "definition refresh") pending = editor.refreshAssignedTags();
       else pending = editor.edit({}, {}, false, notify, [{ tag_id: tag.id, assign: true }]);
       await vi.waitFor(() => expect(reads).toBe(2));
+      if (path === "receipt refresh")
+        await vi.waitFor(() => expect(editor.tags.map((value) => value.id)).toContain(tag.id));
       remove(response({ detail: "Keyword deleted" }, 404));
     }
     await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith(tag.id));
     editor.stage({ caption: "keep draft" });
-    release(response(tag));
+    release(response(path === "receipt refresh" ? retained : tag));
     await pending;
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(editor.tags.map((value) => value.id)).not.toContain(tag.id);
     if (path === "definition refresh") expect(await pending).toEqual([]);
-    if (path === "receipt refresh") expect(notify.mock.calls[0]?.[1]).toEqual([]);
+    if (path === "receipt refresh") expect(notify.mock.calls[0]?.[1]).toEqual([retained]);
     expect(editor.patch).toEqual({ caption: "keep draft" });
     editor.dispose();
   },
 );
-
-it("filters deleted keywords from a receipt catalog while another lookup finishes", async () => {
-  const editor = editorWithTargets();
-  editor.targets[0].tags = ["deleted-tag"];
-  let remove!: (value: Response) => void;
-  let finish!: (value: Response) => void;
-  const deleted = vi.fn();
-  editor.onTagDeleted = deleted;
-  let reads = 0;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) => {
-      if (url.endsWith("/tags/deleted-tag")) {
-        if (++reads === 1)
-          return new Promise<Response>((resolve) => {
-            remove = resolve;
-          });
-        return response({ id: "deleted-tag", name: "Deleted keyword", revision: 1 });
-      }
-      if (url.endsWith("/tags/retained-tag"))
-        return new Promise<Response>((resolve) => {
-          finish = resolve;
-        });
-      return response({
-        receipt_id: "edit",
-        before: targets,
-        after: targets,
-        keywords: [{ tag_id: "deleted-tag" }, { tag_id: "retained-tag" }],
-      });
-    }),
-  );
-  void editor.refreshAssignedTags();
-  const notify = vi.fn();
-  const pending = editor.edit({}, {}, false, notify, [{ tag_id: "deleted-tag", assign: true }]);
-  await vi.waitFor(() => expect(editor.tags.map((tag) => tag.id)).toContain("deleted-tag"));
-  remove(response({ detail: "Keyword deleted" }, 404));
-  await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith("deleted-tag"));
-  finish(response({ id: "retained-tag", name: "Retained keyword", revision: 1 }));
-  await pending;
-  expect(notify.mock.calls[0]?.[1].map((tag: Tag) => tag.id)).toEqual(["retained-tag"]);
-  editor.dispose();
-});

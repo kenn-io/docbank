@@ -173,6 +173,13 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 			return err
 		}))
 	}
+	idle, err := s.PhotoHiddenState(ctx, false)
+	require.NoError(t, err)
+	_, err = s.CreatePhotoSet(ctx, "Idle album")
+	require.NoError(t, err)
+	afterIdle, err := s.PhotoHiddenState(ctx, false)
+	require.NoError(t, err)
+	require.Equal(t, idle.ChangeCursor, afterIdle.ChangeCursor, "ordinary state reads leave capture idle")
 	locked := cursor(ctx)
 	require.Equal(t, locked, cursor(ctx))
 	write()

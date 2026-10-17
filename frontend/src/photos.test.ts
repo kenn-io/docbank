@@ -2902,6 +2902,39 @@ it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
 );
 
 it("bounds targeted row refreshes, retries and ignores an abandoned view", async () => {
+  for (const broad of [false, true]) {
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    photos.total = 2;
+    const untouched = photos.items[1];
+    const changed = {
+      ...photo(1),
+      previews: { ...photo(1).previews, grid: { state: "unsupported" as const } },
+    };
+    const wholeQueries = vi.fn();
+    stubPhotoFetch(async (_url, init) => {
+      const request = JSON.parse(String(init.body));
+      if (request.query.filters.asset_ids) {
+        expect(request.query.filters.asset_ids).toEqual(["photo-1"]);
+        return response([changed]);
+      }
+      wholeQueries(request);
+      return response([changed, photo(2), photo(3)]);
+    });
+    await photos.refreshChanges({ assets: new Map([["photo-1", 1]]), refetch: broad });
+    expect(photos.items[0].previews.grid).toEqual({ state: "unsupported" });
+    if (broad) {
+      expect(wholeQueries).toHaveBeenCalledOnce();
+      expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
+      expect(photos.total).toBe(3);
+    } else {
+      expect(wholeQueries).not.toHaveBeenCalled();
+      expect(photos.items[1]).toBe(untouched);
+      expect(photos.total).toBe(2);
+    }
+    photos.dispose();
+  }
   vi.useFakeTimers();
   vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
     const controller = new AbortController();

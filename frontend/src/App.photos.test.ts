@@ -3626,7 +3626,7 @@ it("propagates album refresh failures and shows a later refresh", async () => {
     .spyOn(api, "listPhotoAlbums")
     .mockRejectedValueOnce(new Error("Albums unavailable"))
     .mockResolvedValue([{ ...fixture.album, name: "Updated album" }]);
-  const batch = { assets: new Map<string, number>(), refetch: true };
+  const batch = { assets: new Map([["photo-1", 1]]), refetch: false };
   await act(async () => expect(fixture.refresh(batch)).rejects.toThrow());
   await act(async () => fixture.refresh(batch));
   expect(load).toHaveBeenCalledTimes(2);
@@ -3653,34 +3653,6 @@ it("forwards the Hidden view access poll cursor", async () => {
   await waitFor(() => expect(fixture.cursors).toHaveBeenCalledWith("hidden-change"), {
     timeout: 4000,
   });
-});
-
-it("refreshes album covers after row-only preview events", async () => {
-  const fixture = await watcherFixture();
-  await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
-  await screen.findByRole("main", { name: "Albums" });
-  const preview = vi.spyOn(api, "readPhotoPreview").mockResolvedValue(new Response("preview"));
-  Object.defineProperty(URL, "createObjectURL", {
-    configurable: true,
-    value: vi.fn(() => "blob:cover"),
-  });
-  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-  vi.spyOn(api, "listPhotoAlbums").mockResolvedValue([
-    { ...fixture.album, effective_cover_asset_id: "photo-1", cover_generation_id: "new-preview" },
-  ]);
-  await act(async () => fixture.refresh({ assets: new Map([["photo-1", 1]]), refetch: false }));
-  await waitFor(() =>
-    expect(preview).toHaveBeenCalledWith(
-      "photo-1",
-      "new-preview",
-      undefined,
-      expect.objectContaining({ session: "synthetic" }),
-    ),
-  );
-  const albums = screen.getByRole("main", { name: "Albums" });
-  await waitFor(() =>
-    expect(albums.querySelector(".album-cover img")?.getAttribute("src")).toBe("blob:cover"),
-  );
 });
 
 it("routes row-only changes to an active direct viewer outside loaded rows", async () => {

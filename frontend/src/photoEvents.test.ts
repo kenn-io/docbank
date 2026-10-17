@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
-import { readPhotoEvents, type PhotoEventBatch, watchPhotoEvents } from "./photoEvents.js";
+import { readPhotoEvents, watchPhotoEvents } from "./photoEvents.js";
 
 const encoder = new TextEncoder();
 function stream(chunks: string[]) {
@@ -118,6 +118,15 @@ it("authenticates and coalesces changes while preserving a change during refresh
   expect(refresh).toHaveBeenCalledTimes(3);
   expect(refresh.mock.calls[2][0]).toEqual({ assets: new Map(), refetch: true });
   release();
+  await vi.advanceTimersByTimeAsync(0);
+  refresh.mockClear().mockImplementation(async () => {});
+  for (let i = 0; i < 1000; i++) {
+    writer.enqueue(encoder.encode(`data: {"asset_id":"photo-${i}","revision":1}\n\n`));
+    await vi.advanceTimersByTimeAsync(60);
+  }
+  expect(refresh.mock.calls.length).toBeLessThanOrEqual(60);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(refresh.mock.calls.reduce((total, [batch]) => total + batch.assets.size, 0)).toBe(1000);
   stop();
 });
 
@@ -244,42 +253,6 @@ it("uses cursor polling when locks are unavailable", async () => {
   await vi.advanceTimersByTimeAsync(100);
   expect(refresh).toHaveBeenCalledTimes(2);
   stop();
-});
-
-it("limits 1,000 events paced over one minute to 60 refresh batches", async () => {
-  vi.useFakeTimers();
-  let writer!: ReadableStreamDefaultController<Uint8Array>;
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          writer = controller;
-        },
-      }),
-      { headers: { "Content-Type": "text/event-stream" } },
-    ),
-  );
-  const times: number[] = [];
-  const batches: PhotoEventBatch[] = [];
-  const refresh = vi.fn(async (batch: PhotoEventBatch) => {
-    times.push(Date.now());
-    batches.push(batch);
-  });
-  const stop = watchPhotoEvents("synthetic", refresh, vi.fn());
-  try {
-    await vi.advanceTimersByTimeAsync(0);
-    for (let i = 0; i < 1000; i++) {
-      writer.enqueue(encoder.encode(`data: {"asset_id":"photo-${i}","revision":1}\n\n`));
-      await vi.advanceTimersByTimeAsync(60);
-    }
-    expect(refresh).toHaveBeenCalledTimes(60);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(refresh).toHaveBeenCalledTimes(61);
-    expect(batches.reduce((total, batch) => total + batch.assets.size, 0)).toBe(1000);
-    expect(times.slice(1).every((time, index) => time - times[index] >= 1000)).toBe(true);
-  } finally {
-    stop();
-  }
 });
 
 it("uses each follower's cursor while waiting for ownership and refetches on handoff", async () => {

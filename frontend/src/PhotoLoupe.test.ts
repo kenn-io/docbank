@@ -58,7 +58,7 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("shows grid, fit and large and preserves zoom", async () => {
+it("shows grid, fit and large, keeping zoom until reload", async () => {
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);
   await screen.findByText("Grid preview");

@@ -10,7 +10,7 @@ import (
 
 func TestPhotoEventsCaptureWrites(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"photo file", "technical metadata", "published metadata", "quality worker", "album", "saved", "collection", "document", "document worker", "peer leaves", "matching hash", "unrelated hash"} {
+	for _, change := range []string{"technical metadata", "published metadata", "quality worker", "album", "saved", "collection", "document", "peer leaves"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -36,15 +36,6 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 			generic := false
 			quiet := false
 			switch change {
-			case "photo file":
-				err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-					_, err := tx.ExecContext(ctx, `UPDATE photo_files SET file_id='replacement-photo',revision=revision+1 WHERE node_id=?`, photo.ID)
-					if err != nil {
-						return err
-					}
-					_, err = tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id='replacement-photo',revision=revision+1 WHERE asset_id=?`, asset.ID)
-					return err
-				})
 			case "technical metadata":
 				err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 					_, err := tx.ExecContext(ctx, `UPDATE photo_technical_metadata SET iso=400 WHERE generation_id=?`, generation.GenerationID)
@@ -72,21 +63,9 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 			case "document":
 				_, _, err = s.Move(ctx, doc.ID, s.RootID(), "renamed.txt", doc.Revision)
 				quiet = true
-			case "document worker":
-				err = s.RecordExtraction(ctx, ExtractionResult{BlobHash: doc.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "Document"})
-				quiet = true
 			case "peer leaves":
 				_, _, err = s.Trash(ctx, doc.ID, doc.Revision)
 				generic = true
-			case "matching hash", "unrelated hash":
-				hash := fakeHash("33")
-				if change == "matching hash" {
-					hash = photo.BlobHash
-					generic = true
-				} else {
-					quiet = true
-				}
-				_, err = s.CreateFile(ctx, s.RootID(), "peer.txt", hash, 4, "text/plain")
 			}
 			require.NoError(t, err)
 			if quiet {

@@ -205,36 +205,23 @@ func TestPhotoHiddenLockDuringMaintenance(t *testing.T) {
 
 func TestPhotoHiddenHTTPWatchInterest(t *testing.T) {
 	t.Parallel()
-	for _, watch := range []bool{false, true} {
-		t.Run(strconv.FormatBool(watch), func(t *testing.T) {
-			ts, s := newTestServer(t, nil)
-			ctx := t.Context()
-			hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
-			require.NoError(t, err)
-			node, err := s.CreateFile(ctx, s.RootID(), "before.jpg", hash, size, "image/jpeg")
-			require.NoError(t, err)
-			path := "/api/v1/photos/hidden"
-			if watch {
-				path += "?watch=true"
-			}
-			poll := func() string {
-				t.Helper()
-				response, body := get(t, ts, path, nil)
-				require.Equal(t, http.StatusOK, response.StatusCode, body)
-				var state store.PhotoHiddenState
-				require.NoError(t, json.Unmarshal([]byte(body), &state))
-				require.NotEmpty(t, state.ChangeCursor)
-				return state.ChangeCursor
-			}
-			before := poll()
-			_, _, err = s.Move(ctx, node.ID, s.RootID(), "renamed.jpg", node.Revision)
-			require.NoError(t, err)
-			after := poll()
-			if watch {
-				require.NotEqual(t, before, after, "explicit watch reads must keep capturing committed changes")
-			} else {
-				require.Equal(t, before, after, "ordinary state reads must leave capture idle")
-			}
-		})
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, s.RootID(), "before.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	poll := func() string {
+		t.Helper()
+		response, body := get(t, ts, "/api/v1/photos/hidden?watch=true", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var state store.PhotoHiddenState
+		require.NoError(t, json.Unmarshal([]byte(body), &state))
+		require.NotEmpty(t, state.ChangeCursor)
+		return state.ChangeCursor
 	}
+	before := poll()
+	_, _, err = s.Move(ctx, node.ID, s.RootID(), "renamed.jpg", node.Revision)
+	require.NoError(t, err)
+	require.NotEqual(t, before, poll(), "the watch parameter reaches the store")
 }

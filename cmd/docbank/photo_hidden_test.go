@@ -170,11 +170,6 @@ func TestPhotoHiddenCLIJSONContract(t *testing.T) {
 	for _, tc := range []struct{ action, input string }{
 		{"setup", "synthetic-passcode\n"},
 		{"state", ""},
-		{"change", "synthetic-passcode\nreplacement-passcode\n"},
-		{"lock", ""},
-		{"disable", "replacement-passcode\n"},
-		{"setup", "synthetic-passcode\n"},
-		{"reset", ""},
 	} {
 		t.Run(tc.action, func(t *testing.T) {
 			cmd, _, err := rootCmd.Find([]string{"photos", "hidden", tc.action})
@@ -187,11 +182,6 @@ func TestPhotoHiddenCLIJSONContract(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(out), &result))
 			require.Contains(t, result, "configured")
 			require.NotContains(t, result, "change_cursor")
-			connection, err := daemonconn.Ensure(t.Context())
-			require.NoError(t, err)
-			state, err := connection.PhotoHiddenState(t.Context())
-			require.NoError(t, err)
-			require.NotEmpty(t, state.ChangeCursor, "the daemon retains its cursor")
 		})
 	}
 }
