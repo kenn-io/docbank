@@ -477,7 +477,61 @@ it.each([
   faces.dispose();
 });
 
-it.each(["complete", "broad", "case"])("completes only the last name group: %s", async (result) => {
+it("finds an exact existing person after 100 earlier matching names", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  const existing: api.PersonSummary = {
+    person_id: "person-exact",
+    display_name: "Alex",
+    display_name_folded: "alex",
+    state: "curated",
+    revision: 1,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  let finish!: (page: api.PersonPage) => void;
+  const search = vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
+    if (!query) return { items: [] };
+    if (!cursor)
+      return {
+        items: Array.from({ length: 100 }, (_, index) => ({
+          ...existing,
+          person_id: `person-${index}`,
+          display_name: `Aaron ${index} Alex`,
+          display_name_folded: `aaron ${index} alex`,
+        })),
+        next_cursor: "later-names",
+        same_name_continues: false,
+      };
+    expect(cursor).toBe("later-names");
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+  const more = await screen.findByRole("option", { name: "Load more" });
+  expect(search.mock.calls.some(([params]) => params?.cursor)).toBe(false);
+  expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
+  await fireEvent.mouseDown(more);
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
+  await act(() => finish({ items: [existing] }));
+  expect(await screen.findByRole("option", { name: 'Create person "Alex"' })).toBeTruthy();
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex" }));
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith(
+      "version-a",
+      expect.objectContaining({ person_id: "person-exact" }),
+      expect.anything(),
+    ),
+  );
+  faces.dispose();
+});
+
+it.each(["complete", "broad", "case"])("completes paginated name groups: %s", async (result) => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
     faces: [face],
     assertions: [],

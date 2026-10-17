@@ -28,6 +28,7 @@
   let query = $state("");
   let activeFace = $state("");
   let searching = $state(false);
+  let nextCursor = $state<string>();
   let error = $state("");
   let controller: AbortController | undefined;
   let writer: AbortController | undefined;
@@ -216,6 +217,7 @@
   $effect(() => {
     void faces.version;
     people = [];
+    nextCursor = undefined;
     query = "";
     activeFace = "";
     error = "";
@@ -229,18 +231,21 @@
     void faces.hiddenAccess?.scope;
     controller?.abort();
     people = [];
+    nextCursor = undefined;
     query = "";
     error = "";
     searching = false;
     closeChooser();
   });
-  async function search(faceID: string, value: string) {
+  async function search(faceID: string, value: string, cursor?: string) {
     activeFace = faceID;
     query = value;
     const normalized = value.trim();
     controller?.abort();
     const request = (controller = new AbortController());
+    const previous = cursor ? people : [];
     people = [];
+    nextCursor = undefined;
     searching = true;
     error = "";
     if (new TextEncoder().encode(normalized).length > 200) {
@@ -259,21 +264,16 @@
         };
         return faces.hiddenAccess ? faces.hiddenAccess.run(fetch) : fetch();
       };
-      let page = await read();
-      const matches = [...page.items];
-      const tail = matches.at(-1)?.display_name_folded;
-      while (
-        !request.signal.aborted &&
-        page.next_cursor &&
-        page.same_name_continues &&
-        tail !== undefined
-      ) {
+      let page = await read(cursor);
+      const matches = [...previous, ...page.items];
+      while (!request.signal.aborted && page.next_cursor && page.same_name_continues) {
         page = await read(page.next_cursor);
-        const boundary = page.items.findIndex((person) => person.display_name_folded !== tail);
-        matches.push(...(boundary < 0 ? page.items : page.items.slice(0, boundary)));
-        if (boundary >= 0 || !page.items.length) break;
+        matches.push(...page.items);
       }
-      if (!request.signal.aborted) people = matches;
+      if (!request.signal.aborted) {
+        people = matches;
+        nextCursor = page.next_cursor;
+      }
     } catch (cause) {
       if (!request.signal.aborted) {
         previewFailure(cause);
@@ -285,6 +285,10 @@
   }
   async function choose(face: PhotoFace, value: string) {
     if (choosing) return false;
+    if (value === "\0more") {
+      if (nextCursor && !searching) await search(face.face_id, query, nextCursor);
+      return false;
+    }
     if (value.startsWith("\0group:")) {
       void openChooser(face, value.slice(7));
       return true;
@@ -345,8 +349,15 @@
                 ? { displayLabel: faces.personLabel(person!.person_id) }
                 : {}),
             })),
+          ...(activeFace === face.face_id && nextCursor && !searching && !error
+            ? [{ name: "\0more", label: "Load more" }]
+            : []),
         ]}
-        allowCustom={activeFace === face.face_id && !!query.trim() && !searching && !error}
+        allowCustom={activeFace === face.face_id &&
+          !!query.trim() &&
+          !searching &&
+          !nextCursor &&
+          !error}
         customLabel={'Create person "{query}"'}
         loading={activeFace === face.face_id && searching}
         allowClear={!!person}
