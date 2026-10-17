@@ -701,9 +701,6 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 
 func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 	if r.URL.Path == "/api/v1/people" {
-		if r.Method == http.MethodPost {
-			return r.URL.RawQuery == ""
-		}
 		if r.Method != http.MethodGet {
 			return false
 		}

@@ -100,7 +100,10 @@ export class PhotoFaces {
       return true;
     } catch (cause) {
       if (!controller.signal.aborted) {
-        if (cause instanceof APIError && (cause.status === 409 || cause.status === 412))
+        if (
+          decision ||
+          (cause instanceof APIError && (cause.status === 409 || cause.status === 412))
+        )
           await this.load(version);
         this.failed(cause);
       }
@@ -109,7 +112,8 @@ export class PhotoFaces {
       if (!controller.signal.aborted) this.busy = false;
     }
   }
-  name(face: PhotoFace, personID: string) {
+  name(face: PhotoFace, personID: string, personName?: string) {
+    const operationID = randomUUID();
     return this.write(
       (version, signal) =>
         decidePhotoFace(
@@ -118,8 +122,8 @@ export class PhotoFaces {
             action: "name",
             face_id: face.face_id,
             revision: face.revision,
-            person_id: personID,
-            operation_id: randomUUID(),
+            ...(personName === undefined ? { person_id: personID } : { person_name: personName }),
+            operation_id: operationID,
           },
           { session: this.session, signal },
         ),

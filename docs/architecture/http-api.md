@@ -1418,12 +1418,7 @@ query arguments.
 
 ## People search
 
-`GET /api/v1/people` and MCP `find_people` return `items`, an optional
-`next_cursor`, and optional `exact_match`. `exact_match: true` means the returned
-page contains an active person whose display name equals the query after
-Unicode folding (`ada` matches `Ada`). The field is omitted otherwise. Browser
-sessions may search and create people, but cannot read person details or edit
-canonical person records.
+`GET /api/v1/people` and MCP `find_people` return `items` and an optional `next_cursor`. HTTP also returns optional `exact_match`: true when the returned page contains an active person whose display name equals the query after Unicode folding (`ada` matches `Ada`). The field is omitted otherwise. Browser sessions may search people and create a person while naming a face; separate person creation, person details, and canonical person edits require the API key.
 
 ## Photo faces
 
@@ -1433,7 +1428,7 @@ canonical person records.
 
 Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. API-key clients can use every face route. Browser sessions can list faces, create boxed faces, and name or clear a face through revision-fenced `name` or `retract` decisions. Whole-photo marks and other decisions require the API key. Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. Detection and face suggestions are unavailable. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
 
-`POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming, rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`.
+`POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming takes either `person_id` or `person_name`. A new name creates the person and assigns the face in one transaction; a failed revision check rolls both back. Retain `operation_id` for an identical replay after an uncertain response. Rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. Undo retains a person created by the decision. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`.
 
 Person detail accepts `assertion_cursor` and `assertion_limit` (1–1,000) and returns `assertions_next_cursor`, `key_face_id`, and document and photo assertion selectors. Hidden filtering precedes pagination. Merge conflicts include up to 20 visible `face_ids`, `more`, and `hidden_face_conflict`; retained versions can be corrected through the same Hidden gate.
 

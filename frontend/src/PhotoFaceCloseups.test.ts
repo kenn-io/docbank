@@ -34,6 +34,9 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
   expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Ada", "Unnamed face"]);
   expect(images.every((img) => img.getAttribute("src") === "blob:fit")).toBe(true);
   expect(images[1]!.getAttribute("style")).toContain("rotate(90deg)");
+  const crop = (images[1] as HTMLImageElement).style;
+  expect(parseFloat(crop.left)).toBeCloseTo(44);
+  expect(parseFloat(crop.top)).toBeCloseTo(125);
   faces.people = faces.people.map((row) => ({ ...row, display_name: "Grace" }));
   await component.rerender({
     photo: selected,

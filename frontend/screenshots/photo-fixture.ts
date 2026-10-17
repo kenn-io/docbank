@@ -1,3 +1,4 @@
+import { expect, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -43,4 +44,40 @@ export function photoFixture(workspace: string, binaryOverride?: string) {
     }
   };
   return { run, seed, dispose };
+}
+
+export async function withPhotoAPI<T>(url: URL, run: () => Promise<T>): Promise<T> {
+  const fetcher = globalThis.fetch;
+  try {
+    globalThis.fetch = (input, init) => {
+      const address = new URL(String(input), url.origin);
+      const headers = new Headers(init?.headers);
+      headers.set("Host", address.host);
+      address.hostname = "127.0.0.1";
+      return fetcher(address, { ...init, headers });
+    };
+    return await run();
+  } finally {
+    globalThis.fetch = fetcher;
+  }
+}
+
+export async function capturePhotoThemes(
+  page: Page,
+  output: string,
+  name: string,
+  ready: () => Promise<unknown>,
+) {
+  await expect.poll(ready).toBe(true);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      localStorage.setItem("docbank-theme", value);
+      document.documentElement.classList.toggle("dark", value === "dark");
+      return document.fonts.ready.then(() => {});
+    }, theme);
+    await page.screenshot({
+      path: path.join(output, `${name}${theme === "light" ? "-light" : ""}.png`),
+      animations: "disabled",
+    });
+  }
 }

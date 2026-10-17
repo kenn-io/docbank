@@ -1,53 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import * as api from "../src/generated/docbank.js";
-import { photoFixture, repository } from "./photo-fixture.js";
+import { photoFixture, repository, withPhotoAPI, capturePhotoThemes } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
-
-async function withPhotoAPI<T>(url: URL, run: () => Promise<T>): Promise<T> {
-  const fetcher = globalThis.fetch;
-  try {
-    globalThis.fetch = (input, init) => {
-      const address = new URL(String(input), url.origin);
-      const headers = new Headers(init?.headers);
-      headers.set("Host", address.host);
-      address.hostname = "127.0.0.1";
-      return fetcher(address, { ...init, headers });
-    };
-    return await run();
-  } finally {
-    globalThis.fetch = fetcher;
-  }
-}
-
-async function captureThemes(page: Page, name: string) {
-  await expect
-    .poll(() =>
-      page
-        .locator(".photo-viewport img")
-        .evaluateAll(
-          (images) =>
-            images.length > 0 &&
-            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
-        ),
-    )
-    .toBe(true);
-  for (const theme of ["light", "dark"]) {
-    await page.evaluate((value) => {
-      localStorage.setItem("docbank-theme", value);
-      document.documentElement.classList.toggle("dark", value === "dark");
-      return document.fonts.ready.then(() => {});
-    }, theme);
-    await page.screenshot({
-      path: path.join(output!, `${name}${theme === "light" ? "-light" : ""}.png`),
-      animations: "disabled",
-    });
-  }
-}
 
 test("draws and names faces, opens person-filtered Library, and reads cull closeups", async ({
   page,
@@ -246,8 +205,27 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       async () =>
         (await api.listPeople({ query: "Ada", limit: 100 }, { session })).items[0]!.person_id,
     );
+    await fixture.run("people", "rename", personID, "Ada Updated", "--revision", "3");
+    await people.getByRole("button", { name: "Find or create a person: Unnamed face" }).click();
+    await people.getByRole("combobox").fill("Grace");
+    await people.getByRole("option", { name: "Grace", exact: true }).click();
+    await expect(
+      people.getByRole("button", { name: "Find or create a person: Ada Updated" }),
+    ).toBeVisible();
+    await expect(loupe.locator(".face-box")).toHaveText(["Ada Updated", "Grace"]);
+    await fixture.run("people", "rename", personID, "Ada", "--revision", "4");
+    await people.getByRole("button", { name: "Find or create a person: Grace" }).click();
+    await people.getByRole("option", { name: "Clear name", exact: true }).click();
     await fixture.run("photos", "faces", "create", face.content_version_id, "--person", personID);
-    await captureThemes(page, "web-photo-faces-loupe");
+    await capturePhotoThemes(page, output!, "web-photo-faces-loupe", () =>
+      page
+        .locator(".photo-viewport img")
+        .evaluateAll(
+          (images) =>
+            images.length > 0 &&
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+        ),
+    );
     const filtered = page.waitForRequest(
       (request) =>
         request.url().endsWith("/photos/assets/query") &&
@@ -271,7 +249,15 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       )
       .toBe(true);
     await expect(closeups.locator("figcaption")).toHaveText(["Ada", "Ada", "Unnamed face"]);
-    await captureThemes(page, "web-photo-faces-cull");
+    await capturePhotoThemes(page, output!, "web-photo-faces-cull", () =>
+      page
+        .locator(".photo-viewport img")
+        .evaluateAll(
+          (images) =>
+            images.length > 0 &&
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+        ),
+    );
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
     await page.getByRole("button", { name: "Hidden", exact: true }).click();
     await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
@@ -365,7 +351,7 @@ test("pages to every person match after leaving a relevance search", async ({ pa
     url.pathname = "/photos";
     await page.goto(url.href);
     const { personID, lastName } = await withPhotoAPI(url, async () => {
-      const person = await api.createPerson({ display_name: "Ada" }, { session });
+      const person = JSON.parse(await fixture.run("people", "create", "Ada")) as api.Person;
       let cursor: string | undefined;
       const rows: api.PhotoBrowseRow[] = [];
       do {
@@ -434,97 +420,6 @@ test("pages to every person match after leaving a relevance search", async ({ pa
         return page.getByRole("button", { name: `Select ${lastName}`, exact: true }).count();
       })
       .toBe(1);
-  } finally {
-    await fixture.dispose();
-  }
-});
-
-test("updates a mounted face picker's cached name after a CLI rename and another face decision", async ({
-  page,
-}) => {
-  test.setTimeout(300_000);
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "faces-rename-proof-"));
-  const fixture = photoFixture(workspace);
-  try {
-    await fixture.seed(1);
-    const url = new URL(await fixture.run("web", "--no-browser"));
-    const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
-    url.pathname = "/photos";
-    await page.goto(url.href);
-    const ada = await withPhotoAPI(url, async () => {
-      const rows = await api.listPhotoAssets(
-        {
-          query: {
-            v: 1,
-            syntax: "simple",
-            text: "",
-            mode: "lexical",
-            filters: {},
-            sort: { field: "capture_time", direction: "desc" },
-          },
-          page_size: 250,
-        },
-        { session },
-      );
-      const ada = await api.createPerson({ display_name: "Ada" }, { session });
-      await api.createPerson({ display_name: "Grace" }, { session });
-      for (const x of [0.1, 0.6]) {
-        await api.createPhotoFace(
-          rows.items[0]!.content_version_id,
-          {
-            face_id: crypto.randomUUID(),
-            box: { x, y: 0.2, width: 0.2, height: 0.3 },
-          },
-          { session },
-        );
-      }
-      return ada;
-    });
-    await page.locator(".photo-image").first().dblclick();
-    const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
-    await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
-    const people = loupe.getByRole("region", { name: "People", exact: true });
-    await people
-      .getByRole("button", { name: "Find or create a person: Unnamed face" })
-      .first()
-      .click();
-    await people.getByRole("combobox").fill("Ada");
-    await people.getByRole("option", { name: "Ada", exact: true }).click();
-    await expect(
-      people.getByRole("button", { name: "Find or create a person: Ada" }),
-    ).toBeVisible();
-    await fixture.run(
-      "people",
-      "rename",
-      ada.person_id,
-      "Ada Updated",
-      "--revision",
-      String(ada.revision),
-    );
-    await people.getByRole("button", { name: "Find or create a person: Unnamed face" }).click();
-    await people.getByRole("combobox").fill("Grace");
-    await people.getByRole("option", { name: "Grace", exact: true }).click();
-    await expect(
-      people.getByRole("button", { name: "Find or create a person: Ada Updated" }),
-    ).toBeVisible();
-    await expect(people.getByRole("button", { name: "Ada Updated", exact: true })).toBeVisible();
-    await expect(
-      people.getByRole("button", { name: "Find or create a person: Grace" }),
-    ).toBeVisible();
-    await expect(loupe.locator(".face-box")).toHaveText(["Ada Updated", "Grace"]);
-    await expect
-      .poll(() =>
-        loupe
-          .locator(".photo-viewport img")
-          .evaluate((image) => (image as HTMLImageElement).naturalWidth > 512),
-      )
-      .toBe(true);
-    await page.evaluate(() => document.fonts.ready.then(() => {}));
-    await mkdir(output!, { recursive: true });
-    await page.screenshot({
-      path: path.join(output!, "web-photo-faces-canonical-rename.png"),
-      animations: "disabled",
-    });
   } finally {
     await fixture.dispose();
   }

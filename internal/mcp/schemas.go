@@ -213,7 +213,7 @@ func findPeopleSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			"query": stringSchema(document.MaxPersonDisplayNameBytes), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 		}), rootObjectSchema(withPrivateCache(schema{
-			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters), "exact_match": booleanSchema(),
+			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters),
 		}), cacheRequired("items")...)
 }
 

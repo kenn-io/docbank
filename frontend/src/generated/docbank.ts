@@ -5741,6 +5741,8 @@ export interface PhotoFaceDecisionRequest {
   face_id?: string;
   operation_id?: string;
   person_id?: string;
+  /** @maxLength 200 */
+  person_name?: string;
   person_revision?: number;
   /** @minimum 0 */
   revision?: number;

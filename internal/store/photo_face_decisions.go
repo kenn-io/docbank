@@ -20,6 +20,7 @@ type PhotoFaceDecisionRequest struct {
 	OperationID    string `json:"operation_id,omitzero" format:"uuid"`
 	FaceID         string `json:"face_id,omitzero" format:"uuid"`
 	PersonID       string `json:"person_id,omitzero" format:"uuid"`
+	PersonName     string `json:"person_name,omitzero" maxLength:"200"`
 	Action         string `json:"action" enum:"name,retract,reject,dismiss,key,withdraw_rejection"`
 	Revision       int64  `json:"revision,omitzero" minimum:"0"`
 	PersonRevision int64  `json:"person_revision,omitzero"`
@@ -303,6 +304,9 @@ func reserveFaceDecisionRevisions(state PhotoFaceDecisionState) PhotoFaceDecisio
 var faceCandidateActions = []string{faceDecisionName, faceDecisionReject, "dismiss", "withdraw_rejection"}
 
 func validateFaceDecisionRequest(request PhotoFaceDecisionRequest) error {
+	if request.PersonName != "" && (request.Action != faceDecisionName || request.PersonID != "" || !validPersonName(request.PersonName)) {
+		return ErrInvalidPhotoFace
+	}
 	if request.OperationID != "" && validateUUIDv4(request.OperationID) != nil {
 		return ErrInvalidPhotoFace
 	}
@@ -318,7 +322,7 @@ func validateFaceDecisionRequest(request PhotoFaceDecisionRequest) error {
 	if request.FaceID == "" && request.Action != "key" {
 		return ErrInvalidPhotoFace
 	}
-	if slices.Contains([]string{faceDecisionName, faceDecisionReject, "withdraw_rejection", "key"}, request.Action) && request.PersonID == "" {
+	if slices.Contains([]string{faceDecisionName, faceDecisionReject, "withdraw_rejection", "key"}, request.Action) && request.PersonID == "" && request.PersonName == "" {
 		return ErrInvalidPhotoFace
 	}
 	return nil
@@ -355,6 +359,13 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	face, err := decisionFaceTx(ctx, tx, versionID, request)
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
+	}
+	if request.PersonName != "" {
+		person, err := createPersonTx(ctx, tx, request.PersonName, "operator")
+		if err != nil {
+			return PhotoFaceDecisionReceipt{}, err
+		}
+		request.PersonID = person.PersonID
 	}
 	request.PersonID, err = decisionPersonTx(ctx, tx, request)
 	if err != nil {
@@ -402,7 +413,12 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 			return PhotoFaceDecisionReceipt{}, err
 		}
 	}
-	if err = advancePersonBindingEpochForVersionTx(ctx, tx, stateVersion); err != nil {
+	if request.PersonName != "" {
+		err = advancePersonBindingEpochTx(ctx, tx)
+	} else {
+		err = advancePersonBindingEpochForVersionTx(ctx, tx, stateVersion)
+	}
+	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
 	after, err := s.faceDecisionStateTx(ctx, tx, stateVersion, face.FaceID, personIDs, withCandidates, faceStateCandidateIDs(before)...)

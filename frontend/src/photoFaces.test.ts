@@ -33,16 +33,20 @@ it("names the face with its current revision and refreshes its active label", as
   );
   expect(faces.label(face)).toBe("Ada");
   expect(read).toHaveBeenCalledTimes(2);
-  write.mockRejectedValueOnce(new APIError("Changed", 412, "stale_revision"));
+  write.mockRejectedValueOnce(new Error("Response lost"));
   read.mockResolvedValue({
     faces: [{ ...face, revision: 9 }],
     assertions: [assertion],
     people: [{ person_id: "person-a", display_name: "Ada" }],
   });
-  expect(await faces.name(faces.faces[0]!, "person-a")).toBe(false);
+  expect(await faces.name(faces.faces[0]!, "", "Grace")).toBe(false);
   expect(write).toHaveBeenLastCalledWith(
     "version-a",
-    expect.objectContaining({ revision: 8 }),
+    expect.objectContaining({
+      revision: 8,
+      person_name: "Grace",
+      operation_id: expect.any(String),
+    }),
     expect.anything(),
   );
   expect(faces.faces[0]!.revision).toBe(9);

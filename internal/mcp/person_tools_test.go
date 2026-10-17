@@ -71,7 +71,7 @@ func TestPeopleMCPReads(t *testing.T) {
 	})
 	require.NoError(t, err)
 	found := call("find_people", map[string]any{"query": "survivor"})
-	assert.Equal(t, true, found["exact_match"])
+	assert.NotContains(t, found, "exact_match")
 	items, ok := found["items"].([]any)
 	require.True(t, ok)
 	require.Len(t, items, 1)

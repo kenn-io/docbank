@@ -87,6 +87,7 @@ func findPeople(ctx context.Context, lease *daemonLease, raw []byte) (personPage
 	if err != nil {
 		return personPageOutput{}, err
 	}
+	page.ExactMatch = false
 	return personPageOutput{PersonPage: page, privateCache: newPrivateCache()}, nil
 }
 

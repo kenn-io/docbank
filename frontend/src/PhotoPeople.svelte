@@ -1,11 +1,6 @@
 <script lang="ts">
   import { Button, Typeahead, Notice } from "@kenn-io/kit-ui";
-  import {
-    listPeople,
-    createPerson,
-    type PhotoFace,
-    type PersonSummary,
-  } from "./generated/docbank.js";
+  import { listPeople, type PhotoFace, type PersonSummary } from "./generated/docbank.js";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   let {
     faces,
@@ -68,25 +63,14 @@
     const request = (writer = new AbortController());
     try {
       if (!value) return (saved = await faces.clear(face));
-      let person = people.find((person) => key(person.person_id) === value);
+      const person = people.find((person) => key(person.person_id) === value);
       if (!person && (value.startsWith("\0") || value.trim() !== query.trim())) return false;
-      if (!person) {
-        person = await createPerson(
-          { display_name: value.trim() },
-          { session, signal: request.signal },
-        );
-      }
-      if (request.signal.aborted || faces.version !== version) return false;
-      return (saved = await faces.name(face, person.person_id));
-    } catch (cause) {
-      if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
-      return false;
+      return (saved = person
+        ? await faces.name(face, person.person_id)
+        : await faces.name(face, "", value.trim()));
     } finally {
-      if (!saved && !request.signal.aborted && faces.version === version) {
-        const message = error;
+      if (!saved && !request.signal.aborted && faces.version === version)
         await search(face.face_id, selectedQuery);
-        if (message) error = message;
-      }
       choosing = false;
     }
   }

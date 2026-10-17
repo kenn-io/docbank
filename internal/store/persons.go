@@ -55,7 +55,7 @@ func validPersonConfidence(confidence string) bool {
 	return slices.Contains([]string{"exact_identifier", "operator_asserted", "supplied_identity", "name_candidate"}, confidence)
 }
 
-func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (Person, error) {
+func createPersonTx(ctx context.Context, tx *sql.Tx, displayName, origin string) (Person, error) {
 	if !validPersonName(displayName) || !validPersonOrigin(origin) {
 		return Person{}, ErrInvalidPerson
 	}
@@ -68,14 +68,22 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 		return Person{}, err
 	}
 	now := nowRFC3339()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
+		return Person{}, err
+	}
 	var created Person
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
-			&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
-			&created.Revision, &created.CreatedAt, &created.UpdatedAt); err != nil {
+	err = tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+		&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
+		&created.Revision, &created.CreatedAt, &created.UpdatedAt)
+	return created, err
+}
+
+func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (Person, error) {
+	var created Person
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		created, err = createPersonTx(ctx, tx, displayName, origin)
+		if err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)

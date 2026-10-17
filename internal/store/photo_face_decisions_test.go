@@ -996,29 +996,66 @@ func TestPhotoFaceDecisionKeepsPhotoMark(t *testing.T) {
 
 func TestPhotoFaceDecisionOperationReplay(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	p, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	n, f := faceForDecisionTest(t, s, "")
-	request := PhotoFaceDecisionRequest{OperationID: uuid.NewString(), FaceID: f.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1}
-	first, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
-	require.NoError(t, err)
-	replayed, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
-	require.NoError(t, err)
-	require.Equal(t, first.ReceiptID, replayed.ReceiptID)
-	require.Equal(t, first.RequestSHA256, replayed.RequestSHA256)
-	request.Action = "reject"
-	_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
-	require.ErrorIs(t, err, ErrExists)
-	operationID := uuid.NewString()
-	undo, err := s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
-	require.NoError(t, err)
-	replayed, err = s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
-	require.NoError(t, err)
-	require.Equal(t, undo.ReceiptID, replayed.ReceiptID)
-	require.Equal(t, undo.After.Faces, replayed.After.Faces)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	for _, newName := range []bool{false, true} {
+		s := newTestStore(t)
+		ctx := t.Context()
+		p, err := s.CreatePerson(ctx, "Ada", "operator")
+		require.NoError(t, err)
+		n, f := faceForDecisionTest(t, s, "")
+		request := PhotoFaceDecisionRequest{OperationID: uuid.NewString(), FaceID: f.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1}
+		var epoch, afterEpoch, heads int64
+		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM document_event_heads WHERE content_version_id=?`, n.CurrentVersionID).Scan(&heads))
+		require.Zero(t, heads)
+		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
+		if newName {
+			request.PersonID = ""
+			request.PersonName = "Grace"
+		}
+		first, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
+		require.NoError(t, err)
+		if !newName {
+			legacyDigest, err := requestDigest([]any{n.CurrentVersionID, map[string]any{
+				"operation_id": request.OperationID, "face_id": f.FaceID, "person_id": p.PersonID, "action": "name", "revision": 1,
+			}})
+			require.NoError(t, err)
+			require.Equal(t, legacyDigest, first.RequestSHA256)
+		}
+		replayed, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
+		require.NoError(t, err)
+		require.Equal(t, first.ReceiptID, replayed.ReceiptID)
+		require.Equal(t, first.RequestSHA256, replayed.RequestSHA256)
+		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&afterEpoch))
+		if newName {
+			require.Equal(t, epoch+1, afterEpoch)
+			require.Equal(t, first.Before.People, first.After.People)
+			stale := request
+			stale.OperationID = uuid.NewString()
+			_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, stale)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			var count int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM persons WHERE display_name='Grace'`).Scan(&count))
+			require.Equal(t, 1, count)
+		}
+		request.PersonName = ""
+		request.PersonID = p.PersonID
+		request.Action = "reject"
+		_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
+		require.ErrorIs(t, err, ErrExists)
+		operationID := uuid.NewString()
+		undo, err := s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
+		require.NoError(t, err)
+		replayed, err = s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
+		require.NoError(t, err)
+		require.Equal(t, undo.ReceiptID, replayed.ReceiptID)
+		require.Equal(t, undo.After.Faces, replayed.After.Faces)
+		if newName {
+			var count int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM persons WHERE display_name='Grace'`).Scan(&count))
+			require.Equal(t, 1, count)
+			require.Empty(t, undo.After.Faces[0].AssertionID)
+		}
+		require.NoError(t, s.ValidateMetadata(ctx))
+	}
 }
 
 func TestPhotoFaceDecisionRejectionBound(t *testing.T) {

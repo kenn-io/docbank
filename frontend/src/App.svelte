@@ -689,7 +689,10 @@
   function applyPersonPhotos() {
     if (!pendingPerson || !photoState || !photoValidated || hiddenMode) return false;
     const { id: personID, name } = pendingPerson;
-    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
+    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) {
+      pendingPerson = undefined;
+      return false;
+    }
     if (
       !photoState.photos.setQuery({
         ...photoState.photos.query,

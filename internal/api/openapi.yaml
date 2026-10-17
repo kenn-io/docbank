@@ -12502,6 +12502,9 @@ components:
         person_id:
           format: uuid
           type: string
+        person_name:
+          maxLength: 200
+          type: string
         person_revision:
           format: int64
           type: integer
