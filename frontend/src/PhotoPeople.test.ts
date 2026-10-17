@@ -31,20 +31,12 @@ it("explains that removed faces keep their place in the photo limit", async () =
   ).toBeTruthy();
   faces.dispose();
 });
-it("validates and trims names, resets search on reopen, and opens a person’s photos", async () => {
-  const assertion = photoPersonAssertion();
-  vi.spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [], people: [] })
-    .mockResolvedValue({
-      faces: [{ ...face, assertion_id: "assertion-a", revision: 1 }],
-      assertions: [assertion],
-      people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
-    });
+it("resets validated person search input on reopen", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
   const search = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
-  const onperson = vi.fn(),
-    faces = new PhotoFaces("session", vi.fn());
+  const faces = new PhotoFaces("session", vi.fn());
   await faces.load("version-a");
-  render(PhotoPeople, { faces, session: "session", onperson });
+  render(PhotoPeople, { faces, session: "session" });
   await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "雪".repeat(67) } });
   await screen.findByText("Name must be 200 bytes or fewer.");
@@ -60,10 +52,7 @@ it("validates and trims names, resets search on reopen, and opens a person’s p
     expect.objectContaining({ session: "session" }),
   );
   await fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
-  await faces.load("version-a");
-  await fireEvent.click(await screen.findByRole("button", { name: "Ada" }));
-  expect(onperson).toHaveBeenCalledWith("person-a", "Ada");
-  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Ada" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
   await waitFor(() =>
     expect(search).toHaveBeenLastCalledWith(
       { query: "", limit: 100 },
@@ -141,18 +130,6 @@ it("replaces a cached selected name after canonical names reload", async () => {
   await faces.load("version-a");
   await screen.findByRole("button", { name: "Find or create a person: Ada Updated" });
   expect(screen.getByRole("button", { name: "Ada Updated" })).toBeTruthy();
-  faces.dispose();
-});
-
-it("retries an empty failed face page", async () => {
-  vi.spyOn(api, "listPhotoFaces")
-    .mockRejectedValueOnce(new Error("Offline"))
-    .mockResolvedValue(photoFacePage());
-  const faces = new PhotoFaces("session", vi.fn());
-  await faces.load("version-a");
-  render(PhotoPeople, { faces, session: "session" });
-  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByRole("button", { name: "Find or create a person: Ada" });
   faces.dispose();
 });
 

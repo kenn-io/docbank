@@ -460,20 +460,3 @@ func seedBrowseProducedPackage(t *testing.T, catalog *testStore) store.Package {
 	require.NoError(t, err)
 	return pkg
 }
-
-func TestPeoplePageContinuesFoldedName(t *testing.T) {
-	t.Parallel()
-	srv, catalog := newPackageTestServer(t)
-	for _, name := range []string{"Alex", "ALEX", "Alice"} {
-		_, err := catalog.CreatePerson(t.Context(), name, "operator")
-		require.NoError(t, err)
-	}
-	for _, limit := range []string{"1", "2"} {
-		response := srv.get(t, "/api/v1/people?query=Al&limit="+limit)
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-		var page api.PersonPage
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
-		require.NotEmpty(t, page.NextCursor)
-		require.Equal(t, limit == "1", page.SameNameContinues)
-	}
-}

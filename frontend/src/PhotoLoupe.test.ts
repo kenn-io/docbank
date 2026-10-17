@@ -64,7 +64,7 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("gates keyboard face placement on decode, cancels with Escape, and maps a rotated box", async () => {
+it("guards rotated face placement before saving", async () => {
   const { props } = setup();
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
@@ -88,15 +88,23 @@ it("gates keyboard face placement on decode, cancels with Escape, and maps a rot
   expect(add).not.toHaveBeenCalled();
   expect(props.onclose).not.toHaveBeenCalled();
   await fireEvent.click(button);
-  const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
-  await fireEvent.keyDown(position, { key: "ArrowLeft" });
-  await fireEvent.click(position, { detail: 1 });
-  expect(add).toHaveBeenCalledWith(
-    expect.objectContaining({
-      x: expect.closeTo(0.475, 8),
-      y: expect.closeTo(0.425, 8),
-    }),
+  const viewport = image.closest<HTMLElement>(".photo-viewport")!;
+  viewport.setPointerCapture = vi.fn();
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 400));
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
   );
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(add).toHaveBeenCalledWith({
+    x: expect.closeTo(0.3, 8),
+    y: expect.closeTo(0.3, 8),
+    width: expect.closeTo(0.2, 8),
+    height: expect.closeTo(0.2, 8),
+  });
 });
 
 it("shows grid, fit and large and preserves zoom", async () => {

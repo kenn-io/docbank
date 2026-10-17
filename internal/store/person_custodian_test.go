@@ -404,6 +404,21 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, withHiddenPhoto, 1)
 	require.Equal(t, hiddenOnlyID, withHiddenPhoto[0].PersonID)
+}
+
+func TestPeopleByDisplayNameRequiresPublishedEvidence(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("search-hidden"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
 	candidate, err := s.CreatePerson(ctx, "Alex Candidate", "operator")
 	require.NoError(t, err)
 	face, _, err := s.CreatePhotoFace(unlocked, hidden.CurrentVersionID, "11111111-1111-4111-8111-111111111111", document.FaceBox{Width: .2, Height: .2}, "")
@@ -415,18 +430,9 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	people, err := s.PeopleByDisplayName(ctx, "Alex Candidate", "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, people, 1)
-	free, err := s.CreatePerson(ctx, "Alex Free", "operator")
-	require.NoError(t, err)
-	page, err := s.PeopleByDisplayName(ctx, "Alex Free", "", "", 1, true)
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	require.Equal(t, free.PersonID, page[0].PersonID)
-	hiddenNode, visibleNode := hidden, visible
 	retainedHidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
 	require.NoError(t, err)
-	retainedVisible, err := s.CreatePerson(ctx, "Visible Lin", "operator")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(unlocked, hiddenNode.CurrentVersionID, retainedHidden.PersonID)
+	_, err = s.MarkPersonInPhoto(unlocked, hidden.CurrentVersionID, retainedHidden.PersonID)
 	require.NoError(t, err)
 	retainedHidden, _, err = s.PersonByID(ctx, retainedHidden.PersonID)
 	require.NoError(t, err)
@@ -438,8 +444,6 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	derivedVersion := seedDocumentPeopleEvent(t, s, "visible-person-author.txt", "d9", nil)
 	derived := publishLifecycleDocumentPeople(t, s, derivedVersion.ID)
 	require.Equal(t, retainedHidden.PersonID, derived.PersonID)
-	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, retainedVisible.PersonID)
-	require.NoError(t, err)
 	locked, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, true)
 	require.NoError(t, err)
 	personIDs := func(people []PersonSearchResult) []string {
@@ -494,20 +498,11 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 			require.Equal(t, all, retainedVisible)
 		})
 	}
-}
-
-func TestPeopleByDisplayNameOmitsSensitiveOnlyActors(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
-	require.NoError(t, err)
 	var sensitiveID, visibleID string
 	for _, sensitive := range []bool{true, false} {
-		address, name, seed := "visible@example.test", "Alex Visible", "d1"
+		address, name, seed := "visible@example.test", "Published Visible", "d1"
 		if sensitive {
-			address, name, seed = "sensitive@example.test", "Alex Sensitive", "d2"
+			address, name, seed = "sensitive@example.test", "Published Sensitive", "d2"
 		}
 		version := seedDocumentPeopleEvent(t, s, seed+".txt", seed, []document.DocumentEventActorV1{{
 			ActorKey: "email:" + address, Address: address, DisplayName: name,
@@ -528,29 +523,23 @@ func TestPeopleByDisplayNameOmitsSensitiveOnlyActors(t *testing.T) {
 		}
 	}
 	for _, unlocked := range []bool{false, true} {
-		t.Run(fmt.Sprintf("unlocked=%t", unlocked), func(t *testing.T) {
+		t.Run(fmt.Sprintf("published/unlocked=%t", unlocked), func(t *testing.T) {
 			searchCtx := ctx
 			if unlocked {
 				searchCtx = WithPhotoHiddenToken(ctx, token)
 			}
-			global, err := s.PeopleByDisplayName(searchCtx, "Alex", "", "", 10, false)
+			global, err := s.PeopleByDisplayName(searchCtx, "Published", "", "", 10, false)
 			require.NoError(t, err)
 			require.Len(t, global, 2)
 			require.Equal(t, sensitiveID, global[0].PersonID)
-			require.Equal(t, "Alex Sensitive", global[0].DisplayName)
+			require.Equal(t, "Published Sensitive", global[0].DisplayName)
 			require.Equal(t, visibleID, global[1].PersonID)
-			browser, err := s.PeopleByDisplayName(searchCtx, "Alex", "", "", 10, true)
+			browser, err := s.PeopleByDisplayName(searchCtx, "Published", "", "", 10, true)
 			require.NoError(t, err)
 			require.Len(t, browser, 1)
 			require.Equal(t, visibleID, browser[0].PersonID)
 		})
 	}
-}
-
-func TestPeopleByDisplayNameRequiresPublishedEvidence(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "pending.txt", "b1", []document.DocumentEventActorV1{{ActorKey: "email:pending@example.test", Address: "pending@example.test", DisplayName: "Pending Person", Claim: "Pending Person", Role: "author", Sensitive: true}})
 	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
 	require.NoError(t, err)

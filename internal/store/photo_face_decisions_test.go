@@ -994,7 +994,7 @@ func TestPhotoFaceDecisionKeepsPhotoMark(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceDecisionValidatesNamesAndReplaysOperations(t *testing.T) {
+func TestPhotoFaceNamingPreservesReplayDigestsAndClearedPeople(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"existing person", "new person"} {
 		t.Run(mode, func(t *testing.T) {
@@ -1006,8 +1006,8 @@ func TestPhotoFaceDecisionValidatesNamesAndReplaysOperations(t *testing.T) {
 			n, f := faceForDecisionTest(t, s, "")
 			request := PhotoFaceDecisionRequest{OperationID: uuid.NewString(), FaceID: f.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1}
 			var epoch, afterEpoch int64
-			require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
 			if newName {
+				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
 				for _, invalid := range []PhotoFaceDecisionRequest{
 					{Action: "name", FaceID: f.FaceID, PersonID: p.PersonID, PersonName: "Grace", Revision: 1},
 					{Action: "name", FaceID: f.FaceID, PersonName: " ", Revision: 1},
@@ -1032,8 +1032,8 @@ func TestPhotoFaceDecisionValidatesNamesAndReplaysOperations(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, first.ReceiptID, replayed.ReceiptID)
 			require.Equal(t, first.RequestSHA256, replayed.RequestSHA256)
-			require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&afterEpoch))
 			if newName {
+				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&afterEpoch))
 				require.Equal(t, epoch+1, afterEpoch)
 				require.Equal(t, first.Before.People, first.After.People)
 				stale := request

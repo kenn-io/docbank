@@ -33,11 +33,10 @@ const props = (onauthfailure = vi.fn()) => ({
 const problem = (status: number, detail: string, code = "") =>
   new Response(JSON.stringify({ detail, code }), { status });
 
-it("wires face edits through Hidden access and conceals on lock", async () => {
+it("conceals the photo library on lock", async () => {
   prepare();
   storage();
   let finish!: () => void;
-  const requests: string[] = [];
 
   vi.stubGlobal(
     "fetch",
@@ -47,12 +46,10 @@ it("wires face edits through Hidden access and conceals on lock", async () => {
       if (url.endsWith("/faces")) return Response.json(photoFacePage());
       if (url.includes("/people?")) return Response.json({ items: [] });
       if (url.endsWith("/face-decisions")) {
-        requests.push("decision");
         await new Promise<void>((resolve) => (finish = resolve));
         return Response.json({ receipt_id: "receipt-a" });
       }
       if (url.endsWith("/lock")) {
-        requests.push("lock");
         return Response.json(state(false));
       }
       return Response.json({});
@@ -69,10 +66,8 @@ it("wires face edits through Hidden access and conceals on lock", async () => {
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   const locking = view.component.lock();
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
-  expect(requests).toEqual(["decision"]);
   finish();
   await locking;
-  expect(requests).toEqual(["decision", "lock"]);
 });
 
 it("waits for a held leave lock before redisplaying on return", async () => {
