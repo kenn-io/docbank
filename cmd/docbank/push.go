@@ -93,7 +93,6 @@ func readPushKey(keyFile string) (string, error) {
 func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	opts.AddedBatch = func() { reportAction(cmd, connection, "document_added", "", 1500*time.Millisecond) }
 	opts.Progress = func(ref, outcome string) error {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", outcome, strconv.QuoteToASCII(ref)); err != nil {
 			return fmt.Errorf("writing push progress: %w", err)

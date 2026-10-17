@@ -1254,7 +1254,7 @@
       shortcutNotice = "No rows are loaded.";
       return;
     }
-    if (move.id !== undefined && move.id !== selectedID) selectNode(move.id, true);
+    if (move.id !== undefined) selectNode(move.id, true);
     if (move.id !== undefined) await revealInspectedRow(move.id);
     if (move.boundary === "first") shortcutNotice = "First loaded row reached.";
     else if (move.boundary === "last") shortcutNotice = "Last loaded row reached.";
@@ -2401,15 +2401,15 @@
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
     keepQueryDraft(query);
-    void snapshot.run(query, options).then(() => {
-      if (intent && snapshot.state.status === "ready")
+    void snapshot.run(query, options).then((accepted) => {
+      if (intent && accepted)
         reportAction(webSession, "search_run", query.text ? query.mode : "text");
     });
   }
 
   function runSnapshotAgain(): void {
     if (!snapshot.state.query || !snapshot.state.options) return;
-    runSnapshot(snapshot.state.query, snapshot.state.options);
+    runSnapshot(snapshot.state.query, snapshot.state.options, false);
   }
 
   function changeSnapshotQuery(query: Query): void {

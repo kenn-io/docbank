@@ -25774,11 +25774,6 @@ paths:
   /api/v1/photos/imports:
     post:
       operationId: startPhotoImport
-      parameters:
-        - in: header
-          name: X-Docbank-Surface
-          schema:
-            type: string
       requestBody:
         content:
           application/json:

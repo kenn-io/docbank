@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
   import { onDestroy } from "svelte";
+  import { randomUUID } from "./crypto.js";
   import FileUpIcon from "@lucide/svelte/icons/file-up";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
@@ -60,8 +60,8 @@
   let items = $state<UploadItem[]>([]);
   let running = $state(false);
   let controller: AbortController | null = null;
-  let reportedAddition = false;
   let nextID = 1;
+  let importID = "";
 
   const pending = $derived(
     items.filter((item) => ["ready", "failed", "unconfirmed", "cancelled"].includes(item.state))
@@ -80,7 +80,7 @@
 
   function addFiles(event: Event): void {
     const selected = Array.from((event.currentTarget as HTMLInputElement).files ?? []);
-    reportedAddition = false;
+    importID = randomUUID();
     items = [
       ...items,
       ...selected.map((file) => ({
@@ -142,11 +142,8 @@
             refreshNeeded = true;
             progressFor(queued.id, progress);
           },
+          importID,
         );
-        if (receipt.status === "added" && !reportedAddition) {
-          reportedAddition = true;
-          reportAction(session, "document_added", "upload");
-        }
         updateItem(queued.id, {
           state: receipt.status,
           receipt,

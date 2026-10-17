@@ -214,8 +214,11 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		var j store.MailboxJob
-		err := d.Imports.Admit(actionSurface(r), func() (string, bool, error) {
+		err := d.Imports.Admit(browserActionSurface(r), func() (string, bool, error) {
 			_, existing := d.Store.MailboxJob(r.Context(), mailboxOwner(d), request.ID)
+			if existing != nil && !errors.Is(existing, store.ErrNotFound) {
+				return "", false, existing
+			}
 			err := g.mutate(func() error {
 				var err error
 				j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest())
@@ -290,7 +293,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			writeMailboxError(w, err)
 			return
 		}
-		d.Imports.Result("mailbox:"+current.ID, current.Imported > 0, true)
+		d.Imports.ResultCount("mailbox:"+current.ID, current.Imported, true)
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /api/v1/mailbox/jobs/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
@@ -303,10 +306,18 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		var j store.MailboxJob
-		err := g.mutate(func() error {
-			var err error
-			j, err = d.Store.ResumeMailboxJob(r.Context(), mailboxOwner(d), input.Request.storeRequest(), input.Continuation)
-			return err
+		err := d.Imports.AdmitCount(browserActionSurface(r), func() (string, int64, bool, error) {
+			fresh := false
+			err := g.mutate(func() error {
+				prior, err := d.Store.MailboxJob(r.Context(), mailboxOwner(d), input.Request.ID)
+				if err != nil {
+					return err
+				}
+				fresh = prior.State != "queued" && prior.State != "running"
+				j, err = d.Store.ResumeMailboxJob(r.Context(), mailboxOwner(d), input.Request.storeRequest(), input.Continuation)
+				return err
+			})
+			return "mailbox:" + j.ID, j.Imported, fresh, err
 		})
 		if err != nil {
 			writeMailboxError(w, err)

@@ -138,6 +138,8 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
     });
   const cursors: string[] = [];
   let highlightRequests = 0;
+  const searches: unknown[] = [];
+  let failRun = false;
   const payload: HighlightSet = { v: 1, terms: [{ text: "evidence", color: "#ffcc00" }] };
   const highlightSet = {
     id: "44444444-4444-4444-8444-444444444444",
@@ -152,6 +154,11 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url === "/api/daemon/telemetry/events") {
+      const event = JSON.parse(String(init?.body));
+      if (event.event === "search_run") searches.push(event);
+      return json({}, 202);
+    }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0")
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
@@ -175,7 +182,8 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
         terms: ["report"],
       });
     }
-    if (url === "/api/v1/workspace/queries") return json(first);
+    if (url === "/api/v1/workspace/queries")
+      return failRun ? json({ detail: "Synthetic query unavailable" }, 422) : json(first);
     if (url === "/api/v1/renditions/text") {
       const request = JSON.parse(String(init?.body));
       return json({
@@ -229,6 +237,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
   await waitFor(() => expect(highlightRequests).toBe(1));
+  await waitFor(() => expect(searches).toHaveLength(1));
   await fireEvent.click(screen.getByRole("cell", { name: "/records/report-100.pdf" }));
   await screen.findByText("Document 100 of 101");
   await fireEvent.click(
@@ -264,11 +273,20 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   const choices = await screen.findByRole("combobox", { name: "Saved highlight set" });
   expect(within(choices).getByRole("option", { name: "Review terms" })).toBeTruthy();
 
+  await fireEvent.click(screen.getAllByRole("button", { name: "Run again" })[0]);
+  await screen.findByText("Document 1 of 101");
+  expect(searches).toHaveLength(1);
+
   first.snapshot_id = "1123456789abcdef0123456789abcdef";
   await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
   await waitFor(() => expect(highlightRequests).toBe(2));
+  await waitFor(() => expect(searches).toHaveLength(2));
+  failRun = true;
+  await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));
+  await screen.findByText("Synthetic query unavailable");
+  expect(searches).toHaveLength(2);
 });
 
 it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {

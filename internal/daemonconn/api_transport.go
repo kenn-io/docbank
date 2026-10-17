@@ -70,9 +70,6 @@ func (t apiTransport) CreateRequest(ctx context.Context, params runtime.RequestO
 	if t.connection.key != "" {
 		req.Header.Set("X-Api-Key", t.connection.key)
 	}
-	if t.connection.actionSurface != "" {
-		req.Header.Set("X-Docbank-Surface", t.connection.actionSurface)
-	}
 	for _, edit := range editors {
 		if err := edit(ctx, req); err != nil {
 			return nil, err

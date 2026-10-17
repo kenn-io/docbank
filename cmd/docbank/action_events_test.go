@@ -63,7 +63,7 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			cmd.SetContext(ctx)
-			reportAction(cmd, connection, "document_added", "add", 100*time.Millisecond)
+			reportAction(cmd, connection, "document_added", "add")
 			reportOpened(cmd, connection)
 		})
 	}
@@ -71,7 +71,7 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	cmd.SetOut(terminal)
 	cmd.SetContext(t.Context())
 	start := time.Now()
-	reportAction(cmd, connection, "search_run", "hybrid", 100*time.Millisecond)
+	reportAction(cmd, connection, "search_run", "hybrid")
 	assert.Less(t, time.Since(start), time.Second)
 	mu.Lock()
 	defer mu.Unlock()

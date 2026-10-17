@@ -288,6 +288,7 @@ describe("verified browser upload", () => {
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       controller.signal,
       () => {},
+      "synthetic-import",
     );
     await ended;
     controller.abort();
@@ -334,6 +335,7 @@ describe("verified browser upload", () => {
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       readyController.signal,
       () => {},
+      "synthetic-import",
     );
     await began;
     readyController.abort();
@@ -360,6 +362,7 @@ describe("verified browser upload", () => {
       (progress) => {
         if (progress.processed === 0) becameReady?.();
       },
+      "synthetic-import",
     );
     await readyProgress;
     pressureController.abort();
@@ -390,6 +393,7 @@ describe("verified browser upload", () => {
       (progress) => {
         if (progress.processed === 0) cancelController.abort();
       },
+      "synthetic-import",
     );
     const cancelRejected = expect(waitingCancel).rejects.toMatchObject({
       name: "AbortError",
@@ -418,6 +422,7 @@ describe("verified browser upload", () => {
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       new AbortController().signal,
       () => {},
+      "synthetic-import",
     );
     await closeBegan;
     closeChannel.close();

@@ -36,6 +36,9 @@ func TestPhotoImportRoutes(t *testing.T) {
 	})
 	body, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
 	require.NoError(t, err)
+	status, responseBody := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/v1/photos/imports", string(body),
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)})
+	require.Equal(t, http.StatusForbidden, status, responseBody)
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader(body))
 	require.NoError(t, err)
 	request.Header.Set("Content-Type", "application/json")
@@ -83,7 +86,10 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, int64(1), receipt.Added)
 	// Shutdown waits for the runner's terminal accounting callback too.
 	require.NoError(t, supervisor.Shutdown(pollCtx))
-	capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
+	require.NoError(t, capture.reporter.Close())
+	capture.mu.Lock()
+	require.Empty(t, capture.events)
+	capture.mu.Unlock()
 
 	for _, test := range []struct{ source, message string }{
 		{"relative", "absolute daemon-host path"},

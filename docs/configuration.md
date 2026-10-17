@@ -1041,11 +1041,17 @@ are dropped. Missing or unsupported required values return HTTP 400.
 
 `document_added` counts each user-started import once, after its first confirmed
 addition, including partial failures. Skipped files, replacements, preflight,
-agent calls and unattended ingestion stay silent. Closing a browser drawer
-preserves attribution for mailbox, load-file and daemon-host Photos jobs.
+agent calls and unattended ingestion stay silent. Browser uploads and Photos
+groups report from the daemon after commit, even if the drawer closes before
+its receipt arrives. Mailbox and load-file jobs retain the surface that started
+them after their drawer closes. An explicit browser mailbox resume saves its
+current imported count and reports only a subsequent increase. Opening a
+drawer onto an existing job stays silent. CLI push, Photos, mailbox and
+load-file imports and their status commands stay silent; synchronous CLI
+`add` counts a confirmed addition. The browser Photos drawer uses upload groups.
 The daemon keeps at most 256 active import attributions in memory. At capacity,
 imports proceed without attribution. Restarting the daemon can lose an
-in-flight count. Jobs resumed without original attribution stay silent.
+in-flight count. Resumes without an eligible browser action stay silent.
 
 `search_run` counts successful submitted searches, including empty results,
 facets and Smart Sets, once per surface and search type each UTC day.
@@ -1062,9 +1068,7 @@ Search and open claims share the persisted daily screen-claim file, so daemon
 restarts preserve the day's counts.
 
 CLI actions require terminal output and exclude `search --agent`. Scripts
-that inherit terminal output may count. Local reporting has a 100 ms deadline;
-remote push reporting has a 1.5-second deadline. Reporting never changes
-command results.
+that inherit terminal output may count. Reporting has a 100 ms deadline and never changes command results.
 
 Each event carries these fields:
 

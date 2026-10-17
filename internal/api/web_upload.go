@@ -248,6 +248,13 @@ func handleWebUploadConnection(
 	}
 
 	var photoImport *webPhotoImport
+	var uploadImport string
+	defer func() {
+		d.Imports.Result(uploadImport, false, true)
+		if photoImport != nil {
+			d.Imports.Result("browser-photos:"+photoImport.id, false, true)
+		}
+	}()
 	for {
 		begin, err := readWebUploadControl(ctx, conn)
 		if err != nil {
@@ -258,6 +265,9 @@ func handleWebUploadConnection(
 			return
 		}
 		if begin.Type == "plan_photo_import" {
+			if photoImport != nil {
+				d.Imports.Result("browser-photos:"+photoImport.id, false, true)
+			}
 			var ok bool
 			photoImport, ok = handleWebPhotoPlan(ctx, conn, d, begin)
 			if !ok {
@@ -291,6 +301,17 @@ func handleWebUploadConnection(
 			continue
 		}
 
+		key := ""
+		if begin.ImportID != "" {
+			key = "browser-upload:" + begin.ImportID
+		}
+		if key != uploadImport {
+			d.Imports.Result(uploadImport, false, true)
+			uploadImport = key
+			if key != "" {
+				_ = d.Imports.Admit("web", func() (string, bool, error) { return key, true, nil })
+			}
+		}
 		reader := &webUploadReader{
 			ctx: ctx, conn: conn, requestID: request.requestID,
 			inactivity: webUploadInactivity,
@@ -311,6 +332,7 @@ func handleWebUploadConnection(
 			result, err = executeWebUpload(ctx, d, request, reader)
 			return err
 		})
+		d.Imports.Result(uploadImport, result.Added, false)
 		if uploadErr != nil {
 			problem := uploadError(uploadErr)
 			if errors.Is(uploadErr, errWebUploadCanceled) {
@@ -351,7 +373,7 @@ func isCanonicalHash(hash string) bool {
 }
 
 func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
-	if begin.Type != "begin" || begin.RequestID == "" || len(begin.RequestID) > 128 {
+	if begin.Type != "begin" || begin.RequestID == "" || len(begin.RequestID) > 128 || len(begin.ImportID) > 128 {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"upload begin requires a bounded request identity")
 	}
@@ -694,6 +716,7 @@ func handleWebPhotoPlan(
 		id: rand.Text(), files: begin.Files, groups: groups, destination: destination,
 		hashes: make([][]string, len(groups)),
 	}
+	_ = d.Imports.Admit("web", func() (string, bool, error) { return "browser-photos:" + photoImport.id, true, nil })
 	err := wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,
 		Groups: groups, Unsupported: unsupported, SkipReasons: skipReasons,
@@ -791,6 +814,7 @@ func handleWebPhotoGroup(
 			return err
 		})
 	})
+	d.Imports.Result("browser-photos:"+photoImport.id, result.Added, false)
 	if err != nil {
 		problem := uploadError(err)
 		if errors.Is(err, errWebUploadCanceled) {

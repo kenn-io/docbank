@@ -121,7 +121,7 @@ or import cancel <operation-id> to request cancellation.`,
 		if err != nil {
 			return err
 		}
-		result, err := interactiveImport(cmd, client).API().CreatePackageImport(cmd.Context(), &apiclient.CreatePackageImportRequestOptions{Body: &api.PackageImportRequest{
+		result, err := client.API().CreatePackageImport(cmd.Context(), &apiclient.CreatePackageImportRequestOptions{Body: &api.PackageImportRequest{
 			PreflightID: args[0], Into: packageImportInto, Name: packageImportName,
 			Party: packageImportParty, OperationID: operation,
 			AcceptPartial: packageImportPartial, IndexSuppliedText: packageImportSuppliedText,

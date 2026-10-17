@@ -1980,11 +1980,12 @@ it("reports keyboard inspections, keeps checkbox selection independent, and acti
   expect(opened()).toEqual([]);
   const requestsAtBoundary = backend.getRootReads();
 
+  await fireEvent.keyDown(window, { key: "j" });
+  await waitFor(() => expect(opened()).toHaveLength(1));
+  expect(screen.getByLabelText("Document authority for zeta.txt")).toBeTruthy();
   await fireEvent.keyDown(window, { key: "k" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
-  await waitFor(() =>
-    expect(opened()).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
-  );
+  await waitFor(() => expect(opened()).toHaveLength(2));
   await fireEvent.keyDown(window, { key: " " });
   expect(
     (
@@ -2009,12 +2010,7 @@ it("reports keyboard inspections, keeps checkbox selection independent, and acti
 
   await fireEvent.keyDown(window, { key: "j" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
-  await waitFor(() =>
-    expect(opened()).toEqual([
-      { event: "document_opened", properties: { surface: "web" } },
-      { event: "document_opened", properties: { surface: "web" } },
-    ]),
-  );
+  await waitFor(() => expect(opened()).toHaveLength(3));
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 

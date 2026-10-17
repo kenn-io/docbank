@@ -42,10 +42,9 @@ import (
 )
 
 type Connection struct {
-	actionSurface string
-	base          string
-	key           string
-	hc            *http.Client
+	base string
+	key  string
+	hc   *http.Client
 }
 
 // WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,

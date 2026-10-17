@@ -89,29 +89,49 @@
   });
 
   let inspectionKey = "";
-  let inspected = false;
+  let inspectedDay = "";
   $effect(() => {
     const key = `${session}:${displayedSource.key}`;
     if (key !== inspectionKey) {
       inspectionKey = key;
-      inspected = false;
+      inspectedDay = "";
     }
     if (deliberate || duplicateSource || relatedSource) inspect();
   });
   function inspect(): void {
-    if (inspected) return;
-    inspected = true;
+    const day = new Date().toISOString().slice(0, 10);
+    if (inspectedDay === day) return;
+    inspectedDay = day;
     reportAction(session, "document_opened");
+  }
+
+  function inspectKey(event: KeyboardEvent): void {
+    if (
+      [
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "PageUp",
+        "PageDown",
+        "Home",
+        "End",
+        " ",
+        "j",
+        "k",
+      ].includes(event.key)
+    )
+      inspect();
   }
 
   function inspection(element: HTMLElement) {
     element.addEventListener("pointerdown", inspect);
-    element.addEventListener("keydown", inspect);
+    element.addEventListener("keydown", inspectKey);
     element.addEventListener("wheel", inspect, { passive: true });
     return {
       destroy() {
         element.removeEventListener("pointerdown", inspect);
-        element.removeEventListener("keydown", inspect);
+        element.removeEventListener("keydown", inspectKey);
         element.removeEventListener("wheel", inspect);
       },
     };

@@ -52,9 +52,9 @@ export class SnapshotSession {
     this.publish(this.state);
   }
 
-  async run(query: Query, options: SnapshotOptions): Promise<void> {
+  async run(query: Query, options: SnapshotOptions): Promise<boolean> {
     const started = this.begin(query, options);
-    if (started === undefined) return;
+    if (started === undefined) return false;
     try {
       const firstPage = await createSnapshot(
         this.session,
@@ -62,7 +62,7 @@ export class SnapshotSession {
         started.options,
         started.signal,
       );
-      if (!this.current(started.epoch)) return;
+      if (!this.current(started.epoch)) return false;
       this.emit({
         status: "ready",
         firstPage,
@@ -71,6 +71,7 @@ export class SnapshotSession {
         options: started.options,
         offset: 0,
       });
+      return true;
     } catch (error) {
       this.fail(
         started.epoch,
@@ -82,6 +83,7 @@ export class SnapshotSession {
           offset: 0,
         },
       );
+      return false;
     }
   }
 

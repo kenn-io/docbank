@@ -153,6 +153,7 @@ export interface UploadTransport {
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    importID: string,
   ): Promise<UploadReceipt>;
 }
 
@@ -239,6 +240,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    importID: string,
   ): Promise<UploadReceipt> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
@@ -253,6 +255,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       this.send({
         type: "begin",
         request_id: requestID,
+        import_id: importID,
         parent_id: parentID,
         name,
         mime_type: file.type || "application/octet-stream",

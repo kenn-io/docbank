@@ -46,7 +46,7 @@ export class SnapshotWorkspace {
     this.overlays = {};
   }
 
-  run(query: Query, options: SnapshotOptions): Promise<void> {
+  run(query: Query, options: SnapshotOptions): Promise<boolean> {
     this.invalidateActions();
     return this.snapshotSession().run(query, options);
   }

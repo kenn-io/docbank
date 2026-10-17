@@ -40,8 +40,11 @@ func handlePackageImport(w http.ResponseWriter, r *http.Request, d Deps, g *gate
 		return
 	}
 	var result PackageImportJob
-	err := d.Imports.Admit(actionSurface(r), func() (string, bool, error) {
+	err := d.Imports.Admit(browserActionSurface(r), func() (string, bool, error) {
 		_, existing := d.Store.PackageImportJob(r.Context(), owner, request.OperationID)
+		if existing != nil && !errors.Is(existing, store.ErrNotFound) {
+			return "", false, existing
+		}
 		var err error
 		result, err = AdmitPackageImport(r.Context(), d, g, owner, request)
 		if existing == nil || err != nil || result.Committed > 0 || result.State != "queued" && result.State != "running" {

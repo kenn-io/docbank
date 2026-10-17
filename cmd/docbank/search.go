@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -208,10 +207,10 @@ See docs/usage/search.md.`,
 			return err
 		}
 		if automatic.report != nil {
-			reportAction(cmd, c, "search_run", automatic.report.ActualMode, 100*time.Millisecond)
+			reportAction(cmd, c, "search_run", automatic.report.ActualMode)
 			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
 		}
-		reportAction(cmd, c, "search_run", "text", 100*time.Millisecond)
+		reportAction(cmd, c, "search_run", "text")
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
@@ -324,7 +323,7 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 		return err
 	}
 	if options.Intent {
-		reportAction(cmd, c, "search_run", "semantic", 100*time.Millisecond)
+		reportAction(cmd, c, "search_run", "semantic")
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
@@ -392,7 +391,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 	if options.Intent {
-		reportAction(cmd, c, "search_run", report.ActualMode, 100*time.Millisecond)
+		reportAction(cmd, c, "search_run", report.ActualMode)
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)

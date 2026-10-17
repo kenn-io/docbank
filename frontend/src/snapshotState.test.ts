@@ -220,14 +220,14 @@ describe("snapshot request-epoch state", () => {
       .mockResolvedValueOnce(response(first))
       .mockResolvedValueOnce(response(await receipt({ query: otherQuery })));
     const session = new SnapshotSession("session", (state) => states.push(state));
-    await session.run(query, { page_size: 50 });
+    expect(await session.run(query, { page_size: 50 })).toBe(true);
     await session.page("next");
     const accepted = states.at(-1)!;
 
     const rerun = session.run(otherQuery, { page_size: 100 });
     expect(states.at(-1)).toMatchObject({ ...accepted, status: "loading" });
     pending.resolve(new Response(JSON.stringify({ detail: "Query unavailable" }), { status: 422 }));
-    await rerun;
+    expect(await rerun).toBe(false);
     expect(states.at(-1)).toMatchObject(accepted);
     expect(states.at(-1)!.error?.message).toBe("Query unavailable");
     expect(states.at(-1)!.page).toBe(accepted.page);

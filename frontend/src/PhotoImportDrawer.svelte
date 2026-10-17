@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
   import { onDestroy } from "svelte";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, DetailDrawer, IconButton, TextInput } from "@kenn-io/kit-ui";
@@ -52,7 +51,6 @@
   let stopping = $state(false);
   let error = $state("");
   let controller: AbortController | null = null;
-  let reportedAddition = false;
   let destroyed = false;
   let counts = $state<Record<Item["state"], number>>({
     ready: 0,
@@ -116,7 +114,6 @@
         progress: { processed: 0, total: group.reduce((sum, index) => sum + files[index].size, 0) },
       }));
       counts.ready = items.length;
-      if (importID !== plan.import_id) reportedAddition = false;
       importID = plan.import_id;
       unsupported = plan.unsupported.map((index) => ({
         file: files[index],
@@ -172,10 +169,6 @@
               }
             },
           );
-          if (receipt.status === "added" && !reportedAddition) {
-            reportedAddition = true;
-            reportAction(session, "document_added", "photos");
-          }
           setState(item, receipt.status);
           item.error =
             receipt.reason === "multiple_raw"

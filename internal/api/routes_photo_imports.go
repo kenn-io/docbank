@@ -44,8 +44,7 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/imports", Summary: "Import grouped camera files from a daemon-host folder",
 		DefaultStatus: http.StatusAccepted,
 	}, func(ctx context.Context, in *struct {
-		Body    PhotoImportStartRequest
-		Surface string `header:"X-Docbank-Surface"`
+		Body PhotoImportStartRequest
 	}) (*photoImportStartOutput, error) {
 		if !filepath.IsAbs(in.Body.SourceRoot) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "source_root must be an absolute daemon-host path")
@@ -66,8 +65,8 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var operation store.StorageOperation
 		surface := ""
-		if in.Surface == "cli" {
-			surface = "cli"
+		if browserSessionRequest(ctx) {
+			surface = "web"
 		}
 		err = d.Imports.Admit(surface, func() (string, bool, error) {
 			err := g.MutateContext(ctx, func() error {

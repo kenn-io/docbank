@@ -12,9 +12,6 @@ afterEach(() => {
 });
 
 it("uses the plan, uploads groups in order, reports totals, and refreshes once", async () => {
-  const capture = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(new Response(null, { status: 202 }));
   const selected = files();
   const channel: PhotoImportTransport = {
     planPhotoImport: vi.fn().mockResolvedValue({
@@ -44,9 +41,6 @@ it("uses the plan, uploads groups in order, reports totals, and refreshes once",
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
   await waitFor(() => expect(complete).toHaveBeenCalledOnce());
-  expect(capture.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-    { event: "document_added", properties: { surface: "web" } },
-  ]);
   expect(channel.planPhotoImport).toHaveBeenCalledWith(selected, "/");
   expect(channel.uploadPhotoGroup).toHaveBeenNthCalledWith(
     1,

@@ -8,7 +8,6 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
-	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -108,7 +107,7 @@ Exit 1 if any file failed (each failure is listed).`,
 			rep, err = c.IngestStream(cmd.Context(), abs, addDest, opts, renderer.handle)
 		}
 		if rep.Added > 0 {
-			reportAction(cmd, c, telemetry.EventDocumentAdded, "add", 100*time.Millisecond)
+			reportAction(cmd, c, telemetry.EventDocumentAdded, "add")
 		}
 		if err != nil {
 			return err

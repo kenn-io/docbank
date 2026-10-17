@@ -8629,10 +8629,6 @@ export type UndoPhotoFaceDecisionParams = {
 operation_id?: string;
 };
 
-export type StartPhotoImportHeaders = {
-'X-Docbank-Surface'?: string;
-};
-
 export type PromotePhotoNodeHeaders = {
 'If-Match'?: string;
 };
@@ -16497,8 +16493,7 @@ export const getStartPhotoImportUrl = () => {
 /**
  * @summary Import grouped camera files from a daemon-host folder
  */
-export const startPhotoImport = async (photoImportStartRequest: NonReadonly<PhotoImportStartRequest>,
-    headers?: StartPhotoImportHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
+export const startPhotoImport = async (photoImportStartRequest: NonReadonly<PhotoImportStartRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16518,7 +16513,7 @@ return sessionJSON<StorageOperation>(getStartPhotoImportUrl(),
   {
     ...options,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(photoImportStartRequest)
   }
 );}

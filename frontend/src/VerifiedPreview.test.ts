@@ -8,6 +8,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function source(content: Uint8Array, versionID: string, mimeType = "text/plain"): SelectedSource {
@@ -416,7 +417,7 @@ it.each([0, 64 * 1024 * 1024 + 1])(
   },
 );
 
-it("counts wheel inspection of an automatic selection once", async () => {
+it("counts inspection gestures once per UTC day and ignores unrelated keys", async () => {
   const bytes = new TextEncoder().encode("Synthetic inspected text");
   const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
   const events: unknown[] = [];
@@ -437,9 +438,18 @@ it("counts wheel inspection of an automatic selection once", async () => {
   });
   await screen.findByText("Synthetic inspected text");
   expect(events).toEqual([]);
+  vi.setSystemTime(new Date("2026-10-17T23:59:00Z"));
+  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "Tab" });
+  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "a" });
+  expect(events).toEqual([]);
   await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
   const opened = { event: "document_opened", properties: { surface: "web" } };
   await waitFor(() => expect(events).toEqual([opened]));
   await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
   expect(events).toEqual([opened]);
+  vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
+  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "ArrowDown" });
+  await waitFor(() => expect(events).toEqual([opened, opened]));
+  await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
+  expect(events).toEqual([opened, opened]);
 });
