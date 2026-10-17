@@ -356,7 +356,6 @@ const screenRetryDelay = 30 * time.Second
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
 	reportedDay   string
-	inspectionDay string
 	screenRetryAt time.Time
 	ctx           context.Context
 	backend       Backend
@@ -3155,13 +3154,6 @@ func (m Model) visibleScreen() string {
 }
 
 func (m *Model) reportAction(event, value string) tea.Cmd {
-	if event == "document_opened" {
-		day := time.Now().UTC().Format(time.DateOnly)
-		if m.inspectionDay == day {
-			return nil
-		}
-		m.inspectionDay = day
-	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.ctx, 100*time.Millisecond)
 		defer cancel()

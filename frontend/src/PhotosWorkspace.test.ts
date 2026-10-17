@@ -903,7 +903,7 @@ it.each([
 
 it("opens on touch with empty selection and toggles membership on touch taps", async () => {
   const inspect = vi.fn();
-  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+  vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
   vi.stubGlobal(
     "ResizeObserver",
     class {

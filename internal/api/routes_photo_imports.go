@@ -71,6 +71,7 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		d.TelemetryCapture.TrackImport(operation.ID, cliImportSurface(ctx, in.Surface))
 		runner := NewPhotoImportRunner(runnerDeps)
 		if err := runner.Start(d.Jobs, operation.ID); err != nil {
+			d.TelemetryCapture.ForgetImport(operation.ID)
 			d.Logger.Error("start queued photo import", "operation_id", operation.ID, "error", err)
 		}
 		return &photoImportStartOutput{Body: storageOperationAPI(operation)}, nil

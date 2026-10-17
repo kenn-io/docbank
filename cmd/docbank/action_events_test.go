@@ -203,3 +203,18 @@ func TestAutomaticSearchDiscoveryFailureStaysSilent(t *testing.T) {
 	assert.Zero(t, searches)
 	assert.Empty(t, events)
 }
+
+func TestPhotoTimelineReportsInteractiveSearch(t *testing.T) {
+	f := newImportActionDaemon(t)
+	cmd := newPhotoTimelineCommand()
+	cmd.SetContext(t.Context())
+	cmd.SetIn(actionTerminal(t))
+	cmd.SetOut(actionTerminal(t))
+	cmd.SetArgs([]string{"--query", `{"text":"synthetic","mode":"lexical"}`})
+	require.NoError(t, cmd.Execute())
+	require.Len(t, f.requests, 1)
+	require.Equal(t, api.TelemetryEventRequest{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: "text"}}, <-f.requests)
+	cmd.SetArgs([]string{"--query", `{"unknown":true}`})
+	require.Error(t, cmd.Execute())
+	require.Empty(t, f.requests)
+}

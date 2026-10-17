@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dailyAction } from "./action-events.js";
+  import { inspectionReporter } from "./action-events.js";
   import { tick, untrack } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
@@ -73,7 +73,7 @@
   let rank = -1;
   let largeStarted = false;
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
-  const inspect = dailyAction("document_opened", () => photos.session);
+  const inspect = inspectionReporter("document_opened", () => photos.session);
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);

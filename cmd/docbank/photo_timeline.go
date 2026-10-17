@@ -36,7 +36,14 @@ date, which are also counted in missing.`,
 			if err != nil {
 				return err
 			}
-			return writeCLIJSON(cmd.OutOrStdout(), timeline)
+			if err := writeCLIJSON(cmd.OutOrStdout(), timeline); err != nil {
+				return err
+			}
+			executed, err := query.Parse(timeline.Query)
+			if err == nil {
+				reportAction(cmd, c, "search_run", executed.Mode)
+			}
+			return nil
 		},
 	}
 	command.Flags().StringVar(&raw, "query", "{}", "strict QueryV1 JSON selecting the photos to count")

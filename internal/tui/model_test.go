@@ -24,6 +24,7 @@ import (
 type fakeBackend struct {
 	screenErr                 error
 	screens                   []string
+	actionErr                 error
 	actions                   [][2]string
 	nodes                     map[string]api.Node
 	children                  map[int64]api.NodePage
@@ -1617,7 +1618,7 @@ func TestExpandedDetailReportsInspectionAndExposesCompleteAuthority(t *testing.T
 	assert.False(t, model.detailOpen)
 }
 
-func TestInspectionScrollReportsAgainAfterUTCDateChanges(t *testing.T) {
+func TestInspectionScrollForwardsEachGestureAcrossUTCDateChanges(t *testing.T) {
 	for _, tc := range []struct {
 		view   string
 		scroll tea.KeyPressMsg
@@ -1648,7 +1649,7 @@ func TestInspectionScrollReportsAgainAfterUTCDateChanges(t *testing.T) {
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
-				require.Len(t, backend.actions, 1)
+				require.Len(t, backend.actions, 2)
 				time.Sleep(24 * time.Hour)
 				for range 3 {
 					model, cmd = updateModel(t, model, tc.scroll)
@@ -1656,7 +1657,7 @@ func TestInspectionScrollReportsAgainAfterUTCDateChanges(t *testing.T) {
 						model = runModelCommand(t, model, cmd)
 					}
 				}
-				require.Equal(t, [][2]string{{"document_opened", ""}, {"document_opened", ""}}, backend.actions)
+				require.Equal(t, [][2]string{{"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}}, backend.actions)
 			})
 		})
 	}
@@ -2901,7 +2902,7 @@ func TestVisibleScreensAreAllowlisted(t *testing.T) {
 
 func (f *fakeBackend) ReportAction(_ context.Context, event, value string) error {
 	f.actions = append(f.actions, [2]string{event, value})
-	return nil
+	return f.actionErr
 }
 
 func TestSearchesReportTheModeThatRanWhenResultsArrive(t *testing.T) {
@@ -3007,4 +3008,20 @@ func applyResults(t *testing.T, model Model, cmd tea.Cmd) Model {
 		}
 	}
 	return model
+}
+
+func TestInspectionRetriesAfterReportFailure(t *testing.T) {
+	backend := newFakeBackend()
+	backend.actionErr = errors.New("daemon unavailable")
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.rows = []row{{node: api.Node{ID: 3, Kind: "file", Name: "report.txt"}}}
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	model = runModelCommand(t, model, cmd)
+	require.Len(t, backend.actions, 1)
+	backend.actionErr = nil
+	model, cmd = updateModel(t, model, runeKey('j'))
+	require.NotNil(t, cmd)
+	_ = runModelCommand(t, model, cmd)
+	require.Equal(t, [][2]string{{"document_opened", ""}, {"document_opened", ""}}, backend.actions)
 }

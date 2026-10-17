@@ -63,7 +63,7 @@ function setup() {
 }
 it("shows preview quality, preserves zoom and reports deliberate inspection", async () => {
   const inspect = vi.fn();
-  vi.spyOn(actionEvents, "dailyAction").mockImplementation((event, session) => {
+  vi.spyOn(actionEvents, "inspectionReporter").mockImplementation((event, session) => {
     expect(event).toBe("document_opened");
     expect(session()).toBe("scoped");
     return inspect;
@@ -136,7 +136,7 @@ it.each(["wheel", "i", "pointerdown"])(
   "reports %s inspection from a fresh viewer",
   async (gesture) => {
     const inspect = vi.fn();
-    vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+    vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
     const { props } = setup();
     const view = render(PhotoLoupe, props);
     await screen.findByText("Fit preview");
@@ -152,7 +152,7 @@ it.each(["wheel", "i", "pointerdown"])(
 
 it("closes without reporting an inspection", async () => {
   const inspect = vi.fn();
-  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+  vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
   const { props } = setup();
   render(PhotoLoupe, props);
   await screen.findByText("Fit preview");
@@ -168,7 +168,7 @@ it.each([
   ["ArrowRight", 1],
 ])("reports deliberate %s navigation after restoring a photo", async (key, direction) => {
   const inspect = vi.fn();
-  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+  vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
   const { props } = setup();
   render(PhotoLoupe, props);
   await screen.findByText("Fit preview");
@@ -182,7 +182,7 @@ it.each(["Show Photo 4.jpg", "View original", "Metadata"])(
   "reports keyboard activation of %s after restoration",
   async (action) => {
     const inspect = vi.fn();
-    vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+    vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
     const { props } = setup();
     const original = vi.spyOn(props.photos, "original").mockResolvedValue("blob:original");
     render(PhotoLoupe, props);

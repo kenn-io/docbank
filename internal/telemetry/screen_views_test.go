@@ -43,7 +43,7 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 	collector := screenCollector(t, &mu, &events)
 	defer collector.Close()
 	dir := t.TempDir()
-	reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
+	reporter := New(Options{Dir: dir, Endpoint: collector.URL, Logger: discardLogger()})
 	handler := CaptureHandler(reporter, dir)
 	for _, tc := range []struct {
 		name, media, body string
@@ -97,7 +97,7 @@ func TestCaptureClassifiesSearchesAndClaimsAcrossInterfacesRestartsAndDays(t *te
 	defer collector.Close()
 	dir := t.TempDir()
 	makeHandler := func() (*Reporter, *Capture) {
-		reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
+		reporter := New(Options{Dir: dir, Endpoint: collector.URL, Logger: discardLogger()})
 		handler := CaptureHandler(reporter, dir)
 		return reporter, handler
 	}

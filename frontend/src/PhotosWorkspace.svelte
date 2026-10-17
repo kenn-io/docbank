@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { dailyAction } from "./action-events.js";
+  import { inspectionReporter } from "./action-events.js";
   import {
     Button,
     EmptyState,
@@ -106,7 +106,7 @@
   } = $props();
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
-  const inspect = dailyAction("document_opened", () => photos.session);
+  const inspect = inspectionReporter("document_opened", () => photos.session);
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);

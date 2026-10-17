@@ -136,3 +136,14 @@ func TestCoreActionEventRoute(t *testing.T) {
 		})
 	}
 }
+
+func TestTUIScreenUsesProductionTelemetryAllowlist(t *testing.T) {
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(posthog.GenericEnabledEnv, "1")
+	capture := newActionCollector(t)
+	server, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture })
+	status, body := postTelemetryEvent(t, server.Client(), http.MethodPost, server.URL+"/api/daemon/telemetry/events",
+		`{"event":"screen_viewed","properties":{"screen":"search","surface":"tui"}}`, nil)
+	require.Equal(t, http.StatusAccepted, status, body)
+	capture.requireEvent(t, "screen_viewed", map[string]any{"surface": "tui", "screen": "search"})
+}

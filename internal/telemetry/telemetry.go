@@ -38,7 +38,7 @@ type Options struct {
 	Version  string
 	Commit   string
 	Logger   *slog.Logger // nil uses slog.Default()
-	endpoint string       // tests point the enabled reporter at a loopback server
+	Endpoint string       // collector override for tests; empty uses the default endpoint
 }
 
 // New returns docbank's reporter. It never fails: opted out, it keeps the
@@ -60,7 +60,7 @@ func New(opts Options) *Reporter {
 	reporter, err := posthog.NewReporter(posthog.Options{
 		Logger:      logger,
 		APIKey:      postHogAPIKey,
-		Endpoint:    opts.endpoint,
+		Endpoint:    opts.Endpoint,
 		Application: application,
 		EnvPrefix:   envPrefix,
 		DistinctID:  inst.ID,

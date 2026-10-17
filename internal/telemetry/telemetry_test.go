@@ -126,7 +126,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
-	r := New(Options{Dir: dir, Version: "test-version", Commit: "test-commit", Logger: discardLogger(), endpoint: srv.URL})
+	r := New(Options{Dir: dir, Version: "test-version", Commit: "test-commit", Logger: discardLogger(), Endpoint: srv.URL})
 	require.True(t, r.Enabled())
 	handler := CaptureHandler(r, dir)
 	rec := postEvent(t, handler, `{"event":"app_opened","properties":{"path":"/synthetic/report.pdf","query":"synthetic"}}`)
@@ -180,7 +180,7 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 		http.Error(w, "synthetic ingest rejection", http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	reporter := New(Options{Dir: t.TempDir(), Logger: logger, endpoint: server.URL})
+	reporter := New(Options{Dir: t.TempDir(), Logger: logger, Endpoint: server.URL})
 	require.True(t, reporter.Enabled())
 	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
 	require.NoError(t, reporter.Close())

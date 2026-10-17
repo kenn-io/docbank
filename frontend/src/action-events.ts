@@ -17,14 +17,7 @@ export function reportAction(session: string, event: string, value = ""): void {
   }).catch(() => undefined);
 }
 
-// dailyAction sends one request per session and UTC day; the daemon keeps the durable claim.
-export function dailyAction(event: string, session: () => string): () => void {
-  let claimed = "";
-  return () => {
-    const current = session();
-    const claim = `${current}:${new Date().toISOString().slice(0, 10)}`;
-    if (claim === claimed) return;
-    claimed = claim;
-    reportAction(current, event);
-  };
+// The daemon owns daily claims, so failed deliveries can be retried by later gestures.
+export function inspectionReporter(event: string, session: () => string): () => void {
+  return () => reportAction(session(), event);
 }

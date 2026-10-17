@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dailyAction } from "./action-events.js";
+  import { inspectionReporter } from "./action-events.js";
   import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -92,10 +92,12 @@
     void displayedSource.key;
     if (deliberate || duplicateSource || relatedSource) inspect();
   });
-  const inspect = dailyAction("document_opened", () => session);
+  const inspect = inspectionReporter("document_opened", () => session);
 
   function inspectKey(event: KeyboardEvent): void {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const control = (event.target as Element).closest("button, input, select, textarea, a");
+    if (control && !control.matches('[role="tab"]') && !control.closest(".page-viewer")) return;
     if (
       [
         "ArrowUp",
