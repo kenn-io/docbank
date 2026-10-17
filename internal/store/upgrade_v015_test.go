@@ -709,12 +709,10 @@ func TestUpgradeReleasedJobsStartWithoutActionAttribution(t *testing.T) {
 			imported, err := upgraded.PackageImportJob(t.Context(), request.Owner, request.OperationID)
 			require.NoError(t, err)
 			require.Empty(t, imported.ActionSurface)
-			require.False(t, imported.ActionAddedReported)
 			require.Equal(t, request.JobJSON, imported.JobJSON)
 			mailbox, err := upgraded.MailboxJob(t.Context(), job.Owner, job.ID)
 			require.NoError(t, err)
 			require.Empty(t, mailbox.ActionSurface)
-			require.False(t, mailbox.ActionAddedReported)
 		})
 	}
 }

@@ -1051,9 +1051,10 @@ mailbox and load-file package imports report once after a confirmed new addition
 `push --watch`, API-key host-folder `photos import` and status commands stay
 silent. CLI `add` reports confirmed additions from the daemon even when its
 progress stream fails. The browser Photos drawer uses upload groups.
-Mailbox and load-file jobs store their original surface and first-addition claim
-with the job. Backups preserve both fields. Jobs restored from older released
-vaults have no attribution and stay silent. Host-folder Photos jobs retain their first-addition claim across daemon restarts.
+Mailbox and load-file backups preserve attribution and committed import progress.
+That progress identifies whether an import has already reported an addition. Jobs
+restored from older released vaults have no attribution and stay silent. Host-folder
+Photos jobs keep attribution and their first-addition claim across restart and resume.
 
 `search_run` counts submitted searches, including failed or superseded requests,
 facets and Smart Sets, once per surface and search type each UTC day.

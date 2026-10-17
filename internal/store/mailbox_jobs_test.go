@@ -114,7 +114,7 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	unchanged, err := s.MailboxJob(ctx, c.Owner, j.ID)
 	require.NoError(t, err)
 	require.Zero(t, unchanged.Checkpoint)
-	require.False(t, unchanged.ActionAddedReported)
+	require.Zero(t, unchanged.Imported)
 	require.Equal(t, int64(1), unchanged.Pending)
 	_, err = s.db.Exec(`DROP TRIGGER fail_mailbox_checkpoint`)
 	require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	require.True(t, reported)
 	stored, err := s.MailboxJob(ctx, c.Owner, j.ID)
 	require.NoError(t, err)
-	require.True(t, stored.ActionAddedReported)
+	require.Equal(t, int64(1), stored.Imported)
 	require.Equal(t, "web", stored.ActionSurface)
 	require.NoError(t, s.ValidateMetadata(ctx))
 	var original []byte

@@ -1,3 +1,6 @@
+import bridgeSource from "./email-frame-bridge.js?raw";
+import { pageDigest } from "./pages.js";
+import { emailTupleDigest } from "./email-viewer.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import userEvent from "@testing-library/user-event";
@@ -514,3 +517,155 @@ it.each(["Text", "Email"])(
     );
   },
 );
+
+it("reports sandboxed email inspection gestures again after UTC rollover", async () => {
+  const selected = source(
+    new TextEncoder().encode("Synthetic email"),
+    "55555555-5555-4555-8555-555555555555",
+    "message/rfc822",
+  );
+  const html = new TextEncoder().encode("<p>Synthetic email body</p>");
+  const artifact = {
+    role: "body_utf8",
+    sha256: createHash("sha256").update(html).digest("hex"),
+    size: html.length,
+  };
+  const evidence = {
+    contract_version: "docbank-email/v1",
+    source: { sha256: selected.blobHash, size: selected.size, verification: "verified" },
+    recipe: {},
+    outcome: "decoded",
+    failure: null,
+    inventory: {
+      state: "complete",
+      root_path: "1",
+      diagnostics: [],
+      parts: [
+        {
+          path: "1",
+          parent_path: null,
+          message_path: "1",
+          media: { declared: "text/html", detected: null },
+          content_id: { value: null, state: "absent" },
+          decode_state: "decoded",
+          filename: { safe_name: "" },
+          disposition: null,
+          payload: null,
+          body_utf8: artifact,
+          header_block: null,
+          diagnostics: [],
+        },
+      ],
+      messages: [
+        {
+          path: "1",
+          selected_body_path: "1",
+          alternatives: [
+            { part_path: "1", kind: "html", display_state: "available", display: artifact },
+          ],
+          fields: {},
+          date: { state: "absent", civil: null, timezone_text: null, timezone_state: "absent" },
+          diagnostics: [],
+        },
+      ],
+    },
+  };
+  const checksum = pageDigest(evidence);
+  const recipe = pageDigest(evidence.recipe);
+  const generation = emailTupleDigest(
+    "docbank-email-generation/v1",
+    evidence.contract_version,
+    selected.blobHash,
+    String(selected.size),
+    recipe,
+    checksum,
+  );
+  const attachment = emailTupleDigest(
+    "docbank-email-attachment/v1",
+    selected.versionID,
+    generation,
+  );
+  const events: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/daemon/telemetry/events") {
+      events.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 202 });
+    }
+    if (url.endsWith("/email"))
+      return new Response(
+        JSON.stringify({
+          version: {
+            id: selected.versionID,
+            node_id: selected.nodeID,
+            blob_hash: selected.blobHash,
+            size: selected.size,
+          },
+          evidence,
+          checksum,
+          recipe_fingerprint: recipe,
+          generation_id: generation,
+          attachment_id: attachment,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (url === `/api/v1/nodes/${selected.nodeID}`)
+      return new Response(
+        JSON.stringify({ id: selected.nodeID, kind: "file", name: "synthetic.eml" }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (url.includes("/email/"))
+      return new Response(html, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Docbank-Content-Version": selected.versionID,
+          "X-Docbank-Email-Generation": generation,
+          "X-Docbank-Email-Attachment": attachment,
+          "X-Docbank-Email-Part-Path": "1",
+          "X-Docbank-Email-Part-Role": "body_utf8",
+          "X-Docbank-Blob-Hash": artifact.sha256,
+          "X-Docbank-Blob-Size": String(html.length),
+        },
+      });
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(VerifiedPreview, {
+    session: "visit-session",
+    source: selected,
+    authorizationRevision: 3,
+    activeTab: "email",
+    onauthfailure: vi.fn(),
+  });
+  const frame = (await screen.findByTitle(
+    `Email HTML body of ${selected.name}`,
+  )) as HTMLIFrameElement;
+  const frameDocument = frame.contentDocument!;
+  frameDocument.open();
+  frameDocument.write(frame.srcdoc);
+  frameDocument.close();
+  // jsdom does not load the sandbox's external script. Run that exact bridge
+  // against its document and forward the browser's opaque-origin envelope.
+  new Function("document", "parent", bridgeSource)(frameDocument, {
+    postMessage: (data: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent("message", { data, source: frame.contentWindow, origin: "null" }),
+      ),
+  });
+  await fireEvent.keyDown(frameDocument.body, { key: "Escape" });
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Enter email body · Escape returns here" }),
+  );
+  expect(events).toEqual([]);
+  const opened = { event: "document_opened", properties: { surface: "web" } };
+  vi.setSystemTime(new Date("2026-10-17T23:59:00Z"));
+  await fireEvent.pointerDown(frameDocument.body);
+  expect(events).toEqual([opened]);
+  vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
+  await fireEvent.wheel(frameDocument.body);
+  expect(events).toEqual([opened, opened]);
+  vi.setSystemTime(new Date("2026-10-19T00:01:00Z"));
+  await fireEvent.keyDown(frameDocument.body, { key: "j", ctrlKey: true });
+  expect(events).toEqual([opened, opened]);
+  await fireEvent.keyDown(frameDocument.body, { key: "j" });
+  expect(events).toEqual([opened, opened, opened]);
+});

@@ -11,7 +11,7 @@
     readEmailMetadata,
     readEmailPart,
     prepareEmailHTML,
-    validFrameEscape,
+    validFrameAction,
     type EmailMetadata,
   } from "./email-viewer.js";
 
@@ -20,12 +20,14 @@
     source,
     authorizationRevision,
     onattachments,
+    oninspect,
     onauthfailure,
   }: {
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
     onattachments: () => void;
+    oninspect: () => void;
     onauthfailure: (cause: unknown) => void;
   } = $props();
   let metadata = $state<EmailMetadata>();
@@ -167,8 +169,10 @@
   });
   onMount(() => {
     const receive = (event: MessageEvent) => {
-      if (frame && validFrameEscape(event, iframe?.contentWindow, frame.nonce))
-        escapeButton?.focus();
+      if (frame && validFrameAction(event, iframe?.contentWindow, frame.nonce)) {
+        if (event.data.action === "inspect") oninspect();
+        else escapeButton?.focus();
+      }
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 )
 
@@ -16,8 +17,15 @@ const ActionSurfaceHeader = "X-Docbank-Surface"
 
 // importActionSurface prefers the browser session over a client's CLI claim.
 func importActionSurface(r *http.Request) string {
-	if surface := browserActionSurface(r); surface != "" || r.Header.Get(ActionSurfaceHeader) != "cli" {
+	if surface := browserActionSurface(r); surface != "" {
 		return surface
 	}
-	return "cli"
+	return cliImportSurface(r.Context(), r.Header.Get(ActionSurfaceHeader))
+}
+
+func cliImportSurface(ctx context.Context, surface string) string {
+	if surface == "cli" && !browserSessionRequest(ctx) {
+		return "cli"
+	}
+	return ""
 }

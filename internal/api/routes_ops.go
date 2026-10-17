@@ -347,14 +347,14 @@ func runIngest(
 		return d.Blobs.WithMutation(ctx, func() error {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
 			rep, err := ing.AddPathsWithSelection(ctx, paths, dest, opts, selection)
-			if rep.Created > 0 && surface == "cli" && !browserSessionRequest(ctx) {
+			if rep.Created > 0 && cliImportSurface(ctx, surface) != "" {
 				d.TelemetryCapture.DocumentAdded(surface)
 			}
 			if err != nil {
 				return FromStoreError(err)
 			}
 			out = IngestReport{
-				IngestID: rep.IngestID, Added: rep.Added, Created: rep.Created,
+				IngestID: rep.IngestID, Added: rep.Added,
 				Skipped: rep.Skipped, Excluded: rep.Excluded,
 			}
 			for _, failure := range rep.Failed {

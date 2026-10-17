@@ -940,7 +940,6 @@ type IngestFailure struct {
 type IngestReport struct {
 	IngestID string          `json:"ingest_id,omitempty"`
 	Added    int             `json:"added"`
-	Created  int             `json:"created"`
 	Skipped  int             `json:"skipped"`
 	Excluded int             `json:"excluded"`
 	Failed   []IngestFailure `json:"failed,omitempty"`

@@ -437,8 +437,6 @@ func TestPackageImportJobSurvivesMetadataRestoreWithoutLease(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, packageJobRunning, claimed.State)
 
-	_, err = s.db.ExecContext(t.Context(), `UPDATE package_import_jobs SET action_added_reported=1 WHERE id=?`, claimed.ID)
-	require.NoError(t, err)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	restored := newTestStore(t)
@@ -449,7 +447,6 @@ func TestPackageImportJobSurvivesMetadataRestoreWithoutLease(t *testing.T) {
 	require.Equal(t, packageJobQueued, job.State)
 	require.Equal(t, request.JobJSON, job.JobJSON)
 	require.Equal(t, "web", job.ActionSurface)
-	require.True(t, job.ActionAddedReported)
 	reclaimed, err := restored.ClaimPackageImportJob(t.Context(), "worker-b", time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, job.ID, reclaimed.ID)

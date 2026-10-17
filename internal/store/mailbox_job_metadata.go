@@ -10,10 +10,9 @@ import (
 )
 
 type metadataMailboxJob struct {
-	Type                string     `json:"type"`
-	Job                 MailboxJob `json:"job"`
-	ActionSurface       *string    `json:"action_surface,omitempty"`
-	ActionAddedReported *bool      `json:"action_added_reported,omitempty"`
+	Type          string     `json:"type"`
+	Job           MailboxJob `json:"job"`
+	ActionSurface *string    `json:"action_surface,omitempty"`
 }
 type metadataMailboxOccurrence struct {
 	Type       string            `json:"type"`
@@ -54,7 +53,7 @@ func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWri
 			var b []byte
 			err = q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json FROM mailbox_jobs WHERE id=? AND owner=?`, id, owner).Scan(&state, &claim, &container, &b)
 			if err == nil {
-				j, err = decodeMailboxJob(id, owner, state, claim, container, b)
+				j, err = decodeMailboxJob(id, owner, state, claim, container, "", b)
 			}
 		}
 		if err != nil {
@@ -69,7 +68,7 @@ func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWri
 		}
 		record := metadataMailboxJob{Type: "mailbox_job", Job: j}
 		if version >= 39 {
-			record.ActionSurface, record.ActionAddedReported = new(j.ActionSurface), new(j.ActionAddedReported)
+			record.ActionSurface = new(j.ActionSurface)
 		}
 		if err = write(record); err != nil {
 			return err

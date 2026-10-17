@@ -329,7 +329,6 @@ CREATE TABLE IF NOT EXISTS package_import_jobs (
     token TEXT NOT NULL,
     job_json BLOB NOT NULL,
     action_surface TEXT NOT NULL DEFAULT '',
-    action_added_reported INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(owner, operation_id),
@@ -2686,7 +2685,6 @@ CREATE TABLE IF NOT EXISTS mailbox_jobs (
     state TEXT NOT NULL,
     claim TEXT NOT NULL,
     action_surface TEXT NOT NULL DEFAULT '',
-    action_added_reported INTEGER NOT NULL DEFAULT 0,
     job_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mailbox_jobs_state ON mailbox_jobs(state,owner,id);

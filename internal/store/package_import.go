@@ -310,11 +310,12 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 		if err != nil {
 			return err
 		}
-		if receipt.State == "committed" && job.ActionSurface != "" && !job.ActionAddedReported {
-			if _, err := tx.ExecContext(ctx, `UPDATE package_import_jobs SET action_added_reported=1 WHERE id=?`, job.ID); err != nil {
+		if receipt.State == "committed" && job.ActionSurface != "" {
+			if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(
+				SELECT 1 FROM package_import_receipts WHERE package_id=? AND state='committed' AND receipt_id<>?)`,
+				receipt.PackageID, receipt.ReceiptID).Scan(&receipt.ReportAddition); err != nil {
 				return err
 			}
-			receipt.ReportAddition = true
 		}
 		result = receipt
 		return nil

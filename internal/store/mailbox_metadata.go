@@ -69,9 +69,6 @@ var mailboxMetadataTables = []metadataRecordCodec{
 			if r.ActionSurface != nil {
 				r.Job.ActionSurface = *r.ActionSurface
 			}
-			if r.ActionAddedReported != nil {
-				r.Job.ActionAddedReported = *r.ActionAddedReported
-			}
 			return saveMailboxJob(ctx, tx, r.Job, true)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxOccurrence]{

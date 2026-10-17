@@ -70,7 +70,6 @@ func TestMailboxPortableBackupRetainsSourceChildrenTombstoneAndImportReportingSt
 	require.NoError(t, err)
 	require.Equal(t, []string{hashBytes([]byte(message))}, resumed.EntryHashes)
 	require.Equal(t, "web", resumed.ActionSurface)
-	require.True(t, resumed.ActionAddedReported)
 	resumed, err = restored.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
 	require.NoError(t, service.RunJob(ctx, resumed))

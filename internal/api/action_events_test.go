@@ -36,7 +36,7 @@ func newActionCollector(t *testing.T) *actionCollector {
 	}))
 	t.Cleanup(server.Close)
 	var err error
-	c.reporter, err = posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: server.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"}, posthog.WithAllowedEvent("document_added", posthog.AllowProperty("surface", posthog.AllowStringValues("web", "cli"))), posthog.WithAllowedEvent("screen_viewed", posthog.AllowProperty("screen", posthog.AllowStringValues("browse")), posthog.AllowProperty("surface", posthog.AllowStringValues("web"))))
+	c.reporter, err = posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: server.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"}, posthog.WithAllowedEvent("document_added", posthog.RequireProperty("surface", posthog.AllowStringValues("web", "cli"))), posthog.WithAllowedEvent("screen_viewed", posthog.RequireProperty("screen", posthog.AllowStringValues("browse")), posthog.RequireProperty("surface", posthog.AllowStringValues("web"))))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.reporter.Close()) })
 	c.capture = telemetry.CaptureHandler(c.reporter, t.TempDir())

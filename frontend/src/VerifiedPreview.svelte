@@ -300,6 +300,7 @@
           source={displayedSource}
           authorizationRevision={displayedRevision}
           onattachments={() => chooseTab("attachments")}
+          oninspect={inspect}
           {onauthfailure}
         />
       {/key}

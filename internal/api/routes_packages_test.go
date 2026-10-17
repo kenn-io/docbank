@@ -137,6 +137,7 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 }
 
 func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
+	t.Parallel()
 	for _, afterPublication := range []bool{false, true} {
 		t.Run(fmt.Sprintf("after_publication_%t", afterPublication), func(t *testing.T) {
 			gate := api.NewOperationGate()

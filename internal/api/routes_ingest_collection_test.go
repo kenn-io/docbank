@@ -389,7 +389,7 @@ func TestIngestReportsCommittedAdditionsWhenProgressStreamFails(t *testing.T) {
 			client := daemonconn.New(proxy.URL, testAPIKey)
 			report, err := client.IngestStream(daemonconn.WithActionSurface(t.Context(), surface), paths, "/inbox", daemonconn.IngestOptions{}, nil)
 			require.ErrorContains(t, err, "ended without a result")
-			require.Zero(t, report.Created)
+			require.Zero(t, report.Added)
 			for _, path := range paths {
 				_, err := catalog.NodeByPath(t.Context(), "/inbox/"+filepath.Base(path))
 				require.NoError(t, err)

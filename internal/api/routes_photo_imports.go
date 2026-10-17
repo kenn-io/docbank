@@ -61,10 +61,7 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if d.Jobs == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "photo_import_unavailable", "background job supervisor is unavailable")
 		}
-		surface := ""
-		if in.Surface == "cli" && !browserSessionRequest(ctx) {
-			surface = "cli"
-		}
+		surface := cliImportSurface(ctx, in.Surface)
 		operation, err := d.Store.CreatePhotoImport(ctx, store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination}, surface)
 		if err != nil {
 			return nil, FromStoreError(err)

@@ -61,7 +61,7 @@ func (h *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Capture(request.Event, request.Properties); err != nil {
-		if errors.Is(err, errInvalidCapture) || errors.Is(err, posthog.ErrUnsupportedEvent) {
+		if errors.Is(err, posthog.ErrInvalidProperty) || errors.Is(err, posthog.ErrUnsupportedEvent) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
 			http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
@@ -75,23 +75,19 @@ func (h *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeCaptureStatus(w, status)
 }
 
-var errInvalidCapture = errors.New("event requires allowed properties")
-
 // Capture validates and claims interface events for HTTP and daemon callers.
 func (h *Capture) Capture(event string, properties map[string]any) error {
 	event = strings.TrimSpace(event)
 	if !h.reporter.EventAllowed(event) {
 		return posthog.ErrUnsupportedEvent
 	}
-	if event == EventScreenViewed || event == EventSearchRun || event == EventDocumentOpened || event == EventDocumentAdded {
-		props, err := h.reporter.SanitizeProperties(event, properties)
-		if err != nil || props["surface"] == nil || event == EventSearchRun && props["search_type"] == nil || event == EventScreenViewed && props["screen"] == nil {
-			return errInvalidCapture
-		}
-		properties = props
-		if event != EventDocumentAdded {
-			return h.captureDaily(event, properties)
-		}
+	props, err := h.reporter.SanitizeProperties(event, properties)
+	if err != nil {
+		return fmt.Errorf("validate telemetry properties: %w", err)
+	}
+	properties = props
+	if event == EventScreenViewed || event == EventSearchRun || event == EventDocumentOpened {
+		return h.captureDaily(event, properties)
 	}
 	if !h.reporter.Enabled() {
 		return nil

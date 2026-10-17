@@ -589,7 +589,7 @@ export async function prepareEmailHTML(
     throw new Error("Serialized email exceeds 32 MiB; original remains complete.");
   return { html, warnings: [...new Set(result.warnings)] };
 }
-export function validFrameEscape(
+export function validFrameAction(
   event: MessageEvent,
   frame: Window | null | undefined,
   nonce: string,
@@ -605,6 +605,6 @@ export function validFrameEscape(
     Object.keys(data).sort().join(",") === "action,channel,nonce" &&
     data.channel === "docbank-email" &&
     data.nonce === nonce &&
-    data.action === "escape"
+    (data.action === "escape" || data.action === "inspect")
   );
 }

@@ -497,8 +497,6 @@ func init() {
 }
 
 func (b *tuiDaemonBackend) ReportAction(ctx context.Context, event, value string) error {
-	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-	defer cancel()
 	_, err := withTUIClient(ctx, b, func(c *daemonconn.Connection) (*apiclient.ReportTelemetryEventResponse, error) {
 		return c.ReportAction(ctx, event, "tui", value)
 	})

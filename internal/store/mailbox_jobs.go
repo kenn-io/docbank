@@ -91,22 +91,21 @@ type MailboxJobRequest struct {
 type MailboxJob struct {
 	MailboxJobRequest
 
-	ActionSurface       string   `json:"-"`
-	ActionAddedReported bool     `json:"-"`
-	Owner               string   `json:"owner"`
-	State               string   `json:"state"`
-	Claim               string   `json:"-"`
-	CollectionID        string   `json:"collection_id"`
-	StartedAt           string   `json:"started_at"`
-	Checkpoint          int64    `json:"checkpoint"`
-	SegmentStart        int64    `json:"segment_start"`
-	Imported            int64    `json:"imported"`
-	Rejected            int64    `json:"rejected"`
-	EntryHashes         []string `json:"entry_hashes,omitempty"`
-	Pending             int64    `json:"pending"`
-	Canceled            int64    `json:"canceled"`
-	ScannedTail         bool     `json:"scanned_tail"`
-	Reason              string   `json:"reason"`
+	ActionSurface string   `json:"-"`
+	Owner         string   `json:"owner"`
+	State         string   `json:"state"`
+	Claim         string   `json:"-"`
+	CollectionID  string   `json:"collection_id"`
+	StartedAt     string   `json:"started_at"`
+	Checkpoint    int64    `json:"checkpoint"`
+	SegmentStart  int64    `json:"segment_start"`
+	Imported      int64    `json:"imported"`
+	Rejected      int64    `json:"rejected"`
+	EntryHashes   []string `json:"entry_hashes,omitempty"`
+	Pending       int64    `json:"pending"`
+	Canceled      int64    `json:"canceled"`
+	ScannedTail   bool     `json:"scanned_tail"`
+	Reason        string   `json:"reason"`
 }
 
 func (j MailboxJob) IngestRun() IngestRun {
@@ -176,31 +175,25 @@ func saveMailboxJob(ctx context.Context, tx *sql.Tx, j MailboxJob, insert bool) 
 		return ErrMailboxLimit
 	}
 	if insert {
-		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json,action_surface,action_added_reported) VALUES(?,?,?,?,?,?,?,?)`, j.ID, j.Owner, j.ContainerID, j.State, j.Claim, b, j.ActionSurface, j.ActionAddedReported)
+		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json,action_surface) VALUES(?,?,?,?,?,?,?)`, j.ID, j.Owner, j.ContainerID, j.State, j.Claim, b, j.ActionSurface)
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE mailbox_jobs SET state=?,claim=?,job_json=?,action_surface=?,action_added_reported=? WHERE id=?`, j.State, j.Claim, b, j.ActionSurface, j.ActionAddedReported, j.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE mailbox_jobs SET state=?,claim=?,job_json=?,action_surface=? WHERE id=?`, j.State, j.Claim, b, j.ActionSurface, j.ID)
 	}
 	return err
 }
 func loadMailboxJob(ctx context.Context, q metadataQuerier, owner, id string) (MailboxJob, error) {
 	var b []byte
 	var state, claim, container, surface string
-	var reported bool
-	err := q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json,action_surface,action_added_reported FROM mailbox_jobs WHERE id=? AND owner=?`, id, owner).Scan(&state, &claim, &container, &b, &surface, &reported)
+	err := q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json,action_surface FROM mailbox_jobs WHERE id=? AND owner=?`, id, owner).Scan(&state, &claim, &container, &b, &surface)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MailboxJob{}, ErrNotFound
 	}
 	if err != nil {
 		return MailboxJob{}, err
 	}
-	j, err := decodeMailboxJob(id, owner, state, claim, container, b)
-	j.ActionSurface, j.ActionAddedReported = surface, reported
-	if err != nil {
-		return j, err
-	}
-	return j, validateMailboxJob(j)
+	return decodeMailboxJob(id, owner, state, claim, container, surface, b)
 }
-func decodeMailboxJob(id, owner, state, claim, container string, b []byte) (MailboxJob, error) {
+func decodeMailboxJob(id, owner, state, claim, container, surface string, b []byte) (MailboxJob, error) {
 	var j MailboxJob
 	if len(b) > 128<<10 {
 		return j, ErrMailboxLimit
@@ -211,7 +204,7 @@ func decodeMailboxJob(id, owner, state, claim, container string, b []byte) (Mail
 	if j.ID != id || j.Owner != owner || j.State != state || j.ContainerID != container {
 		return j, ErrMailboxInvalid
 	}
-	j.Claim = claim
+	j.Claim, j.ActionSurface = claim, surface
 	return j, validateMailboxJob(j)
 }
 func (s *Store) MailboxJob(ctx context.Context, owner, id string) (MailboxJob, error) {
@@ -235,7 +228,7 @@ func (s *Store) MailboxJobs(ctx context.Context, owner, after string, limit int)
 		AND (?='' OR (json_extract(job_json, '$.started_at'), id) < (?, ?))
 		ORDER BY started DESC, id DESC LIMIT ?
 	)
-	SELECT j.id,j.state,j.claim,j.container_id,j.job_json,j.action_surface,j.action_added_reported
+	SELECT j.id,j.state,j.claim,j.container_id,j.job_json,j.action_surface
 	FROM page JOIN mailbox_jobs j ON j.id=page.id`, owner, after, started, after, limit)
 	if err != nil {
 		return nil, err
@@ -244,17 +237,12 @@ func (s *Store) MailboxJobs(ctx context.Context, owner, after string, limit int)
 	out := []MailboxJob{}
 	for rows.Next() {
 		var id, state, claim, container, surface string
-		var reported bool
 		var b []byte
-		if err := rows.Scan(&id, &state, &claim, &container, &b, &surface, &reported); err != nil {
+		if err := rows.Scan(&id, &state, &claim, &container, &b, &surface); err != nil {
 			return nil, err
 		}
-		j, err := decodeMailboxJob(id, owner, state, claim, container, b)
+		j, err := decodeMailboxJob(id, owner, state, claim, container, surface, b)
 		if err != nil {
-			return nil, err
-		}
-		j.ActionSurface, j.ActionAddedReported = surface, reported
-		if err := validateMailboxJob(j); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
@@ -520,10 +508,7 @@ func (s *Store) CommitMailboxOccurrence(ctx context.Context, id, claim string, o
 				return ErrMailboxInvalid
 			}
 			j.Imported++
-			if !j.ActionAddedReported && j.ActionSurface != "" {
-				j.ActionAddedReported = true
-				reported = true
-			}
+			reported = j.Imported == 1 && j.ActionSurface != ""
 		case "rejected":
 			if !mailboxText(o.Reason, 4096) {
 				return ErrMailboxInvalid

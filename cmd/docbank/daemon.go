@@ -507,7 +507,7 @@ func runServe(ctx context.Context) (retErr error) {
 	stop := func() { stopOnce.Do(func() { close(stopCh) }) }
 
 	tracker := api.NewActivityTracker()
-	photoImports := api.NewPhotoImportRunner(api.Deps{Store: s, Blobs: blobs, Gate: operationGate, Tracker: tracker})
+	photoImports := api.NewPhotoImportRunner(api.Deps{Store: s, Blobs: blobs, Gate: operationGate, Tracker: tracker, TelemetryCapture: capture})
 	if err := photoImports.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
 	}
