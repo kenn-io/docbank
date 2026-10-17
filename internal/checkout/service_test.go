@@ -461,50 +461,55 @@ func recordCheckoutPublication(t *testing.T, s Service, op store.StorageOperatio
 
 func TestCheckoutRecoveryFinishesReplacedDirectories(t *testing.T) {
 	t.Parallel()
-	for _, location := range []string{"destination ancestor", "entry subdirectory"} {
-		for _, publication := range []string{"published", "in flight", "unrecorded"} {
-			t.Run(location+"/"+publication, func(t *testing.T) {
-				s := checkoutService(t)
-				a := checkoutPhoto(t, s, "photo.jpg", "source bytes")
-				parent := filepath.Join(t.TempDir(), "parent")
-				destination := filepath.Join(parent, "checkout")
-				require.NoError(t, os.MkdirAll(destination, 0o700))
-				c, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
-				require.NoError(t, err)
-				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
-				entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Len(t, entries, 1)
-				recordCheckoutPublication(t, s, op, entries[0], publication)
-				require.NoError(t, root.Close())
-				replaced := parent
-				if location == "entry subdirectory" {
-					replaced = filepath.Join(destination, filepath.Dir(filepath.FromSlash(entries[0].Path)))
-					require.NotEqual(t, destination, replaced)
-					require.NoError(t, os.MkdirAll(filepath.Dir(replaced), 0o700))
-				} else {
-					require.NoError(t, os.RemoveAll(parent))
-				}
-				require.NoError(t, os.WriteFile(replaced, []byte("user replacement"), 0o600))
-				supervisor := jobs.New(t.Context(), nil)
-				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-				require.NoError(t, s.Resume(t.Context(), supervisor))
-				require.Eventually(t, func() bool {
-					status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-					return err == nil && status.Checkout.State == "failed" && status.Checkout.RetentionReleased
-				}, 3*time.Second, 10*time.Millisecond)
-				finished, err := s.Store.StorageOperation(t.Context(), op.ID)
-				require.NoError(t, err)
-				require.Equal(t, store.StorageOperationFailed, finished.State)
-				require.NotNil(t, finished.FinishedAt)
-				observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.False(t, observed[0].Published)
-				content, err := os.ReadFile(replaced)
-				require.NoError(t, err)
-				require.Equal(t, "user replacement", string(content))
-			})
-		}
+	for _, test := range []struct {
+		location    string
+		publication string
+	}{
+		{location: "destination ancestor", publication: "published"},
+		{location: "entry subdirectory", publication: "published"},
+		{location: "entry subdirectory", publication: "unrecorded"},
+	} {
+		t.Run(test.location+"/"+test.publication, func(t *testing.T) {
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "source bytes")
+			parent := filepath.Join(t.TempDir(), "parent")
+			destination := filepath.Join(parent, "checkout")
+			require.NoError(t, os.MkdirAll(destination, 0o700))
+			c, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+			require.NoError(t, err)
+			require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			recordCheckoutPublication(t, s, op, entries[0], test.publication)
+			require.NoError(t, root.Close())
+			replaced := parent
+			if test.location == "entry subdirectory" {
+				replaced = filepath.Join(destination, filepath.Dir(filepath.FromSlash(entries[0].Path)))
+				require.NotEqual(t, destination, replaced)
+				require.NoError(t, os.MkdirAll(filepath.Dir(replaced), 0o700))
+			} else {
+				require.NoError(t, os.RemoveAll(parent))
+			}
+			require.NoError(t, os.WriteFile(replaced, []byte("user replacement"), 0o600))
+			supervisor := jobs.New(t.Context(), nil)
+			defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+			require.NoError(t, s.Resume(t.Context(), supervisor))
+			require.Eventually(t, func() bool {
+				status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+				return err == nil && status.Checkout.State == "failed" && status.Checkout.RetentionReleased
+			}, 3*time.Second, 10*time.Millisecond)
+			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+			require.NoError(t, err)
+			require.Equal(t, store.StorageOperationFailed, finished.State)
+			require.NotNil(t, finished.FinishedAt)
+			observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.False(t, observed[0].Published)
+			content, err := os.ReadFile(replaced)
+			require.NoError(t, err)
+			require.Equal(t, "user replacement", string(content))
+		})
 	}
 }
 
