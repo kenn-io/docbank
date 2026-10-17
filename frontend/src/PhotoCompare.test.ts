@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotoCompare from "./PhotoCompare.svelte";
+import { APIError } from "./api-transport.js";
 import { Photos } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -15,6 +16,44 @@ const names = (dialog: HTMLElement) =>
   within(dialog)
     .getAllByRole("heading")
     .map((heading) => heading.textContent);
+
+it.each([false, true])(
+  "shares closeup retry results with full frames (removed: %s)",
+  async (removed) => {
+    const { photos, dialog } = compare();
+    await within(dialog).findByText("Photo 1.jpg");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
+    const frame = within(dialog).getByRole("button", { name: "Position closeup on Photo 1.jpg" });
+    await fireEvent.click(frame);
+    const closeups = await within(dialog).findByLabelText("Matching closeups");
+    vi.mocked(photos.preview).mockRejectedValue(
+      new APIError("Photo replaced", 409, "photo_display_changed"),
+    );
+    const closeup = within(closeups).getByRole("region", { name: "Closeup of Photo 1.jpg" });
+    const retry = await within(closeup).findByRole("button", { name: "Retry preview" });
+    const lookup = vi.spyOn(photos, "lookup");
+    if (removed) lookup.mockRejectedValue(new APIError("Photo removed", 404, "not_found"));
+    else
+      lookup.mockResolvedValue({ ...photo(1), name: "Replacement.jpg", content_version_id: "v2" });
+    await fireEvent.click(retry);
+    await waitFor(() =>
+      expect(names(dialog)).toEqual(
+        removed
+          ? ["Photo 2.jpg", "Photo 2.jpg"]
+          : ["Replacement.jpg", "Photo 2.jpg", "Replacement.jpg", "Photo 2.jpg"],
+      ),
+    );
+    if (!removed) {
+      await waitFor(() =>
+        expect(
+          vi.mocked(photos.preview).mock.calls.filter(([row]) => row.content_version_id === "v2")
+            .length,
+        ).toBeGreaterThanOrEqual(2),
+      );
+    }
+    photos.dispose();
+  },
+);
 
 function compare(
   rows = [photo(1), photo(2), photo(3)],

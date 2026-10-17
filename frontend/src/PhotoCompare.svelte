@@ -102,6 +102,13 @@
   function cancelRegion() {
     regionMode = false;
   }
+  function reload(row: PhotoBrowseRow) {
+    rows = rows.map((item) => (item.asset_id === row.asset_id ? row : item));
+  }
+  function remove(id: string, message: string) {
+    rows = rows.filter((item) => item.asset_id !== id);
+    errors = [...errors, message];
+  }
   const restoreFocus = () => restorePhotoReviewFocus(() => content);
 </script>
 
@@ -171,12 +178,8 @@
               {cache}
               {view}
               onfocus={restoreFocus}
-              onreload={(row) =>
-                (rows = rows.map((item) => (item.asset_id === row.asset_id ? row : item)))}
-              onunavailable={(message) => {
-                rows = rows.filter((item) => item.asset_id !== photo.asset_id);
-                errors = [...errors, message];
-              }}
+              onreload={reload}
+              onunavailable={(message) => remove(photo.asset_id, message)}
               onview={(value) => (view = value)}
               onmove={move}
               {regionMode}
@@ -199,6 +202,8 @@
                 view={crop}
                 onview={(value) => (crop = value)}
                 onfocus={restoreFocus}
+                onreload={reload}
+                onunavailable={(message) => remove(photo.asset_id, message)}
               />
             </section>{/each}
         </div>{/if}
