@@ -334,6 +334,16 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MarkPersonInPhoto(ctx, hiddenNode.CurrentVersionID, hidden.PersonID)
 	require.NoError(t, err)
+	hidden, _, err = s.PersonByID(ctx, hidden.PersonID)
+	require.NoError(t, err)
+	_, err = s.AddPersonIdentity(ctx, hidden.PersonID, hidden.Revision, PersonIdentity{
+		Kind: "email", ValueDisplay: "ada@example.test", Origin: "operator",
+		EvidenceKind: "operator_assertion", EvidenceID: "visible-derived-author", Confidence: "operator_asserted",
+	})
+	require.NoError(t, err)
+	derivedVersion := seedDocumentPeopleEvent(t, s, "visible-person-author.txt", "d9", nil)
+	derived := publishLifecycleDocumentPeople(t, s, derivedVersion.ID)
+	require.Equal(t, hidden.PersonID, derived.PersonID)
 	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, visible.PersonID)
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, hiddenNode.ID)
@@ -350,7 +360,7 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 		}
 		return ids
 	}
-	require.Equal(t, []string{ada.PersonID, free.PersonID, grace.PersonID, secondGrace.PersonID, visible.PersonID}, personIDs(locked))
+	require.Equal(t, []string{ada.PersonID, free.PersonID, grace.PersonID, secondGrace.PersonID, hidden.PersonID, visible.PersonID}, personIDs(locked))
 	all, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{ada.PersonID, free.PersonID, grace.PersonID, secondGrace.PersonID, hidden.PersonID, visible.PersonID}, personIDs(all))
