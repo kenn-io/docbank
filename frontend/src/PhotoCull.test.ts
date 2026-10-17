@@ -720,7 +720,9 @@ it("keeps shown-file narrowing on retry and resets it for a fresh decision", asy
     ),
   );
   expect(
-    (edit.mock.calls[2]![0].targets as api.PhotoAuthoredEditTarget[]).map((target) => target.file_id),
+    (edit.mock.calls[2]![0].targets as api.PhotoAuthoredEditTarget[]).map(
+      (target) => target.file_id,
+    ),
   ).toEqual(["raw-1", "file-1"]);
 });
 
