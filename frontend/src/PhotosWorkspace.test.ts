@@ -2569,3 +2569,193 @@ it("disables selected export when a metadata draft keeps an empty selection open
   expect(onexport).not.toHaveBeenCalled();
   photos.dispose();
 });
+
+it.each(["listed", "outside", "map"] as const)(
+  "awaits live detail and retries a delayed failure for a %s photo",
+  async (kind) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+      projection: kind === "map" ? "map" : undefined,
+    });
+    photos.started = true;
+    photos.items = kind === "map" ? [mapPhoto(1)] : [photo(1)];
+    if (kind === "map")
+      photos.viewerReturn = {
+        contextID: photos.contextID,
+        assetID: "photo-1",
+        control: "open",
+        scrollTop: 0,
+      };
+    let changed = false;
+    let finish!: (response: Response) => void;
+    stubPhotoFetch(async (_url, init) => {
+      const input = JSON.parse(String(init.body));
+      if (input.query.filters.asset_ids) {
+        if (changed)
+          return new Promise<Response>((resolve) => {
+            finish = resolve;
+          });
+        return Response.json({ items: [photo(1)], total: 1 });
+      }
+      return Response.json({
+        items: kind === "outside" ? [] : [{ ...photo(1), name: "Updated.jpg" }],
+        map_items: [mapPhoto(1)],
+        total: 1,
+      });
+    });
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache: new PhotoPreviewCache("scoped", vi.fn()),
+      photoID: "photo-1",
+      mapMode: kind === "map",
+      tiles,
+    });
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    changed = true;
+    const changes = { assets: new Map<string, number>(), refetch: true };
+    const refreshed = view.component.refresh(changes);
+    if (kind === "listed") {
+      await refreshed;
+      await screen.findByRole("dialog", { name: "Photo viewer, Updated.jpg" });
+    } else {
+      let completed = false;
+      const result = refreshed.then(
+        () => {
+          completed = true;
+        },
+        (error) => error,
+      );
+      await waitFor(() => expect(finish).toBeTypeOf("function"));
+      expect(completed).toBe(false);
+      finish(Response.json({ detail: "Detail unavailable" }, { status: 503 }));
+      expect(await result).toBeInstanceOf(APIError);
+      const retry = view.component.refresh(changes);
+      finish = undefined!;
+      await waitFor(() => expect(finish).toBeTypeOf("function"));
+      finish(Response.json({ items: [{ ...photo(1), name: "Recovered.jpg" }], total: 1 }));
+      await retry;
+      await screen.findByRole("dialog", { name: "Photo viewer, Recovered.jpg" });
+    }
+    photos.dispose();
+  },
+);
+
+it.each(["direct", "grid", "outside"] as const)(
+  "keeps an unchanged original and zoom through an ID-free refresh, %s",
+  async (kind) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "Image",
+      class {
+        src = "";
+        async decode() {}
+      },
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:original");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const photos = new Photos("scoped", vi.fn());
+    photos.started = true;
+    photos.items = [photo(1)];
+    if (kind !== "direct")
+      photos.viewerReturn = {
+        contextID: photos.contextID,
+        assetID: "photo-1",
+        control: "open",
+        scrollTop: 0,
+      };
+    let changed = false;
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+    const original = vi.spyOn(photos, "original").mockResolvedValue("blob:original");
+    stubPhotoFetch(async (_url, init) => {
+      const input = JSON.parse(String(init.body));
+      return Response.json({
+        items:
+          kind === "outside" && changed && !input.query.filters.asset_ids
+            ? []
+            : [{ ...photo(1), name: "Updated.jpg" }],
+        total: 1,
+      });
+    });
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache: new PhotoPreviewCache("scoped", vi.fn()),
+      photoID: "photo-1",
+    });
+    await screen.findByRole("dialog", {
+      name: kind === "direct" ? "Photo viewer, Updated.jpg" : "Photo viewer, Photo 1.jpg",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "View original" }));
+    await screen.findByText("Original");
+    const viewport = document.querySelector<HTMLElement>(".photo-viewport")!;
+    await fireEvent.doubleClick(viewport);
+    await waitFor(() => expect(viewport.dataset.zoomed).toBeDefined());
+    changed = true;
+    await view.component.refresh({ assets: new Map(), refetch: true });
+    expect(screen.getByText("Original")).toBeTruthy();
+    expect(viewport.dataset.zoomed).toBeDefined();
+    expect(original).toHaveBeenCalledOnce();
+    expect(revoke).not.toHaveBeenCalledWith("blob:original");
+    photos.dispose();
+  },
+);
+
+it("rejects a superseded live detail read and keeps the newer photo", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  photos.started = true;
+  photos.items = [mapPhoto(1)];
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  let changed = false;
+  const reads: ((response: Response) => void)[] = [];
+  stubPhotoFetch(async (_url, init) => {
+    const input = JSON.parse(String(init.body));
+    if (input.query.filters.asset_ids) {
+      if (changed)
+        return new Promise<Response>((resolve) => {
+          reads.push(resolve);
+        });
+      return Response.json({ items: [photo(1)], total: 1 });
+    }
+    return Response.json({ map_items: [mapPhoto(1)], total: 1 });
+  });
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: new PhotoPreviewCache("scoped", vi.fn()),
+    photoID: "photo-1",
+    mapMode: true,
+    tiles,
+  });
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  changed = true;
+  const batch = { assets: new Map<string, number>(), refetch: true };
+  const first = view.component.refresh(batch).catch((error) => error);
+  await waitFor(() => expect(reads).toHaveLength(1));
+  const second = view.component.refresh(batch);
+  await waitFor(() => expect(reads).toHaveLength(2));
+  reads[1]!(Response.json({ items: [{ ...photo(1), name: "Newest.jpg" }], total: 1 }));
+  await second;
+  reads[0]!(Response.json({ items: [{ ...photo(1), name: "Stale.jpg" }], total: 1 }));
+  expect(await first).toMatchObject({ name: "AbortError" });
+  expect(screen.getByRole("dialog", { name: "Photo viewer, Newest.jpg" })).toBeTruthy();
+  expect(screen.queryByText("Stale.jpg")).toBeNull();
+  photos.dispose();
+});

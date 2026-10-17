@@ -18,6 +18,7 @@
   } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
+  import { APIError } from "./api-transport.js";
   import { photoSearchSort } from "./photoSearch.js";
   import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
   import type { PhotoEventBatch } from "./photoEvents.js";
@@ -295,7 +296,8 @@
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
   let detailLoading = $state(false);
-  let reload = $state.raw<{ id: string }>();
+  let reload = $state.raw<{ id: string; automatic?: boolean }>();
+  let detailRequest: Promise<void> = Promise.resolve();
   let consumedReload = $state.raw<typeof reload>();
   let reloadedRow: Photos["items"][number] | undefined;
   let reloadRevision = $state(0);
@@ -326,6 +328,7 @@
       if (fromGrid) void restoreGrid();
       return;
     }
+    detailRequest = Promise.resolve();
     const controller = new AbortController();
     detailController = controller;
     const explicit =
@@ -343,39 +346,58 @@
       detailLoading = false;
       return () => controller.abort();
     }
+    if (explicit && reload?.automatic && listedDetail) {
+      direct = listedRow as PhotoBrowseRow;
+      detailError = "";
+      detailLoading = false;
+      consumedReload = reload;
+      return () => controller.abort();
+    }
     if (!explicit) {
-      if (!photos.projection || untrack(() => direct?.asset_id) !== id) direct = undefined;
+      if (untrack(() => direct?.asset_id) !== id) direct = undefined;
       detailError = "";
     }
     if (!explicit && fromGrid && listedDetail) {
+      direct = listedRow as PhotoBrowseRow;
       detailLoading = false;
       return () => controller.abort();
     }
     detailLoading = true;
     const request = reload;
     const version = untrack(() => current?.content_version_id);
+    const manual = explicit && !request?.automatic;
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-    void (photos.projection && explicit ? photos.reload(id, signal) : photos.lookup(id, signal))
+    detailRequest = (
+      photos.projection && manual ? photos.reload(id, signal) : photos.lookup(id, signal)
+    )
       .then((photo) => {
-        if (!signal.aborted) {
-          if (!photos.projection)
-            photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
-          direct = photo;
-          detailError = "";
-          if (explicit) {
-            if (!photos.projection || photo.content_version_id === version) reloadRevision++;
-            reloadedRow = untrack(() => listedRow);
-            consumedReload = request;
-          }
+        signal.throwIfAborted();
+        if (!photos.projection)
+          photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
+        direct = photo;
+        detailError = "";
+        if (explicit) {
+          if (manual && (!photos.projection || photo.content_version_id === version))
+            reloadRevision++;
+          reloadedRow = untrack(() => listedRow);
+          consumedReload = request;
         }
       })
       .catch((cause) => {
-        if (!controller.signal.aborted)
-          detailError = cause instanceof Error ? cause.message : String(cause);
+        signal.throwIfAborted();
+        detailError = cause instanceof Error ? cause.message : String(cause);
+        if (cause instanceof APIError && cause.status === 404) {
+          direct = undefined;
+          photos.items = photos.items.filter((item) => item.asset_id !== id);
+          return;
+        }
+        throw cause;
       })
       .finally(() => {
         if (!controller.signal.aborted) detailLoading = false;
       });
+    // Navigation reads show their error locally; live refresh also awaits the rejection.
+    void detailRequest.catch(() => {});
     return () => {
       controller.abort();
       if (explicit) consumedReload = request;
@@ -479,10 +501,12 @@
       return false;
     }
     if (changes) await editor.reconcile();
-    if (id && photoID === id && (!changes || changes.refetch || changes.assets.has(id))) {
-      // The existing reload path owns direct links and compact Map rows.
-      if (!photos.items.some((item) => item.asset_id === id) || photos.projection) reload = { id };
+    if (photoID !== id) return false;
+    if (id && (!changes || changes.refetch || changes.assets.has(id))) {
+      if (!fromGrid) reload = { id, automatic: true };
       await tick();
+      await detailRequest;
+      if (photoID !== id) return false;
     }
     return true;
   }

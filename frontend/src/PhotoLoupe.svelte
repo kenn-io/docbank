@@ -150,6 +150,7 @@
     void identity;
     void reloadRevision;
     const selected = untrack(() => photo);
+    untrack(() => image?.reset());
     url = "";
     quality = "";
     failure = undefined;

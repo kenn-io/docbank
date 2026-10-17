@@ -54,26 +54,28 @@ func registerPhotoEvents(shutdown context.Context, mux *http.ServeMux, api huma.
 			_ = controller.SetWriteDeadline(time.Time{})
 			return nil
 		}
-		send := func(event store.PhotoEvent) error {
+		send := func(events ...store.PhotoEvent) error {
 			if err := r.Context().Err(); err != nil {
 				return err
 			}
-			visible, err := d.Store.VisiblePhotoEvent(r.Context(), event)
+			visible, err := d.Store.VisiblePhotoEvents(r.Context(), events)
 			if err != nil {
 				if r.Context().Err() == nil {
 					d.Logger.Error("checking photo event access", "error", err)
 				}
 				return err
 			}
-			if visible == (store.PhotoEvent{}) {
-				return nil
+			for _, event := range visible {
+				data, err := json.Marshal(event)
+				if err != nil {
+					d.Logger.Error("encoding photo event", "error", err)
+					return err
+				}
+				if err := write(fmt.Sprintf("event: change\ndata: %s\n\n", data)); err != nil {
+					return err
+				}
 			}
-			data, err := json.Marshal(visible)
-			if err != nil {
-				d.Logger.Error("encoding photo event", "error", err)
-				return err
-			}
-			return write(fmt.Sprintf("event: change\ndata: %s\n\n", data))
+			return nil
 		}
 		if send(store.PhotoEvent{Refetch: true}) != nil {
 			return
@@ -86,8 +88,8 @@ func registerPhotoEvents(shutdown context.Context, mux *http.ServeMux, api huma.
 				return
 			case <-shutdown.Done():
 				return
-			case event, ok := <-events:
-				if !ok || send(event) != nil {
+			case batch, ok := <-events:
+				if !ok || send(batch...) != nil {
 					return
 				}
 			case <-ticker.C:

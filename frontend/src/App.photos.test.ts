@@ -14,6 +14,8 @@ import * as api from "./generated/docbank.js";
 import * as photoEvents from "./photoEvents.js";
 import * as photoWorkspace from "./PhotosWorkspace.svelte";
 import App from "./App.svelte";
+import { compile } from "svelte/compiler";
+import workspaceSource from "./PhotosWorkspace.svelte?raw";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
@@ -52,7 +54,9 @@ const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObje
 afterEach(() => {
   cleanup();
   map.props = undefined;
-  document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach((meta) => meta.remove());
+  document
+    .querySelectorAll('meta[name="docbank-map-tiles"], style[data-photo-workspace]')
+    .forEach((element) => element.remove());
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -1613,7 +1617,7 @@ it.each([false, true])(
       await fireEvent(document, new Event("visibilitychange"));
       await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
       await screen.findByText("This photo is no longer in the refreshed result.");
-      expect(screen.queryByText("Fit preview")).toBeNull();
+      await waitFor(() => expect(screen.queryByText("Fit preview")).toBeNull());
       expect(revoke.mock.calls.length).toBeGreaterThan(shown);
       return;
     }
@@ -3437,10 +3441,7 @@ it("rechecks metadata after a mixed visibility batch", async () => {
   const reconcile = vi.spyOn(editor, "reconcile").mockResolvedValue(undefined);
   fixture.access.change_id = "second";
   const batch = {
-    assets: new Map([
-      ["photo-1", 8],
-      ["photo-2", 2],
-    ]),
+    assets: new Map<string, number>(),
     refetch: true,
   };
   await act(async () => fixture.refresh(batch));
@@ -3492,3 +3493,112 @@ it("forwards the Hidden view access poll cursor", async () => {
     timeout: 4000,
   });
 });
+
+it.each([false, true])(
+  "conceals and clears an externally hidden open photo, map=%s",
+  async (mapMode) => {
+    // Vitest omits component styles; use the compiled CSS to check concealment.
+    const style = document.createElement("style");
+    style.dataset.photoWorkspace = "";
+    style.textContent = compile(workspaceSource, {
+      filename: "src/PhotosWorkspace.svelte",
+    }).css!.code;
+    document.head.append(style);
+    history.replaceState(
+      null,
+      "",
+      `${mapMode ? "/photos/map" : "/photos"}#web_session=synthetic&web_upload_secret=proof${mapMode ? "" : "&photo=photo-1"}`,
+    );
+    if (mapMode) {
+      const meta = document.createElement("meta");
+      meta.name = "docbank-map-tiles";
+      meta.content = JSON.stringify({
+        tile_url: "/tiles/{z}/{x}/{y}",
+        host: "example.org",
+        attribution: "Tiles",
+        max_zoom: 19,
+      });
+      document.head.append(meta);
+    }
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    vi.stubGlobal(
+      "Image",
+      class {
+        src = "";
+        async decode() {}
+      },
+    );
+    vi.spyOn(Photos.prototype, "original").mockResolvedValue("blob:original-viewer");
+    let blob = 0;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: () => `blob:viewer-${++blob}`,
+    });
+    const revoke = vi.fn();
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revoke });
+    storage();
+    let changed = false;
+    let finish!: (response: Response) => void;
+    const item = photo(1);
+    item.camera_model = "Synthetic camera";
+    item.previews.fit = { state: "ready", generation_id: "fit" };
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (changed && url.endsWith("/photos/authored/prepare"))
+        return Response.json({ detail: "Photo unavailable" }, { status: 404 });
+      const metadata = photoMetadataResponse(url, init);
+      if (metadata) return metadata;
+      if (url.endsWith("/photos/hidden"))
+        return Response.json({ configured: true, change_id: changed ? "second" : "first" });
+      if (url.endsWith("/assets/query")) {
+        const input = JSON.parse(String(init.body));
+        if (input.query.filters.asset_ids) {
+          if (changed) {
+            if (input.page_size !== 1) return Response.json({ items: [], map_items: [], total: 0 });
+            return new Promise<Response>((resolve) => {
+              finish = resolve;
+            });
+          }
+          return Response.json({ items: [item], total: 1 });
+        }
+        return Response.json({
+          items: changed ? [] : [item],
+          map_items: changed ? [] : [mapPhoto(1)],
+          total: changed ? 0 : 1,
+        });
+      }
+      if (url.includes("/previews/") || url.includes("/content"))
+        return new Response("synthetic-jpeg");
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    });
+    render(App);
+    if (mapMode) {
+      await waitFor(() => expect(map.props?.items).toHaveLength(1));
+      await act(async () => map.props!.onvisible(map.props!.items));
+      await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+    }
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    await screen.findByText("Fit preview");
+    await fireEvent.click(screen.getByRole("button", { name: "View original" }));
+    await screen.findByText("Original");
+    const originalURL = screen.getByAltText("Photo 1.jpg").getAttribute("src");
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata", exact: true }));
+    await screen.findByText("Synthetic camera");
+    changed = true;
+    await fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    finish(Response.json({ items: [], total: 0 }));
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith(originalURL));
+    await waitFor(() => expect(screen.queryByAltText("Photo 1.jpg")).toBeNull());
+    expect(screen.queryByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeNull();
+    expect(screen.queryByText("Synthetic camera")).toBeNull();
+  },
+);

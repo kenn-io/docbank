@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sync"
@@ -28,21 +29,21 @@ type photoEventFeed struct {
 	captureDegraded bool
 	epoch           uint64
 	closed          bool
-	subscribers     map[chan PhotoEvent]struct{}
+	subscribers     map[chan []PhotoEvent]struct{}
 }
 
 // SubscribePhotoEvents creates a bounded feed; overflow replaces queued IDs with a refetch.
-func (s *Store) SubscribePhotoEvents() (<-chan PhotoEvent, func()) {
+func (s *Store) SubscribePhotoEvents() (<-chan []PhotoEvent, func()) {
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
-	ch := make(chan PhotoEvent, 64)
+	ch := make(chan []PhotoEvent, 64)
 	if f.closed {
 		close(ch)
 		return ch, func() {}
 	}
 	if f.subscribers == nil {
-		f.subscribers = make(map[chan PhotoEvent]struct{})
+		f.subscribers = make(map[chan []PhotoEvent]struct{})
 	}
 	if len(f.subscribers) == 0 {
 		f.captureDegraded = false
@@ -131,14 +132,8 @@ func (s *Store) publishPhotoChanges(events []PhotoEvent) {
 	if len(events) == 0 {
 		return
 	}
-	visible := false
-	for _, event := range events {
-		delivery, err := s.VisiblePhotoEvent(context.Background(), event)
-		if err != nil || delivery.Refetch || delivery.AssetID != "" {
-			visible = true
-			break
-		}
-	}
+	visibleEvents, err := s.VisiblePhotoEvents(context.Background(), events)
+	visible := err != nil || len(visibleEvents) > 0
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
@@ -149,57 +144,102 @@ func (s *Store) publishPhotoChanges(events []PhotoEvent) {
 	if visible {
 		f.visibleCursor++
 	}
+	refetch := len(events) > 64
+	for _, event := range events {
+		refetch = refetch || (event.Refetch && event.AssetID == "")
+	}
 	for ch := range f.subscribers {
-		for _, event := range events {
-			if !event.Refetch || event.AssetID != "" {
-				select {
-				case ch <- event:
-					continue
-				default:
-				}
+		if !refetch {
+			select {
+			case ch <- events:
+				continue
+			default:
 			}
-		drain:
-			for {
-				select {
-				case <-ch:
-				default:
-					break drain
-				}
-			}
-			ch <- PhotoEvent{Refetch: true}
-			break
 		}
+	drain:
+		for {
+			select {
+			case <-ch:
+			default:
+				break drain
+			}
+		}
+		ch <- []PhotoEvent{{Refetch: true}}
 	}
 }
 
-// VisiblePhotoEvent returns current revisions, or an empty event when Hidden access suppresses delivery.
-func (s *Store) VisiblePhotoEvent(ctx context.Context, event PhotoEvent) (PhotoEvent, error) {
-	gate := event.AssetID
-	if gate != "" {
-		var hidden bool
-		var revision int64
-		err := s.db.QueryRowContext(ctx, `SELECT revision,hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, gate).Scan(&revision, &hidden)
-		if errors.Is(err, sql.ErrNoRows) {
-			return PhotoEvent{Refetch: true}, nil
+// VisiblePhotoEvents checks a delivery batch with one asset read and one Hidden session check.
+func (s *Store) VisiblePhotoEvents(ctx context.Context, events []PhotoEvent) ([]PhotoEvent, error) {
+	ids := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.AssetID != "" {
+			ids = append(ids, event.AssetID)
 		}
-		if err != nil {
-			return PhotoEvent{}, err
+	}
+	if len(ids) == 0 {
+		return events, nil
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.asset_id,a.revision,a.hidden_at IS NOT NULL FROM json_each(?) ids LEFT JOIN photo_assets a ON a.asset_id=ids.value`, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	type assetState struct {
+		revision int64
+		hidden   bool
+	}
+	assets := make(map[string]assetState, len(ids))
+	hidden := false
+	for rows.Next() {
+		var id sql.NullString
+		var revision sql.NullInt64
+		var state assetState
+		if err := rows.Scan(&id, &revision, &state.hidden); err != nil {
+			return nil, err
 		}
-		if hidden {
-			if _, err := s.hiddenSession(ctx, s.db); err != nil {
-				if errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrHiddenNotConfigured) {
-					if s.hasActivePhotoHiddenSession() {
-						return PhotoEvent{Refetch: true}, nil
-					}
-					return PhotoEvent{}, nil
-				}
-				return PhotoEvent{}, err
+		if id.Valid {
+			state.revision = revision.Int64
+			assets[id.String] = state
+			hidden = hidden || state.hidden
+		}
+	}
+	err = errors.Join(rows.Err(), rows.Close())
+	if err != nil {
+		return nil, err
+	}
+	unlocked, relay := false, false
+	if hidden {
+		_, err := s.hiddenSession(ctx, s.db)
+		if err != nil && !errors.Is(err, ErrHiddenLocked) && !errors.Is(err, ErrHiddenNotConfigured) {
+			return nil, err
+		}
+		unlocked = err == nil
+		relay = !unlocked && s.hasActivePhotoHiddenSession()
+	}
+	visible := make([]PhotoEvent, 0, len(events))
+	for _, event := range events {
+		if event.AssetID != "" {
+			state, exists := assets[event.AssetID]
+			if !exists {
+				visible = append(visible, PhotoEvent{Refetch: true})
+				continue
 			}
+			if state.hidden && !unlocked {
+				if relay {
+					visible = append(visible, PhotoEvent{Refetch: true})
+				}
+				continue
+			}
+			event.Revision = state.revision
 		}
-		event.Revision = revision
+		if event.Refetch {
+			event = PhotoEvent{Refetch: true}
+		}
+		visible = append(visible, event)
 	}
-	if event.Refetch {
-		return PhotoEvent{Refetch: true}, nil
-	}
-	return event, nil
+	return visible, nil
 }

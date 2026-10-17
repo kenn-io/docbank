@@ -9,17 +9,18 @@ import (
 	"time"
 )
 
-func nextPhotoEvent(t *testing.T, ch <-chan PhotoEvent) PhotoEvent {
+func nextPhotoEvent(t *testing.T, ch <-chan []PhotoEvent) PhotoEvent {
 	t.Helper()
 	select {
 	case e := <-ch:
-		return e
+		require.Len(t, e, 1)
+		return e[0]
 	default:
 		t.Fatal("missing committed photo event")
 		return PhotoEvent{}
 	}
 }
-func noPhotoEvent(t *testing.T, ch <-chan PhotoEvent) {
+func noPhotoEvent(t *testing.T, ch <-chan []PhotoEvent) {
 	t.Helper()
 	select {
 	case e := <-ch:
@@ -53,24 +54,24 @@ func TestPhotoEventsDeliveryAndRollback(t *testing.T) {
 		return err
 	}))
 	event := nextPhotoEvent(t, ch)
-	locked, err := s.VisiblePhotoEvent(ctx, event)
+	locked, err := s.VisiblePhotoEvents(ctx, []PhotoEvent{event})
 	require.NoError(t, err)
 	require.Empty(t, locked)
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	for _, viewer := range []context.Context{ctx, WithPhotoHiddenToken(ctx, token)} {
-		visible, err := s.VisiblePhotoEvent(viewer, event)
+		visible, err := s.VisiblePhotoEvents(viewer, []PhotoEvent{event})
 		require.NoError(t, err)
 		if viewer == ctx {
-			require.Equal(t, PhotoEvent{Refetch: true}, visible)
+			require.Equal(t, []PhotoEvent{{Refetch: true}}, visible)
 		} else {
-			require.Equal(t, asset.ID, visible.AssetID)
-			require.Equal(t, asset.Revision+1, visible.Revision)
+			require.Equal(t, asset.ID, visible[0].AssetID)
+			require.Equal(t, asset.Revision+1, visible[0].Revision)
 		}
 	}
-	visible, err := s.VisiblePhotoEvent(ctx, PhotoEvent{AssetID: "missing"})
+	visible, err := s.VisiblePhotoEvents(ctx, []PhotoEvent{{AssetID: "missing"}})
 	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, visible)
+	require.Equal(t, []PhotoEvent{{Refetch: true}}, visible)
 }
 func TestPhotoEventsArrivalAndUnlockDuringWrite(t *testing.T) {
 	t.Parallel()
@@ -92,7 +93,7 @@ func TestPhotoEventsArrivalAndUnlockDuringWrite(t *testing.T) {
 			s.photoHiddenSessionsMu.Lock()
 			delete(s.photoHiddenSessions, hiddenTokenDigest(token))
 			s.photoHiddenSessionsMu.Unlock()
-			var ch <-chan PhotoEvent
+			var ch <-chan []PhotoEvent
 			stop := func() {}
 			if hidden {
 				ch, stop = s.SubscribePhotoEvents()
@@ -121,13 +122,13 @@ func TestPhotoEventsArrivalAndUnlockDuringWrite(t *testing.T) {
 			}
 			close(release)
 			require.NoError(t, <-done)
-			event, err := s.VisiblePhotoEvent(viewer, nextPhotoEvent(t, ch))
+			event, err := s.VisiblePhotoEvents(viewer, []PhotoEvent{nextPhotoEvent(t, ch)})
 			require.NoError(t, err)
 			if hidden {
-				require.Equal(t, asset.ID, event.AssetID)
-				require.Equal(t, asset.Revision+1, event.Revision)
+				require.Equal(t, asset.ID, event[0].AssetID)
+				require.Equal(t, asset.Revision+1, event[0].Revision)
 			} else {
-				require.Equal(t, PhotoEvent{Refetch: true}, event)
+				require.Equal(t, []PhotoEvent{{Refetch: true}}, event)
 			}
 		})
 	}
@@ -229,4 +230,63 @@ func TestPhotoEventsPollStartsDuringWrite(t *testing.T) {
 	after, err := s.PhotoChangeCursor(ctx)
 	require.NoError(t, err)
 	require.NotEqual(t, before, after)
+}
+
+func TestPhotoEventsBatchVisibility(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	visibleNode, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", fakeHash("11"), 4, "image/jpeg")
+	require.NoError(t, err)
+	visible, err := s.PhotoAssetForNode(ctx, visibleNode.ID)
+	require.NoError(t, err)
+	hiddenNode, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", fakeHash("22"), 4, "image/jpeg")
+	require.NoError(t, err)
+	hidden, err := s.PhotoAssetForNode(ctx, hiddenNode.ID)
+	require.NoError(t, err)
+	hidden, err = s.SetPhotoAssetHidden(ctx, hidden.ID, hidden.Revision, true)
+	require.NoError(t, err)
+	batch := []PhotoEvent{{AssetID: visible.ID, Revision: -1}, {AssetID: hidden.ID, Revision: -1}, {AssetID: "missing"}}
+	events, err := s.VisiblePhotoEvents(ctx, batch)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: visible.ID, Revision: visible.Revision}, {Refetch: true}}, events)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	events, err = s.VisiblePhotoEvents(WithPhotoHiddenToken(ctx, token), batch)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: visible.ID, Revision: visible.Revision}, {AssetID: hidden.ID, Revision: hidden.Revision}, {Refetch: true}}, events)
+	events, err = s.VisiblePhotoEvents(ctx, batch[:2])
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: visible.ID, Revision: visible.Revision}, {Refetch: true}}, events)
+}
+
+func TestPhotoEventsKeepCommittedBatch(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	var want []PhotoEvent
+	for _, name := range []string{"first.jpg", "second.jpg"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("11"), 4, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		want = append(want, PhotoEvent{AssetID: asset.ID, Revision: asset.Revision + 1})
+	}
+	ch, stop := s.SubscribePhotoEvents()
+	defer stop()
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1`)
+		return err
+	}))
+	select {
+	case batch := <-ch:
+		require.ElementsMatch(t, want, batch)
+		visible, err := s.VisiblePhotoEvents(ctx, batch)
+		require.NoError(t, err)
+		require.ElementsMatch(t, want, visible)
+	default:
+		t.Fatal("missing committed batch")
+	}
+	noPhotoEvent(t, ch)
 }

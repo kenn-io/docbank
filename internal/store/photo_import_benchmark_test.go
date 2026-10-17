@@ -100,7 +100,7 @@ func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (contex
 		require.NoError(b, err)
 		ctx = WithPhotoHiddenToken(ctx, token)
 	}
-	var events <-chan PhotoEvent
+	var events <-chan []PhotoEvent
 	cancel := func() {}
 	if audience != "none" {
 		events, cancel = s.SubscribePhotoEvents()
@@ -112,7 +112,7 @@ func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (contex
 	if events != nil {
 		select {
 		case event := <-events:
-			require.Equal(b, PhotoEvent{Refetch: true}, event)
+			require.Equal(b, []PhotoEvent{{Refetch: true}}, event)
 		default:
 			b.Fatal("creating a tag did not publish a capture event")
 		}
