@@ -27628,7 +27628,7 @@ type PhotoFaceDecisionResult = api.PhotoFaceDecisionResult
 
 type PhotoFacePage = api.PhotoFacePage
 
-type PhotoFacePerson = api.PhotoFacePerson
+type PhotoFacePerson = store.PhotoFacePerson
 
 type PhotoFaceResult = api.PhotoFaceResult
 

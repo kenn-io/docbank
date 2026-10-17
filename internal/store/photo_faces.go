@@ -94,7 +94,20 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
 	return err
 }
 
+type PhotoFacePerson struct {
+	PersonID    string `json:"person_id" format:"uuid"`
+	DisplayName string `json:"display_name"`
+	State       string `json:"state"`
+}
+
 func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, error) {
+	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, versionID)
+	return faces, assertions, err
+}
+
+// PhotoFacePersonNames reads faces, assertions, and their people in one snapshot.
+func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, []PhotoFacePerson, error) {
+	people := make([]PhotoFacePerson, 0)
 	var faces []PhotoFace
 	assertions := make([]PersonDocumentAssertion, 0)
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
@@ -124,9 +137,24 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 			}
 			assertions = append(assertions, assertion)
 		}
-		return rows.Err()
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		personRows, err := tx.QueryContext(ctx, `SELECT DISTINCT p.person_id,p.display_name,p.state FROM persons p JOIN person_document_assertions a ON a.person_id=p.person_id WHERE a.content_version_id=? AND a.role='depicted' AND (a.action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) ORDER BY p.person_id`, versionID)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = personRows.Close() }()
+		for personRows.Next() {
+			var person PhotoFacePerson
+			if err := personRows.Scan(&person.PersonID, &person.DisplayName, &person.State); err != nil {
+				return err
+			}
+			people = append(people, person)
+		}
+		return personRows.Err()
 	})
-	return faces, assertions, err
+	return faces, assertions, people, err
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
@@ -298,26 +326,4 @@ func photoAssertionCount(ctx context.Context, q metadataQuerier, versionID, exis
 	var count int
 	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions a WHERE a.content_version_id=? AND a.role='depicted' AND a.assertion_id<>? AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id))`, versionID, existingAssertionID).Scan(&count)
 	return count, err
-}
-
-// PhotoFacePersonNames resolves the distinct people in a bounded face page.
-func (s *Store) PhotoFacePersonNames(ctx context.Context, ids []string) (map[string]string, error) {
-	raw, err := stringListJSON(ids)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id IN (SELECT value FROM json_each(?))`, raw)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	names := make(map[string]string)
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return nil, err
-		}
-		names[id] = name
-	}
-	return names, rows.Err()
 }

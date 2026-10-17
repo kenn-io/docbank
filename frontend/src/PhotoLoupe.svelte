@@ -168,7 +168,14 @@
     dialog?.focus({ preventScroll: true });
     onmove(direction);
   }
+  let imageReady = $state(false);
   function key(event: KeyboardEvent) {
+    if (event.key === "Escape" && addingFace) {
+      event.preventDefault();
+      event.stopPropagation();
+      addingFace = false;
+      return;
+    }
     if (
       event.altKey ||
       event.ctrlKey ||
@@ -229,8 +236,10 @@
     >
     {#if photo?.kind === "photo"}<Button
         size="sm"
-        disabled={faces.loading || faces.busy}
-        onclick={() => (addingFace = !addingFace)}>{addingFace ? "Cancel face" : "Add face"}</Button
+        disabled={faces.loading || faces.busy || !imageReady}
+        onclick={() => {
+          if (imageReady) addingFace = !addingFace;
+        }}>{addingFace ? "Cancel face" : "Add face"}</Button
       >{/if}
     {#if faces.pending}<Button
         size="sm"
@@ -249,6 +258,7 @@
       onclick={() => (metadataOpen = !metadataOpen)}><Info size={18} /></IconButton
     >
   </header>
+  {#if addingFace}<span>Arrow keys to position. Enter to save. Escape to cancel.</span>{/if}
   {#if (items.length || canLoadMore) && photos.error}<div class="loupe-error" role="alert">
       <span>{photos.error}</span><Button
         size="sm"
@@ -293,13 +303,16 @@
       </div>
       {#key identity}<PhotoLoupeImage
           {view}
+          onready={(ready) => (imageReady = ready)}
           onview={(value) => (view = value)}
           rotation={photo?.rotation ?? 0}
-          faces={faces.faces.map((face) => ({
-            id: face.face_id,
-            box: face.box,
-            label: faces.label(face),
-          }))}
+          faces={faces.faces
+            .filter((face) => !face.dismissed)
+            .map((face) => ({
+              id: face.face_id,
+              box: face.box,
+              label: faces.label(face),
+            }))}
           regionMode={photo?.kind === "photo" && addingFace}
           regionLabel={`Position face on ${photo?.name ?? "Photo"}`}
           minimumRegionDrag
@@ -311,6 +324,7 @@
             : undefined}
           oncancelregion={() => (addingFace = false)}
           onregion={(region) => {
+            if (!imageReady) return;
             void faces.add(drawnPhotoFace(region, photo?.rotation ?? 0)).then((saved) => {
               if (saved) addingFace = false;
             });

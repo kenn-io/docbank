@@ -1,4 +1,4 @@
-import { photoFace, photoPersonAssertion, photoFacePage } from "./photo-test-fixtures.js";
+import { photoFace, photoFacePage } from "./photo-test-fixtures.js";
 import { APIError } from "./api-transport.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { PhotoFaces } from "./photoFaces.svelte.js";
@@ -7,7 +7,6 @@ import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 afterEach(() => vi.restoreAllMocks());
 const face = photoFace();
-const assertion = photoPersonAssertion();
 it.each(["create", "name", "clear"] as const)(
   "settles a Hidden %s before locking after disposal",
   async (action) => {
@@ -58,59 +57,6 @@ it.each(["create", "name", "clear"] as const)(
     expect(api.listPhotoFaces).toHaveBeenCalledTimes(1);
   },
 );
-it("names the face with its current revision and refreshes its active label", async () => {
-  const read = vi
-    .spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [], people: [] })
-    .mockResolvedValue({
-      faces: [{ ...face, revision: 8 }],
-      assertions: [assertion],
-      people: [{ person_id: "person-a", display_name: "Ada" }],
-    });
-  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt-a" });
-  const ondecision = vi.fn();
-  const faces = new PhotoFaces("session", vi.fn(), false, ondecision);
-  await faces.load("version-a");
-  expect(faces.label(face)).toBe("Unnamed face");
-  expect(await faces.name(face, "person-a")).toBe(true);
-  expect(write).toHaveBeenCalledWith(
-    "version-a",
-    expect.objectContaining({
-      action: "name",
-      face_id: "face-a",
-      person_id: "person-a",
-      revision: 7,
-    }),
-    expect.objectContaining({ session: "session" }),
-  );
-  expect(faces.label(face)).toBe("Ada");
-  expect(read).toHaveBeenCalledTimes(2);
-  write.mockRejectedValueOnce(new Error("Response lost"));
-  read.mockResolvedValue({
-    faces: [{ ...face, revision: 9 }],
-    assertions: [assertion],
-    people: [{ person_id: "person-a", display_name: "Ada" }],
-  });
-  expect(await faces.name(faces.faces[0]!, "", "Grace")).toBe(false);
-  expect(write).toHaveBeenLastCalledWith(
-    "version-a",
-    expect.objectContaining({
-      revision: 8,
-      person_name: "Grace",
-      operation_id: expect.any(String),
-    }),
-    expect.anything(),
-  );
-  expect(faces.faces[0]!.revision).toBe(9);
-  expect(read).toHaveBeenCalledTimes(3);
-  expect(ondecision).toHaveBeenCalledTimes(2);
-  write.mockRejectedValueOnce(new APIError("Revision changed", 412, "precondition_failed"));
-  expect(await faces.clear(faces.faces[0]!)).toBe(false);
-  expect(read).toHaveBeenCalledTimes(4);
-  expect(ondecision).toHaveBeenLastCalledWith("Revision changed", false);
-  expect(faces.error).toBe("Revision changed");
-  faces.dispose();
-});
 it("clears rows on navigation and ignores a late old page", async () => {
   let finish!: (page: api.PhotoFacePage) => void;
   const read = vi

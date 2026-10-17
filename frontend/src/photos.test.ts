@@ -3325,10 +3325,10 @@ it.each([false, true])(
       newPerson.total,
     ]).toEqual([0, 0, 1, 1]);
     expect(otherScope.total).toBe(1);
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(2);
     expect(
       requests.filter((request) => !request.query.text && !request.query.filters.person_ids),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(unopened.started).toBe(false);
     expect(requests.every((request) => request.hidden === hidden)).toBe(true);
     for (const view of [source, oldPerson, newPerson, otherScope, unopened, unfiltered])

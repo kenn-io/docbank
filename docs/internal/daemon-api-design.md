@@ -456,10 +456,11 @@ under `/by-id/` so they do not overlap the document-people rebuild routes.
 Reads return one person snapshot with identities and external UIDs.
 
 Browser sessions can search people, read and create boxed photo faces,
-and name or clear a face with its current revision. Naming can create the
-person atomically. Face pages carry canonical
-names in a page-only `people` list. People search reports a folded `exact_match`
-so the picker can offer existing names. Other person management
+and name, clear, or dismiss a face with its current revision. They can also
+clear a whole-photo mark by assertion ID and revision. Naming can create the
+person atomically. Face pages carry canonical names and person states from
+the same snapshot. Browser search omits people whose only evidence is locked
+Hidden photos until unlock; CLI search stays global. Other person management
 and face decisions remain daemon-only. Rename, retire,
 merge, and split require `If-Match`. Merge also carries the absorbed
 revision in the body. Merge and split operation UUIDs replay their stored

@@ -24,7 +24,8 @@
         label: faces.personLabel(row.person_id),
         box: undefined as FaceBox | undefined,
       })),
-    ...[...faces.faces]
+    ...faces.faces
+      .filter((face) => !face.dismissed)
       .sort(
         (a, b) =>
           b.box.width * b.box.height - a.box.width * a.box.height ||

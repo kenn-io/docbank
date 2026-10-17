@@ -38,10 +38,7 @@ type PhotoFaceResult struct {
 	Assertion *PhotoPersonAssertion `json:"assertion,omitzero"`
 }
 
-type PhotoFacePerson struct {
-	PersonID    string `json:"person_id" format:"uuid"`
-	DisplayName string `json:"display_name"`
-}
+type PhotoFacePerson = store.PhotoFacePerson
 
 type PhotoFacePage struct {
 	People     []PhotoFacePerson      `json:"people" maxItems:"1000"`
@@ -53,26 +50,13 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "listPhotoFaces", Method: http.MethodGet, Path: "/api/v1/photos/versions/{content_version_id}/faces", Summary: "Read face boxes and people on one photo version"}, func(ctx context.Context, in *struct {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 	}) (*struct{ Body PhotoFacePage }, error) {
-		faces, assertions, err := d.Store.PhotoFaces(ctx, in.ContentVersionID)
+		faces, assertions, people, err := d.Store.PhotoFacePersonNames(ctx, in.ContentVersionID)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		ids := make([]string, 0, len(assertions))
-		for _, assertion := range assertions {
-			ids = append(ids, assertion.PersonID)
-		}
-		names, err := d.Store.PhotoFacePersonNames(ctx, ids)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		page := PhotoFacePage{Faces: faces, People: make([]PhotoFacePerson, 0, len(names)), Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
-		seen := make(map[string]bool, len(names))
+		page := PhotoFacePage{Faces: faces, People: people, Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
 		for _, assertion := range assertions {
 			page.Assertions = append(page.Assertions, photoAssertion(assertion))
-			if name, ok := names[assertion.PersonID]; ok && !seen[assertion.PersonID] {
-				page.People = append(page.People, PhotoFacePerson{PersonID: assertion.PersonID, DisplayName: name})
-				seen[assertion.PersonID] = true
-			}
 		}
 		return &struct{ Body PhotoFacePage }{Body: page}, nil
 	})
@@ -126,8 +110,8 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             PhotoFaceDecisionRequest
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
-		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" {
-			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name or clear faces.")
+		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" && in.Body.Action != "dismiss" {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces and clear whole-photo marks.")
 		}
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {

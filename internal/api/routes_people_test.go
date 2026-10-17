@@ -54,12 +54,10 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(listedBody), &page))
 	require.Len(t, page.Items, 1)
 	require.Equal(t, created.PersonID, page.Items[0].PersonID)
-	require.False(t, page.ExactMatch)
 	matchResponse, matchBody := get(t, ts, "/api/v1/people?query="+url.QueryEscape("Renamed Ada"), nil)
 	require.Equal(t, http.StatusOK, matchResponse.StatusCode, matchBody)
 	var match api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(matchBody), &match))
-	require.True(t, match.ExactMatch)
 	require.Equal(t, created.PersonID, match.Items[0].PersonID)
 	identity, err := fixture.AddPersonIdentity(t.Context(), created.PersonID, renamed.Revision, store.PersonIdentity{
 		Kind: "name_alias", ValueDisplay: "Renamed Ada", Origin: "operator",

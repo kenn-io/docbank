@@ -11425,8 +11425,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        exact_match:
-          type: boolean
         items:
           items:
             $ref: "#/components/schemas/PersonSummary"
@@ -12493,6 +12491,9 @@ components:
             - key
             - withdraw_rejection
           type: string
+        assertion_id:
+          format: uuid
+          type: string
         face_id:
           format: uuid
           type: string
@@ -12581,14 +12582,17 @@ components:
         person_id:
           format: uuid
           type: string
+        state:
+          type: string
       required:
         - person_id
         - display_name
+        - state
       type: object
-      x-go-type: api.PhotoFacePerson
+      x-go-type: store.PhotoFacePerson
       x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoFaceResult:
       additionalProperties: false
       properties:

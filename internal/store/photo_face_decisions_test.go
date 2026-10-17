@@ -1701,3 +1701,55 @@ func TestPhotoFaceClearedKeyUndoIgnoresRequestPhoto(t *testing.T) {
 	require.Equal(t, f.FaceID, personKeyFaceForTest(t, s, p.PersonID))
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
+
+func TestPhotoWholeMarkClearReceipt(t *testing.T) {
+	t.Parallel()
+	for _, named := range []bool{false, true} {
+		t.Run(strconv.FormatBool(named), func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			person, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			node, face := faceForDecisionTest(t, s, "")
+			if named {
+				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: 1, Action: "name", PersonID: person.PersonID})
+				require.NoError(t, err)
+			}
+			mark, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
+			require.NoError(t, err)
+			request := PhotoFaceDecisionRequest{AssertionID: mark.AssertionID, Action: "retract", Revision: mark.Revision - 1}
+			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			request.Revision = mark.Revision
+			request.OperationID = uuid.NewString()
+			receipt, err := s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
+			require.NoError(t, err)
+			replay, err := s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
+			require.NoError(t, err)
+			require.Equal(t, receipt.ReceiptID, replay.ReceiptID)
+			require.Equal(t, receipt.After.Assertions, replay.After.Assertions)
+			require.False(t, receipt.After.Assertions[0].PhotoMark)
+			if named {
+				require.Equal(t, "assert", receipt.After.Assertions[0].Action)
+			} else {
+				require.Equal(t, "withdrawn", receipt.After.Assertions[0].Action)
+			}
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &backup))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, &backup))
+			undo, err := restored.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+			require.NoError(t, err)
+			faces, assertions, err := restored.PhotoFaces(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			require.True(t, assertions[0].PhotoMark)
+			if named {
+				require.Equal(t, mark.AssertionID, faces[0].AssertionID)
+			}
+			_, err = restored.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
+			require.NoError(t, err)
+			require.NoError(t, restored.ValidateMetadata(ctx))
+		})
+	}
+}

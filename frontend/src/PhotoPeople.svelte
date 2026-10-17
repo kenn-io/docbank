@@ -17,7 +17,6 @@
   let writer: AbortController | undefined;
   let choosing = $state(false);
   const key = (id: string) => `\0${id}`;
-  let exact = $state(false);
   $effect(() => {
     void faces.version;
     people = [];
@@ -36,17 +35,18 @@
     const request = (controller = new AbortController());
     people = [];
     searching = true;
-    exact = false;
     error = "";
+    if (new TextEncoder().encode(value.trim()).length > 200) {
+      error = "Name must be 200 bytes or fewer.";
+      searching = false;
+      return;
+    }
     try {
       const page = await listPeople(
         { query: value, limit: 100 },
         { session, signal: request.signal },
       );
-      if (!request.signal.aborted) {
-        people = page.items;
-        exact = page.exact_match ?? false;
-      }
+      if (!request.signal.aborted) people = page.items;
     } catch (cause) {
       if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -54,7 +54,7 @@
     }
   }
   async function choose(face: PhotoFace, value: string) {
-    if (choosing) return false;
+    if (choosing || new TextEncoder().encode(value.trim()).length > 200) return false;
     choosing = true;
     error = "";
     const version = faces.version;
@@ -79,7 +79,7 @@
 <section aria-label="People" class="people">
   <h2>People</h2>
   {#if faces.loading}<span role="status">Loading people…</span>{/if}
-  {#each faces.faces as face (face.face_id)}
+  {#each faces.faces.filter((face) => !face.dismissed) as face (face.face_id)}
     {@const person = faces.person(face)}
     <div class="person-row">
       <Typeahead
@@ -100,7 +100,7 @@
             })),
         ]}
         allowCustom={activeFace === face.face_id && !!query.trim() && !searching && !error}
-        customLabel={exact ? 'Create another person named "{query}"' : 'Create person "{query}"'}
+        customLabel={'Create person "{query}"'}
         loading={activeFace === face.face_id && searching}
         allowClear={!!person}
         clearLabel="Clear name"
@@ -109,20 +109,36 @@
         onselect={(value) =>
           person && value === key(person.person_id) ? true : choose(face, value)}
       />
-      {#if person && onperson}<Button
+      {#if person && onperson && faces.personActive(person.person_id)}<Button
           size="sm"
           onclick={() => onperson?.(person.person_id, faces.personLabel(person.person_id))}
           >{faces.personLabel(person.person_id)}</Button
         >{/if}
+      <Button size="sm" disabled={faces.busy || faces.loading} onclick={() => faces.remove(face)}
+        >Remove face</Button
+      >
     </div>
   {/each}
   {#each faces.assertions.filter((row) => row.photo_mark && row.action === "assert") as person (person.assertion_id)}
-    <Button
-      size="sm"
-      onclick={() => onperson?.(person.person_id, faces.personLabel(person.person_id))}
-      >{faces.personLabel(person.person_id)}</Button
-    >
+    <div class="person-row">
+      {#if onperson && faces.personActive(person.person_id)}<Button
+          size="sm"
+          onclick={() => onperson?.(person.person_id, faces.personLabel(person.person_id))}
+          >{faces.personLabel(person.person_id)}</Button
+        >
+      {:else}<span>{faces.personLabel(person.person_id)}</span>{/if}
+      <Button
+        size="sm"
+        disabled={faces.busy || faces.loading}
+        onclick={() => faces.clearMark(person)}>Clear whole-photo mark</Button
+      >
+    </div>
   {/each}
+  {#if faces.error}<Button
+      size="sm"
+      disabled={faces.loading || faces.busy}
+      onclick={() => faces.load(faces.version)}>Retry</Button
+    >{/if}
   {#if faces.error || error}<Notice tone="error" message={faces.error || error} />{/if}
 </section>
 

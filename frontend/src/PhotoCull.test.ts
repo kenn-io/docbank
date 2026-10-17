@@ -1288,7 +1288,9 @@ it("loads face closeups on mount and on the next photo", async () => {
     .spyOn(api, "listPhotoFaces")
     .mockResolvedValueOnce(photoFacePage())
     .mockResolvedValue(
-      photoFacePage({ people: [{ person_id: "person-a", display_name: "Grace" }] }),
+      photoFacePage({
+        people: [{ person_id: "person-a", display_name: "Grace", state: "curated" }],
+      }),
     );
   const { cull, photos } = await reviewPhoto();
   const first = await screen.findByRole("region", { name: "Face closeups" });

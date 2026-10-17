@@ -21,10 +21,7 @@ display-name order. The CLI equivalent is:
 MCP clients use `find_people`. Cursors are bound to the query and the
 requested person page.
 
-HTTP `GET /api/v1/people` includes `exact_match: true` when the
-returned page contains a name equal to the query after Unicode folding. For
-example, searching for `ada` matches `Ada`. The field is omitted when the page
-has no exact match.
+Browser name search omits people whose only evidence is in locked Hidden photos. Unlock Hidden to select those people. People with visible evidence or no assertions remain searchable. CLI search includes all active people. Typing a Hidden-only name while locked can create a duplicate; merge it after unlock.
 
 ## Create and inspect
 

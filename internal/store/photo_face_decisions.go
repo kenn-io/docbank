@@ -19,6 +19,7 @@ const (
 type PhotoFaceDecisionRequest struct {
 	OperationID    string `json:"operation_id,omitzero" format:"uuid"`
 	FaceID         string `json:"face_id,omitzero" format:"uuid"`
+	AssertionID    string `json:"assertion_id,omitzero" format:"uuid"`
 	PersonID       string `json:"person_id,omitzero" format:"uuid"`
 	PersonName     string `json:"person_name,omitzero" maxLength:"200"`
 	Action         string `json:"action" enum:"name,retract,reject,dismiss,key,withdraw_rejection"`
@@ -304,6 +305,9 @@ func reserveFaceDecisionRevisions(state PhotoFaceDecisionState) PhotoFaceDecisio
 var faceCandidateActions = []string{faceDecisionName, faceDecisionReject, "dismiss", "withdraw_rejection"}
 
 func validateFaceDecisionRequest(request PhotoFaceDecisionRequest) error {
+	if request.AssertionID != "" && (validateUUIDv4(request.AssertionID) != nil || request.Action != "retract" || request.FaceID != "") {
+		return ErrInvalidPhotoFace
+	}
 	if request.PersonName != "" && (request.Action != faceDecisionName || request.PersonID != "" || !validPersonName(request.PersonName)) {
 		return ErrInvalidPhotoFace
 	}
@@ -319,7 +323,7 @@ func validateFaceDecisionRequest(request PhotoFaceDecisionRequest) error {
 	if slices.Contains([]string{"retract", "dismiss"}, request.Action) && request.PersonID != "" || request.Action == "key" && request.PersonRevision < 1 {
 		return ErrInvalidPhotoFace
 	}
-	if request.FaceID == "" && request.Action != "key" {
+	if request.FaceID == "" && request.AssertionID == "" && request.Action != "key" {
 		return ErrInvalidPhotoFace
 	}
 	if slices.Contains([]string{faceDecisionName, faceDecisionReject, "withdraw_rejection", "key"}, request.Action) && request.PersonID == "" && request.PersonName == "" {
@@ -376,12 +380,21 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 		personIDs = append(personIDs, request.PersonID)
 	}
 	var assigned PersonDocumentAssertion
-	if face.AssertionID != "" {
-		assigned, err = personAssertionByIDTx(ctx, tx, face.AssertionID)
+	assertionID := cmp.Or(request.AssertionID, face.AssertionID)
+	if assertionID != "" {
+		assigned, err = personAssertionByIDTx(ctx, tx, assertionID)
 		if err != nil {
 			return PhotoFaceDecisionReceipt{}, err
 		}
 		personIDs = append(personIDs, assigned.PersonID)
+	}
+	if request.AssertionID != "" {
+		if assigned.ContentVersionID != versionID || assigned.Role != "depicted" || !assigned.PhotoMark || assigned.Action != "assert" {
+			return PhotoFaceDecisionReceipt{}, ErrInvalidPhotoFace
+		}
+		if assigned.Revision != request.Revision {
+			return PhotoFaceDecisionReceipt{}, ErrStaleRevision
+		}
 	}
 	stateVersion := versionID
 	if request.Action == "key" && request.FaceID == "" {
@@ -395,7 +408,9 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	if request.Action == "key" {
+	if request.AssertionID != "" {
+		_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=0,revision=revision+1,action=CASE WHEN EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN action ELSE 'withdrawn' END WHERE assertion_id=?`, request.AssertionID)
+	} else if request.Action == "key" {
 		err = setKeyFaceTx(ctx, tx, request, assigned)
 	} else {
 		err = s.applyFaceDecisionTx(ctx, tx, &before, request, face, assigned.PersonID)
@@ -922,7 +937,7 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 			}
 			b.Revision = 1
 		}
-		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.PhotoMark != a.PhotoMark || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
+		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
 			return ErrInvalidPhotoFace
 		}
 	}

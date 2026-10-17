@@ -6,6 +6,7 @@ import {
   type PhotoPersonAssertion,
   type FaceBox,
   type PhotoFacePerson,
+  type PhotoFaceDecisionRequest,
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
@@ -44,6 +45,9 @@ export class PhotoFaces {
   }
   personLabel(id: string) {
     return this.people.find((person) => person.person_id === id)?.display_name ?? "Unnamed person";
+  }
+  personActive(id: string) {
+    return this.people.some((person) => person.person_id === id && person.state !== "retired");
   }
   async load(version: string) {
     if (this.disposed) return;
@@ -115,35 +119,28 @@ export class PhotoFaces {
       if (!controller.signal.aborted) this.busy = false;
     }
   }
-  name(face: PhotoFace, personID: string, personName?: string) {
-    const operationID = randomUUID();
+  private decide(decision: PhotoFaceDecisionRequest) {
+    const operation_id = randomUUID();
     return this.write((version, signal) =>
-      decidePhotoFace(
-        version,
-        {
-          action: "name",
-          face_id: face.face_id,
-          revision: face.revision,
-          ...(personName === undefined ? { person_id: personID } : { person_name: personName }),
-          operation_id: operationID,
-        },
-        { session: this.session, signal },
-      ),
+      decidePhotoFace(version, { ...decision, operation_id }, { session: this.session, signal }),
     );
   }
+  name(face: PhotoFace, personID: string, personName?: string) {
+    return this.decide({
+      action: "name",
+      face_id: face.face_id,
+      revision: face.revision,
+      ...(personName === undefined ? { person_id: personID } : { person_name: personName }),
+    });
+  }
   clear(face: PhotoFace) {
-    return this.write((version, signal) =>
-      decidePhotoFace(
-        version,
-        {
-          action: "retract",
-          face_id: face.face_id,
-          revision: face.revision,
-          operation_id: randomUUID(),
-        },
-        { session: this.session, signal },
-      ),
-    );
+    return this.decide({ action: "retract", face_id: face.face_id, revision: face.revision });
+  }
+  remove(face: PhotoFace) {
+    return this.decide({ action: "dismiss", face_id: face.face_id, revision: face.revision });
+  }
+  clearMark({ assertion_id, revision }: PhotoPersonAssertion) {
+    return this.decide({ action: "retract", assertion_id, revision });
   }
   async add(box: FaceBox) {
     if (this.disposed || this.pending || this.loading || this.busy || !this.version) return false;

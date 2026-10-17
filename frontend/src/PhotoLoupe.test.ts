@@ -79,7 +79,7 @@ it("shows the keyboard face target and saves the marked box", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Add face" }));
   const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
   await fireEvent.keyDown(position, { key: "ArrowLeft" });
-  await fireEvent.click(position);
+  await fireEvent.click(position, { detail: 1 });
   expect(add).toHaveBeenCalledWith(
     expect.objectContaining({
       x: expect.closeTo(0.475, 8),
@@ -124,6 +124,28 @@ it("cancels an active face drag with Escape before the pointer is released", asy
     viewport,
     new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
   );
+  expect(add).not.toHaveBeenCalled();
+  expect(props.onclose).not.toHaveBeenCalled();
+});
+
+it("requires a decoded preview and cancels placement from the toolbar", async () => {
+  const { props } = setup();
+  const add = vi.spyOn(props.faces, "add");
+  render(PhotoLoupe, { ...props, items: [] });
+  await screen.findByText("Fit preview");
+  const button = screen.getByRole("button", { name: "Add face" }) as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  await fireEvent.click(button);
+  expect(screen.queryByRole("button", { name: "Position face on Photo 5.jpg" })).toBeNull();
+  const image = screen.getByRole("img", { name: "Photo 5.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await waitFor(() => expect(button.disabled).toBe(false));
+  await fireEvent.click(button);
+  button.focus();
+  await fireEvent.keyDown(button, { key: "Escape" });
+  expect(screen.queryByRole("button", { name: "Position face on Photo 5.jpg" })).toBeNull();
   expect(add).not.toHaveBeenCalled();
   expect(props.onclose).not.toHaveBeenCalled();
 });
@@ -808,7 +830,6 @@ it.each([true, false])(
       ["pointerup", 501, 201],
     ] as const)
       await fireEvent(position, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
-    await fireEvent.click(position, { detail: 1 });
     if (minimumRegionDrag) expect(onregion).not.toHaveBeenCalled();
     else expect(onregion).toHaveBeenCalledWith({ x: 0.501, y: 0.50125, width: 0.15, height: 0.15 });
     onregion.mockClear();
@@ -825,6 +846,20 @@ it.each([true, false])(
       height: expect.closeTo(0.2, 8),
     });
     if (!minimumRegionDrag) return;
+    onregion.mockClear();
+    await component.rerender({ view: { scale: 8, x: 0.5, y: 0.5, actual: false } });
+    for (const [type, x, y] of [
+      ["pointerdown", 500, 200],
+      ["pointerup", 520, 212],
+    ] as const)
+      await fireEvent(viewport, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+    expect(onregion).toHaveBeenCalledWith({
+      x: 0.5025,
+      y: expect.closeTo(0.501875, 8),
+      width: expect.closeTo(0.005, 8),
+      height: expect.closeTo(0.00375, 8),
+    });
+    await component.rerender({ view: { scale: 1, x: 0.5, y: 0.5, actual: false } });
     await fireEvent.keyDown(position, { key: "ArrowLeft" });
     const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
     expect(marker.style.left).toBe("475px");

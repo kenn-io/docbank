@@ -279,7 +279,7 @@ export function photoFacePage(
   return {
     faces: [photoFace()],
     assertions: [photoPersonAssertion()],
-    people: [{ person_id: "person-a", display_name: "Ada" }],
+    people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
     ...overrides,
   };
 }

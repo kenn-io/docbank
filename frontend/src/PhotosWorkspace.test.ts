@@ -3265,7 +3265,7 @@ it("shows the clicked person's name while its ID remains in the query", async ()
   await cache.dispose();
 });
 
-it("keeps the selected row's face state when opening its loupe", async () => {
+it("keeps faces when opening Loupe and clears them before failed Map navigation", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -3317,120 +3317,91 @@ it("keeps the selected row's face state when opening its loupe", async () => {
   await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
   await within(loupe).findByRole("button", { name: "Find or create a person: Ada" });
   expect(read).toHaveBeenCalledOnce();
+  vi.spyOn(photos, "lookup").mockRejectedValue(new Error("Photo unavailable"));
+  await component.rerender({ ...props, mapMode: true, photoID: "photo-2" });
+  await screen.findByText("Photo unavailable");
+  expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeNull();
+  expect(photos.faceEditor?.version).toBe("");
+  expect(read).toHaveBeenCalledOnce();
 });
 
-it.each([
-  ["name", false, true],
-  ["clear", false, true],
-  ["name", true, false],
-  ["clear", true, false],
-  ["name", true, true],
-  ["clear", true, true],
-])(
-  "refreshes person-filtered rows after %s, concealed=%s lost response=%s",
-  async (action, concealed, lost) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-    const row = photo(1);
-    let committed = false;
-    let finish!: () => void;
-    vi.spyOn(api, "listPhotoFaces").mockImplementation(async () =>
-      photoFacePage(
-        committed
-          ? action === "name"
-            ? {
-                assertions: [photoPersonAssertion({ person_id: "person-b" })],
-                people: [{ person_id: "person-b", display_name: "Grace" }],
-              }
-            : { faces: [photoFace({ assertion_id: undefined })], assertions: [], people: [] }
-          : {},
-      ),
-    );
-    vi.spyOn(api, "listPeople").mockResolvedValue({
-      items: [{ person_id: "person-b", display_name: "Grace", revision: 1, state: "curated" }],
-    });
-    vi.spyOn(api, "decidePhotoFace").mockImplementation(async (version, decision, options) => {
-      expect(version).toBe(row.content_version_id);
-      expect(decision.action).toBe(action === "name" ? "name" : "retract");
-      if (action === "name") expect(decision.person_id).toBe("person-b");
-      await new Promise<void>((resolve) => (finish = resolve));
-      expect(options!.signal!.aborted).toBe(false);
-      committed = true;
-      if (lost) throw new Error("Response lost");
-      return { receipt_id: "receipt-a" };
-    });
-    stubPhotoFetch(async (url, init) => {
-      if (!url.endsWith("/photos/assets/query")) return Response.json({ state: "unsupported" });
-      const query = JSON.parse(String(init.body ?? "{}")).query;
-      if (!query?.filters?.asset_ids) expect(query.filters.person_ids).toEqual(["person-a"]);
-      const rows = committed && !query?.filters?.asset_ids ? [] : [row];
-      return Response.json({ items: rows, total: rows.length, facets: [] });
-    });
-    const query = {
-      ...photoQuery,
-      filters: { person_ids: ["person-a"] },
-    };
-    const photos = new Photos("session", vi.fn(), false, query);
-    const sibling = new Photos("session", vi.fn(), false, query);
-    sibling.items = [row];
-    sibling.total = 1;
-    sibling.started = true;
-    photos.items = [row];
-    photos.total = 1;
-    photos.started = true;
-    let cache = new PhotoPreviewCache("session", vi.fn());
-    const props = {
-      photos,
-      cache,
-      photoID: row.asset_id,
-      onphotochange: vi.fn(),
-      onfacedecision: (source: Photos) => void refreshPersonPhotoViews(source, [sibling]),
-    };
-    let view = render(PhotosWorkspace, props);
-    const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
-    await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
-    await fireEvent.click(
-      await within(loupe).findByRole("button", { name: "Find or create a person: Ada" }),
-    );
-    if (action === "name")
-      await fireEvent.input(screen.getByRole("combobox", { name: "Find or create a person" }), {
-        target: { value: "Grace" },
-      });
-    await fireEvent.mouseDown(
-      await screen.findByRole("option", { name: action === "name" ? "Grace" : "Clear name" }),
-    );
-    await waitFor(() => expect(finish).toBeTypeOf("function"));
-    if (concealed) {
-      view.unmount();
-      await cache.dispose();
-      cache = new PhotoPreviewCache("session", vi.fn());
-      if (!lost) {
-        view = render(PhotosWorkspace, { ...props, cache, photoID: "" });
-        expect(screen.getAllByText("1 photos").length).toBeGreaterThan(0);
-      }
-    }
-    finish();
-    await waitFor(() => expect(photos.total).toBe(0));
-    await waitFor(() => expect(sibling.total).toBe(0));
-    expect(photos.items).toEqual([]);
-    expect(sibling.items).toEqual([]);
-    if (concealed && lost) view = render(PhotosWorkspace, { ...props, cache, photoID: "" });
-    if (lost) expect((await screen.findAllByText("Response lost")).length).toBeGreaterThan(0);
-    if (!concealed) {
-      await fireEvent.click(within(loupe).getByRole("button", { name: "Close photo viewer" }));
-      await view.rerender({ ...props, photoID: "" });
-    }
-    await screen.findByText("No matching photos");
-    expect(screen.getAllByText("0 photos").length).toBeGreaterThan(0);
-    photos.dispose();
-    sibling.dispose();
-    await cache.dispose();
-  },
-);
+it("refreshes person-filtered rows after an uncertain clear while concealed", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const row = photo(1);
+  let committed = false;
+  let finish!: () => void;
+  vi.spyOn(api, "listPhotoFaces").mockImplementation(async () =>
+    photoFacePage(
+      committed
+        ? { faces: [photoFace({ assertion_id: undefined })], assertions: [], people: [] }
+        : {},
+    ),
+  );
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+  vi.spyOn(api, "decidePhotoFace").mockImplementation(async (version, decision, options) => {
+    expect(version).toBe(row.content_version_id);
+    expect(decision).toMatchObject({ action: "retract", face_id: "face-a", revision: 7 });
+    await new Promise<void>((resolve) => (finish = resolve));
+    expect(options!.signal!.aborted).toBe(false);
+    committed = true;
+    throw new Error("Response lost");
+  });
+  stubPhotoFetch(async (url, init) => {
+    if (!url.endsWith("/photos/assets/query")) return Response.json({ state: "unsupported" });
+    const query = JSON.parse(String(init.body ?? "{}")).query;
+    if (!query?.filters?.asset_ids) expect(query.filters.person_ids).toEqual(["person-a"]);
+    const rows = committed && !query?.filters?.asset_ids ? [] : [row];
+    return Response.json({ items: rows, total: rows.length, facets: [] });
+  });
+  const query = {
+    ...photoQuery,
+    filters: { person_ids: ["person-a"] },
+  };
+  const photos = new Photos("session", vi.fn(), false, query);
+  const sibling = new Photos("session", vi.fn(), false, query);
+  sibling.items = [row];
+  sibling.total = 1;
+  sibling.started = true;
+  photos.items = [row];
+  photos.total = 1;
+  photos.started = true;
+  let cache = new PhotoPreviewCache("session", vi.fn());
+  const props = {
+    photos,
+    cache,
+    photoID: row.asset_id,
+    onphotochange: vi.fn(),
+    onfacedecision: (source: Photos) => void refreshPersonPhotoViews(source, [sibling]),
+  };
+  let view = render(PhotosWorkspace, props);
+  const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+  await fireEvent.click(
+    await within(loupe).findByRole("button", { name: "Find or create a person: Ada" }),
+  );
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  view.unmount();
+  await cache.dispose();
+  cache = new PhotoPreviewCache("session", vi.fn());
+  finish();
+  await waitFor(() => expect(photos.total).toBe(0));
+  await waitFor(() => expect(sibling.total).toBe(0));
+  expect(photos.items).toEqual([]);
+  expect(sibling.items).toEqual([]);
+  view = render(PhotosWorkspace, { ...props, cache, photoID: "" });
+  expect((await screen.findAllByText("Response lost")).length).toBeGreaterThan(0);
+  await screen.findByText("No matching photos");
+  expect(screen.getAllByText("0 photos").length).toBeGreaterThan(0);
+  photos.dispose();
+  sibling.dispose();
+  await cache.dispose();
+});

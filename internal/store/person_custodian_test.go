@@ -315,11 +315,11 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	secondGrace, err := s.CreatePerson(ctx, "GRACE Murray Hopper", "operator")
 	require.NoError(t, err)
 
-	page, err := s.PeopleByDisplayName(ctx, "grace", "", "", 1)
+	page, err := s.PeopleByDisplayName(ctx, "grace", "", "", 1, false)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	require.Equal(t, grace.PersonID, page[0].PersonID)
-	next, err := s.PeopleByDisplayName(ctx, "grace", page[0].DisplayNameFolded, page[0].PersonID, 10)
+	next, err := s.PeopleByDisplayName(ctx, "grace", page[0].DisplayNameFolded, page[0].PersonID, 10, false)
 	require.NoError(t, err)
 	require.Len(t, next, 1)
 	require.Equal(t, secondGrace.PersonID, next[0].PersonID)

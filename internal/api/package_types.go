@@ -89,8 +89,6 @@ type PersonSummary struct {
 }
 
 type PersonPage struct {
-	// ExactMatch reports whether this page contains the query’s exact folded name.
-	ExactMatch bool            `json:"exact_match,omitzero"`
 	Items      []PersonSummary `json:"items"`
 	NextCursor string          `json:"next_cursor,omitzero"`
 }

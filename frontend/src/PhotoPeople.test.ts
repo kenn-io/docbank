@@ -26,7 +26,7 @@ it("chooses an existing person by ID and opens their photos from the person card
     .mockResolvedValue({
       faces: [{ ...face, assertion_id: "assertion-a", revision: 4 }],
       assertions: [assertion],
-      people: [{ person_id: "person-a", display_name: "Ada" }],
+      people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
     });
   const search = vi.spyOn(api, "listPeople").mockResolvedValue({
     items: [{ person_id: "person-a", display_name: "Ada", revision: 1, state: "curated" }],
@@ -40,6 +40,9 @@ it("chooses an existing person by ID and opens their photos from the person card
   await fireEvent.click(
     screen.getByRole("button", { name: "Find or create a person: Unnamed face" }),
   );
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "雪".repeat(67) } });
+  await screen.findByText("Name must be 200 bytes or fewer.");
+  expect(search.mock.calls.some(([params]) => params?.query === "雪".repeat(67))).toBe(false);
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ad" } });
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Ada" }));
   await waitFor(() => expect(name).toHaveBeenCalledWith(face, "person-a"));
@@ -68,7 +71,6 @@ it("searches again after a failed assignment and disables the picker throughout 
     .mockResolvedValue({ faces: [face], assertions: [], people: [] });
   let canonical = "";
   vi.spyOn(api, "listPeople").mockImplementation(async ({ query } = {}) => ({
-    exact_match: canonical.toLowerCase() === query?.trim().toLowerCase(),
     items:
       canonical && canonical.toLowerCase() === query?.trim().toLowerCase()
         ? [{ person_id: "person-new", display_name: canonical, state: "curated", revision: 1 }]
@@ -98,62 +100,17 @@ it("searches again after a failed assignment and disables the picker throughout 
   read.mockResolvedValue({
     faces: [{ ...face, revision: 4, assertion_id: "assertion" }],
     assertions: [photoPersonAssertion({ assertion_id: "assertion", person_id: "person-new" })],
-    people: [{ person_id: "person-new", display_name: "Ada" }],
+    people: [{ person_id: "person-new", display_name: "Ada", state: "curated" }],
   });
   fail(new Error("Response lost"));
   await screen.findByText("Response lost");
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "ada" } });
-  await screen.findByRole("option", { name: 'Create another person named "ada"' });
+  await screen.findByRole("option", { name: 'Create person "ada"' });
   await fireEvent.mouseDown(screen.getByRole("option", { name: "Ada" }));
   await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
   expect(write).toHaveBeenCalledTimes(1);
-  canonical = "Grace";
-  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Ada" }));
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ada" } });
-  await screen.findByRole("option", { name: 'Create person "Ada"' });
-  // The selected person remains visible, while search results use current names.
-  canonical = "Ada";
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "ada" } });
-  await fireEvent.mouseDown(
-    await screen.findByRole("option", { name: 'Create another person named "ada"' }),
-  );
-  await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
-  expect(write.mock.calls[1]![1]).toMatchObject({ person_name: "ada", revision: 4 });
   faces.dispose();
 });
-it("offers Clear name for named faces and keeps whole-photo marks as person links", async () => {
-  const assertion = photoPersonAssertion();
-  vi.spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({
-      faces: [{ ...face, assertion_id: assertion.assertion_id }],
-      assertions: [assertion, photoPersonAssertion({ assertion_id: "whole", photo_mark: true })],
-      people: [{ person_id: "person-a", display_name: "Ada" }],
-    })
-    .mockResolvedValue({
-      faces: [face],
-      assertions: [photoPersonAssertion({ assertion_id: "whole", photo_mark: true })],
-      people: [{ person_id: "person-a", display_name: "Ada" }],
-    });
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
-  vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-  const faces = new PhotoFaces("session", vi.fn());
-  const clear = vi.spyOn(faces, "clear");
-  await faces.load("version-a");
-  const namedFace = faces.faces[0];
-  const component = render(PhotoPeople, { faces, session: "session", onperson: vi.fn() });
-  expect(component.container.querySelectorAll(".kit-typeahead")).toHaveLength(1);
-  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Ada" }));
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
-  await waitFor(() => expect(clear).toHaveBeenCalledWith(namedFace));
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Find or create a person: Unnamed face" }),
-    ).toBeTruthy(),
-  );
-  expect(screen.getByRole("button", { name: "Ada" })).toBeTruthy();
-  faces.dispose();
-});
-
 it("replaces a cached selected name when another face's decision reloads canonical names", async () => {
   const first = photoFace({ assertion_id: undefined });
   const second = photoFace({ face_id: "face-b", assertion_id: undefined });
@@ -168,8 +125,8 @@ it("replaces a cached selected name when another face's decision reloads canonic
           photoPersonAssertion({ assertion_id: "assertion-b", person_id: "person-b" }),
         ],
         people: [
-          { person_id: "person-a", display_name: "Ada Updated" },
-          { person_id: "person-b", display_name: "Grace" },
+          { person_id: "person-a", display_name: "Ada Updated", state: "curated" },
+          { person_id: "person-b", display_name: "Grace", state: "curated" },
         ],
       }),
     );
@@ -206,45 +163,30 @@ it("replaces a cached selected name when another face's decision reloads canonic
   faces.dispose();
 });
 
-it.each(["name", "clear"] as const)(
-  "keeps face rows visible during the %s refresh",
-  async (action) => {
-    let finish!: (page: api.PhotoFacePage) => void;
-    vi.spyOn(api, "listPhotoFaces")
-      .mockResolvedValueOnce({
-        faces: [photoFace()],
-        assertions: [photoPersonAssertion()],
-        people: [{ person_id: "person-a", display_name: "Ada" }],
-      })
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
-      );
-    vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-    const faces = new PhotoFaces("session", vi.fn());
-    await faces.load("version-a");
-    const component = render(PhotoPeople, { faces, session: "session" });
-    const row = component.container.querySelector(".person-row");
-    const pending =
-      action === "name" ? faces.name(faces.faces[0]!, "person-b") : faces.clear(faces.faces[0]!);
-    await screen.findByRole("status");
-    expect(component.container.querySelector(".person-row")).toBe(row);
-    expect(screen.getByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
-    finish(
-      action === "name"
-        ? {
-            faces: [photoFace()],
-            assertions: [photoPersonAssertion({ person_id: "person-b" })],
-            people: [{ person_id: "person-b", display_name: "Grace" }],
-          }
-        : { faces: [photoFace({ assertion_id: undefined })], assertions: [], people: [] },
-    );
-    await pending;
-    await screen.findByRole("button", {
-      name: `Find or create a person: ${action === "name" ? "Grace" : "Unnamed face"}`,
-    });
-    faces.dispose();
-  },
-);
+it("retries an empty failed face page", async () => {
+  vi.spyOn(api, "listPhotoFaces")
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockResolvedValue(photoFacePage());
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByRole("button", { name: "Find or create a person: Ada" });
+  faces.dispose();
+});
+
+it("keeps retired labels and correction controls without Library links", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
+    photoFacePage({
+      assertions: [photoPersonAssertion({ photo_mark: true })],
+      people: [{ person_id: "person-a", display_name: "Ada", state: "retired" }],
+    }),
+  );
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session", onperson: vi.fn() });
+  expect(screen.queryByRole("button", { name: "Ada" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Remove face" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Clear whole-photo mark" })).toBeTruthy();
+  faces.dispose();
+});

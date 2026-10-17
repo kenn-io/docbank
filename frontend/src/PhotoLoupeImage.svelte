@@ -8,6 +8,7 @@
     name,
     rotation = 0,
     unavailable = false,
+    onready,
     onzoom,
     onmove,
     view,
@@ -24,6 +25,7 @@
     name: string;
     rotation?: number;
     unavailable?: boolean;
+    onready?: (ready: boolean) => void;
     onzoom: () => void;
     onmove: (direction: -1 | 1) => void;
     view?: PhotoView;
@@ -40,11 +42,14 @@
   let height = $state(0);
   let naturalWidth = $state(0);
   let naturalHeight = $state(0);
+  let decodedURL = $state("");
+  const ready = $derived(!!url && decodedURL === url);
+  $effect(() => onready?.(ready));
   const dpr = $derived(devicePixelRatio.current || 1);
   let zoom: PanZoom | undefined;
   let panScale = $state(1);
   const geometry = $derived(
-    width && height && naturalWidth && naturalHeight
+    (!minimumRegionDrag || ready) && width && height && naturalWidth && naturalHeight
       ? photoViewGeometry(naturalWidth, naturalHeight, width, height, dpr, rotation)
       : undefined,
   );
@@ -67,7 +72,7 @@
       panScale = pan.scale;
     }
   });
-  let origin: { x: number; y: number } | undefined;
+  let origin: { x: number; y: number; clientX: number; clientY: number } | undefined;
   function point(event: PointerEvent) {
     const rect = viewport!.getBoundingClientRect();
     const pan = zoom!.getView();
@@ -96,7 +101,7 @@
     if (!regionMode || !geometry || !zoom) return;
     event.stopPropagation();
     event.preventDefault();
-    origin = point(event);
+    origin = { ...point(event), clientX: event.clientX, clientY: event.clientY };
     viewport!.setPointerCapture(event.pointerId);
   }
   function endRegion(event: PointerEvent) {
@@ -110,15 +115,18 @@
     const end = point(event);
     const w = Math.abs(end.x - origin.x),
       h = Math.abs(end.y - origin.y);
-    if (minimumRegionDrag && w < 0.01 && h < 0.01) {
+    if (
+      minimumRegionDrag &&
+      (Math.hypot(event.clientX - origin.clientX, event.clientY - origin.clientY) < 6 || !w || !h)
+    ) {
       origin = undefined;
       return;
     }
     onregion?.({
       x: (end.x + origin.x) / 2,
       y: (end.y + origin.y) / 2,
-      width: w < 0.01 ? 0.15 : w,
-      height: h < 0.01 ? 0.15 : h,
+      width: minimumRegionDrag ? w : w < 0.01 ? 0.15 : w,
+      height: minimumRegionDrag ? h : h < 0.01 ? 0.15 : h,
     });
     origin = undefined;
   }
@@ -150,7 +158,7 @@
   function confirmRegion(event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
-    if (event.detail > 0) return;
+    if (!regionMode || (minimumRegionDrag && !ready)) return;
     if (onconfirmregion) onconfirmregion();
     else onregion?.({ ...keyboardPoint, width: 0.15, height: 0.15 });
   }
@@ -195,7 +203,7 @@
   onpointerupcapture={endRegion}
   {@attach panZoom}
 >
-  {#if regionMode}<button
+  {#if regionMode && (!minimumRegionDrag || ready)}<button
       type="button"
       class="region-keyboard"
       aria-label={regionLabel ?? `Position closeup on ${name}`}
@@ -224,10 +232,18 @@
         alt={name}
         style={photoRotationStyle(rotation, width, height)}
         draggable="false"
-        onload={(event) => {
-          naturalWidth = (event.currentTarget as HTMLImageElement).naturalWidth;
-          naturalHeight = (event.currentTarget as HTMLImageElement).naturalHeight;
+        onload={async (event) => {
+          const image = event.currentTarget as HTMLImageElement;
+          const loaded = url;
+          const decoded = await image.decode().then(
+            () => true,
+            () => false,
+          );
+          if (!decoded || loaded !== url) return;
+          ({ naturalWidth, naturalHeight } = image);
+          if (naturalWidth && naturalHeight) decodedURL = loaded;
         }}
+        onerror={() => (decodedURL = "")}
       />{:else}<span>{unavailable ? "No preview" : "Loading preview…"}</span>{/if}
     {#if url && geometry}
       <div

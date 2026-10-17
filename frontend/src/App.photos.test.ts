@@ -3496,7 +3496,7 @@ it.each([
       assertions: [
         photoPersonAssertion({ content_version_id: item.content_version_id, person_id: personID }),
       ],
-      people: [{ person_id: personID, display_name: "Ada" }],
+      people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
     });
     let validate!: (response: Response) => void;
     const validation = new Promise<Response>((resolve) => {
@@ -3612,7 +3612,7 @@ it.each([
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
     faces: [photoFace({ content_version_id: rows[0]!.content_version_id })],
     assertions: [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
-    people: [{ person_id: "person-a", display_name: "Ada" }],
+    people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
   });
   let finish!: (response: Response) => void;
   let signal!: AbortSignal;

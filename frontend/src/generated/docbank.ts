@@ -4615,7 +4615,6 @@ export interface PersonSummary {
 export interface PersonPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  exact_match?: boolean;
   items: PersonSummary[];
   next_cursor?: string;
 }
@@ -5738,6 +5737,7 @@ export interface PhotoFaceDecisionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   action: PhotoFaceDecisionRequestAction;
+  assertion_id?: string;
   face_id?: string;
   operation_id?: string;
   person_id?: string;
@@ -5757,6 +5757,7 @@ export interface PhotoFaceDecisionResult {
 export interface PhotoFacePerson {
   display_name: string;
   person_id: string;
+  state: string;
 }
 
 export interface PhotoFacePage {

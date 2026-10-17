@@ -1668,7 +1668,8 @@ export async function refreshPersonPhotoViews(source: Photos, views: Iterable<Ph
           !!photos &&
           photos !== source &&
           photos.hidden === source.hidden &&
-          (photos.started || photos.loading),
+          (photos.started || photos.loading) &&
+          (!!photos.query.filters.person_ids?.length || !!photos.query.text.trim()),
       )
       .map((photos) => photos.refresh()),
   );

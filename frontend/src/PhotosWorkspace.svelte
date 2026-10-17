@@ -227,9 +227,9 @@
         const version = row?.kind === "photo" ? row.content_version_id : "";
         if (version !== inspectorFaces.version) void inspectorFaces.load(version);
       };
-      if (row && "content_version_id" in row) target(row);
+      if (id !== faceAssetID) target(undefined);
+      if (row && row.asset_id === id && "content_version_id" in row) target(row);
       else {
-        if (!id || id !== faceAssetID) target(undefined);
         if (id && !photoID)
           void photos
             .lookup(id, controller.signal)

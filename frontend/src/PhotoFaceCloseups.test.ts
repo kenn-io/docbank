@@ -14,8 +14,9 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
       assertion_id: undefined,
     }),
     photoFace(),
+    photoFace({ face_id: "dismissed", dismissed: true }),
   ];
-  faces.people = [{ person_id: "person-a", display_name: "Ada" }];
+  faces.people = [{ person_id: "person-a", display_name: "Ada", state: "curated" }];
   faces.assertions = [
     photoPersonAssertion(),
     photoPersonAssertion({ assertion_id: "mark", photo_mark: true }),
