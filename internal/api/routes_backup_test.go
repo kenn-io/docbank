@@ -259,6 +259,16 @@ func TestBackupVerifySelectionAndProgressStream(t *testing.T) { //nolint:paralle
 	require.NoError(t, err)
 	manifest, err := repo.LoadManifest(first.ID)
 	require.NoError(t, err)
+	futureManifest := *manifest
+	futureManifest.Stats = jsontext.Value(`{"coverage":{"version":2}}`)
+	futureID, err := repo.WriteManifest(&futureManifest)
+	require.NoError(t, err)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/verify", nil,
+		map[string]any{"snapshot_id": futureID, "quick": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, []string{futureID}, report.Snapshots)
+	assert.Equal(t, []api.BackupVerifyProblem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, report.Problems)
 	require.NotEmpty(t, manifest.NewPacks)
 	packID := manifest.NewPacks[0]
 	packPath := repo.Path("packs", packID[:2], packID+packstore.PackExt)

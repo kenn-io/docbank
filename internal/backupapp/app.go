@@ -131,7 +131,7 @@ func computeStats(ctx context.Context, q rowQuerier, scope statsScope) (Stats, e
 // App implements backup.App for docbank.
 type App struct {
 	version      string
-	omitCoverage bool
+	restoreStats *Stats
 }
 
 var _ backup.App = (*App)(nil)
@@ -262,10 +262,13 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 
 func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, error) {
 	scope := restoredStatsScope
-	scope.coverage = !a.omitCoverage
+	scope.coverage = a.restoreStats == nil || a.restoreStats.Coverage != nil
 	stats, err := computeStats(ctx, db, scope)
 	if err != nil {
 		return nil, err
+	}
+	if stats.Coverage != nil && a.restoreStats != nil {
+		stats.Coverage.Excluded = a.restoreStats.Coverage.Excluded
 	}
 	return json.Marshal(stats)
 }

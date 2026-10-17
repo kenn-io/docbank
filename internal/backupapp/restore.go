@@ -167,7 +167,7 @@ func RestoreWithPlacement(
 	}
 	opts.SnapshotID = manifest.SnapshotID
 	restoreApp := New(version)
-	restoreApp.omitCoverage = stats.Coverage == nil
+	restoreApp.restoreStats = &stats
 	var sourcePlacement placementManifest
 	var app backup.App = restoreApp
 	var primaryHandoff *blob.PrimaryRestoreHandoff
