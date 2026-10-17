@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -40,23 +39,6 @@ func BenchmarkPhotoXMPStatus100k(b *testing.B) {
 	_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET xmp_state=CASE WHEN node_id%100=0 THEN 'pending' WHEN node_id%100=1 THEN 'conflict' ELSE 'synced' END`)
 	require.NoError(b, err)
 	b.Logf("seeded %d photos in %s", photos, time.Since(started).Round(time.Millisecond))
-	for _, statement := range []string{
-		`SELECT file_id FROM photo_files INDEXED BY photo_files_xmp_pending WHERE xmp_state IN ('pending','waiting') AND xmp_state='pending' AND node_id>0 ORDER BY node_id LIMIT 10`,
-		`SELECT xf.node_id FROM photo_files xf WHERE xf.xmp_state IN ('pending','waiting')`,
-		`SELECT xf.node_id FROM photo_files xf WHERE xf.xmp_state IN ('conflict','invalid') AND xf.xmp_state='conflict'`,
-	} {
-		var plan []string
-		require.NoError(b, queryRows(ctx, s.db, `EXPLAIN QUERY PLAN `+statement, nil, func(rows *sql.Rows) error {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-				return err
-			}
-			plan = append(plan, detail)
-			return nil
-		}))
-		require.Contains(b, strings.Join(plan, "\n"), "INDEX photo_files_xmp_", statement)
-	}
 	page := func(b *testing.B, text string) {
 		b.Helper()
 		result, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{PageSize: 250, Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: text, Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)

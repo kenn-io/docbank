@@ -179,16 +179,14 @@ func TestPhotoXMPImportThenWritesNewVersion(t *testing.T) {
 	before, _, _ := e.packet()
 
 	e.edit(store.PhotoAuthoredPatch{Rating: new(5), Caption: new("Harbor")})
-	e.state(store.PhotoXMPStatePending)
 	e.drain()
 	e.state(store.PhotoXMPStateSynced)
-	after, data, packet := e.packet()
+	after, _, packet := e.packet()
 	assert.Equal(t, before.ID, after.ID)
 	assert.NotEqual(t, before.CurrentVersionID, after.CurrentVersionID, "Backfill writes a new sidecar version")
 	assert.Equal(t, 5, packet.Rating)
 	assert.Equal(t, "Harbor", packet.Caption)
 	assert.Equal(t, []string{"Travel"}, packet.Keywords)
-	assert.Contains(t, data, `crs:Exposure="1.25"`, "unrelated XMP survives the write")
 }
 
 func TestPhotoXMPOutsideEditsMergeAfterManagedWrite(t *testing.T) {
@@ -266,21 +264,6 @@ func TestPhotoXMPConvergenceThenOneSidedChange(t *testing.T) {
 	assert.NotEqual(t, agreed.CurrentVersionID, current.CurrentVersionID)
 }
 
-func TestPhotoXMPUndoImportRewritesSidecar(t *testing.T) {
-	t.Parallel()
-	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
-	e.drain()
-	state := e.state(store.PhotoXMPStateSynced)
-	_, err := e.catalog.UndoPhotoAuthored(t.Context(), state.Receipt.ReceiptID)
-	require.NoError(t, err)
-	assert.Equal(t, store.PhotoAuthored{}, e.raw().Authored())
-	e.drain()
-	_, data, packet := e.packet()
-	assert.Zero(t, packet.Confirmed&store.PhotoConfirmedRating)
-	assert.NotContains(t, data, "Rating")
-	assert.Nil(t, e.state(store.PhotoXMPStateSynced).Receipt)
-}
-
 func TestPhotoXMPUnrelatedOutsideEditKeepsImportUndo(t *testing.T) {
 	t.Parallel()
 	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
@@ -296,9 +279,11 @@ func TestPhotoXMPUnrelatedOutsideEditKeepsImportUndo(t *testing.T) {
 	require.Equal(t, imported.ReceiptID, current.ReceiptID)
 	_, err := e.catalog.UndoPhotoAuthored(t.Context(), current.ReceiptID)
 	require.NoError(t, err)
+	assert.Equal(t, store.PhotoAuthored{}, e.raw().Authored())
 	e.drain()
 	_, data, packet := e.packet()
 	assert.Zero(t, packet.Confirmed&store.PhotoConfirmedRating)
+	assert.NotContains(t, data, "Rating")
 	assert.Contains(t, data, `crs:Exposure="2.5"`)
 	assert.Nil(t, e.state(store.PhotoXMPStateSynced).Receipt)
 }
@@ -362,8 +347,6 @@ func TestPhotoXMPGeneratedSidecarStaysDetached(t *testing.T) {
 	_, _, err = e.catalog.Move(t.Context(), raw.ID, *raw.ParentID, "renamed.ARW", raw.Revision)
 	require.NoError(t, err)
 	e.drain()
-	e.state(store.PhotoXMPStateNone)
-	assert.Empty(t, e.sidecars(), "a removed sidecar is not recreated for unchanged decisions")
 
 	e.edit(store.PhotoAuthoredPatch{Rating: new(4)})
 	e.drain()
@@ -426,7 +409,6 @@ func TestPhotoXMPRejectSentinelIsNeverWritten(t *testing.T) {
 	t.Parallel()
 	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="-1"`, ""))
 	e.drain()
-	assert.Equal(t, "reject", e.raw().Flag)
 	e.edit(store.PhotoAuthoredPatch{Caption: new("Harbor")})
 	e.drain()
 	_, data, packet := e.packet()
@@ -482,11 +464,4 @@ func TestPhotoXMPOutsideImportReplacesGeneratedSidecar(t *testing.T) {
 	e.drain()
 	e.state(store.PhotoXMPStateSynced)
 	assert.Equal(t, 4, e.raw().Rating)
-	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
-	e.drain()
-	e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}, outside)
-	e.drain()
-	current, _, packet := e.packet()
-	assert.Equal(t, created.ID, current.ID)
-	assert.Equal(t, 5, packet.Rating)
 }

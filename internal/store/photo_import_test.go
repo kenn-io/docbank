@@ -145,7 +145,7 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 
 func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"ambiguous", "qualified RAW first", "qualified JPEG first", "missing extension claim"} {
+	for _, mode := range []string{"ambiguous", "qualified RAW first", "qualified JPEG first", "unqualified RAW sidecar"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -161,7 +161,7 @@ func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
 			if mode == "ambiguous" {
 				members[2] = photoImportTestMember(filepath.Join(root, "capture.jpg"), PhotoRoleImage, fakeHash("e5"), "image/jpeg")
 			}
-			if mode == "missing extension claim" {
+			if mode == "unqualified RAW sidecar" {
 				members[3] = photoImportTestMember(filepath.Join(root, "capture.xmp"), PhotoRoleSidecar, fakeHash("d4"), "application/rdf+xml")
 			}
 			if mode == "qualified JPEG first" {
@@ -183,7 +183,7 @@ func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
 				node, err := s.NodeByID(ctx, f.NodeID)
 				require.NoError(t, err)
 				want := jpg.ID
-				if node.Name == "capture.ARW.xmp" || mode == "missing extension claim" && node.Name == "capture.xmp" {
+				if node.Name == "capture.ARW.xmp" || mode == "unqualified RAW sidecar" && node.Name == "capture.xmp" {
 					want = raw.ID
 				}
 				assert.Equal(t, &want, f.SidecarOfID, node.Name)

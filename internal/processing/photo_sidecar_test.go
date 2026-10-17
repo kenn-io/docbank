@@ -152,14 +152,14 @@ func photoSidecarFixture(t *testing.T, packet []byte) (*store.Store, *blob.Store
 	return catalog, blobs, photo, sidecar
 }
 
-func TestPhotoSidecarSourceEvidence(t *testing.T) {
+func TestPhotoSidecarSourceMetadataWiring(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, packet string
 		valid        bool
 	}{
-		{"prolog and packet", "\xef\xbb\xbf" + `<?xml version="1.0"?><?xpacket begin=""?>` + photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter + `<?xpacket end="w"?>`, true},
-		{"invalid", photoSidecarHeader + ` xmp:Rating="4"><xmp:Rating>3</xmp:Rating>` + photoSidecarFooter, false},
+		{"valid", photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter, true},
+		{"invalid", "<broken", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()

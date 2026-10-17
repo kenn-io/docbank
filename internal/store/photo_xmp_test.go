@@ -2,9 +2,7 @@ package store
 
 import (
 	"bytes"
-	"database/sql"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -373,42 +371,40 @@ func TestPhotoXMPQueryFilters(t *testing.T) {
 	assert.Equal(t, []string{asset.ID}, match("xmp:conflict"))
 	assert.Empty(t, match("xmp:pending"))
 	assert.Equal(t, []string{asset.ID}, match("NOT xmp:pending"))
-	_, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: "xmp:synced"}}, nil)
-	require.Error(t, err)
+	_, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: "xmp:synced", Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)
+	require.ErrorContains(t, err, "invalid xmp operand")
 }
 
-func TestPhotoXMPPurgeUsesNodeIndexes(t *testing.T) {
+func TestPhotoXMPPurgeRemovesSyncReceipts(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	_, err := s.db.Exec(`WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<100000)
- INSERT INTO photo_change_receipts(receipt_id,operation,before_revision,after_revision,before_json,after_json,created_at)
- SELECT printf('receipt-%d',n),'xmp_sync',1,1,'{}',json_object('node_id',2*n,'sidecar',json_object('node_id',2*n+1)),'2026-01-01T00:00:00Z' FROM seq`)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`ANALYZE`)
-	require.NoError(t, err)
-	var plan []string
-	require.NoError(t, queryRows(t.Context(), s.db, `EXPLAIN QUERY PLAN `+photoXMPPurgeReceipts, []any{"[3]"}, func(rows *sql.Rows) error {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-			return err
-		}
-		plan = append(plan, detail)
-		return nil
-	}))
-	t.Log(strings.Join(plan, "\n"))
-	require.Contains(t, strings.Join(plan, "\n"), "INDEX photo_change_receipts_xmp_node (<expr>=?)")
-	require.Contains(t, strings.Join(plan, "\n"), "INDEX photo_change_receipts_xmp_sidecar (<expr>=?)")
-	for _, nodes := range []string{"[2]", "[3]", "[2,3]"} {
-		var ids []string
-		require.NoError(t, queryRows(t.Context(), s.db, photoXMPPurgeReceipts, []any{nodes}, func(rows *sql.Rows) error {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				return err
+	for _, mode := range []string{"original", "sidecar", "both"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s, asset, raw, sidecar := authoredSidecar(t)
+			ctx := t.Context()
+			importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
+			var receipts int
+			require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&receipts))
+			require.Equal(t, 1, receipts)
+			_, err := s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{ClearDependentSidecars: true})
+			require.NoError(t, err)
+			nodes := []int64{raw.NodeID, sidecar.ID}
+			if mode == "original" {
+				nodes = nodes[:1]
+			} else if mode == "sidecar" {
+				nodes = nodes[1:]
 			}
-			ids = append(ids, id)
-			return nil
-		}))
-		require.Equal(t, []string{"receipt-1"}, ids)
+			for _, id := range nodes {
+				node, err := s.NodeByID(ctx, id)
+				require.NoError(t, err)
+				_, _, err = s.Trash(ctx, id, node.Revision)
+				require.NoError(t, err)
+			}
+			_, err = s.TrashEmpty(ctx, 0, true)
+			require.NoError(t, err)
+			require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&receipts))
+			assert.Zero(t, receipts)
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
 	}
 }

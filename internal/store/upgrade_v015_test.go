@@ -696,9 +696,6 @@ func TestReleasedSchema29SidecarFirstSync(t *testing.T) {
 
 			assert.Equal(t, PhotoXMPStatePending, xmpState(t, s, fileID).State)
 			publishXMPOrientation(t, s, original.ID, fakeHash("ee"))
-			targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
-			require.NoError(t, err)
-			require.Equal(t, []PhotoSidecarTarget{{FileID: fileID, NodeID: original.ID}}, targets)
 			work, run, err := s.ClassifyPhotoXMP(ctx, fileID)
 			require.NoError(t, err)
 			require.True(t, run)

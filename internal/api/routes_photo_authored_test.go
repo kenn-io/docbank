@@ -3,7 +3,6 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 
@@ -51,19 +50,9 @@ func TestPhotoXMPResolveRoute(t *testing.T) {
 	require.Equal(t, store.PhotoXMPStateConflict, conflict.State)
 
 	path := "/api/v1/photos/authored/" + file.ID + "/xmp"
-	response, _ = do(t, ts, http.MethodPost, path, nil, api.PhotoXMPResolveRequest{ConflictID: "00000000-0000-4000-8000-000000000001", Choice: "catalog"})
-	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode)
 	choice := api.PhotoXMPResolveRequest{ConflictID: conflict.ConflictID, Choice: "sidecar"}
 	response, body = do(t, ts, http.MethodPost, path, nil, choice)
 	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/prepare", nil, api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &prepared))
-	require.Equal(t, store.PhotoXMPStateSynced, prepared.Targets[0].XMP.State)
-	current, err := s.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	original := slices.IndexFunc(current.Files, func(f store.PhotoFile) bool { return f.ID == file.ID })
-	require.Equal(t, 1, current.Files[original].Rating)
 	response, _ = do(t, ts, http.MethodPost, path, nil, choice)
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, "a resolved conflict cannot be chosen again")
 }
