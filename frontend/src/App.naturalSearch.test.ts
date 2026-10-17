@@ -1020,7 +1020,7 @@ it.each([500, 401])(
   },
 );
 
-it("reruns the active query when the search mode or rerank toggle changes", async () => {
+it("reruns active searches and reports mode changes while keeping rerank silent", async () => {
   const file = node(2, "report.txt", baseVersion);
   const options: HarnessOptions = {
     profiles: [

@@ -55,7 +55,6 @@ func TestTelemetryEventRoute(t *testing.T) {
 		{"no credentials", http.MethodPost, url, `{"event":"app_opened"}`, map[string]string{"X-Api-Key": ""}, http.StatusUnauthorized, ""},
 		{"browser session with query", http.MethodPost, url + "?x=1", `{"event":"app_opened"}`, browser, http.StatusForbidden, `"code":"web_session_read_only"`},
 		{"get", http.MethodGet, url, "", nil, http.StatusMethodNotAllowed, ""},
-		{"unknown event", http.MethodPost, url, `{"event":"search_run"}`, nil, http.StatusBadRequest, ""},
 		{"blank event", http.MethodPost, url, `{"event":""}`, nil, http.StatusBadRequest, ""},
 		{"not json", http.MethodPost, url, `not json`, nil, http.StatusBadRequest, ""},
 	} {

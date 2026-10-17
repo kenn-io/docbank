@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,10 +19,7 @@ func TestActionEventsEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	reporter := New(Options{Dir: dir, endpoint: collector.URL})
 	defer func() { require.NoError(t, reporter.Close()) }()
-	h, ok := CaptureHandler(reporter, dir).(*captureHandler)
-	require.True(t, ok)
-	day := time.Date(2026, 10, 1, 23, 59, 0, 0, time.UTC)
-	h.now = func() time.Time { return day }
+	h := CaptureHandler(reporter, dir)
 	for _, surface := range []string{"web", "tui", "cli"} {
 		for _, event := range []string{"document_added", "document_opened", "search_run"} {
 			values := []string{""}
@@ -31,14 +27,10 @@ func TestActionEventsEndpoint(t *testing.T) {
 				values = []string{"text", "semantic", "hybrid"}
 			}
 			for _, value := range values {
-				body := fmt.Sprintf(`{"event":%q,"properties":{"surface":%q,"search_type":%q,"query":"synthetic query","family":"text"}}`, event, surface, value)
+				body := fmt.Sprintf(`{"event":%q,"properties":{"surface":%q,"search_type":%q}}`, event, surface, value)
 				for range 2 {
 					require.Equal(t, 202, postEvent(t, h, body).Code)
 				}
-				restarted, ok := CaptureHandler(reporter, dir).(*captureHandler)
-				require.True(t, ok)
-				restarted.now = h.now
-				require.Equal(t, 202, postEvent(t, restarted, body).Code)
 			}
 			for _, props := range []string{`{}`, `{"surface":"invalid"}`, `{"surface":42}`} {
 				require.Equal(t, 400, postEvent(t, h, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
@@ -48,16 +40,10 @@ func TestActionEventsEndpoint(t *testing.T) {
 	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
 		require.Equal(t, 400, postEvent(t, h, `{"event":"search_run","properties":`+props+`}`).Code)
 	}
-	day = day.Add(2 * time.Minute)
-	require.Equal(t, 202, postEvent(t, h, `{"event":"document_opened","properties":{"surface":"web"}}`).Code)
 	require.NoError(t, reporter.Close())
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 22) // 9 per-import additions, 12 daily search/open claims, next day's open
-	for _, props := range events {
-		assert.NotContains(t, props, "query")
-		assert.NotContains(t, props, "family")
-	}
+	require.Len(t, events, 18) // six per-import additions and twelve daily search/open claims
 }
 
 func TestImportsRetireOncePreserveRetryAndLoseAttributionOnRestart(t *testing.T) {

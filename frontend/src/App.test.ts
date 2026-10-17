@@ -1961,17 +1961,30 @@ async function configureFirstTagHotkey(): Promise<void> {
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 }
 
-it("navigates the displayed page, keeps checkbox selection independent, and activates a row once", async () => {
+it("reports keyboard inspections, keeps checkbox selection independent, and activates a row once", async () => {
   prepareKeyboardApp();
   const backend = installKeyboardBackend();
   render(App);
 
   await screen.findByRole("cell", { name: "alpha.txt" });
   await screen.findByLabelText("Document authority for zeta.txt");
+  const opened = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(
+        ([url, init]) =>
+          url === "/api/daemon/telemetry/events" &&
+          JSON.parse(String(init?.body)).event === "document_opened",
+      )
+      .map(([, init]) => JSON.parse(String(init?.body)));
+  expect(opened()).toEqual([]);
   const requestsAtBoundary = backend.getRootReads();
 
   await fireEvent.keyDown(window, { key: "k" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  await waitFor(() =>
+    expect(opened()).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
+  );
   await fireEvent.keyDown(window, { key: " " });
   expect(
     (
@@ -1996,6 +2009,12 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
 
   await fireEvent.keyDown(window, { key: "j" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  await waitFor(() =>
+    expect(opened()).toEqual([
+      { event: "document_opened", properties: { surface: "web" } },
+      { event: "document_opened", properties: { surface: "web" } },
+    ]),
+  );
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 

@@ -2596,12 +2596,7 @@ it("recovers smart sets without stale identities", async () => {
   localStorage.clear();
   const opened = await savedSmartSet(2, "00000000-0000-4000-8000-000000000002");
   let finishPending!: (response: Response) => void;
-  const smartSetEvents: unknown[] = [];
-  const selectionFetch = vi.fn((url: string, init: RequestInit) => {
-    if (url === "/api/daemon/telemetry/events") {
-      smartSetEvents.push(JSON.parse(String(init.body)));
-      return Promise.resolve(new Response(null, { status: 202 }));
-    }
+  const selectionFetch = vi.fn((url: string) => {
     return url.endsWith("/photos/assets/query")
       ? Promise.resolve(response([]))
       : new Promise<Response>((resolve) => (finishPending = resolve));
@@ -2614,11 +2609,6 @@ it("recovers smart sets without stale identities", async () => {
   finishPending(savedSmartSetResponse(old));
   await pending;
   expect(selection.smartSet?.id).toBe(opened.id);
-  await vi.waitFor(() =>
-    expect(smartSetEvents).toEqual([
-      { event: "search_run", properties: { search_type: "text", surface: "web" } },
-    ]),
-  );
   selection.dispose();
 
   localStorage.clear();

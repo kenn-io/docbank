@@ -88,21 +88,31 @@
     return cancelNavigation;
   });
 
+  let inspectionKey = "";
+  let inspected = false;
   $effect(() => {
-    if (displayedSource && (deliberate || duplicateSource || relatedSource))
-      reportAction(session, "document_opened");
+    const key = `${session}:${displayedSource.key}`;
+    if (key !== inspectionKey) {
+      inspectionKey = key;
+      inspected = false;
+    }
+    if (deliberate || duplicateSource || relatedSource) inspect();
   });
   function inspect(): void {
+    if (inspected) return;
+    inspected = true;
     reportAction(session, "document_opened");
   }
 
   function inspection(element: HTMLElement) {
     element.addEventListener("pointerdown", inspect);
     element.addEventListener("keydown", inspect);
+    element.addEventListener("wheel", inspect, { passive: true });
     return {
       destroy() {
         element.removeEventListener("pointerdown", inspect);
         element.removeEventListener("keydown", inspect);
+        element.removeEventListener("wheel", inspect);
       },
     };
   }

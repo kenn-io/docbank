@@ -219,7 +219,7 @@ it("disables search and filters until a delayed Hide finishes", async () => {
   await cache.dispose();
 });
 
-it("restores applied search after a facet click and keeps empty-library guidance when clearing filters", async () => {
+it("reports submitted photo searches and facets while keeping filter clearing silent", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -269,6 +269,9 @@ it("restores applied search after a facet click and keeps empty-library guidance
     ).query.text,
   ).toBe("");
   await waitFor(() => expect(photos.loading).toBe(false));
+  await fireEvent.input(search, { target: { value: "Nikon" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(photos.loading).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
   await screen.findByText("Your photo library is empty");
@@ -287,7 +290,10 @@ it("restores applied search after a facet click and keeps empty-library guidance
     fetcher.mock.calls
       .filter(([url]) => url === "/api/daemon/telemetry/events")
       .map(([, init]) => JSON.parse(init.body)),
-  ).toEqual([{ event: "search_run", properties: { search_type: "text", surface: "web" } }]);
+  ).toEqual([
+    { event: "search_run", properties: { search_type: "text", surface: "web" } },
+    { event: "search_run", properties: { search_type: "text", surface: "web" } },
+  ]);
   photos.dispose();
   await cache.dispose();
 });

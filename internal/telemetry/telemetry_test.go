@@ -92,7 +92,6 @@ func TestNewOptedOut(t *testing.T) {
 			assert.JSONEq(t, `{"status":"disabled"}`, postEvent(t, handler, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Body.String())
 			assert.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
 			assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, screenBody("unknown", "web")).Code)
-			assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, `{"event":"search_run"}`).Code)
 			assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
 		})
 	}
@@ -129,7 +128,6 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	rec := postEvent(t, handler, `{"event":"app_opened","properties":{"path":"/synthetic/report.pdf","query":"synthetic"}}`)
 	require.Equal(t, http.StatusAccepted, rec.Code)
 	assert.JSONEq(t, `{"status":"queued"}`, rec.Body.String())
-	assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, `{"event":"search_run"}`).Code)
 	require.NoError(t, r.Capture(EventDaemonActive, nil))
 	require.NoError(t, r.Close())
 

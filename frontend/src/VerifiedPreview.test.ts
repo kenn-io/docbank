@@ -416,7 +416,7 @@ it.each([0, 64 * 1024 * 1024 + 1])(
   },
 );
 
-it("counts interaction with an automatic selection and a verified download", async () => {
+it("counts pointer and wheel inspection of an automatic selection and verified download", async () => {
   const bytes = new TextEncoder().encode("Synthetic inspected text");
   const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
   const events: unknown[] = [];
@@ -439,11 +439,14 @@ it("counts interaction with an automatic selection and a verified download", asy
   });
   await screen.findByText("Synthetic inspected text");
   expect(events).toEqual([]);
+  await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
+  const opened = { event: "document_opened", properties: { surface: "web" } };
+  await waitFor(() => expect(events).toEqual([opened]));
+  await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
   await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
-  await waitFor(() =>
-    expect(events).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
-  );
+  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "ArrowDown" });
+  expect(events).toEqual([opened]);
   await fireEvent.click(screen.getByRole("button", { name: "Download verified original" }));
   await screen.findByText(/browser save started/);
-  expect(events).toHaveLength(2);
+  expect(events).toEqual([opened, opened]);
 });

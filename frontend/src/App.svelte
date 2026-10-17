@@ -1254,7 +1254,7 @@
       shortcutNotice = "No rows are loaded.";
       return;
     }
-    if (move.id !== undefined && move.id !== selectedID) selectNode(move.id);
+    if (move.id !== undefined && move.id !== selectedID) selectNode(move.id, true);
     if (move.id !== undefined) await revealInspectedRow(move.id);
     if (move.boundary === "first") shortcutNotice = "First loaded row reached.";
     else if (move.boundary === "last") shortcutNotice = "Last loaded row reached.";

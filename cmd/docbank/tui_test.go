@@ -302,7 +302,7 @@ func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load())
 }
 
-func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
+func TestTUIBackendReportsScreensAndActionsThroughGeneratedRoute(t *testing.T) {
 	var events []api.TelemetryEventRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)

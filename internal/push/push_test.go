@@ -382,7 +382,7 @@ func TestPushCancellationDoesNotReportSuccess(t *testing.T) {
 	assert.Zero(t, f.uploads.Load())
 }
 
-func TestPushWatchUploadsSettledChangesAndStopsOnCancellation(t *testing.T) {
+func TestPushWatchReportsFirstAddedBatchAndStopsOnCancellation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	dir := t.TempDir()

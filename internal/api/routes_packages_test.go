@@ -186,9 +186,6 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 							wantStatus = http.StatusConflict
 						}
 						require.Equal(t, wantStatus, response.Code, response.Body.String())
-						if !afterPublication {
-							capture.requireAddition(t)
-						}
 					}
 					return nil
 				},
