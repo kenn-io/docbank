@@ -17,29 +17,49 @@ import (
 )
 
 func TestCreateStageOverridesPermissiveParentDACL(t *testing.T) {
-	parent := t.TempDir()
-	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
-	require.NoError(t, err)
-	dacl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
-		AccessPermissions: windows.GENERIC_ALL,
-		AccessMode:        windows.GRANT_ACCESS,
-		Inheritance:       windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-		Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID,
-			TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
-			TrusteeValue: windows.TrusteeValueFromSID(everyone)},
-	}}, nil)
-	require.NoError(t, err)
-	require.NoError(t, windows.SetNamedSecurityInfo(parent, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil))
+	for _, rooted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rooted=%t", rooted), func(t *testing.T) {
+			parent := t.TempDir()
+			everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+			require.NoError(t, err)
+			dacl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+				AccessPermissions: windows.GENERIC_ALL,
+				AccessMode:        windows.GRANT_ACCESS,
+				Inheritance:       windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+				Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID,
+					TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+					TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+			}}, nil)
+			require.NoError(t, err)
+			require.NoError(t, windows.SetNamedSecurityInfo(parent, windows.SE_FILE_OBJECT,
+				windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+				nil, nil, dacl, nil))
 
-	stage, err := CreateStage(parent, ".docbank-test-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = stage.Cleanup() })
-	require.NoError(t, safefileio.ValidatePrivateDir(stage.dir))
-	restricted, err := winsecurity.OpenRestrictedCurrentUserFile(stage.Path())
-	require.NoError(t, err)
-	require.NoError(t, restricted.Close())
+			if rooted {
+				root, err := os.OpenRoot(parent)
+				require.NoError(t, err)
+				defer func() { _ = root.Close() }()
+				rootStage, err := CreateRootStage(root)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, rootStage.Cleanup()) }()
+				restricted, err := winsecurity.OpenRestrictedCurrentUserFile(filepath.Join(parent, rootStage.name))
+				require.NoError(t, err)
+				require.NoError(t, restricted.Close())
+				require.NoError(t, rootStage.MakeParentDirectories(filepath.Join("private", "asset", "photo.jpg")))
+				for _, dir := range []string{"private", filepath.Join("private", "asset")} {
+					require.NoError(t, safefileio.ValidatePrivateDir(filepath.Join(parent, dir)))
+				}
+			} else {
+				stage, err := CreateStage(parent, ".docbank-test-")
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = stage.Cleanup() })
+				require.NoError(t, safefileio.ValidatePrivateDir(stage.dir))
+				restricted, err := winsecurity.OpenRestrictedCurrentUserFile(stage.Path())
+				require.NoError(t, err)
+				require.NoError(t, restricted.Close())
+			}
+		})
+	}
 }
 
 func TestPublishAcceptsPathsLongerThanMaxPath(t *testing.T) {

@@ -113,6 +113,11 @@ func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID 
 	require.NoError(t, legacy.CheckpointRenditionProvider(ctx, claim, "released-provider-handle", now.Add(2*time.Second)))
 	require.NoError(t, legacy.MarkRenditionJobRetry(ctx, claim, RenditionFailureTransient, now.Add(3*time.Second), now.Add(4*time.Second)))
 
+	// Current operation seeding needs checkout retention tables. Temporary
+	// tables keep the released on-disk schema exact for the upgrade.
+	_, err = db.Exec(`CREATE TEMP TABLE photo_checkouts (checkout_id TEXT, operation_id TEXT, retired_at TEXT);
+		CREATE TEMP TABLE photo_checkout_entries (checkout_id TEXT, file_id TEXT, published INTEGER)`)
+	require.NoError(t, err)
 	operation, err := legacy.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{}`)
 	require.NoError(t, err)
 	purged := fakeHash("b2")

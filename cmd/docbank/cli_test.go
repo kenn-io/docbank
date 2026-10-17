@@ -8,6 +8,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,9 +28,39 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/backupapp"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	kitdaemon "go.kenn.io/kit/daemon"
 )
+
+func setupFakeDaemon(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	vault := t.TempDir()
+	t.Setenv("DOCBANK_HOME", vault)
+	const token = "synthetic-proof-token"
+	record := daemonconn.NewRecord("", "synthetic-key", token, "")
+	server := httptest.NewServer(fakeDaemonHandler(t, &record, token, handler))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
+	require.NoError(t, err)
+}
+
+func fakeDaemonHandler(t *testing.T, record *kitdaemon.RuntimeRecord, token string, handler http.HandlerFunc) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET " + kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: record.Service, Version: record.Version, PID: record.PID}))
+		case "GET " + daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		default:
+			handler(w, r)
+		}
+	}
+}
 
 // runCLI executes the root command against a test vault (caller must have
 // set DOCBANK_HOME via t.Setenv) and returns captured stdout.
@@ -1942,4 +1974,20 @@ func TestGcReclaimsUntrackedBlobFiles(t *testing.T) {
 	catOut, err := runCLI(t, "cat", "/inbox/a.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "alpha", catOut)
+}
+
+func TestTrashEmptyReportsHeldRoots(t *testing.T) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/trash/empty":
+			assert.NoError(t, json.MarshalWrite(w, api.TrashEmptyReport{RetainedRoots: 1, HeldRoots: 2, Run: true}))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	out, err := runCLI(t, "trash", "empty", "--run")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "retained 1 trashed root(s) referenced by email publications or photo checkouts")
+	assert.Contains(t, out, "held 2 trashed root(s) whose photo companions are live, newer, or retained")
 }

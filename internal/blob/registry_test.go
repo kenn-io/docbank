@@ -777,3 +777,26 @@ func (r staticLocationResolver) ResolveLocations(
 ) (packstore.Resolution, error) {
 	return r.resolution, nil
 }
+
+func TestRegistryStartupCompletionPreservesStoreWithdrawal(t *testing.T) {
+	for _, withdrawal := range []string{"detach", "remove"} {
+		t.Run(withdrawal, func(t *testing.T) {
+			spec := StoreSpec{ID: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive", OwnershipEpoch: "epoch", UnavailableReason: "checking separation from checkout copies"}
+			open := func(_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership) (packstore.Backend, error) {
+				return &staticOwnershipBackend{ownership: *expected}, nil
+			}
+			registry := newRegistryWithFactories(t.Context(), "vault", map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: t.TempDir()}}, []StoreSpec{spec}, open, open)
+			t.Cleanup(func() { require.NoError(t, registry.Close()) })
+			want := StoreDetached
+			if withdrawal == "detach" {
+				registry.DetachSpec(spec.ID)
+			} else {
+				registry.RemoveSpec(spec.ID)
+				want = StoreUnbound
+			}
+			require.Equal(t, want, registry.CompleteStartupCheck(t.Context(), spec.ID).State)
+			_, attached := registry.Backend(packstore.StoreID(spec.ID))
+			require.False(t, attached)
+		})
+	}
+}

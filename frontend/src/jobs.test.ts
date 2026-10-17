@@ -70,11 +70,28 @@ describe("activity lanes", () => {
         total_objects: 99,
         completed_objects: 99,
       }),
+      job({
+        name: "storage:checkout",
+        operation_id: "checkout",
+        kind: "photo_checkout",
+        total_objects: 2,
+        completed_objects: 1,
+      }),
       job({ name: "watch:inbox", operation_id: undefined, kind: undefined }),
     ]);
-    expect(lanes).toHaveLength(2);
-    expect(lanes[0]).toMatchObject({ lane: "place", completed: 3, total: 12, status: "running" });
-    expect(lanes[1].key).toBe("watch:inbox");
+    expect(lanes).toHaveLength(3);
+    expect(lanes.find(({ lane }) => lane === "place")).toMatchObject({
+      lane: "place",
+      completed: 3,
+      total: 12,
+      status: "running",
+    });
+    expect(lanes.find(({ lane }) => lane === "photo_checkout")).toMatchObject({
+      title: "Photo checkout",
+      completed: 1,
+      total: 2,
+    });
+    expect(lanes.find(({ lane }) => lane === "watch:inbox")?.key).toBe("watch:inbox");
     const [unknown] = jobLanes([
       job({ total_objects: 5 }),
       job({ name: "storage:b", operation_id: "b", total_objects: 0 }),

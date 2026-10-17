@@ -468,9 +468,9 @@ func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
 	require.Equal(t, "cancelled", revoked.State)
 }
 
-func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
+func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []string{"cancelled", "failed"} {
+	for _, outcome := range []string{"cancelled", "failed", "checkout-pinned"} {
 		t.Run(outcome, func(t *testing.T) {
 			s := newTestStore(t)
 			request, run, _ := prepareReceivedPackage(t, s, "photo-"+outcome)
@@ -479,10 +479,14 @@ func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
 			require.NoError(t, err)
+			if outcome == "checkout-pinned" {
+				_, _, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+				require.NoError(t, err)
+			}
 			job := packageImportJobRequest(t, s, request)
 			_, err = s.AdmitPackageImport(t.Context(), run, request, job)
 			require.NoError(t, err)
-			if outcome == "cancelled" {
+			if outcome != "failed" {
 				_, err = s.CancelPackageImportJob(t.Context(), job.Owner, job.OperationID)
 			} else {
 				claimed, claimErr := s.ClaimPackageImportJob(t.Context(), "photo-worker", time.Minute)
@@ -490,13 +494,20 @@ func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
 				_, err = s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token, "failed", "", nil)
 			}
 			require.NoError(t, err)
-			repaired, err := s.PhotoAssetByID(t.Context(), asset.ID)
-			require.NoError(t, err)
-			require.Empty(t, repaired.Files)
-			require.Equal(t, asset.Revision+1, repaired.Revision)
 			var purges int
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))
+			repaired, err := s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			if outcome == "checkout-pinned" {
+				require.Equal(t, asset, repaired)
+				_, err := s.NodeByID(t.Context(), image.ID)
+				require.NoError(t, err)
+				require.Zero(t, purges)
+				return
+			}
+			require.Empty(t, repaired.Files)
+			require.Equal(t, asset.Revision+1, repaired.Revision)
 			require.Equal(t, 1, purges)
 			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
 		})

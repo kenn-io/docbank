@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -178,16 +180,11 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
 		return err
 	}
-	storeSpecs := make([]blob.StoreSpec, 0, len(catalogStores)-1)
-	for _, catalogStore := range catalogStores {
-		if catalogStore.Role == "primary" {
-			continue
-		}
-		storeSpecs = append(storeSpecs, blob.StoreSpec{
-			ID: catalogStore.ID, Kind: catalogStore.Kind, Role: catalogStore.Role,
-			Lifecycle: catalogStore.Lifecycle, Binding: catalogStore.Binding,
-			OwnershipEpoch: catalogStore.OwnershipEpoch,
-		})
+	storeSpecs, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, func(ctx context.Context, binding config.StoreBindingConfig) error {
+		return validateCheckoutBinding(ctx, s, binding)
+	})
+	if err != nil {
+		return err
 	}
 	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs)
 	blobOptions := blob.ManagedOptions()
@@ -236,6 +233,9 @@ func runServe(ctx context.Context) (retErr error) {
 			retErr = errors.Join(retErr, err)
 		}
 	}()
+	if err := startCheckoutStoreWaits(jobSupervisor, blobRegistry, storeSpecs, cfg, s, logger); err != nil {
+		return err
+	}
 	operationGate := api.NewOperationGate()
 	executable, err := os.Executable()
 	if err != nil {
@@ -507,6 +507,10 @@ func runServe(ctx context.Context) (retErr error) {
 	tracker := api.NewActivityTracker()
 	photoImports := api.NewPhotoImportRunner(api.Deps{Store: s, Blobs: blobs, Gate: operationGate, Tracker: tracker})
 	if err := photoImports.Resume(sigCtx, jobSupervisor); err != nil {
+		return err
+	}
+	photoCheckouts := api.NewPhotoCheckoutService(api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Tracker: tracker})
+	if err := photoCheckouts.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
 	}
 	if telemetryReporter.Enabled() {
@@ -832,6 +836,142 @@ func startRetentionMaintenance(
 		return fmt.Errorf("starting retention maintenance: %w", err)
 	}
 	return nil
+}
+
+var errCheckoutPathOverlap = errors.New("configured path overlaps a checkout")
+
+// Only affected stores wait; catalog errors still fail startup. Watches check
+// separation when they start. The registry receives an unavailable spec for
+// each pending store so an ordinary ownership refresh cannot attach it.
+func validateConfiguredCheckoutStartup(ctx context.Context, cfg config.Config, stores []store.BlobStore, check func(context.Context, config.StoreBindingConfig) error) ([]blob.StoreSpec, error) {
+	pending, err := validateConfiguredCheckouts(ctx, cfg, stores, check)
+	if err != nil {
+		return nil, err
+	}
+	specs := make([]blob.StoreSpec, 0, len(stores))
+	for _, item := range stores {
+		if item.Role == "primary" {
+			continue
+		}
+		spec := blob.StoreSpec{ID: item.ID, Kind: item.Kind, Role: item.Role, Lifecycle: item.Lifecycle, Binding: item.Binding, OwnershipEpoch: item.OwnershipEpoch}
+		if reason := pending[item.ID]; reason != nil {
+			spec.UnavailableReason = reason.Error()
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
+}
+
+func startCheckoutStoreWaits(supervisor *jobs.Supervisor, registry *blob.Registry, specs []blob.StoreSpec, cfg config.Config, catalog *store.Store, logger *slog.Logger) error {
+	for _, spec := range specs {
+		if spec.UnavailableReason == "" {
+			continue
+		}
+		if err := supervisor.Start("checkout:startup:"+spec.ID, func(ctx context.Context) error {
+			if err := waitForCheckoutValidation(ctx, func(ctx context.Context) error {
+				binding := cfg.StoreBindings[spec.Binding]
+				if _, err := os.Stat(binding.Path); err != nil {
+					return err
+				}
+				return validateCheckoutBinding(ctx, catalog, binding)
+			}, logger); err != nil {
+				return err
+			}
+			registry.CompleteStartupCheck(ctx, spec.ID)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkoutValidationPending(ctx context.Context, err error) bool {
+	_, pathError := errors.AsType[*os.PathError](err)
+	return ctx.Err() == nil && (pathError || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errCheckoutPathOverlap))
+}
+
+func validateCheckoutPathSnapshot(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) error {
+	id, overlap, err := ingest.CheckoutPathOverlap(ctx, checkouts, pathname)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			if id == "" {
+				ids := make([]string, 0, len(checkouts))
+				for _, checkout := range checkouts {
+					ids = append(ids, checkout.ID)
+				}
+				id = strings.Join(ids, ", ")
+			}
+			return fmt.Errorf("checking separation from checkout %s: %w", id, err)
+		}
+		return fmt.Errorf("checking configured path against checkout %s: %w", id, err)
+	}
+	if overlap {
+		return fmt.Errorf("%w: path \"%s\", checkout %s", errCheckoutPathOverlap, pathname, id)
+	}
+	return nil
+}
+
+func validateCheckoutBinding(ctx context.Context, catalog *store.Store, binding config.StoreBindingConfig) error {
+	if binding.Kind != "filesystem" {
+		return nil
+	}
+	checkouts, err := catalog.ListPhotoCheckouts(ctx)
+	if err != nil {
+		return err
+	}
+	if err := validateCheckoutPathSnapshot(ctx, checkouts, binding.Path); err != nil {
+		return err
+	}
+	return ingest.ReleaseClearedCheckoutDestinations(ctx, catalog, checkouts, binding.Path)
+}
+
+func waitForCheckoutValidation(ctx context.Context, check func(context.Context) error, logger *slog.Logger) error {
+	return ingest.WaitForCheckoutSeparation(ctx, check, func(err error) {
+		logger.Warn("checkout path validation is waiting", "error", err)
+	})
+}
+
+const checkoutStartupTimeout = 5 * time.Second
+
+func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, check func(context.Context, config.StoreBindingConfig) error) (map[string]error, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, checkoutStartupTimeout)
+	defer cancel()
+	type result struct {
+		id  string
+		err error
+	}
+	results := make(chan result, len(stores))
+	checks := 0
+	pending := make(map[string]error)
+	for _, item := range stores {
+		if item.Role == "primary" || item.Lifecycle == "detached" || item.Kind != "filesystem" {
+			continue
+		}
+		binding, ok := cfg.StoreBindings[item.Binding]
+		if !ok {
+			continue
+		}
+		if _, err := os.Stat(binding.Path); errors.Is(err, fs.ErrNotExist) {
+			pending[item.ID] = err
+			continue
+		}
+		checks++
+		go func() { results <- result{item.ID, check(checkCtx, binding)} }()
+	}
+	var failure error
+	for range checks {
+		result := <-results
+		if result.err != nil && !checkoutValidationPending(ctx, result.err) {
+			failure = errors.Join(failure, result.err)
+		} else if result.err != nil {
+			pending[result.id] = result.err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return pending, failure
 }
 
 func validateConfiguredWatchStores(

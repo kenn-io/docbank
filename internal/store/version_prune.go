@@ -222,32 +222,41 @@ func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]
 		return nil
 	}
 	ids := make([]string, 0, len(candidates))
-	args := make([]any, 0, len(candidates))
 	for id := range candidates {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	rows, err := tx.Query(`SELECT content_version_id FROM media_source_versions
-		WHERE content_version_id IN (`+placeholders(len(ids))+`)
-		UNION SELECT content_version_id FROM media_input_artifacts
-		WHERE content_version_id IN (`+placeholders(len(ids))+`)`, append(args, args...)...)
-	if err != nil {
-		return fmt.Errorf("checking media authority before version pruning: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return fmt.Errorf("reading retained media content version: %w", err)
+	const batchSize = 200
+	for start := 0; start < len(ids); start += batchSize {
+		batch := ids[start:min(start+batchSize, len(ids))]
+		args := make([]any, 0, len(batch))
+		for _, id := range batch {
+			args = append(args, id)
 		}
-		delete(candidates, id)
-		retained[id] = true
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("checking media authority before version pruning: %w", err)
+		err := func() error {
+			rows, err := tx.Query(`SELECT content_version_id FROM media_source_versions
+		WHERE content_version_id IN (`+placeholders(len(batch))+`)
+		UNION SELECT content_version_id FROM media_input_artifacts
+		WHERE content_version_id IN (`+placeholders(len(batch))+`)
+		UNION SELECT e.version_id FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE (`+photoCheckoutHoldPredicate+`)
+		AND e.version_id IN (`+placeholders(len(batch))+`)`, append(append(args, args...), args...)...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					return fmt.Errorf("reading retained media content version: %w", err)
+				}
+				delete(candidates, id)
+				retained[id] = true
+			}
+			return rows.Err()
+		}()
+		if err != nil {
+			return fmt.Errorf("checking media authority before version pruning: %w", err)
+		}
 	}
 	return nil
 }

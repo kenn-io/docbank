@@ -432,7 +432,7 @@ Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
 revision, and selected or overridden display pointers. `photo_files` owns the
 role, revision, authored decisions, and same-asset sidecar relationship for each
-node. Detached rows have NULL asset membership and no sidecar pointer; reattachment
+node. Its first operational `source_provenance_identity` preserves original checkout and sidecar filenames through replacement, pruning, and backup. Detached rows have NULL asset membership and no sidecar pointer; reattachment
 reuses their stable identity and decisions. A sidecar never
 becomes a display member, and its source must be a RAW or image member in the
 same asset.
@@ -464,7 +464,7 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 38 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 37 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 37 with this binary; opening them fails the schema check.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 39 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 38 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 38 with this binary; opening them fails the schema check.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
@@ -479,6 +479,18 @@ Released photo files retain their graph and gain revision 1 with empty authored 
 Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs from Library photo-asset runs. Predecessor comparisons stay within the same mode. Older JSONL run rows default to Documents; photo runs serialize `photos: true`.
 
 Schema 38 also adds `photo_authored_fts`, which indexes captions, creator, and copyright from `photo_files` in separate columns so phrases stay within a field. It is derived, rebuilt on restore, and excluded from metadata backup.
+
+### Photo checkouts
+
+`photo_checkouts` stores frozen selections, local destinations and operation state, and portable `retention_released` and `retired_at` decisions. It also stores the creation-time skipped-photo count and up to 20 details, which status, list, and metadata backup retain. Schema 39 adds checkout tables and source provenance identities. `photo_checkout_entries` preserves historical version IDs, hashes, assets, paired originals, and filenames without version/blob foreign keys. Sidecars require a selected eligible original at selection and publication.
+
+Queued, running, and completed checkouts hold their versions and destinations. Failure or cancellation releases destination reservations and unpublished holds; published and uncertain copies keep their base versions. Retirement releases all holds and the reservation while preserving history and local copies. JSONL preserves definitions, historical entries, retention release, and per-entry `base_held` markers. Restore clears local observations and destinations, retaining published or uncertain bases until retirement or rebind. Repeated backup and restore preserves those holds. Pruned unpublished bases remain valid history; live references are required only while held. Older records default `base_held` to false. Released JSONL photo records may omit source identity; restore and upgrade backfill it.
+
+Publication locks the asset and guards against subtree trash, with filesystem work outside the writer transaction. The operation cursor records installation intent before rename. Recovery preserves intended copies, including edited ones. Installed copies advance progress even if directory sync fails. Names that the destination filesystem treats as identical fail at no-replace publication. Copies already published stay.
+
+Watches check separation when they start; filesystem stores check at daemon start and at registration. Checks reject reserved destinations and released folders containing copies, including aliases. A missing folder or a regular-file replacement at the folder or an ancestor releases protection. An overlap or unreadable folder makes only the affected watch or startup store wait and log a warning. Startup stores remain unavailable in the registry until a background separation wait confirms separation and clears their startup hold. Ordinary refreshes check ownership without walking checkout folders. Registration rejects overlapping roots. Watch jobs expose the waiting reason in their existing error field and clear it when the wait ends. Alias checks use the caller's context outside the mutation gate; mutation rechecks root identities and reservations. Checkout creation checks vault ancestry without walking its object tree. Run reuses Prepare's separation check for a pinned destination.
+
+Interrupted inspection retries transient filesystem errors while preserving source holds. Recovery cancellation can finish without filesystem access, retaining published and cursor-identified uncertain bases until retirement. Job receipts with uncertain holds remain until retirement permits expiry.
 
 ### Photo technical projection
 

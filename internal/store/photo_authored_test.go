@@ -1124,14 +1124,11 @@ func TestPhotoSidecarProvenanceCorrectionRetriesCachedOutcome(t *testing.T) {
 				path := filepath.Join(root, "capture.xmp")
 				ordinary, err := s.BeginIngest(ctx, "cli", root)
 				require.NoError(t, err)
-				ordinary.record.ID = "40000000-0000-4000-8000-000000000001"
-				run.record.ID = "40000000-0000-4000-8000-000000000002"
 				ordinaryIdentity, err := provenanceIdentity(metadataProvenance{NodeID: 2, IngestID: ordinary.ID(), OriginalPath: path})
 				require.NoError(t, err)
 				importedIdentity, err := provenanceIdentity(metadataProvenance{NodeID: 2, IngestID: run.ID(), OriginalPath: path})
 				require.NoError(t, err)
-				// Make the ordinary origin sort first so the receipt alone determines import authority.
-				if ordinaryIdentity > importedIdentity {
+				if importedIdentity > ordinaryIdentity {
 					ordinary.record.ID, run.record.ID = run.record.ID, ordinary.record.ID
 				}
 				node, err := s.IngestFileExact(ctx, ordinary, s.RootID(), "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml", path, "")
@@ -1151,7 +1148,7 @@ func TestPhotoSidecarProvenanceCorrectionRetriesCachedOutcome(t *testing.T) {
 			sidecar := fileByRole(asset.Files, PhotoRoleSidecar)
 			if role == "ordinary origin" {
 				var sourceKind string
-				require.NoError(t, s.db.QueryRow(`SELECT i.source_kind FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=? ORDER BY p.identity LIMIT 1`, sidecar.NodeID).Scan(&sourceKind))
+				require.NoError(t, s.db.QueryRow(`SELECT i.source_kind FROM photo_files f JOIN provenance p ON p.identity=f.source_provenance_identity JOIN ingests i ON i.id=p.ingest_id WHERE f.file_id=?`, sidecar.ID).Scan(&sourceKind))
 				require.Equal(t, "cli", sourceKind)
 				require.Equal(t, &raw.ID, sidecar.SidecarOfID)
 			}

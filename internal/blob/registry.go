@@ -50,6 +50,8 @@ type StoreSpec struct {
 	Lifecycle      string
 	Binding        string
 	OwnershipEpoch string
+	// UnavailableReason holds a startup check until CompleteStartupCheck clears it.
+	UnavailableReason string
 }
 
 // StoreObservation describes one process-local binding result.
@@ -308,6 +310,19 @@ func (r *Registry) AttachSpec(ctx context.Context, spec StoreSpec) StoreObservat
 	return r.Refresh(ctx, spec.ID)
 }
 
+// CompleteStartupCheck releases a startup hold on the current catalog spec.
+// A store detached or removed during the wait keeps that decision.
+func (r *Registry) CompleteStartupCheck(ctx context.Context, id string) StoreObservation {
+	r.mu.Lock()
+	key := packstore.StoreID(id)
+	if spec, ok := r.specs[key]; ok {
+		spec.UnavailableReason = ""
+		r.specs[key] = spec
+	}
+	r.mu.Unlock()
+	return r.Refresh(ctx, id)
+}
+
 // DetachSpec immediately withdraws one catalog-detached store from runtime
 // admission. Existing leased backends remain alive until daemon shutdown.
 func (r *Registry) DetachSpec(id string) {
@@ -375,6 +390,10 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 	if spec.Lifecycle == "detached" {
 		r.retireBackendLocked(id)
 		r.observe(id, StoreDetached, "store is detached", 0)
+		return registryRefresh{}, false
+	}
+	if spec.UnavailableReason != "" {
+		r.observe(id, StoreUnavailable, spec.UnavailableReason, 0)
 		return registryRefresh{}, false
 	}
 	binding, ok := r.bindings[spec.Binding]

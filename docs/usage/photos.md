@@ -477,7 +477,7 @@ docbank jobs resume derive:visual-previews
 
 Preview concurrency accepts 1 through 4. Pause and concurrency survive a daemon
 restart. Restoring a backup starts with unpaused lanes and concurrency 1.
-Storage lanes `place`, `evacuate`, `repair`, and `salvage` also accept pause and
+Storage lanes `place`, `evacuate`, `repair`, `salvage`, and `photo_checkout` also accept pause and
 resume, keeping their existing concurrency. Cancellation uses the operation ID.
 Document workers show read-only controls in `jobs`.
 If lane settings cannot be read, the import waits and keeps its progress.
@@ -528,6 +528,46 @@ The web Jobs drawer shows progress and has a Cancel button while the import
 runs. It leaves out source paths and the unpaired-group list. Cancel takes
 effect before the next group. A daemon restart resumes an unfinished import by
 scanning the folder again.
+
+## Create writable copies
+
+Use a checkout to edit copies outside the vault while Docbank retains their exact source versions:
+
+```text
+docbank photos checkout estimate --album <album-id>
+docbank photos checkout create <empty-folder> --album <album-id>
+docbank photos checkout create <empty-folder> --years 2023:2025
+docbank photos checkout create <empty-folder> --all --byte-limit 100000000000
+docbank photos checkout list
+docbank photos checkout status <checkout-id>
+docbank photos checkout retire <checkout-id>
+docbank jobs show <operation-id> --json
+docbank jobs cancel <operation-id>
+```
+
+Combine `--asset`, `--album`, and `--years` to copy their union. Each file appears once. Year ranges include both endpoints. Hidden and excluded photos stay out. Use `--all` alone with a positive byte limit. Other selections can also set a byte limit. Estimate returns asset count, file count, and bytes without creating a checkout.
+
+The destination must be an existing empty folder on the daemon's computer. Keep it separate from the vault, storage roots, watched folders, and other checkouts. Creation requires a local daemon connection.
+
+Docbank preserves original filenames under capture-date and asset-ID folders so RAW, JPEG, and XMP members stay paired. A sidecar requires a selected, eligible original. Recorded sidecar links remain valid when filenames differ; each file uses its saved source path, even after importing renamed duplicates. Files without a saved source identity use their current document name. Docbank uses the modification date when capture metadata is absent, and `undated` when neither date exists. It verifies every copy before publication. Copies are private to the daemon user.
+
+A photo hidden, excluded, detached, or trashed during copying is skipped. Docbank copies the remaining eligible files, then marks the checkout failed with the first error.
+
+Estimate and creation skip the whole photo for invalid filenames or duplicate names within a photo. The estimate and the saved checkout report `skipped_photos`, capped at 20 entries with `asset_id`, `file_id`, `name`, and `reason`, plus `skipped_photo_count`. Creation returns these fields inside `checkout`. Status and list keep showing the skipped photos. Asset, file, and byte totals include only kept photos. A selection with no remaining files fails. On Windows, reserved names, forbidden punctuation, control characters, and trailing dots or spaces are invalid. Retry with an explicit `--asset` selection that leaves out the listed photos. Renaming an imported document in Docbank does not change its copied filename, which comes from its recorded source path. If the destination filesystem treats two names as identical, publication fails and preserves copies already published.
+
+Creation returns the checkout and operation IDs as JSON. Jobs reports progress and accepts cancellation. Pause or resume the `photo_checkout` lane to control copying. Failed and cancelled creations keep their ID, partial files, and error. They release the destination reservation and holds for files that were never published. Published copies keep their base-version holds.
+
+After a daemon restart, a started or paused creation reports failure with its ID, verified partial results, and error. Recovery preserves base versions for copies that may have been edited after installation. Copying stays stopped. If a temporary file or folder lock prevents inspection, recovery stays queued with its error and source holds until the lock clears. Cancellation can finish while the folder is unavailable. Published and uncertain copies keep their source holds until retirement.
+
+Queued, running, and completed checkouts hold their frozen source versions against pruning and emptying trash. Completed checkouts keep their reservation until retirement. Clear any partial files before reusing a released destination.
+
+Watches check separation from checkout folders when they start. Filesystem stores check at daemon start and at registration. At startup, an overlapping store stays unattached while the daemon checks in the background; unrelated stores keep running. Registration rejects overlapping roots. Released checkout folders stay protected while they contain copies or Docbank can't inspect them. Clear or move the copies from a released folder so the waiting watch or store can start. A missing folder or a regular file replacing it or an ancestor also releases protection. A waiting watch shows the checkout folder and the action needed in `docbank watch list`'s ERROR column and the watch API's `error` field. The reason clears when the wait ends.
+
+Status reports file and byte totals, published counts, and any failing relative path and file ID.
+
+Backup includes checkout selections, historical version references, and retention release. A checkout with published or uncertain copies keeps their source bases through restore until retirement or rebind. With no copy to protect, backup releases its holds. Retired checkouts stay released. Restore leaves checkouts unbound. It carries no machine paths, job state, or copy observations.
+
+Checkout creation is unavailable in audited vaults. Retirement remains available after audit is activated. Retire a terminal checkout to release all source holds and its destination reservation. Retirement keeps your copies, selection, and job history. Watches and storage bindings still require the released folder to be empty or missing. Cancel active work first. Backup and restore preserve retirement. Committing edits and rebinding aren't available yet.
 
 ## HTTP and JSONL
 

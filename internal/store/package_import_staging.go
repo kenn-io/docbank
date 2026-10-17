@@ -41,6 +41,8 @@ func discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx, pkg Packa
 	rows, err := tx.QueryContext(ctx, `WITH retained(version_id) AS (
 		SELECT content_version_id FROM package_import_receipts
 		UNION
+		SELECT e.version_id FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE (`+photoCheckoutHoldPredicate+`)
+		UNION
 		SELECT json_extract(rep.value,'$.content_version_id')
 		FROM package_import_receipts receipt,
 			json_each(CAST(receipt.receipt_json AS TEXT),'$.member.representations') rep

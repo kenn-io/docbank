@@ -13,7 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -336,6 +339,36 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
+var errWatchCheckoutOverlap = errors.New("watch source overlaps checkout destination")
+
+func (w *Watcher) waitForCheckoutSeparation(ctx context.Context, root string) ([]store.PhotoCheckout, error) {
+	var checkouts []store.PhotoCheckout
+	err := WaitForCheckoutSeparation(ctx, func(ctx context.Context) error {
+		var err error
+		checkouts, err = w.ing.Store.ListPhotoCheckouts(ctx)
+		if err != nil {
+			return backoff.Permanent(err)
+		}
+		id, overlaps, err := CheckoutPathOverlap(ctx, checkouts, root)
+		if err != nil || overlaps {
+			destination := ""
+			for _, checkout := range checkouts {
+				if checkout.ID == id {
+					destination = checkout.Destination
+					break
+				}
+			}
+			return fmt.Errorf("waiting for checkout %s folder \"%s\"; clear or move its copies from the released folder to start watch %q: %w", id, destination, w.config.Name, errors.Join(err, errWatchCheckoutOverlap))
+		}
+		return nil
+	}, func(err error) {
+		jobs.ReportError(ctx, err)
+		w.logger.Warn("watch is waiting for checkout separation", "watch", w.config.Name, "path", root, "error", err)
+	})
+	jobs.ReportError(ctx, nil)
+	return checkouts, err
+}
+
 func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	root, err := filepath.EvalSymlinks(w.config.Source)
 	if err != nil {
@@ -357,13 +390,20 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root for watch %q: %w", w.config.Name, err)
 	}
-	overlaps, err := PathsOverlap(root, vaultRoot)
+	overlaps, err := PathsOverlapContext(ctx, root, vaultRoot)
 	if err != nil {
 		return nil, fmt.Errorf("checking watch %q source against the vault: %w", w.config.Name, err)
 	}
 	if overlaps {
 		return nil, fmt.Errorf("watch %q source %q overlaps the vault root %q",
 			w.config.Name, root, vaultRoot)
+	}
+	checkouts, err := w.waitForCheckoutSeparation(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	if err := ReleaseClearedCheckoutDestinations(ctx, w.ing.Store, checkouts, root); err != nil {
+		return nil, err
 	}
 	vaultInfo, err := os.Stat(vaultRoot)
 	if err != nil {
@@ -456,6 +496,9 @@ func watchTreeContainsAnyDirectory(
 		}
 		rel := filepath.Join(relDir, entry.Name())
 		if excludes.matchRelative(rel) {
+			continue
+		}
+		if !entry.IsDir() {
 			continue
 		}
 		if beforeDescend != nil {
@@ -576,14 +619,21 @@ func watchDirectoryIdentities(ctx context.Context, dir *os.Root) ([]fs.FileInfo,
 // watched-inbox admission share this check so an aliased vault directory
 // cannot become its own input or secondary namespace.
 func PathsOverlap(left, right string) (bool, error) {
+	return PathsOverlapContext(context.Background(), left, right)
+}
+
+func PathsOverlapContext(ctx context.Context, left, right string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if pathContains(left, right) || pathContains(right, left) {
 		return true, nil
 	}
-	resolvedLeft, err := resolveExistingPathPrefix(left)
+	resolvedLeft, err := resolveExistingPathPrefixContext(ctx, left)
 	if err != nil {
 		return false, fmt.Errorf("resolving path %q: %w", left, err)
 	}
-	resolvedRight, err := resolveExistingPathPrefix(right)
+	resolvedRight, err := resolveExistingPathPrefixContext(ctx, right)
 	if err != nil {
 		return false, fmt.Errorf("resolving path %q: %w", right, err)
 	}
@@ -593,8 +643,8 @@ func PathsOverlap(left, right string) (bool, error) {
 	}
 	var missingErr error
 	for _, pair := range [][2]string{{left, right}, {right, left}} {
-		overlaps, err := existingAncestorMatches(pair[0], pair[1])
-		if errors.Is(err, fs.ErrNotExist) {
+		overlaps, err := existingAncestorMatchesContext(ctx, pair[0], pair[1])
+		if CheckoutPathMissing(err) {
 			if missingErr == nil {
 				missingErr = err
 			}
@@ -612,7 +662,7 @@ func PathsOverlap(left, right string) (bool, error) {
 
 // resolveExistingPathPrefix resolves aliases in the nearest existing prefix
 // while retaining any missing suffix for containment comparisons.
-func resolveExistingPathPrefix(pathname string) (string, error) {
+func resolveExistingPathPrefixContext(ctx context.Context, pathname string) (string, error) {
 	absolute, err := filepath.Abs(pathname)
 	if err != nil {
 		return "", err
@@ -620,6 +670,9 @@ func resolveExistingPathPrefix(pathname string) (string, error) {
 	current := filepath.Clean(absolute)
 	var missing []string
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		resolved, resolveErr := filepath.EvalSymlinks(current)
 		if resolveErr == nil {
 			for _, v := range slices.Backward(missing) {
@@ -627,7 +680,7 @@ func resolveExistingPathPrefix(pathname string) (string, error) {
 			}
 			return filepath.Clean(resolved), nil
 		}
-		if !errors.Is(resolveErr, fs.ErrNotExist) {
+		if !CheckoutPathMissing(resolveErr) {
 			return "", resolveErr
 		}
 		parent := filepath.Dir(current)
@@ -644,16 +697,23 @@ func resolveExistingPathPrefix(pathname string) (string, error) {
 func WatchBindingOverlap(
 	watches []config.WatchConfig, binding config.StoreBindingConfig,
 ) (string, bool, error) {
+	return WatchBindingOverlapContext(context.Background(), watches, binding)
+}
+
+func WatchBindingOverlapContext(ctx context.Context, watches []config.WatchConfig, binding config.StoreBindingConfig) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	if binding.Kind != "filesystem" {
 		return "", false, nil
 	}
 	for _, watch := range watches {
-		overlap, err := PathsOverlap(watch.Source, binding.Path)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		overlap, err := PathsOverlapContext(ctx, watch.Source, binding.Path)
+		if err != nil && !CheckoutPathMissing(err) {
 			return watch.Name, false, err
 		}
 		if !overlap {
-			overlap, err = existingPathPrefixMatchesWatch(binding.Path, watch)
+			overlap, err = existingPathPrefixMatchesWatch(ctx, binding.Path, watch)
 			if err != nil {
 				return watch.Name, false, err
 			}
@@ -670,32 +730,47 @@ func WatchBindingOverlap(
 // unrelated mounted tree is not recursively searched. The whole configured
 // watch root remains protected even when an exclusion currently hides part of
 // it; removing an exclusion must not turn an existing store into watcher input.
-func existingPathPrefixMatchesWatch(pathname string, watch config.WatchConfig) (bool, error) {
-	current, err := filepath.Abs(pathname)
-	if err != nil {
+func existingPathPrefixMatchesWatch(ctx context.Context, pathname string, watch config.WatchConfig) (bool, error) {
+	prefix, ok, err := existingDirectoryPrefix(ctx, pathname)
+	if err != nil || !ok {
 		return false, err
 	}
-	var prefixInfo fs.FileInfo
+	return watchTreeContainsAny(ctx, watch, []fs.FileInfo{prefix})
+}
+
+// existingDirectoryPrefix returns the identity of pathname's nearest existing
+// prefix. It reports false when that prefix is not a directory or no prefix
+// exists.
+func existingDirectoryPrefix(ctx context.Context, pathname string) (fs.FileInfo, bool, error) {
+	current, err := filepath.Abs(pathname)
+	if err != nil {
+		return nil, false, err
+	}
 	for {
-		prefixInfo, err = os.Stat(current)
-		if err == nil {
-			break
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
 		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return false, fmt.Errorf("checking path prefix %q: %w", current, err)
+		info, err := os.Stat(current)
+		if err == nil {
+			return info, info.IsDir(), nil
+		}
+		if !CheckoutPathMissing(err) {
+			return nil, false, fmt.Errorf("checking path prefix \"%s\": %w", current, err)
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
 			// Windows drive and UNC roots can be unavailable while their
 			// configured stores remain active but offline. With no observable
 			// prefix, there is no filesystem identity to compare to the watch.
-			return false, nil
+			return nil, false, nil
 		}
 		current = parent
 	}
-	if !prefixInfo.IsDir() {
-		return false, nil
-	}
+}
+
+// watchTreeContainsAny reports whether any target directory appears in the
+// watch source's confined traversal.
+func watchTreeContainsAny(ctx context.Context, watch config.WatchConfig, targets []fs.FileInfo) (bool, error) {
 	root, err := os.OpenRoot(watch.Source)
 	if err != nil {
 		return false, fmt.Errorf("opening watch %q source %q: %w", watch.Name, watch.Source, err)
@@ -706,7 +781,7 @@ func existingPathPrefixMatchesWatch(pathname string, watch config.WatchConfig) (
 		return false, fmt.Errorf("identifying watch %q source mount: %w", watch.Name, mountErr)
 	}
 	contains, traversalErr := watchTreeContainsAnyDirectory(
-		context.Background(), root, mount, []fs.FileInfo{prefixInfo}, exclusions{}, "", nil,
+		ctx, root, mount, targets, exclusions{}, "", nil,
 	)
 	closeErr := root.Close()
 	if traversalErr != nil || closeErr != nil {
@@ -719,18 +794,21 @@ func existingPathPrefixMatchesWatch(pathname string, watch config.WatchConfig) (
 // existingAncestorMatches supplements filepath.Rel with filesystem identity.
 // It catches case, normalization, and mount aliases whose lexical paths do
 // not reveal that one directory is inside the other.
-func existingAncestorMatches(pathname, protected string) (bool, error) {
+func existingAncestorMatchesContext(ctx context.Context, pathname, protected string) (bool, error) {
 	protectedInfo, err := os.Stat(protected)
 	if err != nil {
 		return false, fmt.Errorf("checking protected path %q: %w", protected, err)
 	}
 	current := pathname
 	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		info, statErr := os.Stat(current)
 		if statErr == nil && os.SameFile(info, protectedInfo) {
 			return true, nil
 		}
-		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		if statErr != nil && !CheckoutPathMissing(statErr) {
 			return false, fmt.Errorf("checking path ancestor %q: %w", current, statErr)
 		}
 		parent := filepath.Dir(current)

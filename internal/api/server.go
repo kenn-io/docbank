@@ -249,6 +249,7 @@ func NewServer(d Deps) *Server {
 	registerPhotoTimelineRoute(humaAPI, s.snapshots)
 	registerPeopleRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)
+	registerPhotoCheckoutRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)

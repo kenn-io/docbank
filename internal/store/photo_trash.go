@@ -10,8 +10,13 @@ import (
 
 // TrashPhotoAsset moves every live member to recoverable trash atomically.
 func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision int64) (PhotoAsset, error) {
+	unlock, err := s.lockPhotoPublication(ctx, assetID)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	defer unlock()
 	var asset PhotoAsset
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		current, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
 		if err != nil {
 			return err

@@ -655,6 +655,11 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 	return receipt, nil
 }
 
+// ReaderWithContext checks cancellation before each source read.
+func ReaderWithContext(ctx context.Context, reader io.Reader) io.Reader {
+	return contextReader{ctx: ctx, reader: reader}
+}
+
 // contextReader keeps read-ahead subject to cancellation between source reads,
 // just like the subsequent copy into Kit's loose writer.
 type contextReader struct {

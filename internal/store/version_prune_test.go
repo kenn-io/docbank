@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -940,4 +941,32 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	require.Len(t, preview.Candidates, 1)
 	assert.Equal(t, second.CurrentVersionID, preview.Candidates[0].ID)
 	assert.NotEmpty(t, preview.Cutoff)
+}
+
+func TestRetainMediaAuthorityVersionsBatchesCheckoutHolds(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "catalog.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			asset := albumAsset(t, s, "photo.jpg")
+			node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
+			require.NoError(t, err)
+			_, _, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			candidates := map[string]bool{node.CurrentVersionID: true}
+			for i := range 12000 {
+				candidates[fmt.Sprintf("candidate-%05d", i)] = true
+			}
+			retained := map[string]bool{}
+			tx, err := s.db.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			defer func() { _ = tx.Rollback() }()
+			require.NoError(t, retainMediaAuthorityVersionsTx(tx, candidates, retained))
+			require.Equal(t, map[string]bool{node.CurrentVersionID: true}, retained)
+			require.Len(t, candidates, 12000)
+			require.NotContains(t, candidates, node.CurrentVersionID)
+		})
+	}
 }

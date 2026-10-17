@@ -100,6 +100,10 @@ func TestStorageJobControlsFollowOperationState(t *testing.T) {
 				_, err = s.ClaimStorageOperation(t.Context(), operation.ID)
 				require.NoError(t, err)
 			}
+			cancelRequested := state == store.StorageOperationQueued || state == store.StorageOperationCancelled
+			if cancelRequested {
+				require.NoError(t, s.RequestStorageOperationCancel(t.Context(), operation.ID))
+			}
 			active := state == store.StorageOperationQueued || state == store.StorageOperationRunning
 			if !active {
 				require.NoError(t, s.FinishStorageOperation(t.Context(), operation.ID, state, "{}", "", time.Now().Add(time.Hour)))
@@ -112,8 +116,12 @@ func TestStorageJobControlsFollowOperationState(t *testing.T) {
 			job := listed.Items[0]
 			assert.Equal(t, active, job.Controllable)
 			assert.Equal(t, active, job.CanCancel)
+			assert.Equal(t, cancelRequested, job.CancelRequested)
 			assert.Equal(t, active, job.Paused)
-			if !active {
+			if active {
+				assert.Equal(t, 1, job.Concurrency)
+				assert.Equal(t, int64(2), job.ControlRevision)
+			} else {
 				assert.Zero(t, job.Concurrency)
 				assert.Zero(t, job.ControlRevision)
 			}
@@ -138,6 +146,7 @@ func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
 	assert.Contains(t, listed.LaneControlsError, "decoding lane controls")
 	require.Len(t, listed.Items, 1)
 	assert.Equal(t, operation.ID, listed.Items[0].OperationID)
+	assert.Equal(t, store.StorageOperationKindPhotoImport, listed.Items[0].Kind)
 	assert.False(t, listed.Items[0].Controllable)
 
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}

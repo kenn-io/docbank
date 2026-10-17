@@ -163,7 +163,7 @@
   }
 
   function unit(kind: string | undefined): string {
-    return kind === "photo_import" ? "groups" : "objects";
+    return kind === "photo_import" ? "groups" : kind === "photo_checkout" ? "files" : "objects";
   }
 
   function percent(completed: number, total: number): number {

@@ -383,9 +383,11 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 		return fmt.Errorf("allocating photo file ID: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at)
-		VALUES(?,?,?,?,?,?)`, fileID, member.AssetID, member.NodeID, member.Role,
-		nullablePhotoString(member.SidecarOfID), member.CreatedAt); err != nil {
+		INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at,source_provenance_identity)
+		VALUES(?,?,?,?,?,?,(SELECT p.identity FROM provenance p JOIN ingests i ON i.id=p.ingest_id
+ WHERE p.node_id=? AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+ ORDER BY `+photoSourceObservedSQL+`,i.started_at,i.id,p.original_path,p.identity LIMIT 1))`, fileID, member.AssetID, member.NodeID, member.Role,
+		nullablePhotoString(member.SidecarOfID), member.CreatedAt, member.NodeID); err != nil {
 		return s.classifyPhotoFileInsertError(err)
 	}
 	return nil
@@ -581,8 +583,13 @@ func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID stri
 }
 
 func (s *Store) mutatePhotoAsset(ctx context.Context, assetID string, revision int64, operation string, edit photoMutation) (PhotoAsset, error) {
+	unlock, err := s.lockPhotoPublication(ctx, assetID)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	defer unlock()
 	var result PhotoAsset
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		result, err = s.mutatePhotoAssetTx(ctx, tx, assetID, revision, operation, edit)
 		return err

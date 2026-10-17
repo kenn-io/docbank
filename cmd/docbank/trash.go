@@ -96,7 +96,7 @@ space then requires repack.`,
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d trashed root(s) eligible for permanent deletion\n",
 			rep.CandidateRoots)
 		if rep.RetainedRoots > 0 {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "retained %d trashed root(s) referenced by email publications\n", rep.RetainedRoots)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "retained %d trashed root(s) referenced by email publications or photo checkouts\n", rep.RetainedRoots)
 		}
 		if rep.HeldRoots > 0 {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),

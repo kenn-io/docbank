@@ -22,6 +22,8 @@ The web application and TUI show this inventory read-only. Registration,
 placement, repair, takeover, evacuation, and removal are CLI or master-key API
 operations.
 
+Photo checkouts hold source versions while queued, running, or completed. Failed and cancelled checkouts release unpublished source holds and their destination reservation. Published and uncertain copies retain their source bases until retirement. Backup preserves those holds through restore. Filesystem stores check checkout separation at daemon start and at registration. An overlapping store stays unattached at startup until a background check confirms separation. Registration rejects overlapping roots. Released checkout folders, including retired ones, stay protected until empty or missing. See [Create writable copies](photos.md#create-writable-copies).
+
 ## Configure a binding
 
 A binding tells this machine how to reach a store. It contains the path or S3
@@ -94,6 +96,10 @@ overlap the vault, a watched inbox, or another active filesystem store. S3
 stores may not use equal or nested prefixes under the same canonical endpoint
 and bucket. The ownership marker is the authoritative check. Path and prefix
 comparisons reject obvious aliases before Docbank contacts the backend.
+
+Watches and filesystem stores that overlap checkout folders wait and log a
+warning. Released checkout folders stay protected while they contain files
+or Docbank can't inspect them. See [Create writable copies](photos.md#create-writable-copies).
 
 `storage list` and `storage status` separate catalog authority from observed
 availability. `authoritative_objects` counts verified locations recorded for a

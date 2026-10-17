@@ -349,6 +349,15 @@ describe("background jobs drawer", () => {
           can_cancel: true,
         },
         {
+          name: "storage:checkout",
+          kind: "photo_checkout",
+          operation_id: "checkout",
+          status: "running",
+          started_at: "2026-07-23T12:00:30Z",
+          completed_objects: 1,
+          total_objects: 2,
+        },
+        {
           name: `storage:${placeId}`,
           kind: "place",
           operation_id: placeId,
@@ -375,6 +384,7 @@ describe("background jobs drawer", () => {
     expect(progress.getAttribute("aria-valuemax")).toBe("301");
     expect(screen.getByText("Photo import")).toBeTruthy();
     expect(screen.getByText("75 of 301 groups")).toBeTruthy();
+    expect(screen.getByText("1 of 2 files")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
     expect(screen.getByText("2 operations")).toBeTruthy();
     expect(screen.getByText(id).tagName).toBe("CODE");

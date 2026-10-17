@@ -156,6 +156,17 @@ func TestEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t *test
 	require.NoError(t, err)
 	_, err = s.ContentVersionByID(t.Context(), child.VersionID)
 	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), head.ID, head.Revision)
+	require.NoError(t, err)
+	empty, err = s.TrashEmpty(t.Context(), 0, true)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, empty.Deleted)
+	_, err = s.NodeByID(t.Context(), head.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	node, err = s.NodeByID(t.Context(), child.NodeID)
+	require.NoError(t, err)
+	require.Nil(t, node.TrashedAt)
+
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 

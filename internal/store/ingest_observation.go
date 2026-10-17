@@ -115,6 +115,9 @@ func (s *Store) observeOperationalIngestTx(
 	if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
 		return Node{}, fmt.Errorf("binding operational ingest observation: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=? WHERE node_id=? AND source_provenance_identity IS NULL`, fact.Identity, prior.ID); err != nil {
+		return Node{}, fmt.Errorf("recording first photo source: %w", err)
+	}
 	if err := bumpRevisionTx(tx, prior.ID, operation.recordedAt); err != nil {
 		return Node{}, err
 	}

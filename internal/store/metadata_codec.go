@@ -279,7 +279,7 @@ func pristineMetadataTableSum(codecs map[string]metadataRecordCodec) string {
 
 var metadataCodecs = indexMetadataCodecs(
 	coreMetadataTables, emailMetadataTables, mailboxMetadataTables, pageMetadataTables,
-	packageMetadataTables, packageImportMetadataTables, batesMetadataTables, photoMetadataTables, photoHiddenMetadataTables,
+	packageMetadataTables, packageImportMetadataTables, batesMetadataTables, photoMetadataTables, photoHiddenMetadataTables, photoCheckoutMetadataTables,
 	personMetadataTables, processingMetadataTables, embeddingMetadataTables, auditMetadataTables,
 	[]metadataRecordCodec{
 		emailDocumentPublicationMetadata, exportAuthorityMetadata,
