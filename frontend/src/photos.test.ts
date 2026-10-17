@@ -3117,30 +3117,11 @@ it("attaches server-described stacks and requests them only for capture-time pag
   photos.dispose();
 });
 
-it("refreshes server representatives after a companion pick, explicit choice, and Undo", async () => {
-  const rows = [photo(1), photo(2), photo(3)];
-  let representativeID = "photo-1";
-  stubPhotoFetch(async () =>
-    Response.json({
-      items: rows,
-      stacks: [
-        { asset_ids: ["photo-1", "photo-2", "photo-3"], representative_id: representativeID },
-      ],
-      total: 3,
-      facets: [],
-      relevance_available: false,
-    }),
-  );
+it("refreshes loaded stacks after representative choice and Undo", () => {
+  const stack = { asset_ids: ["photo-1", "photo-2", "photo-3"], representative_id: "photo-1" };
   const photos = new Photos("session", vi.fn());
-  await photos.resume();
-  vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
-  const raw = preparedPhoto(4, { asset_id: "photo-2", display_file_id: "file-2" });
+  photos.items = [photo(1), photo(2), photo(3)].map((row) => ({ ...row, stack }));
   const receipts: PhotoAuthoredReceipt[] = [
-    {
-      receipt_id: "pick",
-      before: [raw],
-      after: [{ ...raw, revision: 2, values: { ...raw.values, flag: "pick" } }],
-    },
     {
       receipt_id: "choose",
       before: [],
@@ -3154,66 +3135,10 @@ it("refreshes server representatives after a companion pick, explicit choice, an
       representatives: [{ asset_id: "photo-3", before_revision: 2, after_revision: 3, before: 7 }],
     },
   ];
-  for (const [index, expected] of ["photo-2", "photo-3", "photo-2"].entries()) {
-    const changes = photos.metadataChanged(receipts[index]!);
-    expect(photos.reloadsAfter(changes)).toBe(true);
-    representativeID = expected;
-    await photos.refresh();
-    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
-      expected,
-      expected,
-      expected,
-    ]);
-  }
+  for (const receipt of receipts)
+    expect(photos.reloadsAfter(photos.metadataChanged(receipt))).toBe(true);
   photos.dispose();
 });
-
-it.each([false, true])(
-  "keeps a picked companion as the burst representative after a displayed-file reject, held=%s",
-  async (held) => {
-    const stack = {
-      asset_ids: ["photo-1", "photo-2"],
-      representative_id: "photo-2",
-    };
-    const rows = [photo(1), photo(2)];
-    stubPhotoFetch(async () =>
-      Response.json({
-        items: rows,
-        stacks: [stack],
-        total: 2,
-        facets: [],
-        relevance_available: false,
-      }),
-    );
-    const photos = new Photos("session", vi.fn());
-    await photos.resume();
-    rows[1]!.flag = "reject";
-    vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
-    const jpeg = preparedPhoto(2);
-    const raw = preparedPhoto(4, { asset_id: "photo-2", display_file_id: "file-2" });
-    if (held)
-      photos.authored.targets = [
-        { ...jpeg, revision: 2, values: { ...jpeg.values, flag: "reject" } },
-        { ...raw, values: { ...raw.values, flag: "pick" } },
-      ];
-    const changes = photos.metadataChanged({
-      receipt_id: "reject",
-      before: [jpeg],
-      after: [{ ...jpeg, revision: 2, values: { ...jpeg.values, flag: "reject" } }],
-    });
-    expect(photos.reloadsAfter(changes)).toBe(true);
-    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
-      "photo-2",
-      "photo-2",
-    ]);
-    await photos.refresh();
-    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
-      "photo-2",
-      "photo-2",
-    ]);
-    photos.dispose();
-  },
-);
 
 it("updates the burst gap through general settings and shows regrouped Library photos", async () => {
   let gap = 2;

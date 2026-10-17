@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/query"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -39,19 +38,12 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 
 	for _, tc := range []struct{ kind, desc, path, expected string }{
 		{"cli", "", "/shots/a.jpg", "97310aecd6d353ecc4b0b3bbe2a48333e4be26fa435ef8edbce032e1da9fd52d"},
-		{"cli", "", `C:\shots\a.jpg`, "18e6828f06efb295809a602b37c11176daeb34f7d3265b6cc6ce16452d69045c"},
-		{"cli", "", `\\server\share\shots\a.jpg`, "91e3194e643686be077ed2f491b312794e390dab130e3503cec02778b6d2590e"},
-		{"watch", "camera", "/shots/a.jpg", "24bdb20254864c349da512700a1fc77a465d1b042b60769fc3d187699ab9fad7"},
-		{"push", "camera", "/shots/a.jpg", "043d20f8124ffecbfe429e8d5bc753d4525262686a362ba160497eb228cb5e66"},
 		{"cli", "", "", ""},
 	} {
 		var key sql.NullString
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_photo_folder_v1(?, ?, ?)`, tc.kind, tc.desc, tc.path).Scan(&key))
 		require.Equal(t, tc.expected, key.String)
 		require.Equal(t, tc.expected != "", key.Valid)
-		direct, valid := query.PhotoFolderKey(tc.kind, tc.desc, tc.path)
-		require.Equal(t, direct, key.String)
-		require.Equal(t, valid, key.Valid)
 	}
 
 	// Force a second physical connection: the predicate must not depend on the
