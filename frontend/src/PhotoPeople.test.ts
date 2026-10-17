@@ -51,9 +51,19 @@ it("chooses an existing person by ID and opens their photos from the person card
   );
   faces.dispose();
 });
-it("keeps a created person for retry and disables the picker throughout creation", async () => {
+it("searches again after a failed assignment and disables the picker throughout creation", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+  let committed = false;
+  vi.spyOn(api, "listPeople").mockImplementation(async () =>
+    committed
+      ? {
+          exact_match: true,
+          items: [
+            { person_id: "person-new", display_name: "Grace", state: "curated", revision: 1 },
+          ],
+        }
+      : { items: [] },
+  );
   let finish!: (person: api.Person) => void;
   const create = vi.spyOn(api, "createPerson").mockImplementation(
     () =>
@@ -80,6 +90,7 @@ it("keeps a created person for retry and disables the picker throughout creation
   expect(
     (component.container.querySelector(".kit-typeahead__input") as HTMLInputElement).disabled,
   ).toBe(true);
+  committed = true;
   finish({
     person_id: "person-new",
     display_name: "Grace",
@@ -91,7 +102,7 @@ it("keeps a created person for retry and disables the picker throughout creation
   });
   await screen.findByText("Try again");
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Grace" } });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: 'Create person "Grace"' }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Grace" }));
   await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
   expect(create).toHaveBeenCalledTimes(1);
   expect(name).toHaveBeenLastCalledWith(face, "person-new");
@@ -277,3 +288,42 @@ it.each(["name", "clear"] as const)(
     faces.dispose();
   },
 );
+
+it("searches the server after a lost create response and drops externally renamed choices", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  let canonical = "";
+  const search = vi.spyOn(api, "listPeople").mockImplementation(async ({ query } = {}) => ({
+    exact_match: canonical === query,
+    items:
+      canonical && canonical === query
+        ? [{ person_id: "person-new", display_name: canonical, state: "curated", revision: 1 }]
+        : [],
+  }));
+  const create = vi.spyOn(api, "createPerson").mockImplementation(async () => {
+    canonical = "Ada";
+    throw new Error("Response lost");
+  });
+  const decide = vi.spyOn(api, "decidePhotoFace").mockRejectedValue(new Error("Try again"));
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Find or create a person: Unnamed face" }),
+  );
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ada" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: 'Create person "Ada"' }));
+  await screen.findByText("Response lost");
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Ada" }));
+  await waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+  expect(create).toHaveBeenCalledTimes(1);
+  canonical = "Grace";
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ad" } });
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ada" } });
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith({ query: "Ada", limit: 100 }, expect.anything()),
+  );
+  await screen.findByRole("option", { name: 'Create person "Ada"' });
+  expect(screen.queryByRole("option", { name: "Ada" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "Grace" })).toBeNull();
+  faces.dispose();
+});

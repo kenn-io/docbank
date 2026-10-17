@@ -18,6 +18,7 @@ export class PhotoFaces {
   loading = $state(false);
   busy = $state(false);
   error = $state("");
+  pending = $state.raw<{ version: string; box: FaceBox; face_id: string }>();
   private controller?: AbortController;
   private writer?: AbortController;
   constructor(
@@ -41,7 +42,10 @@ export class PhotoFaces {
   async load(version: string) {
     this.controller?.abort();
     const changed = version !== this.version;
-    if (changed) this.writer?.abort();
+    if (changed) {
+      this.writer?.abort();
+      this.pending = undefined;
+    }
     const controller = (this.controller = new AbortController());
     this.version = version;
     if (changed || !version) {
@@ -62,6 +66,8 @@ export class PhotoFaces {
         this.faces = page.faces;
         this.assertions = page.assertions;
         this.people = page.people;
+        if (this.pending && page.faces.some((face) => face.face_id === this.pending?.face_id))
+          this.pending = undefined;
       }
     } catch (cause) {
       if (!controller.signal.aborted) this.failed(cause);
@@ -136,10 +142,39 @@ export class PhotoFaces {
       true,
     );
   }
-  add(box: FaceBox) {
-    return this.write((version, signal) =>
-      createPhotoFace(version, { box, face_id: randomUUID() }, { session: this.session, signal }),
-    );
+  async add(box: FaceBox) {
+    if (this.pending || this.loading || this.busy || !this.version) return false;
+    this.pending = { version: this.version, box: { ...box }, face_id: randomUUID() };
+    return this.retryAdd();
+  }
+  async retryAdd() {
+    const pending = this.pending;
+    if (!pending || this.loading || this.busy || pending.version !== this.version) return false;
+    const controller = (this.writer = new AbortController());
+    this.busy = true;
+    this.error = "";
+    try {
+      await createPhotoFace(
+        pending.version,
+        { box: pending.box, face_id: pending.face_id },
+        { session: this.session, signal: controller.signal },
+      );
+      if (controller.signal.aborted) return false;
+      this.pending = undefined;
+      await this.load(pending.version);
+      return !controller.signal.aborted;
+    } catch (cause) {
+      if (controller.signal.aborted) return false;
+      if (cause instanceof APIError && cause.status >= 400 && cause.status < 500)
+        this.pending = undefined;
+      await this.load(pending.version);
+      if (controller.signal.aborted) return false;
+      if (!this.pending && this.faces.some((face) => face.face_id === pending.face_id)) return true;
+      this.failed(cause);
+      return false;
+    } finally {
+      if (!controller.signal.aborted) this.busy = false;
+    }
   }
   dispose() {
     this.controller?.abort();

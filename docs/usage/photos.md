@@ -757,7 +757,7 @@ Select 2–8 photos and choose **Compare**. Zoom, pan, and arrow-key navigation 
 
 ### People in photos
 
-Open a photo and choose **Add face**. Drag a box around a face, or focus the photo's face control, position it with the arrow keys, and press Enter. Escape cancels the box.
+Open a photo and choose **Add face**. Drag a box around a face, or focus the photo's face control, position it with the arrow keys, and press Enter. Escape cancels placement. If a create request has an uncertain result, **Retry face** or Enter retries the same box. A new placement waits until the pending request is resolved.
 
 In the inspector's **People** section, choose a name from the search results or choose **Create person**. Each face has its own name picker. Open a named face’s picker and choose **Clear name** to remove its name. Whole-photo person marks link to the person; clear those marks through the API or CLI. Choose the person's name beside the picker to open Library filtered to that person. This clears the text search and shows every match in capture-time order. Naming or clearing a face refreshes loaded person-filtered views in the same Hidden scope. Face labels follow the photo through rotation, zoom, and pan.
 

@@ -19,6 +19,9 @@ it.each([
   ['caption:"person:Ada"', false],
   ["otherperson:Ada", false],
   ["\\person:Ada", true],
+  ['saved:"People"', true],
+  ["(saved:Outer) OR rating:5", true],
+  ['"saved:People"', false],
 ])("recognizes person filters in %s", (text, expected) => {
   expect(hasPersonFilter({ syntax: "advanced", text, filters: {} })).toBe(expected);
 });

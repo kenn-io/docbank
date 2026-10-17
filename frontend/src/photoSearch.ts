@@ -6,7 +6,8 @@ export function hasPersonFilter(query: Pick<Query, "filters" | "text" | "syntax"
   // Field names belong to advanced text; quoted phrases remain literal terms.
   const tokens = query.text.match(/"(?:\\.|[^"\\])*"|(?:\\.|[^\s():"\\])+|[:()]/gu) ?? [];
   return tokens.some(
-    (token, index) => token.replace(/\\(.)/gu, "$1") === "person" && tokens[index + 1] === ":",
+    (token, index) =>
+      ["person", "saved"].includes(token.replace(/\\(.)/gu, "$1")) && tokens[index + 1] === ":",
   );
 }
 

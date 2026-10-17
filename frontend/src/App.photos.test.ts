@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
   photoMetadataResponse,
+  photoFace,
+  photoPersonAssertion,
   preparedPhoto,
   photo,
   mapPhoto,
@@ -11,6 +13,7 @@ import {
   storage,
 } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
+import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
@@ -3468,3 +3471,72 @@ it.each([false, true])(
     ]);
   },
 );
+
+it("retains a person link from direct Hidden until Library access is validated", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const item = photo(1),
+    personID = "00000000-0000-4000-8000-000000000001";
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    faces: [photoFace({ content_version_id: item.content_version_id })],
+    assertions: [
+      photoPersonAssertion({ content_version_id: item.content_version_id, person_id: personID }),
+    ],
+    people: [{ person_id: personID, display_name: "Ada" }],
+  });
+  let validate!: (response: Response) => void;
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) {
+      if (location.pathname === "/photos")
+        return new Promise<Response>((resolve) => {
+          validate = resolve;
+        });
+      return Response.json({
+        configured: true,
+        expires_at: "2099-01-01T00:00:00Z",
+        expires_in: 300,
+      });
+    }
+    if (url.endsWith("/photos/assets/query")) {
+      const request = JSON.parse(String(init.body));
+      return Response.json({
+        items: request.hidden ? [item] : [],
+        total: request.hidden ? 1 : 0,
+        facets: [],
+      });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: `Select ${item.name}` }));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const card = await screen.findByRole("button", { name: "Ada" });
+  vi.spyOn(PhotoAuthoredEditor.prototype, "canChangeTarget").mockReturnValue(true);
+  const setQuery = vi.spyOn(Photos.prototype, "setQuery");
+  await fireEvent.click(card);
+  await waitFor(() => expect(location.pathname).toBe("/photos"));
+  await waitFor(() => expect(validate).toBeTypeOf("function"));
+  expect(setQuery).not.toHaveBeenCalled();
+  validate(
+    Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 }),
+  );
+  await waitFor(() =>
+    expect(setQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "",
+        filters: { person_ids: [personID] },
+        sort: { field: "capture_time", direction: "desc" },
+      }),
+    ),
+  );
+  await screen.findByText("Person: Ada");
+});

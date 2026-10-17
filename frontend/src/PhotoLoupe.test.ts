@@ -684,55 +684,61 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   expect(screen.queryByText("File modified")).toBeNull();
 });
 
-it("ignores a one-pixel pointer gesture and keeps meaningful face drags", async () => {
-  setup();
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  const onregion = vi.fn();
-  const component = render(PhotoLoupeImage, {
-    url: "blob:synthetic",
-    name: "Portrait",
-    view: { scale: 1, x: 0.5, y: 0.5, actual: false },
-    onzoom: vi.fn(),
-    onmove: vi.fn(),
-    regionMode: true,
-    onregion,
-  });
-  const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
-  viewport.setPointerCapture = vi.fn();
-  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
-    x: 0,
-    y: 0,
-    left: 0,
-    top: 0,
-    right: 1000,
-    bottom: 400,
-    width: 1000,
-    height: 400,
-    toJSON: vi.fn(),
-  });
-  const image = screen.getByRole("img", { name: "Portrait" });
-  Object.defineProperty(image, "naturalWidth", { value: 1000 });
-  Object.defineProperty(image, "naturalHeight", { value: 800 });
-  await fireEvent.load(image);
-  const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
-  for (const [type, x, y] of [
-    ["pointerdown", 500, 200],
-    ["pointerup", 501, 201],
-  ] as const)
-    await fireEvent(position, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
-  await fireEvent.click(position, { detail: 1 });
-  expect(onregion).not.toHaveBeenCalled();
-  for (const [type, x, y] of [
-    ["pointerdown", 500, 200],
-    ["pointerup", 600, 280],
-  ] as const)
-    await fireEvent(position, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
-  expect(onregion).toHaveBeenCalledOnce();
-  expect(onregion).toHaveBeenCalledWith({
-    x: 0.6,
-    y: 0.6,
-    width: expect.closeTo(0.2, 8),
-    height: expect.closeTo(0.2, 8),
-  });
-});
+it.each([true, false])(
+  "applies minimum drag only for face placement=%s",
+  async (minimumRegionDrag) => {
+    setup();
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    const onregion = vi.fn();
+    const component = render(PhotoLoupeImage, {
+      url: "blob:synthetic",
+      name: "Portrait",
+      view: { scale: 1, x: 0.5, y: 0.5, actual: false },
+      onzoom: vi.fn(),
+      onmove: vi.fn(),
+      regionMode: true,
+      minimumRegionDrag,
+      onregion,
+    });
+    const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
+    viewport.setPointerCapture = vi.fn();
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 1000,
+      bottom: 400,
+      width: 1000,
+      height: 400,
+      toJSON: vi.fn(),
+    });
+    const image = screen.getByRole("img", { name: "Portrait" });
+    Object.defineProperty(image, "naturalWidth", { value: 1000 });
+    Object.defineProperty(image, "naturalHeight", { value: 800 });
+    await fireEvent.load(image);
+    const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
+    for (const [type, x, y] of [
+      ["pointerdown", 500, 200],
+      ["pointerup", 501, 201],
+    ] as const)
+      await fireEvent(position, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+    await fireEvent.click(position, { detail: 1 });
+    if (minimumRegionDrag) expect(onregion).not.toHaveBeenCalled();
+    else expect(onregion).toHaveBeenCalledWith({ x: 0.501, y: 0.50125, width: 0.15, height: 0.15 });
+    onregion.mockClear();
+    for (const [type, x, y] of [
+      ["pointerdown", 500, 200],
+      ["pointerup", 600, 280],
+    ] as const)
+      await fireEvent(position, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+    expect(onregion).toHaveBeenCalledOnce();
+    expect(onregion).toHaveBeenCalledWith({
+      x: 0.6,
+      y: 0.6,
+      width: expect.closeTo(0.2, 8),
+      height: expect.closeTo(0.2, 8),
+    });
+  },
+);

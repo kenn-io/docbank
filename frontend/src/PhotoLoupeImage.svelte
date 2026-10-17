@@ -14,6 +14,8 @@
     onview,
     onregion,
     oncancelregion,
+    onconfirmregion,
+    minimumRegionDrag = false,
     regionMode = false,
     regionLabel,
     faces = [],
@@ -28,6 +30,8 @@
     onview?: (value: PhotoView) => void;
     onregion?: (value: { x: number; y: number; width: number; height: number }) => void;
     oncancelregion?: () => void;
+    onconfirmregion?: () => void;
+    minimumRegionDrag?: boolean;
     regionMode?: boolean;
     regionLabel?: string;
     faces?: { id: string; label: string; box: import("./photoRotation.js").NormalizedBox }[];
@@ -100,7 +104,7 @@
     const end = point(event);
     const w = Math.abs(end.x - origin.x),
       h = Math.abs(end.y - origin.y);
-    if (w < 0.01 && h < 0.01) {
+    if (minimumRegionDrag && w < 0.01 && h < 0.01) {
       origin = undefined;
       return;
     }
@@ -140,7 +144,8 @@
     event.preventDefault();
     event.stopPropagation();
     if (event.detail > 0) return;
-    onregion?.({ ...keyboardPoint, width: 0.15, height: 0.15 });
+    if (onconfirmregion) onconfirmregion();
+    else onregion?.({ ...keyboardPoint, width: 0.15, height: 0.15 });
   }
 
   let viewport: HTMLElement | undefined;

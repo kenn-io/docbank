@@ -21,6 +21,7 @@
     onreload,
     onunavailable,
     onfocus,
+    onfit,
   }: {
     photo: PhotoBrowseRow;
     photos: Photos;
@@ -34,6 +35,12 @@
     onreload?: (row: PhotoBrowseRow) => void;
     onunavailable?: (message: string) => void;
     onfocus?: () => void;
+    onfit?: (preview?: {
+      url: string;
+      content_version_id: string;
+      width: number;
+      height: number;
+    }) => void;
   } = $props();
   let current = $state.raw(untrack(() => photo));
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
@@ -53,10 +60,15 @@
     loader = active;
     return () => active.dispose();
   });
+  $effect(() => {
+    onfit?.(loader.fit);
+  });
+  const failure = $derived(loader.failure ?? (onfit ? loader.fitFailure : undefined));
   async function retry() {
-    if (loader.failure?.action !== "reload") {
+    if (failure?.action !== "reload") {
       const active = loader;
-      await active.retry();
+      if (onfit && active.fitFailure?.action === "fit") await active.retryFit();
+      else await active.retry();
       if (!active.active.signal.aborted && !active.failure) {
         await tick();
         onfocus?.();
@@ -98,8 +110,8 @@
     onzoom={() => loader.zoom()}
     unavailable={!!loader.failure && !loader.retrying}
   />
-  {#if loader.failure}<p role="status">
-      {loader.failure.message}{#if loader.failure.action}
+  {#if failure}<p role="status">
+      {failure.message}{#if failure.action}
         <Button size="sm" onclick={() => void retry()}>Retry preview</Button>{/if}
     </p>{/if}
 </div>

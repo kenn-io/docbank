@@ -536,12 +536,14 @@
     photoConcealed = false;
     photoValidated = true;
     photoAccessError = "";
+    applyPersonPhotos();
   }
 
   $effect(() => {
     if (!webSession) return;
     return () => {
       hiddenPhotoActionError = "";
+      pendingPerson = undefined;
       discardLibrary();
       photoValidated = false;
       photoChangeID = undefined;
@@ -683,9 +685,11 @@
     }
   }
 
-  function openPersonPhotos(personID: string, name: string) {
+  let pendingPerson = $state<{ id: string; name: string }>();
+  function applyPersonPhotos() {
+    if (!pendingPerson || !photoState || !photoValidated || hiddenMode) return false;
+    const { id: personID, name } = pendingPerson;
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
-    if (!photoState) return;
     if (
       !photoState.photos.setQuery({
         ...photoState.photos.query,
@@ -696,7 +700,15 @@
     )
       return;
     photoState.photos.personFilter = { id: personID, name };
-    navigatePhotos("/photos");
+    pendingPerson = undefined;
+    return true;
+  }
+  function openPersonPhotos(personID: string, name: string) {
+    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
+    pendingPerson = { id: personID, name };
+    if (photoState && photoValidated && !hiddenMode) {
+      if (applyPersonPhotos()) navigatePhotos("/photos");
+    } else navigatePhotos("/photos");
   }
 
   function navigatePhotos(path: string) {

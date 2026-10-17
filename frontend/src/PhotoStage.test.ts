@@ -1,3 +1,4 @@
+import type { PhotoPreviewSlot } from "./generated/docbank.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoStage from "./PhotoStage.svelte";
@@ -32,6 +33,8 @@ it.each(["fit", "large"] as const)(
       configurable: true,
       value: vi.fn(async () => {}),
     });
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
+    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
     const item = photo(1);
     item.previews.grid = { state: "missing" };
     const photos = new Photos("scoped", vi.fn());
@@ -110,6 +113,8 @@ it.each([
       rejectFit = reject;
       resolveFit = resolve;
     });
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
+    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
     const item = photo(1);
     item.previews.grid = { state: "missing" };
     const photos = new Photos("scoped", vi.fn());
@@ -136,16 +141,13 @@ it.each([
     if (failure === "rejected") rejectFit(new Error("Fit preview failed"));
     else resolveFit({ state: "missing" });
     await fit.catch(() => {});
-    await tick();
     expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:synthetic-large");
-    expect(!!screen.queryByRole("status")).toBe(closeups);
+    await waitFor(() => expect(!!screen.queryByRole("status")).toBe(closeups));
     expect(!!screen.queryByRole("button", { name: "Retry preview" })).toBe(closeups);
     if (closeups) {
       preview.mockResolvedValueOnce({
         state: "ready",
         generation_id: "fit-retry",
-        width: 1200,
-        height: 800,
       });
       await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
       await waitFor(() =>
@@ -183,6 +185,8 @@ it.each([
       configurable: true,
       value: vi.fn(async () => {}),
     });
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
+    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
     const item = photo(1);
     item.previews.grid = { state: "missing" };
     const current = {

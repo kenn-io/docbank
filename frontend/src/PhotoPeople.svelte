@@ -21,7 +21,6 @@
   let controller: AbortController | undefined;
   let writer: AbortController | undefined;
   let choosing = $state(false);
-  const created = new Map<string, PersonSummary>();
   const key = (id: string) => `\0${id}`;
   let exact = $state(false);
   $effect(() => {
@@ -33,7 +32,6 @@
     return () => {
       controller?.abort();
       writer?.abort();
-      created.clear();
     };
   });
   async function search(faceID: string, value: string) {
@@ -65,24 +63,31 @@
     choosing = true;
     error = "";
     const version = faces.version;
+    const selectedQuery = query;
+    let saved = false;
     const request = (writer = new AbortController());
     try {
-      if (!value) return await faces.clear(face);
-      let person =
-        people.find((person) => key(person.person_id) === value) ?? created.get(value.trim());
+      if (!value) return (saved = await faces.clear(face));
+      let person = people.find((person) => key(person.person_id) === value);
+      if (!person && (value.startsWith("\0") || exact || value.trim() !== query.trim()))
+        return false;
       if (!person) {
         person = await createPerson(
           { display_name: value.trim() },
           { session, signal: request.signal },
         );
-        created.set(value.trim(), person);
       }
       if (request.signal.aborted || faces.version !== version) return false;
-      return await faces.name(face, person.person_id);
+      return (saved = await faces.name(face, person.person_id));
     } catch (cause) {
       if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
       return false;
     } finally {
+      if (!saved && !request.signal.aborted && faces.version === version) {
+        const message = error;
+        await search(face.face_id, selectedQuery);
+        if (message) error = message;
+      }
       choosing = false;
     }
   }

@@ -76,6 +76,12 @@
     void photo?.content_version_id;
     addingFace = false;
   });
+  $effect(() => {
+    if (addingFace && !faces.pending && faces.faces.some((face) => face.face_id === pendingFaceID))
+      addingFace = false;
+    pendingFaceID = faces.pending?.face_id ?? "";
+  });
+  let pendingFaceID = $state("");
   let busy = $state(false);
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
@@ -226,6 +232,14 @@
         disabled={faces.loading || faces.busy}
         onclick={() => (addingFace = !addingFace)}>{addingFace ? "Cancel face" : "Add face"}</Button
       >{/if}
+    {#if faces.pending}<Button
+        size="sm"
+        disabled={faces.busy || faces.loading}
+        onclick={() =>
+          void faces.retryAdd().then((saved) => {
+            if (saved) addingFace = false;
+          })}>Retry face</Button
+      >{/if}
     <IconButton ariaLabel="Reset zoom" onclick={() => image?.reset()}
       ><RotateCcw size={18} /></IconButton
     >
@@ -288,6 +302,13 @@
           }))}
           regionMode={photo?.kind === "photo" && addingFace}
           regionLabel={`Position face on ${photo?.name ?? "Photo"}`}
+          minimumRegionDrag
+          onconfirmregion={faces.pending
+            ? () =>
+                void faces.retryAdd().then((saved) => {
+                  if (saved) addingFace = false;
+                })
+            : undefined}
           oncancelregion={() => (addingFace = false)}
           onregion={(region) => {
             void faces.add(drawnPhotoFace(region, photo?.rotation ?? 0)).then((saved) => {

@@ -63,6 +63,23 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
     url.pathname = "/photos";
     await page.goto(url.href);
+    await page
+      .locator(".photo-cell")
+      .nth(0)
+      .getByRole("button", { name: /^Select / })
+      .click();
+    await page
+      .locator(".photo-cell")
+      .nth(1)
+      .getByRole("button", { name: /^Select / })
+      .click({ modifiers: ["Control"] });
+    await page.getByRole("button", { name: "Compare", exact: true }).click();
+    const compare = page.getByRole("dialog", { name: "Compare photos" });
+    await expect(compare.locator(".photo-viewport img").first()).toBeVisible();
+    await compare.getByRole("button", { name: "Manual closeup", exact: true }).click();
+    await compare.locator(".photo-viewport").first().click();
+    await expect(compare.getByLabel("Matching closeups")).toBeVisible();
+    await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
     await page.locator(".photo-image").first().dblclick();
     const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
     await expect(loupe.locator(".photo-viewport img")).toBeVisible();
@@ -231,6 +248,42 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       .toBe(true);
     await expect(closeups.locator("figcaption")).toHaveText(["Ada", "Ada", "Unnamed face"]);
     await captureThemes(page, "web-photo-faces-cull");
+    await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
+    await page.getByRole("button", { name: "Hidden", exact: true }).click();
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Set passcode", exact: true }).click();
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    await page
+      .locator(".photo-cell")
+      .first()
+      .getByRole("button", { name: /^Select / })
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
+    await expect(page.locator(".photo-cell")).toHaveCount(0);
+    url.pathname = "/photos/hidden";
+    await page.goto("about:blank");
+    await page.goto(url.href);
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await page.locator(".photo-image").first().dblclick();
+    await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
+    const library = page.waitForRequest(
+      (request) =>
+        request.url().endsWith("/photos/assets/query") &&
+        request.postDataJSON()?.query?.filters?.person_ids?.includes(personID),
+    );
+    await loupe.getByRole("button", { name: "Ada", exact: true }).first().click();
+    expect((await library).postDataJSON()).toMatchObject({
+      hidden: false,
+      query: { text: "", sort: { field: "capture_time", direction: "desc" } },
+    });
+    await expect(page).toHaveURL(/\/photos$/);
+    await expect(page.getByText("Person: Ada", { exact: true })).toBeVisible();
+    await expect(page.locator(".photo-cell")).toHaveCount(0);
+    await page.screenshot({
+      path: path.join(output!, "web-photo-faces-hidden-person.png"),
+      animations: "disabled",
+    });
   } finally {
     await fixture.dispose();
   }

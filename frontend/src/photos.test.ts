@@ -3247,7 +3247,10 @@ it.each([false, true])(
       const request = JSON.parse(String(init.body));
       requests.push(request);
       const id =
-        request.query.filters.person_ids?.[0] ?? request.query.text.slice("person:".length);
+        request.query.filters.person_ids?.[0] ??
+        (request.query.text.startsWith("saved:")
+          ? grace
+          : request.query.text.slice("person:".length));
       const items = id === assigned ? [photo(1)] : [];
       return Response.json({ items, total: items.length, facets: [] });
     });
@@ -3259,7 +3262,7 @@ it.each([false, true])(
     const newPerson = new Photos("session", vi.fn(), hidden, {
       ...photoQuery,
       syntax: "advanced",
-      text: `person:${grace}`,
+      text: `saved:"Grace photos"`,
     });
     const otherScope = new Photos("session", vi.fn(), !hidden, {
       ...photoQuery,

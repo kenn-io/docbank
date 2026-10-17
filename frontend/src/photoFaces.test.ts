@@ -130,3 +130,57 @@ it.each([
   expect(auth).toHaveBeenCalledTimes(escalates ? 1 : 0);
   expect(faces.error).toBe("Denied");
 });
+
+it.each([new Error("Response lost"), new APIError("Unavailable", 503, "unavailable")])(
+  "replays an uncertain box with its original ID: %s",
+  async (cause) => {
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
+    const create = vi
+      .spyOn(api, "createPhotoFace")
+      .mockRejectedValueOnce(cause)
+      .mockResolvedValue({ face });
+    const faces = new PhotoFaces("session", vi.fn());
+    await faces.load("version-a");
+    const box = { x: 0.2, y: 0.3, width: 0.1, height: 0.15 };
+    expect(await faces.add(box)).toBe(false);
+    const request = create.mock.calls[0]!;
+    expect(await faces.add({ ...box, x: 0.7 })).toBe(false);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(await faces.retryAdd()).toBe(true);
+    expect(create.mock.calls[1]!.slice(0, 2)).toEqual(request.slice(0, 2));
+    expect(request[1]!.box).toEqual(box);
+    expect(await faces.add(box)).toBe(true);
+    expect(create.mock.calls[2]![1]!.face_id).not.toBe(request[1]!.face_id);
+    faces.dispose();
+  },
+);
+it.each(["definitive", "version", "reconciled"])(
+  "clears a pending create after %s",
+  async (reason) => {
+    const read = vi
+      .spyOn(api, "listPhotoFaces")
+      .mockResolvedValue({ faces: [], assertions: [], people: [] });
+    const create = vi
+      .spyOn(api, "createPhotoFace")
+      .mockRejectedValue(
+        reason === "definitive"
+          ? new APIError("Invalid", 400, "invalid")
+          : new Error("Response lost"),
+      );
+    const faces = new PhotoFaces("session", vi.fn());
+    await faces.load("version-a");
+    await faces.add({ x: 0.2, y: 0.3, width: 0.1, height: 0.15 });
+    if (reason === "version") await faces.load("version-b");
+    if (reason === "reconciled") {
+      read.mockResolvedValue({
+        faces: [{ ...face, face_id: create.mock.calls[0]![1]!.face_id! }],
+        assertions: [],
+        people: [],
+      });
+      await faces.load("version-a");
+    }
+    expect(await faces.retryAdd()).toBe(false);
+    expect(create).toHaveBeenCalledTimes(1);
+    faces.dispose();
+  },
+);
