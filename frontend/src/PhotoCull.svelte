@@ -74,20 +74,34 @@
   const currentID = $derived(cull.currentID);
   const complete = $derived(cull.complete);
   const pass = $derived(checkpoint.pass);
+  let lastLookupAttempt = 0;
   $effect(() => {
     const id = currentID;
-    void lookupAttempt;
+    const reload = lookupAttempt !== lastLookupAttempt;
+    lastLookupAttempt = lookupAttempt;
     const controller = new AbortController();
-    untrack(() => {
+    const held = untrack(() => {
       const previous = photo;
       if (previous)
         neighbors = [...neighbors.filter((row) => row.asset_id !== previous.asset_id), previous];
+      if (reload) return;
+      const row = neighbors.find((row) => row.asset_id === id);
+      const expected = editor.targets.find(
+        (target) => target.asset_id === id && target.content_version_id,
+      );
+      if (
+        row &&
+        (!expected?.content_version_id ||
+          (expected.file_id === row.display_file_id &&
+            expected.content_version_id === row.content_version_id))
+      )
+        return row;
     });
-    photo = undefined;
+    photo = held;
     error = "";
-    loading = !!id;
+    loading = !!id && !held;
     view = { ...fittedPhotoView };
-    if (id)
+    if (id && !held)
       void photos
         .lookup(id, controller.signal)
         .then((row) => {

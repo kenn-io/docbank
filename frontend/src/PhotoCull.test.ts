@@ -1106,3 +1106,33 @@ it.each(["Cancel", "Replace"])(
     }
   },
 );
+
+it.each(["held", "missing", "different version"])(
+  "loads the current photo from a %s neighbor",
+  async (kind) => {
+    const rows = [photo(1), photo(2)];
+    const { cull, photos } = await reviewPhoto(rows[0]);
+    vi.mocked(photos.lookupMany).mockResolvedValue(kind === "missing" ? [] : [rows[1]!]);
+    vi.mocked(photos.lookup).mockResolvedValue({ ...rows[1]!, name: "Looked up.jpg" });
+    await act(() => {
+      cull.run = {
+        ...cull.run!,
+        ids: rows.map((row) => row.asset_id),
+        checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+      };
+    });
+    if (kind !== "missing") await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+    if (kind === "different version") {
+      await act(() => {
+        photos.cullEditor!.targets = [
+          { ...preparedPhoto(2), content_version_id: "expected-version" },
+        ];
+      });
+    }
+    vi.mocked(photos.lookup).mockClear();
+    await fireEvent.click(await readyButton("Next"));
+    await screen.findByText(kind === "held" ? "Photo 2.jpg" : "Looked up.jpg");
+    if (kind === "held") expect(photos.lookup).not.toHaveBeenCalled();
+    else expect(photos.lookup).toHaveBeenCalledExactlyOnceWith("photo-2", expect.any(AbortSignal));
+  },
+);
