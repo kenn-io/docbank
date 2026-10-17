@@ -15,6 +15,13 @@
     onedit: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
   } = $props();
   let keyword = $state("");
+  $effect(() => {
+    if (keyword && !editor.tags.some((tag) => tag.id === keyword)) keyword = "";
+  });
+  function stageKeyword(assign: boolean) {
+    if (keyword && editor.tags.some((tag) => tag.id === keyword))
+      editor.stage({}, [{ tag_id: keyword, assign }]);
+  }
   const disabled = $derived(
     actionDisabled ||
       editor.concealed ||
@@ -138,15 +145,10 @@
       />
     </div>
     {#if keyword}<div class="keyword-actions">
-        <Button
+        <Button size="sm" {disabled} onclick={() => stageKeyword(true)}>Add keyword</Button><Button
           size="sm"
           {disabled}
-          onclick={() => editor.stage({}, [{ tag_id: keyword, assign: true }])}>Add keyword</Button
-        ><Button
-          size="sm"
-          {disabled}
-          onclick={() => editor.stage({}, [{ tag_id: keyword, assign: false }])}
-          >Remove keyword</Button
+          onclick={() => stageKeyword(false)}>Remove keyword</Button
         >{#if editor.keywordState(keyword)}<span
             >{editor.keywordState(keyword) === "mixed" ? "Mixed" : "Assigned"}</span
           >{/if}

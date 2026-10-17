@@ -795,6 +795,42 @@ it.each([
   },
 );
 
+it.each([false, true])(
+  "reconciles a newer event after a shared read settles, failed=$0",
+  async (failed) => {
+    const editor = editorWithTargets();
+    let finish!: () => void;
+    const latest = targets.map((target) => ({
+      ...target,
+      revision: 8,
+      values: { ...target.values, caption: "Latest caption" },
+    }));
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => (finish = resolve));
+        if (failed) throw new APIError("Metadata unavailable", 503, "unavailable");
+        return { assets: [asset], targets };
+      })
+      .mockResolvedValue({ assets: [asset], targets: latest });
+    editor.changedElsewhere();
+    const first = editor.reconcile();
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    editor.changedElsewhere();
+    const second = editor.reconcile();
+    expect(prepare).toHaveBeenCalledOnce();
+    finish();
+    await Promise.all([first, second]);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(editor.value("caption")).toBe("Latest caption");
+    expect(editor.targets).toEqual(latest);
+    expect(editor.conflict).toBe(false);
+    await editor.reconcile();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    editor.dispose();
+  },
+);
+
 it("retries a metadata reconcile that a later list refresh interrupts", async () => {
   const editor = editorWithTargets();
   let finish!: () => void;
@@ -980,6 +1016,43 @@ it("retains a staged keyword beyond the first catalog page", async () => {
   expect(editor.patch.caption).toBe("Draft");
   editor.dispose();
 });
+
+it.each(["Add keyword", "Remove keyword"])(
+  "clears a deleted keyword selection and rejects a stale %s action",
+  async (action) => {
+    const editor = editorWithTargets();
+    const retained = { id: "retained", name: "Retained", revision: 1, assignment_count: 0 };
+    editor.tags = [retained, { id: "deleted", name: "Deleted", revision: 1, assignment_count: 1 }];
+    editor.targets[0]!.tags = ["deleted"];
+    editor.stage({ caption: "Draft caption" }, [{ tag_id: "retained", assign: true }]);
+    editor.rotationDelta = 90;
+    ui(editor);
+    await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "Deleted (1)" }));
+    const staleAction = screen.getByRole("button", { name: action });
+    vi.spyOn(api, "getTag").mockImplementation(async (id) => {
+      if (id === "deleted") throw new APIError("Deleted", 404, "not_found");
+      return retained;
+    });
+    await editor.refreshAssignedTags();
+    // A click queued before the catalog update must also reject the stale selection.
+    await fireEvent.click(staleAction);
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Add keyword" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Remove keyword" })).toBeNull();
+    });
+    expect(screen.getByRole("combobox", { name: /Keyword:/ }).textContent).toContain(
+      "Choose keyword",
+    );
+    expect(editor.keywords).toEqual([{ tag_id: "retained", assign: true }]);
+    expect(editor.patch).toEqual({ caption: "Draft caption" });
+    expect(editor.rotationDelta).toBe(90);
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).value).toBe(
+      "Draft caption",
+    );
+    editor.dispose();
+  },
+);
 
 it.each(["refresh", "resolve"])("removes a deleted assigned keyword during %s", async (path) => {
   const editor = editorWithTargets();

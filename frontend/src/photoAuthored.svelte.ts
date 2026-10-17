@@ -202,7 +202,7 @@ export class PhotoAuthoredEditor {
   private membershipConflict = false;
   private remoteChanges = 0;
   private failedComparison?: number;
-  private reconciling?: { read: AbortController; done: Promise<void> };
+  private reconciling?: { read: AbortController; done: Promise<void>; change: number };
   affectedBy(changes: PhotoEventBatch) {
     return this.targets.some((target) => changes.refetch || changes.assets.has(target.asset_id));
   }
@@ -221,12 +221,16 @@ export class PhotoAuthoredEditor {
     }
     // Share a live reconcile; a failed one waits for Reload metadata or the next change.
     if (!this.reconciling || this.reconciling.read.signal.aborted) {
+      const change = this.remoteChanges;
       const done = this.prepare(this.reloadScope(), true, true);
-      this.reconciling = { read: this.read, done };
+      this.reconciling = { read: this.read, done, change };
     }
     const reconciling = this.reconciling;
     await reconciling.done;
-    if (this.reconciling === reconciling) this.reconciling = undefined;
+    if (this.reconciling === reconciling) {
+      this.reconciling = undefined;
+      if (this.remoteChanges !== reconciling.change) await this.reconcile();
+    }
   }
   canChangeTarget() {
     if (this.loading) {
