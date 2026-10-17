@@ -8,7 +8,7 @@ const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
 
-async function captureDialogThemes(
+async function captureDarkDialog(
   page: Page,
   dialog: Locator,
   directory: string,
@@ -17,26 +17,24 @@ async function captureDialogThemes(
   ready: () => Promise<unknown>,
 ) {
   await expect.poll(ready).toBe(true);
-  for (const theme of ["light", "dark"]) {
-    await page.evaluate(async (theme) => {
-      localStorage.setItem("docbank-theme", theme);
-      document.documentElement.classList.toggle("dark", theme === "dark");
-      await document.fonts.ready;
-    }, theme);
-    const bounds = await dialog.boundingBox();
-    const viewport = page.viewportSize();
-    if (!bounds || !viewport) throw new Error("Photo dialog is not measurable");
-    await page.screenshot({
-      path: path.join(directory, `${name}-${theme}.png`),
-      clip: {
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: Math.min(cropHeight, bounds.height, viewport.height - bounds.y),
-      },
-      animations: "disabled",
-    });
-  }
+  await page.evaluate(async () => {
+    localStorage.setItem("docbank-theme", "dark");
+    document.documentElement.classList.add("dark");
+    await document.fonts.ready;
+  });
+  const bounds = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  if (!bounds || !viewport) throw new Error("Photo dialog is not measurable");
+  await page.screenshot({
+    path: path.join(directory, `${name}-dark.png`),
+    clip: {
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: Math.min(cropHeight, bounds.height, viewport.height - bounds.y),
+    },
+    animations: "disabled",
+  });
 }
 
 test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) => {
@@ -143,7 +141,7 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await people.getByRole("option", { name: "Ada · 2 people", exact: true }).click();
     const chooser = page.getByRole("dialog", { name: "Choose Ada" });
     await expect(chooser.getByRole("img")).toHaveCount(2);
-    await captureDialogThemes(page, chooser, output!, "after-photo-people-chooser", 760, async () =>
+    await captureDarkDialog(page, chooser, output!, "after-photo-people-chooser", 760, async () =>
       chooser
         .getByRole("img")
         .evaluateAll((images) =>
@@ -188,10 +186,10 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x + 20, y + 12);
+    const layer = (await loupe.locator(".face-layer").boundingBox())!;
     await page.mouse.up();
     const drawnFace = (await (await drawn).json()).face;
     await expect(loupe.locator(".face-box")).toHaveCount(2);
-    const layer = (await loupe.locator(".face-layer").boundingBox())!;
     expect(drawnFace.box.width * layer.width).toBeCloseTo(20, 0);
     expect(drawnFace.box.height * layer.height).toBeCloseTo(12, 0);
     await people
@@ -205,7 +203,7 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
       expect(rows.faces.find((row) => row.face_id === drawnFace.face_id)?.dismissed).toBe(true);
     });
     await loupe.getByRole("button", { name: "Reset zoom", exact: true }).click();
-    await captureDialogThemes(
+    await captureDarkDialog(
       page,
       loupe,
       output!,
@@ -225,13 +223,16 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await filtered;
     await expect(loupe).toHaveCount(0);
     await expect(page.locator(".photo-cell")).toHaveCount(2);
+    await page.goto(url.href);
+    await page.getByRole("button", { name: "Clear filters", exact: true }).click();
+    await expect(page.locator(".photo-cell")).toHaveCount(3);
     await page.setViewportSize({ width: 1440, height: 720 });
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     const closeups = cull.getByRole("region", { name: "Face closeups" });
     await expect(closeups.getByRole("img")).toHaveCount(1);
     await expect(closeups.locator("figcaption")).toHaveText(["Face 1 · Ada"]);
-    await captureDialogThemes(page, cull, output!, "after-photo-faces-cull", 620, async () =>
+    await captureDarkDialog(page, cull, output!, "after-photo-faces-cull", 620, async () =>
       closeups.getByRole("img").evaluate((image) => (image as HTMLImageElement).naturalWidth > 0),
     );
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
