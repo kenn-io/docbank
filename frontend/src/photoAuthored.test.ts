@@ -618,15 +618,8 @@ it.each(["assigned tags", "edit counts", "Undo counts"])(
       await fireEvent.click(option);
     };
     if (behavior === "assigned tags") {
-      const lookup = vi.spyOn(api, "getTag");
-      await editor.refreshAssignedTags();
-      expect(lookup).toHaveBeenCalledExactlyOnceWith(
-        assigned,
-        expect.objectContaining({ session: "session" }),
-      );
       expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
         "/api/v1/photos/authored/prepare",
-        `/api/v1/tags/${assigned}`,
         `/api/v1/tags/${assigned}`,
       ]);
       expect(editor.tags).toHaveLength(1002);
@@ -744,277 +737,6 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   editor.dispose();
 });
 
-it.each([
-  { failed: false, filtered: false },
-  { failed: false, filtered: true },
-  { failed: true, filtered: false },
-])(
-  "reconciles metadata once a write settles after its event, failed=$failed, filtered=$filtered",
-  async ({ failed, filtered }) => {
-    const editor = editorWithTargets();
-    const saved = targets.map((target) => ({
-      ...target,
-      revision: 7,
-      values: { ...target.values, caption: "Saved" },
-    }));
-    let respond!: () => void;
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockResolvedValue({ assets: [asset], targets: saved });
-    vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
-      await new Promise<void>((resolve) => (respond = resolve));
-      if (failed) throw new APIError("Metadata unavailable", 503, "unavailable");
-      return { receipt_id: "saved", before: targets, after: saved };
-    });
-    editor.stage({ caption: "Saved" });
-    const write = editor.edit({}, {}, false, async () => {
-      if (filtered) {
-        editor.conceal();
-        editor.revalidate(new Set(["asset"]));
-      }
-    });
-    await vi.waitFor(() => expect(respond).toBeTypeOf("function"));
-    editor.changedElsewhere();
-    await editor.reconcile();
-    expect(prepare).not.toHaveBeenCalled();
-    respond();
-    await write;
-    if (failed) {
-      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-      expect(editor.conflict).toBe(true);
-      expect(editor.patch.caption).toBe("Saved");
-    } else {
-      await vi.waitFor(() => expect(editor.conflict).toBe(false));
-      await vi.waitFor(() => expect(editor.loading).toBe(false));
-      expect(prepare).toHaveBeenCalled();
-      expect(editor.value("caption")).toBe("Saved");
-      editor.stage({ caption: "Again" });
-      expect(editor.dirty).toBe(true);
-    }
-    editor.dispose();
-  },
-);
-
-it.each([false, true])(
-  "preserves drafts through an initial live follow-up, changed=$0",
-  async (changed) => {
-    const editor = new PhotoAuthoredEditor("session", vi.fn());
-    let finish!: () => void;
-    const remote = changed ? targets.map((target) => ({ ...target, revision: 8 })) : targets;
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockImplementationOnce(async () => {
-        await new Promise<void>((resolve) => (finish = resolve));
-        return { assets: [asset], targets };
-      })
-      .mockResolvedValue({ assets: [asset], targets: remote });
-    const first = editor.prepare({ asset_ids: ["asset"] });
-    const changes = { assets: new Map([["asset", 2]]), albums: new Map(), refetch: false };
-    expect(editor.affectedBy(changes)).toBe(true);
-    expect(editor.affectedBy({ assets: new Map(), albums: new Map(), refetch: true })).toBe(true);
-    expect(editor.affectedBy({ ...changes, assets: new Map([["unrelated", 2]]) })).toBe(false);
-    editor.changedElsewhere(changes);
-    editor.stage({ caption: "Local draft" });
-    const refreshing = editor.reconcile({ asset_ids: ["asset"] });
-    expect(prepare).toHaveBeenCalledOnce();
-    finish();
-    await first;
-    await refreshing;
-    expect(editor.value("caption")).toBe("Local draft");
-    expect(editor.conflict).toBe(changed);
-    if (changed) {
-      await editor.reload();
-      expect(editor.value("caption")).toBe("Local draft");
-      expect(editor.targets[0]!.revision).toBe(8);
-      expect(editor.conflict).toBe(false);
-    }
-    editor.dispose();
-  },
-);
-
-it("retries an initial follow-up aborted while the editor is concealed", async () => {
-  const editor = new PhotoAuthoredEditor("session", vi.fn());
-  const replies: (() => void)[] = [];
-  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () => {
-    if (replies.length < 2) await new Promise<void>((resolve) => replies.push(resolve));
-    return { assets: [asset], targets };
-  });
-  const initial = editor.prepare({ asset_ids: ["asset"] });
-  editor.changedElsewhere();
-  const refreshing = editor.reconcile({ asset_ids: ["asset"] });
-  replies[0]!();
-  await initial;
-  await vi.waitFor(() => expect(replies).toHaveLength(2));
-  editor.conceal();
-  editor.revalidate(new Set(["asset"]));
-  replies[1]!();
-  await refreshing;
-  expect(prepare).toHaveBeenCalledTimes(3);
-  expect(editor.conflict).toBe(false);
-  expect(editor.loading).toBe(false);
-  editor.dispose();
-});
-
-it.each([false, true])(
-  "reconciles a newer event after a shared read settles, failed=$0",
-  async (failed) => {
-    const editor = editorWithTargets();
-    let finish!: () => void;
-    const latest = targets.map((target) => ({
-      ...target,
-      revision: 8,
-      values: { ...target.values, caption: "Latest caption" },
-    }));
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockImplementationOnce(async () => {
-        await new Promise<void>((resolve) => (finish = resolve));
-        if (failed) throw new APIError("Metadata unavailable", 503, "unavailable");
-        return { assets: [asset], targets };
-      })
-      .mockResolvedValue({ assets: [asset], targets: latest });
-    editor.changedElsewhere();
-    const first = editor.reconcile();
-    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-    editor.changedElsewhere();
-    const second = editor.reconcile();
-    expect(prepare).toHaveBeenCalledOnce();
-    finish();
-    await Promise.all([first, second]);
-    expect(prepare).toHaveBeenCalledTimes(2);
-    expect(editor.value("caption")).toBe("Latest caption");
-    expect(editor.targets).toEqual(latest);
-    expect(editor.conflict).toBe(false);
-    await editor.reconcile();
-    expect(prepare).toHaveBeenCalledTimes(2);
-    editor.dispose();
-  },
-);
-
-it("retries a metadata reconcile that a later list refresh interrupts", async () => {
-  const editor = editorWithTargets();
-  let finish!: () => void;
-  const remote = targets.map((target) => ({
-    ...target,
-    revision: 7,
-    values: { ...target.values, caption: "Remote" },
-  }));
-  const prepare = vi
-    .spyOn(api, "preparePhotoAuthored")
-    .mockImplementationOnce(async () => {
-      await new Promise<void>((resolve) => (finish = resolve));
-      return { assets: [asset], targets: remote };
-    })
-    .mockResolvedValue({ assets: [asset], targets: remote });
-  editor.changedElsewhere();
-  const affected = editor.reconcile();
-  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-  editor.conceal();
-  editor.revalidate(new Set(["asset"]));
-  finish();
-  await affected;
-  await vi.waitFor(() => expect(editor.conflict).toBe(false));
-  expect(prepare).toHaveBeenCalledTimes(2);
-  expect(editor.value("caption")).toBe("Remote");
-  editor.dispose();
-});
-
-it("keeps metadata blocked after a timed-out live reload until a successful retry", async () => {
-  const editor = editorWithTargets();
-  const deadline = new AbortController();
-  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
-  const prepare = vi
-    .spyOn(api, "preparePhotoAuthored")
-    .mockImplementationOnce(async (_scope, options) => {
-      return new Promise((_, reject) =>
-        options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
-          once: true,
-        }),
-      );
-    })
-    .mockResolvedValue({
-      assets: [asset],
-      targets: targets.map((target) => ({
-        ...target,
-        values: { ...target.values, caption: "Remote caption" },
-      })),
-    });
-  editor.changedElsewhere();
-  const refreshing = editor.reconcile();
-  await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-  expect(editor.loading).toBe(true);
-  deadline.abort(new DOMException("The operation timed out.", "TimeoutError"));
-  await refreshing;
-  expect(editor.loading).toBe(false);
-  expect(editor.conflict).toBe(true);
-  ui(editor);
-  const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
-  expect(caption().disabled).toBe(true);
-  expect(editor.error).toBe("Metadata timed out. Reload metadata.");
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled).toBe(
-    false,
-  );
-  vi.mocked(AbortSignal.timeout).mockReturnValue(new AbortController().signal);
-  await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
-  await vi.waitFor(() => expect(caption().value).toBe("Remote caption"));
-  expect(caption().disabled).toBe(false);
-  editor.dispose();
-});
-
-it("closes clean metadata when a live change removes its only target", async () => {
-  const editor = editorWithTargets();
-  editor.changedElsewhere();
-  editor.conceal();
-  editor.revalidate(new Set());
-  await editor.reconcile();
-  expect(editor.targets).toHaveLength(0);
-  expect(editor.conflict).toBe(false);
-  editor.dispose();
-});
-
-it.each(["Reload", "another event"])(
-  "blocks a retained draft after a failed ID-free comparison until %s",
-  async (recovery) => {
-    const editor = editorWithTargets();
-    editor.stage({ caption: "Draft caption" });
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockRejectedValueOnce(new APIError("Metadata unavailable", 503, "unavailable"))
-      .mockResolvedValue({ assets: [asset], targets });
-    ui(editor);
-    editor.changedElsewhere({ assets: new Map(), albums: new Map(), refetch: true });
-    expect(editor.conflict).toBe(false);
-    await editor.reconcile();
-    expect(editor.loading).toBe(false);
-    expect(editor.conflict).toBe(true);
-    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).disabled).toBe(
-      true,
-    );
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
-    ).toBe(false);
-    expect(editor.targets).toEqual(targets);
-    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).value).toBe(
-      "Draft caption",
-    );
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
-    expect(prepare).toHaveBeenCalledOnce();
-    await editor.reconcile();
-    expect(prepare).toHaveBeenCalledOnce();
-    if (recovery === "Reload")
-      await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
-    else {
-      editor.changedElsewhere({ assets: new Map(), albums: new Map(), refetch: true });
-      await editor.reconcile();
-    }
-    await vi.waitFor(() => expect(editor.conflict).toBe(false));
-    expect(editor.patch.caption).toBe("Draft caption");
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(false);
-    expect(prepare).toHaveBeenCalledTimes(2);
-    editor.dispose();
-  },
-);
-
 it.each(["unchanged", "asset", "file", "node", "membership"])(
   "rechecks an ID-free refresh with %s targets while retaining a draft",
   async (change) => {
@@ -1028,7 +750,6 @@ it.each(["unchanged", "asset", "file", "node", "membership"])(
     vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [asset], targets: latest });
     const changes = {
       assets: new Map<string, number>(),
-      albums: new Map<string, number>(),
       refetch: true,
     };
     editor.changedElsewhere(changes);
@@ -1063,165 +784,39 @@ it.each(["unchanged", "asset", "file", "node", "membership"])(
   },
 );
 
-it("retains a staged keyword beyond the first catalog page", async () => {
-  const editor = editorWithTargets();
-  const keyword = { id: "later-page", name: "Later page", revision: 1, assignment_count: 0 };
-  editor.tags = [keyword];
-  editor.stage({ caption: "Draft" }, [{ tag_id: keyword.id, assign: true }]);
-  const renamed = { ...keyword, name: "Renamed later page", revision: 2 };
-  vi.spyOn(api, "getTag").mockResolvedValue(renamed);
-  await editor.refreshAssignedTags();
-  editor.catalog([{ id: "first-page", name: "First page", revision: 1, assignment_count: 0 }]);
-  expect(editor.tags).toContainEqual(renamed);
-  expect(editor.keywordState(keyword.id)).toBe("assigned");
-  expect(editor.patch.caption).toBe("Draft");
-  editor.dispose();
-});
-
-it.each([
-  { path: "refresh", action: "Add keyword" },
-  { path: "resolve", action: "Remove keyword" },
-])(
-  "removes a deleted keyword during $path and rejects its stale $action action",
-  async ({ path, action }) => {
-    const editor = editorWithTargets();
-    const retained = { id: "retained", name: "Retained", revision: 1, assignment_count: 0 };
-    editor.tags = [retained, { id: "deleted", name: "Deleted", revision: 1, assignment_count: 1 }];
-    editor.targets[0]!.tags = ["deleted"];
-    editor.stage({ caption: "Draft caption" }, [
-      { tag_id: "deleted", assign: true },
-      { tag_id: "retained", assign: false },
-    ]);
-    editor.rotationDelta = 90;
-    const deleted = vi.fn();
-    editor.onTagDeleted = deleted;
-    ui(editor);
-    await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
-    await fireEvent.click(screen.getByRole("option", { name: "Deleted (1)" }));
-    const staleAction = screen.getByRole("button", { name: action });
-    const lookup = vi.spyOn(api, "getTag").mockImplementation(async (id) => {
-      if (id === "deleted") throw new APIError("Deleted", 404, "not_found");
-      return retained;
-    });
-    if (path === "refresh") await editor.refreshAssignedTags();
-    else {
-      editor.tags = [retained];
-      editor.catalog([]);
-      await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith("deleted"));
-      editor.catalog([]);
-    }
-    // A click queued before the catalog update must also reject the stale selection.
-    await fireEvent.click(staleAction);
-    await vi.waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Add keyword" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Remove keyword" })).toBeNull();
-    });
-    expect(screen.getByRole("combobox", { name: /Keyword:/ }).textContent).toContain(
-      "Choose keyword",
-    );
-    expect(editor.tags).toEqual([retained]);
-    expect(editor.tagsError).toBe("");
-    expect(editor.keywords).toEqual([{ tag_id: "retained", assign: false }]);
-    expect(editor.patch).toEqual({ caption: "Draft caption" });
-    expect(editor.rotationDelta).toBe(90);
-    expect(editor.noticeTone).toBe("warning");
-    expect(editor.notice).toBe(
-      `${path === "refresh" ? "“Deleted”" : "A keyword"} was deleted. Its staged edit was removed.`,
-    );
-    expect(lookup).toHaveBeenCalledTimes(path === "refresh" ? 2 : 1);
-    const edit = vi
-      .spyOn(api, "editPhotoAuthored")
-      .mockResolvedValue({ receipt_id: "saved", before: targets, after: targets });
-    await editor.edit({}, {}, false, vi.fn());
-    expect(edit.mock.calls[0]![0]).toMatchObject({
-      patch: { caption: "Draft caption" },
-      rotation_delta: 90,
-      keywords: [{ tag_id: "retained", assign: false }],
-    });
-    editor.dispose();
-  },
-);
-
-it("retries a timed-out assigned keyword request", async () => {
-  const editor = editorWithTargets();
-  editor.targets[0]!.tags = ["assigned"];
-  const deadline = new AbortController();
-  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
-  const get = vi
-    .spyOn(api, "getTag")
-    .mockImplementationOnce(
-      async (_id, options) =>
-        new Promise<never>((_, reject) =>
-          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
-            once: true,
-          }),
-        ),
-    )
-    .mockResolvedValue({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 });
-  const refreshing = editor.refreshAssignedTags();
-  const failed = expect(refreshing).rejects.toThrow("Timed out");
-  await vi.waitFor(() => expect(get).toHaveBeenCalledOnce());
-  deadline.abort(new DOMException("Timed out", "TimeoutError"));
-  await failed;
-  timeout.mockRestore();
-  expect(await editor.refreshAssignedTags()).toEqual([
-    { id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 },
-  ]);
-  expect(get).toHaveBeenCalledTimes(2);
-  editor.dispose();
-});
-
-it.each([false, true])(
-  "reloads query membership and preserves later conflicts, event=%s",
-  async (event) => {
+it.each(["initial", "follow-up"])(
+  "reloads retained IDs after failed %s preparation",
+  async (failure) => {
     const editor = new PhotoAuthoredEditor("session", vi.fn());
-    const query = { syntax: "simple" as const, text: "photos" };
-    const a = preparedPhoto(1),
-      b = preparedPhoto(2),
-      c = preparedPhoto(3, { revision: 7 });
-    let finish!: (response: Response) => void;
-    let calls = 0;
-    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
-      expect(JSON.parse(init.body as string)).toEqual({ query });
-      if (++calls === 1) return response({ assets: [], targets: [a, b] });
-      return new Promise<Response>((resolve) => (finish = resolve));
-    });
-    await editor.prepare({ query });
-    editor.stage({ caption: "Draft" });
-    editor.changedElsewhere();
-    const reload = editor.reload();
-    if (event) editor.changedElsewhere();
-    finish(response({ assets: [], targets: [b, c] }));
-    await reload;
-    expect(editor.targets).toEqual([b, c]);
-    expect(editor.patch).toEqual({ caption: "Draft" });
-    expect(editor.membershipChanged).toBe(true);
-    editor.reviewMembers();
-    expect(editor.conflict).toBe(event);
+    const scope = { asset_ids: ["asset"] };
+    const prepare = vi.spyOn(api, "preparePhotoAuthored");
+    let finish!: () => void;
+    if (failure === "follow-up")
+      prepare.mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => (finish = resolve));
+        return { assets: [asset], targets };
+      });
+    prepare
+      .mockRejectedValueOnce(new Error("Metadata unavailable"))
+      .mockResolvedValue({ assets: [asset], targets });
+    const pending = editor.prepare(scope);
+    if (failure === "follow-up") {
+      editor.changedElsewhere({ assets: new Map(), refetch: true });
+      const reconciled = editor.reconcile(scope);
+      finish();
+      await pending;
+      await reconciled;
+    } else await pending;
+    expect(editor.error).toBe("Metadata unavailable");
+    expect(editor.canReload).toBe(true);
+    ui(editor);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
+    ).toBe(false);
+    await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+    expect(prepare.mock.calls.at(-1)![0]).toMatchObject(scope);
+    expect(editor.targets).toEqual(targets);
+    expect(editor.conflict).toBe(false);
     editor.dispose();
   },
 );
-
-it("keeps query Reload available after all targets disappear and a zero-match error", async () => {
-  const editor = new PhotoAuthoredEditor("session", vi.fn());
-  const query = { syntax: "simple" as const, text: "photos" };
-  let calls = 0;
-  vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
-    expect(JSON.parse(init.body as string)).toEqual({ query });
-    if (++calls === 2)
-      return response({ message: "No editable photos", code: "invalid_request" }, 400);
-    return response({ assets: [], targets: [preparedPhoto(1)] });
-  });
-  await editor.prepare({ query });
-  editor.stage({ caption: "Draft" });
-  editor.revalidate(new Set());
-  ui(editor);
-  const reload = screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" });
-  expect(reload.disabled).toBe(false);
-  await editor.reload();
-  expect(editor.conflict).toBe(true);
-  expect(editor.patch.caption).toBe("Draft");
-  await editor.reload();
-  expect(editor.membershipChanged).toBe(true);
-  editor.dispose();
-});

@@ -1366,15 +1366,9 @@ encoding. The path must be absolute (leading `/`), and `?path=/`
 resolves the root. The server applies the store's existing NFC name
 normalization and validation and returns `422` for an invalid path.
 
-`GET /photos/events` returns `text/event-stream`. Each `change` event contains JSON with an `asset_id` or `album_id` and its current `revision`, or `{ "refetch": true }` for a full refresh. The first event requests a refresh. Events publish after commit and recheck Hidden access before delivery. Hidden IDs and revisions reach only unlocked requests; a locked stream receives a generic refetch while a Hidden session is active so an unlocked tab can refresh through the stream holder. Missing assets request a full refresh. Each subscription buffers 64 events; overflow requests a full refresh. Reconnects start from current state rather than replaying history.
+`GET /photos/events` returns authenticated `text/event-stream`. Each `change` carries an `asset_id` and current `revision`, or `{ "refetch": true }`. The initial event and reconnects request a refresh. Changes publish after commit; delivery checks current Hidden access. Album changes, shared definitions, matching ordinary-file content changes, visible-to-Hidden transitions, and batches beyond 64 source keys request an ID-free refresh.
 
-Each daemon accepts up to 128 concurrent photo event streams across browser sessions and API clients. Further requests return `429` with the standard problem JSON and code `photo_event_stream_limit`. Closing a stream releases its slot.
-
-This daemon-wide limit bounds resource use for a single-user daemon; separate browser sessions share the same allowance.
-
-On origins with Web Locks, one visible tab holds the stream and relays only ID-free refresh pulses through BroadcastChannel. Origins without Web Locks refresh each visible tab through its own session, waiting five seconds after each successful refresh and opening no event streams.
-
-The browser batches events for 100 ms, retaining the highest revision per ID. Asset changes refresh query membership and counts for the view on screen; other loaded views refresh when they reopen. Album changes refresh views that filter by the album, including any advanced search with a field such as `set:` or `saved:`, and other views' album counts. A view that changes off screen also marks its open metadata for reload, so returning to it refreshes values and revisions before the next edit. An open photo reuses a successfully refreshed query row at or above the event revision. ID-free refreshes also reuse complete rows. The open photo requests a lookup when the refreshed listing is incomplete, the row is missing or compact, or its revision is older than the event. Event refresh waits for that lookup; transient failures retry and a missing photo becomes unavailable. The browser reconnects when 45 seconds pass without response headers, an event, or a keepalive.
+The daemon accepts 128 concurrent streams; further requests return `429` with code `photo_event_stream_limit`. Each event write has a ten-second deadline. Browser tabs share one stream through a Web Lock and relay only ID-free refreshes through BroadcastChannel. Origins without Web Locks poll every five seconds. Failed refreshes retry with backoff. A locked holder may relay a bare refresh while another Hidden session is active; each follower fetches through its own session.
 
 ## Batch tag assignment
 

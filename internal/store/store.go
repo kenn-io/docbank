@@ -277,7 +277,8 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
-	active, hidden, epoch := s.photoCaptureState()
+	active, epoch := s.photoCaptureState()
+	capture := s.preparePhotoChanges(ctx, conn, active)
 	// Own cancellation so a mutation cannot return while database/sql is
 	// still rolling back and closing a connection in another goroutine.
 	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
@@ -301,8 +302,6 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(retErr, err)
 		}
 	}()
-	cleaned := !active && s.prepareIdlePhotoCleanup(ctx, tx)
-	capture := active && s.preparePhotoChanges(ctx, tx, hidden)
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)
@@ -313,21 +312,18 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return errors.Join(err, tx.Rollback())
 	}
 	var events []PhotoEvent
+	var hashes []photoHashChange
 	if active {
-		events = s.readPhotoChanges(ctx, tx, capture)
+		events, hashes = s.readPhotoChanges(ctx, tx, capture)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
-	if cleaned {
-		s.finishIdlePhotoCleanup(epoch)
+	if watching, current := s.photoCaptureState(); watching && current != epoch && !active {
+		events = []PhotoEvent{{Refetch: true}}
 	}
-	if watching, watchingHidden, current := s.photoCaptureState(); watching && current != epoch {
-		if !active {
-			events = []PhotoEvent{{Refetch: true}}
-		} else if !hidden && watchingHidden {
-			events = append(events, PhotoEvent{Refetch: true, audience: photoHidden})
-		}
+	if s.photoDuplicateChanged(ctx, hashes) {
+		events = []PhotoEvent{{Refetch: true}}
 	}
 	s.publishPhotoChanges(events)
 	return nil

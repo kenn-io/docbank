@@ -85,13 +85,10 @@
     photoWorkspace?.captureReturn();
   }
   export async function refresh(changes?: PhotoEventBatch) {
-    if (workspaceVisible) {
-      const membership = changes && workspace?.photos.dependsOnAlbums(changes.albums.keys());
-      if (!changes || changes.refetch || changes.assets.size || membership)
-        await photoWorkspace?.refresh(changes);
-      else await workspace?.photos.reloadCounts(!!changes);
-    } else if (!changes || changes.refetch) await checkAccess(!!changes);
+    if (workspaceVisible) await photoWorkspace?.refresh(changes);
+    else if (!changes || changes.refetch) await checkAccess(!!changes);
   }
+
   export function lock() {
     return action("lock");
   }

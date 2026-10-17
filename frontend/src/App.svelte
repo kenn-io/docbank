@@ -503,7 +503,6 @@
       state.cache = new PhotoPreviewCache(webSession, handleFailure);
       const completed = await workspace.refresh({
         assets: new Map(),
-        albums: new Map(),
         refetch: true,
       });
       // Another refresh replaced this one before it confirmed visibility. Conceal the library
@@ -741,6 +740,14 @@
     const stop = watchPhotoEvents(
       session,
       async (changes) => {
+        // Access refreshes abort pending reads. Retain their affected scope before that happens.
+        if (changes.refetch) {
+          for (const photos of [photoState?.photos, albumPhotos, mapPhotos]) {
+            const editor = photos?.authored;
+            if (editor?.loading && !editor.targets.length && editor.affectedBy(changes))
+              editor.changedElsewhere(changes);
+          }
+        }
         const source = changes.refetch
           ? await checkPhotoAccess?.(typeof navigator.locks !== "undefined")
           : undefined;
@@ -2738,41 +2745,35 @@
     changes?: PhotoEventBatch,
   ): Promise<void> {
     const visible = albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
-    const displayed = photoValidated && libraryWorkspace ? visible : undefined;
+    const displayed = libraryWorkspace && (!changes || photoValidated) ? visible : undefined;
     const loaded = [photoState?.photos, albumPhotos, mapPhotos].filter(
       (photos): photos is Photos => !!(photos?.started || photos?.loading),
     );
-    const assetsChanged = changes ? changes.refetch || changes.assets.size > 0 : !affectedAlbumID;
-    const albums = [
-      ...(affectedAlbumID ? [affectedAlbumID] : []),
-      ...(changes?.albums.keys() ?? []),
-    ];
-    const affected = (photos: Photos) => photos.dependsOnAlbums(albums);
-    const stale = loaded.filter(
-      (photos) => photos !== source && (assetsChanged || affected(photos)),
-    );
-    // Live changes refresh only the view on screen; other views refresh when they reopen.
-    const offscreen = changes ? stale.filter((photos) => photos !== displayed) : [];
-    if (changes) for (const photos of offscreen) photos.markChanged(changes);
-    const results = await Promise.all([
-      affectedAlbumID && !changes ? undefined : photoAlbums?.load(),
-      ...stale
-        .filter((photos) => !offscreen.includes(photos))
+    await Promise.all([
+      changes || !affectedAlbumID ? photoAlbums?.load() : undefined,
+      ...loaded
+        .filter(
+          (photos) =>
+            photos !== source &&
+            (changes ||
+              !affectedAlbumID ||
+              photos.query.filters?.set_ids?.includes(affectedAlbumID)),
+        )
         .map((photos) =>
-          // A replaced refresh is not a failure; the newer one owns the result.
-          (libraryWorkspace && photos === visible
+          libraryWorkspace && photos === displayed
             ? libraryWorkspace.refresh(changes)
-            : photos.refresh(undefined, !!changes)
-          ).then(() => undefined),
+            : photos.refresh(undefined, !!changes),
         ),
-      // A membership change moves Albums counts even where the photo list itself stays current.
-      ...(!assetsChanged
+      changes ? source?.reconcileMetadata(changes) : undefined,
+      ...(!changes && affectedAlbumID
         ? loaded
-            .filter((photos) => !stale.includes(photos))
-            .map((photos) => photos.reloadCounts(!!changes))
+            .filter(
+              (photos) =>
+                photos === source || !photos.query.filters?.set_ids?.includes(affectedAlbumID),
+            )
+            .map((photos) => photos.reloadCounts())
         : []),
     ]);
-    if (changes && results.includes(false)) throw new Error("Photo refresh failed.");
   }
 
   function handleRestored(_receipt: Node): void {

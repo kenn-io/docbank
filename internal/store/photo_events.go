@@ -7,32 +7,11 @@ import (
 	"sync"
 )
 
-type photoAudience uint8
-
-const (
-	photoPublic photoAudience = 1 << iota
-	photoHidden
-	photoControl
-	photoDegraded
-)
-
-func (e PhotoEvent) audiences() photoAudience {
-	if e.audience != 0 {
-		return e.audience
-	}
-	if e.Refetch {
-		return photoControl
-	}
-	return photoPublic
-}
-
 // PhotoEvent tells a viewer which committed resource to refetch.
 type PhotoEvent struct {
 	AssetID  string `json:"asset_id,omitempty"`
-	AlbumID  string `json:"album_id,omitempty"`
 	Revision int64  `json:"revision,omitzero"`
 	Refetch  bool   `json:"refetch,omitzero"`
-	audience photoAudience
 }
 
 type photoEventFeed struct {
@@ -41,7 +20,6 @@ type photoEventFeed struct {
 	captureDegraded bool
 	epoch           uint64
 	closed          bool
-	cleanupPending  bool
 	subscribers     map[chan PhotoEvent]struct{}
 }
 
@@ -71,48 +49,36 @@ func (s *Store) SubscribePhotoEvents() (<-chan PhotoEvent, func()) {
 				delete(f.subscribers, ch)
 				close(ch)
 			}
-			idle := len(f.subscribers) == 0 && !f.closed
-			if idle {
-				f.cleanupPending = true
-			}
 			f.Unlock()
-			if idle {
-				s.clearIdlePhotoCapture()
-			}
 		})
 	}
 }
 
-// Session digests let capture stop at expiry or revocation without database reads.
-func (s *Store) photoCaptureState() (bool, bool, uint64) {
-	s.photoHiddenSessionsMu.Lock()
-	defer s.photoHiddenSessionsMu.Unlock()
+func (s *Store) photoCaptureState() (bool, uint64) {
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
-	hidden := false
-	now := s.hiddenNow()
-	for digest, until := range s.photoHiddenSessions {
-		if until.After(now) {
-			hidden = true
-		} else {
-			delete(s.photoHiddenSessions, digest)
-		}
-	}
-	return len(f.subscribers) > 0, hidden, f.epoch
+	return len(f.subscribers) > 0, f.epoch
 }
 
 func (s *Store) hasActivePhotoHiddenSession() bool {
 	s.photoHiddenSessionsMu.Lock()
 	defer s.photoHiddenSessionsMu.Unlock()
+	return s.scanPhotoHiddenSessions()
+}
+
+// Caller holds photoHiddenSessionsMu. Expiry cleanup is shared with unlock.
+func (s *Store) scanPhotoHiddenSessions() bool {
 	now := s.hiddenNow()
+	active := false
 	for digest, until := range s.photoHiddenSessions {
 		if until.After(now) {
-			return true
+			active = true
+			continue
 		}
 		delete(s.photoHiddenSessions, digest)
 	}
-	return false
+	return active
 }
 
 func (s *Store) closePhotoEvents() {
@@ -134,28 +100,23 @@ func (s *Store) publishPhotoChanges(events []PhotoEvent) {
 		return
 	}
 	for ch := range f.subscribers {
-		for i, event := range events {
-			if !event.Refetch {
+		for _, event := range events {
+			if !event.Refetch || event.AssetID != "" {
 				select {
 				case ch <- event:
 					continue
 				default:
 				}
 			}
-			audience := event.audiences()
 		drain:
 			for {
 				select {
-				case queued := <-ch:
-					audience |= queued.audiences()
+				case <-ch:
 				default:
 					break drain
 				}
 			}
-			for _, remaining := range events[i+1:] {
-				audience |= remaining.audiences()
-			}
-			ch <- PhotoEvent{Refetch: true, audience: audience}
+			ch <- PhotoEvent{Refetch: true}
 			break
 		}
 	}
@@ -163,48 +124,34 @@ func (s *Store) publishPhotoChanges(events []PhotoEvent) {
 
 // VisiblePhotoEvent returns current revisions, or an empty event when Hidden access suppresses delivery.
 func (s *Store) VisiblePhotoEvent(ctx context.Context, event PhotoEvent) (PhotoEvent, error) {
-	audience := event.audiences()
-	if audience&photoHidden != 0 {
-		if _, err := s.hiddenSession(ctx, s.db); err != nil {
-			if errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrHiddenNotConfigured) {
-				if audience&(photoPublic|photoControl) != 0 || s.hasActivePhotoHiddenSession() {
-					return PhotoEvent{Refetch: true}, nil
-				}
-				return PhotoEvent{}, nil
-			}
-			return PhotoEvent{}, err
-		}
-	}
-	if event.Refetch {
-		return PhotoEvent{Refetch: true}, nil
-	}
-	event.audience = 0
-	if event.AssetID != "" {
+	gate := event.AssetID
+	if gate != "" {
 		var hidden bool
-		err := s.db.QueryRowContext(ctx, `SELECT revision,hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, event.AssetID).Scan(&event.Revision, &hidden)
+		var revision int64
+		err := s.db.QueryRowContext(ctx, `SELECT revision,hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, gate).Scan(&revision, &hidden)
 		if errors.Is(err, sql.ErrNoRows) {
 			return PhotoEvent{Refetch: true}, nil
 		}
 		if err != nil {
 			return PhotoEvent{}, err
 		}
-		if hidden && audience != photoHidden {
-			if _, err := s.hiddenSession(ctx, s.db); errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrHiddenNotConfigured) {
-				return PhotoEvent{Refetch: true}, nil
-			} else if err != nil {
+		if hidden {
+			if _, err := s.hiddenSession(ctx, s.db); err != nil {
+				if errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrHiddenNotConfigured) {
+					if s.hasActivePhotoHiddenSession() {
+						return PhotoEvent{Refetch: true}, nil
+					}
+					return PhotoEvent{}, nil
+				}
 				return PhotoEvent{}, err
 			}
 		}
+		if event.AssetID != "" {
+			event.Revision = revision
+		}
 	}
-	if event.AlbumID != "" {
-		set, err := photoSetByID(ctx, s.db, event.AlbumID)
-		if errors.Is(err, ErrNotFound) {
-			return PhotoEvent{Refetch: true}, nil
-		}
-		if err != nil {
-			return PhotoEvent{}, err
-		}
-		event.Revision = set.Revision
+	if event.Refetch {
+		return PhotoEvent{Refetch: true}, nil
 	}
 	return event, nil
 }

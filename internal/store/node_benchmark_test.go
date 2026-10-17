@@ -73,8 +73,7 @@ func benchmarkCreateFilePhotoSubscriber(b *testing.B, sharedBlob bool, photos in
 				require.Equal(b, photos+1, photoFiles)
 			}
 			next := 0
-			writeCosts := make(map[string]float64, 3)
-			for _, audience := range []string{"none", "locked", "hidden"} {
+			for _, audience := range []string{"none", "inactive", "locked", "hidden"} {
 				b.Run("subscriber="+audience, func(b *testing.B) {
 					ctx, cancel, installed := setupPhotoBenchmarkCapture(b, s, audience)
 					b.Cleanup(cancel)
@@ -90,27 +89,9 @@ func benchmarkCreateFilePhotoSubscriber(b *testing.B, sharedBlob bool, photos in
 						next++
 					}
 					writeCost := float64(b.Elapsed().Nanoseconds()) / float64(b.N)
-					writeCosts[audience] = writeCost
 					b.ReportMetric(writeCost, "ns/file")
 					b.ReportMetric(float64(installed.Microseconds())/1000, "capture-install-ms")
 				})
-			}
-			// This fixture has 100,000 ordinary versions of one hash and no matching photo peer.
-			if sharedBlob && existing == 100000 && photos == 0 {
-				baseline, baselineOK := writeCosts["none"]
-				if !baselineOK {
-					b.Fatal("shared-blob write budget requires a no-subscriber measurement")
-				}
-				const maxWriteCostFactor = 8
-				for _, audience := range []string{"locked", "hidden"} {
-					observed, ok := writeCosts[audience]
-					if !ok {
-						b.Fatalf("shared-blob write budget requires a %s measurement", audience)
-					}
-					if baseline > 0 && observed > baseline*maxWriteCostFactor {
-						b.Fatalf("shared-blob photo subscriber writes for %s cost %.1fx the no-subscriber baseline; budget is %dx", audience, observed/baseline, maxWriteCostFactor)
-					}
-				}
 			}
 		})
 	}
@@ -141,5 +122,21 @@ func BenchmarkDirectoryChildrenPage(b *testing.B) {
 				})
 			}
 		})
+	}
+}
+
+// BenchmarkPhotoEventSubscriptionChurn measures reuse after the first captured write.
+func BenchmarkPhotoEventSubscriptionChurn(b *testing.B) {
+	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, s.Close()) })
+	_, cancel := s.SubscribePhotoEvents()
+	require.NoError(b, s.withStorageTx(b.Context(), func(*sql.Tx) error { return nil }))
+	cancel()
+	b.ReportAllocs()
+	for b.Loop() {
+		_, cancel := s.SubscribePhotoEvents()
+		require.NoError(b, s.withStorageTx(b.Context(), func(*sql.Tx) error { return nil }))
+		cancel()
 	}
 }

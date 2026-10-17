@@ -213,12 +213,12 @@ export class PhotoAuthoredEditor {
   get preparingQuery() {
     return this.preparing?.scope.query;
   }
-  affectedBy(changes: PhotoEventBatch, albumsAffected = false) {
+  affectedBy(changes: PhotoEventBatch) {
     const pending = this.preparing?.scope;
     return (
       ((!!pending || !!this.targets.length) && changes.refetch) ||
       !!pending?.asset_ids?.some((id) => changes.assets.has(id)) ||
-      (!!pending?.query && (!!changes.assets.size || albumsAffected)) ||
+      (!!pending?.query && !!changes.assets.size) ||
       this.targets.some((target) => changes.assets.has(target.asset_id))
     );
   }
@@ -361,7 +361,10 @@ export class PhotoAuthoredEditor {
     this.loading = true;
     this.comparing = compare;
     this.error = "";
-    const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
+    const previous =
+      reload && (this.targets.length || this.scope?.query)
+        ? new Set(this.targets.map((target) => target.file_id))
+        : undefined;
     const change = this.remoteChanges;
     try {
       const prepared =
@@ -423,7 +426,7 @@ export class PhotoAuthoredEditor {
         });
     } catch (cause) {
       if (!signal.aborted) {
-        if (compare || reload || followup) {
+        if (compare || reload || followup || scope.asset_ids?.length) {
           this.conflict = true;
           this.failedComparison = change;
         }
@@ -443,11 +446,14 @@ export class PhotoAuthoredEditor {
     }
   }
   get canReload() {
-    return !!this.scope?.query || !!this.targets.length;
+    return !!this.scope?.query || !!this.scope?.asset_ids?.length || !!this.targets.length;
   }
   async reload() {
     if (this.busy || this.loading || !this.canReload) return;
-    await this.prepare(this.scope?.query ? this.scope : this.reloadScope(), true);
+    await this.prepare(
+      this.scope?.query || !this.targets.length ? this.scope! : this.reloadScope(),
+      true,
+    );
   }
   private reloadScope(): api.PhotoAuthoredPrepareRequest {
     return {

@@ -86,7 +86,7 @@ it("authenticates and coalesces changes while preserving a change during refresh
     { asset_id: "a", revision: 1 },
     { asset_id: "a", revision: 4 },
     { asset_id: "a", revision: 2 },
-    { album_id: "b", revision: 3 },
+    { asset_id: "b", revision: 3 },
   ].entries()) {
     writer.enqueue(encoder.encode(`data: ${JSON.stringify(change)}\n\n`));
     await vi.advanceTimersByTimeAsync(index === 3 ? 24 : 25);
@@ -95,8 +95,10 @@ it("authenticates and coalesces changes while preserving a change during refresh
   await vi.advanceTimersByTimeAsync(1);
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(refresh.mock.calls[0][0]).toEqual({
-    assets: new Map([["a", 4]]),
-    albums: new Map([["b", 3]]),
+    assets: new Map([
+      ["a", 4],
+      ["b", 3],
+    ]),
     refetch: false,
   });
   writer.enqueue(encoder.encode('data: {"asset_id":"c","revision":2}\n\n'));
@@ -109,7 +111,6 @@ it("authenticates and coalesces changes while preserving a change during refresh
   expect(refresh).toHaveBeenCalledTimes(2);
   expect(refresh.mock.calls[1][0]).toEqual({
     assets: new Map([["c", 2]]),
-    albums: new Map(),
     refetch: false,
   });
   writer.enqueue(
@@ -120,7 +121,7 @@ it("authenticates and coalesces changes while preserving a change during refresh
   release();
   await vi.advanceTimersByTimeAsync(1000);
   expect(refresh).toHaveBeenCalledTimes(3);
-  expect(refresh.mock.calls[2][0]).toEqual({ assets: new Map(), albums: new Map(), refetch: true });
+  expect(refresh.mock.calls[2][0]).toEqual({ assets: new Map(), refetch: true });
   release();
   stop();
 });
@@ -209,7 +210,6 @@ it("retries failed refreshes with backoff and resets the delay after recovery", 
     expect(refresh).toHaveBeenCalledTimes(calls + 1);
     expect(refresh.mock.lastCall?.[0]).toEqual({
       assets: new Map(),
-      albums: new Map(),
       refetch: true,
     });
   }
@@ -225,248 +225,4 @@ it("retries failed refreshes with backoff and resets the delay after recovery", 
   await vi.advanceTimersByTimeAsync(1);
   expect(refresh).toHaveBeenCalledTimes(calls + 1);
   stop();
-});
-
-it.each(["pause", "dispose"])("aborts a failed-refresh stream on %s", async (action) => {
-  const { visible, fetch, refresh, stop } = await failedRefreshWatcher();
-  const signal = fetch.mock.calls[0][1]!.signal!;
-  expect(signal.aborted).toBe(false);
-  if (action === "dispose") stop();
-  else {
-    visible.mockReturnValue("hidden");
-    document.dispatchEvent(new Event("visibilitychange"));
-  }
-  expect(signal.aborted).toBe(true);
-  await vi.advanceTimersByTimeAsync(60000);
-  expect(refresh).toHaveBeenCalledOnce();
-  expect(fetch).toHaveBeenCalledOnce();
-  if (action === "pause") {
-    refresh.mockResolvedValue(undefined);
-    visible.mockReturnValue("visible");
-    document.dispatchEvent(new Event("visibilitychange"));
-    await vi.advanceTimersByTimeAsync(100);
-    expect(refresh).toHaveBeenCalledTimes(2);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(refresh.mock.lastCall?.[0]).toEqual({
-      assets: new Map(),
-      albums: new Map(),
-      refetch: true,
-    });
-  }
-  stop();
-});
-
-it("ignores refresh completion after the watcher is disposed", async () => {
-  vi.useFakeTimers();
-  let writer!: ReadableStreamDefaultController<Uint8Array>;
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(
-      new ReadableStream<Uint8Array>({
-        start(c) {
-          writer = c;
-        },
-      }),
-      { headers: { "Content-Type": "text/event-stream" } },
-    ),
-  );
-  let finish!: () => void;
-  const recovered = vi.fn();
-  const stop = watchPhotoEvents(
-    "synthetic",
-    () => new Promise<void>((resolve) => (finish = resolve)),
-    vi.fn(),
-    vi.fn(),
-    recovered,
-  );
-  await vi.advanceTimersByTimeAsync(0);
-  writer.enqueue(encoder.encode('data: {"refetch":true}\n\n'));
-  await vi.advanceTimersByTimeAsync(100);
-  stop();
-  finish();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(recovered).not.toHaveBeenCalled();
-});
-
-it("reconnects a stream that stops sending keepalives", async () => {
-  vi.useFakeTimers();
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const silent = () =>
-    new Response(new ReadableStream<Uint8Array>({}), {
-      headers: { "Content-Type": "text/event-stream" },
-    });
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => silent());
-  const stop = watchPhotoEvents("synthetic", vi.fn(), vi.fn());
-  await vi.advanceTimersByTimeAsync(photoEventIdleTimeout - 1);
-  expect(fetch).toHaveBeenCalledOnce();
-  await vi.advanceTimersByTimeAsync(1);
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(fetch).toHaveBeenCalledTimes(2);
-  stop();
-});
-
-it("keeps reading through keepalives and cancels after the next idle deadline", async () => {
-  vi.useFakeTimers();
-  let writer!: ReadableStreamDefaultController<Uint8Array>;
-  const cancelled = vi.fn();
-  const body = new ReadableStream<Uint8Array>({
-    cancel: cancelled,
-    start(controller) {
-      writer = controller;
-    },
-  });
-  const controller = new AbortController();
-  const reading = readPhotoEvents(body, controller.signal, vi.fn(), 1000);
-  for (let beat = 0; beat < 5; beat++) {
-    await vi.advanceTimersByTimeAsync(900);
-    writer.enqueue(encoder.encode(": keepalive\n\n"));
-  }
-  await vi.advanceTimersByTimeAsync(999);
-  expect(cancelled).not.toHaveBeenCalled();
-  const failed = expect(reading).rejects.toThrow();
-  await vi.advanceTimersByTimeAsync(1);
-  await failed;
-  expect(cancelled).toHaveBeenCalledOnce();
-});
-
-it("reconnects a stream whose response headers never arrive", async () => {
-  vi.useFakeTimers();
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const signals: AbortSignal[] = [];
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(
-    (_url, init) =>
-      new Promise<Response>((_, reject) => {
-        const signal = init!.signal!;
-        signals.push(signal);
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-      }),
-  );
-  const stop = watchPhotoEvents("synthetic", vi.fn(), vi.fn());
-  await vi.advanceTimersByTimeAsync(photoEventIdleTimeout - 1);
-  expect(signals[0]?.aborted).toBe(false);
-  await vi.advanceTimersByTimeAsync(1);
-  expect(signals[0]?.aborted).toBe(true);
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(fetch).toHaveBeenCalledTimes(2);
-  stop();
-});
-
-it("broadcasts one ID-free pulse from the holder's parsed change", async () => {
-  vi.useFakeTimers();
-  let writer!: ReadableStreamDefaultController<Uint8Array>;
-  const postMessage = vi.fn();
-  const close = vi.fn();
-  vi.stubGlobal(
-    "BroadcastChannel",
-    class {
-      postMessage = postMessage;
-      close = close;
-    },
-  );
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(
-      new ReadableStream({
-        start(c) {
-          writer = c;
-        },
-      }),
-      { headers: { "Content-Type": "text/event-stream" } },
-    ),
-  );
-  const refresh = vi.fn();
-  const stop = watchPhotoEvents("holder", refresh, vi.fn());
-  await vi.advanceTimersByTimeAsync(0);
-  writer.enqueue(encoder.encode('data: {"asset_id":"private-photo","revision":7}\n\n'));
-  await vi.advanceTimersByTimeAsync(100);
-  expect(postMessage).toHaveBeenCalledExactlyOnceWith("refetch");
-  expect(refresh).toHaveBeenCalledExactlyOnceWith({
-    assets: new Map([["private-photo", 7]]),
-    albums: new Map(),
-    refetch: false,
-  });
-  stop();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(close).toHaveBeenCalledOnce();
-});
-
-it("refreshes a Web Locks follower through ID-free pulses without opening a stream", async () => {
-  vi.useFakeTimers();
-  let channel!: { onmessage?: (event: MessageEvent<unknown>) => void };
-  const close = vi.fn();
-  vi.stubGlobal(
-    "BroadcastChannel",
-    class {
-      onmessage?: (event: MessageEvent<unknown>) => void;
-      close = close;
-      constructor() {
-        channel = this;
-      }
-    },
-  );
-  vi.stubGlobal("navigator", {
-    locks: {
-      request: vi.fn(async (_name, options, run) => {
-        if (options.ifAvailable) return run(null);
-        await new Promise<void>((resolve) =>
-          options.signal.addEventListener("abort", () => resolve(), { once: true }),
-        );
-      }),
-    },
-  });
-  const fetch = vi.spyOn(globalThis, "fetch");
-  const refresh = vi.fn(async (_batch: PhotoEventBatch) => {});
-  const stop = watchPhotoEvents("follower", refresh, vi.fn());
-  await vi.advanceTimersByTimeAsync(100);
-  expect(refresh).toHaveBeenCalledExactlyOnceWith({
-    assets: new Map(),
-    albums: new Map(),
-    refetch: true,
-  });
-  channel.onmessage?.({ data: "refetch" } as MessageEvent<unknown>);
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(refresh).toHaveBeenCalledTimes(2);
-  expect(refresh.mock.lastCall?.[0]).toEqual({
-    assets: new Map(),
-    albums: new Map(),
-    refetch: true,
-  });
-  expect(fetch).not.toHaveBeenCalled();
-  stop();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(close).toHaveBeenCalledOnce();
-});
-
-it("refreshes six visible tabs without streams when Web Locks are unavailable", async () => {
-  vi.useFakeTimers();
-  vi.stubGlobal("navigator", {});
-  const fetch = vi.spyOn(globalThis, "fetch");
-  let finish!: () => void;
-  const refreshes = Array.from({ length: 6 }, () => vi.fn(async () => {}));
-  refreshes[0]!.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
-  const stops = refreshes.map((refresh, index) =>
-    watchPhotoEvents(`tab-${index}`, refresh, vi.fn()),
-  );
-  await vi.advanceTimersByTimeAsync(100);
-  for (const refresh of refreshes)
-    expect(refresh).toHaveBeenCalledExactlyOnceWith({
-      assets: new Map(),
-      albums: new Map(),
-      refetch: true,
-    });
-  await vi.advanceTimersByTimeAsync(4999);
-  expect(refreshes[0]).toHaveBeenCalledOnce();
-  for (const refresh of refreshes.slice(1)) expect(refresh).toHaveBeenCalledOnce();
-  await vi.advanceTimersByTimeAsync(1);
-  for (const refresh of refreshes.slice(1)) expect(refresh).toHaveBeenCalledTimes(2);
-  finish();
-  await vi.advanceTimersByTimeAsync(4999);
-  expect(refreshes[0]).toHaveBeenCalledOnce();
-  await vi.advanceTimersByTimeAsync(1);
-  expect(refreshes[0]).toHaveBeenCalledTimes(2);
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-  document.dispatchEvent(new Event("visibilitychange"));
-  const counts = refreshes.map((refresh) => refresh.mock.calls.length);
-  await vi.advanceTimersByTimeAsync(5000);
-  expect(refreshes.map((refresh) => refresh.mock.calls.length)).toEqual(counts);
-  expect(fetch).not.toHaveBeenCalled();
-  for (const stop of stops) stop();
 });

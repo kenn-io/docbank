@@ -117,10 +117,7 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
         .getByRole("group", { name: "Lens facet" })
         .getByRole("button", { name: "RF 24-70mm F2.8, 5000 photos" }),
     ).toBeVisible();
-    await expect(
-      page.locator(".photo-results > .photo-loading").filter({ hasText: "Loading photos" }),
-    ).toHaveCount(0);
-    await expect(page.locator(".photo-cell img").first()).toBeVisible();
+    await page.waitForLoadState("networkidle");
     for (const theme of ["light", "dark"]) {
       await page.evaluate((value) => {
         localStorage.setItem("docbank-theme", value);

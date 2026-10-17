@@ -2,472 +2,120 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
-	"strings"
-	"testing"
-
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"testing"
 )
 
-func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
+func TestPhotoEventsCaptureWrites(t *testing.T) {
 	t.Parallel()
-	for _, rule := range []string{"asset exclusion", "album membership", "tags", "tags/create", "tags/delete", "provenance", "metadata and indexing", "extraction", "directory refetch", "photo faces", "collection coverage", "visual previews", "global settings and Hidden credentials refetch"} {
-		t.Run(rule, func(t *testing.T) {
-			ctx := t.Context()
-			if rule == "collection coverage" {
-				s, run, docs, profile := collectionCoverageFixture(t, 1)
-				node, _, err := s.IngestFile(ctx, run, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg", "/synthetic/photo.jpg", "")
-				require.NoError(t, err)
-				events, cancel := s.SubscribePhotoEvents()
-				t.Cleanup(cancel)
-				collectionCoveragePublish(t, s, docs[0], profile, "complete")
-				noPhotoEvent(t, events)
-				collectionCoveragePublish(t, s, node, profile, "complete")
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				noPhotoEvent(t, events)
-
-				return
-			}
+	for _, change := range []string{"photo file", "technical metadata", "quality worker", "tag assignment", "album", "tag", "saved", "collection", "document", "document worker", "peer leaves", "matching hash", "unrelated hash", "overflow"} {
+		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
-			if rule == "global settings and Hidden credentials refetch" {
-				events, cancel := s.SubscribePhotoEvents()
-				t.Cleanup(cancel)
-				require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				_, err := s.SetPhotoSettings(t.Context(), 1, new("image"))
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				token, _, err := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
-				require.NoError(t, err)
-				require.NoError(t, s.LockPhotoHidden(WithPhotoHiddenToken(t.Context(), token)))
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				noPhotoEvent(t, events)
-				return
+			ctx := t.Context()
+			run, err := s.BeginIngest(ctx, "cli", "Synthetic")
+			require.NoError(t, err)
+			photo, _, err := s.IngestFile(ctx, run, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg", "/synthetic/photo.jpg", "")
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+			require.NoError(t, err)
+			docHash := fakeHash("22")
+			if change == "peer leaves" {
+				docHash = photo.BlobHash
 			}
-			run, err := s.BeginIngest(ctx, "cli", "synthetic")
+			doc, err := s.CreateFile(ctx, s.RootID(), "document.txt", docHash, 4, "text/plain")
 			require.NoError(t, err)
-			dir, err := s.Mkdir(ctx, s.RootID(), "camera")
+			tag, err := s.CreateTag(ctx, "Keyword")
 			require.NoError(t, err)
-			node, _, err := s.IngestFile(ctx, run, dir.ID, "photo.jpg", fakeHash("11"), 4, "image/jpeg", "/synthetic/photo.jpg", "")
+			metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.iso", Namespace: "image.exif", SourceField: "ISO", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(200))}}}}
+			canonical, _, err := document.MarshalSourceMetadataV1(metadata)
 			require.NoError(t, err)
-			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			generation, err := s.PublishSourceMetadata(ctx, photo.BlobHash, fakeHash("f1"), canonical)
 			require.NoError(t, err)
-			tag, err := s.CreateTag(ctx, "trip")
-			require.NoError(t, err)
-			events, cancel := s.SubscribePhotoEvents()
-			t.Cleanup(cancel)
-
-			switch rule {
-			case "asset exclusion":
-				_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{AssetID: asset.ID}, nextPhotoEvent(t, events))
-
-			case "album membership":
-				album, err := s.CreatePhotoSet(ctx, "Trip album")
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{AlbumID: album.ID}, nextPhotoEvent(t, events))
-				_, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-				require.NoError(t, err)
-				require.Equal(t, album.ID, nextPhotoEvent(t, events).AlbumID)
-
-			case "tags/create", "tags/delete":
-				if rule == "tags/create" {
-					_, err = s.CreateTag(ctx, "New keyword")
+			ch, stop := s.SubscribePhotoEvents()
+			defer stop()
+			generic := false
+			quiet := false
+			switch change {
+			case "photo file":
+				err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+					_, err := tx.ExecContext(ctx, `UPDATE photo_files SET file_id='replacement-photo',revision=revision+1 WHERE node_id=?`, photo.ID)
+					if err != nil {
+						return err
+					}
+					_, err = tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id='replacement-photo',revision=revision+1 WHERE asset_id=?`, asset.ID)
+					return err
+				})
+			case "technical metadata":
+				err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+					_, err := tx.ExecContext(ctx, `UPDATE photo_technical_metadata SET iso=400 WHERE generation_id=?`, generation.GenerationID)
+					return err
+				})
+			case "quality worker":
+				fingerprints, e := document.CurrentPhotoQualityFingerprints()
+				require.NoError(t, e)
+				err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+					_, err := tx.ExecContext(ctx, `INSERT INTO photo_quality_signals(content_version_id,evaluator_fingerprint,state) VALUES(?,?,'unavailable')`, photo.CurrentVersionID, fingerprints.Evaluator)
+					return err
+				})
+			case "tag assignment":
+				_, err = s.AssignTag(ctx, tag.ID, photo.ID, photo.Revision)
+			case "album":
+				_, err = s.CreatePhotoSet(ctx, "Album")
+				generic = true
+			case "tag":
+				_, err = s.RenameTag(ctx, tag.ID, tag.Revision, "Renamed")
+				generic = true
+			case "saved":
+				_, err = s.CreateSavedQuery(ctx, "PhotoSource", "", SavedQueryKindQuery, []byte(`{"text":"photo"}`))
+				generic = true
+			case "collection":
+				_, err = s.SetCollectionLabel(ctx, run.ID(), 1, new("Renamed"))
+				generic = true
+			case "document":
+				_, _, err = s.Move(ctx, doc.ID, s.RootID(), "renamed.txt", doc.Revision)
+				quiet = true
+			case "document worker":
+				err = s.RecordExtraction(ctx, ExtractionResult{BlobHash: doc.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "Document"})
+				quiet = true
+			case "peer leaves":
+				_, _, err = s.Trash(ctx, doc.ID, doc.Revision)
+				generic = true
+			case "matching hash", "unrelated hash":
+				hash := fakeHash("33")
+				if change == "matching hash" {
+					hash = photo.BlobHash
+					generic = true
 				} else {
-					_, err = s.DeleteTag(ctx, tag.ID, tag.Revision)
+					quiet = true
 				}
-				require.NoError(t, err)
-				// Publication finishes with the write; close so a missing event fails immediately.
-				cancel()
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-
-			case "tags":
-				_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
-				require.NoError(t, err)
-				require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-				noPhotoEvent(t, events)
-				_, err = s.RenameTag(ctx, tag.ID, tag.Revision+1, "holiday")
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				noPhotoEvent(t, events)
-				require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-					_, err := tx.ExecContext(ctx, `DELETE FROM node_tags WHERE node_id=?`, node.ID)
-					return err
-				}))
-				require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-				noPhotoEvent(t, events)
-
-			case "provenance":
-				require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-					_, err := tx.ExecContext(ctx, `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES('synthetic-membership',?,?,'/synthetic/another.jpg')`, node.ID, run.ID())
-					return err
-				}))
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-
-			case "metadata and indexing":
-				metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.iso", Namespace: "image.exif", SourceField: "ISO", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(200))}}}}
-				canonical, _, err := document.MarshalSourceMetadataV1(metadata)
-				require.NoError(t, err)
-				generation, err := s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				noPhotoEvent(t, events)
-				fingerprints, err := document.CurrentPhotoQualityFingerprints()
-				require.NoError(t, err)
-				for _, statement := range []string{
-					`UPDATE photo_files SET rating=3 WHERE node_id=?`,
-					`UPDATE photo_technical_metadata SET iso=400 WHERE generation_id=?`,
-					fmt.Sprintf(`INSERT INTO photo_quality_signals(content_version_id,evaluator_fingerprint,state) VALUES(?,'%s','unavailable')`, fingerprints.Evaluator),
-					`INSERT INTO text_searchable_versions(version_id) VALUES(?)`,
-				} {
-					var value any = node.CurrentVersionID
-					switch {
-					case strings.Contains(statement, "node_id=?"):
-						value = node.ID
-					case strings.HasPrefix(statement, "UPDATE photo_technical_metadata"):
-						value = generation.GenerationID
+				_, err = s.CreateFile(ctx, s.RootID(), "peer.txt", hash, 4, "text/plain")
+			case "overflow":
+				err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+					for range 70 {
+						if _, err := insertPhotoSet(ctx, tx, "Album"); err != nil {
+							return err
+						}
 					}
-					require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { _, err := tx.ExecContext(ctx, statement, value); return err }), statement)
-					want := PhotoEvent{Refetch: true}
-					if strings.Contains(statement, "node_id=?") {
-						want = PhotoEvent{AssetID: asset.ID}
-					}
-					require.Equal(t, want, nextPhotoEvent(t, events), statement)
-					noPhotoEvent(t, events)
-				}
-
-			case "extraction":
-				require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "Trip"}))
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-
-			case "directory refetch":
-				dir, err = s.NodeByID(ctx, dir.ID)
-				require.NoError(t, err)
-				_, _, err = s.Move(ctx, dir.ID, s.RootID(), "renamed-camera", dir.Revision)
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				noPhotoEvent(t, events)
-
-			case "photo faces":
-				_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, "11111111-1111-4111-8111-111111111111", document.FaceBox{X: 0.1, Y: 0.2, Width: 0.3, Height: 0.4}, "")
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				noPhotoEvent(t, events)
-
-			case "visual previews":
-				canonical := readyVisualPreview(t, node.BlobHash, fakeHash("22"), 9)
-				physical := &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9}
-				_, err = s.PublishVisualPreview(ctx, node.CurrentVersionID, canonical, physical)
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-				_, err = s.PublishVisualPreview(ctx, node.CurrentVersionID, canonical, physical)
-				require.NoError(t, err)
-				noPhotoEvent(t, events)
-				recipe := visualPreviewRecipe()
-				recipe.ProcessorFingerprint = fakeHash("33")
-				another := readyVisualPreviewWithRecipe(t, node.BlobHash, fakeHash("44"), 9, recipe)
-				_, err = s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, another, physical)
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+					return nil
+				})
+				generic = true
 			}
-		})
-	}
-}
-
-func TestPhotoEventCaptureCoversPhotoSchemaTables(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	events, cancel := s.SubscribePhotoEvents()
-	defer cancel()
-	_, err := s.CreateTag(t.Context(), "capture schema check")
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-
-	triggers, err := s.writeDB.QueryContext(t.Context(), `SELECT name FROM temp.sqlite_schema WHERE type='trigger' AND name LIKE 'photo_events_%'`)
-	require.NoError(t, err)
-	defer func() { _ = triggers.Close() }()
-	triggerNames := make(map[string]bool)
-	for triggers.Next() {
-		var name string
-		require.NoError(t, triggers.Scan(&name))
-		triggerNames[name] = true
-	}
-	require.NoError(t, triggers.Err())
-
-	captured := make(map[string]bool)
-	for _, rule := range photoEventCaptureRules() {
-		for _, action := range []string{"INSERT", "UPDATE", "DELETE"} {
-			trigger := fmt.Sprintf("photo_events_%s_%s", rule.table, action)
-			require.True(t, triggerNames[trigger], "capture rule %q must install %s", rule.table, action)
-		}
-		if strings.HasPrefix(rule.table, "photo_") {
-			captured[rule.table] = true
-		}
-	}
-
-	quiet := map[string]string{
-		"photo_change_receipts":          "operation receipts are read by the action that created them",
-		"photo_hidden_failures":          "authentication failure bookkeeping",
-		"photo_hidden_lockout":           "authentication lockout bookkeeping",
-		"photo_sidecar_considered":       "import bookkeeping",
-		"photo_technical_metadata_state": "projection recipe bookkeeping",
-		"photo_timeline":                 "derived browse index maintained with its source writes",
-		"photo_timeline_pending":         "derived browse index bookkeeping",
-	}
-	for _, source := range []string{"photo_files", "photo_technical_metadata"} {
-		prefix := "photo_authored_fts"
-		if source == "photo_technical_metadata" {
-			prefix = "photo_metadata_fts"
-		}
-		for _, suffix := range []string{"", "_config", "_content", "_data", "_docsize", "_idx"} {
-			quiet[prefix+suffix] = "FTS projection maintained by " + source + " triggers"
-		}
-	}
-	tables, err := s.db.QueryContext(t.Context(), `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'photo_%'`)
-	require.NoError(t, err)
-	defer func() { _ = tables.Close() }()
-	schemaTables := make(map[string]bool)
-	for tables.Next() {
-		var name string
-		require.NoError(t, tables.Scan(&name))
-		schemaTables[name] = true
-		if reason, ok := quiet[name]; ok {
-			require.NotEmpty(t, reason)
-			require.False(t, captured[name], "quiet table %q also has capture rules", name)
-			continue
-		}
-		require.True(t, captured[name], "photo table %q needs capture rules or a documented quiet reason", name)
-	}
-	require.NoError(t, tables.Err())
-	for table := range quiet {
-		require.True(t, schemaTables[table], "quiet table %q must still exist in the schema", table)
-	}
-}
-
-func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	first, err := s.CreateFile(ctx, s.RootID(), "first.jpg", fakeHash("11"), 4, "image/jpeg")
-	require.NoError(t, err)
-	second, err := s.CreateFile(ctx, s.RootID(), "second.jpg", fakeHash("22"), 4, "image/jpeg")
-	require.NoError(t, err)
-	tag, err := s.CreateTag(ctx, "synthetic")
-	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents()
-	defer cancel()
-	baseline, err := s.CreateFile(ctx, s.RootID(), "note.txt", fakeHash("33"), 4, "text/plain")
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	baseline, _, err = s.ReplaceContent(ctx, baseline.ID, baseline.Revision, fakeHash("44"), 4, "text/plain")
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	baseline, _, err = s.Trash(ctx, baseline.ID, baseline.Revision)
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	_, _, err = s.Restore(ctx, baseline.ID, baseline.Revision)
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	doc, err := s.CreateFile(ctx, s.RootID(), "duplicate.bin", first.BlobHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	doc, _, err = s.Move(ctx, doc.ID, s.RootID(), "renamed.bin", doc.Revision)
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	_, err = s.AssignTag(ctx, tag.ID, doc.ID, doc.Revision)
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE nodes SET current_version_id=current_version_id,trashed_at=trashed_at,modified_at=? WHERE id=?`, nowRFC3339(), doc.ID)
-		return err
-	}))
-	noPhotoEvent(t, events)
-	doc, err = s.NodeByID(ctx, doc.ID)
-	require.NoError(t, err)
-	doc, _, err = s.Trash(ctx, doc.ID, doc.Revision)
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	doc, _, err = s.Restore(ctx, doc.ID, doc.Revision)
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	doc, _, err = s.ReplaceContent(ctx, doc.ID, doc.Revision, second.BlobHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id=?`, doc.ID)
-		return err
-	}))
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	noPhotoEvent(t, events)
-}
-
-func TestPhotoEventsPhotoPeerMembership(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	first, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, first.ID)
-	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents()
-	defer cancel()
-	oldHash := first.BlobHash
-	first, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, fakeHash("55"), 4, "image/jpeg")
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-	_, err = s.CreateFile(ctx, s.RootID(), "old-photo-content.bin", oldHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	_, err = s.CreateFile(ctx, s.RootID(), "new-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	first, _, err = s.Trash(ctx, first.ID, first.Revision)
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-	_, err = s.CreateFile(ctx, s.RootID(), "trashed-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	first, _, err = s.Restore(ctx, first.ID, first.Revision)
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-	_, err = s.CreateFile(ctx, s.RootID(), "restored-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	asset, err = s.PhotoAssetForNode(ctx, first.ID)
-	require.NoError(t, err)
-	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-	_, err = s.CreateFile(ctx, s.RootID(), "detached-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, first.ID, PhotoRoleImage, nil)
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-}
-
-func TestPhotoEventsCaptureDepictedPeople(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", fakeHash("11"), 4, "image/jpeg")
-	require.NoError(t, err)
-	person, err := s.CreatePerson(ctx, "Person A", "operator")
-	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents()
-	t.Cleanup(cancel)
-	assertion, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	noPhotoEvent(t, events)
-	for _, statement := range []string{
-		`UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=?`,
-		`DELETE FROM person_document_assertions WHERE assertion_id=?`,
-	} {
-		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, statement, assertion.AssertionID)
-			return err
-		}))
-		require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-		noPhotoEvent(t, events)
-	}
-}
-
-func TestPhotoEventsRefetchWhenPersonSearchesResolveDifferently(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	ada, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents()
-	t.Cleanup(cancel)
-	refetch := PhotoEvent{Refetch: true}
-	_, err = s.CreatePerson(ctx, "Grace", "operator")
-	require.NoError(t, err)
-	noPhotoEvent(t, events)
-	_, err = s.CreatePerson(ctx, "ada", "operator")
-	require.NoError(t, err)
-	require.Equal(t, refetch, nextPhotoEvent(t, events))
-	noPhotoEvent(t, events)
-	ada, err = s.UpdatePerson(ctx, ada.PersonID, ada.Revision, "Ada Lovelace")
-	require.NoError(t, err)
-	require.Equal(t, refetch, nextPhotoEvent(t, events))
-	noPhotoEvent(t, events)
-	_, err = s.RetirePerson(ctx, ada.PersonID, ada.Revision)
-	require.NoError(t, err)
-	require.Equal(t, refetch, nextPhotoEvent(t, events))
-	noPhotoEvent(t, events)
-}
-
-func TestPhotoEventsQueryDefinitions(t *testing.T) {
-	t.Parallel()
-	for _, dependency := range []string{"saved", "collection"} {
-		t.Run(dependency, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			run, err := s.BeginIngest(ctx, "cli", "Synthetic photos")
 			require.NoError(t, err)
-			_, _, err = s.IngestFile(ctx, run, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg", "/synthetic/photo.jpg", "")
-			require.NoError(t, err)
-			saved, err := s.CreateSavedQuery(ctx, "LiveSource", "", SavedQueryKindQuery, []byte(`{"text":"photo"}`))
-			require.NoError(t, err)
-			label, err := s.SetCollectionLabel(ctx, run.ID(), 1, new("Original"))
-			require.NoError(t, err)
-			events, cancel := s.SubscribePhotoEvents()
-			defer cancel()
-			if dependency == "saved" {
-				_, err = s.UpdateSavedQuery(ctx, saved.ID, saved.Revision, SavedQueryPatch{Payload: new([]byte(`{"text":"absent"}`))})
+			if quiet {
+				noPhotoEvent(t, ch)
+				return
+			}
+			event := nextPhotoEvent(t, ch)
+			if generic {
+				require.Equal(t, PhotoEvent{Refetch: true}, event)
 			} else {
-				_, err = s.SetCollectionLabel(ctx, run.ID(), label.Revision, new("Renamed"))
+				require.Equal(t, asset.ID, event.AssetID)
+				current, e := s.PhotoAssetByID(ctx, asset.ID)
+				require.NoError(t, e)
+				require.Equal(t, current.Revision, event.Revision)
 			}
-			require.NoError(t, err)
-			cancel()
-			require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+			noPhotoEvent(t, ch)
 		})
-	}
-}
-
-func TestPhotoEventsHiddenAlbumMembership(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
-	require.NoError(t, err)
-	unlocked := WithPhotoHiddenToken(ctx, token)
-	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("11"), "image/jpeg")
-	privateAsset, err := s.PhotoAssetForNode(ctx, hidden.ID)
-	require.NoError(t, err)
-	privateAsset, err = s.SetPhotoAssetHidden(ctx, privateAsset.ID, privateAsset.Revision, true)
-	require.NoError(t, err)
-	album, err := s.CreatePhotoSet(ctx, "Trip")
-	require.NoError(t, err)
-	lockedEvents, stopLocked := s.SubscribePhotoEvents()
-	defer stopLocked()
-	openEvents, stopOpen := s.SubscribePhotoEvents()
-	defer stopOpen()
-	for _, add := range []bool{true, false} {
-		album, err = s.ChangePhotoSetMembers(unlocked, album.ID, album.Revision, add, PhotoSetSelection{AssetIDs: []string{privateAsset.ID}})
-		require.NoError(t, err)
-		event := nextPhotoEventWithAudience(t, lockedEvents)
-		visible, err := s.VisiblePhotoEvent(ctx, event)
-		require.NoError(t, err)
-		require.Equal(t, PhotoEvent{Refetch: true}, visible)
-		visible, err = s.VisiblePhotoEvent(unlocked, nextPhotoEventWithAudience(t, openEvents))
-		require.NoError(t, err)
-		require.Equal(t, PhotoEvent{AlbumID: album.ID, Revision: album.Revision}, visible)
-		noPhotoEvent(t, lockedEvents)
-		noPhotoEvent(t, openEvents)
-		if add {
-			album, err = s.UpdatePhotoSet(unlocked, album.ID, album.Revision, nil, nil, new(new(privateAsset.ID)))
-			require.NoError(t, err)
-			for _, events := range []<-chan PhotoEvent{lockedEvents, openEvents} {
-				event, err := s.VisiblePhotoEvent(ctx, nextPhotoEventWithAudience(t, events))
-				require.NoError(t, err)
-				require.Equal(t, PhotoEvent{AlbumID: album.ID, Revision: album.Revision}, event)
-			}
-		}
 	}
 }

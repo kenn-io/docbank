@@ -28,29 +28,19 @@
   let smartTotal = $state(0);
   let smartLoading = $state(false);
   let smartGeneration = 0;
-  let smartRead: AbortController | undefined;
   async function loadSmartSets(reset = false) {
     if (smartLoading && !reset) return;
-    smartRead?.abort();
-    const read = (smartRead = new AbortController());
-    const signal = AbortSignal.any([read.signal, AbortSignal.timeout(60_000)]);
     const generation = reset ? ++smartGeneration : smartGeneration;
+    if (reset) {
+      smartSets = [];
+      smartOffset = 0;
+      smartTotal = 0;
+    }
     smartLoading = true;
     smartError = "";
     try {
-      const page = await listSavedQueries(
-        albums.session,
-        "query",
-        reset ? 0 : smartOffset,
-        100,
-        true,
-        signal,
-      );
-      if (!alive || read.signal.aborted || generation !== smartGeneration) return;
-      if (reset) {
-        smartSets = [];
-        smartOffset = 0;
-      }
+      const page = await listSavedQueries(albums.session, "query", smartOffset, 100, true);
+      if (!alive || generation !== smartGeneration) return;
       const seen = new Set(smartSets.map((saved) => saved.id));
       for (const saved of page.items)
         if (!seen.has(saved.id)) {
@@ -60,12 +50,12 @@
       smartOffset += page.items.length;
       smartTotal = page.items.length ? page.total : smartOffset;
     } catch (cause) {
-      if (alive && !read.signal.aborted && generation === smartGeneration) {
+      if (alive && generation === smartGeneration) {
         if (cause instanceof APIError && cause.status === 401) albums.onauthfailure(cause);
         smartError = cause instanceof Error ? cause.message : String(cause);
       }
     } finally {
-      if (alive && !read.signal.aborted && generation === smartGeneration) smartLoading = false;
+      if (alive && generation === smartGeneration) smartLoading = false;
     }
   }
   onMount(() => {
@@ -76,10 +66,7 @@
     });
   });
   let alive = true;
-  onDestroy(() => {
-    alive = false;
-    smartRead?.abort();
-  });
+  onDestroy(() => (alive = false));
   let creating = $state(false);
   let createError = $state("");
   let name = $state("");
@@ -120,15 +107,15 @@
       <ul>
         {#each smartSets as saved (saved.id)}<li>
             <Button
-              disabled={smartDisabled || smartLoading || !!smartError}
+              disabled={smartDisabled}
               onclick={() => {
-                if (!smartDisabled && !smartLoading && !smartError) onopensmart?.(saved);
+                if (!smartDisabled) onopensmart?.(saved);
               }}>{saved.name}</Button
             ><span>Smart set</span>
           </li>{/each}
       </ul>{/if}
     {#if smartError}<p role="alert">
-        {smartError}<Button onclick={() => void loadSmartSets(true)}>Retry smart sets</Button>
+        {smartError}<Button onclick={() => void loadSmartSets()}>Retry smart sets</Button>
       </p>{/if}
     {#if smartOffset < smartTotal}<Button
         disabled={smartLoading}

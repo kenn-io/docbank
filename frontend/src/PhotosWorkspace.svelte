@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { APIError } from "./api-transport.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     Button,
@@ -168,24 +167,16 @@
     const displayFileID = editor.asset?.display_file_id ?? direct?.display_file_id;
     if (direct && rotations.has(direct.display_file_id))
       direct = { ...direct, rotation: rotations.get(direct.display_file_id)! };
-    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) {
-      await refresh();
-      return;
-    }
     // A lookup that has not bound its display file yet may predate any rotation in this receipt.
     if (
       photoID &&
       detailLoading &&
       (displayFileID ? rotations.has(displayFileID) : rotations.size > 0)
     ) {
-      if (photos.projection) {
-        detailController?.abort();
-        reload = { id: photoID };
-      } else {
-        detailRequest?.controller.abort();
-        void loadDetail(photoID, true).catch(() => {});
-      }
+      detailController?.abort();
+      reload = { id: photoID };
     }
+    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) await refresh();
   }
   function unavailable() {
     editor.unavailable(
@@ -307,9 +298,6 @@
   let reload = $state.raw<{ id: string }>();
   let consumedReload = $state.raw<typeof reload>();
   let reloadedRow: Photos["items"][number] | undefined;
-  let detailRequest:
-    | { id: string; controller: AbortController; signal: AbortSignal; promise: Promise<void> }
-    | undefined;
   let reloadRevision = $state(0);
   let detailController: AbortController | undefined;
   let visitController: AbortController | undefined;
@@ -324,58 +312,6 @@
   let openingElement: HTMLElement | undefined;
   let openingID = "";
   let restorePosition: (() => Promise<void>) | undefined;
-  function loadDetail(id: string, resetOriginal = false, mapReload?: typeof reload): Promise<void> {
-    if (!mapReload && detailRequest?.id === id && !detailRequest.signal.aborted)
-      return detailRequest.promise;
-    detailRequest?.controller.abort();
-    const controller = new AbortController();
-    const owner = AbortSignal.any([
-      controller.signal,
-      ...(detailController ? [detailController.signal] : []),
-    ]);
-    const signal = AbortSignal.any([owner, AbortSignal.timeout(30_000)]);
-    const request = { id, controller, signal, promise: Promise.resolve() };
-    detailRequest = request;
-    detailLoading = true;
-    const version = untrack(() => current?.content_version_id);
-    request.promise = (mapReload ? photos.reload(id, signal) : photos.lookup(id, signal))
-      .then((photo) => {
-        if (owner.aborted || photoID !== id || !alive) return;
-        signal.throwIfAborted();
-        const index = photos.items.findIndex((item) => item.asset_id === id);
-        if (index >= 0 && !photos.projection)
-          photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
-        direct = photo;
-        detailError = "";
-        if (resetOriginal || (mapReload && photo.content_version_id === version)) reloadRevision++;
-        if (mapReload) {
-          reloadedRow = untrack(() => listedRow);
-          consumedReload = mapReload;
-        }
-      })
-      .catch((cause) => {
-        if (owner.aborted || photoID !== id || !alive) return;
-        detailError =
-          signal.aborted && !mapReload
-            ? "Photo details timed out."
-            : cause instanceof Error
-              ? cause.message
-              : String(cause);
-        if (!mapReload && cause instanceof APIError && cause.status === 404) {
-          direct = undefined;
-          photos.items = photos.items.filter((item) => item.asset_id !== id);
-          return;
-        }
-        throw cause;
-      })
-      .finally(() => {
-        if (detailRequest === request) {
-          detailRequest = undefined;
-          detailLoading = false;
-        }
-      });
-    return request.promise;
-  }
   $effect(() => {
     if (!photoID) return;
     const controller = new AbortController();
@@ -383,27 +319,6 @@
     return () => controller.abort();
   });
   $effect(() => {
-    if (photos.projection) return;
-    const id = photoID;
-    if (!id) {
-      direct = undefined;
-      detailError = "";
-      if (fromGrid) void restoreGrid();
-      return;
-    }
-    const controller = new AbortController();
-    detailController = controller;
-    if (untrack(() => direct?.asset_id) !== id) direct = undefined;
-    detailError = "";
-    if (fromGrid && listedDetail) detailLoading = false;
-    else void loadDetail(id).catch(() => {});
-    return () => {
-      controller.abort();
-      if (detailRequest?.id === id) detailRequest.controller.abort();
-    };
-  });
-  $effect(() => {
-    if (!photos.projection) return;
     const id = photoID;
     if (!id) {
       direct = undefined;
@@ -436,20 +351,34 @@
       detailLoading = false;
       return () => controller.abort();
     }
-    if (!explicit) {
-      void loadDetail(id).catch(() => {});
-      const request = detailRequest;
-      return () => {
-        controller.abort();
-        request?.controller.abort();
-        if (detailRequest === request) detailRequest = undefined;
-      };
-    }
+    detailLoading = true;
     const request = reload;
-    void loadDetail(id, false, request).catch(() => {});
+    const version = untrack(() => current?.content_version_id);
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+    void (photos.projection && explicit ? photos.reload(id, signal) : photos.lookup(id, signal))
+      .then((photo) => {
+        if (!signal.aborted) {
+          if (!photos.projection)
+            photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
+          direct = photo;
+          detailError = "";
+          if (explicit) {
+            if (!photos.projection || photo.content_version_id === version) reloadRevision++;
+            reloadedRow = untrack(() => listedRow);
+            consumedReload = request;
+          }
+        }
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted)
+          detailError = cause instanceof Error ? cause.message : String(cause);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) detailLoading = false;
+      });
     return () => {
       controller.abort();
-      consumedReload = request;
+      if (explicit) consumedReload = request;
     };
   });
   async function restoreGrid() {
@@ -508,34 +437,25 @@
     captureReturn(element);
     onphotochange(id, "open");
   }
-  function neighbors(id: string) {
-    const index = ordered.findIndex((item) => item.asset_id === id);
-    if (index >= 0) return { previous: index - 1, next: index + 1 };
-    if (removedAt < 0) return undefined;
-    return { previous: removedAt - 1, next: removedAt };
-  }
   async function move(direction: -1 | 1) {
     if (!editor.canChangeTarget()) return;
     const controller = visitController;
-    // A photo deleted elsewhere has no details, but still has a place in the list.
-    const id = photoID;
-    if (!fromGrid || !id || !controller) return;
-    const before = neighbors(id);
-    if (!before) return;
-    const wasListed = listed;
+    if (!fromGrid || !current || !controller) return;
+    const id = current.asset_id;
+    const index = ordered.findIndex((item) => item.asset_id === id);
+    if (index < 0) return;
     if (
       photos.cursor &&
       (!mapMode || photos.items.length < mapPhotoLimit) &&
       direction === 1 &&
-      before.next === ordered.length
+      index === ordered.length - 1
     ) {
       await photos.loadMore(preserve);
     }
     if (controller.signal.aborted || photoID !== id) return;
-    // A refresh that removed the photo during the wait makes this step stale.
-    const after = neighbors(id);
-    if (!after || (wasListed && !listed)) return;
-    const next = ordered[direction === 1 ? after.next : after.previous];
+    const currentIndex = ordered.findIndex((item) => item.asset_id === id);
+    if (currentIndex < 0) return;
+    const next = ordered[currentIndex + direction];
     if (next) onphotochange(next.asset_id, "step");
   }
   async function retryNavigation() {
@@ -550,65 +470,21 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
-  // A newer refresh owns the list and viewer; an older one reports that it was replaced.
-  let refreshes = 0;
-  /** Returns false when the refresh was cancelled or replaced before it finished. */
   export async function refresh(changes?: PhotoEventBatch) {
-    const generation = ++refreshes;
-    const replaced = () => generation !== refreshes;
+    if (changes && editor.affectedBy(changes)) editor.changedElsewhere(changes);
     const id = photoID;
-    const revision = changes?.assets.get(id);
-    const affected = !changes || changes.refetch || revision !== undefined;
-    const metadataAffected =
-      changes && editor.affectedBy(changes, photos.dependsOnAlbums(changes.albums.keys()));
-    if (metadataAffected) editor.changedElsewhere(changes);
-    if (affected) detailRequest?.controller.abort();
-    if (current) direct = current;
-    const previousItems = photos.items;
-    let refreshed: boolean;
-    let failure: { cause: unknown } | undefined;
-    try {
-      refreshed = await photos.refresh(preserve, !!changes);
-    } catch (cause) {
-      // Counts or timeline can fail after replace accepts a new row array.
-      if (photos.items === previousItems) throw cause;
-      refreshed = true;
-      failure = { cause };
-    }
-    if (replaced()) return false;
-    // Only live refreshes reject; other callers already show list and viewer errors.
-    if (!refreshed && photos.error) {
-      if (changes) throw new Error(photos.error);
+    const refreshed = await photos.refresh(preserve, !!changes);
+    if (!refreshed) {
+      if (changes && photos.error) throw new Error(photos.error);
       return false;
     }
-    try {
-      if (refreshed && metadataAffected) await editor.reconcile();
-      if (photos.projection) await tick();
-      if (replaced()) return false;
-      if (id && photoID === id) {
-        if (affected && !photos.projection) {
-          detailRequest?.controller.abort();
-          detailLoading = false;
-        }
-        const listed = refreshed ? photos.items.find((photo) => photo.asset_id === id) : undefined;
-        if (listed && "content_version_id" in listed) {
-          direct = listed;
-          if (listed.revision >= (revision ?? 0)) detailError = "";
-        }
-        if (
-          !changes ||
-          (affected &&
-            (!listed || !("content_version_id" in listed) || listed.revision < (revision ?? 0)))
-        ) {
-          const lookup = loadDetail(id);
-          await (changes ? lookup : lookup.catch(() => {}));
-        }
-      }
-    } finally {
-      if (failure && !replaced()) throw failure.cause;
+    if (changes) await editor.reconcile();
+    if (id && photoID === id && (!changes || changes.refetch || changes.assets.has(id))) {
+      // The existing reload path owns direct links and compact Map rows.
+      if (!photos.items.some((item) => item.asset_id === id) || photos.projection) reload = { id };
+      await tick();
     }
-    // An incomplete listing still looks up the open photo, but has not confirmed the list.
-    return refreshed && !replaced();
+    return true;
   }
   async function setHidden(id: string) {
     if (photos.hiding || photos.trashing) return;
@@ -637,16 +513,6 @@
         )),
   );
   const ordered = $derived(photos.items);
-  // A refresh can drop the open photo from the list; navigation continues from where it was.
-  let anchor = $state.raw<{ id: string; index: number }>();
-  $effect(() => {
-    const id = photoID;
-    const index = ordered.findIndex((item) => item.asset_id === id);
-    if (id && index >= 0) anchor = { id, index };
-  });
-  const removedAt = $derived(
-    fromGrid && !listed && anchor?.id === photoID ? Math.min(anchor.index, ordered.length) : -1,
-  );
   const outsideSelection = $derived(
     mapMode ? [...photos.selectedIDs].filter((id) => !shownIDs.has(id)).length : 0,
   );
@@ -1344,14 +1210,12 @@
       reloading={detailLoading}
       {reloadRevision}
       onreload={() => {
-        if (photos.projection) reload = { id: photoID };
-        else void loadDetail(photoID, true).catch(() => {});
+        reload = { id: photoID };
       }}
       onretry={retryNavigation}
       {photos}
       {cache}
       items={fromGrid ? ordered : []}
-      {removedAt}
       canLoadMore={fromGrid && (!mapMode || photos.items.length < mapPhotoLimit) && !!photos.cursor}
       onmove={move}
       onchoose={(id) => onphotochange(id, "step")}

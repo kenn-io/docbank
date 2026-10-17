@@ -109,6 +109,22 @@ func TestPhotoEventsRejectsRequestsWithoutAPIKey(t *testing.T) {
 	require.Equal(t, "unauthorized", problem.Code)
 }
 
+func TestPhotoEventsHideTransitionRefetchesLockedStream(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	node, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", testHash("visible"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	response, scanner := openPhotoEventStream(t, ts, "", nil)
+	require.True(t, readPhotoChange(t, scanner, response.Body).Refetch)
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.Equal(t, `{"refetch":true}`, readPhotoChangeData(t, scanner, response.Body))
+}
+
 func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)

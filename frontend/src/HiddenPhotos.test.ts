@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import HiddenPhotos from "./HiddenPhotos.svelte";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
-import * as photosWorkspace from "./PhotosWorkspace.svelte";
 import { photo, storage } from "./photo-test-fixtures.js";
 
 afterEach(() => {
@@ -33,55 +32,6 @@ const props = (onauthfailure = vi.fn()) => ({
 });
 const problem = (status: number, detail: string, code = "") =>
   new Response(JSON.stringify({ detail, code }), { status });
-
-it("routes live album changes to Hidden counts or membership", async () => {
-  prepare();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => Response.json(state(true))),
-  );
-  const refresh = vi.fn(async () => true);
-  vi.spyOn(photosWorkspace, "default").mockImplementation(() => ({
-    refresh,
-    captureReturn: vi.fn(),
-  }));
-  const view = render(HiddenPhotos, props());
-  await waitFor(() => expect(view.component.activePhotos()).toBeDefined());
-  const photos = view.component.activePhotos()!;
-  const depends = vi.spyOn(photos, "dependsOnAlbums").mockReturnValue(false);
-  const counts = vi.spyOn(photos, "reloadCounts").mockResolvedValue();
-  const unrelated = {
-    assets: new Map<string, number>(),
-    albums: new Map([["album-2", 2]]),
-    refetch: false,
-  };
-  await view.component.refresh(unrelated);
-  expect(depends).toHaveBeenCalledOnce();
-  expect([...depends.mock.calls[0]![0]]).toEqual(["album-2"]);
-  expect(counts).toHaveBeenCalledExactlyOnceWith(true);
-  expect(refresh).not.toHaveBeenCalled();
-  const membership = { ...unrelated, albums: new Map([["album-1", 2]]) };
-  depends.mockReturnValue(true);
-  await view.component.refresh(membership);
-  expect([...depends.mock.calls[1]![0]]).toEqual(["album-1"]);
-  expect(refresh).toHaveBeenCalledExactlyOnceWith(membership);
-});
-
-it("propagates live Hidden gate access failures and displays the error", async () => {
-  prepare();
-  let failing = false;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => (failing ? problem(503, "Access unavailable") : Response.json(state(false)))),
-  );
-  const view = render(HiddenPhotos, props());
-  await screen.findByRole("button", { name: "Unlock" });
-  failing = true;
-  await expect(
-    view.component.refresh({ assets: new Map(), albums: new Map(), refetch: true }),
-  ).rejects.toThrow("Access unavailable");
-  expect(screen.getByText("Access unavailable")).toBeTruthy();
-});
 
 it("waits for a held leave lock before redisplaying on return", async () => {
   prepare();
@@ -463,7 +413,7 @@ it("keeps one associated lockout visible outside management until its original d
   expect(reads).toBe(before);
 });
 
-it.each(["lock", "revoke", "expiry with clock-skew countdown", "denial", "trash denial", "read"])(
+it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])(
   "clears Hidden rows, selections and previews after %s and recovers failed reads",
   async (kind) => {
     prepare();
@@ -480,13 +430,7 @@ it.each(["lock", "revoke", "expiry with clock-skew countdown", "denial", "trash 
         }
       },
     );
-    let now = Date.now();
-    if (kind === "expiry with clock-skew countdown")
-      vi.spyOn(Date, "now").mockImplementation(() => now);
-    let hidden =
-      kind === "expiry with clock-skew countdown"
-        ? { configured: true, expires_at: new Date(now - 300_000).toISOString(), expires_in: 300 }
-        : state(true);
+    let hidden = state(true);
     let failed = false;
     let denied = false;
     const fetcher = vi.fn(async (url: string) => {
@@ -525,8 +469,6 @@ it.each(["lock", "revoke", "expiry with clock-skew countdown", "denial", "trash 
     await waitFor(() => expect(screen.getByAltText("Photo 1.jpg")).toBeTruthy());
     const cacheName = stored.open.mock.calls[0][0];
     const grid = screen.getByRole("main", { name: "Photo library" });
-    if (kind === "expiry with clock-skew countdown")
-      expect(screen.getByText("Locks in 5:00")).toBeTruthy();
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     await fireEvent(document, new Event("visibilitychange"));
     await waitFor(() =>
@@ -543,8 +485,9 @@ it.each(["lock", "revoke", "expiry with clock-skew countdown", "denial", "trash 
       denied = true;
       hidden = state(false);
       await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
-    } else if (kind === "expiry with clock-skew countdown") now += 300_001;
-    else {
+    } else if (kind === "expire") {
+      vi.spyOn(Date, "now").mockReturnValue(Date.now() + 300_001);
+    } else {
       if (kind === "revoke") hidden = state(false);
       else failed = true;
       vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -552,8 +495,6 @@ it.each(["lock", "revoke", "expiry with clock-skew countdown", "denial", "trash 
     }
     await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
     await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
-    if (kind === "expiry with clock-skew countdown")
-      expect(screen.getByLabelText("Passcode")).toBeTruthy();
     expect(revoked).toBeGreaterThan(0);
     if (kind === "read") {
       await screen.findByText("Access unavailable");
@@ -565,6 +506,33 @@ it.each(["lock", "revoke", "expiry with clock-skew countdown", "denial", "trash 
     }
   },
 );
+
+it("counts down from server-relative seconds when the browser clock runs ahead", async () => {
+  prepare();
+  storage();
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const serverNow = now - 600_000;
+  const unlocked = {
+    configured: true,
+    expires_at: new Date(serverNow + 300_000).toISOString(),
+    expires_in: 300,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/hidden")) return Response.json(unlocked);
+      if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+      return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
+    }),
+  );
+  render(HiddenPhotos, props());
+  await screen.findByRole("main", { name: "Photo library" });
+  expect(screen.getByText("Locks in 5:00")).toBeTruthy();
+  now += 300_001;
+  await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
+  expect(screen.getByLabelText("Passcode", { exact: true })).toBeTruthy();
+});
 
 it("moves focus to the successor control after unlock and lock", async () => {
   prepare();

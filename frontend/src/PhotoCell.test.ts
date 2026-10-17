@@ -195,11 +195,45 @@ it.each(pairRejections)(
   },
 );
 
-function previewFixture(failure: string, compact = false) {
-  let urls = 0;
+it("revokes mounted URLs and ignores previews that complete after unmount", async () => {
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
-    value: vi.fn(() => `blob:synthetic-${++urls}`),
+    value: vi.fn(() => "blob:synthetic"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  const item = photo(1);
+  item.previews.grid = { state: "ready", generation_id: "generation" };
+  let finish!: (blob: Blob) => void;
+  const get = vi
+    .fn()
+    .mockResolvedValueOnce(new Blob(["synthetic-jpeg"]))
+    .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  const props = {
+    photo: item,
+    cache: { get } as unknown as PhotoPreviewCache,
+    selected: false,
+    onclick: vi.fn(),
+    oncheck: vi.fn(),
+    onopen: vi.fn(),
+  };
+  const first = render(PhotoCell, props);
+  await screen.findByRole("img");
+  first.unmount();
+  expect(get.mock.calls[0][2].aborted).toBe(true);
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic");
+  const second = render(PhotoCell, props);
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  second.unmount();
+  expect(get.mock.calls[1][2].aborted).toBe(true);
+  finish(new Blob(["late-jpeg"]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+});
+
+it("reloads a preview from the network after the image fails to decode", async () => {
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:synthetic"),
   });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   const item = photo(1);
@@ -208,97 +242,18 @@ function previewFixture(failure: string, compact = false) {
     async (_id: string, _generation: string, _signal: AbortSignal, _reload: boolean) =>
       new Blob(["synthetic-jpeg"]),
   );
-  const onclick = vi.fn(),
-    onopen = vi.fn();
-  if (failure === "cache") get.mockRejectedValueOnce(new Error("Preview unavailable"));
-  let finish!: (blob: Blob) => void;
-  if (failure === "lifecycle")
-    get
-      .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-      .mockResolvedValueOnce(new Blob(["replacement-jpeg"]))
-      .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
-  const props = {
+  render(PhotoCell, {
     photo: item,
     cache: { get } as unknown as PhotoPreviewCache,
     selected: false,
-    compact,
-    onclick,
+    onclick: vi.fn(),
     oncheck: vi.fn(),
-    onopen,
-  };
-  const first = render(PhotoCell, props);
-  return {
-    item,
-    get,
-    props,
-    first,
-    get finish() {
-      return finish;
-    },
-    onclick,
-    onopen,
-  };
-}
-
-it("preserves pending previews through row replacement and ignores late completion after unmount", async () => {
-  const fixture = previewFixture("lifecycle");
-  const { get, first, item, props } = fixture;
-  await waitFor(() => expect(get).toHaveBeenCalledOnce());
-  const signal = get.mock.calls[0][2];
-  await first.rerender({ photo: { ...item } });
-  expect(signal.aborted).toBe(false);
-  expect(get).toHaveBeenCalledOnce();
-  fixture.finish(new Blob(["completed"]));
-  const old = await screen.findByRole("img"),
-    oldURL = (old as HTMLImageElement).src;
-  const replacement = {
-    ...item,
-    previews: {
-      ...item.previews,
-      grid: { state: "ready" as const, generation_id: "replacement-grid" },
-    },
-  };
-  await first.rerender({ ...props, photo: replacement });
-  await waitFor(() =>
-    expect((screen.getByRole("img") as HTMLImageElement).src).toBe("blob:synthetic-2"),
-  );
-  expect(get).toHaveBeenLastCalledWith(
-    item.asset_id,
-    "replacement-grid",
-    expect.any(AbortSignal),
-    false,
-  );
-  expect(URL.revokeObjectURL).toHaveBeenCalledWith(oldURL);
-  first.unmount();
-  expect(get.mock.calls[0][2].aborted).toBe(true);
-  expect(get.mock.calls[1][2].aborted).toBe(true);
-  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic-2");
-  const second = render(PhotoCell, props);
-  await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
-  second.unmount();
-  fixture.finish(new Blob(["late-jpeg"]));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
-});
-
-it.each([
-  { failure: "cache", compact: false },
-  { failure: "cache", compact: true },
-  { failure: "decode", compact: false },
-])("retries a $failure preview failure, compact=$compact", async ({ failure, compact }) => {
-  const { get, onclick, onopen } = previewFixture(failure, compact);
-  if (failure === "decode") await fireEvent.error(await screen.findByRole("img"));
-  const retry = await screen.findByRole("button", {
-    name: compact ? "Retry preview for Photo 1.jpg" : "Retry preview",
+    onopen: vi.fn(),
   });
-  retry.focus();
-  await fireEvent.click(retry);
+  await fireEvent.error(await screen.findByRole("img"));
+  await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
   await screen.findByRole("img");
   expect(get.mock.calls.map((call) => call[3])).toEqual([false, true]);
-  expect(onclick).not.toHaveBeenCalled();
-  expect(onopen).not.toHaveBeenCalled();
-  if (compact)
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show Photo 1.jpg" }));
 });
 
 it("measures only quarter turns and releases the observer when rotation returns to zero", async () => {

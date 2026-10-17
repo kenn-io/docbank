@@ -38,7 +38,6 @@
     onreload,
     reloading = false,
     reloadRevision = 0,
-    removedAt = -1,
   }: {
     metadataOpen?: boolean;
     editor?: PhotoAuthoredEditor;
@@ -59,8 +58,6 @@
     onreload?: () => void;
     reloading?: boolean;
     reloadRevision?: number;
-    /** Where the open photo sat in items before a refresh removed it. */
-    removedAt?: number;
   } = $props();
   let url = $state("");
   let quality = $state("");
@@ -79,15 +76,10 @@
     photo ? `${photo.asset_id}:${photo.display_file_id}:${photo.content_version_id}` : "",
   );
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
-  // The position of the photo after the open one.
-  const following = $derived(index >= 0 ? index + 1 : removedAt);
-  const rail = $derived(
-    following < 0 ? [] : items.slice(Math.max(0, following - 5), following + 4),
-  );
-  const previous = $derived(index >= 0 ? index > 0 : following > 0);
+  const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
+  const previous = $derived(index > 0);
   const next = $derived(
-    following >= 0 &&
-      (following < items.length || (canLoadMore && !photos.error && !photos.loading)),
+    index >= 0 && (index < items.length - 1 || (canLoadMore && !photos.error && !photos.loading)),
   );
   const originalAllowed = $derived.by(() => {
     try {

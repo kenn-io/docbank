@@ -112,10 +112,13 @@ func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (contex
 	if events != nil {
 		select {
 		case event := <-events:
-			require.Equal(b, PhotoEvent{Refetch: true, audience: photoPublic}, event)
+			require.Equal(b, PhotoEvent{Refetch: true}, event)
 		default:
 			b.Fatal("creating a tag did not publish a capture event")
 		}
+	}
+	if audience == "inactive" {
+		cancel()
 	}
 	return ctx, cancel, installed
 }

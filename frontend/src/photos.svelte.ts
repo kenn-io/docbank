@@ -279,8 +279,6 @@ export class Photos {
   }
   total = $state(0);
   private countStale = false;
-  // A live change arrived while this view was off screen; it refreshes when it resumes.
-  private changedOffscreen = false;
   cursor = $state<string | undefined>();
   get mapCapped() {
     return (
@@ -765,28 +763,13 @@ export class Photos {
     this.rejectsLoading = false;
   }
 
-  markChanged(changes: PhotoEventBatch) {
-    this.changedOffscreen = true;
-    // Retained metadata reconciles when the refresh on return revalidates it.
-    if (this.authored.affectedBy(changes, this.dependsOnAlbums(changes.albums.keys())))
-      this.authored.changedElsewhere(changes);
-  }
-
-  /** Whether a membership change in these albums can change this view's results. */
-  dependsOnAlbums(ids: Iterable<string>) {
-    const filtered = new Set(this.query.filters?.set_ids ?? []);
-    // Advanced fields such as `set:` or `saved:` can select albums, and every field needs a
-    // colon. Treat any advanced search with one as depending on every album.
-    const fields = this.query.syntax === "advanced" && this.query.text.includes(":");
-    for (const id of ids) if (fields || filtered.has(id)) return true;
-    return false;
+  async reconcileMetadata(changes: PhotoEventBatch) {
+    if (!this.authored.affectedBy(changes)) return;
+    this.authored.changedElsewhere(changes);
+    await this.authored.reconcile(this.authoredScope(this.selectedIDs));
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.changedOffscreen) {
-      this.changedOffscreen = false;
-      if (this.started) return this.refresh(preserve);
-    }
     if (this.needsFacets && !this.facetsError) void this.retryFacets();
     if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError)
       void this.loadTimeline();
@@ -860,7 +843,6 @@ export class Photos {
   }
 
   refresh(preserve?: () => (() => Promise<void>) | undefined, live = false) {
-    this.changedOffscreen = false;
     this.timelineController.abort();
     // A live refresh keeps the current timeline on screen until its replacement arrives.
     if (!live) this.timeline = undefined;
@@ -891,7 +873,9 @@ export class Photos {
     if (this.disposed || this.hidden) return;
     this.timelineController.abort();
     const controller = (this.timelineController = new AbortController());
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+    const signal = live
+      ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
+      : controller.signal;
     this.timelineLoading = true;
     this.timelineError = "";
     try {
@@ -1323,7 +1307,9 @@ export class Photos {
     if (this.disposed || !this.started || this.facetsLoading || this.withoutCounts) return;
     this.facetsController.abort();
     const controller = (this.facetsController = new AbortController());
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+    const signal = live
+      ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
+      : controller.signal;
     this.needsFacets = true;
     this.facetsLoading = true;
     this.facetsError = "";

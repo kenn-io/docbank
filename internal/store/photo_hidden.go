@@ -287,11 +287,7 @@ func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string,
 	}
 	if denial == nil {
 		s.photoHiddenSessionsMu.Lock()
-		for digest, until := range s.photoHiddenSessions {
-			if !until.After(s.hiddenNow()) {
-				delete(s.photoHiddenSessions, digest)
-			}
-		}
+		s.scanPhotoHiddenSessions()
 		s.photoHiddenSessions[hiddenTokenDigest(token)] = expiry
 		s.photoHiddenSessionsMu.Unlock()
 	}

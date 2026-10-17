@@ -1,8 +1,4 @@
-import * as photoWorkspace from "./PhotosWorkspace.svelte";
-import { PhotoAlbums } from "./photoAlbums.svelte.js";
-import { APIError } from "./api-transport.js";
-import * as photoEvents from "./photoEvents.js";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
   photoMetadataResponse,
@@ -14,8 +10,12 @@ import {
   savedSmartSet,
   storage,
 } from "./photo-test-fixtures.js";
-import App from "./App.svelte";
 import * as api from "./generated/docbank.js";
+import * as photoEvents from "./photoEvents.js";
+
+beforeEach(() => vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue(() => {}));
+import * as photoWorkspace from "./PhotosWorkspace.svelte";
+import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
@@ -1597,30 +1597,22 @@ it.each([false, true])(
       expect(location.hash).toBe("");
       await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
       await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-      const viewer = screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-      const concealed = () =>
-        document.querySelector<HTMLElement>("main.photos-workspace")?.inert ?? false;
-      // The viewer stays mounted, but shows nothing while the replacement query is pending.
-      const holdChange = async (id: string) => {
-        changeID = id;
-        holdRefresh = true;
-        await fireEvent(document, new Event("visibilitychange"));
-        await waitFor(() => expect(holdRefresh).toBe(false), { timeout: 5000 });
-        expect(concealed()).toBe(true);
-        expect(viewer.isConnected).toBe(true);
-      };
-      await holdChange("second");
-      finishRefresh(Response.json({ items: [item], total: 1 }));
-      await waitFor(() => expect(concealed()).toBe(false));
+      const queries = () =>
+        vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/assets/query")).length;
+      let refreshed = queries();
+      changeID = "second";
+      await fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
       await screen.findByText("Fit preview");
-      expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBe(viewer);
+      expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeTruthy();
       expect(location.hash).toBe("#photo=photo-1");
       const shown = revoke.mock.calls.length;
+      refreshed = queries();
       listed = false;
-      await holdChange("third");
-      finishRefresh(Response.json({ items: [], total: 0 }));
+      changeID = "third";
+      await fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
       await screen.findByText("This photo is no longer in the refreshed result.");
-      await waitFor(() => expect(concealed()).toBe(false));
       expect(screen.queryByText("Fit preview")).toBeNull();
       expect(revoke.mock.calls.length).toBeGreaterThan(shown);
       return;
@@ -2486,7 +2478,7 @@ it.each(["search", "tag", "snapshot"] as const)(
   },
 );
 
-it("refreshes remote smart-set names, payloads and deletions while Albums stays open", async () => {
+it("opens a smart set through the Albums app route", async () => {
   history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -2501,32 +2493,12 @@ it("refreshes remote smart-set names, payloads and deletions while Albums stays 
   const payload = parseQuery(
     '{"syntax":"advanced","text":"rating:5","filters":{"kinds":["photo"]},"sort":{"field":"size","direction":"desc"}}',
   );
-  let saved = savedSmartSet(payload, await queryFingerprint(payload), { revision: 2 });
-  let definitions: (typeof saved)[] = [saved];
-  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
-  vi.spyOn(photoEvents, "watchPhotoEvents").mockImplementation((_session, update) => {
-    refresh = update;
-    return vi.fn();
-  });
-  let stall = false;
-  const pendingSignals: AbortSignal[] = [];
+  const saved = savedSmartSet(payload, await queryFingerprint(payload), { revision: 2 });
   const open = vi.spyOn(Photos.prototype, "openSmartSet").mockReturnValue(true);
   stubPhotoFetch(
-    vi.fn(async (url: string, init: RequestInit) => {
-      if (url.includes("/saved-queries?") && stall) {
-        const signal = init.signal!;
-        pendingSignals.push(signal);
-        return new Promise<Response>((_, reject) =>
-          signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
-        );
-      }
+    vi.fn(async (url: string) => {
       if (url.includes("/saved-queries?"))
-        return Response.json({
-          items: definitions,
-          total: definitions.length,
-          limit: 100,
-          offset: 0,
-        });
+        return Response.json({ items: [saved], total: 1, limit: 100, offset: 0 });
       if (url.endsWith("/photos/albums")) return albumResponse([]);
       if (url.endsWith("/photos/assets/query"))
         return albumResponse({ items: [photo(1)], total: 1 });
@@ -2536,55 +2508,9 @@ it("refreshes remote smart-set names, payloads and deletions while Albums stays 
     }),
   );
   render(App);
-  await screen.findByRole("button", { name: "Five stars" });
-  const deadline = new AbortController();
-  const timeout = vi
-    .spyOn(AbortSignal, "timeout")
-    .mockImplementation((duration) =>
-      duration === 60_000 ? deadline.signal : new AbortController().signal,
-    );
-  stall = true;
-  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
-  await waitFor(() => expect(pendingSignals).toHaveLength(1));
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Five stars" }).disabled).toBe(true);
-  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
-  await waitFor(() => expect(pendingSignals).toHaveLength(2));
-  expect(pendingSignals[0]!.aborted).toBe(true);
-  deadline.abort(new DOMException("Smart sets timed out", "TimeoutError"));
-  await screen.findByRole("button", { name: "Retry smart sets" });
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Five stars" }).disabled).toBe(true);
-  timeout.mockRestore();
-  stall = false;
-  await fireEvent.click(screen.getByRole("button", { name: "Retry smart sets" }));
-  await waitFor(() =>
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Five stars" }).disabled).toBe(
-      false,
-    ),
-  );
-  const updatedPayload = { ...payload, text: "rating:4" };
-  saved = savedSmartSet(updatedPayload, await queryFingerprint(updatedPayload), {
-    name: "Four stars",
-    revision: 3,
-  });
-  definitions = [saved];
-  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
-  await screen.findByRole("button", { name: "Four stars" });
-  expect(screen.queryByRole("button", { name: "Five stars" })).toBeNull();
-  definitions = [];
-  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Four stars" })).toBeNull());
-  definitions = [saved];
-  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Four stars" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Five stars" }));
   await waitFor(() => expect(location.pathname).toBe("/photos"));
   expect(open).toHaveBeenCalledWith(saved);
-  await fireEvent.click(screen.getByRole("button", { name: /^Albums$/ }));
-  await screen.findByRole("button", { name: "Four stars" });
-  stall = true;
-  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
-  await waitFor(() => expect(pendingSignals).toHaveLength(3));
-  cleanup();
-  expect(pendingSignals[2]!.aborted).toBe(true);
 });
 
 it("passes a registered Photos shortcut into the help dialog", async () => {
@@ -3448,6 +3374,7 @@ async function watcherFixture({
     .mockImplementation(async function (this: Photos) {
       this.started = true;
       this.items = this.hidden ? hiddenRows : rows;
+      this.authored.revalidate(new Set(this.items.map((item) => item.asset_id)));
       return true;
     });
   vi.spyOn(Photos.prototype, "reloadCounts").mockResolvedValue(undefined);
@@ -3489,296 +3416,57 @@ async function watcherFixture({
   };
 }
 
-it("rejects the first transient access failure during an event-driven refresh", async () => {
-  vi.stubGlobal("navigator", { locks: {} });
-  const fixture = await watcherFixture();
-  await waitFor(() => expect(fixture.workspaceProps.concealed).toBe(false));
-  const cause = new Error("Status temporarily unavailable");
-  const status = vi.spyOn(api, "getPhotoHiddenState").mockRejectedValueOnce(cause);
-  await act(async () => {
-    await expect(
-      fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true }),
-    ).rejects.toBe(cause);
-  });
-  expect(status).toHaveBeenCalledOnce();
-  expect(fixture.workspaceProps.concealed).toBe(false);
-});
-
-it("reconnects the watcher when Hidden access expiry changes", async () => {
-  const fixture = await watcherFixture({ configured: true });
-  const { access, watch, stop } = fixture;
-  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
-  for (const [index, expiresAt] of ["2099-01-01T00:00:00Z", "2099-01-01T01:00:00Z"].entries()) {
-    access.expires_at = expiresAt;
-    await act(async () => {
-      await fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
-    });
-    await waitFor(() => expect(watch).toHaveBeenCalledTimes(index + 2));
-    expect(stop).toHaveBeenCalledTimes(index + 1);
-  }
-  expect(watch.mock.calls.map(([session]) => session)).toEqual([
-    "synthetic",
-    "synthetic",
-    "synthetic",
-  ]);
-});
-
-it("keeps a refresh notice until recovery and preserves page errors", async () => {
-  const fixture = await watcherFixture();
-  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
-  await act(async () =>
-    fixture.fail(
-      new APIError("Close another photo view and retry.", 429, "photo_event_stream_limit"),
-    ),
-  );
-  expect(await screen.findByRole("alert")).toHaveProperty(
-    "textContent",
-    "Close another photo view and retry.",
-  );
-  await act(async () => fixture.connected());
-  await waitFor(() => expect(screen.queryByText("Close another photo view and retry.")).toBeNull());
-  await act(async () => fixture.fail(new Error("Photo refresh unavailable")));
-  expect(await screen.findByText("Photo refresh unavailable")).toBeTruthy();
-  await act(async () => fixture.connected());
-  expect(screen.getByText("Photo refresh unavailable")).toBeTruthy();
-  await act(async () => fixture.fail(new Error("Photo refresh still unavailable")));
-  expect(await screen.findByText("Photo refresh still unavailable")).toBeTruthy();
-  await act(async () => fixture.workspaceProps.onactionerror?.("Unrelated action error"));
-  expect(await screen.findByText("Unrelated action error")).toBeTruthy();
-  await act(async () => fixture.recovered());
-  expect(screen.queryByText("Photo refresh still unavailable")).toBeNull();
-  expect(screen.getByText("Unrelated action error")).toBeTruthy();
-});
-
-it("defers a cached Library refresh while Hidden is on screen", async () => {
-  const fixture = await watcherFixture({ configured: true, expiry: "2099-01-01T00:00:00Z" });
-  const { stores, workspaceRefresh } = fixture;
-  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(2));
-  workspaceRefresh.mockImplementation(function (this: Photos) {
-    return this.refresh(undefined, true).then(() => undefined);
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-  await waitFor(() => expect(fixture.workspaceProps.photos.hidden).toBe(true));
-  stores.mockClear();
-  const batch = {
-    assets: new Map([["photo-3", 2]]),
-    albums: new Map<string, number>(),
-    refetch: false,
-  };
-  workspaceRefresh.mockClear();
-  await act(async () => {
-    await fixture.refresh(batch);
-  });
-  expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
-  expect(stores.mock.contexts).toEqual([expect.objectContaining({ hidden: true })]);
-});
-
-it("routes album events to the affected photo list", async () => {
-  const fixture = await watcherFixture();
-  const { album, rows, workspaceRefresh, mounts } = fixture;
-  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
-  const albums = vi.spyOn(PhotoAlbums.prototype, "load").mockResolvedValue(true);
-  const library = fixture.workspaceProps.photos;
-  await fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${album.name}`) }));
-  await waitFor(() => expect(mounts).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(fixture.workspaceProps.albumID).toBe(album.id));
-  fixture.workspaceProps.photos.started = true;
-  fixture.workspaceProps.photos.items = rows;
-  workspaceRefresh.mockClear();
-  albums.mockClear();
-  expect(fixture.workspaceProps.albumID).toBe(album.id);
-  const counts = vi.spyOn(Photos.prototype, "reloadCounts").mockResolvedValue(undefined);
-  const unrelated = {
-    assets: new Map<string, number>(),
-    albums: new Map([["another", 2]]),
-    refetch: false,
-  };
-  await act(async () => {
-    await fixture.refresh(unrelated);
-  });
-  expect(albums).toHaveBeenCalledExactlyOnceWith();
-  expect(counts.mock.calls[counts.mock.contexts.indexOf(library)]).toEqual([true]);
-  expect(workspaceRefresh).not.toHaveBeenCalled();
-  const depends = vi.spyOn(fixture.workspaceProps.photos, "dependsOnAlbums").mockReturnValue(true);
-  await act(async () => {
-    await fixture.refresh(unrelated);
-  });
-  expect(depends).toHaveBeenCalledWith(["another"]);
-  expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(unrelated);
-  depends.mockRestore();
-  workspaceRefresh.mockClear();
-  albums.mockClear();
-  counts.mockClear();
-  const batch = {
-    assets: new Map<string, number>(),
-    albums: new Map([[album.id, 3]]),
-    refetch: false,
-  };
-  await act(async () => {
-    await fixture.refresh(batch);
-  });
-  expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
-  expect(albums).toHaveBeenCalledExactlyOnceWith();
-  expect(counts).toHaveBeenCalledExactlyOnceWith(true);
-  expect(counts.mock.contexts).toEqual([library]);
-  expect(mounts).toHaveBeenCalledTimes(2);
-});
-
-it("propagates a failed album refresh", async () => {
-  const fixture = await watcherFixture();
-  const albums = vi.spyOn(PhotoAlbums.prototype, "load").mockResolvedValue(true);
-  albums.mockResolvedValueOnce(false);
-  await act(async () => {
-    await expect(
-      fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true }),
-    ).rejects.toThrow("Photo refresh failed.");
-  });
-});
-
-it.each(["refetch", "asset"])(
-  "keeps the viewer concealed until a Hidden recheck finishes before a %s event refresh",
-  async (kind) => {
+it.each(["retained", "pending"])(
+  "rechecks %s metadata after a mixed visibility batch",
+  async (state) => {
     const fixture = await watcherFixture();
-    const { access, workspaceRefresh } = fixture;
-    await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
     await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
     await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
-    let finishRecheck!: (completed: boolean) => void;
-    workspaceRefresh.mockImplementationOnce(
-      () => new Promise<boolean>((resolve) => (finishRecheck = resolve)),
-    );
-    workspaceRefresh.mockResolvedValue(true);
-    access.change_id = "second";
-    const recheck = fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
-    await waitFor(() => expect(finishRecheck).toBeTypeOf("function"));
-    expect(fixture.workspaceProps.concealed).toBe(true);
-    const batch =
-      kind === "refetch"
-        ? { assets: new Map<string, number>(), albums: new Map<string, number>(), refetch: true }
-        : { assets: new Map([["photo-2", 2]]), albums: new Map<string, number>(), refetch: false };
-    const overlapping = fixture.refresh(batch);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(workspaceRefresh).toHaveBeenCalledOnce();
-    expect(fixture.workspaceProps.concealed).toBe(true);
-    await act(async () => {
-      finishRecheck(true);
-      await recheck;
-      await overlapping;
-    });
-    expect(fixture.workspaceProps.concealed).toBe(false);
-    expect(workspaceRefresh.mock.calls).toEqual([
-      [expect.objectContaining({ refetch: true })],
-      [batch],
-    ]);
-    workspaceRefresh.mockClear();
-    await act(async () => fixture.refresh(batch));
-    expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
-  },
-);
-
-it("revalidates the library when a Hidden recheck is replaced before it confirms visibility", async () => {
-  const fixture = await watcherFixture();
-  const { access, workspaceRefresh, mounts } = fixture;
-  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
-  await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
-  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
-  workspaceRefresh.mockResolvedValueOnce(false);
-  const mounted = mounts.mock.calls.length;
-  access.change_id = "second";
-  await act(async () => {
-    await fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
-  });
-  await waitFor(() => expect(mounts.mock.calls.length).toBeGreaterThan(mounted));
-  expect(fixture.workspaceProps.concealed).toBe(false);
-});
-
-it.each(["rename", "create", "delete", "rename and assign"])(
-  "refreshes the displayed keyword catalog after %s",
-  async (change) => {
-    const original = { id: "tag", name: "Trip keyword", revision: 1, assignment_count: 0 };
-    const list = vi
-      .spyOn(api, "listTags")
-      .mockResolvedValue({ items: [original], total: 1, limit: 1000, offset: 0 });
-    const fixture = await watcherFixture();
-    await waitFor(() => expect(fixture.workspaceProps.tags).toEqual([original]));
     const editor = fixture.workspaceProps.photos.authored;
-    editor.targets = [preparedPhoto(1, { tags: [] })];
-    const changed = {
-      ...original,
-      id: change === "create" ? "new-tag" : original.id,
-      name: "Holiday keyword",
-      revision: 2,
-    };
-    const current = change.startsWith("delete")
-      ? []
-      : change === "create"
-        ? [original, changed]
-        : [changed];
-    const listed = change === "rename and assign" ? [] : current;
-    list.mockResolvedValue({ items: listed, total: current.length, limit: 1000, offset: 0 });
-    if (change === "rename and assign") {
-      editor.targets[0]!.tags = [original.id];
-      vi.spyOn(api, "getTag").mockResolvedValue(changed);
+    const before = preparedPhoto(1);
+    editor.inspectedID = before.asset_id;
+    const latest = { ...before, revision: 8 };
+    let finish!: () => void;
+    const prepare = vi.spyOn(api, "preparePhotoAuthored");
+    let pending: Promise<void> | undefined;
+    if (state === "pending") {
+      prepare.mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => (finish = resolve));
+        return { assets: [], targets: [before] };
+      });
+      pending = editor.prepare({ asset_ids: [before.asset_id] });
+      fixture.workspaceRefresh.mockImplementationOnce(async () => {
+        editor.conceal();
+        finish();
+        await pending;
+        editor.revalidate(new Set([before.asset_id]), { asset_ids: [before.asset_id] });
+        return true;
+      });
+    } else {
+      editor.targets = [before];
     }
-    await act(async () =>
-      fixture.refresh({
-        assets: new Map(change === "rename and assign" ? [["photo-1", 2]] : []),
-        albums: new Map(),
-        refetch: true,
-      }),
-    );
-    expect(fixture.workspaceProps.tags).toEqual(expect.arrayContaining(current));
-    expect(fixture.workspaceProps.tags).toHaveLength(current.length);
+    prepare.mockResolvedValue({ assets: [], targets: [latest] });
+    editor.stage({ caption: "Local draft" });
+    fixture.access.change_id = "second";
+    const batch = {
+      assets: new Map([
+        [before.asset_id, 8],
+        ["photo-2", 2],
+      ]),
+      refetch: true,
+    };
+    const refreshing = fixture.refresh(batch);
+    await act(async () => refreshing);
+    expect(editor.patch.caption).toBe("Local draft");
+    expect(editor.conflict).toBe(true);
+    expect(prepare).toHaveBeenCalledTimes(state === "pending" ? 2 : 1);
+    await editor.reload();
+    expect(editor.targets[0]!.revision).toBe(8);
+    expect(editor.conflict).toBe(false);
+    const edit = vi
+      .spyOn(api, "editPhotoAuthored")
+      .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+    await editor.edit({}, {}, false, vi.fn());
+    expect(edit.mock.calls[0]![0].targets[0]!.revision).toBe(8);
   },
 );
-
-it("retries a timed-out catalog request", async () => {
-  const fixture = await watcherFixture();
-  const deadline = new AbortController();
-  const timeout = vi
-    .spyOn(AbortSignal, "timeout")
-    .mockImplementation((duration) =>
-      duration === 60_000 ? deadline.signal : new AbortController().signal,
-    );
-  const stall = async (_input: unknown, options?: { signal?: AbortSignal | null }) =>
-    new Promise<never>((_, reject) => {
-      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
-        once: true,
-      });
-    });
-  const list = vi
-    .spyOn(api, "listTags")
-    .mockResolvedValue({ items: [], total: 0, limit: 1000, offset: 0 });
-  list.mockImplementationOnce(stall);
-  const batch = {
-    assets: new Map<string, number>(),
-    albums: new Map<string, number>(),
-    refetch: true,
-  };
-  const refreshing = fixture.refresh(batch);
-  const failed = expect(refreshing).rejects.toThrow("Timed out");
-  await waitFor(() => expect(list).toHaveBeenCalledOnce());
-  deadline.abort(new DOMException("Timed out", "TimeoutError"));
-  await failed;
-  timeout.mockRestore();
-  await act(async () => fixture.refresh(batch));
-  expect(list).toHaveBeenCalledTimes(2);
-});
-
-it("cancels catalog reads when their watcher is disposed", async () => {
-  const fixture = await watcherFixture();
-  let signal!: AbortSignal;
-  const list = vi.spyOn(api, "listTags").mockImplementationOnce(async (_params, options) => {
-    signal = options!.signal!;
-    return new Promise((_, reject) =>
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
-    );
-  });
-  const refreshing = fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
-  // Register rejection handling before unmount aborts the request.
-  const cancelled = expect(refreshing).rejects.toThrow();
-  await waitFor(() => expect(list).toHaveBeenCalledOnce());
-  cleanup();
-  await cancelled;
-  expect(signal.aborted).toBe(true);
-});

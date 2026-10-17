@@ -3,20 +3,17 @@ import { photoEvents } from "./generated/docbank.js";
 
 export interface PhotoEvent {
   asset_id?: string;
-  album_id?: string;
   revision?: number;
   refetch?: boolean;
 }
 
 export interface PhotoEventBatch {
   assets: Map<string, number>;
-  albums: Map<string, number>;
   refetch: boolean;
 }
 
 const emptyBatch = (): PhotoEventBatch => ({
   assets: new Map(),
-  albums: new Map(),
   refetch: false,
 });
 
@@ -187,24 +184,18 @@ export function watchPhotoEvents(
       if (hasPending() && !stopped) schedule();
     }
   };
-  const hasPending = () => pending.refetch || pending.assets.size > 0 || pending.albums.size > 0;
+  const hasPending = () => pending.refetch || pending.assets.size > 0;
   const schedule = (event?: PhotoEvent) => {
     if (event && !pending.refetch) {
-      if (event.refetch || (!event.asset_id && !event.album_id)) pending.refetch = true;
+      if (event.refetch || !event.asset_id) pending.refetch = true;
       if (event.asset_id)
         pending.assets.set(
           event.asset_id,
           Math.max(event.revision ?? 0, pending.assets.get(event.asset_id) ?? 0),
         );
-      if (event.album_id)
-        pending.albums.set(
-          event.album_id,
-          Math.max(event.revision ?? 0, pending.albums.get(event.album_id) ?? 0),
-        );
-      if (pending.assets.size + pending.albums.size > 64) pending.refetch = true;
+      if (pending.assets.size > 64) pending.refetch = true;
       if (pending.refetch) {
         pending.assets.clear();
-        pending.albums.clear();
       }
     }
     if (!stopped && !refreshing && document.visibilityState === "visible")
