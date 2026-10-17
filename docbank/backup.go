@@ -264,7 +264,7 @@ func (r *BackupRepository) Verify(
 		ForceUnlock: opts.ForceUnlock, Progress: backupProgressCallback(opts.Progress),
 	})
 	if err != nil {
-		return BackupVerifyReport{}, fmt.Errorf("verifying backup repository: %w", err)
+		return BackupVerifyReport{}, err
 	}
 	report := BackupVerifyReport{
 		Snapshots: result.Snapshots, BlobsChecked: result.BlobsChecked,

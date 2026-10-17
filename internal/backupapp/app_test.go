@@ -3233,11 +3233,6 @@ func TestStatsCoverageV1EncodingGolden(t *testing.T) {
 	assert.Equal(t, golden, string(encoded))
 }
 
-func TestCheckManifestNamesUnsupportedCoverage(t *testing.T) {
-	manifest := &backup.Manifest{Stats: jsontext.Value(`{"coverage":{"version":2,"included":["future"]}}`)}
-	assert.Equal(t, []string{"backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}, backupapp.New("test").CheckManifest(manifest))
-}
-
 func TestVerifyReportsUnsupportedCoverage(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
@@ -3263,5 +3258,44 @@ func TestVerifyReportsUnsupportedCoverage(t *testing.T) {
 			}
 			assert.Equal(t, []backup.Problem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, result.Problems)
 		}
+	}
+	for _, change := range []string{"removed", "corrupted"} {
+		t.Run(change, func(t *testing.T) {
+			manifestPath := repo.Path("snapshots", supportedID+".mvmanifest")
+			original, err := os.ReadFile(manifestPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, os.WriteFile(manifestPath, original, 0o600)) })
+			result, err := backupapp.Verify(t.Context(), repo, "test", backup.VerifyOptions{
+				Quick: true, All: true,
+				Progress: func(event backup.ProgressEvent) {
+					if !event.Final {
+						return
+					}
+					// Kit has finished its checks. Change the manifest before the wrapper reloads it.
+					if change == "removed" {
+						require.NoError(t, os.Remove(manifestPath))
+					} else {
+						require.NoError(t, os.WriteFile(manifestPath, []byte("{"), 0o600))
+					}
+				},
+			})
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []string{supportedID, futureID}, result.Snapshots)
+			assert.Positive(t, result.BlobsChecked)
+			assert.Positive(t, result.BytesRead)
+			assert.Contains(t, result.Problems, backup.Problem{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"})
+			if change == "removed" {
+				assert.Len(t, result.Problems, 1)
+			} else {
+				require.Len(t, result.Problems, 2)
+				for _, problem := range result.Problems {
+					if problem.SnapshotID == futureID {
+						continue
+					}
+					assert.Equal(t, supportedID, problem.SnapshotID)
+					assert.Contains(t, problem.Detail, "loading verified backup manifest: backup: parsing snapshot "+supportedID)
+				}
+			}
+		})
 	}
 }

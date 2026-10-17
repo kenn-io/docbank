@@ -193,6 +193,14 @@ func TestEmbeddedBackup(t *testing.T) {
 	require.Len(t, snapshots, 1)
 	require.Equal(t, snapshot.ID, snapshots[0].ID)
 
+	t.Run("verify-error", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := repository.Verify(ctx, docbank.BackupVerifyOptions{SnapshotID: snapshot.ID})
+		require.ErrorIs(t, err, context.Canceled)
+		require.EqualError(t, err, "verifying backup repository: context canceled")
+	})
+
 	t.Run("round-trip", func(t *testing.T) {
 		verified, err := repository.Verify(t.Context(), docbank.BackupVerifyOptions{SnapshotID: snapshot.ID})
 		require.NoError(t, err)
