@@ -16,6 +16,8 @@ import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { PhotoCull } from "./photoCull.svelte.js";
+import { photoCullStorage } from "./photoCullStorage.js";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
@@ -2610,6 +2612,8 @@ it("refuses draft navigation until Clear edits releases it", async () => {
 });
 
 it("guards reload for a failed cull decision after vault identity arrives", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("navigation", undefined);
   vi.stubGlobal(
@@ -2640,6 +2644,7 @@ it("guards reload for a failed cull decision after vault identity arrives", asyn
         autoAdvance: true,
       },
     };
+    await photoCullStorage("11111111-1111-4111-8111-111111111111").replace(this.run);
     return true;
   });
   const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };

@@ -4,6 +4,8 @@ import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
+import { photoCullStorage } from "./photoCullStorage.js";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
@@ -2573,6 +2575,8 @@ it("disables selected export when a metadata draft keeps an empty selection open
 it.each([false, true])(
   "reconciles grid selection after cull (one unavailable: %s)",
   async (oneUnavailable) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -2606,6 +2610,7 @@ it.each([false, true])(
           autoAdvance: true,
         },
       };
+      await photoCullStorage("vault").replace(this.run);
       return true;
     });
     vi.spyOn(photos, "lookup").mockImplementation(
