@@ -112,20 +112,64 @@ version is removed. Attachment/build derivative purge does not purge page
 images. There is no separate page-purge API. The PyMuPDF text bridge is
 unchanged.
 
-## Native-PDF redaction qualification
+## Native-PDF preparation
 
-The internal redaction libraries can compose a fresh PDF from verified source
-bytes, a text-to-page map, and a rectangle decision. The source-preparation
-qualification imports a synthetic native PDF through the CLI, downloads its
-verified original, and stops the daemon. A test-only consumer then derives page
-geometry and text evidence from that download before aligning text, resolving
-the mask, rendering at 300 DPI, and writing a fresh PDF and sanitized text.
+`POST /api/v1/redaction/prepare` inspects one exact retained PDF selected by
+node ID, node revision and source version/hash/size. The API key is required;
+browser sessions are not admitted. The CLI entry point is
+[`redaction prepare`](../usage/document-processing.md#prepare-a-native-pdf).
+This read creates no jobs, attachments, stored maps or output PDFs.
 
-`TestPDFRedactionSourcePreparation` covers a Letter page in Helvetica and a
-fractional-position Courier page. It removes the first `SECRET`, then checks
-the exact sanitized text, a black mask interior, and unchanged pixels in both
-retained word regions. The PDF consistency verifier checks the saved output
-against its page artifacts and sanitized runs.
+The processing service reads the live file and its node-owned version in one
+snapshot. Historical versions are allowed. It checks the node revision before
+comparing the immutable hash and size, then copies and verifies the entire
+original under the shared physical-authority gate. Logical replacement or trash
+after admission does not revoke that snapshot. The gate is released before
+inspection, so maintenance does not wait for rendering.
+
+The configured page runtime inspects the private bytes once. Native PDFium
+inspection consumes that complete result, rechecking its source identity,
+frames, parser identity and font domains. It does not launch a second
+classifier. The original bytes and temporary engine resources are released
+before the service gives up its preparation slot.
+
+The response contract is `native-pdf-preparation/v1`: `selection`, ordered
+`frames`, `evidence`, `evidence_sha256` and `map`. The evidence contract is
+`native-pdf-evidence/v1`, containing the source, page-runtime fingerprint,
+qualified renderer digest and native page observations. Observation bounds are
+PDF point/10000; map boxes use top-left inch/10000 and name their frame digest.
+Text spans count UTF-8 bytes. Text is neither normalized nor trimmed, and page
+boundaries add no separators. Semantic `units` is empty.
+
+The map's evidence digest binds this native evidence record. Existing `Align`
+callers continue to bind normalized evidence instead. Any future mask admission
+must accept the complete preparation envelope and check its evidence contract;
+a bare `aligned-text/v1` map cannot identify the meaning of that digest. The
+service and client check source, frame, evidence and map bindings. Client checks
+establish response consistency, not independent verification of source pixels.
+
+One preparation may run per daemon, with no queue. Shutdown cancels admitted
+work and waits for cleanup. Limits are 8 KiB requests, 64 MiB originals, the
+entire 1–16-page PDF, 8 MiB retained evidence, a 15 MiB result and a 16 MiB client
+wire read. A refusal returns no partial result. The ordinary 60-second request
+deadline and qualified renderer's 300 DPI, 512 MiB WASM and 1 GiB process-RSS
+limits apply. Evidence size is not a peak-memory bound.
+
+RSS refusals preserve a typed cause with observed and allowed byte counts in
+daemon diagnostics. A live request receives 503 `redaction_preparation_memory`;
+an internal deadline receives 503 `redaction_preparation_worker_timeout`.
+Only the original request context selects 408 cancellation or 504 timeout.
+A stopped service or missing runtime returns 503 unavailable; a second request
+returns 503 busy. Limit and unsupported-source refusals are 422, stale selection
+is 409, and missing or trashed selection is 404. Corrupt originals or invalid
+inspector output return 500 integrity; other worker failures return 500 failed.
+
+`TestNativePDFPreparationCLI` imports a synthetic Helvetica PDF and obtains the
+map through the real daemon and CLI. A test-only consumer resolves its rectangle,
+writes a fresh PDF, then checks sanitized text, a black mask interior and
+unchanged retained pixels. `TestPDFRedactionSourcePreparation` separately
+qualifies the existing normalized-evidence path, including fractional-position
+Courier text. Neither test exposes mask execution as a product operation.
 
 Resolution requires complete gap coverage across the entire document. Every
 ordered gap must be fully masked, even away from a selected rectangle. An
@@ -189,8 +233,9 @@ source-page visibility checks; the source bytes are never rewritten.
 
 ### Remaining refusals
 
-Without a usable configured runtime, with an unclassified page, or with an
-unsupported program, inspection uses the existing pixel decision. Classifier
+The existing library alignment path uses the pixel decision without a usable
+configured runtime. Native preparation requires that runtime. With an
+unclassified page or unsupported program, either path uses the pixel decision. Classifier
 failure does not create a new blanket refusal. Caller cancellation and PDFium
 errors still end inspection. Only complete proofs skip the whitespace pixel
 check; all earlier hidden-text, ActualText, crop, generated-character, nested
@@ -204,7 +249,6 @@ miss small visible glyphs falsely mapped to whitespace. A proof that observes
 an inked whitespace alias adds an ordered `unproven_whitespace` gap, even if
 that alias is unused on the source page. Every gap still needs complete masking.
 
-The qualification uses an upstream PDFium reader as a test-only evidence
-bridge. There is no operator redaction command or daemon operation connecting
-these libraries. This does not qualify a production extraction recipe, user
-review, retained redaction outputs, restart recovery, numbering or delivery.
+Preparation is an inspection step. It does not apply masks, approve a review,
+retain redaction outputs, or provide restart recovery, numbering or delivery.
+The saved-PDF qualification uses an upstream PDFium reader only in tests.

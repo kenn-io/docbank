@@ -92,7 +92,7 @@ func writeFresh(ctx context.Context, out io.Writer, pages PageSequence, recipe r
 	if hashBytes(fontBytes) != fontSHA256 || recipe.FontSHA256 != "" && recipe.FontSHA256 != fontSHA256 {
 		return errors.New("qualified Unicode font unavailable or hash mismatch")
 	}
-	ctx, stop, err := watchRSS(ctx, recipe.QualifiedPeakRSSBytes)
+	ctx, stop, err := watchRSS(ctx, recipe.QualifiedPeakRSSBytes, readProcessRSS)
 	if err != nil {
 		return err
 	}

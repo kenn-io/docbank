@@ -226,13 +226,14 @@ func (e *Runtime) Inspect(ctx context.Context, data []byte, source document.Page
 	if err != nil {
 		return Inspection{}, ErrInvalidOutput
 	}
-	if err := validateInspection(value, source, mediaType); err != nil {
+	if err := ValidateInspection(value, source, mediaType); err != nil {
 		return Inspection{}, err
 	}
 	return value, nil
 }
 
-func validateInspection(value Inspection, source document.PageSource, mediaType string) error {
+// ValidateInspection checks the complete inspector result against its admitted source.
+func ValidateInspection(value Inspection, source document.PageSource, mediaType string) error {
 	if value.Contract != Protocol || !value.Complete || value.ParserIdentity != ParserIdentity ||
 		value.Source != source || value.PageCount < 1 || value.PageCount > document.MaxDocumentPages ||
 		len(value.Frames) != value.PageCount || len(value.FontDomains) != value.PageCount {

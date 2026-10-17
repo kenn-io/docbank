@@ -111,21 +111,42 @@ func validateRecipe(r redaction.Recipe) error {
 	return nil
 }
 
-func checkRSS(ctx context.Context, limit int64) error {
+// RSSLimitError identifies a refusal caused by whole-process memory pressure.
+type RSSLimitError struct {
+	ObservedBytes uint64
+	LimitBytes    int64
+}
+
+func (e *RSSLimitError) Error() string {
+	return fmt.Sprintf("PDF worker RSS %d exceeds qualified ceiling %d", e.ObservedBytes, e.LimitBytes)
+}
+
+func readProcessRSS(ctx context.Context) (uint64, error) {
 	pid := os.Getpid()
-	if pid < 0 || pid > math.MaxInt32 || limit < 1 {
-		return errors.New("invalid PDF worker accounting limits")
+	if pid < 0 || pid > math.MaxInt32 {
+		return 0, errors.New("invalid PDF worker process ID")
 	}
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
-		return fmt.Errorf("open worker memory accounting: %w", err)
+		return 0, fmt.Errorf("open worker memory accounting: %w", err)
 	}
 	info, err := p.MemoryInfoWithContext(ctx)
 	if err != nil {
-		return fmt.Errorf("read worker RSS: %w", err)
+		return 0, fmt.Errorf("read worker RSS: %w", err)
 	}
-	if info.RSS > uint64(limit) {
-		return errors.New("PDF worker exceeds qualified RSS ceiling")
+	return info.RSS, nil
+}
+
+func checkRSS(ctx context.Context, limit int64, read func(context.Context) (uint64, error)) error {
+	if limit < 1 {
+		return errors.New("invalid PDF worker accounting limit")
+	}
+	rss, err := read(ctx)
+	if err != nil {
+		return err
+	}
+	if rss > uint64(limit) {
+		return &RSSLimitError{ObservedBytes: rss, LimitBytes: limit}
 	}
 	return nil
 }
@@ -133,8 +154,8 @@ func checkRSS(ctx context.Context, limit int64) error {
 // watchRSS covers the whole Go/WASM worker, including decoding, compression,
 // font data, compiled code and indexes. A breached ceiling cancels WASM as well
 // as the bounded Go streaming loops; accounting failure is fatal.
-func watchRSS(parent context.Context, limit int64) (context.Context, func(), error) {
-	if err := checkRSS(parent, limit); err != nil {
+func watchRSS(parent context.Context, limit int64, read func(context.Context) (uint64, error)) (context.Context, func(), error) {
+	if err := checkRSS(parent, limit, read); err != nil {
 		return nil, nil, err
 	}
 	ctx, cancel := context.WithCancelCause(parent)
@@ -148,7 +169,7 @@ func watchRSS(parent context.Context, limit int64) (context.Context, func(), err
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := checkRSS(ctx, limit); err != nil {
+				if err := checkRSS(ctx, limit, read); err != nil {
 					cancel(err)
 					return
 				}

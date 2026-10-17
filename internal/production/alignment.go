@@ -76,7 +76,12 @@ func Align(ctx context.Context, input AlignmentInput) (redaction.TextMap, error)
 	if err != nil {
 		return redaction.TextMap{}, err
 	}
+	return finishAlignment(result)
+}
+
+func finishAlignment(result redaction.TextMap) (redaction.TextMap, error) {
 	canonicalizeMap(&result)
+	var err error
 	_, result.SHA256, err = redaction.CanonicalTextMap(result)
 	if err != nil {
 		return redaction.TextMap{}, err
@@ -91,22 +96,10 @@ func validateAlignmentAuthority(input AlignmentInput) ([]redaction.Page, error) 
 	if input.PDF.Reader == nil || input.PDF.Size < 1 || !digest(input.PDF.SHA256) || len(input.Pages) == 0 {
 		return nil, &Problem{Code: "source_binding_mismatch"}
 	}
-	frames := make([]redaction.Page, len(input.Pages))
-	var source document.PageSource
-	for index, frame := range input.Pages {
-		if err := document.ValidatePageFrameV1(frame); err != nil || frame.Page != index+1 {
-			return nil, &Problem{Code: "page_inventory_mismatch"}
-		}
-		if index == 0 {
-			source = frame.Source
-		} else if frame.Source != source {
-			return nil, &Problem{Code: "page_inventory_mismatch"}
-		}
-		_, frameSHA, err := document.MarshalPageFrameV1(frame)
-		if err != nil {
-			return nil, err
-		}
-		frames[index] = redaction.Page{Number: index + 1, FrameSHA256: frameSHA, Width: frame.Width, Height: frame.Height}
+	source := input.Pages[0].Source
+	frames, err := alignmentPageFrames(input.Pages, source)
+	if err != nil {
+		return nil, err
 	}
 	if source.SHA256 != input.PDF.SHA256 || source.Size != input.PDF.Size {
 		return nil, &Problem{Code: "source_binding_mismatch"}
@@ -165,3 +158,21 @@ func normalizeVisibleText(s string) string {
 }
 
 var errUnsupportedRendition = &Problem{Code: "unsupported_rendition"}
+
+func alignmentPageFrames(inputFrames []document.PageFrameV1, source document.PageSource) ([]redaction.Page, error) {
+	frames := make([]redaction.Page, len(inputFrames))
+	for index, frame := range inputFrames {
+		if err := document.ValidatePageFrameV1(frame); err != nil || frame.Page != index+1 {
+			return nil, &Problem{Code: "page_inventory_mismatch"}
+		}
+		if frame.Source != source {
+			return nil, &Problem{Code: "page_inventory_mismatch"}
+		}
+		_, frameSHA, err := document.MarshalPageFrameV1(frame)
+		if err != nil {
+			return nil, err
+		}
+		frames[index] = redaction.Page{Number: index + 1, FrameSHA256: frameSHA, Width: frame.Width, Height: frame.Height}
+	}
+	return frames, nil
+}

@@ -39,3 +39,21 @@ func nativeFontDomains(ctx context.Context, runtime *pagerender.Runtime, staged 
 	}
 	return domains, nil
 }
+
+func (input nativeTextInput) fontDomains(ctx context.Context, staged io.ReaderAt) ([]bool, error) {
+	if input.inspection == nil {
+		return nativeFontDomains(ctx, input.runtime, staged, input.source, input.frames)
+	}
+	inspection := *input.inspection
+	if inspection.Source.SHA256 != input.source.SHA256 || inspection.Source.Size != input.source.Size {
+		return nil, pagerender.ErrInvalidOutput
+	}
+	if err := pagerender.ValidateInspection(inspection, inspection.Source, "application/pdf"); err != nil {
+		return nil, err
+	}
+	domains := make([]bool, len(inspection.FontDomains))
+	for i, domain := range inspection.FontDomains {
+		domains[i] = *domain.SimpleFontsOnly
+	}
+	return domains, nil
+}
