@@ -70,17 +70,7 @@ func (s *Store) photoCaptureState() (bool, uint64) {
 	return len(f.subscribers) > 0 || s.hiddenNow().Before(f.pollUntil), f.epoch
 }
 
-// PhotoChangeCursor renews capture interest for polling viewers. Resuming after
-// expiry changes both cursors because uncaptured writes may have occurred.
-func (s *Store) PhotoChangeCursor(ctx context.Context) (string, error) {
-	_, err := s.hiddenSession(ctx, s.db)
-	unlocked := err == nil
-	if err != nil && !errors.Is(err, ErrHiddenLocked) && !errors.Is(err, ErrHiddenNotConfigured) {
-		return "", err
-	}
-	return s.photoChangeCursor(unlocked), nil
-}
-
+// photoChangeCursor renews polling interest; expired interest invalidates both audiences.
 func (s *Store) photoChangeCursor(unlocked bool) string {
 	f := &s.photoEvents
 	f.Lock()

@@ -3431,6 +3431,90 @@ async function watcherFixture({
   };
 }
 
+it("retains a failed metadata comparison through the same batch's access check", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  storage();
+  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockImplementation((_session, callback) => {
+    refresh = callback;
+    return () => {};
+  });
+  let compares = 0;
+  let live = false;
+  let finishEdit!: (response: Response) => void;
+  let finishCompare!: (response: Response) => void;
+  let finishAccess!: (response: Response) => void;
+  const access = { configured: false, change_id: "first", change_cursor: "initial" };
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/authored/edit"))
+      return new Promise<Response>((resolve) => {
+        finishEdit = resolve;
+      });
+    if (url.endsWith("/photos/authored/prepare")) {
+      compares++;
+      if (compares === 2)
+        return new Promise<Response>((resolve) => {
+          finishCompare = resolve;
+        });
+      if (compares > 2) return Response.json({ detail: "Comparison unavailable" }, { status: 503 });
+    }
+    const metadata = photoMetadataResponse(url, init);
+    if (metadata) return metadata;
+    if (url.endsWith("/photos/hidden")) {
+      if (live)
+        return new Promise<Response>((resolve) => {
+          finishAccess = resolve;
+        });
+      return Response.json(access);
+    }
+    if (url.endsWith("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await waitFor(() => expect(compares).toBe(1));
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Caption" }).hasAttribute("disabled")).toBe(false),
+  );
+  await fireEvent.input(screen.getByRole("textbox", { name: "Caption" }), {
+    target: { value: "Draft caption" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(finishEdit).toBeTypeOf("function"));
+  live = true;
+  const refreshed = refresh({ assets: new Map(), refetch: true });
+  await waitFor(() => expect(finishAccess).toBeTypeOf("function"));
+  finishEdit(Response.json({ detail: "Write unavailable" }, { status: 503 }));
+  await waitFor(() => expect(finishCompare).toBeTypeOf("function"));
+  finishCompare(Response.json({ detail: "Comparison unavailable" }, { status: 503 }));
+  await screen.findByText("Comparison unavailable");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Reload metadata" }).hasAttribute("disabled")).toBe(
+      false,
+    ),
+  );
+  finishAccess(Response.json(access));
+  await refreshed;
+  expect(compares).toBe(2);
+  expect((screen.getByRole("textbox", { name: "Caption" }) as HTMLTextAreaElement).value).toBe(
+    "Draft caption",
+  );
+  expect(screen.getByRole("button", { name: "Reload metadata" })).toBeTruthy();
+});
+
 it("rechecks metadata after a mixed visibility batch", async () => {
   const fixture = await watcherFixture();
   await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));

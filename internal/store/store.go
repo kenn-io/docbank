@@ -276,7 +276,8 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err != nil {
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
-	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
+	closeConn := sync.OnceValue(conn.Close)
+	defer func() { retErr = errors.Join(retErr, closeConn()) }()
 	active, epoch := s.photoCaptureState()
 	capture := s.preparePhotoChanges(ctx, conn, active)
 	// Own cancellation so a mutation cannot return while database/sql is
@@ -319,6 +320,14 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
+	if err := closeConn(); err != nil {
+		return err
+	}
+	s.publishCommittedPhotoChanges(ctx, events, hashes, active, epoch)
+	return nil
+}
+
+func (s *Store) publishCommittedPhotoChanges(ctx context.Context, events []PhotoEvent, hashes []photoHashChange, active bool, epoch uint64) {
 	if watching, current := s.photoCaptureState(); watching && current != epoch && !active {
 		events = []PhotoEvent{{Refetch: true}}
 	}
@@ -326,7 +335,6 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		events = []PhotoEvent{{Refetch: true}}
 	}
 	s.publishPhotoChanges(events)
-	return nil
 }
 
 // withLogicalTx runs an ordinary metadata mutation. Once audit authority

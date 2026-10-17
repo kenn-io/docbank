@@ -2712,6 +2712,77 @@ it.each(["direct", "grid", "outside"] as const)(
   },
 );
 
+it.each(["rename", "hide"] as const)(
+  "refreshes a retained album photo after %s",
+  async (change) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "Image",
+      class {
+        src = "";
+        async decode() {}
+      },
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:original");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const photos = new Photos("scoped", vi.fn(), false, {
+      ...photoQuery,
+      filters: { ...photoQuery.filters, set_ids: ["album-1"] },
+    });
+    photos.started = true;
+    photos.items = [photo(1)];
+    photos.viewerReturn = {
+      contextID: photos.contextID,
+      assetID: "photo-1",
+      control: "open",
+      scrollTop: 0,
+    };
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+    vi.spyOn(photos, "original").mockResolvedValue("blob:original");
+    let removed = false;
+    let changed = false;
+    stubPhotoFetch(async (_url, init) => {
+      const input = JSON.parse(String(init.body));
+      const items = input.query.filters.asset_ids
+        ? changed && change === "hide"
+          ? []
+          : [{ ...photo(1), name: changed ? "Renamed.jpg" : "Photo 1.jpg" }]
+        : removed
+          ? []
+          : [photo(1)];
+      return Response.json({ items, total: items.length });
+    });
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache: new PhotoPreviewCache("scoped", vi.fn()),
+      photoID: "photo-1",
+      albumID: "album-1",
+    });
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    await fireEvent.click(screen.getByRole("button", { name: "View original" }));
+    await screen.findByText("Original");
+    removed = true;
+    await view.component.refresh({ assets: new Map(), refetch: true });
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    changed = true;
+    await view.component.refresh({ assets: new Map([["photo-1", 2]]), refetch: false });
+    if (change === "rename")
+      await screen.findByRole("dialog", { name: "Photo viewer, Renamed.jpg" });
+    else
+      await waitFor(() => {
+        expect(screen.queryByAltText("Photo 1.jpg")).toBeNull();
+        expect(revoke).toHaveBeenCalledWith("blob:original");
+      });
+    photos.dispose();
+  },
+);
+
 it("rejects a superseded live detail read and keeps the newer photo", async () => {
   vi.stubGlobal(
     "ResizeObserver",

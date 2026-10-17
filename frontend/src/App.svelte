@@ -746,10 +746,7 @@
       session,
       async (changes) => {
         // Access refreshes abort pending reads. Retain their affected scope before that happens.
-        for (const photos of [photoState?.photos, albumPhotos, mapPhotos]) {
-          const editor = photos?.authored;
-          if (editor?.affectedBy(changes)) editor.changedElsewhere(changes);
-        }
+        invalidatePhotoMetadata(changes);
         const source = changes.refetch ? await checkPhotoAccess?.(true) : undefined;
         // A Hidden recheck owns the open viewer until it confirms visibility. It handles its own
         // failure by concealing the library, so this refresh only waits for it to finish.
@@ -2398,6 +2395,17 @@
     else if (activeTagID) void loadTaggedNodes(activeTagID);
     else if (directory) void loadDirectory(directory.id, false, selectedID, true);
     else void loadRoot();
+  }
+
+  function invalidatePhotoMetadata(changes: PhotoEventBatch) {
+    for (const editor of [
+      photoState?.photos.authored,
+      albumPhotos?.authored,
+      mapPhotos?.authored,
+      hiddenWorkspace?.retainedEditor(),
+    ]) {
+      if (editor?.affectedBy(changes)) editor.changedElsewhere(changes);
+    }
   }
 
   async function refreshPhotoChanges(

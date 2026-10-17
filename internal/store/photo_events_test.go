@@ -165,9 +165,6 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 		t.Helper()
 		state, err := s.PhotoHiddenState(viewer)
 		require.NoError(t, err)
-		value, err := s.PhotoChangeCursor(viewer)
-		require.NoError(t, err)
-		require.Equal(t, value, state.ChangeCursor)
 		require.Equal(t, state.ExpiresAt != nil, strings.Contains(state.ChangeCursor, ":hidden:"))
 		return state.ChangeCursor
 	}
@@ -207,9 +204,9 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 	now = now.Add(5 * time.Minute)
 	require.Equal(t, cursor(ctx), cursor(viewer), "expired unlock uses the locked audience")
 	other := newTestStore(t)
-	restarted, err := other.PhotoChangeCursor(ctx)
+	restarted, err := other.PhotoHiddenState(ctx)
 	require.NoError(t, err)
-	require.NotEqual(t, cursor(ctx), restarted)
+	require.NotEqual(t, cursor(ctx), restarted.ChangeCursor)
 }
 
 func TestPhotoEventsPollStartsDuringWrite(t *testing.T) {
@@ -228,13 +225,13 @@ func TestPhotoEventsPollStartsDuringWrite(t *testing.T) {
 		})
 	}()
 	<-started
-	before, err := s.PhotoChangeCursor(ctx)
+	before, err := s.PhotoHiddenState(ctx)
 	close(release)
 	require.NoError(t, err)
 	require.NoError(t, <-done)
-	after, err := s.PhotoChangeCursor(ctx)
+	after, err := s.PhotoHiddenState(ctx)
 	require.NoError(t, err)
-	require.NotEqual(t, before, after)
+	require.NotEqual(t, before.ChangeCursor, after.ChangeCursor)
 }
 
 func TestPhotoEventsBatchVisibility(t *testing.T) {

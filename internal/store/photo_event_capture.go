@@ -57,7 +57,10 @@ func (s *Store) preparePhotoChanges(ctx context.Context, conn *sql.Conn, active 
 	return active && err == nil
 }
 
-const photoChangeRefetch = "refetch"
+const (
+	photoChangeRefetch        = "refetch"
+	photoChangeCurrentVersion = "current_version"
+)
 
 // Related keys survive deletion of the row that originally linked a worker result to a photo.
 type photoEventCaptureRule struct{ table, key, relation, kind, columns string }
@@ -69,17 +72,17 @@ var photoEventCaptureRules = []photoEventCaptureRule{
 	{"node_tags", "node_id", "node_id", "node", ""},
 	{metadataProvenanceType, "node_id", "node_id", "node", ""},
 	{"extracted_text", "blob_hash", "blob_hash", "source", "status,text"},
-	{"text_searchable_versions", "version_id", "version_id", "current_version", ""},
+	{"text_searchable_versions", "version_id", "version_id", photoChangeCurrentVersion, ""},
 	{"source_metadata_heads", "source_sha256", "source_sha256", "source", "generation_id"},
 	{"photo_technical_metadata", "generation_id", "generation_id", "generation", ""},
-	{"photo_faces", "face_id", "content_version_id", "current_version", "content_version_id,x,y,width,height,revision,assertion_id"},
-	{"photo_quality_signals", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
-	{"visual_preview_generations", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
-	{"visual_preview_heads", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", "generation_id"},
-	{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", "attachment_id"},
-	{"rendition_job_waiters", "waiter_id", "content_version_id", "current_version", "job_id,content_version_id,profile_fingerprint,state"},
+	{"photo_faces", "face_id", "content_version_id", photoChangeCurrentVersion, "content_version_id,x,y,width,height,revision,assertion_id"},
+	{"photo_quality_signals", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},
+	{"visual_preview_generations", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},
+	{"visual_preview_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, "generation_id"},
+	{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, "attachment_id"},
+	{"rendition_job_waiters", "waiter_id", "content_version_id", photoChangeCurrentVersion, "job_id,content_version_id,profile_fingerprint,state"},
 	{"rendition_jobs", "job_id", "job_id", "job", "state,updated_at"},
-	{"person_document_assertions", metadataContentVersionIDField, metadataContentVersionIDField, "current_version", ""},
+	{"person_document_assertions", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},
 	{"photo_sets", "set_id", "set_id", photoChangeRefetch, ""},
 	{"photo_set_members", "set_id", "asset_id", photoChangeRefetch, ""},
 	{"tags", "id", "id", photoChangeRefetch, "name,revision"},
@@ -93,8 +96,11 @@ var photoEventCaptureRules = []photoEventCaptureRule{
 
 // Filters keep rows that cannot reach a photo from consuming the capture budget; $ is the related key.
 var photoChangeFilters = map[string]string{
-	"node": "EXISTS(SELECT 1 FROM photo_files WHERE node_id=$ AND asset_id IS NOT NULL)",
-	"job":  "EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE w.job_id=$)",
+	"node":                    "EXISTS(SELECT 1 FROM photo_files WHERE node_id=$ AND asset_id IS NOT NULL)",
+	photoChangeCurrentVersion: "EXISTS(SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE n.current_version_id=$)",
+	"source":                  "EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE v.blob_hash=$)",
+	"generation":              "EXISTS(SELECT 1 FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE g.generation_id=$)",
+	"job":                     "EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE w.job_id=$)",
 }
 
 // The 65th distinct key represents overflow. Further rows do no capture work.
@@ -176,12 +182,12 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 }
 
 var photoChangeSelections = map[string]string{
-	"asset":           `SELECT keys.value,COALESCE(a.revision,0) FROM json_each(?) keys LEFT JOIN photo_assets a ON a.asset_id=keys.value`,
-	"node":            `SELECT a.asset_id,a.revision FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
-	"current_version": `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
-	"source":          `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.blob_hash IN (SELECT value FROM json_each(?))`,
-	"generation":      `SELECT a.asset_id,a.revision FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE g.generation_id IN (SELECT value FROM json_each(?))`,
-	"job":             `SELECT a.asset_id,a.revision FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE w.job_id IN (SELECT value FROM json_each(?))`,
+	"asset":                   `SELECT keys.value,COALESCE(a.revision,0) FROM json_each(?) keys LEFT JOIN photo_assets a ON a.asset_id=keys.value`,
+	"node":                    `SELECT a.asset_id,a.revision FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
+	photoChangeCurrentVersion: `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
+	"source":                  `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.blob_hash IN (SELECT value FROM json_each(?))`,
+	"generation":              `SELECT a.asset_id,a.revision FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE g.generation_id IN (SELECT value FROM json_each(?))`,
+	"job":                     `SELECT a.asset_id,a.revision FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE w.job_id IN (SELECT value FROM json_each(?))`,
 }
 
 type photoHashChange struct{ hash, node string }

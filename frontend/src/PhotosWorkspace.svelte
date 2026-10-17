@@ -493,7 +493,6 @@
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
   export async function refresh(changes?: PhotoEventBatch) {
-    if (changes && editor.affectedBy(changes)) editor.changedElsewhere(changes);
     const id = photoID;
     const refreshed = await photos.refresh(preserve, !!changes);
     if (!refreshed) {
@@ -503,7 +502,7 @@
     if (changes) await editor.reconcile();
     if (photoID !== id) return false;
     if (id && (!changes || changes.refetch || changes.assets.has(id))) {
-      if (!fromGrid) reload = { id, automatic: true };
+      if (!fromGrid || !listed) reload = { id, automatic: true };
       await tick();
       await detailRequest;
       if (photoID !== id) return false;

@@ -4,7 +4,40 @@ import (
 	"database/sql"
 	"github.com/stretchr/testify/require"
 	"testing"
+	"time"
 )
+
+func TestPhotoEventsReleaseWriterBeforeResolution(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	s.db.SetMaxOpenConns(1)
+	read, err := s.db.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = read.Close() }()
+	events, stop := s.SubscribePhotoEvents()
+	defer stop()
+	done := make(chan error, 1)
+	go func() {
+		done <- s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=?`, asset.ID)
+			return err
+		})
+	}()
+	require.Eventually(t, func() bool {
+		var revision int64
+		return read.QueryRowContext(ctx, `SELECT revision FROM photo_assets WHERE asset_id=?`, asset.ID).Scan(&revision) == nil && revision > asset.Revision
+	}, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return s.writeDB.Stats().InUse == 0 }, time.Second, time.Millisecond,
+		"a committed transaction must release the writer while event reads wait")
+	require.NoError(t, read.Close())
+	require.NoError(t, <-done)
+	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+}
 
 func TestPhotoEventsCaptureFlagAndWriterReplacement(t *testing.T) {
 	t.Parallel()
