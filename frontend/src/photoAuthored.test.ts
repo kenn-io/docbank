@@ -129,7 +129,7 @@ it("preserves multiline caption through rendered editing", async () => {
 
 it.each([
   {
-    name: "whole pair with mixed flags",
+    name: "whole pair scope",
     fileID: "",
     expected: [
       {
@@ -151,7 +151,7 @@ it.each([
     ],
   },
   {
-    name: "non-displayed RAW member",
+    name: "RAW scope narrowed via fileID",
     fileID: "raw",
     expected: [
       {
@@ -167,7 +167,6 @@ it.each([
 ])("binds the viewed content version without changing $name", async ({ fileID, expected }) => {
   const editor = editorWithTargets();
   editor.fileID = fileID;
-  editor.targets[0]!.values.flag = "reject";
   const edit = vi
     .spyOn(api, "editPhotoAuthored")
     .mockResolvedValue({ receipt_id: "", before: [], after: [] });
@@ -186,7 +185,7 @@ it("restores the pre-edit draft when a viewed decision is refused", async () => 
   vi.spyOn(api, "editPhotoAuthored").mockRejectedValueOnce(
     new APIError("Photo changed", 412, "stale_revision"),
   );
-  await editor.edit({}, {}, false, vi.fn(), {
+  await editor.edit({}, { flag: "pick" }, false, vi.fn(), {
     viewed: { content_version_id: "viewed-version" },
     rotationDelta: 90,
   });

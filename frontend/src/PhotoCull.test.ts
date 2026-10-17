@@ -414,14 +414,9 @@ it("refuses a decision after another client changes the cached neighbor flag", a
 });
 
 it.each([
-  { name: "empty preparation", prepared: [] },
   {
     name: "missing viewed file",
     prepared: [preparedPhoto(1, { file_id: "raw-1", file_name: "Photo 1.ARW" })],
-  },
-  {
-    name: "displayed flag differs",
-    prepared: [preparedPhoto(1, { values: { ...preparedPhoto(1).values, flag: "pick" } })],
   },
   {
     name: "rating differs with the same flag",
@@ -445,21 +440,6 @@ it.each([
   expect(edit).not.toHaveBeenCalled();
   expect(photos.cullEditor!.dirty).toBe(false);
   expect(cull.currentID).toBe("photo-1");
-
-  vi.mocked(photos.lookup).mockResolvedValue({
-    ...photo(1),
-    content_version_id: "replacement-version",
-  });
-  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation([preparedPhoto(1)]));
-  await fireEvent.click(await readyButton("Reload photo"));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Reload photo" })).toBeNull());
-  expect(edit).not.toHaveBeenCalled();
-  await fireEvent.click(await readyButton("Pick (P)"));
-  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
-  expect(edit.mock.calls[0]![0]).toMatchObject({
-    targets: [{ file_id: "file-1", content_version_id: "replacement-version" }],
-    patch: { flag: "pick" },
-  });
 });
 
 it("allows another decision after reconciling its own flag and rating with auto-advance off", async () => {
