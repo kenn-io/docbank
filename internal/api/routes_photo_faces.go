@@ -66,14 +66,12 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 			return nil, FromStoreError(err)
 		}
 		page := PhotoFacePage{Faces: faces, People: make([]PhotoFacePerson, 0, len(names)), Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
+		seen := make(map[string]bool, len(names))
 		for _, assertion := range assertions {
-			row := photoAssertion(assertion)
-			page.Assertions = append(page.Assertions, row)
-		}
-		for _, id := range ids {
-			if name, ok := names[id]; ok {
-				page.People = append(page.People, PhotoFacePerson{PersonID: id, DisplayName: name})
-				delete(names, id)
+			page.Assertions = append(page.Assertions, photoAssertion(assertion))
+			if name, ok := names[assertion.PersonID]; ok && !seen[assertion.PersonID] {
+				page.People = append(page.People, PhotoFacePerson{PersonID: assertion.PersonID, DisplayName: name})
+				seen[assertion.PersonID] = true
 			}
 		}
 		return &struct{ Body PhotoFacePage }{Body: page}, nil
