@@ -179,7 +179,7 @@ func TestEmbeddingGemma2UnsupportedKitSettingsAreRejected(t *testing.T) {
 			text := "[embedding_profiles.semantic.embedder]\n" + key + " = " + value + "\n"
 			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(text), 0o600))
 			_, err := config.Load(root)
-			require.ErrorContains(t, err, "unknown key")
+			require.ErrorContains(t, err, "unsupported embedder setting")
 			require.ErrorContains(t, err, key)
 		})
 	}

@@ -464,6 +464,9 @@ func loadTOML(root string) (Config, error) {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
 	for name, profile := range c.EmbeddingProfiles {
+		if err := validateEmbedderOptions(profile.Embedder); err != nil {
+			return Config{}, fmt.Errorf("loading %s: [embedding_profiles.%s.embedder]: %w", path, name, err)
+		}
 		if profile.Runtime == nil || profile.Runtime.CapabilityManifest == "" || filepath.IsAbs(profile.Runtime.CapabilityManifest) {
 			continue
 		}
