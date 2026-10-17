@@ -76,7 +76,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
 	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
-	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by folded name prefix.", schemas: findPeopleSchemas},
+	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by prefix of any word in the folded name.", schemas: findPeopleSchemas},
 	{name: "get_person", title: "Get person", description: "Read one canonical person and its split selectors.", schemas: getPersonSchemas},
 	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},
 	{name: "get_package", title: "Get package", description: "Read one load-file package and its retained source authority.", schemas: getPackageSchemas},

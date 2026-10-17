@@ -32,6 +32,13 @@ func TestPeopleMCPToolsAreReads(t *testing.T) {
 	}
 }
 
+func TestFindPeopleDescriptionExplainsWordPrefixSearch(t *testing.T) {
+	listed := decodeResult(t, exchangeRaw(t, newTestServer(), requestFor("tools/list", map[string]any{})))
+	tool := listedToolsByName(t, listed)["find_people"]
+	require.NotNil(t, tool)
+	assert.Contains(t, tool["description"], "prefix of any word in the folded name")
+}
+
 func TestPeopleMCPReads(t *testing.T) {
 	vault := t.TempDir()
 	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
