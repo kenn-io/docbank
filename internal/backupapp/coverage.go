@@ -16,6 +16,7 @@ type BackupCoverage struct {
 }
 
 // CoverageIncluded counts persisted owner decisions and their content.
+// Adding fields or changing counting queries requires a new coverage version because restore compares recomputed stats byte for byte.
 type CoverageIncluded struct {
 	PhotoAssets    int64 `json:"photo_assets"`
 	PhotoFiles     int64 `json:"photo_files"`

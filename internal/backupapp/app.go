@@ -78,8 +78,7 @@ var captureStatsScope = statsScope{
 }
 
 var restoredStatsScope = statsScope{
-	coverage: true,
-	blobs:    restoredContentStatsQuery, extractedText: restoredExtractedTextStatsQuery,
+	blobs: restoredContentStatsQuery, extractedText: restoredExtractedTextStatsQuery,
 }
 
 func computeStats(ctx context.Context, q rowQuerier, scope statsScope) (Stats, error) {
@@ -267,7 +266,7 @@ func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, er
 	if err != nil {
 		return nil, err
 	}
-	if stats.Coverage != nil && a.restoreStats != nil {
+	if stats.Coverage != nil {
 		stats.Coverage.Excluded = a.restoreStats.Coverage.Excluded
 	}
 	return json.Marshal(stats)
