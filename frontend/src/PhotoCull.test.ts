@@ -400,7 +400,76 @@ it("refreshes current and cached rows when a new pass starts on the same photo",
   await screen.findByText("pick · 0 stars");
 });
 
-it("shows prepared flag, rating and rotation after a no-op decision without replacing Undo", async () => {
+it.each([
+  { name: "displayed flag", cached: false, pair: false, changed: { flag: "pick" as const } },
+  { name: "cached neighbor flag", cached: true, pair: false, changed: { flag: "pick" as const } },
+  { name: "rating with an unchanged flag", cached: false, pair: false, changed: { rating: 4 } },
+  { name: "displayed JPEG flag", cached: false, pair: true, changed: { flag: "pick" as const } },
+])(
+  "refuses a decision after another client changes the $name",
+  async ({ cached, pair, changed }) => {
+    const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+      receipt_id: "",
+      before: [],
+      after: [],
+    });
+    const { cull, photos, container } = await reviewPhoto();
+    const id = cached ? 2 : 1;
+    if (cached) {
+      vi.mocked(photos.lookupMany).mockResolvedValue([photo(2)]);
+      await act(() => {
+        cull.run = {
+          ids: ["photo-1", "photo-2"],
+          checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+        };
+      });
+      await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+      const lookups = vi.mocked(photos.lookup).mock.calls.length;
+      await fireEvent.click(await readyButton("Next"));
+      await screen.findByText("Photo 2.jpg");
+      expect(photos.lookup).toHaveBeenCalledTimes(lookups);
+    }
+    await screen.findByText("Unflagged · 0 stars");
+    const target = preparedPhoto(id);
+    vi.mocked(api.preparePhotoAuthored).mockResolvedValue(
+      photoPreparation([
+        ...(pair ? [preparedPhoto(id, { file_id: "raw", file_name: "Photo 1.raw" })] : []),
+        { ...target, revision: 2, values: { ...target.values, ...changed } },
+      ]),
+    );
+    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "x" });
+    await screen.findByRole("button", { name: "Reload photo" });
+    expect(photos.cullEditor!.conflict).toBe(true);
+    expect(edit).not.toHaveBeenCalled();
+    expect(cull.currentID).toBe(`photo-${id}`);
+  },
+);
+
+it("allows another decision after reconciling its own flag and rating with auto-advance off", async () => {
+  const target = preparedPhoto(1);
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async (request) => {
+    const before = { ...target, values: { ...target.values } };
+    target.values = { ...target.values, ...request.patch };
+    target.revision++;
+    return { receipt_id: "decision", before: [before], after: [target] };
+  });
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async () =>
+    photoPreparation([{ ...target, values: { ...target.values } }]),
+  );
+  const { cull, photos, container } = await reviewPhoto();
+  vi.spyOn(photos, "metadataChanged").mockReturnValue(new Map());
+  await fireEvent.click(await readyButton("Pick (P)"));
+  await screen.findByText("pick · 0 stars");
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "4" });
+  await screen.findByText("pick · 4 stars");
+  await fireEvent.click(await readyButton("Reject (X)"));
+  await screen.findByText("reject · 4 stars");
+  expect(edit).toHaveBeenCalledTimes(3);
+  expect(cull.currentID).toBe("photo-1");
+  expect(photos.cullEditor!.conflict).toBe(false);
+});
+
+it("shows prepared rotation after a no-op decision without replacing Undo", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   Object.defineProperty(HTMLImageElement.prototype, "decode", {
@@ -416,11 +485,13 @@ it("shows prepared flag, rating and rotation after a no-op decision without repl
     after: [],
   });
   const row = photo(1);
+  row.flag = "pick";
+  row.rating = 4;
   row.previews.grid = { state: "ready", generation_id: "grid-1" };
   const { cull, photos, container } = await reviewPhoto(row);
   photos.authored.undoState.receiptID = "previous-decision";
   photos.authored.undoState.summary = "Previous edit";
-  expect(screen.getByText("Unflagged · 0 stars")).toBeTruthy();
+  expect(screen.getByText("pick · 4 stars")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
   await screen.findByText("No changes to apply");
   expect(edit).toHaveBeenCalledOnce();

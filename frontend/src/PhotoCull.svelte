@@ -227,6 +227,8 @@
         : {
             file_id: selected.display_file_id,
             content_version_id: selected.content_version_id,
+            flag: selected.flag,
+            rating: selected.rating,
           },
     });
     await tick();

@@ -335,7 +335,12 @@ export class PhotoAuthoredEditor {
     }: {
       keywords?: api.PhotoKeywordEdit[];
       rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"];
-      viewed?: { file_id: string; content_version_id: string };
+      viewed?: {
+        file_id: string;
+        content_version_id: string;
+        flag: api.PhotoBrowseRow["flag"];
+        rating: number;
+      };
       beforeWrite?: () => Promise<boolean>;
     } = {},
   ) {
@@ -353,7 +358,15 @@ export class PhotoAuthoredEditor {
       if (this.error) return;
     }
     if (this.conflict) return;
-    if (viewed && !this.files.some((target) => target.file_id === viewed.file_id)) {
+    if (
+      viewed &&
+      !this.files.some(
+        (target) =>
+          target.file_id === viewed.file_id &&
+          target.values.flag === viewed.flag &&
+          target.values.rating === viewed.rating,
+      )
+    ) {
       this.error = "This photo changed. Reload the photo before deciding.";
       this.conflict = true;
       return;

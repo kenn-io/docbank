@@ -137,6 +137,8 @@ it.each([{ prepared: [] }, { prepared: targets }])(
       viewed: {
         file_id: "missing",
         content_version_id: "viewed-version",
+        flag: "",
+        rating: 0,
       },
     });
     expect(editor.conflict).toBe(true);
@@ -785,7 +787,12 @@ it.each([
       .spyOn(api, "editPhotoAuthored")
       .mockResolvedValue({ receipt_id: "", before: [], after: [] });
     await editor.edit({}, patch, false, vi.fn(), {
-      viewed: { file_id: "jpeg", content_version_id: "viewed-version" },
+      viewed: {
+        file_id: "jpeg",
+        content_version_id: "viewed-version",
+        flag: editor.targets[1]!.values.flag,
+        rating: editor.targets[1]!.values.rating,
+      },
     });
     expect(edit).toHaveBeenCalledOnce();
     expect(Object.values(edit.mock.calls[0]![0].targets).map((target) => target.file_id)).toEqual(
