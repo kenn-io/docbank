@@ -455,9 +455,10 @@ it("renders unavailable card observations and omits an unknown count from deleti
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Delete album…" }));
   expect(screen.getByText('Delete "Trip"? Its photos stay in your library.')).toBeTruthy();
   cleanup();
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotoAlbumsIndex, {
     albums,
-    cache: new PhotoPreviewCache("scoped", vi.fn()),
+    cache,
     onnavigate: vi.fn(),
   });
   expect(screen.getByText("Count unavailable")).toBeTruthy();
@@ -486,6 +487,7 @@ it("renders unavailable card observations and omits an unknown count from deleti
   await waitFor(() =>
     expect(document.querySelector(".album-cover img")?.getAttribute("src")).toBe("blob:cover"),
   );
+  await cache.dispose();
 });
 
 it("deduplicates shifted pages of smart sets", async () => {
