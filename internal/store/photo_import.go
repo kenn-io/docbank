@@ -106,7 +106,7 @@ func claimPhotoImportAdditionTx(ctx context.Context, tx *sql.Tx, id string) (boo
 		return false, err
 	}
 	var plan PhotoImportPlan
-	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+	if err := json.Unmarshal([]byte(raw), &plan, json.RejectUnknownMembers(true)); err != nil {
 		return false, err
 	}
 	if plan.ActionSurface == "" || plan.ActionAddedReported {

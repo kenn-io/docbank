@@ -76,6 +76,28 @@ func photoImportTestGroup(members ...PhotoImportMember) PhotoImportGroup {
 	return PhotoImportGroup{Members: members, DestinationID: 1}
 }
 
+func TestPhotoImportAdditionRejectsUnknownPlanFields(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	const plan = `{"action_surface":"cli","future_policy":true}`
+	op, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: StorageOperationKindPhotoImport, RequestDigest: fakeHash("future-plan"),
+		RequestJSON: `{}`, PlanJSON: plan,
+	})
+	require.NoError(t, err)
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	group := photoImportTestGroup(photoImportTestMember("IMG.JPG", PhotoRoleImage, fakeHash("future-photo"), "image/jpeg"))
+	group.OperationID = op.ID
+	_, err = s.IngestPhotoGroup(ctx, run, group)
+	require.ErrorContains(t, err, "future_policy")
+	stored, err := s.StorageOperation(ctx, op.ID)
+	require.NoError(t, err)
+	assert.Equal(t, plan, stored.PlanJSON)
+	_, err = s.NodeByPath(ctx, "/IMG.JPG")
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

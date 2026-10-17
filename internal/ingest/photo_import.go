@@ -524,7 +524,7 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		return finishErr
 	}
 	var plan store.PhotoImportPlan
-	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan); err != nil {
+	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan, json.RejectUnknownMembers(true)); err != nil {
 		return err
 	}
 	opts := r.Options

@@ -78,9 +78,6 @@ func (h *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Capture validates and claims interface events for HTTP and daemon callers.
 func (h *Capture) Capture(event string, properties map[string]any) error {
 	event = strings.TrimSpace(event)
-	if !h.reporter.EventAllowed(event) {
-		return posthog.ErrUnsupportedEvent
-	}
 	props, err := h.reporter.SanitizeProperties(event, properties)
 	if err != nil {
 		return fmt.Errorf("validate telemetry properties: %w", err)

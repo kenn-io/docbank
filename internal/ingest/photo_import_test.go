@@ -28,6 +28,26 @@ func TestPhotoImportGrouping(t *testing.T) {
 	assert.Len(t, grouped[1].Members, 1)
 }
 
+func TestPhotoImportRunnerRejectsUnknownPlanFields(t *testing.T) {
+	ing := newTestIngester(t)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG.JPG"), []byte("synthetic-jpeg"), 0o600))
+	const plan = `{"action_surface":"cli","future_policy":true}`
+	op, err := ing.Store.CreateStorageOperation(t.Context(), store.StorageOperationCreate{
+		Kind: store.StorageOperationKindPhotoImport, RequestDigest: fmt.Sprintf("%064x", 1),
+		RequestJSON: fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root), PlanJSON: plan,
+	})
+	require.NoError(t, err)
+	runner := PhotoImportRunner{Ingester: ing}
+	require.ErrorContains(t, runner.Run(t.Context(), op.ID), "future_policy")
+	stored, err := ing.Store.StorageOperation(t.Context(), op.ID)
+	require.NoError(t, err)
+	assert.Equal(t, plan, stored.PlanJSON)
+	assert.Zero(t, stored.CompletedObjects)
+	_, err = ing.Store.NodeByPath(t.Context(), "/photos/IMG.JPG")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
 func TestPhotoImportAmbiguity(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.ARW"), []byte("raw-one"), 0o600))

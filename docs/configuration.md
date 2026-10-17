@@ -1065,8 +1065,9 @@ Sorting, paging, reranking, refresh and restored state stay silent.
 
 `document_opened` counts deliberate inspections once per surface each UTC day.
 Interaction with an automatically selected file counts, including keyboard activation
-of a content tab; automatic selection
-and cursor movement stay silent. Single-document retrievals such as `get`
+of a content tab. In the TUI, opening the selected file's detail counts; `j`/`k`
+scroll its content after the detail is open. Automatic selection and movement
+between selected rows stay silent. Single-document retrievals such as `get`
 and deliberate photo inspections with `photos assets inspect` count as inspections.
 Multi-document exports and reports stay silent.
 Search and open claims share the persisted daily screen-claim file, so daemon

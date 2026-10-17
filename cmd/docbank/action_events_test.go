@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 func TestPhotoInspectReportsInteractiveSuccess(t *testing.T) {
@@ -159,4 +160,37 @@ func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
 			require.Equal(t, []api.TelemetryEventRequest{{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: wantMode}}}, events)
 		})
 	}
+}
+
+func TestAutomaticSearchDiscoveryFailureStaysSilent(t *testing.T) {
+	var events []api.TelemetryEventRequest
+	var record kitdaemon.RuntimeRecord
+	var profiles, scope, searches int
+	handler := automaticSearchDaemon(t, automaticSearchCase{profileError: "unauthorized"}, &record, &profiles, &scope, &searches)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/daemon/telemetry/events" {
+			var event api.TelemetryEventRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &event))
+			events = append(events, event)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+			return
+		}
+		handler(w, r)
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "key", "synthetic-token", "")
+	_, err := daemonconn.RuntimeStore(root).Write(record)
+	require.NoError(t, err)
+	rootCmd.SetIn(actionTerminal(t))
+	searchCmd.SetOut(actionTerminal(t))
+	defer rootCmd.SetIn(nil)
+	defer searchCmd.SetOut(nil)
+	_, err = runCLI(t, "search", "synthetic query")
+	require.Error(t, err)
+	assert.Equal(t, 1, profiles)
+	assert.Zero(t, searches)
+	assert.Empty(t, events)
 }

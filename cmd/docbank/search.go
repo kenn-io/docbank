@@ -200,7 +200,6 @@ See docs/usage/search.md.`,
 				submitted = true
 			}
 		}
-		defer func() { submit("text") }()
 		var automatic automaticSearchOutcome
 		if !cmd.Flags().Changed("mode") {
 			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts, submit)
