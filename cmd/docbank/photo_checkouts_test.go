@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,7 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	require.NoError(t, err)
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{AssetIDs: []string{checkoutID}, AlbumIDs: []string{operationID}}, Destination: absoluteDestination, ByteLimit: 100000}
 	skipped := []store.PhotoCheckoutSkip{{AssetID: operationID, FileID: checkoutID, Name: "duplicate.jpg", Reason: "duplicate filename"}}
+	checkout.SkippedPhotos, checkout.SkippedPhotoCount = skipped, 1
 	created := api.PhotoCheckoutCreateResult{SkippedPhotos: skipped, SkippedPhotoCount: 1, Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	listed := []store.PhotoCheckout{checkout}
 	retired := checkout
@@ -43,6 +45,8 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 			} else {
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: listed}))
 			}
+		case "/api/v1/photos/checkouts/" + checkoutID:
+			assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutStatus{Checkout: checkout}))
 		case "/api/v1/photos/checkouts/" + checkoutID + "/retire":
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.NoError(t, json.MarshalWrite(w, retired))
@@ -67,9 +71,20 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	require.Equal(t, absoluteDestination, input.Destination)
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
+	summary, out, found := strings.Cut(out, "\n")
+	require.True(t, found)
+	require.Equal(t, checkoutID+": 1 photos skipped", summary)
 	var listOutput []store.PhotoCheckout
 	require.NoError(t, json.Unmarshal([]byte(out), &listOutput))
 	require.Equal(t, listed, listOutput)
+	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
+	require.NoError(t, err, out)
+	summary, out, found = strings.Cut(out, "\n")
+	require.True(t, found)
+	require.Equal(t, "1 photos skipped", summary)
+	var statusOutput api.PhotoCheckoutStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &statusOutput))
+	require.Equal(t, checkout, statusOutput.Checkout)
 	out, err = runCLI(t, "photos", "checkout", "retire", checkoutID)
 	require.NoError(t, err, out)
 	var retireOutput store.PhotoCheckout

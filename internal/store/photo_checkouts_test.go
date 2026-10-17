@@ -998,6 +998,33 @@ func TestPhotoCheckoutSkipsDuplicateNamesInAsset(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.Equal(t, good.ID, entries[0].AssetID)
 
+	for _, source := range []string{"created", "status", "list", "restored"} {
+		t.Run(source, func(t *testing.T) {
+			actual := checkout
+			switch source {
+			case "status":
+				status, err := s.PhotoCheckoutStatus(ctx, checkout.ID)
+				require.NoError(t, err)
+				actual = status.Checkout
+			case "list":
+				listed, err := s.ListPhotoCheckouts(ctx)
+				require.NoError(t, err)
+				require.Len(t, listed, 1)
+				actual = listed[0]
+			case "restored":
+				var snapshot bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &snapshot))
+				restored := newTestStore(t)
+				require.NoError(t, restored.ImportMetadata(ctx, &snapshot))
+				var err error
+				actual, err = restored.PhotoCheckout(ctx, checkout.ID)
+				require.NoError(t, err)
+			}
+			require.Equal(t, int64(1), actual.SkippedPhotoCount)
+			require.Equal(t, estimate.SkippedPhotos, actual.SkippedPhotos)
+		})
+	}
+
 	selection = PhotoCheckoutSelection{AssetIDs: []string{first.ID}}
 	_, err = s.EstimatePhotoCheckout(ctx, selection)
 	require.ErrorContains(t, err, "selection contains no files")
@@ -1088,6 +1115,13 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 	checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 20)
 	require.NoError(t, err)
 	require.Equal(t, estimate, createdEstimate)
+	require.Equal(t, int64(25), checkout.SkippedPhotoCount)
+	require.Equal(t, estimate.SkippedPhotos, checkout.SkippedPhotos)
+	persisted, err := s.PhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, checkout.SkippedPhotoCount, persisted.SkippedPhotoCount)
+	require.Equal(t, checkout.SkippedPhotos, persisted.SkippedPhotos)
+
 	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)

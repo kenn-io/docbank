@@ -5630,6 +5630,13 @@ export interface PhotoCheckoutSelection {
   years?: PhotoCheckoutYears;
 }
 
+export interface PhotoCheckoutSkip {
+  asset_id: string;
+  file_id: string;
+  name: string;
+  reason: string;
+}
+
 export interface PhotoCheckout {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5643,6 +5650,9 @@ export interface PhotoCheckout {
   /** @nullable */
   retired_at: string | null;
   selection: PhotoCheckoutSelection;
+  skipped_photo_count: number;
+  /** @maxItems 20 */
+  skipped_photos: PhotoCheckoutSkip[];
   state: string;
 }
 
@@ -5676,13 +5686,6 @@ export interface StorageOperation {
   state: string;
   total_objects: number;
   updated_at: string;
-}
-
-export interface PhotoCheckoutSkip {
-  asset_id: string;
-  file_id: string;
-  name: string;
-  reason: string;
 }
 
 export interface PhotoCheckoutCreateResult {

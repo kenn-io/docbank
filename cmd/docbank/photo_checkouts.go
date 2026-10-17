@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -100,6 +101,13 @@ The folder must be on the daemon's computer. List or inspect saved checkouts.`, 
 		if err != nil {
 			return err
 		}
+		for _, checkout := range out {
+			if checkout.SkippedPhotoCount > 0 {
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s: %d photos skipped\n", checkout.ID, checkout.SkippedPhotoCount); err != nil {
+					return fmt.Errorf("writing checkout skip summary: %w", err)
+				}
+			}
+		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
 	command.AddCommand(&cobra.Command{Use: "status <checkout-id>", Short: "Inspect photo checkout progress", Example: "  docbank photos checkout status 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -110,6 +118,11 @@ The folder must be on the daemon's computer. List or inspect saved checkouts.`, 
 		out, err := connection.PhotoCheckoutStatus(cmd.Context(), args[0])
 		if err != nil {
 			return err
+		}
+		if out.Checkout.SkippedPhotoCount > 0 {
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d photos skipped\n", out.Checkout.SkippedPhotoCount); err != nil {
+				return fmt.Errorf("writing checkout skip summary: %w", err)
+			}
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})

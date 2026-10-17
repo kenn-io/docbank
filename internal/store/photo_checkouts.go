@@ -58,6 +58,8 @@ type PhotoCheckoutEstimate struct {
 }
 
 type PhotoCheckout struct {
+	SkippedPhotos     []PhotoCheckoutSkip    `json:"skipped_photos" maxItems:"20"`
+	SkippedPhotoCount int64                  `json:"skipped_photo_count"`
 	RetiredAt         *string                `json:"retired_at"`
 	RetentionReleased bool                   `json:"retention_released"`
 	ID                string                 `json:"id"`
@@ -338,8 +340,15 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 		if err != nil {
 			return err
 		}
-		checkout = PhotoCheckout{ID: id, Selection: selection, ByteLimit: byteLimit, CreatedAt: nowRFC3339(), Destination: destination, OperationID: operation.ID, State: "queued"}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_checkouts(checkout_id,selection_json,byte_limit,created_at,destination,operation_id,state) VALUES(?,?,?,?,?,?,?)`, id, string(encoded), byteLimit, checkout.CreatedAt, destination, operation.ID, checkout.State); err != nil {
+		skipped, err := json.Marshal(estimate.SkippedPhotos)
+		if err != nil {
+			return err
+		}
+		checkout = PhotoCheckout{SkippedPhotos: estimate.SkippedPhotos, SkippedPhotoCount: estimate.SkippedPhotoCount, ID: id, Selection: selection, ByteLimit: byteLimit, CreatedAt: nowRFC3339(), Destination: destination, OperationID: operation.ID, State: "queued"}
+		if checkout.SkippedPhotos == nil {
+			checkout.SkippedPhotos = []PhotoCheckoutSkip{}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_checkouts(checkout_id,selection_json,skipped_photos_json,skipped_photo_count,byte_limit,created_at,destination,operation_id,state) VALUES(?,?,?,?,?,?,?,?,?)`, id, string(encoded), string(skipped), estimate.SkippedPhotoCount, byteLimit, checkout.CreatedAt, destination, operation.ID, checkout.State); err != nil {
 			return err
 		}
 		insert, err := tx.PrepareContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,sidecar_of_file_id) VALUES(?,?,?,?,?,?,?,?)`)
@@ -394,15 +403,18 @@ func validateCheckoutPath(name string) error {
 	return nil
 }
 
-const photoCheckoutSelect = `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,COALESCE(c.destination,''),COALESCE(c.operation_id,''),COALESCE(o.state,c.state),COALESCE(o.error,c.error),c.retention_released,c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id`
+const photoCheckoutSelect = `SELECT c.checkout_id,c.selection_json,c.skipped_photos_json,c.skipped_photo_count,c.byte_limit,c.created_at,COALESCE(c.destination,''),COALESCE(c.operation_id,''),COALESCE(o.state,c.state),COALESCE(o.error,c.error),c.retention_released,c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id`
 
 func scanPhotoCheckout(row scanner) (PhotoCheckout, error) {
 	var out PhotoCheckout
-	var encoded string
-	if err := row.Scan(&out.ID, &encoded, &out.ByteLimit, &out.CreatedAt, &out.Destination, &out.OperationID, &out.State, &out.Error, &out.RetentionReleased, &out.RetiredAt); err != nil {
+	var encoded, skipped string
+	if err := row.Scan(&out.ID, &encoded, &skipped, &out.SkippedPhotoCount, &out.ByteLimit, &out.CreatedAt, &out.Destination, &out.OperationID, &out.State, &out.Error, &out.RetentionReleased, &out.RetiredAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, ErrNotFound
 		}
+		return out, err
+	}
+	if err := json.Unmarshal([]byte(skipped), &out.SkippedPhotos); err != nil {
 		return out, err
 	}
 	return out, json.Unmarshal([]byte(encoded), &out.Selection)

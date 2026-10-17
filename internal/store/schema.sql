@@ -2739,6 +2739,8 @@ END;
 CREATE TABLE IF NOT EXISTS photo_checkouts (
     checkout_id TEXT PRIMARY KEY,
     selection_json TEXT NOT NULL,
+    skipped_photos_json TEXT NOT NULL DEFAULT '[]',
+    skipped_photo_count INTEGER NOT NULL DEFAULT 0,
     byte_limit INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     destination TEXT,

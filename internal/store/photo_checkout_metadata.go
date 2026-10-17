@@ -10,6 +10,8 @@ import (
 const photoCheckoutsStorageSchemaVersion = 39
 
 type metadataPhotoCheckout struct {
+	SkippedPhotos     *[]PhotoCheckoutSkip   `json:"skipped_photos,omitempty" db:"skipped_photos_json,json"`
+	SkippedPhotoCount *int64                 `json:"skipped_photo_count,omitempty" db:"skipped_photo_count"`
 	RetiredAt         *string                `json:"retired_at,omitempty" db:"retired_at"`
 	RetentionReleased bool                   `json:"retention_released" db:"retention_released"`
 	Type              string                 `json:"type"`
@@ -33,7 +35,7 @@ type metadataPhotoCheckoutEntry struct {
 }
 
 var photoCheckoutMetadataTables = []metadataRecordCodec{
-	newMetadataTable(metadataTable[metadataPhotoCheckout]{record: metadataPhotoCheckout{Type: "photo_checkout"}, table: "photo_checkouts", suffix: "ORDER BY checkout_id", checkExport: true, exportAll: exportPhotoCheckoutMetadata, validate: validatePhotoCheckoutMetadata}),
+	newMetadataTable(metadataTable[metadataPhotoCheckout]{record: metadataPhotoCheckout{Type: "photo_checkout"}, table: "photo_checkouts", suffix: "ORDER BY checkout_id", checkExport: true, exportAll: exportPhotoCheckoutMetadata, insert: insertPhotoCheckoutMetadata, validate: validatePhotoCheckoutMetadata}),
 	newMetadataTable(metadataTable[metadataPhotoCheckoutEntry]{record: metadataPhotoCheckoutEntry{Type: "photo_checkout_entry"}, table: "photo_checkout_entries", suffix: "ORDER BY checkout_id,file_id", checkExport: true, exportAll: exportPhotoCheckoutEntryMetadata, insert: insertPhotoCheckoutEntryMetadata, validate: validatePhotoCheckoutEntryMetadata}),
 }
 
@@ -46,6 +48,17 @@ func validatePhotoCheckoutEntryMetadata(v metadataPhotoCheckoutEntry) error {
 
 func validatePhotoCheckoutMetadata(v metadataPhotoCheckout) error {
 	if v.Type != "photo_checkout" || validateUUIDv4(v.ID) != nil || v.ByteLimit < 0 || v.Selection.All && v.ByteLimit == 0 {
+		return ErrInvalidPhotoCheckout
+	}
+	var count int64
+	if v.SkippedPhotoCount != nil {
+		count = *v.SkippedPhotoCount
+	}
+	var skipped []PhotoCheckoutSkip
+	if v.SkippedPhotos != nil {
+		skipped = *v.SkippedPhotos
+	}
+	if count < int64(len(skipped)) || len(skipped) > 20 {
 		return ErrInvalidPhotoCheckout
 	}
 	if err := ValidatePhotoCheckoutSelection(v.Selection); err != nil {
@@ -74,19 +87,28 @@ func validatePhotoCheckoutReferences(ctx context.Context, q metadataQuerier) err
 }
 
 func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,c.retention_released OR COALESCE(o.state,c.state) IN ('queued','running','paused'),c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY c.checkout_id`)
+	rows, err := q.QueryContext(ctx, `SELECT c.checkout_id,c.selection_json,c.skipped_photos_json,c.skipped_photo_count,c.byte_limit,c.created_at,c.retention_released OR COALESCE(o.state,c.state) IN ('queued','running','paused'),c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY c.checkout_id`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		record := metadataPhotoCheckout{Type: "photo_checkout"}
-		var selection string
-		if err := rows.Scan(&record.ID, &selection, &record.ByteLimit, &record.CreatedAt, &record.RetentionReleased, &record.RetiredAt); err != nil {
+		var selection, skipped string
+		var count int64
+		if err := rows.Scan(&record.ID, &selection, &skipped, &count, &record.ByteLimit, &record.CreatedAt, &record.RetentionReleased, &record.RetiredAt); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(selection), &record.Selection); err != nil {
 			return err
+		}
+		var details []PhotoCheckoutSkip
+		if err := json.Unmarshal([]byte(skipped), &details); err != nil {
+			return err
+		}
+		if count != 0 || len(details) > 0 {
+			record.SkippedPhotos = &details
+			record.SkippedPhotoCount = &count
 		}
 		if err := validatePhotoCheckoutMetadata(record); err != nil {
 			return err
@@ -96,6 +118,16 @@ func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write m
 		}
 	}
 	return rows.Err()
+}
+
+func insertPhotoCheckoutMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckout) error {
+	if v.SkippedPhotos == nil {
+		v.SkippedPhotos = new([]PhotoCheckoutSkip{})
+	}
+	if v.SkippedPhotoCount == nil {
+		v.SkippedPhotoCount = new(int64(0))
+	}
+	return insertMetadataRecord(ctx, tx, "photo_checkouts", v)
 }
 
 func insertPhotoCheckoutEntryMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckoutEntry) error {

@@ -21,6 +21,8 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	const operationID = "00000000-0000-4000-8000-000000000012"
 	selection := store.PhotoCheckoutSelection{AssetIDs: []string{"00000000-0000-4000-8000-000000000021"}, AlbumIDs: []string{"00000000-0000-4000-8000-000000000022"}, Years: &store.PhotoCheckoutYears{From: 2024, To: 2025}}
 	checkout := store.PhotoCheckout{ID: id, Selection: selection, ByteLimit: 100, Destination: filepath.Join(t.TempDir(), "destination"), OperationID: operationID, State: "queued"}
+	checkout.SkippedPhotos = []store.PhotoCheckoutSkip{{AssetID: id, FileID: operationID, Name: "duplicate.jpg", Reason: "duplicate filename"}}
+	checkout.SkippedPhotoCount = 1
 	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3}
 	created := api.PhotoCheckoutCreateResult{SkippedPhotos: []store.PhotoCheckoutSkip{{AssetID: id, FileID: operationID, Name: "duplicate.jpg", Reason: "duplicate filename"}}, SkippedPhotoCount: 1, Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100}
@@ -40,6 +42,8 @@ func TestPhotoCheckoutClients(t *testing.T) {
 			assert.Equal(t, request, body)
 			out = response
 			w.WriteHeader(http.StatusAccepted)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
+			out = api.PhotoCheckoutList{Items: []store.PhotoCheckout{checkout}}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts/"+id:
 			out = expectedStatus
 		default:
@@ -64,6 +68,10 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	status, err := client.PhotoCheckoutStatus(t.Context(), strings.ToUpper(id))
 	require.NoError(t, err)
 	require.Equal(t, expectedStatus, status)
+
+	listed, err := client.PhotoCheckouts(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []store.PhotoCheckout{checkout}, listed)
 
 	mismatchedState := created
 	mismatchedState.Checkout.State = "running"

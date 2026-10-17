@@ -12352,9 +12352,19 @@ components:
             - "null"
         selection:
           $ref: "#/components/schemas/PhotoCheckoutSelection"
+        skipped_photo_count:
+          format: int64
+          type: integer
+        skipped_photos:
+          items:
+            $ref: "#/components/schemas/PhotoCheckoutSkip"
+          maxItems: 20
+          type: array
         state:
           type: string
       required:
+        - skipped_photos
+        - skipped_photo_count
         - retired_at
         - retention_released
         - id
