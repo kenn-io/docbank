@@ -35,9 +35,7 @@ report the same version string.
 
 ## Live photo changes
 
-Authenticated `GET /api/v1/photos/events` streams committed changes as server-sent events. Each stream starts with a bare refetch. Asset events carry current revisions and set `refetch` when the write can change query membership; visual-preview events omit it; rendition heads affect text-search membership. Delivery checks the requesting viewer's current Hidden session. Album membership events carry asset IDs. Album definitions, shared query definitions, and ordinary-file changes that affect photo duplicate searches use ID-free refetches. Locked viewers receive no Hidden-asset event, even while another session is unlocked. Lock publishes a generic refetch; browser access polling reconnects the stream on unlock or expiry.
-
-Visible photos becoming Hidden, deleted targets, shared definitions (tags, saved queries, and collection labels), and batches exceeding 64 changes use a broad refetch. Worker metadata changes resolve to the current photo asset IDs. The daemon permits 128 concurrent streams, returns 429 at capacity, and limits each write to ten seconds. One visible browser tab owns the stream through a Web Lock. Every tab without an established stream, including followers, reconnecting tabs, and browsers without Web Locks, compares its own audience-specific change cursor in the existing two-second `GET /photos/hidden?watch=true` poll and refreshes through its own session when it changes. An unlocked follower can therefore refresh Hidden changes while the stream owner stays locked. Ownership handoff requests a full refresh. Reads without `watch` do not renew capture.
+The daemon publishes committed photo changes to authenticated viewers and checks each viewer's current Hidden access before delivery. The browser refreshes affected views through an event stream or its own access poll, including when another tab owns the stream. See the [live photo change contract](../architecture/http-api.md#live-photo-changes) for event policies, capture limits, stream ownership, and polling leases.
 
 ## Runtime record and trust boundary
 

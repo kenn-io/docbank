@@ -28,7 +28,7 @@ asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
 
-Open photo views refresh when another tab, the CLI, an import, or a worker changes the library. Changes to photo files and their metadata carry photo IDs; albums, tags, saved queries, collection labels, directory paths, and ordinary-file changes that affect photo duplicate searches request a full refresh. An unaffected open original keeps its zoom. Hiding or unhiding a photo elsewhere conceals the open viewer until a refresh confirms what remains visible. Hidden photo IDs and revisions require a current unlock session. One visible tab owns the stream through a Web Lock. Other tabs, reconnecting tabs, and browsers without Web Locks compare their own change cursor in the existing two-second Hidden-state poll and refresh when it changes. An unlocked tab refreshes its Hidden view even when the stream owner stays locked. Taking over the stream requests a full refresh.
+Open photo views refresh when another tab, the CLI, an import, or a worker changes the library. An unaffected open original keeps its zoom. Hiding or unhiding a photo elsewhere conceals the open viewer until a refresh confirms what remains visible. Each unlocked tab refreshes its Hidden view even when another tab stays locked. See the [live photo change contract](../architecture/http-api.md#live-photo-changes) for event and polling details.
 
 ## Add photos in the web app
 

@@ -382,12 +382,47 @@ func TestPhotoEventsSourceCandidateBudget(t *testing.T) {
 						})
 					}
 					require.NoError(t, err)
-					if fixture == "65 ordinary" {
-						require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-					}
 					noPhotoEvent(t, events)
 				})
 			}
 		})
 	}
+}
+
+func TestPhotoEventsSharedOrdinaryBlob(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("22")
+	run, err := s.BeginIngest(ctx, "cli", "Synthetic shared ordinary files")
+	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for i := range 70 {
+			name := fmt.Sprintf("ordinary-%06d.bin", i)
+			_, _, _, err := s.ingestFileTx(ctx, tx, run, s.RootID(), name, hash, 4,
+				"application/octet-stream", "/synthetic/"+name, "",
+				ingestFileOptions{observeMembership: true, exact: true})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	_, err = s.CreateFile(ctx, s.RootID(), "unrelated.jpg", fakeHash("11"), 4, "image/jpeg")
+	require.NoError(t, err)
+	events, stop := s.SubscribePhotoEvents()
+	defer stop()
+	_, err = s.CreateFile(ctx, s.RootID(), "another-ordinary.bin", hash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	noPhotoEvent(t, events)
+
+	photo, err := s.CreateFile(ctx, s.RootID(), "shared.jpg", hash, 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+	_, err = s.CreateFile(ctx, s.RootID(), "matching-ordinary.bin", hash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+	noPhotoEvent(t, events)
 }

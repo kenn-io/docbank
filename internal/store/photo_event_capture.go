@@ -272,7 +272,7 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 }
 
 // Resolve hash-based keys only after releasing the writer. Materialize the 64+1
-// candidates before checking current membership, including ordinary and old versions.
+// current photo candidates after checking membership and excluding the changed node.
 func (s *Store) resolvePhotoSources(ctx context.Context, sources []photoSourceChange) []PhotoEvent {
 	if len(sources) == 0 {
 		return nil
@@ -287,15 +287,12 @@ func (s *Store) resolvePhotoSources(ctx context.Context, sources []photoSourceCh
  ), changed AS (
  SELECT kind,key hash,node FROM raw WHERE kind<>'generation'
  UNION ALL SELECT raw.kind,g.source_sha256,raw.node FROM raw JOIN source_metadata_generations g ON g.generation_id=raw.key WHERE raw.kind='generation'
- ), candidates AS MATERIALIZED (
- SELECT changed.kind,changed.node,v.version_id,v.node_id FROM changed
- CROSS JOIN content_versions v INDEXED BY content_versions_blob ON v.blob_hash=changed.hash LIMIT 65
- ), `+CurrentContentMembershipCTE+`
- SELECT c.kind,(SELECT f.asset_id FROM current_content_members current
- JOIN photo_files f ON f.node_id=current.node_id AND f.asset_id IS NOT NULL
- WHERE current.node_id=c.node_id AND current.version_id=c.version_id
- AND (c.kind<>'hash' OR current.node_id<>CAST(c.node AS INTEGER)) LIMIT 1)
- FROM candidates c`, string(encoded))
+ ), `+CurrentContentMembershipCTE+`, candidates AS MATERIALIZED (
+ SELECT changed.kind,f.asset_id FROM changed
+ CROSS JOIN photo_files f CROSS JOIN current_content_members current ON current.node_id=f.node_id
+ WHERE current.blob_hash=changed.hash AND f.asset_id IS NOT NULL
+ AND (changed.kind<>'hash' OR current.node_id<>CAST(changed.node AS INTEGER)) LIMIT 65
+ ) SELECT kind,asset_id FROM candidates`, string(encoded))
 	fallback := []PhotoEvent{{Refetch: true}}
 	if err != nil {
 		s.warnPhotoCapture(err)
