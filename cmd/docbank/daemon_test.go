@@ -380,7 +380,11 @@ func TestConfiguredCheckoutValidationDefersOnlyOverlappingBindings(t *testing.T)
 	specs, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, check)
 	require.NoError(t, err)
 	for _, spec := range specs {
-		require.Empty(t, spec.UnavailableReason)
+		if spec.ID == "missing" {
+			require.NotEmpty(t, spec.UnavailableReason)
+		} else {
+			require.Empty(t, spec.UnavailableReason)
+		}
 	}
 
 	stores = append(stores, store.BlobStore{ID: "archive", Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"})
@@ -590,6 +594,53 @@ func TestCheckoutStartupKeepsStoreUnattachedUntilSeparated(t *testing.T) {
 	require.NoError(t, startCheckoutStoreWaits(supervisor, registry, specs, cfg, catalog, slog.Default()))
 	// Move the released copies out, leaving the store namespace in place.
 	require.NoError(t, os.Rename(copyPath, filepath.Join(t.TempDir(), "edited.jpg")))
+	require.Eventually(t, func() bool { _, ok := registry.Backend(storeID); return ok }, 5*time.Second, 10*time.Millisecond)
+	require.Equal(t, blob.StoreOnline, registry.Observation(storeID).State)
+}
+
+func TestCheckoutStartupMissingStoreWaitsUntilSeparated(t *testing.T) {
+	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	_, err := catalog.RetirePhotoCheckout(t.Context(), checkoutID)
+	require.NoError(t, err)
+	copyPath := filepath.Join(destination, "edited.jpg")
+	require.NoError(t, os.WriteFile(copyPath, []byte("copy"), 0o600))
+	storePath := filepath.Join(destination, "missing")
+	parked := filepath.Join(t.TempDir(), "parked")
+	cfg := config.Default()
+	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: storePath}}
+	const storeID = "20000000-0000-4000-8000-000000000001"
+	const epoch = "30000000-0000-4000-8000-000000000001"
+	require.NoError(t, blob.EnsureFilesystemNamespace(storePath))
+	backend, err := blob.NewFilesystemBackend(storePath, nil)
+	require.NoError(t, err)
+	require.NoError(t, backend.ReplaceOwnership(t.Context(), packstore.Ownership{Format: packstore.OwnershipFormatV1, Vault: catalog.VaultID(), Store: storeID, Epoch: epoch}, nil))
+	require.NoError(t, backend.Close())
+	require.NoError(t, os.Rename(storePath, parked))
+	stores := []store.BlobStore{{ID: storeID, Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch}}
+	specs, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, func(ctx context.Context, binding config.StoreBindingConfig) error {
+		return validateCheckoutBinding(ctx, catalog, binding)
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, specs[0].UnavailableReason)
+	registry := blob.NewRegistry(t.Context(), catalog.VaultID(), cfg.StoreBindings, specs)
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	_, attached := registry.Backend(storeID)
+	require.False(t, attached, "startup overlap must keep the store unattached without registry admission hooks")
+	require.Equal(t, blob.StoreUnavailable, registry.Refresh(t.Context(), storeID).State)
+	supervisor := jobs.New(t.Context(), nil)
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	require.NoError(t, startCheckoutStoreWaits(supervisor, registry, specs, cfg, catalog, slog.Default()))
+	// A returning store stays held while checkout copies protect its parent.
+	require.NoError(t, os.Rename(parked, storePath))
+	require.Equal(t, blob.StoreUnavailable, registry.Refresh(t.Context(), storeID).State)
+	require.Never(t, func() bool { _, ok := registry.Backend(storeID); return ok }, 1500*time.Millisecond, 10*time.Millisecond)
+	// Clear the retired destination before reusing it for store data.
+	require.NoError(t, os.Rename(storePath, parked))
+	require.NoError(t, os.Rename(copyPath, filepath.Join(t.TempDir(), "edited.jpg")))
+	require.NoError(t, validateCheckoutBinding(t.Context(), catalog, cfg.StoreBindings["archive"]))
+	require.NoError(t, os.Rename(parked, storePath))
 	require.Eventually(t, func() bool { _, ok := registry.Backend(storeID); return ok }, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, blob.StoreOnline, registry.Observation(storeID).State)
 }

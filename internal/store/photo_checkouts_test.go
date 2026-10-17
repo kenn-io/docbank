@@ -398,7 +398,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG"}},
 		{name: "explicit differently named sidecar", sidecar: "unrelated.XMP", paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG", "sidecar": "undated/%s/unrelated.XMP"}},
 		{name: "trashed conflicting sidecar", sidecar: "unrelated.XMP", trashRole: PhotoRoleSidecar, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG"}},
-		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/RENAMED.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/RENAMED.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
+		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/IMG.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)

@@ -127,7 +127,7 @@ Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
-	command.AddCommand(&cobra.Command{Use: "retire <checkout-id>", Short: "Release a checkout's source holds and destination", Example: "  docbank photos checkout retire 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "retire <checkout-id>", Short: "Release source holds; the destination stays protected until copies are cleared", Example: "  docbank photos checkout retire 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err

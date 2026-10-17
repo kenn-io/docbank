@@ -549,7 +549,7 @@ Combine `--asset`, `--album`, and `--years` to copy their union. Each file appea
 
 The destination must be an existing empty folder on the daemon's computer. Keep it separate from the vault, storage roots, watched folders, and other checkouts. Creation requires a local daemon connection.
 
-Docbank preserves original filenames under capture-date and asset-ID folders so RAW, JPEG, and XMP members stay paired. A sidecar requires a selected, eligible original. Recorded sidecar links remain valid when filenames differ; each file keeps its own original name. Docbank uses the modification date when capture metadata is absent, and `undated` when neither date exists. It verifies every copy before publication. Copies are private to the daemon user.
+Docbank preserves original filenames under capture-date and asset-ID folders so RAW, JPEG, and XMP members stay paired. A sidecar requires a selected, eligible original. Recorded sidecar links remain valid when filenames differ; each file uses its saved source path, even after importing renamed duplicates. Files without a saved source identity use their current document name. Docbank uses the modification date when capture metadata is absent, and `undated` when neither date exists. It verifies every copy before publication. Copies are private to the daemon user.
 
 A photo hidden, excluded, detached, or trashed during copying is skipped. Docbank copies the remaining eligible files, then marks the checkout failed with the first error.
 

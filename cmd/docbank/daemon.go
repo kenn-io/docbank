@@ -869,7 +869,11 @@ func startCheckoutStoreWaits(supervisor *jobs.Supervisor, registry *blob.Registr
 		}
 		if err := supervisor.Start("checkout:startup:"+spec.ID, func(ctx context.Context) error {
 			if err := waitForCheckoutValidation(ctx, func(ctx context.Context) error {
-				return validateCheckoutBinding(ctx, catalog, cfg.StoreBindings[spec.Binding])
+				binding := cfg.StoreBindings[spec.Binding]
+				if _, err := os.Stat(binding.Path); err != nil {
+					return err
+				}
+				return validateCheckoutBinding(ctx, catalog, binding)
 			}, logger); err != nil {
 				return err
 			}
@@ -939,6 +943,7 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 	}
 	results := make(chan result, len(stores))
 	checks := 0
+	pending := make(map[string]error)
 	for _, item := range stores {
 		if item.Role == "primary" || item.Lifecycle == "detached" || item.Kind != "filesystem" {
 			continue
@@ -947,14 +952,13 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 		if !ok {
 			continue
 		}
-		// A missing store has no copies to protect; the registry reports it offline.
 		if _, err := os.Stat(binding.Path); errors.Is(err, fs.ErrNotExist) {
+			pending[item.ID] = err
 			continue
 		}
 		checks++
 		go func() { results <- result{item.ID, check(checkCtx, binding)} }()
 	}
-	pending := make(map[string]error)
 	var failure error
 	for range checks {
 		result := <-results

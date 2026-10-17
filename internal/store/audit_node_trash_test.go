@@ -3,12 +3,67 @@ package store
 import (
 	"bytes"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/audit"
 )
+
+func TestAuditedTrashWaitsForPhotoCheckoutPublication(t *testing.T) {
+	t.Parallel()
+	for _, mutation := range []string{"node", "path", "photo"} {
+		t.Run(mutation, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "photo.jpg")
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			seedInitialAuditAuthority(t, s, s.RootID())
+			started, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			releaseInstall := func() { once.Do(func() { close(release) }) }
+			defer releaseInstall()
+			published := make(chan error, 1)
+			go func() {
+				published <- s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
+					close(started)
+					<-release
+					return true, nil
+				})
+			}()
+			<-started
+			changed := make(chan error, 1)
+			go func() {
+				var err error
+				switch mutation {
+				case "node":
+					_, _, err = s.Trash(ctx, asset.Files[0].NodeID, UnconditionalRev)
+				case "path":
+					_, _, err = s.TrashPath(ctx, "/photo.jpg")
+				case "photo":
+					_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
+				}
+				changed <- err
+			}()
+			select {
+			case err := <-changed:
+				t.Fatalf("audited trash completed during publication: %v", err)
+			case <-time.After(50 * time.Millisecond): //nolint:kennlint // the tree RWMutex has no waiter signal
+			}
+			require.NoError(t, s.CheckPhotoCheckoutEntry(ctx, entries[0]))
+			releaseInstall()
+			require.NoError(t, <-published)
+			require.NoError(t, <-changed)
+			require.ErrorIs(t, s.CheckPhotoCheckoutEntry(ctx, entries[0]), ErrPhotoCheckoutSourceUnavailable)
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
 
 func TestAuditedTrashRecordsSubtreeAndRoundTrips(t *testing.T) {
 	t.Parallel()
