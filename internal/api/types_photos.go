@@ -66,7 +66,7 @@ type SetPhotoExcludedRequest struct {
 }
 
 type SetPhotoSettingsRequest struct {
-	Preference      *string `json:"preference,omitzero" enum:"raw,image" doc:"Omit to reset the display preference."`
+	Preference      *string `json:"preference,omitzero" enum:"raw,image" doc:"Omit to keep the display preference when changing the burst gap, or reset it otherwise."`
 	BurstGapSeconds *int    `json:"burst_gap_seconds,omitzero" minimum:"1" maximum:"30" doc:"Omit to keep the burst gap."`
 }
 
@@ -94,10 +94,6 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
 	return PhotoSettings{BurstGapSeconds: settings.BurstGapSeconds, Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
-}
-
-type SetPhotoBurstGapRequest struct {
-	Seconds int `json:"seconds" minimum:"1" maximum:"30"`
 }
 
 // GroupPhotoStacksRequest names photos to regroup. The store rejects repeated

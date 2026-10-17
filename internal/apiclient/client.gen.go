@@ -10467,53 +10467,6 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	return responseParser(ctx, resp)
 }
 
-// SetPhotoBurstGap Change the burst gap
-func (c *Client) SetPhotoBurstGap(ctx context.Context, options *SetPhotoBurstGapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPhotoBurstGapResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/settings/burst-gap",
-		Method:      "PUT",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*SetPhotoBurstGapResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(SetPhotoBurstGapResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "SetPhotoBurstGapResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[SetPhotoBurstGapErrorResponse](resp, "SetPhotoBurstGapErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings/burst-gap")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
 // GroupPhotoStacks Group explicit photos into bursts
 func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GroupPhotoStacksResponseJSON, error) {
 	var err error
@@ -21374,41 +21327,6 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
-// SetPhotoBurstGapRequestOptions is the options needed to make a request to SetPhotoBurstGap.
-type SetPhotoBurstGapRequestOptions struct {
-	Body   *SetPhotoBurstGapBody
-	Header *SetPhotoBurstGapHeaders
-}
-
-// GetPathParams returns the path params as a map.
-func (o *SetPhotoBurstGapRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *SetPhotoBurstGapRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *SetPhotoBurstGapRequestOptions) GetBody() any {
-	if o.Body == nil {
-		return nil
-	}
-	return o.Body
-}
-
-// GetHeader returns the headers as a map.
-func (o *SetPhotoBurstGapRequestOptions) GetHeader() (map[string]string, error) {
-	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var headers map[string]string
-	err = json.Unmarshal(encoded, &headers)
-	return headers, err
-}
-
 // GroupPhotoStacksRequestOptions is the options needed to make a request to GroupPhotoStacks.
 type GroupPhotoStacksRequestOptions struct {
 	Body *GroupPhotoStacksBody
@@ -24217,10 +24135,6 @@ type SetPhotoSettingsHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
-type SetPhotoBurstGapHeaders struct {
-	IfMatch string `json:"If-Match"`
-}
-
 type UploadPushFileHeaders struct {
 	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
@@ -25086,8 +25000,6 @@ type PreflightPhotoRejectsBody = PhotoRejectsRequest
 type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
-
-type SetPhotoBurstGapBody = SetPhotoBurstGapRequest
 
 type GroupPhotoStacksBody = GroupPhotoStacksRequest
 
@@ -26490,10 +26402,6 @@ type GetPhotoSettingsErrorResponse = Error
 type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
-
-type SetPhotoBurstGapResponse = api.PhotoSettings
-
-type SetPhotoBurstGapErrorResponse = Error
 
 type GroupPhotoStacksResponseJSON = api.GroupPhotoStacksResponse
 
@@ -28157,8 +28065,6 @@ type SetCollectionLabelRequest struct {
 }
 
 type SetLaneControlRequest = api.SetLaneControlRequest
-
-type SetPhotoBurstGapRequest = api.SetPhotoBurstGapRequest
 
 type SetPhotoDisplayRequest = api.SetPhotoDisplayRequest
 

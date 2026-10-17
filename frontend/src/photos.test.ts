@@ -3188,3 +3188,96 @@ it("patches loaded stacks from receipts and reloads only for unknown companion f
   expect(photos.reloadsAfter(changes)).toBe(true);
   photos.dispose();
 });
+
+it.each([false, true])(
+  "keeps a picked companion as the burst representative after a displayed-file reject, held=%s",
+  async (held) => {
+    const stack = {
+      asset_ids: ["photo-1", "photo-2"],
+      representative_id: "photo-2",
+      picked_ids: ["photo-2"],
+    };
+    const rows = [photo(1), photo(2)];
+    stubPhotoFetch(async () =>
+      Response.json({
+        items: rows,
+        stacks: [stack],
+        total: 2,
+        facets: [],
+        relevance_available: false,
+      }),
+    );
+    const photos = new Photos("session", vi.fn());
+    await photos.resume();
+    rows[1]!.flag = "reject";
+    vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+    const jpeg = preparedPhoto(2);
+    const raw = preparedPhoto(4, { asset_id: "photo-2", display_file_id: "file-2" });
+    if (held)
+      photos.authored.targets = [
+        { ...jpeg, revision: 2, values: { ...jpeg.values, flag: "reject" } },
+        { ...raw, values: { ...raw.values, flag: "pick" } },
+      ];
+    const changes = photos.metadataChanged({
+      receipt_id: "reject",
+      before: [jpeg],
+      after: [{ ...jpeg, revision: 2, values: { ...jpeg.values, flag: "reject" } }],
+    });
+    expect(photos.reloadsAfter(changes)).toBe(!held);
+    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
+      "photo-2",
+      "photo-2",
+    ]);
+    expect(photos.items.map((row) => "stack" in row && row.stack?.picked_ids)).toEqual([
+      ["photo-2"],
+      ["photo-2"],
+    ]);
+    if (!held) await photos.refresh();
+    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
+      "photo-2",
+      "photo-2",
+    ]);
+    photos.dispose();
+  },
+);
+
+it("updates the burst gap through general settings and shows regrouped Library photos", async () => {
+  let gap = 2;
+  const updates: unknown[] = [];
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/settings")) {
+      if (init.method === "PUT") {
+        updates.push(JSON.parse(String(init.body)));
+        expect(new Headers(init.headers).get("If-Match")).toBe('"1"');
+        gap = 5;
+      }
+      return Response.json({
+        revision: gap === 2 ? 1 : 2,
+        preference: "image",
+        burst_gap_seconds: gap,
+      });
+    }
+    expect(url.endsWith("/photos/assets/query")).toBe(true);
+    return Response.json({
+      items: [photo(1), photo(2)],
+      total: 2,
+      facets: [],
+      relevance_available: false,
+      burst_gap_seconds: gap,
+      stacks:
+        gap === 5
+          ? [{ asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1", picked_ids: [] }]
+          : [],
+    });
+  });
+  const photos = new Photos("session", vi.fn());
+  await photos.resume();
+  await photos.setBurstGap(5);
+  expect(updates).toEqual([{ burst_gap_seconds: 5 }]);
+  expect(photos.burstGapSeconds).toBe(5);
+  expect(photos.items.map((row) => "stack" in row && row.stack?.asset_ids)).toEqual([
+    ["photo-1", "photo-2"],
+    ["photo-1", "photo-2"],
+  ]);
+  photos.dispose();
+});

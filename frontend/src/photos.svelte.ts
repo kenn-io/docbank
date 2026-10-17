@@ -5,7 +5,7 @@ import { photoSearchSort } from "./photoSearch.js";
 import { getSavedQuery, type SavedQuery } from "./savedQueries.js";
 import {
   getPhotoSettings,
-  setPhotoBurstGap,
+  setPhotoSettings,
   getNode,
   hidePhotoAsset,
   unhidePhotoAsset,
@@ -942,10 +942,7 @@ export class Photos {
         editor ? [...editor.targets, ...editor.stackTargets] : [],
       );
       const rows = this.items as PhotoBrowseRow[];
-      const known = new Set([
-        ...targets.map((target) => target.file_id),
-        ...rows.map((row) => row.display_file_id),
-      ]);
+      const known = new Set(targets.map((target) => target.file_id));
       stacksUnresolved =
         rows.some((row) => row.stack) &&
         receipt.after.some(
@@ -1525,8 +1522,8 @@ export class Photos {
     this.actionError = "";
     try {
       const settings = await getPhotoSettings({ session: this.session });
-      const next = await setPhotoBurstGap(
-        { seconds: gap },
+      const next = await setPhotoSettings(
+        { burst_gap_seconds: gap },
         { "If-Match": `"${settings.revision}"` },
         { session: this.session },
       );

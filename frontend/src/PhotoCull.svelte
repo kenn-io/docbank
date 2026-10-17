@@ -177,7 +177,7 @@
     onmetadatachanged?.(receipt, tags);
     const changes = photos.metadataChanged(receipt);
     if (photos.started && photos.reloadsAfter(changes)) await photos.refresh();
-    reconcile(receipt.after);
+    reconcile(receipt.after, receipt.representatives);
     if (
       cull.complete &&
       receipt.after.some((after) => {
@@ -187,15 +187,22 @@
     )
       await cull.checkRemainder();
   }
-  function reconcile(targets: PhotoAuthoredSnapshot[]) {
+  function reconcile(
+    targets: PhotoAuthoredSnapshot[],
+    representatives: PhotoAuthoredReceipt["representatives"] = [],
+  ) {
     const updated = (row: PhotoBrowseRow) => {
       const after = targets.find((file) => file.file_id === row.display_file_id);
-      return after
+      const choice = representatives?.find((change) => change.asset_id === row.asset_id);
+      return after || choice
         ? {
             ...row,
-            flag: after.values.flag,
-            rating: after.values.rating,
-            rotation: after.values.rotation,
+            ...(after && {
+              flag: after.values.flag,
+              rating: after.values.rating,
+              rotation: after.values.rotation,
+            }),
+            ...(choice && { revision: choice.after_revision }),
           }
         : row;
     };
@@ -275,7 +282,11 @@
       !cull.stale &&
       !editor.error &&
       !editor.conflict &&
-      !editor.stackTargets.length
+      (stack.some(
+        (id) =>
+          ![...editor.targets, ...editor.stackTargets].some((target) => target.asset_id === id),
+      ) ||
+        editor.stackTargets.some((target) => !stack.includes(target.asset_id)))
     )
       untrack(() => void prepareStack(stack));
   });
@@ -308,7 +319,8 @@
         beforeWrite: () => cull.verifyDecision(),
       },
     );
-    if (editor.error || editor.conflict || editor.notice) return;
+    if (editor.error || editor.conflict || (editor.notice && editor.noticeTone !== "success"))
+      return;
     if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
       cull.moveStack(1);
   }

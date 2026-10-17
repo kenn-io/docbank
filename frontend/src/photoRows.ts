@@ -39,9 +39,8 @@ export function patchPhotoRows(
   );
   const stacks = new Map<PhotoStack, PhotoStack>();
   for (const row of rows) {
-    const values = files.get(row.display_file_id),
-      choice = choices.get(row.asset_id),
-      pick = picked(row.asset_id) ?? (values ? values.flag === "pick" : undefined);
+    const choice = choices.get(row.asset_id),
+      pick = picked(row.asset_id);
     if (!row.stack || (pick === undefined && !choice)) continue;
     let next = stacks.get(row.stack);
     if (!next) stacks.set(row.stack, (next = { ...row.stack }));

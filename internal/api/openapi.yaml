@@ -16708,28 +16708,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    SetPhotoBurstGapRequest:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/SetPhotoBurstGapRequest.json
-          format: uri
-          readOnly: true
-          type: string
-        seconds:
-          format: int64
-          maximum: 30
-          minimum: 1
-          type: integer
-      required:
-        - seconds
-      type: object
-      x-go-type: api.SetPhotoBurstGapRequest
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
     SetPhotoDisplayRequest:
       additionalProperties: false
       properties:
@@ -16788,7 +16766,7 @@ components:
             - integer
             - "null"
         preference:
-          description: Omit to reset the display preference.
+          description: Omit to keep the display preference when changing the burst gap, or reset it otherwise.
           enum:
             - raw
             - image
@@ -26235,39 +26213,6 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Set photo settings
-  /api/v1/photos/settings/burst-gap:
-    put:
-      operationId: setPhotoBurstGap
-      parameters:
-        - in: header
-          name: If-Match
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetPhotoBurstGapRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PhotoSettings"
-          description: OK
-          headers:
-            ETag:
-              schema:
-                type: string
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Change the burst gap
   /api/v1/photos/stacks/group:
     post:
       operationId: groupPhotoStacks

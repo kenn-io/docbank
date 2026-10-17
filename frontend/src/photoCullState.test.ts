@@ -734,7 +734,10 @@ it("regroups saved IDs after a gap change and recovers only a stale stack", asyn
   await resumed.restore();
   expect(resumed.run?.groups).toEqual([]);
   expect(resumed.run?.burstGapSeconds).toBe(5);
-  expect(resumed.run?.checkpoint).toEqual(run.checkpoint);
+  expect(resumed.run?.checkpoint).toEqual({
+    ...run.checkpoint,
+    revision: run.checkpoint.revision + 2,
+  });
 });
 
 it("keeps filename-sorted cull passes flat and preserves their captured order", async () => {
@@ -818,3 +821,50 @@ it.each(["left at first", "current thumbnail", "right after completion", "next p
     expect(other.error).toContain("Close and resume it.");
   },
 );
+
+it("refuses another tab's old membership after regrouping and saves the new checkpoint", async () => {
+  const ids = [photo(1).asset_id, photo(2).asset_id, photo(3).asset_id];
+  const store = storage();
+  const run: CullRun = {
+    ids,
+    captureTimeOrder: "asc",
+    groups: [[ids[0]!, ids[1]!]],
+    burstGapSeconds: 2,
+    checkpoint: {
+      runID: "run",
+      revision: 0,
+      pass: ids,
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  };
+  await store.replace(run);
+  const first = new PhotoCull("session", store);
+  const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+  await first.restore();
+  await other.restore();
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 2,
+    preference: null,
+    burst_gap_seconds: 5,
+  });
+  vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({ groups: [ids], unavailable_ids: [] });
+  await first.regroup();
+  expect(first.run?.groups).toEqual([ids]);
+  expect(first.run?.checkpoint.revision).toBe(1);
+  expect((await store.load())?.checkpoint.revision).toBe(1);
+  expect(await first.verifyDecision()).toBe(true);
+  expect(await other.verifyDecision()).toBe(false);
+  expect(other.stale).toBe(true);
+  expect(other.run?.groups).toEqual([[ids[0], ids[1]]]);
+  first.moveFrame(1);
+  await first.flush();
+  const resumed = new PhotoCull("session", store);
+  await resumed.restore();
+  expect(resumed.currentID).toBe(ids[1]);
+  expect(resumed.run?.groups).toEqual([ids]);
+});

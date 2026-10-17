@@ -114,7 +114,12 @@ export class PhotoCull {
       }
       await this.storage.regroup(groups, settings.burst_gap_seconds, run.checkpoint);
       if (this.run === run)
-        this.run = { ...run, groups, burstGapSeconds: settings.burst_gap_seconds };
+        this.run = {
+          ...run,
+          groups,
+          burstGapSeconds: settings.burst_gap_seconds,
+          checkpoint: { ...run.checkpoint, revision: run.checkpoint.revision + 1 },
+        };
     } catch (cause) {
       if (!controller.signal.aborted) this.stackError = failure(cause);
     } finally {

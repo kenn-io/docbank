@@ -47,7 +47,7 @@ export interface CullStorage {
   saved(): Promise<Header | undefined>;
   load(): Promise<CullRun | undefined>;
   replace(run: CullRun, signal?: AbortSignal, expected?: Header): Promise<void>;
-  /** Replace the saved bursts without changing order or the checkpoint. */
+  /** Replace the saved bursts and advance the checkpoint revision atomically. */
   regroup(groups: string[][], burstGapSeconds: number, expected: Header): Promise<void>;
   checkpoint(value: CullProgress): Promise<void>;
 }
@@ -189,6 +189,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         const members = tx.objectStore("members");
         const membership = await idbRequest<Membership>(members.get(vaultID));
         members.put({ ...membership, groups, burstGapSeconds }, vaultID);
+        tx.objectStore("checkpoints").put({ ...current, revision: current.revision + 1 }, vaultID);
         await done;
       } finally {
         db.close();

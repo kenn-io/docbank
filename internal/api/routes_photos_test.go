@@ -194,7 +194,7 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	assert.Equal(t, api.TrashEmptyReport{HeldRoots: 1, Run: true}, report)
 }
 
-func TestPhotoBurstGapRoutePreservesDisplayPreference(t *testing.T) {
+func TestPhotoSettingsGapOnlyPreservesDisplayPreference(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
@@ -211,7 +211,7 @@ func TestPhotoBurstGapRoutePreservesDisplayPreference(t *testing.T) {
 	before, err := s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"2"`}
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings/burst-gap", browser, map[string]any{"seconds": 5})
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, 200, res.StatusCode, body)
 	var settings api.PhotoSettings
 	require.NoError(t, json.Unmarshal([]byte(body), &settings))
@@ -221,7 +221,7 @@ func TestPhotoBurstGapRoutePreservesDisplayPreference(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before.DisplayFileID, after.DisplayFileID)
 	require.Equal(t, before.Revision, after.Revision)
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings/burst-gap", map[string]string{"If-Match": `"3"`}, map[string]any{"seconds": 5})
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"3"`}, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, 200, res.StatusCode, body)
 	require.Equal(t, `"3"`, res.Header.Get("ETag"))
 	browser["If-Match"] = `"3"`

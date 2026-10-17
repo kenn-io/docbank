@@ -225,30 +225,15 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		var out *photoSettingsOutput
-		err = g.mutate(func() error {
-			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, store.PhotoSettingsUpdate{Preference: in.Body.Preference, BurstGapSeconds: in.Body.BurstGapSeconds})
-			if callErr != nil {
-				return FromStoreError(callErr)
-			}
-			out = &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}
-			return nil
-		})
-		return out, err
-	})
-	huma.Register(api, huma.Operation{OperationID: "setPhotoBurstGap", Method: http.MethodPut, Path: "/api/v1/photos/settings/burst-gap", Summary: "Change the burst gap"}, func(ctx context.Context, in *struct {
-		IfMatch string `header:"If-Match"`
-		Body    SetPhotoBurstGapRequest
-	}) (*photoSettingsOutput, error) {
-		revision, err := parseIfMatch(in.IfMatch)
-		if err != nil {
-			return nil, err
+		keepPreference := in.Body.Preference == nil && in.Body.BurstGapSeconds != nil
+		if browserSessionRequest(ctx) && !keepPreference {
+			return nil, huma.Error403Forbidden("Changing the display preference requires the API key")
 		}
 		var out *photoSettingsOutput
 		err = g.mutate(func() error {
-			settings, err := d.Store.SetPhotoSettings(ctx, revision, store.PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: &in.Body.Seconds})
-			if err != nil {
-				return FromStoreError(err)
+			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, store.PhotoSettingsUpdate{Preference: in.Body.Preference, KeepPreference: keepPreference, BurstGapSeconds: in.Body.BurstGapSeconds})
+			if callErr != nil {
+				return FromStoreError(callErr)
 			}
 			out = &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}
 			return nil

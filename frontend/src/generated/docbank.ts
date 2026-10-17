@@ -7182,16 +7182,6 @@ export interface SetLaneControlRequest {
   paused: boolean;
 }
 
-export interface SetPhotoBurstGapRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /**
-     * @minimum 1
-     * @maximum 30
-     */
-  seconds: number;
-}
-
 export interface SetPhotoDisplayRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7206,7 +7196,7 @@ export interface SetPhotoExcludedRequest {
 }
 
 /**
- * Omit to reset the display preference.
+ * Omit to keep the display preference when changing the burst gap, or reset it otherwise.
  * @nullable
  */
 export type SetPhotoSettingsRequestPreference = typeof SetPhotoSettingsRequestPreference[keyof typeof SetPhotoSettingsRequestPreference] | null;
@@ -7228,7 +7218,7 @@ export interface SetPhotoSettingsRequest {
      */
   burst_gap_seconds?: number | null;
   /**
-     * Omit to reset the display preference.
+     * Omit to keep the display preference when changing the burst gap, or reset it otherwise.
      * @nullable
      */
   preference?: SetPhotoSettingsRequestPreference;
@@ -8776,10 +8766,6 @@ export type PromotePhotoNodeHeaders = {
 };
 
 export type SetPhotoSettingsHeaders = {
-'If-Match': string;
-};
-
-export type SetPhotoBurstGapHeaders = {
 'If-Match': string;
 };
 
@@ -16902,45 +16888,6 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
-  }
-);}
-
-
-
-export const getSetPhotoBurstGapUrl = () => {
-
-
-
-
-  return `/api/v1/photos/settings/burst-gap`
-}
-
-/**
- * @summary Change the burst gap
- */
-export const setPhotoBurstGap = async (setPhotoBurstGapRequest: NonReadonly<SetPhotoBurstGapRequest>,
-    headers: SetPhotoBurstGapHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<PhotoSettings>(getSetPhotoBurstGapUrl(),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
-    body: JSON.stringify(setPhotoBurstGapRequest)
   }
 );}
 

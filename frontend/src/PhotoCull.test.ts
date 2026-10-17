@@ -995,3 +995,101 @@ it.each(["preparation", "submission"])(
     if (phase === "preparation") expect(prepare).not.toHaveBeenCalled();
   },
 );
+
+it.each(["decision", "representative", "unchanged"])(
+  "decides consecutive stacks after a successful %s",
+  async (first) => {
+    const rows = [photo(1), photo(2), photo(3), photo(4)];
+    if (first === "unchanged") {
+      rows[0]!.flag = "pick";
+      rows[1]!.flag = "pick";
+      vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+        photoPreparation(
+          (scope.asset_ids ?? []).map((id) => {
+            const target = preparedPhoto(Number(id.slice(6)));
+            return {
+              ...target,
+              values: { ...target.values, flag: rows.find((row) => row.asset_id === id)!.flag },
+            };
+          }),
+        ),
+      );
+    }
+    const { cull, photos } = await reviewPhoto(rows[0], true);
+    vi.mocked(photos.lookup).mockImplementation(
+      async (id) => rows.find((row) => row.asset_id === id)!,
+    );
+    vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+      rows.filter((row) => ids.includes(row.asset_id)),
+    );
+    const decide = vi.spyOn(api, "decidePhotoStack").mockImplementation(async (request) => {
+      const before = Object.values(request.asset_ids).map((id) =>
+        preparedPhoto(Number(id.slice(6))),
+      );
+      return {
+        receipt_id: "stack",
+        before,
+        after: before.map((target) => ({
+          ...target,
+          revision: 2,
+          values: {
+            ...target.values,
+            flag:
+              request.decision === "all" || target.asset_id === request.current_id
+                ? ("pick" as const)
+                : ("reject" as const),
+          },
+        })),
+      };
+    });
+    if (first === "representative")
+      decide.mockResolvedValueOnce({
+        receipt_id: "representative",
+        before: [],
+        after: [],
+        representatives: [
+          { asset_id: "photo-1", before_revision: 1, after_revision: 2, after: 10 },
+          { asset_id: "photo-2", before_revision: 1, after_revision: 2, before: 9 },
+        ],
+      });
+    else if (first === "unchanged")
+      decide.mockResolvedValueOnce({ receipt_id: "", before: [], after: [] });
+    await act(() => {
+      cull.run = {
+        ...cull.run!,
+        ids: rows.map((row) => row.asset_id),
+        captureTimeOrder: "asc",
+        groups: [
+          ["photo-1", "photo-2"],
+          ["photo-3", "photo-4"],
+        ],
+        checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+      };
+    });
+    if (first === "representative") {
+      await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+      await fireEvent.click(await readyButton("Choose representative"));
+      await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+      await readyButton("Keep all");
+      await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Enter" });
+      await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+      expect(
+        Object.values(decide.mock.calls[1]![0].targets).map((target) => target.asset_revision),
+      ).toEqual([2, 2]);
+    } else await fireEvent.click(await readyButton("Keep all"));
+    await waitFor(() => expect(cull.currentID).toBe("photo-3"));
+    await fireEvent.click(await readyButton("Keep all"));
+    await screen.findByRole("heading", { name: "Pass complete" });
+    expect(decide.mock.calls.at(-1)![0]).toMatchObject({
+      asset_ids: ["photo-3", "photo-4"],
+      current_id: "photo-3",
+      decision: "all",
+    });
+    expect(
+      Object.values(decide.mock.calls.at(-1)![0].targets)
+        .map((target) => target.asset_id)
+        .sort(),
+    ).toEqual(["photo-3", "photo-4"]);
+    expect(screen.queryByRole("button", { name: "Reload photo" })).toBeNull();
+  },
+);
