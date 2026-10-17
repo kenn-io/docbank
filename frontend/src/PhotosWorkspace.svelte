@@ -284,12 +284,7 @@
       .then(() => {
         if (!id || id !== photoID || !editor.conflict) return;
         reload = { id };
-        if (!editor.dirty) {
-          const error = editor.error;
-          void editor.reload().then(() => {
-            if (!editor.error) editor.error = error;
-          });
-        }
+        if (!editor.dirty) void editor.reload(true);
       });
   }
   function undoShortcut() {

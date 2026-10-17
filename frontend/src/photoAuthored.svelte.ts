@@ -171,12 +171,12 @@ export class PhotoAuthoredEditor {
     this.validating = false;
     this.concealed = false;
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false) {
+  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false, keepError = false) {
     this.read.abort();
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
     this.loading = true;
-    this.error = "";
+    if (!keepError) this.error = "";
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
     try {
       const prepared = await this.request(() =>
@@ -218,7 +218,7 @@ export class PhotoAuthoredEditor {
       if (!signal.aborted) this.loading = false;
     }
   }
-  async reload() {
+  async reload(keepError = false) {
     if (this.busy || this.loading || !this.targets.length) return;
     await this.prepare(
       {
@@ -227,6 +227,7 @@ export class PhotoAuthoredEditor {
         skip_unavailable: true,
       },
       true,
+      keepError,
     );
   }
   reviewMembers() {
