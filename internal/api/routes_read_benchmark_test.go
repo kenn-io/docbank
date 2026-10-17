@@ -110,10 +110,10 @@ func BenchmarkContentDownload(b *testing.B) {
 
 // Includes the authenticated HTTP handler, complete previews and JSON decoding.
 func BenchmarkDuplicatePageHTTP(b *testing.B) {
-	for _, tc := range []struct{ references, depth int }{
-		{2, 0}, {2, 16}, {16, 0}, {16, 16},
+	for _, tc := range []struct{ references, depth, unrelated int }{
+		{2, 0, 0}, {2, 16, 0}, {16, 0, 0}, {16, 16, 0}, {2, 0, 10000},
 	} {
-		b.Run(fmt.Sprintf("references=%d/depth=%d", tc.references, tc.depth), func(b *testing.B) {
+		b.Run(fmt.Sprintf("references=%d/depth=%d/unrelated=%d", tc.references, tc.depth, tc.unrelated), func(b *testing.B) {
 			ts, s := newTestServer(b, func(d *api.Deps) { d.Logger = slog.New(slog.DiscardHandler) })
 			ctx := b.Context()
 			prefix := strings.Repeat("/folder", tc.depth)
@@ -128,6 +128,11 @@ func BenchmarkDuplicatePageHTTP(b *testing.B) {
 						1024, "application/octet-stream", "/synthetic/"+name, "")
 					require.NoError(b, err)
 				}
+			}
+			for i := range tc.unrelated {
+				_, err := s.CreateFile(ctx, parent.ID, fmt.Sprintf("unrelated-%05d.bin", i),
+					fmt.Sprintf("%064x", i+51), 1024, "application/octet-stream")
+				require.NoError(b, err)
 			}
 			endpoint := ts.URL + "/api/v1/duplicates?limit=50"
 			b.ReportAllocs()
