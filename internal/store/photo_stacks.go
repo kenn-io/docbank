@@ -148,14 +148,14 @@ const photoStackFileCount = `(SELECT COUNT(*) FROM photo_files live JOIN nodes l
 
 const photoStackCameraColumns = `COALESCE(p.camera_make_folded,''),COALESCE(p.camera_model_folded,'')`
 
-const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackCameraColumns + `,` + photoStackChoiceColumns + `,` + photoStackFileCount
+const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackCameraColumns + `,` + photoStackFileCount
 
 // photoStackFrames reads the live, visible members of ids. Missing IDs are unavailable.
 func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
 	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+` FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
-		if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.CameraMake, &frame.CameraModel, &frame.Rank, &frame.Picked, &frame.Files); err != nil {
+		if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.CameraMake, &frame.CameraModel, &frame.Files); err != nil {
 			return err
 		}
 		frames[frame.AssetID] = frame
