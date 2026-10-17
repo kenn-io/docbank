@@ -20,6 +20,9 @@ func TestPhotoBrowserPermissions(t *testing.T) {
 		allowed      bool
 	}{
 		{http.MethodPost, "/api/v1/photos/assets/query", true}, {http.MethodGet, preview, true},
+		{http.MethodPost, "/api/v1/photos/assets/flags", true},
+		{http.MethodGet, "/api/v1/photos/assets/flags", false},
+		{http.MethodPost, "/api/v1/photos/assets/flags?extra=1", false},
 		{http.MethodPost, base + "/trash", true},
 		{http.MethodPost, base + "/hide", true}, {http.MethodPost, base + "/unhide", true},
 		{http.MethodGet, base + "/hide", false}, {http.MethodPost, base + "/unhide?extra=1", false},

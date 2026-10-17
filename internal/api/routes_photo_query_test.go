@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -657,4 +658,46 @@ func TestPhotoBrowseRowsCarryFileModifiedTime(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &compact))
 	require.Len(t, compact.MapItems, 1)
 	require.Equal(t, new("2024-03-05T10:00:00Z"), compact.MapItems[0].FileModifiedTime)
+}
+
+func TestLookupPhotoFlags(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	var liveID, trashedID string
+	for _, name := range []string{"live", "trashed"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name+".jpg", testHash(name), 10, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		if name == "live" {
+			liveID = asset.ID
+		} else {
+			trashedID = asset.ID
+			_, _, err = s.Trash(ctx, node.ID, node.Revision)
+			require.NoError(t, err)
+		}
+	}
+	for _, size := range []int{3, 20000, 20001, 0, -1} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			ids := []string{}
+			if size > 0 {
+				for i := range size {
+					ids = append(ids, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1))
+				}
+				ids[0], ids[1] = liveID, trashedID
+			} else if size == -1 {
+				ids = []string{"invalid"}
+			}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/flags", nil, api.LookupPhotoFlagsRequest{AssetIDs: ids})
+			if size <= 0 || size > 20000 {
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				return
+			}
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var result api.PhotoFlagsResponse
+			require.NoError(t, json.Unmarshal([]byte(body), &result))
+			require.Equal(t, []store.PhotoFlagRow{{AssetID: liveID, Flag: ""}}, result.Items)
+		})
+	}
 }

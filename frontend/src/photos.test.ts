@@ -3001,12 +3001,11 @@ it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
   },
 );
 
-it("looks up and projects large captured sets in at most four concurrent 64-ID queries, preserving input order", async () => {
+it("looks up large captured sets in at most four concurrent 64-ID queries, preserving input order", async () => {
   const ids = Array.from({ length: 321 }, (_, index) => `photo-${index + 1}`);
   let active = 0,
     peak = 0;
-  const sizes: number[] = [],
-    progress: number[] = [];
+  const sizes: number[] = [];
   const waiting: (() => void)[] = [];
   stubPhotoFetch(async (_url, init) => {
     const request = JSON.parse(String(init.body));
@@ -3024,23 +3023,12 @@ it("looks up and projects large captured sets in at most four concurrent 64-ID q
         .map((id) => ({ ...photo(1), asset_id: id })),
     );
   });
-  const result = lookupPhotoRows(
-    "session",
-    ids,
-    undefined,
-    (count) => progress.push(count),
-    false,
-    undefined,
-    ({ asset_id, flag }) => ({ asset_id, flag }),
-  );
+  const result = lookupPhotoRows("session", ids);
   await waitFor(() => expect(waiting).toHaveLength(4));
   waiting.splice(0).forEach((resolve) => resolve());
   await waitFor(() => expect(waiting).toHaveLength(2));
   waiting.splice(0).forEach((resolve) => resolve());
-  const rows = await result;
-  expect(rows.map((row) => row.asset_id)).toEqual(ids);
-  expect(rows.every((row) => Object.keys(row).sort().join(",") === "asset_id,flag")).toBe(true);
+  expect((await result).map((row) => row.asset_id)).toEqual(ids);
   expect(peak).toBe(4);
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
-  expect(progress.at(-1)).toBe(321);
 });

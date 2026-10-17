@@ -17,6 +17,35 @@ import (
 
 const photoBrowseConfiguredCoverage = "configured"
 
+type PhotoFlagRow struct {
+	AssetID string `json:"asset_id" format:"uuid"`
+	Flag    string `json:"flag" enum:",pick,reject"`
+}
+
+// LookupPhotoFlags returns current display flags for live, visible assets in ID order.
+func (s *Store) LookupPhotoFlags(ctx context.Context, assetIDs []string) ([]PhotoFlagRow, error) {
+	encoded, err := json.Marshal(assetIDs)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.asset_id,f.flag FROM `+photoBrowseDisplayFrom+
+		` WHERE a.asset_id IN (SELECT value FROM json_each(?)) AND `+photoBrowseLiveDisplay+
+		` AND `+photoVisibilityPredicate(false)+` ORDER BY a.asset_id`, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := []PhotoFlagRow{}
+	for rows.Next() {
+		var row PhotoFlagRow
+		if err := rows.Scan(&row.AssetID, &row.Flag); err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+	return items, rows.Err()
+}
+
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
 	Hidden   bool

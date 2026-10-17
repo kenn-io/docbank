@@ -274,7 +274,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if r.URL.Path == "/api/v1/photos/rejects/preflight" || r.URL.Path == "/api/v1/photos/rejects/trash" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
-	if r.URL.Path == "/api/v1/photos/assets/query" || r.URL.Path == "/api/v1/photos/assets/timeline" {
+	if r.URL.Path == "/api/v1/photos/assets/query" || r.URL.Path == "/api/v1/photos/assets/timeline" || r.URL.Path == "/api/v1/photos/assets/flags" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/assets/"); ok {
