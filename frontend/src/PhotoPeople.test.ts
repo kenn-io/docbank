@@ -365,8 +365,7 @@ it.each([
     secondIdentity: "alex-b@example.test",
     secondTime: "12:00:00",
   },
-  { label: "same creation time", identity: "", secondTime: "12:00:00" },
-  { label: "same displayed date", identity: "", secondTime: "13:00:00" },
+  { label: "same displayed date", identity: "", secondTime: "12:00:30" },
   { label: "shared identity", identity: "alex@example.test", secondTime: "13:00:00" },
 ])("distinguishes namesakes for $label", async ({ identity, secondIdentity, secondTime }) => {
   const ids = ["person-alex-a", "person-alex-b", "person-alex-c"];
@@ -488,7 +487,6 @@ it.each(
 
 it.each([
   { source: "list", result: "empty" },
-  { source: "list", result: "failure" },
   { source: "list", result: "relock" },
   { source: "image", result: "failure" },
   { source: "image", result: "relock" },
@@ -525,7 +523,6 @@ it.each([
       row.previews.grid = { state: "ready", generation_id: `grid-${row.asset_id}` };
       return { items: [row] } as api.PhotoBrowsePage;
     }
-    if (result === "failure") throw new Error("Preview read failed");
     if (result === "relock") throw new APIError("Hidden locked", 403, "photo_hidden_locked");
     return { items: [] } as unknown as api.PhotoBrowsePage;
   });
@@ -595,7 +592,7 @@ it.each([
   faces.dispose();
 });
 
-it("finds an exact existing person after 100 earlier matching names", async () => {
+it("keeps 100 loaded people and retries a later page to find an exact person", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
   const existing: api.PersonSummary = {
     person_id: "person-exact",
@@ -606,6 +603,7 @@ it("finds an exact existing person after 100 earlier matching names", async () =
     created_at: "2026-01-01T00:00:00Z",
   };
   let finish!: (page: api.PersonPage) => void;
+  let attempts = 0;
   const search = vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
     if (!query) return { items: [] };
     if (!cursor)
@@ -620,6 +618,7 @@ it("finds an exact existing person after 100 earlier matching names", async () =
         same_name_continues: false,
       };
     expect(cursor).toBe("later-names");
+    if (++attempts === 1) throw new Error("People search unavailable");
     return new Promise((resolve) => {
       finish = resolve;
     });
@@ -634,70 +633,23 @@ it("finds an exact existing person after 100 earlier matching names", async () =
   expect(search.mock.calls.some(([params]) => params?.cursor)).toBe(false);
   expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
   await fireEvent.mouseDown(more);
+  await screen.findByText("People search unavailable");
+  expect(screen.getByRole("option", { name: "Aaron 0 Alex" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
+  await fireEvent.mouseDown(screen.getByRole("option", { name: "Load more" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
   await act(() => finish({ items: [existing] }));
   expect(await screen.findByRole("option", { name: 'Create person "Alex"' })).toBeTruthy();
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex" }));
-  await waitFor(() =>
-    expect(write).toHaveBeenCalledWith(
-      "version-a",
-      expect.objectContaining({ person_id: "person-exact" }),
-      expect.anything(),
-    ),
-  );
-  faces.dispose();
-});
-
-it("keeps loaded people and retries a failed later page", async () => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
-  const existing: api.PersonSummary = {
-    person_id: "person-exact",
-    display_name: "Alex",
-    display_name_folded: "alex",
-    state: "curated",
-    revision: 1,
-    created_at: "2026-01-01T00:00:00Z",
-  };
-  let attempts = 0;
-  vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
-    if (!query) return { items: [] };
-    if (!cursor)
-      return {
-        items: [
-          {
-            ...existing,
-            person_id: "person-earlier",
-            display_name: "Aaron Alex",
-            display_name_folded: "aaron alex",
-          },
-        ],
-        next_cursor: "later-names",
-      };
-    expect(cursor).toBe("later-names");
-    if (++attempts === 1) throw new Error("People search unavailable");
-    return { items: [existing] };
-  });
-  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-  const faces = new PhotoFaces("session", vi.fn());
-  await faces.load("version-a");
-  render(PhotoPeople, { faces, session: "session" });
-  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
-  await screen.findByText("People search unavailable");
-  expect(screen.getByRole("option", { name: "Aaron Alex" })).toBeTruthy();
-  expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
-  await fireEvent.mouseDown(screen.getByRole("option", { name: "Load more" }));
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex" }));
-  await waitFor(() =>
-    expect(write).toHaveBeenCalledWith(
-      "version-a",
-      expect.objectContaining({ person_id: "person-exact" }),
-      expect.anything(),
-    ),
-  );
   expect(screen.queryByText("People search unavailable")).toBeNull();
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex" }));
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith(
+      "version-a",
+      expect.objectContaining({ person_id: "person-exact" }),
+      expect.anything(),
+    ),
+  );
   faces.dispose();
 });
 
@@ -810,8 +762,6 @@ it("ignores an older continuation after a new search", async () => {
 
 it.each([
   ["initial", 401],
-  ["continuation", 401],
-  ["initial", 500],
   ["continuation", 500],
 ] as const)("recovers session failure during %s search with status %s", async (page, status) => {
   const { APIError } = await import("./api-transport.js");

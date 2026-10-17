@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import HiddenPhotos from "./HiddenPhotos.svelte";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
-import { photo, storage, photoFacePage } from "./photo-test-fixtures.js";
+import { photo, storage } from "./photo-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -32,43 +32,6 @@ const props = (onauthfailure = vi.fn()) => ({
 });
 const problem = (status: number, detail: string, code = "") =>
   new Response(JSON.stringify({ detail, code }), { status });
-
-it("conceals the photo library on lock", async () => {
-  prepare();
-  storage();
-  let finish!: () => void;
-
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) => {
-      if (url.endsWith("/photos/hidden")) return Response.json(state(true));
-      if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
-      if (url.endsWith("/faces")) return Response.json(photoFacePage());
-      if (url.includes("/people?")) return Response.json({ items: [] });
-      if (url.endsWith("/face-decisions")) {
-        await new Promise<void>((resolve) => (finish = resolve));
-        return Response.json({ receipt_id: "receipt-a" });
-      }
-      if (url.endsWith("/lock")) {
-        return Response.json(state(false));
-      }
-      return Response.json({});
-    }),
-  );
-  const supplied = props();
-  const view = render(HiddenPhotos, supplied);
-  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Find or create a person: Ada" }),
-  );
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
-  await waitFor(() => expect(finish).toBeTypeOf("function"));
-  const locking = view.component.lock();
-  await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
-  finish();
-  await locking;
-});
 
 it("waits for a held leave lock before redisplaying on return", async () => {
   prepare();

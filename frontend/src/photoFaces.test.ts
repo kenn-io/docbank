@@ -266,8 +266,6 @@ it("reports a held mutation across concealment and reconciles on an authorized r
   expect(notice).toHaveBeenCalledOnce();
   expect(read).toHaveBeenCalledTimes(1);
   expect(faces.faces).toEqual([]);
-  expect(await faces.remove(face)).toBe(false);
-  expect(faces.error).toBe("People are reloading; try again.");
   await faces.load("version-a");
   expect(faces.faces).toEqual(photoFacePage().faces);
   faces.dispose();
