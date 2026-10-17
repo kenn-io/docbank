@@ -14,10 +14,11 @@
 </script>
 
 {#if request}
-  <Modal title={request.message} ariaLabel={request.message} onclose={() => answer(false)}>
+  {@const pending = request}
+  <Modal title={pending.message} ariaLabel={pending.message} onclose={() => answer(false)}>
     {#snippet footer()}
       <Button onclick={() => answer(false)}>Cancel</Button>
-      <Button tone="danger" surface="solid" onclick={() => answer(true)}>{request.label}</Button>
+      <Button tone="danger" surface="solid" onclick={() => answer(true)}>{pending.label}</Button>
     {/snippet}
   </Modal>
 {/if}
