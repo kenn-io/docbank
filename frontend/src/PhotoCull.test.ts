@@ -1294,7 +1294,7 @@ it("loads face closeups on mount and on the next photo", async () => {
     );
   const { cull, photos } = await reviewPhoto();
   const first = await screen.findByRole("region", { name: "Face closeups" });
-  expect(within(first).getByText("Ada")).toBeTruthy();
+  expect(within(first).getByText("Face 1 · Ada")).toBeTruthy();
   await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
   const next = photo(2);
   cull.run = {
@@ -1307,7 +1307,7 @@ it("loads face closeups on mount and on the next photo", async () => {
   await fireEvent.click(await readyButton("Next"));
   await screen.findByText(next.name);
   const second = await screen.findByRole("region", { name: "Face closeups" });
-  await within(second).findByText("Grace");
-  expect(within(second).queryByText("Ada")).toBeNull();
+  await within(second).findByText("Face 1 · Grace");
+  expect(within(second).queryByText("Face 1 · Ada")).toBeNull();
   expect(read).toHaveBeenLastCalledWith(next.content_version_id, expect.anything());
 });

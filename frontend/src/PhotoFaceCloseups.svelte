@@ -24,14 +24,13 @@
         label: faces.personLabel(row.person_id),
         box: undefined as FaceBox | undefined,
       })),
-    ...faces.faces
-      .filter((face) => !face.dismissed)
-      .sort(
-        (a, b) =>
-          b.box.width * b.box.height - a.box.width * a.box.height ||
-          a.face_id.localeCompare(b.face_id),
-      )
-      .map((face) => ({ id: face.face_id, label: faces.label(face), box: face.box })),
+    ...faces.ordered.map((face) => ({
+      id: face.face_id,
+      label: faces.person(face)
+        ? `${faces.number(face)} · ${faces.label(face)}`
+        : faces.label(face),
+      box: face.box,
+    })),
   ]);
   function style(box?: FaceBox) {
     if (!source) return "";

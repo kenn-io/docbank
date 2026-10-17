@@ -11488,6 +11488,8 @@ components:
     PersonSummary:
       additionalProperties: false
       properties:
+        created_at:
+          type: string
         display_name:
           type: string
         person_id:
@@ -11498,6 +11500,7 @@ components:
         state:
           type: string
       required:
+        - created_at
         - person_id
         - display_name
         - state

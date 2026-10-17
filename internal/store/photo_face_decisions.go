@@ -383,6 +383,9 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	assertionID := cmp.Or(request.AssertionID, face.AssertionID)
 	if assertionID != "" {
 		assigned, err = personAssertionByIDTx(ctx, tx, assertionID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return PhotoFaceDecisionReceipt{}, ErrNotFound
+		}
 		if err != nil {
 			return PhotoFaceDecisionReceipt{}, err
 		}

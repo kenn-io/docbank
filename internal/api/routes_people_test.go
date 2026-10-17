@@ -53,6 +53,7 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(listedBody), &page))
 	require.Len(t, page.Items, 1)
 	require.Equal(t, created.PersonID, page.Items[0].PersonID)
+	require.Equal(t, created.CreatedAt, page.Items[0].CreatedAt)
 	identity, err := fixture.AddPersonIdentity(t.Context(), created.PersonID, renamed.Revision, store.PersonIdentity{
 		Kind: "name_alias", ValueDisplay: "Renamed Ada", Origin: "operator",
 		EvidenceKind: "operator_assertion", EvidenceID: "synthetic-workflow", Confidence: "operator_asserted",

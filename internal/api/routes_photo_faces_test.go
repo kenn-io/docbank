@@ -105,6 +105,8 @@ func TestPhotoFaceDecisionRoutes(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: 1})
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
 	require.Contains(t, body, "stale_revision")
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{AssertionID: uuid.NewString(), Action: "retract", Revision: 1})
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	operationID := uuid.NewString()
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo?operation_id="+operationID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)

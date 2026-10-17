@@ -1352,6 +1352,7 @@
             </div>
             {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
                 <PhotoInspector
+                  {cache}
                   {editor}
                   {actionDisabled}
                   count={editCount}

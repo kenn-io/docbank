@@ -26,10 +26,10 @@ export class PhotoFaces {
   private disposed = false;
   constructor(
     private session: string,
-    private onauthfailure: (cause: unknown) => void,
-    private hidden = false,
+    readonly onauthfailure: (cause: unknown) => void,
+    readonly hidden = false,
     private ondecision: (error?: string, refresh?: boolean) => void = () => {},
-    private readonly hiddenAccess?: HiddenAccess,
+    readonly hiddenAccess?: HiddenAccess,
   ) {}
   private request<T>(request: () => Promise<T>) {
     return this.hiddenAccess ? this.hiddenAccess.run(request) : request();
@@ -39,9 +39,18 @@ export class PhotoFaces {
       (row) => row.assertion_id === face.assertion_id && row.action === "assert",
     );
   }
+  private numbered = $derived(
+    this.faces.toSorted(
+      (a, b) => a.created_at.localeCompare(b.created_at) || a.face_id.localeCompare(b.face_id),
+    ),
+  );
+  ordered = $derived(this.numbered.filter((face) => !face.dismissed));
+  number(face: PhotoFace) {
+    return `Face ${this.numbered.findIndex((row) => row.face_id === face.face_id) + 1}`;
+  }
   label(face: PhotoFace) {
     const person = this.person(face);
-    return person ? this.personLabel(person.person_id) : "Unnamed face";
+    return person ? this.personLabel(person.person_id) : this.number(face);
   }
   personLabel(id: string) {
     return this.people.find((person) => person.person_id === id)?.display_name ?? "Unnamed person";

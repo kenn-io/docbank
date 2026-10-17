@@ -217,9 +217,11 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 }
 
 var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
-	FROM persons WHERE state<>'retired' AND display_name_folded LIKE ? ESCAPE '\'
-	AND (?=0 OR NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND a.action='assert') OR EXISTS(
-		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND a.action='assert'
+	FROM persons WHERE state<>'retired' AND (display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\')
+	AND (?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
+		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
+		AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE c.suggested_person_id=persons.person_id)) OR EXISTS(
+		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id
 		AND ` + personVersionVisibleSQL("a.content_version_id") + `) OR EXISTS(
 		SELECT 1 FROM document_people p
 		JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id
@@ -229,7 +231,10 @@ var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,
 		CROSS JOIN document_people_state ps
 		WHERE p.person_id=persons.person_id AND n.current_version_id=cv.version_id AND n.trashed_at IS NULL
 		AND h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch
-		AND h.node_revision=n.revision AND h.resolver_fingerprint=? AND ` + personVersionVisibleSQL("p.content_version_id") + `))
+		AND h.node_revision=n.revision AND h.resolver_fingerprint=? AND ` + personVersionVisibleSQL("p.content_version_id") + `) OR EXISTS(
+		SELECT 1 FROM person_match_candidates c WHERE c.suggested_person_id=persons.person_id
+		AND EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id)
+		AND NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `))))
 	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
 	ORDER BY display_name_folded,person_id LIMIT ?`
 
@@ -248,7 +253,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		hideLocked = state.ExpiresAt == nil
 	}
 	prefix := document.FoldPersonName(query)
-	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, escapePersonLike(prefix)+"%", hideLocked,
+	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, escapePersonLike(prefix)+"%", "% "+escapePersonLike(prefix)+"%", hideLocked,
 		document.PersonResolverFingerprint(), afterName, afterName, afterName, afterID, limit)
 	if err != nil {
 		return nil, err

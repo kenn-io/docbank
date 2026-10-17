@@ -14,14 +14,14 @@ uses the revision returned by the preceding read.
 ## List and search
 
 `GET /api/v1/people?query=ada&limit=100` lists active people in folded
-display-name order. The CLI equivalent is:
+display-name order. Search matches the beginning of any word, so `Smith` finds `John Smith`. The CLI equivalent is:
 
 `docbank people list ada`
 
 MCP clients use `find_people`. Cursors are bound to the query and the
 requested person page.
 
-Browser name search omits people whose only evidence is in locked Hidden photos. Unlock Hidden to select those people. People with visible evidence or no assertions remain searchable. CLI search includes all active people. Typing a Hidden-only name while locked can create a duplicate; merge it after unlock.
+Browser name search omits people whose only evidence is in locked Hidden photos. Unlock Hidden to select those people. People with visible evidence or no linked evidence remain searchable. CLI search includes all active people. Typing a Hidden-only name while locked can create a duplicate; merge it after unlock.
 
 ## Create and inspect
 

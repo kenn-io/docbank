@@ -32,7 +32,7 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
     fit: { ...fit, content_version_id: "version-a" },
   });
   const images = screen.getAllByRole("img");
-  expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Ada", "Unnamed face"]);
+  expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Face 2 · Ada", "Face 3"]);
   expect(images.every((img) => img.getAttribute("src") === "blob:fit")).toBe(true);
   expect(images[1]!.getAttribute("style")).toContain("rotate(90deg)");
   faces.people = faces.people.map((row) => ({ ...row, display_name: "Grace" }));
@@ -42,5 +42,5 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
     fit: { ...fit, content_version_id: "version-a" },
   });
   expect(screen.getAllByRole("img")[1]).toBe(images[1]);
-  expect(images[1]!.getAttribute("alt")).toBe("Grace");
+  expect(images[1]!.getAttribute("alt")).toBe("Face 2 · Grace");
 });

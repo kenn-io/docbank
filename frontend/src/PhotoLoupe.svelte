@@ -306,13 +306,13 @@
           onready={(ready) => (imageReady = ready)}
           onview={(value) => (view = value)}
           rotation={photo?.rotation ?? 0}
-          faces={faces.faces
-            .filter((face) => !face.dismissed)
-            .map((face) => ({
-              id: face.face_id,
-              box: face.box,
-              label: faces.label(face),
-            }))}
+          faces={faces.ordered.map((face) => ({
+            id: face.face_id,
+            box: face.box,
+            label: faces.person(face)
+              ? `${faces.number(face)} · ${faces.label(face)}`
+              : faces.label(face),
+          }))}
           regionMode={photo?.kind === "photo" && addingFace}
           regionLabel={`Position face on ${photo?.name ?? "Photo"}`}
           minimumRegionDrag
@@ -349,6 +349,7 @@
     </div>
     {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">
         {#if editor && onedit}<PhotoInspector
+            {cache}
             {editor}
             {actionDisabled}
             {onedit}

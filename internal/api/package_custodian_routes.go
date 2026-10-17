@@ -81,7 +81,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		for index := range out.Items {
 			person := people[index]
 			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName,
-				State: person.State, Revision: person.Revision}
+				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt}
 		}
 		if len(people) > limit {
 			last := people[limit-1]

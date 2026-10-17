@@ -2,10 +2,12 @@ package store
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
@@ -369,6 +371,19 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	unlocked, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), "", "", "", 100, true)
 	require.NoError(t, err)
 	require.Equal(t, personIDs(all), personIDs(unlocked))
+	for _, action := range []string{"suppress", "withdrawn"} {
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,photo_mark=0 WHERE person_id=?`, action, hidden.PersonID)
+		require.NoError(t, err)
+		visibleDerived, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
+		require.NoError(t, err)
+		require.Len(t, visibleDerived, 1)
+		require.Equal(t, hidden.PersonID, visibleDerived[0].PersonID)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE document_people_heads SET node_revision=node_revision+1 WHERE content_version_id=?`, derivedVersion.ID)
+	require.NoError(t, err)
+	stale, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
+	require.NoError(t, err)
+	require.Empty(t, stale)
 }
 
 func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
@@ -416,4 +431,107 @@ func TestOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T) {
 	_, err = s.SetOperatorPackageCustodian(ctx, CustodianRequest{Scope: scope, RawLabel: "Operator Owner",
 		Rank: "primary", Basis: "operator_assigned", SourceRef: "operator", IfMatchRevision: 1})
 	require.ErrorIs(t, err, ErrCustodianConflict)
+}
+
+func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("search-hidden"), "image/jpeg")
+	visible := browsePhotoNode(t, s, "visible.jpg", fakeHash("search-visible"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	for _, action := range []string{"assert", "suppress", "withdrawn"} {
+		for _, version := range []string{hidden.CurrentVersionID, visible.CurrentVersionID} {
+			prefix := "Alex Z"
+			if version == hidden.CurrentVersionID {
+				prefix = "Alex A"
+			}
+			p, err := s.CreatePerson(ctx, prefix+action+version, "operator")
+			require.NoError(t, err)
+			_, err = s.AssertDocumentPerson(unlocked, PersonDocumentAssertion{ContentVersionID: version, PersonID: p.PersonID, Role: "depicted", Action: action, Revision: 1})
+			require.NoError(t, err)
+			people, err := s.PeopleByDisplayName(ctx, p.DisplayName, "", "", 10, true)
+			require.NoError(t, err)
+			if version == hidden.CurrentVersionID {
+				require.Empty(t, people)
+			} else {
+				require.Len(t, people, 1)
+				require.Equal(t, p.PersonID, people[0].PersonID)
+			}
+		}
+	}
+	candidate, err := s.CreatePerson(ctx, "Alex Candidate", "operator")
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(unlocked, hidden.CurrentVersionID, "11111111-1111-4111-8111-111111111111", document.FaceBox{Width: .2, Height: .2}, "")
+
+	require.NoError(t, err)
+	buildFaceMatchCandidateForTest(t, s, hidden.CurrentVersionID, face.FaceID, 99, 0)
+	_, err = s.db.ExecContext(ctx, `UPDATE person_match_candidates SET suggested_person_id=? WHERE actor_key=?`, candidate.PersonID, "face:"+face.FaceID)
+	require.NoError(t, err)
+	people, err := s.PeopleByDisplayName(ctx, "Alex Candidate", "", "", 10, true)
+	require.NoError(t, err)
+	require.Empty(t, people)
+	free, err := s.CreatePerson(ctx, "Alex Free", "operator")
+	require.NoError(t, err)
+	page, err := s.PeopleByDisplayName(ctx, "Alex", "", "", 1, true)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, free.PersonID, page[0].PersonID)
+	next, err := s.PeopleByDisplayName(ctx, "Alex", page[0].DisplayNameFolded, page[0].PersonID, 10, true)
+	require.NoError(t, err)
+	require.Len(t, next, 3)
+	for _, p := range next {
+		require.NotEqual(t, candidate.PersonID, p.PersonID)
+	}
+}
+
+func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Alice Blacksmith", "Alice Smith%"} {
+		_, err := s.CreatePerson(ctx, name, "operator")
+		require.NoError(t, err)
+	}
+	page, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 1, false)
+	require.NoError(t, err)
+	require.Equal(t, "Alice Smith", page[0].DisplayName)
+	next, err := s.PeopleByDisplayName(ctx, "Smith", page[0].DisplayNameFolded, page[0].PersonID, 10, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Alice Smith%", "John Smith", "Smith Jones"}, []string{next[0].DisplayName, next[1].DisplayName, next[2].DisplayName})
+	literal, err := s.PeopleByDisplayName(ctx, "Smith%", "", "", 10, false)
+	require.NoError(t, err)
+	require.Len(t, literal, 1)
+	require.Equal(t, "Alice Smith%", literal[0].DisplayName)
+}
+
+func BenchmarkPeopleByDisplayNameHiddenCatalog(b *testing.B) {
+	s, err := Open(filepath.Join(b.TempDir(), "people.db"))
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, s.Close()) })
+	ctx := b.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", fakeHash("benchmark-hidden"), 12, "image/jpeg")
+	require.NoError(b, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(b, err)
+	require.NoError(b, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(b, err)
+	_, err = s.db.ExecContext(ctx, `WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<20000) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) SELECT printf('00000000-0000-4000-8000-%012d',n),printf('Alex %05d',n),printf('alex %05d',n),'operator','curated',?,? FROM seq`, nowRFC3339(), nowRFC3339())
+	require.NoError(b, err)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at) SELECT person_id,?,person_id,'depicted','suppress','',? FROM persons WHERE display_name_folded<'alex 10001'`, node.CurrentVersionID, nowRFC3339())
+	require.NoError(b, err)
+	for b.Loop() {
+		people, err := s.PeopleByDisplayName(ctx, "Alex", "", "", 100, true)
+		require.NoError(b, err)
+		require.Len(b, people, 100)
+		require.Equal(b, "Alex 10001", people[0].DisplayName)
+	}
 }

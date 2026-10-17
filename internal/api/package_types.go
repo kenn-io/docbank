@@ -82,6 +82,7 @@ type PackageImportJob struct {
 }
 
 type PersonSummary struct {
+	CreatedAt   string `json:"created_at"`
 	PersonID    string `json:"person_id"`
 	DisplayName string `json:"display_name"`
 	State       string `json:"state"`

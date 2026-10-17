@@ -1,13 +1,29 @@
 <script lang="ts">
-  import { Button, Typeahead, Notice } from "@kenn-io/kit-ui";
-  import { listPeople, type PhotoFace, type PersonSummary } from "./generated/docbank.js";
+  import { Button, Typeahead, Notice, Modal } from "@kenn-io/kit-ui";
+  import {
+    listPeople,
+    listPhotoAssets,
+    type PhotoFace,
+    type PersonSummary,
+    type PhotoPersonAssertion,
+  } from "./generated/docbank.js";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
+  import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { APIError } from "./api-transport.js";
+  import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   let {
     faces,
     session,
     onperson,
-  }: { faces: PhotoFaces; session: string; onperson?: (id: string, name: string) => void } =
-    $props();
+    cache,
+    assetID,
+  }: {
+    faces: PhotoFaces;
+    session: string;
+    onperson?: (id: string, name: string) => void;
+    cache?: PhotoPreviewCache;
+    assetID?: string;
+  } = $props();
   let people = $state.raw<PersonSummary[]>([]);
   let query = $state("");
   let activeFace = $state("");
@@ -16,6 +32,177 @@
   let controller: AbortController | undefined;
   let writer: AbortController | undefined;
   let choosing = $state(false);
+  let confirmation = $state<PhotoCullConfirmation>();
+  let duplicate = $state.raw<{ face: PhotoFace; name: string; people: PersonSummary[] }>();
+  let selection = $state("");
+  let previews = $state.raw<Record<string, { urls: string[]; loading: boolean; failed: boolean }>>(
+    {},
+  );
+  let previewController: AbortController | undefined;
+  let releases: (() => void)[] = [];
+  const groupKey = (name: string) => `\0group:${name}`;
+  const groups = $derived.by(() => {
+    const grouped = new Map<string, PersonSummary[]>();
+    for (const person of people)
+      grouped.set(person.display_name, [...(grouped.get(person.display_name) ?? []), person]);
+    return [...grouped].map(([name, members]) => ({
+      name: members.length > 1 ? groupKey(name) : key(members[0]!.person_id),
+      label: members.length > 1 ? `${name} · ${members.length} people` : name,
+    }));
+  });
+  function closeChooser() {
+    previewController?.abort();
+    for (const release of releases) release();
+    releases = [];
+    previews = {};
+    duplicate = undefined;
+    selection = "";
+  }
+  function previewFailure(cause: unknown) {
+    if (
+      cause instanceof APIError &&
+      (cause.status === 401 || (faces.hidden && cause.status === 403))
+    ) {
+      closeChooser();
+      faces.onauthfailure(cause);
+    }
+  }
+  async function openChooser(face: PhotoFace, name: string) {
+    closeChooser();
+    const members = people.filter((person) => person.display_name === name);
+    duplicate = { face: { ...face }, name, people: members };
+    selection =
+      members.find((person) => person.person_id === faces.person(face)?.person_id)?.person_id ?? "";
+    const request = (previewController = new AbortController());
+    previews = Object.fromEntries(
+      members.map((person) => [person.person_id, { urls: [], loading: true, failed: false }]),
+    );
+    for (const person of members) {
+      try {
+        const read = () => {
+          request.signal.throwIfAborted();
+          return listPhotoAssets(
+            {
+              query: {
+                text: "",
+                syntax: "simple",
+                filters: { person_ids: [person.person_id] },
+                sort: { field: "capture_time", direction: "desc" },
+              },
+              hidden: faces.hidden,
+              page_size: 4,
+              stacks: false,
+              facets: [],
+            },
+            { session, signal: request.signal },
+          );
+        };
+        const page = await (faces.hiddenAccess ? faces.hiddenAccess.run(read) : read());
+        if (request.signal.aborted) return;
+        const rows = page.items
+          .filter((row) => row.asset_id !== assetID && row.content_version_id !== faces.version)
+          .slice(0, 3);
+        previews = {
+          ...previews,
+          [person.person_id]: {
+            urls: [],
+            loading: rows.length > 0 && !!cache,
+            failed: rows.length > 0 && !cache,
+          },
+        };
+        for (const row of rows) {
+          if (!cache) continue;
+          if (!row.previews.grid.generation_id) {
+            previews = {
+              ...previews,
+              [person.person_id]: { ...previews[person.person_id]!, loading: false, failed: true },
+            };
+            continue;
+          }
+          releases.push(
+            previewObjectURL(
+              cache,
+              row.asset_id,
+              row.previews.grid.generation_id,
+              (url) => {
+                if (request.signal.aborted) return;
+                const state = previews[person.person_id]!;
+                previews = {
+                  ...previews,
+                  [person.person_id]: { ...state, loading: false, urls: [...state.urls, url] },
+                };
+              },
+              (cause) => {
+                if (request.signal.aborted) return;
+                previewFailure(cause);
+                if (!request.signal.aborted)
+                  previews = {
+                    ...previews,
+                    [person.person_id]: {
+                      ...previews[person.person_id]!,
+                      loading: false,
+                      failed: true,
+                    },
+                  };
+              },
+              false,
+              faces.hiddenAccess,
+            ),
+          );
+        }
+      } catch (cause) {
+        if (request.signal.aborted) return;
+        previewFailure(cause);
+        if (!request.signal.aborted)
+          previews = {
+            ...previews,
+            [person.person_id]: { urls: [], loading: false, failed: true },
+          };
+      }
+    }
+  }
+  async function assignSelection() {
+    const selected = duplicate;
+    if (!selected || !selection) return;
+    const id = selection;
+    closeChooser();
+    choosing = true;
+    try {
+      await faces.name(
+        selected.face,
+        id === "new" ? "" : id,
+        id === "new" ? selected.name : undefined,
+      );
+    } finally {
+      choosing = false;
+    }
+  }
+  async function remove(face: PhotoFace) {
+    const version = faces.version;
+    const captured = { ...face };
+    const person = faces.person(face);
+    if (
+      person &&
+      !(await confirmation!.confirm(
+        `Remove this face and its name, ${faces.personLabel(person.person_id)}? You can't undo this here.`,
+        "Remove face",
+      ))
+    )
+      return;
+    if (faces.version === version) await faces.remove(captured);
+  }
+  async function clearMark(assertion: PhotoPersonAssertion) {
+    const version = faces.version;
+    const captured = { ...assertion };
+    if (
+      await confirmation!.confirm(
+        `Remove ${faces.personLabel(assertion.person_id)} from this photo? You can't add a whole-photo mark back from the browser.`,
+        "Clear whole-photo mark",
+      )
+    ) {
+      if (faces.version === version) await faces.clearMark(captured);
+    }
+  }
   const key = (id: string) => `\0${id}`;
   $effect(() => {
     void faces.version;
@@ -24,6 +211,7 @@
     activeFace = "";
     error = "";
     return () => {
+      closeChooser();
       controller?.abort();
       writer?.abort();
     };
@@ -43,10 +231,9 @@
       return;
     }
     try {
-      const page = await listPeople(
-        { query: normalized, limit: 100 },
-        { session, signal: request.signal },
-      );
+      const read = () =>
+        listPeople({ query: normalized, limit: 100 }, { session, signal: request.signal });
+      const page = await (faces.hiddenAccess ? faces.hiddenAccess.run(read) : read());
       if (!request.signal.aborted) people = page.items;
     } catch (cause) {
       if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
@@ -55,7 +242,12 @@
     }
   }
   async function choose(face: PhotoFace, value: string) {
-    if (choosing || new TextEncoder().encode(value.trim()).length > 200) return false;
+    if (choosing) return false;
+    if (value.startsWith("\0group:")) {
+      void openChooser(face, value.slice(7));
+      return true;
+    }
+    if (new TextEncoder().encode(value.trim()).length > 200) return false;
     choosing = true;
     error = "";
     const version = faces.version;
@@ -80,24 +272,34 @@
 <section aria-label="People" class="people">
   <h2>People</h2>
   {#if faces.loading}<span role="status">Loading people…</span>{/if}
-  {#each faces.faces.filter((face) => !face.dismissed) as face (face.face_id)}
+  {#each faces.ordered as face (face.face_id)}
     {@const person = faces.person(face)}
+    {@const sharedName =
+      person &&
+      activeFace === face.face_id &&
+      people.filter((candidate) => candidate.display_name === faces.personLabel(person.person_id))
+        .length > 1
+        ? faces.personLabel(person.person_id)
+        : ""}
     <div class="person-row">
+      <span>{faces.number(face)}</span>
       <Typeahead
         remote
         title="Name face"
         placeholder="Find or create a person"
         fallbackLabel={faces.label(face)}
-        value={person ? key(person.person_id) : ""}
+        value={person ? (sharedName ? groupKey(sharedName) : key(person.person_id)) : ""}
         options={[
-          ...(person
+          ...(person && !sharedName
             ? [{ name: key(person.person_id), label: faces.personLabel(person.person_id) }]
             : []),
-          ...(activeFace === face.face_id ? people : [])
-            .filter((candidate) => candidate.person_id !== person?.person_id)
-            .map((candidate) => ({
-              name: key(candidate.person_id),
-              label: candidate.display_name,
+          ...(activeFace === face.face_id ? groups : [])
+            .filter((option) => option.name !== (person ? key(person.person_id) : ""))
+            .map((option) => ({
+              ...option,
+              ...(sharedName && option.name === groupKey(sharedName)
+                ? { displayLabel: sharedName }
+                : {}),
             })),
         ]}
         allowCustom={activeFace === face.face_id && !!query.trim() && !searching && !error}
@@ -108,14 +310,14 @@
         disabled={choosing || faces.busy || faces.loading}
         onquery={(value) => search(face.face_id, value)}
         onselect={(value) =>
-          person && value === key(person.person_id) ? true : choose(face, value)}
+          person && !sharedName && value === key(person.person_id) ? true : choose(face, value)}
       />
       {#if person && onperson && faces.personActive(person.person_id)}<Button
           size="sm"
           onclick={() => onperson?.(person.person_id, faces.personLabel(person.person_id))}
           >{faces.personLabel(person.person_id)}</Button
         >{/if}
-      <Button size="sm" disabled={faces.busy || faces.loading} onclick={() => faces.remove(face)}
+      <Button size="sm" disabled={faces.busy || faces.loading} onclick={() => remove(face)}
         >Remove face</Button
       >
     </div>
@@ -128,10 +330,8 @@
           >{faces.personLabel(person.person_id)}</Button
         >
       {:else}<span>{faces.personLabel(person.person_id)}</span>{/if}
-      <Button
-        size="sm"
-        disabled={faces.busy || faces.loading}
-        onclick={() => faces.clearMark(person)}>Clear whole-photo mark</Button
+      <Button size="sm" disabled={faces.busy || faces.loading} onclick={() => clearMark(person)}
+        >Clear whole-photo mark</Button
       >
     </div>
   {/each}
@@ -143,7 +343,51 @@
   {#if faces.error || error}<Notice tone="error" message={faces.error || error} />{/if}
 </section>
 
+<PhotoCullConfirmation bind:this={confirmation} />
+{#if duplicate}
+  <Modal title={`Choose ${duplicate.name}`} onclose={closeChooser}>
+    {#each duplicate.people as person (person.person_id)}
+      {@const preview = previews[person.person_id]}
+      <label class="duplicate-person">
+        <input type="radio" name="person" value={person.person_id} bind:group={selection} />
+        <span
+          >{person.display_name}<small>{new Date(person.created_at).toLocaleDateString()}</small
+          ></span
+        >
+        {#each preview?.urls ?? [] as url}<img
+            src={url}
+            alt={`Photos of ${person.display_name}`}
+          />{/each}
+        {#if preview?.loading}<span>Loading photos…</span>
+        {:else if preview?.failed}<span>Preview unavailable</span>
+        {:else if !preview?.urls.length}<span>No photos you can see.</span>{/if}
+      </label>
+    {/each}
+    <label
+      ><input type="radio" name="person" value="new" bind:group={selection} />New person named {duplicate.name}</label
+    >
+    {#snippet footer()}
+      <Button onclick={closeChooser}>Cancel</Button>
+      <Button disabled={!selection} onclick={assignSelection}>Name face</Button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
+  .duplicate-person {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+  .duplicate-person small {
+    display: block;
+  }
+  .duplicate-person img {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+  }
   .people {
     display: flex;
     flex-direction: column;

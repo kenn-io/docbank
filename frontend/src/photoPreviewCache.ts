@@ -2,6 +2,8 @@ import { getReadPhotoPreviewUrl, readPhotoPreview } from "./generated/docbank.js
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 
+import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+
 const cachePrefix = "docbank-photo-previews-";
 const maxFetches = 6;
 
@@ -12,12 +14,13 @@ export function previewObjectURL(
   onload: (url: string) => void,
   onfailure: (cause: unknown) => void,
   reload = false,
+  hiddenAccess?: HiddenAccess,
 ) {
   const controller = new AbortController();
   let current = true;
   let url = "";
-  void cache
-    .get(assetID, generationID, controller.signal, reload)
+  const read = () => cache.get(assetID, generationID, controller.signal, reload);
+  void (hiddenAccess ? hiddenAccess.run(read) : read())
     .then((blob) => {
       if (current) {
         url = URL.createObjectURL(blob);

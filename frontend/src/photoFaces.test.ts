@@ -174,3 +174,27 @@ it("clears a pending create after refusal, navigation, or reconciliation", async
     vi.restoreAllMocks();
   }
 });
+
+it("numbers the same snapshot by creation time and ID, retaining numbers when a face is added", () => {
+  const faces = new PhotoFaces("session", vi.fn());
+  const earlier = photoFace({
+    face_id: "earlier",
+    created_at: "2025-01-01T00:00:00Z",
+    assertion_id: undefined,
+  });
+  const a = photoFace({ face_id: "a", assertion_id: undefined });
+  const b = photoFace({ face_id: "b", assertion_id: undefined });
+  faces.faces = [b, earlier, a];
+  expect(faces.ordered.map((face) => face.face_id)).toEqual(["earlier", "a", "b"]);
+  expect(faces.label(b)).toBe("Face 3");
+  expect(faces.label(a)).toBe("Face 2");
+  faces.faces = [photoFace({ face_id: "new", created_at: "2026-02-01T00:00:00Z" }), ...faces.faces];
+  expect(faces.label(a)).toBe("Face 2");
+  expect(faces.number(b)).toBe("Face 3");
+  faces.faces = faces.faces.map((face) =>
+    face.face_id === "earlier" ? { ...face, dismissed: true } : face,
+  );
+  expect(faces.ordered.map((face) => face.face_id)).toEqual(["a", "b", "new"]);
+  expect(faces.number(b)).toBe("Face 3");
+  faces.dispose();
+});

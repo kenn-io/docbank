@@ -9,6 +9,7 @@
     editor,
     faces,
     session = "",
+    cache,
     onperson,
     count = 1,
     actionDisabled = false,
@@ -17,6 +18,7 @@
     editor: PhotoAuthoredEditor;
     faces?: PhotoFaces;
     session?: string;
+    cache?: import("./photoPreviewCache.js").PhotoPreviewCache;
     onperson?: (id: string, name: string) => void;
     count?: number;
     actionDisabled?: boolean;
@@ -193,7 +195,13 @@
       disabled={editor.busy || editor.loading}
       onclick={() => editor.clearDraft()}>Clear edits</Button
     >{/if}
-  {#if count === 1 && faces?.version}<PhotoPeople {faces} {session} {onperson} />{/if}
+  {#if count === 1 && faces?.version}<PhotoPeople
+      {faces}
+      {session}
+      {onperson}
+      {cache}
+      assetID={editor.asset?.id}
+    />{/if}
 </section>
 
 <style>
