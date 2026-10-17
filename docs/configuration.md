@@ -1067,8 +1067,8 @@ count as inspections. Multi-document exports and reports stay silent.
 Search and open claims share the persisted daily screen-claim file, so daemon
 restarts preserve the day's counts.
 
-CLI actions require terminal output and exclude `search --agent`. Scripts
-that inherit terminal output may count. Reporting has a 100 ms deadline and never changes command results.
+CLI actions require terminal input and exclude `search --agent`. Piping output
+still counts; scripts that inherit terminal input may count. Reporting has a 100 ms deadline and never changes command results.
 
 Each event carries these fields:
 

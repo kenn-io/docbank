@@ -45,19 +45,23 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	defer server.Close()
 	connection := daemonconn.New(server.URL, "synthetic-key")
 	for _, tc := range []struct {
-		name           string
-		stdout, stderr *os.File
-		agent          bool
+		name          string
+		stdin, stdout *os.File
+		agent         bool
+		want          int
 	}{
-		{"terminal output", terminal, redirected, false},
-		{"redirected output with terminal stderr", redirected, terminal, false},
-		{"unattended", redirected, redirected, false},
-		{"agent", terminal, terminal, true},
+		{"terminal input and output", terminal, terminal, false, 2},
+		{"terminal input with redirected output", terminal, redirected, false, 2},
+		{"unattended input with terminal output", redirected, terminal, false, 0},
+		{"agent", terminal, terminal, true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			events = nil
+			mu.Unlock()
 			cmd := &cobra.Command{}
+			cmd.SetIn(tc.stdin)
 			cmd.SetOut(tc.stdout)
-			cmd.SetErr(tc.stderr)
 			cmd.Flags().Bool("agent", tc.agent, "")
 			// A canceled document command still reports its acknowledged result.
 			ctx, cancel := context.WithCancel(t.Context())
@@ -65,20 +69,21 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 			cmd.SetContext(ctx)
 			reportAction(cmd, connection, "document_added", "add")
 			reportOpened(cmd, connection)
+			mu.Lock()
+			defer mu.Unlock()
+			require.Len(t, events, tc.want)
+			if tc.want > 0 {
+				assert.Equal(t, []api.TelemetryEventRequest{
+					{Event: "document_added", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
+					{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
+				}, events)
+			}
 		})
 	}
 	cmd := &cobra.Command{}
-	cmd.SetOut(terminal)
+	cmd.SetIn(terminal)
 	cmd.SetContext(t.Context())
 	start := time.Now()
 	reportAction(cmd, connection, "search_run", "hybrid")
 	assert.Less(t, time.Since(start), time.Second)
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, events, 2)
-	assert.Equal(t, "document_added", events[0].Event)
-	assert.Equal(t, "document_opened", events[1].Event)
-	for _, event := range events {
-		assert.Equal(t, &api.TelemetryEventProperties{Surface: "cli"}, event.Properties)
-	}
 }
