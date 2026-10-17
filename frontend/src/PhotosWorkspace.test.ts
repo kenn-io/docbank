@@ -3065,7 +3065,7 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
   },
 );
 
-it("reloads a stack conflict before Metadata opens and keeps the selection", async () => {
+it("reloads a stack conflict and keeps the selection", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -3187,6 +3187,7 @@ it.each(
         db.close();
       }
     }
+    const durable = formatVersion === 1 ? await store.load() : undefined;
     const photos = new Photos("scoped", vi.fn());
     photos.items = [photo(1)];
     photos.total = 1;
@@ -3218,10 +3219,17 @@ it.each(
       await waitFor(() => expect(photos.cull!.capturing).toBe(false));
       expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
       expect(capture).not.toHaveBeenCalled();
+      if (formatVersion === 2) {
+        await expect(store.load()).rejects.toThrow("unsupported format");
+        await screen.findByText(
+          "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
+        );
+      } else expect(await store.load()).toEqual(durable);
     } else {
       await screen.findByRole("dialog", { name: "Cull photos" });
       expect(capture).toHaveBeenCalledOnce();
       await photos.cull!.flush();
+      expect((await store.load())?.ids).toEqual([]);
     }
     photos.dispose();
   },

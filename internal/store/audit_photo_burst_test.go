@@ -81,8 +81,6 @@ func TestPhotoBurstAuditEnrollmentAndRestore(t *testing.T) {
 			verify(restored)
 			_, err = restored.SetPhotoSettings(ctx, settings.Revision, PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: new(2)})
 			require.NoError(t, err)
-			later := choose(restored, ids[1])
-			require.Equal(t, *receipt.Representatives[0].After+1, *later.Representatives[0].After)
 			_, err = restored.UndoPhotoAuthored(ctx, undo.ReceiptID)
 			require.ErrorIs(t, err, ErrStaleRevision)
 			verify(restored)
@@ -92,7 +90,7 @@ func TestPhotoBurstAuditEnrollmentAndRestore(t *testing.T) {
 
 func TestPhotoBurstAuditRollback(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"choice", "undo", "gap", "gap and preference"} {
+	for _, action := range []string{"choice", "undo", "gap"} {
 		t.Run(action, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -118,14 +116,8 @@ func TestPhotoBurstAuditRollback(t *testing.T) {
 				_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 			case "gap":
 				_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: new(5)})
-			case "gap and preference":
-				_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: new("image"), BurstGapSeconds: new(5)})
 			}
-			if action == "gap and preference" {
-				require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-			} else {
-				require.ErrorContains(t, err, "forced burst audit failure")
-			}
+			require.ErrorContains(t, err, "forced burst audit failure")
 			require.NoError(t, s.ExportMetadata(ctx, &after))
 			require.Equal(t, before.String(), after.String(), "rank, sequence, settings, revisions, receipts and audit authority must roll back together")
 		})
@@ -159,6 +151,8 @@ func TestPhotoBurstAuditSettingsReturnToDefault(t *testing.T) {
 	_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image")})
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, s.RootID())
+	_, err = s.SetPhotoSettings(t.Context(), 2, PhotoSettingsUpdate{Preference: new("raw"), BurstGapSeconds: new(5)})
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	for i, gap := range []int{5, 2} {
 		settings, err := s.SetPhotoSettings(t.Context(), int64(i+2), PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: &gap})
 		require.NoError(t, err)

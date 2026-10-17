@@ -72,13 +72,18 @@ func TestPhotoStackDecisionBounds(t *testing.T) {
 	request := api.PhotoStackDecisionRequest{BurstGapSeconds: 30, Hidden: true, AssetIDs: ids, Targets: targets, Decision: "representative", CurrentID: ids[0], SelectedIDs: ids}
 	encoded, err := json.Marshal(request)
 	require.NoError(t, err)
-	require.Greater(t, len(encoded), 512<<10)
-	require.LessOrEqual(t, len(encoded), 576<<10)
-	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, request)
-	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
-	require.Contains(t, body, "hidden_locked")
-	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, map[string]any{"padding": strings.Repeat("x", 1<<20)})
-	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode, body)
+	// Hidden-lock refusal confirms decoding reached the store without creating
+	// 2,000 live targets; hidden access itself is covered by the store tests.
+	for _, tc := range []struct{ size, status int }{{(576 << 10) - 1, http.StatusForbidden}, {576 << 10, http.StatusRequestEntityTooLarge}} {
+		payload := string(encoded) + strings.Repeat(" ", tc.size-len(encoded))
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/photos/authored/stack", strings.NewReader(payload))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		require.Equal(t, tc.status, res.StatusCode)
+		require.NoError(t, res.Body.Close())
+	}
 }
 
 func TestPhotoAuthoredRouteRefusesStaleContentVersion(t *testing.T) {

@@ -783,6 +783,47 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   editor.dispose();
 });
 
+it("caches preparation for the same stack", async () => {
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    assets: [],
+    targets: [preparedPhoto(1), preparedPhoto(2)],
+  });
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  await editor.prepareStack(["photo-1", "photo-2"], false);
+  await editor.prepareStack(["photo-1", "photo-2"], false);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    { asset_ids: ["photo-1", "photo-2"], hidden: false, stack: true },
+    expect.anything(),
+  );
+});
+
+it("reloads a hidden stack after a membership conflict", async () => {
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    assets: [],
+    targets: [preparedPhoto(1), preparedPhoto(2)],
+  });
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockRejectedValue(new APIError("Stack changed", 409, "photo_stack_changed"));
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const asset_ids = ["photo-1", "photo-2"];
+  await editor.prepareStack(asset_ids, true);
+  expect(
+    await editor.decideStack(
+      { asset_ids, current_id: "photo-1", decision: "current", burst_gap_seconds: 2, hidden: true },
+      vi.fn(),
+      { observed: [] },
+    ),
+  ).toBe(false);
+  expect(decide.mock.calls[0]![0].hidden).toBe(true);
+  expect(editor.targets).toEqual([]);
+  expect(editor.conflict).toBe(true);
+  await editor.reload();
+  expect(editor.conflict).toBe(false);
+  await editor.prepareStack(asset_ids, true);
+  expect(prepare).toHaveBeenCalledTimes(2);
+});
+
 const stackScenarios = [
   "current",
   "stale-asset",
@@ -792,7 +833,6 @@ const stackScenarios = [
   "stale-version",
   "unchanged",
   "checkpoint",
-  "hidden-conflict",
 ];
 
 it.each(stackScenarios)(
@@ -807,7 +847,7 @@ it.each(stackScenarios)(
       selected_ids: ["photo-1"],
       decision: "selected" as const,
       burst_gap_seconds: 2,
-      hidden: scenario === "hidden-conflict",
+      hidden: false,
     };
     if (scenario === "unchanged") {
       selected.values.flag = "pick";
@@ -829,20 +869,14 @@ it.each(stackScenarios)(
               },
             })),
     };
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockResolvedValue({ assets: [], targets: [sibling, companion, selected] });
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+      assets: [],
+      targets: [sibling, companion, selected],
+    });
     const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue(receipt);
-    if (request.hidden)
-      decide.mockRejectedValue(new APIError("Stack changed", 409, "photo_stack_changed"));
     const editor = new PhotoAuthoredEditor("session", vi.fn());
-    editor.targets = request.hidden ? [] : [selected];
+    editor.targets = [selected];
     await editor.prepareStack(request.asset_ids, request.hidden);
-    await editor.prepareStack(request.asset_ids, request.hidden);
-    expect(prepare).toHaveBeenCalledExactlyOnceWith(
-      { asset_ids: ["photo-1", "photo-2"], hidden: request.hidden, stack: true },
-      expect.anything(),
-    );
     const observed = [
       {
         asset_id: "photo-1",
@@ -858,20 +892,7 @@ it.each(stackScenarios)(
       observed,
       beforeWrite: async () => scenario !== "checkpoint",
     });
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(editor.targets.map((target) => target.asset_id)).toEqual(
-      request.hidden ? [] : ["photo-1"],
-    );
-    if (request.hidden) {
-      expect(success).toBe(false);
-      expect(decide.mock.calls[0]![0].hidden).toBe(true);
-      expect(editor.conflict).toBe(true);
-      await editor.reload();
-      expect(editor.conflict).toBe(false);
-      await editor.prepareStack(request.asset_ids, true);
-      expect(prepare).toHaveBeenCalledTimes(2);
-      return;
-    }
+    expect(editor.targets.map((target) => target.asset_id)).toEqual(["photo-1"]);
     if (scenario.startsWith("stale-") || scenario === "replaced" || scenario === "checkpoint") {
       expect(success).toBe(false);
       expect(decide).not.toHaveBeenCalled();

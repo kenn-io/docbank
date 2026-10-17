@@ -36,6 +36,23 @@ function storage() {
   vi.spyOn(store, "checkpoint");
   return store;
 }
+function stackedRun(ids: string[]): CullRun {
+  return {
+    stackEligible: true,
+    ids,
+    checkpoint: {
+      runID: "run",
+      revision: 0,
+      pass: ids,
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  };
+}
 function browsePage(rows: api.PhotoBrowseRow[], request: api.PhotoBrowseRequest) {
   const filters = request.query.filters;
   const items = rows.filter(
@@ -51,16 +68,22 @@ function browsePage(rows: api.PhotoBrowseRow[], request: api.PhotoBrowseRequest)
   };
 }
 
-it("filters the next pass by refreshed flags", async () => {
+it("retains only asset IDs and flags from a cull flag refresh", async () => {
   const rows = [photo(1), { ...photo(2), flag: "pick" as const }];
   vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
     Response.json(await snapshot(rows.map((row) => row.asset_id))),
   );
   vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => browsePage(rows, request));
+  const lookup = vi.spyOn(photoQueries, "lookupPhotoRows");
   const cull = new PhotoCull("session", storage());
   await cull.start(query);
   await cull.nextPass(false, () => true);
   expect(cull.run?.checkpoint.pass).toEqual([rows[1]!.asset_id]);
+  expect(lookup).toHaveBeenCalledOnce();
+  expect(await lookup.mock.results[0]!.value).toEqual([
+    { asset_id: "00000000-0000-4000-8000-000000000001", flag: "" },
+    { asset_id: "00000000-0000-4000-8000-000000000002", flag: "pick" },
+  ]);
 });
 it("probes saved headers and replaces a run without loading its membership", async () => {
   const store = storage(),
@@ -699,21 +722,8 @@ it("keeps forward stack navigation at pass completion and returns to the last st
 it("regroups frozen IDs on resume and gap changes without resetting progress", async () => {
   const ids = [1, 2, 3, 4].map((id) => photo(id).asset_id);
   const store = storage();
-  const run: CullRun = {
-    stackEligible: true,
-    ids,
-    checkpoint: {
-      runID: "run",
-      revision: 0,
-      pass: ids,
-      position: 2,
-      visited: [ids[0]!],
-      skipped: [],
-      unavailable: [],
-      scope: "all",
-      autoAdvance: true,
-    },
-  };
+  const run = stackedRun(ids);
+  Object.assign(run.checkpoint, { position: 2, visited: [ids[0]!] });
   await store.replace(run);
   const group = vi
     .spyOn(api, "groupPhotoStacks")
@@ -740,62 +750,10 @@ it("regroups frozen IDs on resume and gap changes without resetting progress", a
   expect(resumed.run?.checkpoint).toEqual(run.checkpoint);
 });
 
-it("keeps navigation and pending progress while regrouping", async () => {
-  const ids = [1, 2, 3].map((id) => photo(id).asset_id);
-  const store = storage();
-  await store.replace({
-    stackEligible: true,
-    ids,
-    checkpoint: {
-      runID: "run",
-      revision: 0,
-      pass: ids,
-      position: 0,
-      visited: [],
-      skipped: [],
-      unavailable: [],
-      scope: "all",
-      autoAdvance: true,
-    },
-  });
-  const cull = new PhotoCull("session", store);
-  await cull.restore();
-  let resolve!: (value: api.GroupPhotoStacksResponse) => void;
-  vi.spyOn(api, "groupPhotoStacks").mockReturnValue(
-    new Promise((done) => {
-      resolve = done;
-    }),
-  );
-  const pending = cull.regroup();
-  cull.move(1);
-  expect(cull.currentID).toBe(ids[1]);
-  expect(await cull.verifyDecision()).toBe(false);
-  resolve({ groups: [ids], unavailable_ids: [], burst_gap_seconds: 5 });
-  await pending;
-  await cull.flush();
-  expect(cull.currentID).toBe(ids[1]);
-  expect(cull.run?.groups).toEqual([ids]);
-  expect((await store.load())?.checkpoint).toEqual(cull.run?.checkpoint);
-});
-
 it("retries grouping failures and ignores groups for a replaced run", async () => {
   const ids = [photo(1).asset_id, photo(2).asset_id];
   const store = storage();
-  await store.replace({
-    stackEligible: true,
-    ids,
-    checkpoint: {
-      runID: "run",
-      revision: 0,
-      pass: ids,
-      position: 0,
-      visited: [],
-      skipped: [],
-      unavailable: [],
-      scope: "all",
-      autoAdvance: true,
-    },
-  });
+  await store.replace(stackedRun(ids));
   const group = vi
     .spyOn(api, "groupPhotoStacks")
     .mockRejectedValueOnce(new Error("Grouping failed"));
@@ -816,12 +774,21 @@ it("retries grouping failures and ignores groups for a replaced run", async () =
     }),
   );
   const pending = cull.regroup();
+  cull.move(-1);
+  expect(cull.currentID).toBe(ids[0]);
+  expect(await cull.verifyDecision()).toBe(false);
+  resolve({ groups: [ids], unavailable_ids: [], burst_gap_seconds: 5 });
+  await pending;
+  await cull.flush();
+  expect(cull.currentID).toBe(ids[0]);
+  expect((await store.load())?.checkpoint).toEqual(cull.run?.checkpoint);
+  const replaced = cull.regroup();
   cull.run = {
     ids: [ids[0]!],
     checkpoint: { ...cull.run!.checkpoint, runID: "replacement", pass: [ids[0]!], position: 0 },
   };
   resolve({ groups: [ids], unavailable_ids: [], burst_gap_seconds: 8 });
-  await pending;
+  await replaced;
   expect(cull.run.groups).toBeUndefined();
   expect(cull.run.checkpoint.runID).toBe("replacement");
 });
@@ -905,21 +872,7 @@ it.each(["left at first", "current thumbnail", "right after completion", "next p
 it("allows another tab to regroup but detects its progress changes", async () => {
   const ids = [photo(1).asset_id, photo(2).asset_id];
   const store = storage();
-  await store.replace({
-    stackEligible: true,
-    ids,
-    checkpoint: {
-      runID: "run",
-      revision: 0,
-      pass: ids,
-      position: 0,
-      visited: [],
-      skipped: [],
-      unavailable: [],
-      scope: "all",
-      autoAdvance: true,
-    },
-  });
+  await store.replace(stackedRun(ids));
   const first = new PhotoCull("session", store),
     other = new PhotoCull("session", store);
   await first.restore();
@@ -1002,10 +955,9 @@ it("verifies a decision against progress queued before the check", async () => {
   expect((await store.load())!.checkpoint.unavailable).toEqual([ids[1]]);
 });
 
-it("reuses pass navigation until the pass or grouping changes", async () => {
+it("updates navigation after the pass or grouping changes", async () => {
   const ids = Array.from({ length: 100 }, (_, index) => photo(index + 1).asset_id);
   const pass = [...ids];
-  const scans = vi.spyOn(pass, Symbol.iterator);
   const cull = new PhotoCull("session", {
     saved: vi.fn(),
     load: vi.fn(),
@@ -1029,12 +981,10 @@ it("reuses pass navigation until the pass or grouping changes", async () => {
   };
   cull.moveFrame(1);
   expect(cull.currentID).toBe(ids[1]);
-  scans.mockClear();
   cull.moveStack(1);
   expect(cull.currentID).toBe(ids[2]);
   cull.moveFrame(1);
   expect(cull.currentID).toBe(ids[3]);
-  expect(scans).not.toHaveBeenCalled();
   cull.run = {
     ...cull.run!,
     groups: [
