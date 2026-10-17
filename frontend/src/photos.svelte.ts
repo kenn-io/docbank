@@ -65,6 +65,15 @@ export function lookupPhotoRows<Row extends { asset_id: string }>(
   signal: AbortSignal | undefined,
   onprogress: ((loaded: number, total: number) => void) | undefined,
   hidden: boolean,
+  read: (batch: string[], signal: AbortSignal) => Promise<{ items: Row[] }>,
+): Promise<Row[]>;
+export function lookupPhotoRows<Row extends { asset_id: string }>(
+  session: string,
+  ids: string[],
+  signal: AbortSignal | undefined,
+  onprogress: ((loaded: number, total: number) => void) | undefined,
+  hidden: boolean,
+  read: undefined,
   project: (row: PhotoBrowseRow) => Row,
 ): Promise<Row[]>;
 export async function lookupPhotoRows(
@@ -73,6 +82,7 @@ export async function lookupPhotoRows(
   signal?: AbortSignal,
   onprogress?: (loaded: number, total: number) => void,
   hidden = false,
+  read?: (batch: string[], signal: AbortSignal) => Promise<{ items: { asset_id: string }[] }>,
   project?: (row: PhotoBrowseRow) => { asset_id: string },
 ): Promise<{ asset_id: string }[]> {
   const controller = new AbortController();
@@ -86,16 +96,21 @@ export async function lookupPhotoRows(
         while (offset < ids.length) {
           signal?.throwIfAborted();
           const batch = ids.slice(offset, (offset += 64));
-          const page = await listPhotoAssets(
-            {
-              query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
-              page_size: 250,
-              hidden,
-            },
-            { session, signal },
-          );
+          let items: { asset_id: string }[];
+          if (read) items = (await read(batch, signal!)).items;
+          else {
+            const page = await listPhotoAssets(
+              {
+                query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+                page_size: 250,
+                hidden,
+              },
+              { session, signal },
+            );
+            items = project ? page.items.map(project) : page.items;
+          }
           signal?.throwIfAborted();
-          rows.push(...(project ? page.items.map(project) : page.items));
+          rows.push(...items);
           loaded += batch.length;
           onprogress?.(loaded, ids.length);
         }

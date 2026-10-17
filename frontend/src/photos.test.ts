@@ -3048,6 +3048,7 @@ it("projects each lookup batch and returns projected rows in input order", async
     undefined,
     undefined,
     false,
+    undefined,
     ({ asset_id, flag }) => ({ asset_id, flag }),
   );
   expect(projected).toHaveLength(65);

@@ -194,6 +194,7 @@ export class PhotoCull {
         this.progress = `Checking ${loaded} of ${total} photos…`;
       },
       false,
+      undefined,
       ({ asset_id, flag }) => ({ asset_id, flag }),
     );
     signal.throwIfAborted();
