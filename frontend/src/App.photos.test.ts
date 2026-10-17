@@ -124,7 +124,7 @@ it("retains the navigated comparison and closeup across a browser tab switch", a
         .map((heading) => heading.textContent),
     ).toEqual(["Photo 2.jpg", "Photo 3.jpg"]),
   );
-  const owner = lookup.mock.contexts.at(-1)!;
+  const owner = lookup.mock.contexts.at(-1) as Photos;
   expect(owner.compareView).toEqual({ scale: 1, x: 0.5, y: 0.5, actual: true });
   expect(owner.compareCrop).toEqual({ scale: 1 / 0.15, x: 0.55, y: 0.5, actual: false });
   expect(lookups.slice(lookupCount)).toContainEqual(["photo-2", "photo-3"]);
