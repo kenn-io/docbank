@@ -283,6 +283,10 @@ then asks you to select **Refresh XMP**. Missing sidecar content stays Pending
 with a reason. Restore its bytes to let background sync retry automatically;
 **Refresh XMP** checks progress and resumes polling.
 
+On first sync, a TIFF orientation that matches the photo's EXIF orientation
+leaves Teststrip's rotation as the authored turn. If the two encodings specify
+different authored turns, sync keeps the catalog's rotation.
+
 | Decision | XMP property |
 | --- | --- |
 | Rating | `xmp:Rating`, whole numbers 0 through 5. A rating of -1 imports as reject and is never written. |

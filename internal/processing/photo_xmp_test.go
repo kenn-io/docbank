@@ -553,3 +553,54 @@ func TestPhotoXMPIdenticalFirstObservationSurvivesManagedWrite(t *testing.T) {
 	e.drain()
 	assert.Equal(t, []store.PhotoXMPRow{{Field: "Rating", Catalog: "5", Sidecar: "4"}}, e.state(store.PhotoXMPStateConflict).Rows)
 }
+
+func TestPhotoXMPFirstSyncImportsRotationWithEchoedOrientation(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, orientation string
+		rotation          int
+	}{
+		{"camera orientation", "6", 90},
+		{"conflicting orientation", "8", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			e := newXMPEnv(t, xmpSidecar(` xmlns:tiff="http://ns.adobe.com/tiff/1.0/" tiff:Orientation="`+test.orientation+`" ts:Rotation="90" xmp:Rating="4"`, ""))
+			canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.orientation", Namespace: "image.exif", SourceField: "Orientation", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(6))}}}})
+			require.NoError(t, err)
+			_, err = e.catalog.PublishSourceMetadata(t.Context(), e.node(e.raw().NodeID).BlobHash, strings.Repeat("6", 64), canonical)
+			require.NoError(t, err)
+			e.drain()
+			assert.Equal(t, test.rotation, e.raw().Rotation)
+			assert.Equal(t, test.rotation != 0, e.raw().Confirmed&store.PhotoConfirmedRotation != 0)
+			assert.Equal(t, 4, e.raw().Rating, "other readable decisions still import")
+			assert.Empty(t, e.state(store.PhotoXMPStateSynced).Rows)
+		})
+	}
+}
+
+func TestPhotoXMPSourceOrientationReplacementKeepsAuthoredRotation(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t, xmpSidecar(` ts:Rotation="90"`, ""))
+	e.drain()
+	require.Equal(t, 90, e.raw().Rotation)
+	before := e.node(e.raw().NodeID)
+	e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "replacement RAW"})
+	current := e.node(e.raw().NodeID)
+	require.Equal(t, before.ID, current.ID)
+	require.NotEqual(t, before.CurrentVersionID, current.CurrentVersionID)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.orientation", Namespace: "image.exif", SourceField: "Orientation", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(6))}}}})
+	require.NoError(t, err)
+	_, err = e.catalog.PublishSourceMetadata(t.Context(), current.BlobHash, SourceMetadataExtractorFingerprint, canonical)
+	require.NoError(t, err)
+	e.drain()
+	_, _, packet := e.packet()
+	assert.Equal(t, 3, packet.Orientation, "the written orientation composes EXIF 6 with the authored turn")
+	assert.Equal(t, 90, packet.Rotation)
+	assert.Equal(t, 90, e.raw().Rotation)
+	e.importFiles(xmpSidecar(` ts:Rotation="90"`, `<dc:description>River</dc:description>`))
+	e.drain()
+	assert.Equal(t, "River", e.raw().Caption)
+	assert.Equal(t, 90, e.raw().Rotation)
+	e.state(store.PhotoXMPStateSynced)
+}

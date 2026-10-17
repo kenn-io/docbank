@@ -50,6 +50,9 @@ func TestPhotoXMPResolveRoute(t *testing.T) {
 	require.Equal(t, store.PhotoXMPStateConflict, conflict.State)
 
 	path := "/api/v1/photos/authored/" + file.ID + "/xmp"
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoXMPResolveRequest{ConflictID: conflict.ConflictID, Choice: "other"})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, "body.choice")
 	choice := api.PhotoXMPResolveRequest{ConflictID: conflict.ConflictID, Choice: "sidecar"}
 	response, body = do(t, ts, http.MethodPost, path, nil, choice)
 	require.Equal(t, http.StatusNoContent, response.StatusCode, body)

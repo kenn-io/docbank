@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -268,7 +267,7 @@ func TestUpgradeReleasedSchemasCreateEmptyPhotoAuthority(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
+func TestOpenRejectsUnreleasedSchema38WithoutCutover(t *testing.T) {
 	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
@@ -277,10 +276,7 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
-			unreleased := currentStorageSchemaVersion - 1
-			for slices.Contains(releasedStorageSchemaVersions, unreleased) {
-				unreleased--
-			}
+			const unreleased = 38
 			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, unreleased)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())

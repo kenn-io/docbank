@@ -46,9 +46,6 @@ func SyncPhotoXMPBackground(ctx context.Context, ing *ingest.Ingester, fileID st
 
 // ResolvePhotoXMP applies a person's choice to the recorded conflict.
 func ResolvePhotoXMP(ctx context.Context, ing *ingest.Ingester, fileID, conflictID, choice string) error {
-	if choice != "catalog" && choice != "sidecar" {
-		return store.ErrInvalidPhotoAsset
-	}
 	work, err := ing.Store.PhotoXMPConflict(ctx, fileID, conflictID)
 	if err != nil {
 		return err

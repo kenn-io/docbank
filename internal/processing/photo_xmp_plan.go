@@ -187,7 +187,11 @@ func resolvePhotoXMPRotation(sidecar *store.PhotoXMPPacket, base store.PhotoXMPP
 		sidecar.Values.Confirmed &^= store.PhotoConfirmedRotation
 		return
 	}
-	tiffChanged := sidecar.Orientation != base.Orientation
+	baseOrientation := base.Orientation
+	if baseOrientation == 0 {
+		baseOrientation = store.PhotoXMPOrientation(source, 0)
+	}
+	tiffChanged := sidecar.Orientation != baseOrientation
 	tsRotation := 0
 	if sidecar.Rotation != nil {
 		tsRotation = *sidecar.Rotation

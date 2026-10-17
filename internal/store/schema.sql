@@ -2231,7 +2231,7 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- Pending that needs the original's source metadata first. A sidecar row's
 -- source_sha256 is the last outside packet Docbank accepted for it.
 CREATE INDEX IF NOT EXISTS photo_files_xmp_pending ON photo_files(xmp_state, node_id) WHERE xmp_state IN ('pending','waiting');
-CREATE INDEX IF NOT EXISTS photo_files_xmp_outcome ON photo_files(xmp_state, node_id) WHERE xmp_state IN ('conflict','invalid');
+CREATE INDEX IF NOT EXISTS photo_files_xmp_outcome ON photo_files(xmp_state, node_id) WHERE xmp_state='conflict';
 CREATE INDEX IF NOT EXISTS nodes_xmp_filename ON nodes(parent_id, lower(name)) WHERE trashed_at IS NULL;
 
 -- Where each non-sidecar photo file sits on the timeline: the displayed

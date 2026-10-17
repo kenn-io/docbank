@@ -72,7 +72,7 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		// Each predicate repeats its partial index condition so SQLite can seek it.
 		state := `xf.xmp_state IN ('pending','waiting')`
 		if value == PhotoXMPStateConflict {
-			state = `xf.xmp_state IN ('conflict','invalid') AND xf.xmp_state='conflict'`
+			state = `xf.xmp_state='conflict'`
 		}
 		if c.photoDisplayMetadata {
 			return compiledQueryFragment{sql: `n.id IN (SELECT pf.node_id FROM photo_files xf JOIN photo_files pf ON pf.asset_id=xf.asset_id WHERE ` + state + `)`}, nil
