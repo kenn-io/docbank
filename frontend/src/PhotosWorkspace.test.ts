@@ -3,6 +3,7 @@ import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
@@ -2876,3 +2877,62 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   expect(open).toHaveBeenCalledWith("docbank-photo-cull-v1", 1);
   photos.dispose();
 });
+
+it.each(["Cancel", "Replace"])(
+  "%s in the capture modal preserves or replaces the saved run",
+  async (answer) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const store = photoCullStorage("synthetic-vault");
+    const original = {
+      ids: ["photo-1"],
+      checkpoint: {
+        runID: "saved-run",
+        revision: 0,
+        pass: ["photo-1"],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all" as const,
+        autoAdvance: true,
+      },
+    };
+    await store.replace(original);
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1)];
+    photos.total = 1;
+    photos.started = true;
+    const capture = vi
+      .spyOn(api, "createWorkspaceQuery")
+      .mockResolvedValue(Response.json(await snapshotEnvelope(photos.query, [])));
+    render(PhotosWorkspace, {
+      photos,
+      vaultID: "synthetic-vault",
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    });
+    await screen.findByRole("button", { name: "Resume cull" });
+    await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+    await screen.findByRole("dialog", { name: "Replace saved cull progress?" });
+    expect(capture).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: answer }));
+    if (answer === "Cancel") {
+      await waitFor(() => expect(photos.cull!.capturing).toBe(false));
+      expect(await store.load()).toEqual(original);
+      expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
+    } else {
+      await screen.findByRole("dialog", { name: "Cull photos" });
+      expect((await store.load())!.checkpoint.runID).not.toBe("saved-run");
+      expect((await store.load())!.ids).toEqual([]);
+      expect(capture).toHaveBeenCalledOnce();
+    }
+    photos.dispose();
+  },
+);

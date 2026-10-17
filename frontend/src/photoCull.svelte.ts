@@ -121,7 +121,10 @@ export class PhotoCull {
       this.finishFlagRead(this.flagRead);
     }
   }
-  async start(query: Query, confirm = (message: string) => window.confirm(message)) {
+  async start(
+    query: Query,
+    confirm: (message: string) => boolean | Promise<boolean> = () => false,
+  ) {
     if (this.capturing) return false;
     const controller = (this.capture = new AbortController());
     this.capturing = true;
@@ -129,7 +132,7 @@ export class PhotoCull {
     try {
       await this.writes;
       const previous = await this.storage.saved();
-      if (previous && !confirm("Replace saved cull progress?")) return false;
+      if (previous && !(await confirm("Replace saved cull progress?"))) return false;
       this.progress = "Capturing photos…";
       const page = await createSnapshot(
         this.session,
@@ -306,15 +309,22 @@ export class PhotoCull {
       this.finishFlagRead(controller);
     }
   }
-  async nextPass(followUp = false, confirm = (message: string) => window.confirm(message)) {
+  async nextPass(
+    followUp = false,
+    confirm: (message: string) => boolean | Promise<boolean> = () => false,
+  ) {
     if (!this.run || this.busy || this.stale) return;
-    if (!followUp && !this.complete && !confirm("Change scope and reset this pass's progress?"))
-      return;
     const controller = this.beginFlagRead();
     this.changingPass = true;
     let changed = false;
     this.error = "";
     try {
+      if (
+        !followUp &&
+        !this.complete &&
+        !(await confirm("Change scope and reset this pass's progress?"))
+      )
+        return;
       await this.writes;
       controller.signal.throwIfAborted();
       if (this.stale) return;

@@ -18,6 +18,7 @@
   import { prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoStage from "./PhotoStage.svelte";
   import PhotoCell from "./PhotoCell.svelte";
+  import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
   import { photoFacts } from "./photoFacts.js";
   import { cullKey } from "./shortcuts.js";
@@ -57,6 +58,7 @@
   let lookupAttempt = $state(0);
   const reloadController = new AbortController();
   let checkingDecision = $state(false);
+  let confirmation = $state<PhotoCullConfirmation>();
   const busy = $derived(editor.loading || editor.busy || checkingDecision);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let info = $state(0);
@@ -135,7 +137,13 @@
     return !busy && editor.canChangeTarget();
   }
   async function nextPass(followUp = false) {
-    if (canChangeTarget()) await cull.nextPass(followUp);
+    if (!canChangeTarget()) return;
+    checkingDecision = true;
+    try {
+      await cull.nextPass(followUp, (message) => confirmation!.confirm(message));
+    } finally {
+      checkingDecision = false;
+    }
   }
   function move(direction: -1 | 1) {
     if (canChangeTarget()) cull.move(direction);
@@ -248,6 +256,8 @@
 </script>
 
 <svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
+
+<PhotoCullConfirmation bind:this={confirmation} />
 
 <div class="review-shell">
   <Modal

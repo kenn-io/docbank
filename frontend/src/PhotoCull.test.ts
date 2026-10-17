@@ -749,7 +749,6 @@ it("keeps rail thumbnails while loading and shows rail errors", async () => {
 it("includes the last photo picked after completion when S starts Picks", async () => {
   const row = photo(1),
     before = preparedPhoto(1);
-  vi.spyOn(window, "confirm").mockReturnValue(true);
   vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([before]));
   vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
     row.flag = "pick";
@@ -778,6 +777,7 @@ it("includes the last photo picked after completion when S starts Picks", async 
   await waitFor(() => expect(screen.getByText("pick · 0 stars")).toBeTruthy());
   await readyButton("Scope: unflagged");
   await fireEvent.keyDown(document.activeElement!, { key: "s" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Replace" }));
   await screen.findByRole("button", { name: "Scope: picks" });
   expect(cull.run!.checkpoint.pass).toEqual([row.asset_id]);
   expect(screen.queryByRole("heading", { name: "Pass complete" })).toBeNull();
@@ -1070,6 +1070,39 @@ it.each(["advanced", "replaced", "unchanged"])(
       );
       expect(undo).not.toHaveBeenCalled();
       expect(photos.cullEditor!.receiptID).toBe("decision");
+    }
+  },
+);
+
+it.each(["Cancel", "Replace"])(
+  "%s in the scope modal preserves or replaces the saved pass",
+  async (answer) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const store = photoCullStorage("synthetic-vault");
+    const { cull } = await reviewPhoto(photo(1), false, store);
+    await store.replace(cull.run!);
+    const original = await store.load();
+    const list = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+      items: [photo(1)],
+      total: 1,
+      facets: [],
+      relevance_available: false,
+    });
+    await fireEvent.click(await readyButton("Scope: all"));
+    await screen.findByRole("dialog", { name: "Change scope and reset this pass's progress?" });
+    expect(list).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Exit cull" }).matches(":disabled")).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: answer }));
+    await waitFor(() => expect(cull.busy).toBe(false));
+    await cull.flush();
+    if (answer === "Cancel") {
+      expect(await store.load()).toEqual(original);
+      expect(cull.run!.checkpoint.scope).toBe("all");
+    } else {
+      expect((await store.load())!.checkpoint.scope).toBe("unflagged");
+      expect(cull.run!.checkpoint.scope).toBe("unflagged");
+      expect(list).toHaveBeenCalledOnce();
     }
   },
 );
