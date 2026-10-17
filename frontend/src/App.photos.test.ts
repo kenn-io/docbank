@@ -2544,13 +2544,10 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
   );
   await fireEvent.keyDown(window, { key: "r" });
   await waitFor(() =>
-    expect(edit).toHaveBeenCalledWith(
-      { asset_ids: ["photo-1"] },
-      {},
-      false,
-      expect.any(Function),
-      { keywords: undefined, rotationDelta: 90 },
-    ),
+    expect(edit).toHaveBeenCalledWith({ asset_ids: ["photo-1"] }, {}, false, expect.any(Function), {
+      keywords: undefined,
+      rotationDelta: 90,
+    }),
   );
   document.body.focus();
   await fireEvent.keyDown(window, { key: "?", shiftKey: true });
