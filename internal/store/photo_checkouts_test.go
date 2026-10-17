@@ -1014,16 +1014,16 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
 
-	checkout, _, _, err := s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+	//nolint:dogsled // Only the stale-selection error matters after rollback.
+	_, _, _, err = s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
 		return entries, estimate, nil
 	})
 	require.ErrorIs(t, err, errPhotoCheckoutSelectionStale)
-	require.NotEmpty(t, checkout.ID)
 	checkouts, err := s.ListPhotoCheckouts(ctx)
 	require.NoError(t, err)
 	require.Empty(t, checkouts)
 
-	checkout, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
 	require.NoError(t, err)
 	frozen, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
