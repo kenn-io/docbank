@@ -302,7 +302,7 @@ func TestSavedQueryRunRouteRequiresRevisionAndUsesSavedDefinition(t *testing.T) 
 	assert.Equal(t, "stale_revision", decodeProblem(t, body).Code)
 }
 
-func TestPhotoSnapshotRouteOptions(t *testing.T) {
+func TestSavedPhotoRunRouteOptions(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, renditionTextConfig)
 	ctx := t.Context()
@@ -349,9 +349,6 @@ func TestPhotoSnapshotRouteOptions(t *testing.T) {
 					page = result.Snapshot
 				} else {
 					require.NoError(t, json.Unmarshal([]byte(body), &page))
-				}
-
-				if i == 0 {
 					require.EqualValues(t, 3, page.Total)
 					require.Len(t, page.Rows, 3)
 					var pickedFlag *string
@@ -361,6 +358,8 @@ func TestPhotoSnapshotRouteOptions(t *testing.T) {
 						}
 					}
 					require.Equal(t, new("pick"), pickedFlag)
+				}
+				if i == 0 {
 					assert.Equal(t, "unconfigured", page.Coverage.Configuration)
 					assert.Empty(t, page.Coverage.ProfileFingerprint)
 				} else {

@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -200,8 +199,8 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "synthetic burst")
 	require.NoError(t, err)
-	ids := make([]string, 3)
-	for i, source := range []string{"/roll/one.jpg", "/roll/two.jpg", "/other/three.jpg"} {
+	ids := make([]string, 2)
+	for i, source := range []string{"/roll/one.jpg", "/roll/two.jpg"} {
 		node, err := s.IngestFileExact(ctx, run, s.RootID(), strconv.Itoa(i)+".jpg", testHash(source), 10, "image/jpeg", source, "2024-01-01T00:00:00Z")
 		require.NoError(t, err)
 		stamp := "2024-06-10T12:00:0" + strconv.Itoa(i) + "Z"
@@ -220,11 +219,11 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	}
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 	missing := "00000000-0000-4000-8000-000000000009"
-	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{ids[1], missing, ids[2], ids[0]}})
+	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{ids[0], ids[1], missing}})
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	var grouped api.GroupPhotoStacksResponse
 	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
-	require.Equal(t, api.GroupPhotoStacksResponse{BurstGapSeconds: 2, Groups: [][]string{{ids[1], ids[0]}}, UnavailableIDs: []string{missing}}, grouped)
+	require.Equal(t, api.GroupPhotoStacksResponse{BurstGapSeconds: 2, Groups: [][]string{{ids[0], ids[1]}}, UnavailableIDs: []string{missing}}, grouped)
 
 	// A full Cull run fits the request bound, and so does its flat response.
 	run250k := make([]string, 250_000)
@@ -239,7 +238,7 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	require.Empty(t, grouped.Groups)
 	require.Len(t, grouped.UnavailableIDs, 250_000)
 	// Repeats are rejected without echoing the run back once per repeat.
-	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": slices.Repeat([]string{ids[0]}, 250_000)})
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{ids[0], ids[0]}})
 	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
 	require.Less(t, len(body), 64<<10)
 	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})

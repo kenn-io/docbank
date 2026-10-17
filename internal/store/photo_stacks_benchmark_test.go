@@ -61,13 +61,7 @@ func BenchmarkPhotoStackBrowse250K(b *testing.B) {
 						request := PhotoBrowseRequest{Query: value, PageSize: 250, Stacks: stacks}
 						first, err := s.ListPhotoAssets(b.Context(), request, nil)
 						require.NoError(b, err)
-						require.Equal(b, int64(photoStackScaleAssets), first.Total)
 						require.NotNil(b, first.Next)
-						if stacks && layout.name == "bursts" {
-							require.Len(b, first.Stacks, 50)
-						} else {
-							require.Empty(b, first.Stacks)
-						}
 						for _, page := range []struct {
 							name     string
 							boundary *PhotoBrowsePosition

@@ -120,6 +120,7 @@ it.each([
 });
 
 it("maps only the cull keys and ignores modifier chords, repeated keys and text entry", () => {
+  expect(cullKey(new KeyboardEvent("keydown", { key: "Enter" }))).toBe("keep-current");
   expect(cullKey(new KeyboardEvent("keydown", { key: "P" }))).toBe("pick");
   expect(cullKey(new KeyboardEvent("keydown", { key: "4" }))).toBe(4);
   expect(cullKey(new KeyboardEvent("keydown", { key: "?", shiftKey: true }))).toBe("help");
@@ -138,5 +139,4 @@ it.each(["button", "a", "div"])("leaves Enter to focused %s controls", (tag) => 
   const event = new KeyboardEvent("keydown", { key: "Enter" });
   Object.defineProperty(event, "target", { value: target });
   expect(cullKey(event)).toBeUndefined();
-  expect(cullKey(new KeyboardEvent("keydown", { key: "Enter" }))).toBe("keep-current");
 });

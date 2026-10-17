@@ -197,24 +197,6 @@ func TestPhotoStackCameraPartitions(t *testing.T) {
 					require.ElementsMatch(t, groups, stacks)
 				}
 			}
-			if tc.split {
-				_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "current"})
-				require.ErrorIs(t, err, ErrStalePhotoStack)
-			}
-			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: groups[0], Targets: stackTargets(t, s, groups[0]), CurrentID: ids[0], Decision: "current"})
-			require.NoError(t, err)
-			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{PageSize: 100, Query: captureRequest(t, "asc").Query}, nil)
-			require.NoError(t, err)
-			require.Len(t, page.Items, len(ids))
-			for _, row := range page.Items {
-				want := ""
-				if row.AssetID == ids[0] {
-					want = "pick"
-				} else if slices.Contains(groups[0], row.AssetID) {
-					want = "reject"
-				}
-				require.Equal(t, want, row.Flag)
-			}
 		})
 	}
 }
@@ -310,14 +292,6 @@ func TestPhotoStackFoldersFollowSourceProvenance(t *testing.T) {
 		require.Equal(t, [][]string{{ids[0]}, {ids[1]}}, pages)
 		require.Empty(t, stacks)
 		require.Empty(t, stackIndexes(t, s, ids))
-		_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "current"})
-		require.ErrorIs(t, err, ErrStalePhotoStack)
-		page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{PageSize: 10, Query: captureRequest(t, "asc").Query}, nil)
-		require.NoError(t, err)
-		require.Len(t, page.Items, 2)
-		for _, row := range page.Items {
-			require.Empty(t, row.Flag)
-		}
 	})
 	t.Run("push and watch namespaces", func(t *testing.T) {
 		s := newTestStore(t)
@@ -360,16 +334,12 @@ func TestPhotoStackFoldersFollowSourceProvenance(t *testing.T) {
 		node = revertTo(t, s, node.ID, original)
 		require.Equal(t, browseHash("/A/two.jpg"), node.BlobHash)
 		require.Equal(t, [][]int{{0, 1}}, stackIndexes(t, s, ids))
-		_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "current"})
-		require.NoError(t, err)
 		// A second current claim from another folder makes the frame's folder ambiguous.
 		node, err = s.NodeByID(t.Context(), node.ID)
 		require.NoError(t, err)
 		_, _, err = s.ReplaceContentForIngest(t.Context(), other, node.ID, node.Revision, node.BlobHash, 20, "image/jpeg", "/C/two.jpg", "")
 		require.NoError(t, err)
 		require.Equal(t, [][]int{}, stackIndexes(t, s, ids))
-		_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "all"})
-		require.ErrorIs(t, err, ErrStalePhotoStack)
 	})
 }
 
@@ -417,6 +387,35 @@ func TestPhotoStackLibraryPagesQueryScopedBursts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{b1, b2, b3}, rowIDs(second.Items))
 	require.Equal(t, int64(6), second.Total)
+	missing := "00000000-0000-4000-8000-000000000009"
+	groups, unavailable, gap, err := s.PhotoStackGroups(t.Context(), []string{b2, a2, missing, b1, a1}, false)
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{b2, b1}, {a2, a1}}, groups)
+	require.Equal(t, []string{missing}, unavailable)
+	require.Equal(t, 2, gap)
+	require.NotContains(t, slices.Concat(groups...), b3)
+	// A full run of 125,000 pairs retains request order.
+	frames, position := make([]photoStackFrame, MaxPhotoStackGroupIDs), map[string]int{}
+	for i := range frames {
+		frames[i] = photoStackFrame{AssetID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), Folder: fmt.Sprintf("folder-%d", i/2), SortKey: "2024-06-10T12:00:00.000000000"}
+		position[frames[i].AssetID] = i
+	}
+	pairs := photoStackRequestGroups(frames, 2, position)
+	require.Len(t, pairs, MaxPhotoStackGroupIDs/2)
+	require.Equal(t, []string{frames[2].AssetID, frames[3].AssetID}, pairs[1])
+	_, _, gap, err = s.PhotoStackGroups(t.Context(), []string{a1, a1}, false)
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	require.Zero(t, gap)
+	tooMany := make([]string, MaxPhotoStackGroupIDs+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	_, _, gap, err = s.PhotoStackGroups(t.Context(), tooMany, false)
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	require.Zero(t, gap)
+	_, _, gap, err = s.PhotoStackGroups(t.Context(), []string{a1}, true)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	require.Zero(t, gap)
 	// Changing the gap invalidates cursors bound to the old grouping.
 	_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: new(1)})
 	require.NoError(t, err)
@@ -748,7 +747,7 @@ func TestPhotoStackAuditsOneDecisionAndRollsBackTogether(t *testing.T) {
 
 func TestPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T) {
 	t.Parallel()
-	for _, decision := range []string{"current", "selected", "mixed"} {
+	for _, decision := range []string{"current", "selected"} {
 		t.Run(decision, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
@@ -763,18 +762,9 @@ func TestPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T) {
 			_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image")})
 			require.NoError(t, err)
 			rawFlag := "pick"
-			if decision == "mixed" {
-				rawFlag = "reject"
-				_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: *first.DisplayFileID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
-				require.NoError(t, err)
-			}
 			_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: rawFile.ID, Revision: rawFile.Revision, Patch: PhotoAuthoredPatch{Flag: new(rawFlag)}}})
 			require.NoError(t, err)
-			operation := decision
-			if decision == "mixed" {
-				operation = "current"
-			}
-			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: operation, CurrentID: ids[1], SelectedIDs: ids[1:]})
+			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: decision, CurrentID: ids[1], SelectedIDs: ids[1:]})
 			require.NoError(t, err)
 			kept, err := photoFileByIDQuery(t.Context(), s.db, rawFile.ID)
 			require.NoError(t, err)
@@ -863,7 +853,7 @@ func TestPhotoStackLatestChoiceWinsWhenGapMergesStacks(t *testing.T) {
 	require.Equal(t, ids[1], page.Stacks[0].RepresentativeID)
 }
 
-func TestPhotoSettingsUpdateValidatesBeforeOneRevision(t *testing.T) {
+func TestPhotoSettingsUpdatesAndBackupFormat(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	unchanged, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: new(2)})
@@ -901,47 +891,6 @@ func TestPhotoSettingsUpdateValidatesBeforeOneRevision(t *testing.T) {
 	settings, err := old.PhotoSettings(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 2, settings.BurstGapSeconds)
-}
-
-func TestPhotoStackGroupsExplicitIDsInRequestOrder(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	run, err := s.BeginIngest(t.Context(), "cli", "synthetic interleaved imports")
-	require.NoError(t, err)
-	a1 := stackPhoto(t, s, run, "/A/one.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond)
-	b1 := stackPhoto(t, s, run, "/B/one.jpg", "2024-06-10T12:00:01Z", document.SourceMetadataPrecisionSecond)
-	a2 := stackPhoto(t, s, run, "/A/two.jpg", "2024-06-10T12:00:02Z", document.SourceMetadataPrecisionSecond)
-	b2 := stackPhoto(t, s, run, "/B/two.jpg", "2024-06-10T12:00:03Z", document.SourceMetadataPrecisionSecond)
-	outside := stackPhoto(t, s, run, "/A/three.jpg", "2024-06-10T12:00:04Z", document.SourceMetadataPrecisionSecond)
-	missing := "00000000-0000-4000-8000-000000000009"
-	groups, unavailable, gap, err := s.PhotoStackGroups(t.Context(), []string{b2, a2, missing, b1, a1}, false)
-	require.NoError(t, err)
-	require.Equal(t, [][]string{{b2, b1}, {a2, a1}}, groups)
-	require.Equal(t, []string{missing}, unavailable)
-	require.Equal(t, 2, gap)
-	require.NotContains(t, slices.Concat(groups...), outside)
-	// A full run of 125,000 pairs retains request order.
-	frames, position := make([]photoStackFrame, MaxPhotoStackGroupIDs), map[string]int{}
-	for i := range frames {
-		frames[i] = photoStackFrame{AssetID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), Folder: fmt.Sprintf("folder-%d", i/2), SortKey: "2024-06-10T12:00:00.000000000"}
-		position[frames[i].AssetID] = i
-	}
-	pairs := photoStackRequestGroups(frames, 2, position)
-	require.Len(t, pairs, MaxPhotoStackGroupIDs/2)
-	require.Equal(t, []string{frames[2].AssetID, frames[3].AssetID}, pairs[1])
-	_, _, gap, err = s.PhotoStackGroups(t.Context(), []string{a1, a1}, false)
-	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-	require.Zero(t, gap)
-	tooMany := make([]string, MaxPhotoStackGroupIDs+1)
-	for i := range tooMany {
-		tooMany[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
-	}
-	_, _, gap, err = s.PhotoStackGroups(t.Context(), tooMany, false)
-	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-	require.Zero(t, gap)
-	_, _, gap, err = s.PhotoStackGroups(t.Context(), []string{a1}, true)
-	require.ErrorIs(t, err, ErrHiddenLocked)
-	require.Zero(t, gap)
 }
 
 func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {

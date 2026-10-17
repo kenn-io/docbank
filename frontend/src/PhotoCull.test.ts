@@ -653,22 +653,57 @@ it("shows the restored rotation in the cull stage after Undo", async () => {
   expect(container.querySelector(".photo-stage img")!.getAttribute("src")).toBe(preview);
 });
 
-it.each([
-  "before edit",
-  "during preparation",
-  "before Undo",
-  "stack preparation",
-  "stack submission",
-])("refuses a stale tab decision %s", async (timing) => {
-  vi.stubGlobal("indexedDB", new IDBFactory());
-  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-  const store = photoCullStorage("synthetic-vault");
-  const stack = timing.startsWith("stack");
-  const { cull, photos, container } = await reviewPhoto(photo(stack ? 2 : 1), true, store);
-  const edit = vi.spyOn(api, "editPhotoAuthored");
-  const undo = vi.spyOn(api, "undoPhotoAuthored");
-  const decide = vi.spyOn(api, "decidePhotoStack");
-  if (stack) {
+it.each(["before edit", "during preparation", "before Undo"])(
+  "refuses a stale tab decision %s",
+  async (timing) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const store = photoCullStorage("synthetic-vault");
+    const { cull, photos } = await reviewPhoto(photo(1), true, store);
+    const edit = vi.spyOn(api, "editPhotoAuthored");
+    const undo = vi.spyOn(api, "undoPhotoAuthored");
+    const decide = vi.spyOn(api, "decidePhotoStack");
+    await store.replace(cull.run!);
+    const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+    await other.restore();
+    const preparation = photoPreparation([preparedPhoto(1)]);
+    let finish!: (value: typeof preparation) => void;
+    if (timing === "during preparation") {
+      vi.mocked(api.preparePhotoAuthored).mockReturnValueOnce(
+        new Promise((resolve) => (finish = resolve)),
+      );
+      await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+      await waitFor(() => expect(api.preparePhotoAuthored).toHaveBeenCalledOnce());
+    }
+    other.move(1);
+    await other.flush();
+    if (timing === "during preparation") await act(() => finish(preparation));
+    else if (timing === "before Undo") {
+      await act(() => {
+        photos.cullEditor!.receiptID = "decision";
+        photos.cullEditor!.undoState.summary = "Photo picked";
+      });
+      await fireEvent.click(await readyButton(/^Undo$/));
+    } else await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+    await screen.findByText(
+      "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
+    );
+    expect(edit).not.toHaveBeenCalled();
+    expect(undo).not.toHaveBeenCalled();
+    expect(decide).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["stack preparation", "stack submission"])(
+  "refuses a stale tab during %s",
+  async (timing) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const store = photoCullStorage("synthetic-vault");
+    const { cull, photos, container } = await reviewPhoto(photo(2), true, store);
+    const edit = vi.spyOn(api, "editPhotoAuthored");
+    const undo = vi.spyOn(api, "undoPhotoAuthored");
+    const decide = vi.spyOn(api, "decidePhotoStack");
     const rows = [photo(1), photo(2), photo(3), photo(4)];
     vi.mocked(photos.lookup).mockImplementation(
       async (id) => rows.find((row) => row.asset_id === id)!,
@@ -706,39 +741,16 @@ it.each([
         revision: timing === "stack preparation" ? 99 : cull.run!.checkpoint.revision,
       }),
     );
-  } else {
-    await store.replace(cull.run!);
-    const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
-    await other.restore();
-    const preparation = photoPreparation([preparedPhoto(1)]);
-    let finish!: (value: typeof preparation) => void;
-    if (timing === "during preparation") {
-      vi.mocked(api.preparePhotoAuthored).mockReturnValueOnce(
-        new Promise((resolve) => (finish = resolve)),
-      );
-      await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
-      await waitFor(() => expect(api.preparePhotoAuthored).toHaveBeenCalledOnce());
-    }
-    other.move(1);
-    await other.flush();
-    if (timing === "during preparation") await act(() => finish(preparation));
-    else if (timing === "before Undo") {
-      await act(() => {
-        photos.cullEditor!.receiptID = "decision";
-        photos.cullEditor!.undoState.summary = "Photo picked";
-      });
-      await fireEvent.click(await readyButton(/^Undo$/));
-    } else await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
-  }
-  await screen.findByText(
-    "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
-  );
-  expect(edit).not.toHaveBeenCalled();
-  expect(undo).not.toHaveBeenCalled();
-  expect(decide).not.toHaveBeenCalled();
-  if (stack) expect(cull.currentID).toBe("photo-2");
-  if (timing === "stack preparation") expect(api.preparePhotoAuthored).not.toHaveBeenCalled();
-});
+    await screen.findByText(
+      "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
+    );
+    expect(edit).not.toHaveBeenCalled();
+    expect(undo).not.toHaveBeenCalled();
+    expect(decide).not.toHaveBeenCalled();
+    expect(cull.currentID).toBe("photo-2");
+    if (timing === "stack preparation") expect(api.preparePhotoAuthored).not.toHaveBeenCalled();
+  },
+);
 
 it("keeps a failed decision on screen and guards exit while its draft remains", async () => {
   vi.spyOn(api, "editPhotoAuthored").mockRejectedValue(new Error("Decision failed"));
