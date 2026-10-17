@@ -35,7 +35,7 @@ report the same version string.
 
 ## Live photo changes
 
-Authenticated `GET /api/v1/photos/events` streams committed changes as server-sent events. Each stream starts with a bare refetch. Asset events carry current revisions; delivery checks the requesting viewer's current Hidden session. Albums, shared query definitions, and ordinary-file changes that affect photo duplicate searches use ID-free refetches. Locked viewers receive no Hidden asset or member IDs. A locked stream can receive a bare refetch while another Hidden session is active so its browser followers refresh with their own sessions.
+Authenticated `GET /api/v1/photos/events` streams committed changes as server-sent events. Each stream starts with a bare refetch. Asset events carry current revisions; delivery checks the requesting viewer's current Hidden session. Albums, shared query definitions, and ordinary-file changes that affect photo duplicate searches use ID-free refetches. Locked viewers receive no Hidden-asset event, even while another session is unlocked. Lock publishes a generic refetch; browser access polling reconnects the stream on unlock or expiry.
 
 Visible photos becoming Hidden, deleted targets, shared definitions (tags, saved queries, and collection labels), and batches exceeding 64 changes use a broad refetch. Worker metadata changes resolve to the current photo asset IDs. The daemon permits 128 concurrent streams, returns 429 at capacity, and limits each write to ten seconds. Browser tabs share one stream through a Web Lock and BroadcastChannel; browsers without Web Locks or BroadcastChannel compare an opaque change cursor in the existing two-second Hidden-state poll and refresh only when it changes.
 

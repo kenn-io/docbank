@@ -2830,3 +2830,55 @@ it("rejects a superseded live detail read and keeps the newer photo", async () =
   expect(screen.queryByText("Stale.jpg")).toBeNull();
   photos.dispose();
 });
+
+it.each([false, true])("handles a Map detail deadline after navigation=%s", async (navigate) => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal);
+  let pending!: AbortSignal;
+  stubPhotoFetch((url, init) => {
+    const id = url.endsWith("/photos/assets/query")
+      ? JSON.parse(String(init.body)).query.filters.asset_ids?.[0]
+      : undefined;
+    if (id === "photo-1") {
+      pending = init.signal!;
+      return new Promise((_, reject) =>
+        pending.addEventListener("abort", () => reject(pending.reason), { once: true }),
+      );
+    }
+    if (id) return Response.json({ items: [photo(2)], total: 1 });
+    return Response.json({ items: [], total: 0 });
+  });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  photos.started = true;
+  const view = render(PhotosWorkspace, {
+    photos,
+    mapMode: true,
+    tiles,
+    photoID: "photo-1",
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await waitFor(() => expect(pending).toBeDefined());
+  if (navigate) await view.rerender({ photoID: "photo-2" });
+  deadline.abort(new DOMException("Photo request timed out", "TimeoutError"));
+  if (navigate) {
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
+    expect(screen.queryByText(/Photo request timed out/)).toBeNull();
+  } else {
+    await screen.findByText(/Photo request timed out/);
+    const reload = screen.getByRole("button", { name: "Reload photo" }) as HTMLButtonElement;
+    expect(reload.disabled).toBe(false);
+    vi.mocked(AbortSignal.timeout).mockRestore();
+    stubPhotoFetch(() => Response.json({ items: [photo(1)], total: 1 }));
+    await fireEvent.click(reload);
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    expect(screen.queryByText(/Photo request timed out/)).toBeNull();
+  }
+  photos.dispose();
+});

@@ -167,7 +167,7 @@ export class Photos {
       /* Keep the current view usable without storage. */
     }
   }
-  async recoverSmartSet() {
+  async recoverSmartSet(signal?: AbortSignal) {
     if (this.hidden || this.withoutCounts) return;
     const storageKey = smartSetStorageKey(this.session);
     let id = this.smartSet?.id;
@@ -184,7 +184,8 @@ export class Photos {
       generation === this.smartSetRecoveryGeneration &&
       (!this.smartSet || this.smartSet.id === id);
     try {
-      const saved = await getSavedQuery(this.session, id);
+      const saved = await getSavedQuery(this.session, id, signal);
+      signal?.throwIfAborted();
       if (!current() || (this.smartSet?.id === id && saved.revision < this.smartSet.revision))
         return;
       if (
@@ -213,7 +214,10 @@ export class Photos {
         } catch {
           /* The missing definition stays unavailable in this view. */
         }
-      } else if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      } else {
+        if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+        throw cause;
+      }
     }
   }
   openSmartSet(saved: SavedQuery) {

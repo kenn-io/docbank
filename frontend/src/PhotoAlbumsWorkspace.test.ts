@@ -1,3 +1,4 @@
+import { tick } from "svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
@@ -13,7 +14,8 @@ import {
   savedSmartSet,
 } from "./photo-test-fixtures.js";
 import { parseQuery, queryFingerprint } from "./query.js";
-import { createSavedQuery } from "./savedQueries.js";
+import { watchPhotoEvents } from "./photoEvents.js";
+import { createSavedQuery, definitionsChanged } from "./savedQueries.js";
 
 beforeEach(() =>
   vi.stubGlobal(
@@ -690,4 +692,103 @@ it("retains one error and selection when a failed membership completes after rem
   await screen.findByText("Add unavailable");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(photos.selection.selectedIDs.size).toBe(2);
+});
+
+it("rejects a failed smart-set notification and reloads the rendered list on recovery", async () => {
+  const scope = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const saved = savedSmartSet(scope, await queryFingerprint(scope));
+  let failing = false;
+  let name = "Original smart set";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      failing
+        ? Response.json({ detail: "Definitions unavailable" }, { status: 503 })
+        : Response.json({ items: [{ ...saved, name }], total: 1, limit: 100, offset: 0 }),
+    ),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+  await screen.findByRole("button", { name });
+  failing = true;
+  await expect(definitionsChanged("scoped")).rejects.toThrow("Definitions unavailable");
+  expect(screen.getByRole("button", { name: "Retry smart sets" })).toBeTruthy();
+  failing = false;
+  name = "Renamed smart set";
+  await definitionsChanged("scoped");
+  await screen.findByRole("button", { name });
+  expect(screen.queryByText("Definitions unavailable")).toBeNull();
+  albums.dispose();
+  await cache.dispose();
+});
+
+it("retries a mounted smart-set read without another live event", async () => {
+  const scope = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const saved = savedSmartSet(scope, await queryFingerprint(scope), { name: "Before retry" });
+  let fail = false;
+  let reads = 0;
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal("navigator", {
+    locks: {
+      request: async (_name: string, _options: unknown, run: (lock: Lock) => unknown) =>
+        run({} as Lock),
+    },
+  });
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/events"))
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              writer = controller;
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      reads++;
+      if (fail) return Response.json({ detail: "List temporarily unavailable" }, { status: 503 });
+      return Response.json({
+        items: [{ ...saved, name: reads > 1 ? "After retry" : saved.name }],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      });
+    }),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+  await screen.findByRole("button", { name: "Before retry" });
+  vi.useFakeTimers();
+  fail = true;
+  const failed = vi.fn();
+  const recovered = vi.fn();
+  const stop = watchPhotoEvents(
+    "scoped",
+    () => definitionsChanged("scoped"),
+    failed,
+    vi.fn(),
+    recovered,
+  );
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    writer.enqueue(new TextEncoder().encode('data: {"refetch":true}\n\n'));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(failed).toHaveBeenCalledOnce();
+    expect(reads).toBe(2);
+    fail = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(() => expect(recovered).toHaveBeenCalledOnce());
+    await tick();
+    expect(screen.getByRole("button", { name: "After retry" })).toBeTruthy();
+    expect(reads).toBe(3);
+  } finally {
+    stop();
+    vi.useRealTimers();
+    albums.dispose();
+    await cache.dispose();
+  }
 });

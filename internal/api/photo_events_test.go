@@ -109,7 +109,7 @@ func TestPhotoEventsRejectsRequestsWithoutAPIKey(t *testing.T) {
 	require.Equal(t, "unauthorized", problem.Code)
 }
 
-func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
+func TestPhotoEventsLockedStreamStaysSilentForAnotherSessionsHiddenEdit(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
@@ -118,7 +118,7 @@ func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	lockedResponse, lockedScanner := openPhotoEventStream(t, ts, "", nil)
 	require.True(t, readPhotoChange(t, lockedScanner, lockedResponse.Body).Refetch)
@@ -128,8 +128,15 @@ func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
 	require.True(t, readPhotoChange(t, scanner, response.Body).Refetch)
 	_, _, err = s.Move(ctx, node.ID, s.RootID(), "hidden-renamed.jpg", node.Revision)
 	require.NoError(t, err)
-	require.Equal(t, `{"refetch":true}`, readPhotoChangeData(t, lockedScanner, lockedResponse.Body))
-	require.Equal(t, asset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
+	asset, err = s.PhotoAssetForNode(store.WithPhotoHiddenToken(ctx, unlocked.Cookies()[0].Value), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.PhotoEvent{AssetID: asset.ID, Revision: asset.Revision}, readPhotoChange(t, scanner, response.Body))
+	// A visible commit is an ordering barrier: any Hidden wakeup would arrive first.
+	visible, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", testHash("visible"), 4, "image/jpeg")
+	require.NoError(t, err)
+	visibleAsset, err := s.PhotoAssetForNode(ctx, visible.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.PhotoEvent{AssetID: visibleAsset.ID, Revision: visibleAsset.Revision}, readPhotoChange(t, lockedScanner, lockedResponse.Body))
 }
 
 func TestPhotoEventsStreamEndsOnShutdownOrSessionRevocation(t *testing.T) {

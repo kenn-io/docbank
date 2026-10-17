@@ -4,7 +4,7 @@ import { tick } from "svelte";
 import PhotoSmartSet from "./PhotoSmartSet.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoAlbums } from "./photoAlbums.svelte.js";
-import { updateSavedQuery } from "./savedQueries.js";
+import { updateSavedQuery, definitionsChanged } from "./savedQueries.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 import { savedSmartSet as savedSmartSetFixture } from "./photo-test-fixtures.js";
 import * as generated from "./generated/docbank.js";
@@ -492,6 +492,37 @@ it("keeps a frozen result when album saving waits for another album change", asy
   expect(photos.frozen).toBe(frozen);
   expect(photos.frozenExpired).toBe(false);
   expect(fetcher).not.toHaveBeenCalled();
+  photos.dispose();
+  albums.dispose();
+});
+
+it("rejects active-definition failures, recovers the name, and accepts deletion", async () => {
+  const photos = new Photos("session", vi.fn());
+  const saved = savedSmartSetFixture(
+    photos.savedPhotoQuery,
+    await queryFingerprint(photos.savedPhotoQuery),
+  );
+  photos.smartSet = saved;
+  const albums = new PhotoAlbums("session", vi.fn());
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(Response.json({ detail: "Definition unavailable" }, { status: 503 }));
+  vi.stubGlobal("fetch", fetch);
+  render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
+  await tick();
+  await expect(definitionsChanged("session")).rejects.toThrow("Definition unavailable");
+  expect(photos.smartSet?.name).toBe(saved.name);
+  fetch.mockResolvedValue(
+    Response.json(
+      { ...saved, name: "Renamed definition", revision: 2 },
+      { headers: { ETag: '"2"' } },
+    ),
+  );
+  await definitionsChanged("session");
+  await screen.findByText("Renamed definition");
+  fetch.mockResolvedValue(Response.json({ detail: "gone" }, { status: 404 }));
+  await definitionsChanged("session");
+  expect(photos.smartSet).toBeUndefined();
   photos.dispose();
   albums.dispose();
 });

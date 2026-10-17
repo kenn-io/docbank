@@ -28,7 +28,7 @@
   let smartTotal = $state(0);
   let smartLoading = $state(false);
   let smartGeneration = 0;
-  async function loadSmartSets(reset = false) {
+  async function loadSmartSets(reset = false, signal?: AbortSignal) {
     if (smartLoading && !reset) return;
     const generation = reset ? ++smartGeneration : smartGeneration;
     if (reset) {
@@ -39,7 +39,8 @@
     smartLoading = true;
     smartError = "";
     try {
-      const page = await listSavedQueries(albums.session, "query", smartOffset, 100, true);
+      const page = await listSavedQueries(albums.session, "query", smartOffset, 100, true, signal);
+      signal?.throwIfAborted();
       if (!alive || generation !== smartGeneration) return;
       const seen = new Set(smartSets.map((saved) => saved.id));
       for (const saved of page.items)
@@ -54,15 +55,16 @@
         if (cause instanceof APIError && cause.status === 401) albums.onauthfailure(cause);
         smartError = cause instanceof Error ? cause.message : String(cause);
       }
+      throw cause;
     } finally {
       if (alive && generation === smartGeneration) smartLoading = false;
     }
   }
   onMount(() => {
     if (!onopensmart) return;
-    void loadSmartSets();
-    return subscribeSavedQueries((session) => {
-      if (session === albums.session) void loadSmartSets(true);
+    void loadSmartSets().catch(() => {});
+    return subscribeSavedQueries((session, signal) => {
+      if (session === albums.session) return loadSmartSets(true, signal);
     });
   });
   let alive = true;
@@ -115,11 +117,13 @@
           </li>{/each}
       </ul>{/if}
     {#if smartError}<p role="alert">
-        {smartError}<Button onclick={() => void loadSmartSets()}>Retry smart sets</Button>
+        {smartError}<Button onclick={() => void loadSmartSets().catch(() => {})}
+          >Retry smart sets</Button
+        >
       </p>{/if}
     {#if smartOffset < smartTotal}<Button
         disabled={smartLoading}
-        onclick={() => void loadSmartSets()}>Load more smart sets</Button
+        onclick={() => void loadSmartSets().catch(() => {})}>Load more smart sets</Button
       >{/if}
   </section>
   {#if !creating}<PhotoAlbumPending {albums} {onnavigate} />{/if}

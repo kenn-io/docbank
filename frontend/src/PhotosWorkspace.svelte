@@ -384,7 +384,7 @@
         }
       })
       .catch((cause) => {
-        signal.throwIfAborted();
+        controller.signal.throwIfAborted();
         detailError = cause instanceof Error ? cause.message : String(cause);
         if (cause instanceof APIError && cause.status === 404) {
           direct = undefined;

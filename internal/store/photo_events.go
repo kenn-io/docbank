@@ -91,12 +91,6 @@ func (s *Store) photoChangeCursor(unlocked bool) string {
 	return fmt.Sprintf("%s:visible:%d", f.cursorID, f.visibleCursor)
 }
 
-func (s *Store) hasActivePhotoHiddenSession() bool {
-	s.photoHiddenSessionsMu.Lock()
-	defer s.photoHiddenSessionsMu.Unlock()
-	return s.scanPhotoHiddenSessions()
-}
-
 // Caller holds photoHiddenSessionsMu. Expiry cleanup is shared with unlock.
 func (s *Store) scanPhotoHiddenSessions() bool {
 	now := s.hiddenNow()
@@ -162,7 +156,7 @@ func (s *Store) publishPhotoChanges(events []PhotoEvent) {
 	}
 }
 
-// VisiblePhotoEvents checks a delivery batch with one asset read and one Hidden session check.
+// VisiblePhotoEvents filters a delivery batch by the requesting viewer's Hidden session.
 func (s *Store) VisiblePhotoEvents(ctx context.Context, events []PhotoEvent) ([]PhotoEvent, error) {
 	ids := make([]string, 0, len(events))
 	for _, event := range events {
@@ -205,14 +199,13 @@ func (s *Store) VisiblePhotoEvents(ctx context.Context, events []PhotoEvent) ([]
 	if err != nil {
 		return nil, err
 	}
-	unlocked, relay := false, false
+	unlocked := false
 	if hidden {
 		_, err := s.hiddenSession(ctx, s.db)
 		if err != nil && !errors.Is(err, ErrHiddenLocked) && !errors.Is(err, ErrHiddenNotConfigured) {
 			return nil, err
 		}
 		unlocked = err == nil
-		relay = !unlocked && s.hasActivePhotoHiddenSession()
 	}
 	visible := make([]PhotoEvent, 0, len(events))
 	for _, event := range events {
@@ -223,9 +216,6 @@ func (s *Store) VisiblePhotoEvents(ctx context.Context, events []PhotoEvent) ([]
 				continue
 			}
 			if state.hidden && !unlocked {
-				if relay {
-					visible = append(visible, PhotoEvent{Refetch: true})
-				}
 				continue
 			}
 			event.Revision = state.revision

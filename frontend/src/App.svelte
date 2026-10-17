@@ -2421,9 +2421,12 @@
 
   async function refreshPhotoDefinitions(signal?: AbortSignal): Promise<void> {
     const session = webSession;
-    definitionsChanged(session);
     // The catalog page shows unassigned renames; assigned definitions may sit outside that page.
-    const [tags] = await Promise.all([assignedPhotoTags(), loadTagCatalog(false, true, signal)]);
+    const [tags] = await Promise.all([
+      assignedPhotoTags(),
+      loadTagCatalog(false, true, signal),
+      definitionsChanged(session, signal),
+    ]);
     if (session === webSession) tagCatalog = sortTags(mergePhotoTags(tagCatalog, tags));
   }
 

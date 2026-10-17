@@ -64,7 +64,7 @@ func TestPhotoEventsDeliveryAndRollback(t *testing.T) {
 		visible, err := s.VisiblePhotoEvents(viewer, []PhotoEvent{event})
 		require.NoError(t, err)
 		if viewer == ctx {
-			require.Equal(t, []PhotoEvent{{Refetch: true}}, visible)
+			require.Empty(t, visible)
 		} else {
 			require.Equal(t, asset.ID, visible[0].AssetID)
 			require.Equal(t, asset.Revision+1, visible[0].Revision)
@@ -137,14 +137,22 @@ func TestPhotoEventsArrivalAndUnlockDuringWrite(t *testing.T) {
 func TestPhotoEventsOverflow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
 	ch, stop := s.SubscribePhotoEvents()
 	defer stop()
-	events := make([]PhotoEvent, 65)
-	for i := range events {
-		events[i] = PhotoEvent{AssetID: "photo"}
+	for i := range 65 {
+		asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, i%2 == 0)
+		require.NoError(t, err)
 	}
-	s.publishPhotoChanges(events)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, ch))
+	noPhotoEvent(t, ch)
+	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	require.Equal(t, PhotoEvent{AssetID: asset.ID, Revision: asset.Revision}, nextPhotoEvent(t, ch))
 	noPhotoEvent(t, ch)
 }
 
@@ -184,7 +192,7 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 	viewer := WithPhotoHiddenToken(ctx, token)
 	unlocked := cursor(viewer)
 	write()
-	require.NotEqual(t, locked, cursor(ctx), "locked holders receive the bare wakeup for unlocked followers")
+	require.Equal(t, locked, cursor(ctx), "another viewer unlocking does not expose Hidden changes")
 	require.NotEqual(t, unlocked, cursor(viewer))
 	locked = cursor(ctx)
 	rejected := errors.New("rollback")
@@ -260,7 +268,7 @@ func TestPhotoEventsBatchVisibility(t *testing.T) {
 	require.Equal(t, []PhotoEvent{{AssetID: visible.ID, Revision: visible.Revision}, {AssetID: hidden.ID, Revision: hidden.Revision}, {Refetch: true}}, events)
 	events, err = s.VisiblePhotoEvents(ctx, batch[:2])
 	require.NoError(t, err)
-	require.Equal(t, []PhotoEvent{{AssetID: visible.ID, Revision: visible.Revision}, {Refetch: true}}, events)
+	require.Equal(t, []PhotoEvent{{AssetID: visible.ID, Revision: visible.Revision}}, events)
 }
 
 func TestPhotoEventsKeepCommittedBatch(t *testing.T) {
