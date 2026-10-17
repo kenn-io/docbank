@@ -689,7 +689,7 @@ func TestLookupPhotoFlags(t *testing.T) {
 			} else if size == -1 {
 				ids = []string{"invalid"}
 			} else if size == -2 {
-				ids = []string{strings.ToUpper(liveID)}
+				ids = []string{"ABCDEF01-2345-4678-89AB-CDEF01234567"}
 			}
 			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/flags", nil, api.LookupPhotoFlagsRequest{AssetIDs: ids})
 			if size <= 0 || size > 20000 {

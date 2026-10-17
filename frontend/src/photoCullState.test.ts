@@ -779,6 +779,56 @@ it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", 
   expect(cull.remainder).toBe(false);
 });
 
+it("preserves the pass and saved checkpoint when the second flag batch fails", async () => {
+  const ids = Array.from({ length: 20_001 }, (_, index) => photo(index + 1).asset_id);
+  const store = storage();
+  const cull = new PhotoCull("session", store);
+  cull.run = {
+    ids,
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: ids,
+      position: ids.length,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+  await store.replace(cull.run);
+  const before = structuredClone(cull.run);
+  let reject!: (cause: Error) => void;
+  const lookup = vi
+    .spyOn(api, "lookupPhotoFlags")
+    .mockResolvedValueOnce({
+      items: ids.slice(0, 19_999).map((asset_id) => ({ asset_id, flag: "pick" })),
+    })
+    .mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+  const changing = cull.nextPass();
+  await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+  expect(lookup.mock.calls[0]![0]).toEqual({ asset_ids: ids.slice(0, 20_000) });
+  expect(lookup.mock.calls[1]![0]).toEqual({ asset_ids: [ids[20_000]] });
+  expect(cull.run).toEqual(before);
+  expect(await store.load()).toEqual(before);
+  reject(new Error("Second batch unavailable"));
+  await changing;
+  await cull.flush();
+  expect(cull.run).toEqual(before);
+  expect(await store.load()).toEqual(before);
+  expect(store.checkpoint).not.toHaveBeenCalled();
+  expect(cull.error).toBe("Second batch unavailable");
+  expect(cull.progress).toBe("");
+  expect(cull.busy).toBe(false);
+});
+
 it("skips the flag request for an empty run", async () => {
   const cull = new PhotoCull("session", storage());
   cull.run = {
