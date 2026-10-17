@@ -45,6 +45,7 @@ import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 import type { PhotoCull } from "./photoCull.svelte.js";
+import { fittedPhotoView, type PhotoView } from "./photoView.js";
 
 export const maxComparePhotos = 8;
 export const photoQuery = parseQuery(
@@ -178,6 +179,10 @@ export class Photos {
   cull?: PhotoCull;
   cullVaultID = "";
   culling = $state(false);
+  comparing = $state(false);
+  compareIDs = $state.raw<string[]>([]);
+  compareView = $state<PhotoView>({ ...fittedPhotoView });
+  compareCrop = $state<PhotoView>();
   editScopeRevision = $state(0);
   private changeEditScope() {
     if (!this.authored.canChangeTarget()) return false;

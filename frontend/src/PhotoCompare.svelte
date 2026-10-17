@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { Button, Modal } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
+  import { fittedPhotoView, toggleActualPhotoView } from "./photoView.js";
   import PhotoStage from "./PhotoStage.svelte";
   let {
     ids,
@@ -14,14 +14,12 @@
     cache,
     onclose,
   }: { ids: string[]; photos: Photos; cache: PhotoPreviewCache; onclose: () => void } = $props();
-  let selected = $state<string[]>([]);
-  let target = $state<string[]>([]);
+  let selected = $state<string[]>(untrack(() => [...ids]));
+  let target = $state<string[]>(untrack(() => [...ids]));
   let rows = $state.raw<PhotoBrowseRow[]>([]);
   let unavailable = $state(0);
   let errors = $state.raw<string[]>([]);
-  let view = $state<PhotoView>({ ...fittedPhotoView });
   let regionMode = $state(false);
-  let crop = $state<PhotoView>();
   let moving = $state(false);
   let navigationError = $state("");
   let retryDirection = $state<-1 | 1>(1);
@@ -29,9 +27,6 @@
   let loading = $state(false);
   onMount(() => {
     void restoreFocus();
-  });
-  $effect(() => {
-    selected = target = [...ids];
   });
   $effect(() => {
     const members = target;
@@ -45,8 +40,14 @@
           selected = members;
           rows = values;
           unavailable = members.length - values.length;
-          view = { ...fittedPhotoView };
-          crop = undefined;
+          if (
+            members.some((id, index) => id !== photos.compareIDs[index]) ||
+            members.length !== photos.compareIDs.length
+          ) {
+            photos.compareView = { ...fittedPhotoView };
+            photos.compareCrop = undefined;
+          }
+          photos.compareIDs = members;
           void restoreFocus();
         }
       })
@@ -87,11 +88,11 @@
       void move(event.key === "ArrowLeft" ? -1 : 1);
     } else if (event.key.toLowerCase() === "z") {
       event.preventDefault();
-      view = toggleActualPhotoView(view);
+      photos.compareView = toggleActualPhotoView(photos.compareView);
     }
   }
   function region(value: { x: number; y: number; width: number; height: number }) {
-    crop = {
+    photos.compareCrop = {
       scale: Math.min(32, Math.max(1, 1 / Math.max(value.width, value.height))),
       x: value.x,
       y: value.y,
@@ -139,14 +140,19 @@
             photos.loading ||
             (!photos.cursor && selected.some((id) => id === photos.items.at(-1)?.asset_id))}
           onclick={() => void move(1)}>Next</Button
-        ><Button size="sm" onclick={() => (view = toggleActualPhotoView(view))}>1:1 (Z)</Button
+        ><Button
+          size="sm"
+          onclick={() => (photos.compareView = toggleActualPhotoView(photos.compareView))}
+          >1:1 (Z)</Button
         ><Button
           size="sm"
           onclick={() => {
             regionMode = !regionMode;
-            view = { ...fittedPhotoView };
+            photos.compareView = { ...fittedPhotoView };
           }}>Manual closeup</Button
-        >{#if crop}<Button size="sm" onclick={() => (crop = undefined)}>Clear closeup</Button>{/if}
+        >{#if photos.compareCrop}<Button size="sm" onclick={() => (photos.compareCrop = undefined)}
+            >Clear closeup</Button
+          >{/if}
       </header>
       {#if regionMode}<p role="status">
           Click or draw on a frame, or focus it and use arrow keys to position a closeup. Press
@@ -176,11 +182,11 @@
               {photo}
               {photos}
               {cache}
-              {view}
+              view={photos.compareView}
               onfocus={restoreFocus}
               onreload={reload}
               onunavailable={(message) => remove(photo.asset_id, message)}
-              onview={(value) => (view = value)}
+              onview={(value) => (photos.compareView = value)}
               onmove={move}
               {regionMode}
               onregion={region}
@@ -188,7 +194,7 @@
             />
           </section>{/each}
       </div>
-      {#if crop}<div
+      {#if photos.compareCrop}<div
           class="closeups"
           aria-label="Matching closeups"
           style={`--columns: ${Math.min(4, rows.length)}`}
@@ -199,8 +205,8 @@
                 {photo}
                 {photos}
                 {cache}
-                view={crop}
-                onview={(value) => (crop = value)}
+                view={photos.compareCrop}
+                onview={(value) => (photos.compareCrop = value)}
                 onfocus={restoreFocus}
                 onreload={reload}
                 onunavailable={(message) => remove(photo.asset_id, message)}

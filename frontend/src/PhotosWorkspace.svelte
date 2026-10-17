@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fittedPhotoView } from "./photoView.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     Button,
@@ -116,9 +117,8 @@
   } = $props();
   let cull = $state.raw<CullRun>();
   const culling = $derived(photos.culling);
-  let comparing = $state(false);
+  const comparing = $derived(photos.comparing);
   let enteringReview = false;
-  let compareIDs = $state<string[]>([]);
   let returnFocus: HTMLElement | undefined;
   $effect(() => {
     const owner = photos;
@@ -155,11 +155,17 @@
   function compare() {
     if (enteringReview || culling || comparing || !editor.canChangeTarget()) return;
     returnFocus = document.activeElement as HTMLElement;
-    compareIDs = [...photos.selectedIDs];
-    if (compareIDs.length >= 2 && compareIDs.length <= maxComparePhotos) comparing = true;
+    const ids = [...photos.selectedIDs];
+    if (ids.length >= 2 && ids.length <= maxComparePhotos) {
+      photos.compareIDs = ids;
+      photos.comparing = true;
+    }
   }
   async function closeReview() {
-    photos.culling = comparing = false;
+    photos.culling = photos.comparing = false;
+    photos.compareIDs = [];
+    photos.compareView = { ...fittedPhotoView };
+    photos.compareCrop = undefined;
     photos.cullEditor?.dispose();
     photos.cullEditor = undefined;
     await cull?.flush();
@@ -723,7 +729,7 @@
     onclose={() => void closeReview()}
   />{/if}
 {#if comparing}<PhotoCompare
-    ids={compareIDs}
+    ids={photos.compareIDs}
     {photos}
     {cache}
     onclose={() => void closeReview()}
