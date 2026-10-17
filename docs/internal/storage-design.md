@@ -534,6 +534,8 @@ description in the key. Missing source paths return SQL NULL. The timeline
 prefixes the capture-time zone lane and leaves the key NULL when a precise
 EXIF clock or a unique source folder is unavailable. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
 
+Burst grouping partitions photos by the timeline `folder_key` and the displayed technical metadata's `camera_make_folded` and `camera_model_folded` before chaining capture times. Each camera field requires equal folded values; two missing values match, while a missing value and a known value stay separate. Interleaved camera streams keep separate chains. Stacked page cursors bind the gap and a fingerprint of relevant boundary membership, including the folded camera fields. A changed fingerprint requires a fresh page, so camera metadata changes at that boundary cannot silently omit frames.
+
 ### Photo quality signals
 
 Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.

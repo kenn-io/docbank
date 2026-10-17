@@ -712,7 +712,7 @@ With capture-time sorting, Library groups adjacent photos from one import folder
 
 Library pages stay live. A page finishes its last stack, so it can hold up to 499 frames more than usual, and a stack never splits across pages. Photos imported between pages join later pages. Changing the gap starts a fresh page.
 
-If a burst gains or loses matching frames across a page boundary, Library asks you to retry. Retry starts a fresh result so every matching frame stays with its stack.
+If a burst gains or loses matching frames across a page boundary, including after a camera metadata change, Library asks you to retry. Retry starts a fresh result so every matching frame stays with its stack.
 
 Selecting a collapsed tile selects all its frames. Click the count to expand or collapse it; expanded frames can be selected separately. The tile shows the stack's representative: the frame most recently chosen with **Choose representative**, else the only picked frame, else the first frame. A pick on a RAW or JPEG companion counts as a pick for its frame. When a wider gap joins stacks that each have a chosen representative, the most recent choice wins.
 
