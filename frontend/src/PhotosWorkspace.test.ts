@@ -3258,7 +3258,7 @@ it("shows the clicked person's name while its ID remains in the query", async ()
   await cache.dispose();
 });
 
-it("keeps faces when opening Loupe and clears them before failed Map navigation", async () => {
+async function facesWorkspaceSetup() {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -3299,6 +3299,11 @@ it("keeps faces when opening Loupe and clears them before failed Map navigation"
   const component = render(PhotosWorkspace, props);
   await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
   await screen.findByRole("button", { name: "Find or create a person: Ada" });
+  return { component, props, onphotochange, photos, read };
+}
+
+it("keeps loaded faces when opening Loupe", async () => {
+  const { component, props, onphotochange, read } = await facesWorkspaceSetup();
   await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
   expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
   await component.rerender({ ...props, photoID: "photo-1" });
@@ -3310,6 +3315,10 @@ it("keeps faces when opening Loupe and clears them before failed Map navigation"
   await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
   await within(loupe).findByRole("button", { name: "Find or create a person: Ada" });
   expect(read).toHaveBeenCalledOnce();
+});
+
+it("clears loaded faces before failed Map navigation", async () => {
+  const { component, props, photos, read } = await facesWorkspaceSetup();
   vi.spyOn(photos, "lookup").mockRejectedValue(new Error("Photo unavailable"));
   await component.rerender({ ...props, mapMode: true, photoID: "photo-2" });
   await screen.findByText("Photo unavailable");

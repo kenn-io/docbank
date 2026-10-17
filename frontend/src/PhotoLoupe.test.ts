@@ -688,59 +688,66 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   expect(screen.queryByText("File modified")).toBeNull();
 });
 
+async function regionImageSetup(minimumRegionDrag = true) {
+  setup();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const onregion = vi.fn();
+  const component = render(PhotoLoupeImage, {
+    url: "blob:synthetic",
+    name: "Portrait",
+    view: { scale: 1, x: 0.5, y: 0.5, actual: false },
+    onzoom: vi.fn(),
+    onmove: vi.fn(),
+    regionMode: true,
+    minimumRegionDrag,
+    onregion,
+    faces: [{ id: "face-a", label: "Ada", box: { x: 0.2, y: 0.3, width: 0.2, height: 0.2 } }],
+  });
+  const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
+  viewport.setPointerCapture = vi.fn();
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 1000,
+    bottom: 400,
+    width: 1000,
+    height: 400,
+    toJSON: vi.fn(),
+  });
+  const image = screen.getByRole("img", { name: "Portrait" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  return { component, viewport, onregion };
+}
+
+it("discards a drag after leaving region mode", async () => {
+  const { component, viewport, onregion } = await regionImageSetup();
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
+  );
+  await component.rerender({ regionMode: false });
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(onregion).not.toHaveBeenCalled();
+  await component.rerender({ regionMode: true });
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(onregion).not.toHaveBeenCalled();
+});
+
 it.each([true, false])(
-  "discards stale drags and maps regions, markers, and labels with minimum drag=%s",
+  "maps drags and click defaults with minimum drag=%s",
   async (minimumRegionDrag) => {
-    setup();
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-    const onregion = vi.fn();
-    const component = render(PhotoLoupeImage, {
-      url: "blob:synthetic",
-      name: "Portrait",
-      view: { scale: 1, x: 0.5, y: 0.5, actual: false },
-      onzoom: vi.fn(),
-      onmove: vi.fn(),
-      regionMode: true,
-      minimumRegionDrag,
-      onregion,
-      faces: [{ id: "face-a", label: "Ada", box: { x: 0.2, y: 0.3, width: 0.2, height: 0.2 } }],
-    });
-    const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
-    viewport.setPointerCapture = vi.fn();
-    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-      right: 1000,
-      bottom: 400,
-      width: 1000,
-      height: 400,
-      toJSON: vi.fn(),
-    });
-    const image = screen.getByRole("img", { name: "Portrait" });
-    Object.defineProperty(image, "naturalWidth", { value: 1000 });
-    Object.defineProperty(image, "naturalHeight", { value: 800 });
-    await fireEvent.load(image);
-    if (minimumRegionDrag) {
-      await fireEvent(
-        viewport,
-        new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
-      );
-      await component.rerender({ regionMode: false });
-      await fireEvent(
-        viewport,
-        new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
-      );
-      expect(onregion).not.toHaveBeenCalled();
-      await component.rerender({ regionMode: true });
-      await fireEvent(
-        viewport,
-        new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
-      );
-      expect(onregion).not.toHaveBeenCalled();
-    }
+    const { component, viewport, onregion } = await regionImageSetup(minimumRegionDrag);
     onregion.mockClear();
     const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
     for (const [type, x, y] of [
@@ -778,21 +785,25 @@ it.each([true, false])(
         height: expect.closeTo(0.00375, 8),
       });
     }
-    if (!minimumRegionDrag) return;
-    await component.rerender({ view: { scale: 1, x: 0.5, y: 0.5, actual: false } });
-    await fireEvent.keyDown(position, { key: "ArrowLeft" });
-    const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
-    expect(marker.style.left).toBe("475px");
-    expect(marker.style.top).toBe("200px");
-    expect(marker.style.width).toBe("75px");
-    expect(marker.style.height).toBe("60px");
-    await component.rerender({ view: { scale: 8, x: 0.5, y: 0.5, actual: false } });
-    expect(component.container.querySelector<HTMLElement>(".face-box span")!.style.transform).toBe(
-      "scale(0.125)",
-    );
-    expect(component.container.querySelector<HTMLElement>(".face-box")!.style.width).toBe("20%");
-    expect(component.container.querySelector<HTMLElement>(".pan")!.style.transform).toContain(
-      "scale(8)",
-    );
   },
 );
+
+it("scales region markers and face labels with the image", async () => {
+  const { component } = await regionImageSetup();
+  const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
+  await component.rerender({ view: { scale: 1, x: 0.5, y: 0.5, actual: false } });
+  await fireEvent.keyDown(position, { key: "ArrowLeft" });
+  const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
+  expect(marker.style.left).toBe("475px");
+  expect(marker.style.top).toBe("200px");
+  expect(marker.style.width).toBe("75px");
+  expect(marker.style.height).toBe("60px");
+  await component.rerender({ view: { scale: 8, x: 0.5, y: 0.5, actual: false } });
+  expect(component.container.querySelector<HTMLElement>(".face-box span")!.style.transform).toBe(
+    "scale(0.125)",
+  );
+  expect(component.container.querySelector<HTMLElement>(".face-box")!.style.width).toBe("20%");
+  expect(component.container.querySelector<HTMLElement>(".pan")!.style.transform).toContain(
+    "scale(8)",
+  );
+});

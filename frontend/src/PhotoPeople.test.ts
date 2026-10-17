@@ -344,62 +344,32 @@ it.each(["person-b", "new", "cancel", "assigned"])(
   },
 );
 
-it("distinguishes namesakes with the same date and no photos by identity", async () => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
-  const search = vi.spyOn(api, "listPeople").mockResolvedValue({
-    items: ["alex-a@example.test", "alex-b@example.test", ""].map((identity_label, index) => ({
-      person_id: `person-${index}`,
-      display_name: "Alex Smith",
-      display_name_folded: "alex smith",
-      created_at: "2026-01-01T00:00:00Z",
-      state: "curated",
-      revision: 1,
-      identity_label,
-    })),
-    next_cursor: "different-name",
-  });
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: [],
-  } as unknown as api.PhotoBrowsePage);
-  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-  const faces = new PhotoFaces("session", vi.fn());
-  await faces.load("version-a");
-  render(PhotoPeople, { faces, session: "session" });
-  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex Smith · 3 people" }));
-  const dialog = await screen.findByRole("dialog", { name: "Choose Alex Smith" });
-  expect(within(dialog).getByText("alex-a@example.test")).toBeTruthy();
-  expect(
-    within(dialog).getByText(new Date("2026-01-01T00:00:00Z").toLocaleDateString()),
-  ).toBeTruthy();
-  await fireEvent.click(within(dialog).getByLabelText(/alex-b@example.test/));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Name face" }));
-  await waitFor(() =>
-    expect(write).toHaveBeenCalledWith(
-      "version-a",
-      expect.objectContaining({ person_id: "person-1" }),
-      expect.anything(),
-    ),
-  );
-  expect(search.mock.calls.some(([params]) => params?.cursor)).toBe(false);
-  faces.dispose();
-});
-
 it.each([
+  {
+    label: "distinct identities",
+    identity: "alex-a@example.test",
+    secondIdentity: "alex-b@example.test",
+    secondTime: "12:00:00",
+  },
   { label: "same creation time", identity: "", secondTime: "12:00:00" },
   { label: "same displayed date", identity: "", secondTime: "13:00:00" },
   { label: "shared identity", identity: "alex@example.test", secondTime: "13:00:00" },
-])("distinguishes namesakes by visible ID for $label", async ({ identity, secondTime }) => {
+])("distinguishes namesakes for $label", async ({ identity, secondIdentity, secondTime }) => {
   const ids = ["person-alex-a", "person-alex-b", "person-alex-c"];
+  const identities = [
+    identity,
+    secondIdentity ?? identity,
+    secondIdentity ? "" : "other@example.test",
+  ];
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
-  vi.spyOn(api, "listPeople").mockResolvedValue({
+  const search = vi.spyOn(api, "listPeople").mockResolvedValue({
+    next_cursor: "different-name",
     items: ids.map((person_id, index) => ({
       person_id,
       display_name: "Alex",
       display_name_folded: "alex",
       created_at: `2026-01-01T${index === 1 ? secondTime : "12:00:00"}Z`,
-      identity_label: index === 2 ? "other@example.test" : identity,
+      identity_label: identities[index],
       revision: 1,
       state: "curated",
     })),
@@ -414,10 +384,18 @@ it.each([
   await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 3 people" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
-  expect(dialog.getByText("person-alex-a")).toBeTruthy();
+  if (secondIdentity) {
+    expect(dialog.getByText("alex-a@example.test")).toBeTruthy();
+    expect(dialog.getByText(new Date("2026-01-01T12:00:00Z").toLocaleDateString())).toBeTruthy();
+    expect(dialog.queryByText("person-alex-a")).toBeNull();
+  } else {
+    expect(dialog.getByText("person-alex-a")).toBeTruthy();
+    expect(dialog.getByText("other@example.test")).toBeTruthy();
+  }
   expect(dialog.queryByText("person-alex-c")).toBeNull();
-  expect(dialog.getByText("other@example.test")).toBeTruthy();
-  await fireEvent.click(dialog.getByRole("radio", { name: /person-alex-b/ }));
+  await fireEvent.click(
+    dialog.getByRole("radio", { name: secondIdentity ? /alex-b@example.test/ : /person-alex-b/ }),
+  );
   await fireEvent.click(dialog.getByRole("button", { name: "Name face" }));
   await waitFor(() =>
     expect(write).toHaveBeenCalledWith(
@@ -426,6 +404,7 @@ it.each([
       expect.anything(),
     ),
   );
+  expect(search.mock.calls.some(([params]) => params?.cursor)).toBe(false);
   faces.dispose();
 });
 

@@ -37,6 +37,7 @@ it("wires face edits through Hidden access and conceals on lock", async () => {
   prepare();
   storage();
   let finish!: () => void;
+  const requests: string[] = [];
 
   vi.stubGlobal(
     "fetch",
@@ -46,17 +47,18 @@ it("wires face edits through Hidden access and conceals on lock", async () => {
       if (url.endsWith("/faces")) return Response.json(photoFacePage());
       if (url.includes("/people?")) return Response.json({ items: [] });
       if (url.endsWith("/face-decisions")) {
+        requests.push("decision");
         await new Promise<void>((resolve) => (finish = resolve));
         return Response.json({ receipt_id: "receipt-a" });
       }
       if (url.endsWith("/lock")) {
+        requests.push("lock");
         return Response.json(state(false));
       }
       return Response.json({});
     }),
   );
   const supplied = props();
-  const run = vi.spyOn(supplied.access, "run");
   const view = render(HiddenPhotos, supplied);
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
@@ -65,11 +67,12 @@ it("wires face edits through Hidden access and conceals on lock", async () => {
   );
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect(run).toHaveBeenCalled();
-  finish();
   const locking = view.component.lock();
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
+  expect(requests).toEqual(["decision"]);
+  finish();
   await locking;
+  expect(requests).toEqual(["decision", "lock"]);
 });
 
 it("waits for a held leave lock before redisplaying on return", async () => {

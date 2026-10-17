@@ -245,7 +245,6 @@ func TestPeopleCursorRejectsChangedQuery(t *testing.T) {
 			require.Len(t, first.Items, 1)
 			require.Equal(t, "Ada One", first.Items[0].DisplayName)
 			require.NotEmpty(t, first.NextCursor)
-			require.False(t, first.SameNameContinues)
 			response = srv.get(t, path+"&limit=10&cursor="+first.NextCursor)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 			var remaining api.PersonPage
