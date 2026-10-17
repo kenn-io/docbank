@@ -31,6 +31,7 @@ func check(err error) {
 
 func main() {
 	namesakes := flag.Bool("namesakes", false, "Include people with the same name and distinct identities")
+	faceSearch := flag.Bool("face-search", false, "Include later people-search matches and a rotated namesake preview")
 	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
@@ -66,6 +67,16 @@ func main() {
 				Kind: "email", ValueDisplay: email, Origin: "operator", EvidenceKind: "operator_assertion",
 				EvidenceID: "synthetic-chooser", Confidence: "operator_asserted",
 			})
+			check(err)
+		}
+	}
+	if *faceSearch {
+		for index := range 100 {
+			_, err := s.CreatePerson(ctx, fmt.Sprintf("Aaron %03d Smith", index), "operator")
+			check(err)
+		}
+		for _, name := range []string{"Smith", "Robin", "Robin"} {
+			_, err := s.CreatePerson(ctx, name, "operator")
 			check(err)
 		}
 	}
@@ -197,7 +208,7 @@ func main() {
 			node, err = s.CreateFile(ctx, s.RootID(), name, item.hash, item.size, "image/jpeg")
 		}
 		check(err)
-		if (*rotateCover || *manyKeywords) && index == 0 {
+		if (*rotateCover || *manyKeywords || *faceSearch) && index == 0 {
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
 			check(err)
 			firstAssetID = asset.ID
@@ -258,18 +269,20 @@ func main() {
 		}
 		seedRejects(ctx, s)
 	}
-	if *rotateCover {
+	if *rotateCover || *faceSearch {
 		first, err := s.PhotoAssetByID(ctx, firstAssetID)
 		check(err)
 		prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{first.ID}})
 		check(err)
 		_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: editTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rotation: new(90)}})
 		check(err)
-		cover := &first.ID
-		current, err := s.PhotoSet(ctx, album.ID, "")
-		check(err)
-		_, err = s.UpdatePhotoSet(ctx, album.ID, current.Revision, nil, nil, &cover)
-		check(err)
+		if *rotateCover {
+			cover := &first.ID
+			current, err := s.PhotoSet(ctx, album.ID, "")
+			check(err)
+			_, err = s.UpdatePhotoSet(ctx, album.ID, current.Revision, nil, nil, &cover)
+			check(err)
+		}
 	}
 	check(s.Checkpoint(ctx))
 	fmt.Printf("seeded %d synthetic photos\n", count)
