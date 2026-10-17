@@ -12,8 +12,9 @@ import (
 // not join. Provenance can come from a Windows backup: absolute drive and UNC
 // paths use portable separators, while POSIX paths preserve backslashes and Unicode bytes. Both
 // SQLite drivers call this function when they derive photo_timeline.folder_key.
+// Caller-supplied references stay opaque and cannot identify import folders.
 func PhotoFolderKey(sourceKind, sourceDesc, originalPath string) (string, bool) {
-	if originalPath == "" {
+	if originalPath == "" || strings.HasPrefix(sourceKind, "embedded:") {
 		return "", false
 	}
 	portable := strings.ReplaceAll(originalPath, `\`, "/")
