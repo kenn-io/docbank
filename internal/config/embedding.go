@@ -4,10 +4,26 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 
 	"go.kenn.io/kit/embedconfig"
 )
+
+// Kit's embedder accepts these, but the pinned adapter has no request field
+// for them; use model_input for document/query formatting.
+var unsupportedEmbedderKeys = []string{"document_prefix", "document_suffix", "query_prefix", "query_suffix", "request_dimensions"}
+
+func unsupportedEmbedderKey(md toml.MetaData) (string, bool) {
+	for _, key := range md.Keys() {
+		if len(key) == 4 && key[0] == "embedding_profiles" && key[2] == "embedder" && slices.Contains(unsupportedEmbedderKeys, key[3]) {
+			return key.String(), true
+		}
+	}
+	return "", false
+}
 
 // EmbeddingProfile resolves the preferred Kit configuration into the existing
 // immutable binding. It never reads credentials or modifies the source config.
