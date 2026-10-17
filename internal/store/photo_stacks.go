@@ -37,12 +37,21 @@ type PhotoStack struct {
 // photoStackFrame is one live asset's grouping input. Folder is empty when the
 // photo cannot join a stack.
 type photoStackFrame struct {
-	AssetID string
-	Folder  string
-	SortKey string
-	Rank    int64
-	Picked  bool
-	Files   int
+	AssetID     string
+	Folder      string
+	CameraMake  string
+	CameraModel string
+	SortKey     string
+	Rank        int64
+	Picked      bool
+	Files       int
+}
+
+// photoStackPartition separates camera streams before chaining capture times.
+type photoStackPartition struct{ folder, make, model string }
+
+func (frame photoStackFrame) partition() photoStackPartition {
+	return photoStackPartition{frame.Folder, frame.CameraMake, frame.CameraModel}
 }
 
 func comparePhotoStackFrames(a, b photoStackFrame) int {
@@ -66,7 +75,7 @@ func photoStackReach(key string, gap int, forward bool) (string, bool) {
 // photoStackChained reports whether next follows previous in one stack.
 func photoStackChained(previous, next photoStackFrame, gap int) bool {
 	reach, ok := photoStackReach(previous.SortKey, gap, true)
-	return ok && previous.Folder != "" && previous.Folder == next.Folder && next.SortKey <= reach
+	return ok && previous.Folder != "" && previous.partition() == next.partition() && next.SortKey <= reach
 }
 
 // groupPhotoStackFrames returns the stacks among frames, each in ascending
@@ -74,7 +83,7 @@ func photoStackChained(previous, next photoStackFrame, gap int) bool {
 func groupPhotoStackFrames(frames []photoStackFrame, gap int) [][]photoStackFrame {
 	frames = slices.DeleteFunc(slices.Clone(frames), func(frame photoStackFrame) bool { return frame.Folder == "" })
 	slices.SortFunc(frames, func(a, b photoStackFrame) int {
-		return cmp.Or(strings.Compare(a.Folder, b.Folder), comparePhotoStackFrames(a, b))
+		return cmp.Or(strings.Compare(a.Folder, b.Folder), strings.Compare(a.CameraMake, b.CameraMake), strings.Compare(a.CameraModel, b.CameraModel), comparePhotoStackFrames(a, b))
 	})
 	var groups [][]photoStackFrame
 	for start := 0; start < len(frames); {
@@ -137,14 +146,16 @@ const photoStackChoiceColumns = `COALESCE(a.representative_rank,0),
 // The display file's timeline row decides grouping. Only photos join stacks.
 const photoStackFileCount = `(SELECT COUNT(*) FROM photo_files live JOIN nodes ln ON ln.id=live.node_id WHERE live.asset_id=a.asset_id AND live.role!='sidecar' AND ln.trashed_at IS NULL)`
 
-const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackChoiceColumns + `,` + photoStackFileCount
+const photoStackCameraColumns = `COALESCE(p.camera_make_folded,''),COALESCE(p.camera_model_folded,'')`
+
+const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackCameraColumns + `,` + photoStackChoiceColumns + `,` + photoStackFileCount
 
 // photoStackFrames reads the live, visible members of ids. Missing IDs are unavailable.
 func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
 	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+` FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
-		if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.Rank, &frame.Picked, &frame.Files); err != nil {
+		if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.CameraMake, &frame.CameraModel, &frame.Rank, &frame.Picked, &frame.Files); err != nil {
 			return err
 		}
 		frames[frame.AssetID] = frame
@@ -437,7 +448,7 @@ func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrows
 		`pl.sort_key<=? AND pl.sort_key>=? AND (pl.sort_key<? OR a.asset_id<?) ORDER BY pl.sort_key DESC,a.asset_id DESC LIMIT ?`,
 		`pl.sort_key>=? AND pl.sort_key<=? AND (pl.sort_key>? OR a.asset_id>?) ORDER BY pl.sort_key ASC,a.asset_id ASC LIMIT ?`,
 	} {
-		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key,` + photoStackFileCount + ` FROM ` + photoStackProbeFrom + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND ` + bounds)
+		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key,` + photoStackFileCount + ` FROM ` + photoStackProbeFrom + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND COALESCE(p.camera_make_folded,'')=? AND COALESCE(p.camera_model_folded,'')=? AND ` + bounds)
 		if err == nil {
 			pager.args = args
 			pager.probes[i], err = preparer.PrepareContext(ctx, statement) //nolint:sqlclosecheck // Close releases both probes when the page ends.
@@ -473,14 +484,14 @@ func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, wi
 	if forward {
 		direction = 1
 	}
-	args := append(slices.Clone(p.args), current.Folder, current.SortKey, window, current.SortKey, current.AssetID, MaxPhotoStackFrames+1)
+	args := append(slices.Clone(p.args), current.Folder, current.CameraMake, current.CameraModel, current.SortKey, window, current.SortKey, current.AssetID, MaxPhotoStackFrames+1)
 	rows, err := p.probes[direction].QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
-		next := photoStackFrame{Folder: current.Folder}
+		next := photoStackFrame{Folder: current.Folder, CameraMake: current.CameraMake, CameraModel: current.CameraModel}
 		if err := rows.Scan(&next.AssetID, &next.SortKey, &next.Files); err != nil {
 			return nil, err
 		}
@@ -564,7 +575,7 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 	if after != nil && after.Missing {
 		return nil
 	}
-	folders := map[string][]photoStackFrame{}
+	partitions := map[photoStackPartition][]photoStackFrame{}
 	open, last := !exhausted, ""
 	for _, row := range batch {
 		if row.position.Missing {
@@ -573,7 +584,8 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 		}
 		last = row.position.Key
 		if row.folderKey != "" {
-			folders[row.folderKey] = append(folders[row.folderKey], photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, SortKey: row.position.Key, Files: p.fileCounts[row.AssetID]})
+			frame := photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, CameraMake: row.cameraMake, CameraModel: row.cameraModel, SortKey: row.position.Key, Files: p.fileCounts[row.AssetID]}
+			partitions[frame.partition()] = append(partitions[frame.partition()], frame)
 		}
 	}
 	start, end := "", ""
@@ -596,7 +608,7 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 		reach, ok := photoStackReach(frame.SortKey, p.gap, forward)
 		return ok && (forward && reach < edge || !forward && reach > edge)
 	}
-	for _, frames := range folders {
+	for _, frames := range partitions {
 		slices.SortFunc(frames, comparePhotoStackFrames)
 		for first := 0; first < len(frames); {
 			next := first + 1
@@ -621,7 +633,7 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 // classify returns the frames a raw row emits: the row alone, its whole stack
 // at the first member in scan order, or nothing for any other member.
 func (p *photoStackPager) classify(ctx context.Context, row PhotoBrowseRow) ([]photoStackFrame, error) {
-	frame := photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, SortKey: row.position.Key, Files: p.fileCounts[row.AssetID]}
+	frame := photoStackFrame{AssetID: row.AssetID, Folder: row.folderKey, CameraMake: row.cameraMake, CameraModel: row.cameraModel, SortKey: row.position.Key, Files: p.fileCounts[row.AssetID]}
 	if frame.Folder == "" || row.position.Missing {
 		return []photoStackFrame{frame}, nil
 	}
@@ -723,7 +735,7 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 		low, _ := photoStackReach(boundary.Key, p.gap, false)
 		high, _ := photoStackReach(boundary.Key, p.gap, true)
 		from, _, _ := photoBrowseOrder("capture_time")
-		statement, args, err := p.scope.bind(`SELECT a.asset_id,pl.folder_key,pl.sort_key,`+photoStackFileCount+` FROM `+from+` WHERE `+p.scope.where()+` AND a.kind='photo' AND pl.folder_key IS NOT NULL AND pl.sort_key>=? AND pl.sort_key<=?`, low, high)
+		statement, args, err := p.scope.bind(`SELECT a.asset_id,pl.folder_key,pl.sort_key,`+photoStackCameraColumns+`,`+photoStackFileCount+` FROM `+from+` WHERE `+p.scope.where()+` AND a.kind='photo' AND pl.folder_key IS NOT NULL AND pl.sort_key>=? AND pl.sort_key<=?`, low, high)
 		if err != nil {
 			return "", err
 		}
@@ -735,7 +747,7 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 		var seeds, members []photoStackFrame
 		for rows.Next() {
 			var frame photoStackFrame
-			if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.Files); err != nil {
+			if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.CameraMake, &frame.CameraModel, &frame.Files); err != nil {
 				return "", errors.Join(err, rows.Close())
 			}
 			seeds = append(seeds, frame)
@@ -765,7 +777,7 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 		}
 		slices.SortFunc(members, comparePhotoStackFrames)
 		for _, frame := range members {
-			_, _ = fmt.Fprintf(hash, "%q %q %q %d\n", frame.Folder, frame.AssetID, frame.SortKey, frame.Files)
+			_, _ = fmt.Fprintf(hash, "%q %q %q %q %q %d\n", frame.Folder, frame.CameraMake, frame.CameraModel, frame.AssetID, frame.SortKey, frame.Files)
 		}
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
