@@ -2167,7 +2167,7 @@ it("reopens the map where it was after a remount", async () => {
   photos.dispose();
 });
 
-function openMapViewerSetup(shortcuts?: ReturnType<typeof createShortcutManager>) {
+function openMapViewerSetup() {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -2196,7 +2196,6 @@ function openMapViewerSetup(shortcuts?: ReturnType<typeof createShortcutManager>
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
     photoID: "",
     onphotochange: vi.fn(),
-    shortcuts,
   };
   return { photos, lookup, preview, props, view: render(PhotosWorkspace, props) };
 }
@@ -2207,40 +2206,6 @@ async function openMapViewer({ props, view }: ReturnType<typeof openMapViewerSet
   await view.rerender({ ...props, photoID: "photo-1" });
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
 }
-it("keeps loupe shortcuts working while Map revalidates the open photo", async () => {
-  const shortcuts = createShortcutManager();
-  const setup = openMapViewerSetup(shortcuts);
-  const { photos, lookup } = setup;
-  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
-  const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async (request) => {
-    const before = preparedPhoto(1);
-    const values = request.rotation_delta
-      ? { ...before.values, rotation: 90 as const }
-      : { ...before.values, flag: "pick" as const };
-    return { receipt_id: "edit", before: [before], after: [{ ...before, revision: 2, values }] };
-  });
-  stubPhotoFetch(vi.fn(async () => Response.json({ error: "unavailable" }, { status: 503 })));
-  await openMapViewer(setup);
-  await waitFor(() => expect(lookup).toHaveBeenCalled());
-  await vi.waitFor(() => expect(screen.queryByText("Loading photo")).toBeNull());
-  const calls = lookup.mock.calls.length;
-  lookup.mockImplementation(() => new Promise(() => {}));
-  photos.items = [mapPhoto(1), mapPhoto(2)];
-  await waitFor(() => expect(lookup.mock.calls.length).toBeGreaterThan(calls));
-  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "p", cancelable: true }));
-  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
-  expect(Object.values(edit.mock.calls[0]![0].targets)).toMatchObject([
-    { content_version_id: "version-1" },
-  ]);
-  const pending = lookup.mock.calls[calls]![1] as AbortSignal;
-  await waitFor(() => expect(photos.authored.busy).toBe(false));
-  expect(pending.aborted).toBe(false);
-  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
-  await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(pending.aborted).toBe(true));
-  photos.dispose();
-});
-
 it("disables viewer continuation at the Map ceiling while retaining its cursor", async () => {
   const setup = openMapViewerSetup();
   const { photos, lookup, props, view } = setup;

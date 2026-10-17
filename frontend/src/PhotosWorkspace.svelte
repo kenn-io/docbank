@@ -263,7 +263,7 @@
       unavailable();
       return;
     }
-    if (photoID && (!current || (detailLoading && !revalidating))) {
+    if (photoID && !current) {
       editor.unavailable(
         detailError
           ? "Reload the photo before editing."
@@ -373,7 +373,6 @@
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
   let detailLoading = $state(false);
-  let revalidating = $state(false);
   let reload = $state.raw<{ id: string }>();
   let consumedReload = $state.raw<typeof reload>();
   let reloadedRow: Photos["items"][number] | undefined;
@@ -431,8 +430,6 @@
       return () => controller.abort();
     }
     detailLoading = true;
-    // A Map revalidation of a photo already on screen leaves the viewed version usable.
-    revalidating = !!photos.projection && !explicit && untrack(() => direct?.asset_id === id);
     const request = reload;
     const version = untrack(() => current?.content_version_id);
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
