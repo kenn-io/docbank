@@ -211,13 +211,13 @@ export class PhotoCull {
     for (let offset = 0; offset < ids.length; offset += flagLookupLimit) {
       signal.throwIfAborted();
       const batch = ids.slice(offset, offset + flagLookupLimit);
+      this.progress = `Checking ${offset} of ${ids.length} photos…`;
       const { items } = await lookupPhotoFlags(
         { asset_ids: batch },
         { session: this.session, signal },
       );
       signal.throwIfAborted();
       for (const row of items) flags.set(row.asset_id, row.flag);
-      this.progress = `Checking ${offset + batch.length} of ${ids.length} photos…`;
     }
     return flags;
   }

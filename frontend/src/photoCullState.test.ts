@@ -760,6 +760,7 @@ it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", 
     });
   const checking = cull.checkRemainder();
   await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+  expect(cull.progress).toBe("Checking 0 of 20001 photos…");
   expect(lookup.mock.calls[0]![0]).toEqual({ asset_ids: ids.slice(0, 20_000) });
   expect(lookup.mock.calls[0]![1]).toMatchObject({
     session: "session",
@@ -768,6 +769,7 @@ it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", 
   release({ items: ids.slice(0, 20_000).map((asset_id) => ({ asset_id, flag: "pick" })) });
   await checking;
   await cull.flush();
+  expect(cull.progress).toBe("");
   expect(lookup).toHaveBeenCalledTimes(2);
   expect(lookup.mock.calls[1]![0]).toEqual({ asset_ids: [ids[20_000]] });
   expect(cull.run.checkpoint.unavailable).toEqual([ids[20_000]]);
