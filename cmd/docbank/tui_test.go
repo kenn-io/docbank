@@ -331,7 +331,7 @@ func TestTUIBackendReportsScreensAndActionsThroughGeneratedRoute(t *testing.T) {
 	}, events)
 }
 
-func TestTUIInspectionTransportRetriesAndClaimsSuccessfulDay(t *testing.T) {
+func TestTUIInspectionTransportForwardsEachIntent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var sends int
 		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -354,9 +354,9 @@ func TestTUIInspectionTransportRetriesAndClaimsSuccessfulDay(t *testing.T) {
 		require.Error(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
 		require.NoError(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
 		require.NoError(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
-		require.Equal(t, 2, sends)
+		require.Equal(t, 3, sends)
 		time.Sleep(24 * time.Hour)
 		require.NoError(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
-		require.Equal(t, 3, sends)
+		require.Equal(t, 4, sends)
 	})
 }

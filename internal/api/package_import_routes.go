@@ -130,7 +130,7 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 		admitted, beginErr = d.Store.AdmitPackageImport(ctx, run, pkg, store.PackageImportJobRequest{
 			ID: uuid.NewString(), Owner: owner, OperationID: request.OperationID,
 			RequestSHA256: requestHash, PreflightID: preview.PreflightID,
-			PackageID: pkg.PackageID, JobJSON: jobJSON, ActionSurface: surface,
+			PackageID: pkg.PackageID, JobJSON: jobJSON, ActionSurface: d.actionSurface(surface),
 		})
 		return beginErr
 	})

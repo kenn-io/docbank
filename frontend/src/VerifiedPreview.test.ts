@@ -2,16 +2,11 @@ import bridgeSource from "./email-frame-bridge.js?raw";
 import { pageDigest } from "./pages.js";
 import { emailTupleDigest } from "./email-viewer.js";
 import { createHash } from "node:crypto";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import VerifiedPreview from "./VerifiedPreview.svelte";
 import type { SelectedSource } from "./selectedSource.js";
-
-let inspectionDay = 0;
-beforeEach(() => {
-  vi.setSystemTime(new Date(Date.UTC(2030, 0, ++inspectionDay)));
-});
 
 afterEach(() => {
   cleanup();
@@ -459,15 +454,15 @@ it("forwards inspection gestures across UTC days and ignores unrelated keys", as
   const opened = { event: "document_opened", properties: { surface: "web" } };
   await waitFor(() => expect(events).toEqual([opened]));
   await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
-  expect(events).toEqual([opened]);
+  await waitFor(() => expect(events).toEqual([opened, opened]));
   vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
   await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "ArrowDown" });
-  await waitFor(() => expect(events).toEqual([opened, opened]));
+  await waitFor(() => expect(events).toEqual([opened, opened, opened]));
   await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
-  expect(events).toEqual([opened, opened]);
+  await waitFor(() => expect(events).toEqual([opened, opened, opened, opened]));
 });
 
-it.each(["j", "k"])("reports %s inspection with a fresh daily claim", async (gesture) => {
+it.each(["j", "k"])("reports %s inspection", async (gesture) => {
   const bytes = new TextEncoder().encode("Synthetic inspected text");
   const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
   const events: unknown[] = [];
@@ -561,7 +556,7 @@ it.each(["Text", "Email", "Render page 1"])(
     if (tabName === "Render page 1") await screen.findByRole("button", { name: "Refresh pages" });
     else expect(tab.getAttribute("aria-selected")).toBe("true");
     const opened = { event: "document_opened", properties: { surface: "web" } };
-    await waitFor(() => expect(events).toEqual([opened]));
+    await waitFor(() => expect(events).toContainEqual(opened));
   },
 );
 

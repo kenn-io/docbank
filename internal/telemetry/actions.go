@@ -10,6 +10,11 @@ var searchTypesJSON []byte
 
 var searchTypes map[string]string
 
+// Enabled reports whether this daemon can send usage events.
+func (c *Capture) Enabled() bool {
+	return c != nil && c.reporter.Enabled()
+}
+
 func init() {
 	if err := json.Unmarshal(searchTypesJSON, &searchTypes); err != nil {
 		panic(err)

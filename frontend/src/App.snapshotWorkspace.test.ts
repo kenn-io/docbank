@@ -753,7 +753,7 @@ it("refreshes live metadata and download authority after tagging an inspected fr
   );
 });
 
-it("retries repeated snapshot row activation after a failed delivery and on the next UTC day", async () => {
+it("forwards repeated snapshot row activation after a failed delivery and across UTC days", async () => {
   vi.setSystemTime(new Date("2036-01-01T12:00:00Z"));
   const { state } = await renderFrozenSnapshotWorkspace();
   state.failInspection = true;
@@ -765,8 +765,8 @@ it("retries repeated snapshot row activation after a failed delivery and on the 
   await fireEvent.click(cell);
   await waitFor(() => expect(state.inspections).toBe(2));
   await fireEvent.click(cell);
-  expect(state.inspections).toBe(2);
+  await waitFor(() => expect(state.inspections).toBe(3));
   vi.setSystemTime(new Date("2036-01-02T12:00:00Z"));
   await fireEvent.keyDown(cell.closest("tr")!, { key: "Enter" });
-  await waitFor(() => expect(state.inspections).toBe(3));
+  await waitFor(() => expect(state.inspections).toBe(4));
 });

@@ -64,7 +64,7 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		operation, err := d.Store.CreatePhotoImport(ctx, string(request), cliImportSurface(ctx, in.Surface))
+		operation, err := d.Store.CreatePhotoImport(ctx, string(request), d.actionSurface(cliImportSurface(ctx, in.Surface)))
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

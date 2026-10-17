@@ -157,7 +157,7 @@ func handlePushUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 	if outcome == "added" {
 		httpStatus = http.StatusCreated
 		// One interactive push run reports its first addition; updates are not additions.
-		if surface := cliImportSurface(r.Context(), r.Header.Get(ActionSurfaceHeader)); surface != "" && d.TelemetryCapture != nil {
+		if surface := d.actionSurface(cliImportSurface(r.Context(), r.Header.Get(ActionSurfaceHeader))); surface != "" {
 			var claimed bool
 			err := g.MutateContext(r.Context(), func() error {
 				var claimErr error

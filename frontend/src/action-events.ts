@@ -21,26 +21,6 @@ async function sendAction(session: string, event: string, value = ""): Promise<v
   });
 }
 
-// Share successful daily deliveries across live and snapshot viewers.
-const inspectionGates = new Map<string, { day: string; pending: boolean }>();
-
 export function inspectionReporter(event: string, session: () => string): () => void {
-  return () => {
-    const day = new Date().toISOString().slice(0, 10);
-    let gate = inspectionGates.get(event);
-    if (!gate) {
-      gate = { day: "", pending: false };
-      inspectionGates.set(event, gate);
-    }
-    if (gate.pending || gate.day === day) return;
-    gate.pending = true;
-    void sendAction(session(), event)
-      .then(() => {
-        gate.day = day;
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        gate.pending = false;
-      });
-  };
+  return () => reportAction(session(), event);
 }

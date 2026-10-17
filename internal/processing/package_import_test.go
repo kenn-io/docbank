@@ -267,36 +267,48 @@ func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing
 	require.Equal(t, "CASE000002", assigned[1].Label)
 }
 
-// recordingCapture records each document_added surface as the reporter validates it.
-func recordingCapture(t *testing.T) (*telemetry.Capture, *[]any) {
+// recordingCapture records serialized events delivered to a local PostHog collector.
+func recordingCapture(t *testing.T) (*telemetry.Capture, *telemetry.Reporter, chan map[string]any) {
 	t.Helper()
-	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	events := make(chan map[string]any, 8)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var batch struct {
+			Batch []map[string]any `json:"batch"`
+		}
+		if err := json.UnmarshalRead(r.Body, &batch); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		for _, event := range batch.Batch {
+			events <- event
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
 	t.Cleanup(collector.Close)
-	var surfaces []any
 	reporter, err := posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: collector.URL,
 		Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"},
-		posthog.WithAllowedEvent(telemetry.EventDocumentAdded, posthog.RequireProperty("surface", func(value any) (any, bool) {
-			surfaces = append(surfaces, value)
-			return value, true
-		})))
+		posthog.WithAllowedEvent(telemetry.EventDocumentAdded,
+			posthog.RequireProperty("surface", posthog.AllowStringValues("web", "cli"))))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
-	return telemetry.CaptureHandler(reporter, t.TempDir()), &surfaces
+	return telemetry.CaptureHandler(reporter, t.TempDir()), reporter, events
 }
 
 func TestPackageImportWorkerReportsFirstAdditionOnceAcrossRetry(t *testing.T) {
-	t.Parallel()
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
+	t.Setenv("TELEMETRY_ENABLED", "1")
 	env := newPackageImportTestEnv(t, 2, false)
 	injected := errors.New("synthetic interruption before second record")
 	firstKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
 	require.NoError(t, err)
-	capture, surfaces := recordingCapture(t)
-	var interrupted atomic.Bool
+	capture, reporter, events := recordingCapture(t)
+	var afterFirst atomic.Int32
 	config := env.config()
 	config.Telemetry = capture
 	config.Mutate = func(ctx context.Context, fn func() error) error {
-		// Interrupt the next record once the first one has committed and reported.
-		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && len(*surfaces) == 1 && interrupted.CompareAndSwap(false, true) {
+		// Allow the first record's claim mutation, then interrupt the next record.
+		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && afterFirst.Add(1) == 2 {
 			return injected
 		}
 		return fn()
@@ -308,14 +320,18 @@ func TestPackageImportWorkerReportsFirstAdditionOnceAcrossRetry(t *testing.T) {
 	firstReceipt, err := env.Catalog.PackageImportHead(t.Context(), env.PackageID, firstKey)
 	require.NoError(t, err)
 	require.Equal(t, "committed", firstReceipt.State)
-	require.Equal(t, []any{"web"}, *surfaces)
+	require.NoError(t, reporter.Close())
+	require.Len(t, events, 1)
+	delivered := <-events
+	require.Equal(t, "document_added", delivered["event"])
+	require.Subset(t, delivered["properties"], map[string]any{"surface": "web"})
 	secondKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 2, "DOC-B")
 	require.NoError(t, err)
 	_, err = env.Catalog.PackageImportHead(t.Context(), env.PackageID, secondKey)
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	retry := env.config()
-	retry.Telemetry = capture
+	retry.Telemetry, reporter, events = recordingCapture(t)
 	resumed, err := NewPackageImportWorker(retry)
 	require.NoError(t, err)
 	_, err = resumed.ProcessOnce(t.Context())
@@ -327,7 +343,8 @@ func TestPackageImportWorkerReportsFirstAdditionOnceAcrossRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "complete", pkg.State)
 	require.Equal(t, 2, pkg.MemberCount)
-	require.Equal(t, []any{"web"}, *surfaces, "the second record and retry add no event")
+	require.NoError(t, reporter.Close())
+	require.Empty(t, events, "the second record and retry add no event")
 }
 
 func TestPackageImportWorkerPersistsSuppliedTextGenerationInReceipt(t *testing.T) {
