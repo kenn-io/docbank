@@ -324,8 +324,9 @@
   let openingElement: HTMLElement | undefined;
   let openingID = "";
   let restorePosition: (() => Promise<void>) | undefined;
-  function loadDetail(id: string, resetOriginal = false): Promise<void> {
-    if (detailRequest?.id === id && !detailRequest.signal.aborted) return detailRequest.promise;
+  function loadDetail(id: string, resetOriginal = false, mapReload?: typeof reload): Promise<void> {
+    if (!mapReload && detailRequest?.id === id && !detailRequest.signal.aborted)
+      return detailRequest.promise;
     detailRequest?.controller.abort();
     const controller = new AbortController();
     const owner = AbortSignal.any([
@@ -336,8 +337,8 @@
     const request = { id, controller, signal, promise: Promise.resolve() };
     detailRequest = request;
     detailLoading = true;
-    request.promise = photos
-      .lookup(id, signal)
+    const version = untrack(() => current?.content_version_id);
+    request.promise = (mapReload ? photos.reload(id, signal) : photos.lookup(id, signal))
       .then((photo) => {
         if (owner.aborted || photoID !== id || !alive) return;
         signal.throwIfAborted();
@@ -346,16 +347,21 @@
           photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
         direct = photo;
         detailError = "";
-        if (resetOriginal) reloadRevision++;
+        if (resetOriginal || (mapReload && photo.content_version_id === version)) reloadRevision++;
+        if (mapReload) {
+          reloadedRow = untrack(() => listedRow);
+          consumedReload = mapReload;
+        }
       })
       .catch((cause) => {
         if (owner.aborted || photoID !== id || !alive) return;
-        detailError = signal.aborted
-          ? "Photo details timed out."
-          : cause instanceof Error
-            ? cause.message
-            : String(cause);
-        if (cause instanceof APIError && cause.status === 404) {
+        detailError =
+          signal.aborted && !mapReload
+            ? "Photo details timed out."
+            : cause instanceof Error
+              ? cause.message
+              : String(cause);
+        if (!mapReload && cause instanceof APIError && cause.status === 404) {
           direct = undefined;
           photos.items = photos.items.filter((item) => item.asset_id !== id);
           return;
@@ -439,34 +445,11 @@
         if (detailRequest === request) detailRequest = undefined;
       };
     }
-    detailLoading = true;
     const request = reload;
-    const version = untrack(() => current?.content_version_id);
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-    void (photos.projection && explicit ? photos.reload(id, signal) : photos.lookup(id, signal))
-      .then((photo) => {
-        if (!signal.aborted) {
-          if (!photos.projection)
-            photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
-          direct = photo;
-          detailError = "";
-          if (explicit) {
-            if (!photos.projection || photo.content_version_id === version) reloadRevision++;
-            reloadedRow = untrack(() => listedRow);
-            consumedReload = request;
-          }
-        }
-      })
-      .catch((cause) => {
-        if (!controller.signal.aborted)
-          detailError = cause instanceof Error ? cause.message : String(cause);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) detailLoading = false;
-      });
+    void loadDetail(id, false, request).catch(() => {});
     return () => {
       controller.abort();
-      if (explicit) consumedReload = request;
+      consumedReload = request;
     };
   });
   async function restoreGrid() {
