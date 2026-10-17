@@ -2939,3 +2939,45 @@ it.each([false, true])(
     }
   },
 );
+
+it("refreshes a direct viewer outside loaded rows without querying the listing", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.started = true;
+  photos.total = 3;
+  let changed = false;
+  const queries = vi.fn();
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  stubPhotoFetch(async (url, init) => {
+    if (!url.endsWith("/photos/assets/query")) throw new Error(`Unexpected request: ${url}`);
+    const request = JSON.parse(String(init.body));
+    queries(request);
+    expect(request.query.filters.asset_ids).toEqual(["photo-2"]);
+    expect(request.page_size).toBe(1);
+    return Response.json({
+      items: [{ ...photo(2), name: changed ? "Updated.jpg" : "Direct.jpg" }],
+      total: 1,
+    });
+  });
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const view = render(PhotosWorkspace, { photos, cache, photoID: "photo-2" });
+  try {
+    await screen.findByRole("dialog", { name: "Photo viewer, Direct.jpg" });
+    changed = true;
+    await view.component.refresh({ assets: new Map([["photo-2", 1]]), refetch: false });
+    await screen.findByRole("dialog", { name: "Photo viewer, Updated.jpg" });
+    expect(queries).toHaveBeenCalledTimes(2);
+    expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1"]);
+    expect(photos.total).toBe(3);
+  } finally {
+    cache.dispose();
+    photos.dispose();
+  }
+});

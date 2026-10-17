@@ -3655,17 +3655,40 @@ it("forwards the Hidden view access poll cursor", async () => {
   });
 });
 
-it("limits row-only events to views containing the changed asset", async () => {
+it("refreshes album covers after row-only preview events", async () => {
   const fixture = await watcherFixture();
-  const albums = vi.spyOn(api, "listPhotoAlbums");
-  const rows = vi.spyOn(Photos.prototype, "refreshChanges");
-  const batch = { assets: new Map([["photo-1", 1]]), refetch: false };
+  await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+  await screen.findByRole("main", { name: "Albums" });
+  const preview = vi.spyOn(api, "readPhotoPreview").mockResolvedValue(new Response("preview"));
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:cover"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  vi.spyOn(api, "listPhotoAlbums").mockResolvedValue([
+    { ...fixture.album, effective_cover_asset_id: "photo-1", cover_generation_id: "new-preview" },
+  ]);
+  await act(async () => fixture.refresh({ assets: new Map([["photo-1", 1]]), refetch: false }));
+  await waitFor(() =>
+    expect(preview).toHaveBeenCalledWith(
+      "photo-1",
+      "new-preview",
+      undefined,
+      expect.objectContaining({ session: "synthetic" }),
+    ),
+  );
+  const albums = screen.getByRole("main", { name: "Albums" });
+  await waitFor(() =>
+    expect(albums.querySelector(".album-cover img")?.getAttribute("src")).toBe("blob:cover"),
+  );
+});
+
+it("routes row-only changes to an active direct viewer outside loaded rows", async () => {
+  const fixture = await watcherFixture();
+  await act(async () => fixture.workspaceProps.onphotochange?.("photo-2", "open"));
+  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-2"));
+  expect(fixture.workspaceProps.photos.items.map((item) => item.asset_id)).toEqual(["photo-1"]);
+  const batch = { assets: new Map([["photo-2", 1]]), refetch: false };
   await act(async () => fixture.refresh(batch));
   expect(fixture.workspaceRefresh).toHaveBeenCalledWith(batch);
-  expect(albums).not.toHaveBeenCalled();
-  fixture.workspaceRefresh.mockClear();
-  await act(async () => fixture.refresh({ assets: new Map([["unloaded", 1]]), refetch: false }));
-  expect(fixture.workspaceRefresh).not.toHaveBeenCalled();
-  expect(rows).not.toHaveBeenCalled();
-  expect(albums).not.toHaveBeenCalled();
 });

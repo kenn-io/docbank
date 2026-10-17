@@ -60,7 +60,7 @@ func (s *Store) preparePhotoChanges(ctx context.Context, conn *sql.Conn, active 
 const (
 	photoChangeRefetch        = "refetch"
 	photoChangeCurrentVersion = "current_version"
-	// Preview and rendition outputs replace a row's bytes without changing query membership.
+	// Preview outputs replace a row's bytes without changing query membership.
 	photoChangePreview = "preview"
 )
 
@@ -96,11 +96,13 @@ var photoEventCaptureRules = []photoEventCaptureRule{
 	{"photo_hidden_credentials", "singleton", "singleton", photoChangeRefetch, ""},
 }
 
+const photoChangeCurrentVersionFilter = "EXISTS(SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE n.current_version_id=$)"
+
 // Filters keep rows that cannot reach a photo from consuming the capture budget; $ is the related key.
 var photoChangeFilters = map[string]string{
 	"node":                    "EXISTS(SELECT 1 FROM photo_files WHERE node_id=$ AND asset_id IS NOT NULL)",
-	photoChangeCurrentVersion: "EXISTS(SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE n.current_version_id=$)",
-	photoChangePreview:        "EXISTS(SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE n.current_version_id=$)",
+	photoChangeCurrentVersion: photoChangeCurrentVersionFilter,
+	photoChangePreview:        photoChangeCurrentVersionFilter,
 	"job":                     "EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE w.job_id=$)",
 }
 
@@ -176,11 +178,13 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 	return install("initial_hash", "INSERT", "content_versions", "EXISTS(SELECT 1 FROM nodes WHERE id=NEW.node_id AND current_version_id=NEW.version_id)", photoChangeRecord("hash", "NEW.blob_hash", "NEW.node_id"))
 }
 
+const photoChangeCurrentVersionSelection = `SELECT a.asset_id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`
+
 var photoChangeSelections = map[string]string{
 	"asset":                   `SELECT value FROM json_each(?)`,
 	"node":                    `SELECT a.asset_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
-	photoChangeCurrentVersion: `SELECT a.asset_id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
-	photoChangePreview:        `SELECT a.asset_id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
+	photoChangeCurrentVersion: photoChangeCurrentVersionSelection,
+	photoChangePreview:        photoChangeCurrentVersionSelection,
 	"job":                     `SELECT a.asset_id FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE w.job_id IN (SELECT value FROM json_each(?))`,
 }
 
