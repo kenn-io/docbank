@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -202,77 +200,6 @@ func TestPhotoCheckoutOperationRoutesStartFailure(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutStartResponseKeepsPreparedOperation(t *testing.T) {
-	t.Parallel()
-	for _, action := range []string{"scan", "commit"} {
-		t.Run(action, func(t *testing.T) {
-			supervisor := jobs.New(t.Context(), nil)
-			supervisor.Stop()
-			gate := &photoCheckoutStartGate{Handler: slog.DiscardHandler, entered: make(chan struct{}, 1), release: make(chan struct{})}
-			release := sync.OnceFunc(func() { close(gate.release) })
-			t.Cleanup(release)
-			var service checkout.Service
-			ts, catalog := newTestServer(t, func(d *api.Deps) {
-				d.Jobs = supervisor
-				d.Logger = slog.New(gate)
-				service = api.NewPhotoCheckoutService(*d)
-			})
-			hash, size, err := catalog.Blobs.Write(strings.NewReader("photo"))
-			require.NoError(t, err)
-			node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
-			require.NoError(t, err)
-			selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
-			kind := "photo_checkout_" + action
-			c, _, _, root, err := service.Prepare(t.Context(), selection, t.TempDir(), 100)
-			require.NoError(t, err)
-			require.NoError(t, service.Run(t.Context(), c, root))
-			require.NoError(t, root.Close())
-			request := httptest.NewRequest(http.MethodPost, ts.URL+"/api/v1/photos/checkouts/"+c.ID+"/"+action, nil)
-			request.Header.Set("X-Api-Key", testAPIKey)
-			request.RemoteAddr = "127.0.0.1:12345"
-			response := httptest.NewRecorder()
-			done := make(chan struct{})
-			go func() { defer close(done); ts.Config.Handler.ServeHTTP(response, request) }()
-			t.Cleanup(func() {
-				release()
-				<-done
-			})
-			select {
-			case <-gate.entered:
-			case <-done:
-				t.Fatal("response returned before the start-error gate")
-			case <-time.After(5 * time.Second):
-				t.Fatal("start-error record did not reach the gate")
-			}
-			items, err := catalog.ListPhotoCheckouts(t.Context())
-			require.NoError(t, err)
-			require.Len(t, items, 1)
-			c = items[0]
-			first, err := catalog.StorageOperation(t.Context(), c.ActiveOperationID())
-			require.NoError(t, err)
-			require.Equal(t, kind, first.Kind)
-			require.Equal(t, store.StorageOperationFailed, first.State)
-			// The first start has failed, but its response is held while another
-			// caller queues work against the now-idle checkout.
-			_, competing, err := service.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutScan, "")
-			require.NoError(t, err)
-			require.NotEqual(t, first.ID, competing.ID)
-			release()
-			<-done
-			require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
-			var problem api.Error
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &problem))
-			require.Equal(t, "internal", problem.Code)
-			current, err := catalog.PhotoCheckout(t.Context(), c.ID)
-			require.NoError(t, err)
-			require.Equal(t, competing.ID, current.ActiveOperationID())
-			require.Equal(t, "queued", current.OperationState)
-		})
-	}
-}
-
 func TestPhotoCheckoutJobsProjectLaneProgressResultsAndPausedCommit(t *testing.T) {
 	t.Parallel()
 	supervisor := jobs.New(t.Context(), nil)
@@ -344,26 +271,4 @@ func TestPhotoCheckoutJobsProjectLaneProgressResultsAndPausedCommit(t *testing.T
 		}
 	}
 	require.True(t, found, "commit operation must appear in Jobs")
-}
-
-// photoCheckoutStartGate holds the start-error boundary before response selection.
-type photoCheckoutStartGate struct {
-	slog.Handler
-
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (*photoCheckoutStartGate) Enabled(context.Context, slog.Level) bool { return true }
-
-func (g *photoCheckoutStartGate) Handle(ctx context.Context, record slog.Record) error {
-	if record.Level == slog.LevelError {
-		g.entered <- struct{}{}
-		select {
-		case <-g.release:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return nil
 }

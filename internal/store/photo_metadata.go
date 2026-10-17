@@ -352,6 +352,15 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 		if err := validatePhotoCheckoutReferences(ctx, tx); err != nil {
 			return err
 		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
+ LEFT JOIN photo_checkouts c ON c.checkout_id=json_extract(r.after_json,'$.checkout_id')
+ LEFT JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id AND e.file_id=json_extract(r.after_json,'$.file_id') AND e.asset_id=r.asset_id
+ WHERE r.operation='checkout_commit' AND (c.checkout_id IS NULL OR e.file_id IS NULL)`).Scan(&orphans); err != nil {
+			return fmt.Errorf("checking checkout commit receipt references: %w", err)
+		}
+		if orphans > 0 {
+			return fmt.Errorf("%w: %d checkout commit receipts reference missing checkouts or entries", ErrInvalidPhotoCheckout, orphans)
+		}
 	}
 	if version >= photoAuthoredStorageSchemaVersion {
 		if err := validatePhotoAuthoredReferences(ctx, tx); err != nil {
