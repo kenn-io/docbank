@@ -208,6 +208,7 @@ func NewServer(d Deps) *Server {
 	cursorService := newDocumentQueryService(d)
 	registerDocumentQueryRoute(humaAPI, cursorService)
 	registerInfoRoute(humaAPI, d)
+	registerKataRoutes(humaAPI, d, g)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7

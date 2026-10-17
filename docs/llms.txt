@@ -30,6 +30,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Searching](https://docbank.ai/docs/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
 - [Search exports](https://docbank.ai/docs/usage/search-exports.md): Export search counts for a date range as CSV, review date evidence, and verify the frozen evidence ZIP.
 - [Document processing](https://docbank.ai/docs/usage/document-processing.md): Preview, consent to, and run document processing. The original version is never changed.
+- [Cite documents in Kata](https://docbank.ai/docs/usage/kata-evidence.md): Quote verified document passages into Kata issues and reopen their evidence with current source status.
 - [Automatic and processing search](https://docbank.ai/docs/usage/search.md): Choose automatic retrieval or an explicit profile and source-version set.
 - [Web application](https://docbank.ai/docs/usage/web.md): Find, read, organize, and export documents in the local, authenticated web app.
 - [Interactive terminal browser](https://docbank.ai/docs/usage/tui.md): Browse documents, inspect their details, storage, backups, and permanent history, and move documents to or from trash in the terminal.
