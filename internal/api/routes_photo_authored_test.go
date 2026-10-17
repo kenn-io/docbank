@@ -7,10 +7,58 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestPhotoXMPResolveRoute(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	create := func(name, mime, data string) store.Node {
+		hash, size, err := s.Blobs.Write(strings.NewReader(data))
+		require.NoError(t, err)
+		node, err := s.CreateFile(ctx, s.RootID(), name, hash, size, mime)
+		require.NoError(t, err)
+		return node
+	}
+	photo := create("photo.jpg", "image/jpeg", "synthetic JPEG")
+	sidecar := create("photo.jpg.xmp", "application/rdf+xml", `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="1"/></rdf:RDF></x:xmpmeta>`)
+	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	file := asset.Files[0]
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, store.PhotoRoleSidecar, &file.ID)
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, photo.BlobHash, strings.Repeat("e", 64), canonical)
+	require.NoError(t, err)
+	photo, err = s.NodeByID(ctx, photo.ID)
+	require.NoError(t, err)
+	_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: []store.PhotoAuthoredEditTarget{{AssetID: asset.ID, AssetRevision: asset.Revision, FileID: file.ID, Revision: file.Revision, NodeRevision: photo.Revision}}, Patch: store.PhotoAuthoredPatch{Rating: new(5)}})
+	require.NoError(t, err)
+	require.NoError(t, processing.SyncPhotoXMPBackground(ctx, &ingest.Ingester{Store: s.Store, Blobs: s.Blobs}, file.ID))
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/prepare", nil, api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var prepared api.PhotoAuthoredPreparation
+	require.NoError(t, json.Unmarshal([]byte(body), &prepared))
+	conflict := prepared.Targets[0].XMP
+	require.Equal(t, store.PhotoXMPStateConflict, conflict.State)
+
+	path := "/api/v1/photos/authored/" + file.ID + "/xmp"
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoXMPResolveRequest{ConflictID: conflict.ConflictID, Choice: "other"})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, "body.choice")
+	choice := api.PhotoXMPResolveRequest{ConflictID: conflict.ConflictID, Choice: "sidecar"}
+	response, body = do(t, ts, http.MethodPost, path, nil, choice)
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	response, _ = do(t, ts, http.MethodPost, path, nil, choice)
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, "a resolved conflict cannot be chosen again")
+}
 
 func TestPhotoAuthoredRoutes(t *testing.T) {
 	t.Parallel()

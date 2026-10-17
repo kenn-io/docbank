@@ -256,57 +256,108 @@ fields keep their earlier values and confirmation. Receipts, audit history,
 undo, and JSONL backup preserve the mask. Unknown bits and non-default values
 without confirmation are refused.
 
-### Decisions from XMP sidecars
+### Sync XMP sidecars
 
-The daemon fills in an original file's decisions from its imported XMP sidecar
-while that file is still at revision 1. Once a sidecar sets a decision, later
-packets don't change it. Only non-default values confirm a decision. Rating 0,
-empty text, no label or pick, and rotation 0 confirm nothing, because editors
-write these defaults on untouched photos.
+Photo decisions and keywords sync with each original's linked XMP sidecar
+inside the vault. Docbank writes catalog edits as new sidecar versions, imports
+edits made in another application, and asks you to choose only when both sides
+changed the same property differently. It never writes to the source folder.
 
-The daemon picks the original for each sidecar this way:
+1. Edit a photo in Metadata. The original becomes Pending, and the background
+   worker writes a new version of its sidecar. A photo with decisions or
+   keywords but no sidecar gets `<original-name>.xmp` beside the original.
+2. Rescan the source folder after editing the XMP elsewhere. The changed packet
+   becomes a new sidecar version with ordinary import provenance. The worker
+   imports each property that only the other application changed, writes each
+   property that only Docbank changed, and records the import as an undoable
+   edit. Metadata offers **Undo sidecar import** while that edit can be undone.
+3. When both sides changed one property differently, the photo shows Conflict.
+   Metadata lists each competing property with its catalog and sidecar value.
+   **Use Catalog** keeps the catalog values and **Use Sidecar** imports the
+   sidecar values; properties that only one side changed merge either way.
 
-- A qualified name such as `capture.JPG.xmp` selects that original.
-- A basename-only packet such as `capture.xmp` can select an extension with
-  `photoshop:SidecarForExtension`. Without that claim, the packet applies to
-  its linked file, which import prefers to be the RAW.
-- A missing, ambiguous, or conflicting binding makes no decision. If you attach
-  `capture.JPG.xmp` to the RAW, the name and the attachment conflict. The packet
-  applies after you attach it to the JPEG.
-- The daemon handles one photo's sidecars one at a time, lowest node ID first.
-  When two select the same original, the first that makes a decision wins. An
-  empty or rejected packet makes no decision, so the next sidecar can apply.
-- An audited vault refuses changes outside its audit scopes, so sidecars make no
-  decision there. Enrolling a scope that covers the photo makes its sidecars
-  eligible again.
-- A trashed original gets no decision. Restoring it makes the sidecar eligible
-  again.
+`xmp:pending` finds photos waiting for the worker, including photos waiting for
+source metadata extraction. `xmp:conflict` finds photos waiting for a choice.
+Metadata checks a Pending photo again every few seconds for about a minute,
+then asks you to select **Refresh XMP**. Missing sidecar content stays Pending
+with a reason. Restore its bytes to let background sync retry automatically;
+**Refresh XMP** checks progress and resumes polling.
 
-The daemon reads these XMP properties:
+On first sync, a TIFF orientation that matches the photo's EXIF orientation
+leaves Teststrip's rotation as the authored turn. If the two encodings specify
+different authored turns, sync keeps the catalog's rotation.
+
+Docbank writes rating, label, pick, orientation and Teststrip rotation as
+attributes of the photo's `rdf:Description`, where Teststrip reads them, and
+keeps unrelated properties in place.
 
 | Decision | XMP property |
 | --- | --- |
-| Rating | `xmp:Rating`. A rating of -1 means reject with rating 0, even when the packet also has a pick. It confirms only the flag. |
-| Label | `xmp:Label`, case-insensitive |
+| Rating | `xmp:Rating`, whole numbers 0 through 5. A rating of -1 imports as reject and is never written. |
 | Flag | `Pick` in the `https://teststrip.app/xmp/1.0/` namespace |
-| Rotation | `Rotation` in the `https://teststrip.app/xmp/1.0/` namespace |
+| Label | `xmp:Label`, case-insensitive supported color names |
+| Rotation | `tiff:Orientation`, composed with the original's orientation, and `Rotation` in the Teststrip namespace. A change to either one imports. |
 | Caption | `dc:description`, preferring the `x-default` language |
 | Creator | The first `dc:creator` entry |
 | Copyright | `dc:rights`, preferring the `x-default` language |
+| Keywords | `dc:subject`, merged tag by tag with the original's catalog tags |
 
-An unsupported value is ignored and stays unconfirmed; the other decisions still apply. That
-covers custom color labels, fractional ratings, unknown picks, other rotations,
-and text over 16 KiB. Whitespace-only text counts as absent; other text keeps
-its spaces and newlines. Malformed XML, a repeated property, multiple values in one property, text beside
-a property's value, or nesting deeper than 64 elements rejects the whole packet. Empty and rejected packets leave the file, its
-revision, and audit history unchanged. Sidecars don't import `dc:subject` as
-tags or `tiff:Orientation` as rotation.
+#### Outside edits and rescans
 
-Each applied packet records the sidecar file and content version that supplied
-it. Sidecar source-metadata detail shows a valid-packet fact or a warning.
-Replacing a sidecar's bytes can still fill in a file that has no decision.
-The daemon reconsiders a sidecar when the photo's members change, including
-renames and restoration. Cancellation, stale inputs, and read failures retry.
+When an outside sidecar first arrives for a photo whose sidecar Docbank created,
+the import updates that same sidecar as a new version and records its source path.
+
+Docbank remembers the digest of the last outside packet it accepted for each
+sidecar. Suppose an outside sidecar sets rating 3 and you then rate the photo 5
+in Docbank. A rescan of the unchanged file finds the remembered digest, keeps
+Docbank's newer version current, and changes no decision, even after the
+version holding those bytes is pruned. An edit made to that file elsewhere is
+compared with the packet it was edited from, so the application's rating 4
+saved over the old rating 3 shows a conflict with your 5. A new version you put
+in the vault instead starts from Docbank's version, so changing its rating 5
+to 4 imports 4.
+
+The first sync of a sidecar that Docbank did not write, including one from a
+vault upgraded from v0.15.2, accepts its current bytes as the outside packet.
+Without an earlier sync, an absent property keeps the catalog decision, equal
+values settle, and different values need a choice.
+
+#### Values and refusals
+
+- Defaults, such as rating 0, empty text or no keywords, count as absent. A
+  property that was set at the last sync and is now absent clears on the other
+  side.
+- Unsupported values and unrelated XMP properties stay in the packet; the
+  supported decisions still sync.
+- Malformed XML, unmergeable RDF, packets over 1 MiB and text properties over
+  16 KiB are refused before any catalog change; the photo shows Invalid. Repair
+  the file, put a new version, or trash the sidecar.
+- Keywords over the 64 KiB packet limit, more than one attached sidecar, a
+  member limit of 256 files or a file already named `<original-name>.xmp` also
+  stop sync. Metadata says what to change, and sync resumes after the change.
+
+#### Matching and availability
+
+- A qualified filename such as `capture.JPG.xmp` selects that original. A
+  basename-only packet can name an extension through
+  `photoshop:SidecarForExtension`. Import attaches `capture.xmp` to the RAW; if
+  its packet claims `JPG`, the first sync moves the sidecar to the JPEG and
+  imports its decisions there. The move is part of the import and needs no
+  choice. A claim that names another member after the first sync, a sidecar
+  you attached yourself, an ambiguous claim, or a JPEG that already has a
+  sidecar stops sync instead, and Metadata gives the commands that move it.
+- Trashing or detaching a synced sidecar stops Docbank from creating another
+  one while the original's decisions and keywords stay unchanged, including
+  after a rename or restore. A later edit creates a fresh sidecar.
+- An audited vault syncs only when its scopes cover both the original and the
+  sidecar, and it never creates a sidecar; other photos show Unavailable.
+- Hidden photos keep syncing in the background. Metadata for them still needs
+  an unlock.
+- Each sync outcome adds a receipt to the original, and each receipt keeps the
+  last successful sync and the remembered digest. A repeated identical outcome
+  adds none. Backup and restore keep the receipts; after a restore every photo
+  with sync work is Pending until the worker checks it again. Purging the
+  original or its sidecar removes the receipts naming it.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
 each decision filter reads the asset's display file. With the default RAW display
@@ -495,14 +546,15 @@ folder must exist when you start the import. Otherwise the command fails with
 exit code 2 and no import starts.
 
 Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
-and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original. Unqualified names attach to the RAW, or to the JPEG when there is no RAW; their packet extension claim selects the authored target after extraction. An XMP with no same-name RAW or JPEG imports
+and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original. Unqualified names attach to the RAW, or to the JPEG when there is no RAW; their packet extension claim moves the sidecar to the claimed original when it first syncs. An XMP with no same-name RAW or JPEG imports
 as a plain file. A later full scan pairs companions when both source files
 are still present. Matching uses files in the scan and their current duplicate
 owners. A video always becomes its own photo. Each photo commits in one
 transaction, so a failure leaves no half photo behind, and running the same
 import again skips content already in the vault. A file edited since it was
 imported, such as an XMP saved again by a photo editor, becomes a new version
-of the file already in the photo, not a second file.
+of the file already in the photo, not a second file. See
+[Sync XMP sidecars](#sync-xmp-sidecars) for how a changed XMP merges.
 
 The import leaves a group unpaired and lists it under `ambiguities` in the
 receipt from `jobs show <operation-id> --json` in two cases:

@@ -144,11 +144,17 @@ it.each([false, true])(
     await fireEvent.scroll(scroll);
     const refreshed = items.map((item) => ({
       ...item,
-      previews: { ...item.previews, grid: { state: "ready", generation_id: "refreshed" } },
+      previews: {
+        ...item.previews,
+        grid: { state: "ready", generation_id: "refreshed" },
+      },
     }));
     finishRefresh(
       new Response(
-        JSON.stringify({ [mapMode ? "map_items" : "items"]: refreshed, total: items.length }),
+        JSON.stringify({
+          [mapMode ? "map_items" : "items"]: refreshed,
+          total: items.length,
+        }),
       ),
     );
     await waitFor(() => expect(photos.loading).toBe(false));
@@ -253,7 +259,9 @@ it("restores applied search after a facet click and keeps empty-library guidance
       /Choose a folder or files with Add photos\. Large camera cards on the daemon's own disk import faster with docbank photos import\./,
     ),
   ).toBeTruthy();
-  const search = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
+  const search = screen.getByRole("searchbox", {
+    name: "Search photos",
+  }) as HTMLInputElement;
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   await fireEvent.input(search, { target: { value: "Nikon" } });
   expect(search.value).toBe("Nikon");
@@ -300,7 +308,10 @@ it("keeps failed confirmation visible and closes after cancellation or success",
           total: 1,
         });
       const first = ++listings === 1;
-      return Response.json({ items: [photo(first ? 3 : 2)], total: first ? 3 : 1 });
+      return Response.json({
+        items: [photo(first ? 3 : 2)],
+        total: first ? 3 : 1,
+      });
     }
     if (url.endsWith("/photo-2/trash"))
       return Response.json({ detail: "Photo changed" }, { status: 412 });
@@ -313,9 +324,17 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   photos.selectLoaded();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const ontrashed = vi.fn();
-  render(PhotosWorkspace, { photos, cache, ontrashed, photoID: "", onphotochange: vi.fn() });
+  render(PhotosWorkspace, {
+    photos,
+    cache,
+    ontrashed,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  const dialog = screen.getByRole("dialog", {
+    name: "Move selected photos to trash",
+  });
   expect(within(dialog).getByText(/^Move 2 selected photos and/)).toBeTruthy();
   await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
   await within(dialog).findByText(/Photo changed/);
@@ -324,7 +343,9 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  const single = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  const single = screen.getByRole("dialog", {
+    name: "Move selected photos to trash",
+  });
   expect(within(single).getByText(/^Move 1 selected photo and/)).toBeTruthy();
   await fireEvent.click(within(single).getByRole("button", { name: "Move to trash" }));
   await waitFor(() =>
@@ -351,7 +372,12 @@ it("does not write the user's scroll position back to the grid", async () => {
   photos.total = 60;
   photos.started = true;
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
+  render(PhotosWorkspace, {
+    photos,
+    cache,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   const scroll = screen.getByTestId("photo-scroll");
   let top = 0;
@@ -399,7 +425,9 @@ it("starts no extra detail request after a successful reload", async () => {
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   await screen.findByText("Photo changed");
   await fireEvent.click(screen.getByRole("button", { name: "Reload photo" }));
-  await screen.findByRole("dialog", { name: "Photo viewer, Reloaded photo.jpg" });
+  await screen.findByRole("dialog", {
+    name: "Photo viewer, Reloaded photo.jpg",
+  });
   await waitFor(() => expect(screen.queryByRole("button", { name: "Reload photo" })).toBeNull());
   await tick();
   expect(lookup).toHaveBeenCalledTimes(2);
@@ -453,13 +481,26 @@ it.each([
       .fn()
       .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ items: replacement, total: 100, next_cursor: "new-page" })),
+        new Response(
+          JSON.stringify({
+            items: replacement,
+            total: 100,
+            next_cursor: "new-page",
+          }),
+        ),
       )
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(200)], total: 100 })));
     stubPhotoFetch(fetcher);
     const cache = new PhotoPreviewCache("scoped", vi.fn());
-    const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
-    const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache,
+      photoID: "",
+      onphotochange: vi.fn(),
+    });
+    const cell = await screen.findByRole("button", {
+      name: "Select Photo 1.jpg",
+    });
     await fireEvent.click(cell);
     const scroll = screen.getByTestId("photo-scroll");
     scroll.scrollTop = 500;
@@ -477,10 +518,19 @@ it.each([
     expect(photos.date).toBe(previous);
     expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
     expect(scroll.scrollTop).toBe(500);
-    const filters = { capture_after: after, ...(before ? { capture_before: before } : {}) };
-    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ query: { filters } });
+    const filters = {
+      capture_after: after,
+      ...(before ? { capture_before: before } : {}),
+    };
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
+      query: { filters },
+    });
     expect(JSON.parse(fetcher.mock.calls[0][1].body).cursor).toBeUndefined();
-    finish(new Response(JSON.stringify({ detail: "Date unavailable" }), { status: 503 }));
+    finish(
+      new Response(JSON.stringify({ detail: "Date unavailable" }), {
+        status: 503,
+      }),
+    );
     await screen.findByText("Date unavailable");
     expect(document.querySelector(".library-title span")!.textContent).toBe(heading);
     expect(photos.items[0].asset_id).toBe("photo-1");
@@ -521,10 +571,18 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   const fetcher = vi
     .fn()
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ items: [photo(1), photo(2)], total: 3, next_cursor: "next" })),
+      new Response(
+        JSON.stringify({
+          items: [photo(1), photo(2)],
+          total: 3,
+          next_cursor: "next",
+        }),
+      ),
     )
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ detail: "Page unavailable" }), { status: 503 }),
+      new Response(JSON.stringify({ detail: "Page unavailable" }), {
+        status: 503,
+      }),
     )
     .mockResolvedValueOnce(
       new Response(JSON.stringify({ items: [photo(3, "2024-01-01T12:00:00")], total: 3 })),
@@ -536,7 +594,12 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   );
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
   await screen.findByText("Page unavailable");
   expect(screen.queryByRole("navigation", { name: "Photo years" })).toBeNull();
   expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
@@ -660,7 +723,12 @@ it("shows both years of a New Year session and jumps to the newest containing gr
   photos.started = true;
   photos.grouping = "sessions";
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
+  render(PhotosWorkspace, {
+    photos,
+    cache,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   const rail = screen.getByRole("navigation", { name: "Photo years" });
   expect([...rail.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual([
@@ -715,8 +783,15 @@ it("clears selection with Escape from focused photo controls while honoring shor
   photos.items = [photo(1)];
   photos.started = true;
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
-  const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  render(PhotosWorkspace, {
+    photos,
+    cache,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
+  const cell = await screen.findByRole("button", {
+    name: "Select Photo 1.jpg",
+  });
   await fireEvent.click(cell);
   cell.focus();
   expect(document.activeElement).toBe(cell);
@@ -731,7 +806,9 @@ it("clears selection with Escape from focused photo controls while honoring shor
   cell.focus();
   await fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   expect(screen.queryByText("1 selected photo")).toBeNull();
-  const checkbox = screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const checkbox = screen.getByRole("checkbox", {
+    name: "Select photo Photo 1.jpg",
+  });
   await fireEvent.click(checkbox);
   checkbox.focus();
   expect(screen.getByText("1 selected photo")).toBeTruthy();
@@ -758,14 +835,22 @@ it("keeps the retained scroll position when density changed in another view", as
   photos.scrollTop = 1000;
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   new Photos("scoped", vi.fn()).setDensity("compact");
-  render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
+  render(PhotosWorkspace, {
+    photos,
+    cache,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
   await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(1000));
   photos.dispose();
   await cache.dispose();
 });
 
 it.each([
-  { kind: "density", title: "density changes while repeated-cursor pages add no rows" },
+  {
+    kind: "density",
+    title: "density changes while repeated-cursor pages add no rows",
+  },
   { kind: "relevance density", title: "relevance density changes" },
   { kind: "album trash", title: "album trash" },
 ])("keeps the top photo after $title", async ({ kind }) => {
@@ -864,7 +949,9 @@ it.each([
     );
     await fireEvent.click(await screen.findByRole("button", { name: "Move to trash" }));
     await fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Move to trash" }),
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Move to trash",
+      }),
     );
     await waitFor(() => expect(photos.trashing).toBe(false));
   } else {
@@ -906,7 +993,9 @@ it("opens on touch with empty selection and toggles membership on touch taps", a
     photoID: "",
     onphotochange: open,
   });
-  const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  const cell = await screen.findByRole("button", {
+    name: "Select Photo 1.jpg",
+  });
   await fireEvent.click(cell);
   expect(open).not.toHaveBeenCalled();
   expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
@@ -994,7 +1083,12 @@ it.each(["success", "grid", "removed", "pending"])(
       history.replaceState(null, "", `/photos#photo=${id}`);
       void view.rerender({ photos, cache, photoID: id, onphotochange });
     });
-    view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange });
+    view = render(PhotosWorkspace, {
+      photos,
+      cache,
+      photoID: "",
+      onphotochange,
+    });
     await fireEvent.keyDown(
       await screen.findByRole("button", {
         name: scenario === "grid" ? "Select Photo 1.jpg" : "Select Photo 2.jpg",
@@ -1004,7 +1098,9 @@ it.each(["success", "grid", "removed", "pending"])(
     await screen.findByRole("navigation", { name: "Photos in current result" });
     photos.loading = false;
     if (scenario !== "grid")
-      await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+      await fireEvent.keyDown(screen.getByRole("dialog"), {
+        key: "ArrowRight",
+      });
     const returnRecord = photos.viewerReturn,
       currentURL = location.href;
     if (scenario === "pending") {
@@ -1068,10 +1164,14 @@ it.each(["success", "grid", "removed", "pending"])(
             .every((button) => !(button as HTMLButtonElement).disabled),
         ).toBe(true),
       );
-      await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+      await fireEvent.keyDown(screen.getByRole("dialog"), {
+        key: "ArrowRight",
+      });
       if (scenario === "grid") {
         await waitFor(() => expect(onphotochange).toHaveBeenLastCalledWith("photo-2", "step"));
-        await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+        await fireEvent.keyDown(screen.getByRole("dialog"), {
+          key: "ArrowRight",
+        });
       }
     }
     await waitFor(() => expect(onphotochange).toHaveBeenCalledWith("photo-3", "step"));
@@ -1113,7 +1213,12 @@ it.each(["close", "photo", "unmount", "live"])(
     const onphotochange = vi.fn((id: string) => {
       void view.rerender({ photos, cache, photoID: id, onphotochange });
     });
-    view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange });
+    view = render(PhotosWorkspace, {
+      photos,
+      cache,
+      photoID: "",
+      onphotochange,
+    });
     await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 2.jpg" }), {
       key: "Enter",
     });
@@ -1130,10 +1235,17 @@ it.each(["close", "photo", "unmount", "live"])(
     } else if (interruption === "photo") {
       await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowLeft" });
       await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-      await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+      await fireEvent.keyDown(screen.getByRole("dialog"), {
+        key: "ArrowRight",
+      });
     } else if (interruption === "unmount") {
       view.unmount();
-      view = render(PhotosWorkspace, { photos, cache, photoID: "photo-2", onphotochange });
+      view = render(PhotosWorkspace, {
+        photos,
+        cache,
+        photoID: "photo-2",
+        onphotochange,
+      });
     }
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
     const changes = onphotochange.mock.calls.length;
@@ -1174,7 +1286,10 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])(
     const fresh = {
       ...photo(1),
       content_version_id: "fresh-version",
-      previews: { ...old.previews, grid: { state: "ready" as const, generation_id: "fresh-grid" } },
+      previews: {
+        ...old.previews,
+        grid: { state: "ready" as const, generation_id: "fresh-grid" },
+      },
     };
     const photos = new Photos("scoped", vi.fn());
     photos.started = true;
@@ -1244,12 +1359,18 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])(
       await fireEvent.click(screen.getByRole("button", { name: "Reload photo" }));
       await waitFor(() =>
         expect(
-          (screen.getByRole("button", { name: "Reload photo" }) as HTMLButtonElement).disabled,
+          (
+            screen.getByRole("button", {
+              name: "Reload photo",
+            }) as HTMLButtonElement
+          ).disabled,
         ).toBe(true),
       );
       expect(document.activeElement).toBe(screen.getByRole("dialog"));
       finish(photo(999));
-      await screen.findByRole("dialog", { name: "Photo viewer, Photo 999.jpg" });
+      await screen.findByRole("dialog", {
+        name: "Photo viewer, Photo 999.jpg",
+      });
       expect(lookup).toHaveBeenCalledTimes(3);
       expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1"]);
       expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
@@ -1285,7 +1406,9 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+    projection,
+  });
   photos.started = true;
   photos.items = [projection ? mapPhoto(1) : photo(1)];
   photos.authored.targets = [target];
@@ -1324,7 +1447,11 @@ it("refreshes a filtered view and restarts pending reads after a metadata edit",
     receipt_id: "rotated",
     before: [before],
     after: [
-      { ...before, revision: 2, values: { ...before.values, flag: "pick", rotation: 90 as const } },
+      {
+        ...before,
+        revision: 2,
+        values: { ...before.values, flag: "pick", rotation: 90 as const },
+      },
     ],
   } as PhotoAuthoredReceipt;
   render(PhotosWorkspace, {
@@ -1360,7 +1487,10 @@ it.each(["edit", "Undo"] as const)(
     const before = preparedPhoto(1, { file_id: "file-1" });
     const mapped = workspaceWithPreparedPhoto(before, "map");
     const fetcher = vi.fn(async () =>
-      Response.json({ map_items: [{ ...mapPhoto(1), rotation: 90 }], total: 1 }),
+      Response.json({
+        map_items: [{ ...mapPhoto(1), rotation: 90 }],
+        total: 1,
+      }),
     );
     stubPhotoFetch(fetcher);
     const edit = vi.spyOn(mapped.authored, "edit").mockResolvedValue(undefined);
@@ -1399,7 +1529,13 @@ it.each(["edit", "Undo"] as const)(
       {
         receipt_id: "rotated",
         before: [before],
-        after: [{ ...before, revision: 3, values: { ...before.values, rotation: 90 as const } }],
+        after: [
+          {
+            ...before,
+            revision: 3,
+            values: { ...before.values, rotation: 90 as const },
+          },
+        ],
       } as PhotoAuthoredReceipt,
       [],
     );
@@ -1461,10 +1597,17 @@ it("patches an unfiltered view in place after a metadata edit", async () => {
     receipt_id: "rated",
     before: [before],
     after: [
-      { ...before, revision: 2, values: { ...before.values, rating: 3, rotation: 90 as const } },
+      {
+        ...before,
+        revision: 2,
+        values: { ...before.values, rating: 3, rotation: 90 as const },
+      },
     ],
   } as PhotoAuthoredReceipt;
-  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
   photos.authored.stage({ rating: 3 });
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
@@ -1531,7 +1674,9 @@ it.each([
     else vi.spyOn(photos, "original").mockRejectedValueOnce(changed);
     render(PhotosWorkspace, {
       photos,
-      cache: { get: vi.fn(async () => new Blob(["synthetic"])) } as unknown as PhotoPreviewCache,
+      cache: {
+        get: vi.fn(async () => new Blob(["synthetic"])),
+      } as unknown as PhotoPreviewCache,
       photoID: old.asset_id,
       onphotochange: vi.fn(),
     });
@@ -1653,7 +1798,12 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1)], total: 1 })));
   stubPhotoFetch(fetcher);
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
   expect(screen.getByRole("button", { name: "Grid", pressed: true })).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
   expect(screen.getByRole("button", { name: "Timeline", pressed: true })).toBeTruthy();
@@ -1712,7 +1862,10 @@ it("explains the relevance limit and hides it for complete results or capture da
   photos.total = 1;
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.total = 5000;
-  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
+  photos.query = {
+    ...photos.query,
+    sort: { field: "capture_time", direction: "desc" },
+  };
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.dispose();
   await cache.dispose();
@@ -1730,7 +1883,12 @@ it("applies the selected Relevance sort", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
-      Response.json({ items: [], total: 0, facets: [], relevance_available: false }),
+      Response.json({
+        items: [],
+        total: 0,
+        facets: [],
+        relevance_available: false,
+      }),
     ),
   );
   const photos = new Photos("scoped", vi.fn());
@@ -1744,7 +1902,10 @@ it("applies the selected Relevance sort", async () => {
   photos.relevanceAvailable = true;
   await fireEvent.click(screen.getByRole("combobox", { name: "Sort photos: Capture date" }));
   await fireEvent.click(await screen.findByRole("option", { name: "Relevance" }));
-  expect(setSort).toHaveBeenCalledWith({ field: "relevance", direction: "desc" });
+  expect(setSort).toHaveBeenCalledWith({
+    field: "relevance",
+    direction: "desc",
+  });
   photos.dispose();
   await cache.dispose();
 });
@@ -1867,7 +2028,9 @@ it("guards loupe navigation through the metadata editor", async () => {
     shortcuts: createShortcutManager(),
     photoID: "photo-1",
   });
-  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  const viewer = await screen.findByRole("dialog", {
+    name: "Photo viewer, Photo 1.jpg",
+  });
   await fireEvent.keyDown(viewer, { key: "ArrowRight" });
   expect(onphotochange).not.toHaveBeenCalled();
   canChangeTarget.mockReturnValue(true);
@@ -1917,7 +2080,10 @@ it("keeps Library recovery below its toolbar and inside the grid", async () => {
   photos.started = true;
   photos.error = "Page unavailable";
   const retry = vi.spyOn(photos, "retry").mockResolvedValue();
-  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
   expect(screen.getByRole("button", { name: "Move rejects" })).toBeTruthy();
   const alert = screen.getByRole("alert");
   expect(alert.closest(".library-grid")).toBeTruthy();
@@ -1959,7 +2125,9 @@ it("shows the Map limit notice only for capped results and bounds loading progre
       disconnect() {}
     },
   );
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+    projection: "map",
+  });
   photos.items = [mapPhoto(1), mapPhoto(2)];
   photos.started = true;
   photos.total = 3000;
@@ -2048,7 +2216,9 @@ function openMapViewerSetup() {
   );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+    projection: "map",
+  });
   photos.items = [mapPhoto(1), mapPhoto(2)];
   photos.total = 2;
   photos.started = true;
@@ -2068,7 +2238,13 @@ function openMapViewerSetup() {
     photoID: "",
     onphotochange: vi.fn(),
   };
-  return { photos, lookup, preview, props, view: render(PhotosWorkspace, props) };
+  return {
+    photos,
+    lookup,
+    preview,
+    props,
+    view: render(PhotosWorkspace, props),
+  };
 }
 async function openMapViewer({ props, view }: ReturnType<typeof openMapViewerSetup>) {
   await vi.dynamicImportSettled();
@@ -2088,10 +2264,14 @@ it("disables viewer continuation at the Map ceiling while retaining its cursor",
   await vi.dynamicImportSettled();
   map.onvisible!([mapPhoto(mapPhotoLimit)]);
   await fireEvent.click(
-    await screen.findByRole("button", { name: `Open Photo ${mapPhotoLimit}.jpg` }),
+    await screen.findByRole("button", {
+      name: `Open Photo ${mapPhotoLimit}.jpg`,
+    }),
   );
   await view.rerender({ ...props, photoID: `photo-${mapPhotoLimit}` });
-  await screen.findByRole("dialog", { name: `Photo viewer, Photo ${mapPhotoLimit}.jpg` });
+  await screen.findByRole("dialog", {
+    name: `Photo viewer, Photo ${mapPhotoLimit}.jpg`,
+  });
   expect(
     screen
       .getAllByRole("button", { name: "Next photo" })
@@ -2115,7 +2295,11 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
   const { photos, lookup, preview } = setup;
   stubPhotoFetch(
     vi.fn(async () =>
-      Response.json({ items: [], map_items: [{ ...mapPhoto(1), revision: 2 }], total: 1 }),
+      Response.json({
+        items: [],
+        map_items: [{ ...mapPhoto(1), revision: 2 }],
+        total: 1,
+      }),
     ),
   );
   preview.mockImplementation(async (row) => {
@@ -2148,7 +2332,9 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
     name: "Refreshed photo.jpg",
     content_version_id: "refreshed-version",
   });
-  await screen.findByRole("dialog", { name: "Photo viewer, Refreshed photo.jpg" });
+  await screen.findByRole("dialog", {
+    name: "Photo viewer, Refreshed photo.jpg",
+  });
   await waitFor(() =>
     expect(preview).toHaveBeenCalledWith(
       expect.objectContaining({ content_version_id: "refreshed-version" }),
@@ -2288,7 +2474,9 @@ it("discloses offscreen selection and replaces it with the visible photos", asyn
   await tick();
   await screen.findByText("1 outside this view");
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  const dialog = screen.getByRole("dialog", {
+    name: "Move selected photos to trash",
+  });
   expect(within(dialog).getByText("1 selected photo is outside this view.")).toBeTruthy();
   await fireEvent.click(within(dialog).getByRole("button", { name: "Keep in Docbank" }));
   const select = screen.getByRole("button", { name: "Select visible photos" });
@@ -2366,7 +2554,11 @@ it("explains why Add photos is unavailable", async () => {
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache, uploadChannelError: "The upload channel ended." });
+  render(PhotosWorkspace, {
+    photos,
+    cache,
+    uploadChannelError: "The upload channel ended.",
+  });
   for (const button of screen.getAllByRole("button", { name: "Add photos" })) {
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(button.title).toBe("The upload channel ended.");
@@ -2401,7 +2593,11 @@ it("explains the photo export cap before offering scope or selected export", asy
     (screen.getByRole("button", { name: "Export photos" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   expect(
-    (screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement).disabled,
+    (
+      screen.getByRole("button", {
+        name: "Export selection",
+      }) as HTMLButtonElement
+    ).disabled,
   ).toBe(true);
   expect(screen.getByText(/Clear the selection to choose fewer photos/)).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
@@ -2468,7 +2664,9 @@ it("exports explicit Map selections without offering the broader Library query",
       disconnect() {}
     },
   );
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+    projection: "map",
+  });
   photos.items = [mapPhoto(1), mapPhoto(2)];
   photos.total = 2;
   photos.started = true;
@@ -2495,7 +2693,11 @@ it("exports explicit Map selections without offering the broader Library query",
   expect(onexport).toHaveBeenCalledExactlyOnceWith({
     label: "Selected photos",
     total: 2,
-    photos: { query: photoQuery, asset_ids: ["photo-1", "photo-2"], hidden: false },
+    photos: {
+      query: photoQuery,
+      asset_ids: ["photo-1", "photo-2"],
+      hidden: false,
+    },
   });
   photos.dispose();
 });
@@ -2533,13 +2735,19 @@ it("exports the prepared metadata selection after the query grows beyond the exp
     onexport,
   });
   expect(screen.getByText("All 3 photos selected")).toBeTruthy();
-  const button = screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement;
+  const button = screen.getByRole("button", {
+    name: "Export selection",
+  }) as HTMLButtonElement;
   expect(button.disabled).toBe(false);
   await fireEvent.click(button);
   expect(onexport).toHaveBeenCalledExactlyOnceWith({
     label: "Selected photos",
     total: 3,
-    photos: { query: photoQuery, asset_ids: ["photo-1", "photo-2", "photo-3"], hidden: false },
+    photos: {
+      query: photoQuery,
+      asset_ids: ["photo-1", "photo-2", "photo-3"],
+      hidden: false,
+    },
   });
   photos.dispose();
 });
@@ -2563,9 +2771,89 @@ it("disables selected export when a metadata draft keeps an empty selection open
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
     onexport,
   });
-  const button = screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement;
+  const button = screen.getByRole("button", {
+    name: "Export selection",
+  }) as HTMLButtonElement;
   expect(button.disabled).toBe(true);
   button.click();
   expect(onexport).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
+it("refreshes the list and tags when Refresh XMP observes a background import", async () => {
+  const before = preparedPhoto(1, { file_id: "file-1" });
+  const raw = preparedPhoto(2, {
+    asset_id: before.asset_id,
+    file_id: "raw",
+    file_name: "Photo 1.ARW",
+  });
+  raw.xmp = { state: "pending" };
+  const photos = workspaceWithPreparedPhoto(before);
+  const asset = {
+    id: before.asset_id,
+    display_file_id: before.file_id,
+    files: [
+      { id: raw.file_id, role: "raw" },
+      { id: before.file_id, role: "image" },
+    ],
+  } as PhotoAsset;
+  photos.authored.targets = [raw, before];
+  photos.authored.asset = asset;
+  const receipt = {
+    receipt_id: "xmp-import",
+    before: [before],
+    after: [
+      {
+        ...before,
+        revision: 2,
+        values: { ...before.values, rating: 4, rotation: 90 as const },
+      },
+    ],
+    keywords: [{ node_id: before.node_id, tag_id: "travel", before: false, after: true }],
+  } as PhotoAuthoredReceipt;
+  const jpeg = {
+    ...before,
+    ...receipt.after[0]!,
+    tags: ["travel"],
+    xmp: { state: "synced" as const, receipt },
+  };
+  const travel = {
+    id: "travel",
+    name: "Travel",
+    revision: 2,
+    assignment_count: 1,
+  } as api.Tag;
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/prepare"))
+      return Response.json({
+        assets: [asset],
+        targets: [{ ...raw, xmp: { state: "synced" } }, jpeg],
+      });
+    if (url.endsWith("/tags/travel")) return Response.json(travel);
+    if (url.endsWith("/photos/assets/query"))
+      return Response.json({
+        items: [{ ...photo(1), rotation: 90 }],
+        total: 1,
+        facets: [],
+      });
+    const metadata = photoMetadataResponse(url, init);
+    if (metadata) return metadata;
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const panel = screen.getByRole("region", { name: "XMP for Photo 1.ARW" });
+  expect(within(panel).getByText("XMP: Pending")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "XMP for Photo 1.jpg" })).toBeTruthy();
+  const [refresh, ...extra] = screen.getAllByRole("button", {
+    name: "Refresh XMP",
+  });
+  expect(extra).toHaveLength(0);
+  await fireEvent.click(refresh!);
+  await waitFor(() => expect(photos.items[0]?.rotation).toBe(90));
+  expect(photos.authored.tags).toEqual([travel]);
   photos.dispose();
 });

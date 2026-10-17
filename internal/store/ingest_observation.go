@@ -79,7 +79,7 @@ func requireOperationalIngestRun(run IngestRun) error {
 // advances the node observation. The caller admits the run in this transaction.
 // Identical facts are idempotent within a run.
 func (s *Store) observeOperationalIngestTx(
-	ctx context.Context, tx *sql.Tx, run IngestRun, prior Node, fact metadataProvenance, ingestAdded bool,
+	ctx context.Context, tx *sql.Tx, run IngestRun, prior Node, fact metadataProvenance, ingestAdded bool, observedVersionID string,
 ) (Node, error) {
 	if err := requireOperationalIngestRun(run); err != nil {
 		return Node{}, err
@@ -106,14 +106,13 @@ func (s *Store) observeOperationalIngestTx(
 	if err != nil {
 		return Node{}, err
 	}
-	binding := ProvenanceVersionBinding{
-		ProvenanceIdentity: fact.Identity,
-		ContentVersionID:   prior.CurrentVersionID,
-		ObservedAt:         operation.recordedAt,
-		BasisRef:           provenanceVersionBindingBasis,
-	}
-	if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
-		return Node{}, fmt.Errorf("binding operational ingest observation: %w", err)
+	var binding *ProvenanceVersionBinding
+	if observedVersionID != "" {
+		binding = &ProvenanceVersionBinding{ProvenanceIdentity: fact.Identity, ContentVersionID: observedVersionID,
+			ObservedAt: operation.recordedAt, BasisRef: provenanceVersionBindingBasis}
+		if err := bindProvenanceVersionTx(ctx, tx, *binding); err != nil {
+			return Node{}, fmt.Errorf("binding operational ingest observation: %w", err)
+		}
 	}
 	if err := bumpRevisionTx(tx, prior.ID, operation.recordedAt); err != nil {
 		return Node{}, err
@@ -133,7 +132,7 @@ func (s *Store) observeOperationalIngestTx(
 		}
 		if err := persistAuditedIngestObservation(
 			ctx, tx, s.vaultID, operation.operationID, operation.recordedAt,
-			nodeSequence, authority, scopes, prior, resulting, run.record, fact, &binding, ingestAdded,
+			nodeSequence, authority, scopes, prior, resulting, run.record, fact, binding, ingestAdded,
 		); err != nil {
 			return Node{}, err
 		}

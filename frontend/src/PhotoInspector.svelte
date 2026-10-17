@@ -24,6 +24,22 @@
       (!!editor.error && !editor.targets.length),
   );
   const fields = ["caption", "creator", "copyright"] as const;
+  // Originals get an XMP section; Refresh XMP reloads them all at once.
+  const xmpTargets = $derived(
+    editor.files.filter((target) =>
+      editor.asset?.files.some(
+        (file) => file.id === target.file_id && (file.role === "raw" || file.role === "image"),
+      ),
+    ),
+  );
+  const xmpLabels = {
+    none: "No sidecar",
+    synced: "Synced",
+    pending: "Pending",
+    conflict: "Conflict",
+    unavailable: "Unavailable",
+    invalid: "Invalid",
+  };
   const choices = [
     {
       field: "rating",
@@ -156,6 +172,52 @@
             {tag.name}{editor.keywordState(tag.id) === "mixed" ? " · Mixed" : ""}
           </li>{/each}
       </ul>{/if}
+    {#each xmpTargets as target}
+      {@const xmp = target.xmp}
+      <section class="xmp-state" aria-label={`XMP for ${target.file_name}`}>
+        <h3>{target.file_name}</h3>
+        {#if xmp}<span>XMP: {xmpLabels[xmp.state]}</span>{/if}
+        {#if xmp?.receipt?.receipt_id}<Button
+            size="sm"
+            disabled={disabled || editor.dirty}
+            onclick={() => void editor.undoSidecarImport(target.file_id)}
+            >Undo sidecar import</Button
+          >{/if}
+        {#if xmp?.reason}<p>{xmp.reason}</p>{/if}
+        {#if xmp?.state === "conflict"}
+          <table>
+            <thead><tr><th>Field</th><th>Catalog</th><th>Sidecar</th></tr></thead><tbody>
+              {#each xmp.rows as row}<tr
+                  ><th>{row.field}</th><td>{row.catalog || "Empty"}</td><td
+                    >{row.sidecar || "Empty"}</td
+                  ></tr
+                >{/each}
+            </tbody>
+          </table>
+          <div class="keyword-actions">
+            <Button
+              size="sm"
+              disabled={disabled || editor.dirty}
+              onclick={() => void editor.resolveXMP(target.file_id, "catalog")}>Use Catalog</Button
+            ><Button
+              size="sm"
+              disabled={disabled || editor.dirty}
+              onclick={() => void editor.resolveXMP(target.file_id, "sidecar")}>Use Sidecar</Button
+            >
+          </div>
+        {/if}
+      </section>
+    {/each}
+    {#if editor.xmpStalled}<Notice
+        tone="warning"
+        message="XMP sync is still pending. Select Refresh XMP to check again."
+      />{/if}
+    {#if xmpTargets.length || editor.xmpStalled}<Button
+        size="sm"
+        disabled={editor.busy || editor.loading || actionDisabled}
+        onclick={() => void editor.refreshXMP()}>Refresh XMP</Button
+      >{/if}
+    {#if editor.xmpError}<Notice tone="error" message={editor.xmpError} />{/if}
     {#if editor.conflict && (!editor.membershipChanged || !editor.targets.length)}<Notice
         tone="warning"
         message={editor.targets.length
@@ -228,5 +290,28 @@
     margin: 0;
     padding-left: 16px;
     font-size: var(--font-size-xs);
+  }
+  .xmp-state {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+  }
+  h3 {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+  th,
+  td {
+    text-align: left;
+    vertical-align: top;
+    padding: 4px;
+    overflow-wrap: anywhere;
   }
 </style>

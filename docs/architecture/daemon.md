@@ -154,7 +154,7 @@ Data commands for the local vault call `daemonconn.Ensure`, which discovers a ve
 protocol-matched daemon or starts one. The CLI never fails with "no daemon
 running" for `add`, `ls`, `cat`, and the rest. The protocol revision in the
 runtime record distinguishes incompatible development builds that share the
-same version string. A missing or mismatched revision forces replacement
+same version string. Revision 85 includes photo XMP status and conflict choices. A missing or mismatched revision forces replacement
 before a CLI data request or MCP tool request is sent. `daemon status` and
 `daemon stop` are discovery-only and never start a daemon, so checking on or
 stopping the daemon can't accidentally spawn one.
@@ -190,7 +190,7 @@ The daemon's content jobs include:
 - `extract:source-metadata` reads retained originals that the current extractor
   has not processed. It publishes typed metadata and keeps watching for new
   content.
-- `extract:photo-sidecars` initializes undecided photo files from linked XMP sidecars.
+- `extract:photo-sidecars` syncs Pending photo files with their linked XMP sidecars, including hidden photos.
 - `derive:photo-quality` evaluates the selected display file's quality signals.
 - `maintenance:auxiliary-checksums` computes MD5 for retained blobs that
   predate auxiliary checksums, then completes. New writes record MD5 at ingest.

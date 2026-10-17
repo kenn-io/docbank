@@ -7,6 +7,8 @@ import (
 	"fmt"
 )
 
+const photoXMPPurgeReceipts = `SELECT receipt_id FROM photo_change_receipts INDEXED BY photo_change_receipts_xmp_node WHERE operation='xmp_sync' AND json_extract(after_json,'$.node_id') IN (SELECT value FROM json_each(?1)) UNION SELECT receipt_id FROM photo_change_receipts INDEXED BY photo_change_receipts_xmp_sidecar WHERE operation='xmp_sync' AND json_extract(after_json,'$.sync.sidecar.node_id') IN (SELECT value FROM json_each(?1))`
+
 // adjustPhotosForPurgedNodesTx removes memberships before a permanent node
 // deletion. Assets remain as empty, revisioned graph rows so receipts and later
 // restore/import validation retain their identity.
@@ -84,7 +86,9 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		if err != nil {
 			return fmt.Errorf("encoding purged photo nodes: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (
+		// An XMP receipt naming a purged original or sidecar goes with it.
+		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (`+photoXMPPurgeReceipts+`
+ UNION
  SELECT r.receipt_id FROM photo_change_receipts r
  WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND
  (EXISTS (SELECT 1 FROM json_each(r.after_json,'$.after') entry WHERE json_extract(entry.value,'$.node_id') IN (SELECT id FROM nodes_to_purge))

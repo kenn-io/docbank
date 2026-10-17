@@ -54,7 +54,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v20"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v21"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -2249,7 +2249,7 @@ func localTimestampLayout(value string) string {
 
 func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte) error {
 	values, err := readPhotoSidecar(ctx, data)
-	if err != nil {
+	if err != nil || values.Refusal != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
@@ -2258,9 +2258,9 @@ func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte
 	}
 	c.boolean("image.xmp.packet_valid", "image.xmp", "packet", true)
 	c.string("image.xmp.sidecar_for_extension", "image.xmp", "SidecarForExtension", values.SidecarForExtension, false)
-	c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Rating))
-	c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Rotation))
-	for _, field := range []struct{ key, source, value string }{{"flag", "Pick", values.Flag}, {"label", "Label", values.Label}, {"caption", "description", values.Caption}, {"creator", "creator", values.Creator}, {"copyright", "rights", values.Copyright}} {
+	c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Values.Rating))
+	c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Values.Rotation))
+	for _, field := range []struct{ key, source, value string }{{"flag", "Pick", values.Values.Flag}, {"label", "Label", values.Values.Label}, {"caption", "description", values.Values.Caption}, {"creator", "creator", values.Values.Creator}, {"copyright", "rights", values.Values.Copyright}} {
 		c.string("image.xmp."+field.key, "image.xmp", field.source, field.value, false)
 	}
 	return nil

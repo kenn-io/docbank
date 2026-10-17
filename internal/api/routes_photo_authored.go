@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -31,7 +33,21 @@ type PhotoAuthoredPreparation struct {
 	Targets []store.PhotoPreparedTarget `json:"targets"`
 }
 
+type PhotoXMPResolveRequest struct {
+	ConflictID string `json:"conflict_id" format:"uuid"`
+	Choice     string `json:"choice" enum:"catalog,sidecar"`
+}
+
 func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
+	huma.Register(api, huma.Operation{OperationID: "resolvePhotoXMP", Method: http.MethodPost, Path: "/api/v1/photos/authored/{file_id}/xmp", Summary: "Choose the catalog or sidecar copy of conflicting photo metadata"}, func(ctx context.Context, in *struct {
+		FileID string `path:"file_id" format:"uuid"`
+		Body   PhotoXMPResolveRequest
+	}) (*struct{}, error) {
+		err := g.mutate(func() error {
+			return FromStoreError(processing.ResolvePhotoXMP(ctx, &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}, in.FileID, in.Body.ConflictID, in.Body.Choice))
+		})
+		return nil, err
+	})
 	huma.Register(api, huma.Operation{OperationID: "preparePhotoAuthored", Method: http.MethodPost, Path: "/api/v1/photos/authored/prepare", Summary: "Resolve a revision-bound metadata editing session"}, func(ctx context.Context, in *struct{ Body PhotoAuthoredPrepareRequest }) (*struct {
 		Body PhotoAuthoredPreparation
 	}, error) {
@@ -86,6 +102,9 @@ func photoAuthoredBrowserRequestAllowed(r *http.Request) bool {
 		}
 		if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/authored/"); ok {
 			parts := strings.Split(after, "/")
+			if len(parts) == 2 && parts[1] == "xmp" && query.ValidateTextOperand("asset", parts[0]) == nil {
+				return r.Method == http.MethodPost
+			}
 			return len(parts) == 2 && parts[1] == "undo" && query.ValidateTextOperand("asset", parts[0]) == nil && r.Method == http.MethodPost
 		}
 	}

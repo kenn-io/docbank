@@ -9674,6 +9674,47 @@ func (c *Client) PreparePhotoAuthored(ctx context.Context, options *PreparePhoto
 	return responseParser(ctx, resp)
 }
 
+// ResolvePhotoXMP Choose the catalog or sidecar copy of conflicting photo metadata
+func (c *Client) ResolvePhotoXMP(ctx context.Context, options *ResolvePhotoXMPRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/{file_id}/xmp",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePhotoXMPErrorResponse](resp, "ResolvePhotoXMPErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/{file_id}/xmp")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UndoPhotoAuthored Undo photo fields and keywords if their revisions still match
 func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoAuthoredResponse, error) {
 	var err error
@@ -20827,6 +20868,41 @@ func (o *PreparePhotoAuthoredRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// ResolvePhotoXMPRequestOptions is the options needed to make a request to ResolvePhotoXMP.
+type ResolvePhotoXMPRequestOptions struct {
+	PathParams *ResolvePhotoXMPPath
+	Body       *ResolvePhotoXMPBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePhotoXMPRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UndoPhotoAuthoredRequestOptions is the options needed to make a request to UndoPhotoAuthored.
 type UndoPhotoAuthoredRequestOptions struct {
 	PathParams *UndoPhotoAuthoredPath
@@ -24548,6 +24624,10 @@ type UnhidePhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
 
+type ResolvePhotoXMPPath struct {
+	FileID uuid.UUID `json:"file_id"`
+}
+
 type UndoPhotoAuthoredPath struct {
 	ReceiptID uuid.UUID `json:"receipt_id"`
 }
@@ -24905,6 +24985,8 @@ type PreparePhotoPreviewBody = PreparePhotoPreviewRequest
 type EditPhotoAuthoredBody = PhotoAuthoredEditRequest
 
 type PreparePhotoAuthoredBody = PhotoAuthoredPrepareRequest
+
+type ResolvePhotoXMPBody = PhotoXMPResolveRequest
 
 type ChangePhotoHiddenBody = PhotoHiddenPasscodeRequest
 
@@ -26261,6 +26343,8 @@ type EditPhotoAuthoredErrorResponse = Error
 type PreparePhotoAuthoredResponse = api.PhotoAuthoredPreparation
 
 type PreparePhotoAuthoredErrorResponse = Error
+
+type ResolvePhotoXMPErrorResponse = Error
 
 type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
@@ -27634,6 +27718,12 @@ type PhotoSidecarProvenance = store.PhotoSidecarProvenance
 type PhotoTimeline = api.PhotoTimeline
 
 type PhotoTimelineRequest = api.PhotoTimelineRequest
+
+type PhotoXMPResolveRequest = api.PhotoXMPResolveRequest
+
+type PhotoXMPRow = store.PhotoXMPRow
+
+type PhotoXMPState = store.PhotoXMPState
 
 type Plan = bundle.Plan
 

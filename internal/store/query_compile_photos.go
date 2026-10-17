@@ -40,7 +40,7 @@ func (c queryCompiler) compilePhotoDecisionPredicate(predicate string, args ...a
 }
 
 func isPhotoScalarField(field string) bool {
-	return query.IsQualityField(field) || slices.Contains([]string{"rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "location", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
+	return query.IsQualityField(field) || slices.Contains([]string{"xmp", "rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "location", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
@@ -65,6 +65,21 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		return c.compilePhotoQualityPredicate(field, value)
 	}
 	switch field {
+	case "xmp":
+		if err := query.ValidateTextOperand(field, value); err != nil {
+			return compiledQueryFragment{}, err
+		}
+		originals := `SELECT f.node_id,f.asset_id FROM ` + photoXMPUnfencedSQL + ` JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE ` + photoXMPSignalsSQL
+		if value == PhotoXMPStateConflict {
+			originals = `SELECT f.node_id,f.asset_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id
+ WHERE f.node_id IN (` + photoXMPSyncedNodesSQL + `) AND f.role IN ('raw','image') AND ` + photoXMPFenceCurrentSQL + ` AND ` + photoXMPLatestStateSQL + `='conflict'`
+		}
+		if c.photoDisplayMetadata {
+			// A member matches only inside a matching asset, so the asset set is implied.
+			return compiledQueryFragment{sql: `n.id IN (SELECT pf.node_id FROM (` + originals + `) xf JOIN photo_files pf ON pf.asset_id=xf.asset_id)`,
+				assets: `SELECT asset_id FROM (` + originals + `)`}, nil
+		}
+		return compiledQueryFragment{sql: `n.id IN (SELECT node_id FROM (` + originals + `))`}, nil
 	case "rating", "rating_min", "rating_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil || n > 5 {

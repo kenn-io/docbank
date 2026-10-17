@@ -400,13 +400,22 @@ func photoBrowseMatch(compiled CompiledQuery, generation string, coverage Covera
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member JOIN nodes n ON n.id=member.node_id JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE member.asset_id=a.asset_id AND ` + predicate.sql + `)`, args: predicate.args, relations: predicate.relations}, nil
+		return compiledQueryFragment{sql: photoBrowseAssetSeek(predicate.assets) + `EXISTS (SELECT 1 FROM photo_files member JOIN nodes n ON n.id=member.node_id JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE member.asset_id=a.asset_id AND ` + predicate.sql + `)`, args: predicate.args, relations: predicate.relations}, nil
 	}
 	population, err := photoBrowsePopulation(compiled, generation, coverage)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member CROSS JOIN (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
+}
+
+// photoBrowseAssetSeek restates a predicate's implied asset set on the outer
+// asset, so SQLite seeks those assets before probing members for the rest.
+func photoBrowseAssetSeek(assets string) string {
+	if assets == "" {
+		return ""
+	}
+	return `a.asset_id IN (` + assets + `) AND `
 }
 
 func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot bool) (string, []any, error) {

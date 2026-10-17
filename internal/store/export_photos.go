@@ -190,24 +190,8 @@ func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundl
 	if !includeMetadata {
 		return i, nil
 	}
-	rows, err := q.QueryContext(ctx, `SELECT t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=? ORDER BY t.name,t.id`, m.NodeID)
-	if err != nil {
-		return i, err
-	}
-	defer func() { _ = rows.Close() }()
-	keywordBytes := 0
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return i, err
-		}
-		keywordBytes += len(name)
-		if keywordBytes > maxPhotoExportKeywordBytes {
-			return i, bundle.ErrLimit
-		}
-		i.Keywords = append(i.Keywords, name)
-	}
-	return i, rows.Err()
+	i.Keywords, err = photoKeywordNames(ctx, q, m.NodeID)
+	return i, err
 }
 
 func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.PlanRequest) ([]PhotoExportInput, error) {
@@ -256,4 +240,23 @@ func (s *Store) AcquirePhotoExportPreparation(ctx context.Context) (func(), erro
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// photoKeywordNames is the ordered portable keyword snapshot for a member.
+func photoKeywordNames(ctx context.Context, q metadataQuerier, nodeID int64) ([]string, error) {
+	names := []string{}
+	keywordBytes := 0
+	err := queryRows(ctx, q, `SELECT t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=? ORDER BY t.name,t.id`, []any{nodeID}, func(rows *sql.Rows) error {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		keywordBytes += len(name)
+		if keywordBytes > maxPhotoExportKeywordBytes {
+			return bundle.ErrLimit
+		}
+		names = append(names, name)
+		return nil
+	})
+	return names, err
 }

@@ -251,6 +251,15 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
 		return errors.New("invalid photo receipt metadata")
 	}
+	if v.Operation == "xmp_sync" {
+		if v.AssetID != nil || v.SettingsKey != nil || v.SetID != nil || v.AfterRevision < 1 || v.BeforeRevision != v.AfterRevision-1 || v.BeforeJSON != "null" {
+			return errors.New("invalid XMP receipt identity")
+		}
+		if _, err := decodePhotoXMPReceipt([]byte(v.AfterJSON)); err != nil {
+			return err
+		}
+		return validateMetadataTime("photo receipt created_at", v.CreatedAt)
+	}
 	if v.Operation == "face_decision" {
 		if v.AssetID == nil || validateUUIDv4(*v.AssetID) != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
 			return ErrInvalidPhotoFace
@@ -372,6 +381,25 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 	}
 	if invalid != 0 {
 		return errors.New("authored undo references an invalid receipt")
+	}
+	// XMP receipts name their original's node and sidecar's, and number each
+	// original's outcomes once.
+	if err := q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_change_receipts r
+ LEFT JOIN photo_files f ON f.file_id=json_extract(r.after_json,'$.file_id')
+ LEFT JOIN photo_files sf ON sf.file_id=json_extract(r.after_json,'$.sync.sidecar.file_id')
+ WHERE r.operation='xmp_sync' AND (f.file_id IS NULL OR f.node_id<>json_extract(r.after_json,'$.node_id')
+ OR json_type(r.after_json,'$.sync') IS NOT NULL AND (sf.file_id IS NULL OR sf.node_id<>json_extract(r.after_json,'$.sync.sidecar.node_id'))))`).Scan(&invalid); err != nil {
+		return fmt.Errorf("checking XMP receipt references: %w", err)
+	}
+	if invalid != 0 {
+		return errors.New("XMP receipts reference missing or different nodes")
+	}
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM photo_change_receipts WHERE operation='xmp_sync'
+ GROUP BY json_extract(after_json,'$.file_id'),after_revision HAVING count(*)>1)`).Scan(&invalid); err != nil {
+		return fmt.Errorf("checking XMP receipt sequence: %w", err)
+	}
+	if invalid != 0 {
+		return errors.New("XMP receipts repeat an original's sync sequence")
 	}
 	return nil
 }

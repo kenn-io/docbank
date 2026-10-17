@@ -147,9 +147,20 @@
     editor.tagsLoading = tagsLoading;
     editor.tagsTotal = tagsTotal;
   });
+  $effect(() => {
+    editor.onXMPChanged = async (receipt, tags = []) => {
+      if (photoID) {
+        detailController?.abort();
+        reload = { id: photoID };
+      }
+      if (receipt) await metadataRefresh(receipt, tags, true);
+      else await refresh();
+    };
+  });
   async function metadataRefresh(
     receipt: PhotoAuthoredReceipt,
     tags: import("./generated/docbank.js").Tag[],
+    forceRefresh = false,
   ) {
     onmetadatachanged?.(receipt, tags);
     const refreshing = photos.loading;
@@ -167,7 +178,8 @@
       detailController?.abort();
       reload = { id: photoID };
     }
-    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) await refresh();
+    if (forceRefresh || refreshing || (photos.started && photos.reloadsAfter(rotations)))
+      await refresh();
   }
   function unavailable() {
     editor.unavailable(

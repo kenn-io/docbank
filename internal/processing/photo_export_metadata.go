@@ -28,6 +28,7 @@ const maxPhotoSidecarBytes = 1 << 20
 
 const photoXMPJPEGPrefix = "http://ns.adobe.com/xap/1.0/\x00"
 const photoXMPPNGKeyword = "XML:com.adobe.xmp"
+const photoXMPRDFDescription = "Description"
 const sourceMetadataCreatorField = "creator"
 const microsoftPhotoXMPNamespace = "http://ns.microsoft.com/photo/1.0"
 
@@ -889,7 +890,16 @@ func (w *photoXMPEncoder) EncodeElement(value string, start xml.StartElement) er
 }
 
 func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt, sourceOrientation int, embedded []string) ([]byte, error) {
-	if len(packet) == 0 && input.Authored.Confirmed == 0 && len(input.Keywords) == 0 && len(embedded) == 0 {
+	return mergePhotoXMPProperties(ctx, packet, input, receipt, sourceOrientation, embedded, nil)
+}
+
+type photoXMPReplace struct {
+	mask        store.PhotoAuthoredFields
+	orientation int
+}
+
+func mergePhotoXMPProperties(ctx context.Context, packet []byte, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt, sourceOrientation int, embedded []string, replace *photoXMPReplace) ([]byte, error) {
+	if replace == nil && len(packet) == 0 && input.Authored.Confirmed == 0 && len(input.Keywords) == 0 && len(embedded) == 0 {
 		return nil, nil
 	}
 	if len(packet) == 0 {
@@ -921,8 +931,8 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	decoder := newPhotoXMLDecoder(packet)
 	var out bytes.Buffer
 	encoder := &photoXMPEncoder{encoder: xml.NewEncoder(&out)}
-	ratingConfirmed := input.Authored.Confirmed&store.PhotoConfirmedRating != 0
-	flagConfirmed := input.Authored.Confirmed&store.PhotoConfirmedFlag != 0
+	ratingConfirmed := replace == nil && input.Authored.Confirmed&store.PhotoConfirmedRating != 0
+	flagConfirmed := replace == nil && input.Authored.Confirmed&store.PhotoConfirmedFlag != 0
 	embeddedReject := false
 	saveFlag := func(value string) {
 		if !embeddedReject {
@@ -950,6 +960,9 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 		return n.Space == "http://ns.adobe.com/xmp/note/" && n.Local == "HasExtendedXMP"
 	}
 	remove := func(n xml.Name, photoProperty bool) bool {
+		if replace != nil {
+			return photoProperty && photoXMPPropertyFor(n).bit&replace.mask != 0
+		}
 		if n.Space == xmlNamespacePrefix || n.Space == "" && n.Local == xmlNamespacePrefix {
 			return false
 		}
@@ -969,7 +982,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	rdfDepth := 2
 	// The first top-level description names the photo, as readPhotoSidecar does.
 	subject := photoXMPSubject{kind: "about"}
-	subjectSeen, photoDescription := false, false
+	subjectSeen, photoDescription, authoredWritten, scalarsWritten := false, false, false, false
 	var elements []xml.Name
 	// Qualified properties carry their scalar in rdf:value. Other descendants
 	// describe that value and must not contribute text to it.
@@ -981,7 +994,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 			return false
 		}
 		return depth == propertyDepth+1 || depth == propertyDepth+2 &&
-			elements[propertyDepth] == (xml.Name{Space: rdfNamespace, Local: "Description"})
+			elements[propertyDepth] == (xml.Name{Space: rdfNamespace, Local: photoXMPRDFDescription})
 	}
 	var ratingTokens []xml.Token
 	var ratingValue strings.Builder
@@ -1023,7 +1036,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 		return nil
 	}
 	normalized := func(name xml.Name, photoProperty bool) string {
-		if !photoProperty {
+		if replace != nil || !photoProperty {
 			return ""
 		}
 		if name.Space != "http://ns.adobe.com/tiff/1.0/" && name.Space != "http://ns.adobe.com/exif/1.0/" {
@@ -1114,7 +1127,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				skip++
 				continue
 			}
-			if depth == rdfDepth+1 && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) && t.Name == (xml.Name{Space: rdfNamespace, Local: "Description"}) {
+			if depth == rdfDepth+1 && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) && t.Name == (xml.Name{Space: rdfNamespace, Local: photoXMPRDFDescription}) {
 				current, err := readPhotoXMPSubject(t.Attr)
 				if err != nil {
 					return nil, err
@@ -1124,7 +1137,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				}
 				photoDescription = current == subject
 			}
-			photoObject := photoDescription && depth >= rdfDepth+1 && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) && elements[rdfDepth] == (xml.Name{Space: rdfNamespace, Local: "Description"})
+			photoObject := photoDescription && depth >= rdfDepth+1 && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) && elements[rdfDepth] == (xml.Name{Space: rdfNamespace, Local: photoXMPRDFDescription})
 			photoProperty, photoAttributes := photoObject && depth == rdfDepth+2, photoObject && depth == rdfDepth+1
 			if photoProperty && unionKeywords && t.Name == plainSubject {
 				if !plainSubjectAttrs(t.Attr) {
@@ -1133,7 +1146,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				subjectDepth, subjectCollection = depth, false
 				continue
 			}
-			if remove(t.Name, photoProperty) && !isRating(t.Name) && !sourceFlag(t.Name) {
+			if remove(t.Name, photoProperty) && (replace != nil || !isRating(t.Name) && !sourceFlag(t.Name)) {
 				skip = 1
 				continue
 			}
@@ -1169,6 +1182,9 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				}
 				attrs = append(attrs, a)
 			}
+			if replace != nil && photoAttributes && !authoredWritten && !scalarsWritten {
+				attrs, scalarsWritten = append(attrs, photoXMPScalarAttrs(input.Authored, replace)...), true
+			}
 			t.Attr = attrs
 			if value := normalized(t.Name, photoProperty); value != "" {
 				// The replacement is a plain RDF literal, so the old value's
@@ -1202,6 +1218,12 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				skip--
 				continue
 			}
+			if replace != nil && photoDescription && !authoredWritten && depth == rdfDepth && t.Name == (xml.Name{Space: rdfNamespace, Local: photoXMPRDFDescription}) {
+				if err := writePhotoAuthoredXMP(encoder, input, nil, replace); err != nil {
+					return nil, err
+				}
+				authoredWritten = true
+			}
 			if t.Name.Space == rdfNamespace && t.Name.Local == "RDF" {
 				rdf++
 				if rdf > 1 {
@@ -1216,8 +1238,10 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 						}
 					}
 				}
-				if err := writePhotoAuthoredXMP(encoder, input, subject); err != nil {
-					return nil, err
+				if !authoredWritten {
+					if err := writePhotoAuthoredXMP(encoder, input, &subject, replace); err != nil {
+						return nil, err
+					}
 				}
 			}
 		case xml.CharData:
@@ -1233,7 +1257,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 			if strings.Trim(string(t), " \t\r\n") == "" && (depth == 0 ||
 				depth == 1 && isXMPRoot(elements[0]) ||
 				depth == rdfDepth && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) ||
-				depth == rdfDepth+1 && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) && elements[rdfDepth] == (xml.Name{Space: rdfNamespace, Local: "Description"})) {
+				depth == rdfDepth+1 && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) && elements[rdfDepth] == (xml.Name{Space: rdfNamespace, Local: photoXMPRDFDescription})) {
 				continue
 			}
 		default:
@@ -1282,55 +1306,92 @@ func readPhotoXMPSubject(attrs []xml.Attr) (photoXMPSubject, error) {
 	return subject, nil
 }
 
-func writePhotoAuthoredXMP(encoder *photoXMPEncoder, input store.PhotoExportInput, subject photoXMPSubject) error {
-	if input.Authored.Confirmed == 0 && len(input.Keywords) == 0 {
+func writePhotoAuthoredXMP(encoder *photoXMPEncoder, input store.PhotoExportInput, subject *photoXMPSubject, replace *photoXMPReplace) (err error) {
+	if replace == nil && input.Authored.Confirmed == 0 && len(input.Keywords) == 0 {
 		return nil
 	}
-	description := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: "Description"}, Attr: []xml.Attr{{Name: xml.Name{Space: rdfNamespace, Local: subject.kind}, Value: subject.value}}}
-	if err := encoder.EncodeToken(description); err != nil {
-		return err
-	}
-	write := func(space, name, value string, collection string) error {
-		e := xml.StartElement{Name: xml.Name{Space: space, Local: name}}
-		if err := encoder.EncodeToken(e); err != nil {
+	if subject != nil {
+		description := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: photoXMPRDFDescription}, Attr: []xml.Attr{{Name: xml.Name{Space: rdfNamespace, Local: subject.kind}, Value: subject.value}}}
+		if replace != nil {
+			description.Attr = append(description.Attr, photoXMPScalarAttrs(input.Authored, replace)...)
+		}
+		if err := encoder.EncodeToken(description); err != nil {
 			return err
 		}
-		if collection != "" {
-			c := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: collection}}
-			if err := encoder.EncodeToken(c); err != nil {
-				return err
-			}
-			values := []string{value}
-			if name == "subject" {
-				values = input.Keywords
-			}
-			for _, v := range values {
-				li := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: "li"}}
-				if collection == "Alt" {
-					li.Attr = []xml.Attr{{Name: xml.Name{Space: xmlNamespace, Local: "lang"}, Value: "x-default"}}
-				}
-				if err := encoder.EncodeElement(v, li); err != nil {
-					return err
-				}
-			}
-			if err := encoder.EncodeToken(c.End()); err != nil {
-				return err
-			}
-		} else if err := encoder.EncodeToken(xml.CharData(value)); err != nil {
-			return err
-		}
-		return encoder.EncodeToken(e.End())
+		defer func() { err = errors.Join(err, encoder.EncodeToken(description.End())) }()
 	}
 	v := input.Authored
-	for _, p := range [][4]string{{xmpBasicNamespace, "Rating", strconv.Itoa(v.Rating), ""}, {xmpBasicNamespace, "Label", v.Label, ""}, {teststripXMPNamespace, "Pick", v.Flag, ""}, {teststripXMPNamespace, "Rotation", "0", ""}, {xmpDublinCoreNamespace, "description", v.Caption, "Alt"}, {xmpDublinCoreNamespace, sourceMetadataCreatorField, v.Creator, "Seq"}, {xmpDublinCoreNamespace, "rights", v.Copyright, "Alt"}, {xmpDublinCoreNamespace, "subject", "", "Bag"}} {
-		if !photoXMPConfirmed(xml.Name{Space: p[0], Local: p[1]}, input) {
+	orientation := 1
+	if replace != nil {
+		orientation = replace.orientation
+	}
+	values := photoXMPPropertyValues(v, orientation)
+	for _, p := range &photoXMPProperties {
+		if replace != nil && (replace.mask&p.bit == 0 || p.collection == "" || p.bit != store.PhotoXMPKeywordsBit && v.Confirmed&p.bit == 0) {
 			continue
 		}
-		if err := write(p[0], p[1], p[2], p[3]); err != nil {
+		if replace == nil && p.name == "Orientation" {
+			p.space, p.name = teststripXMPNamespace, "Rotation"
+			values[p.bit] = "0"
+		}
+		if replace == nil && !photoXMPConfirmed(xml.Name{Space: p.space, Local: p.name}, input) {
+			continue
+		}
+		if err := writePhotoXMPProperty(encoder, p.space, p.name, values[p.bit], p.collection, input.Keywords); err != nil {
 			return err
 		}
 	}
-	return encoder.EncodeToken(description.End())
+
+	return nil
+}
+
+// photoXMPScalarAttrs writes a sidecar's replaced scalar decisions as
+// attributes of the photo's description, where Teststrip reads them.
+func photoXMPScalarAttrs(v store.PhotoAuthored, replace *photoXMPReplace) []xml.Attr {
+	values := photoXMPPropertyValues(v, replace.orientation)
+	attrs := []xml.Attr{}
+	for _, p := range &photoXMPProperties {
+		if p.collection != "" || replace.mask&p.bit == 0 || v.Confirmed&p.bit == 0 {
+			continue
+		}
+		attrs = append(attrs, xml.Attr{Name: xml.Name{Space: p.space, Local: p.name}, Value: values[p.bit]})
+		if p.bit == store.PhotoConfirmedRotation {
+			attrs = append(attrs, xml.Attr{Name: xml.Name{Space: teststripXMPNamespace, Local: "Rotation"}, Value: strconv.Itoa(v.Rotation)})
+		}
+	}
+	return attrs
+}
+
+func writePhotoXMPProperty(encoder *photoXMPEncoder, space, name, value, collection string, keywords []string) error {
+	e := xml.StartElement{Name: xml.Name{Space: space, Local: name}}
+	if err := encoder.EncodeToken(e); err != nil {
+		return err
+	}
+	if collection != "" {
+		c := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: collection}}
+		if err := encoder.EncodeToken(c); err != nil {
+			return err
+		}
+		values := []string{value}
+		if name == "subject" {
+			values = keywords
+		}
+		for _, v := range values {
+			li := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: "li"}}
+			if collection == "Alt" {
+				li.Attr = []xml.Attr{{Name: xml.Name{Space: xmlNamespace, Local: "lang"}, Value: "x-default"}}
+			}
+			if err := encoder.EncodeElement(v, li); err != nil {
+				return err
+			}
+		}
+		if err := encoder.EncodeToken(c.End()); err != nil {
+			return err
+		}
+	} else if err := encoder.EncodeToken(xml.CharData(value)); err != nil {
+		return err
+	}
+	return encoder.EncodeToken(e.End())
 }
 
 func photoXMPExportField(n xml.Name) string {
@@ -1344,10 +1405,10 @@ func photoXMPExportField(n xml.Name) string {
 		case "Artist":
 			return sourceMetadataCreatorField
 		case "Copyright":
-			return "rights"
+			return sourceMetadataRightsField
 		}
 	}
-	return photoXMPField(n)
+	return photoXMPPropertyFor(n).name
 }
 
 func photoXMPKeywords(n xml.Name) bool {
@@ -1361,16 +1422,16 @@ func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 	if photoXMPKeywords(n) {
 		return len(input.Keywords) > 0
 	}
-	bit := map[string]store.PhotoAuthoredFields{
-		"Rating":                   store.PhotoConfirmedRating,
-		"Label":                    store.PhotoConfirmedLabel,
-		"Pick":                     store.PhotoConfirmedFlag,
-		"Rotation":                 store.PhotoConfirmedRotation,
-		"description":              store.PhotoConfirmedCaption,
-		sourceMetadataCreatorField: store.PhotoConfirmedCreator,
-		"rights":                   store.PhotoConfirmedCopyright,
-	}[photoXMPExportField(n)]
-	return bit != 0 && input.Authored.Confirmed&bit != 0
+	field := photoXMPExportField(n)
+	if field == "Rotation" {
+		return input.Authored.Confirmed&store.PhotoConfirmedRotation != 0
+	}
+	for _, p := range &photoXMPProperties {
+		if p.name == field && p.name != "Orientation" {
+			return input.Authored.Confirmed&p.bit != 0
+		}
+	}
+	return false
 }
 
 const metadataOffRemedy = "; turn image metadata off to export this photo"
@@ -1502,4 +1563,20 @@ func photoGIFMetadata(data []byte, keepXMP bool) (icc, xmp []byte, err error) {
 		}
 	}
 	return icc, xmp, nil
+}
+
+// Sidecars share the export merger and replace only properties chosen by the planner.
+func mergePhotoXMPSidecar(ctx context.Context, packet []byte, input store.PhotoExportInput, source int, mask store.PhotoAuthoredFields) ([]byte, photoSidecarPacket, error) {
+	data, err := mergePhotoXMPProperties(ctx, packet, input, bundle.PhotoRenderReceipt{}, source, nil, &photoXMPReplace{mask, store.PhotoXMPOrientation(source, input.Authored.Rotation)})
+	if err != nil {
+		return nil, photoSidecarPacket{}, err
+	}
+	parsed, err := readPhotoSidecar(ctx, data)
+	if err == nil {
+		err = parsed.Refusal
+	}
+	return data, parsed, err
+}
+func photoXMPPropertyValues(v store.PhotoAuthored, orientation int) map[store.PhotoAuthoredFields]string {
+	return map[store.PhotoAuthoredFields]string{store.PhotoConfirmedRating: strconv.Itoa(v.Rating), store.PhotoConfirmedFlag: v.Flag, store.PhotoConfirmedLabel: v.Label, store.PhotoConfirmedCaption: v.Caption, store.PhotoConfirmedCreator: v.Creator, store.PhotoConfirmedCopyright: v.Copyright, store.PhotoConfirmedRotation: strconv.Itoa(orientation)}
 }
