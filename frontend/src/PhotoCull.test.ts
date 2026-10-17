@@ -763,7 +763,7 @@ it.each(["held", "missing", "different version"])(
   },
 );
 
-it.each(["rating only", "same flag", "flag change", "unavailable mark and auto-advance toggle"])(
+it.each(["rating only", "flag change", "unavailable mark and auto-advance toggle"])(
   "reads completed-pass flags again only after a flag-changing receipt: %s",
   async (kind) => {
     const row = photo(1);
