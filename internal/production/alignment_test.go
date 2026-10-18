@@ -674,6 +674,8 @@ func TestRenderTextRenditionDeterministicUnicodeAndSemanticUnits(t *testing.T) {
 }
 
 func TestRenderTextRenditionReleasesCompletedPages(t *testing.T) {
+	// Release the final map's validation garbage before another RSS-limited test.
+	t.Cleanup(debug.FreeOSMemory)
 	pdf := redactiontest.PDF(t, []string{"native text"}, "rendition memory")
 	alignNativeFixture(t, pdf, "native text")
 	// Native alignment keeps its WASM backing available. Later renditions must
