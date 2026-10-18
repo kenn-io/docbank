@@ -42,5 +42,11 @@ if ($ShardCount -eq 4 -and $Shard -ne 'all') {
 }
 
 # Git Bash enables backup privileges for its children, which lets reads bypass exclusive file locks.
+if ($ShardCount -eq 4 -and $Shard -eq '3') {
+    # Lifecycle tests spawn daemons with readiness deadlines; give them the runner first.
+    go test -timeout 30m -tags fts5 @args ./cmd/docbank
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $packages = @($packages | Where-Object { $_ -ne './cmd/docbank' })
+}
 go test -timeout 30m -tags fts5 @args @packages
 exit $LASTEXITCODE
