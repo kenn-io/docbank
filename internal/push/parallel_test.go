@@ -107,7 +107,7 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			select {
 			case <-done:
 			case <-completionDeadline.C:
-				t.Fatal("push did not finish")
+				t.Fatal("push did not finish before the completion deadline")
 			}
 			unblock()
 			server.Close()
