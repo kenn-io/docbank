@@ -17,21 +17,6 @@ configuration file. Each registered secondary store needs a matching
 connection profile after restart. Backup commands need either a configured
 repository or a `--repo` flag.
 
-Docbank rejects TOML syntax errors and unknown keys when a command reads the
-file. The daemon validates every subsystem before starting. `docbank web`
-validates web options; `docbank mcp --transport http` validates its HTTP policy
-and selected credential binding. These launchers ignore semantic errors in
-unrelated sections and do not apply daemon-only environment overrides.
-
-Data commands such as `search` use the running daemon's configuration and
-credentials. An invalid unused section in the file produces a warning on stderr
-once per vault in the client process. Warnings check the file alone; the daemon's
-startup environment can satisfy requirements absent from the file.
-If no compatible daemon is running, the command must start one with a valid
-complete configuration. A startup validation failure reports
-`daemon config invalid:` followed by the section and reason. Correct that
-section or start the daemon with its intended environment before retrying.
-
 For optional pinned local email rendering, see
 [Email PDF configuration](usage/email-pdf.md#configure-the-renderer).
 
@@ -120,10 +105,19 @@ owns or creates the vault root.
 
 ## config.toml
 
-`$DOCBANK_HOME/config.toml` is read once, at daemon startup (`docbank
-daemon run` / `daemon start`). `docbank mcp --transport http` also reads and
-validates the whole file at startup, then resolves its named credential
-binding. The file is optional. Nonempty environment settings override the
+With a compatible daemon running, `docbank mcp --transport http` and
+`docbank web` skip unrelated policy and daemon-only environment overrides.
+MCP reads `[mcp.http]` and its named credential binding; web reads `[web] enabled`.
+Both launchers reject TOML syntax errors anywhere in the file, but reject
+unknown keys and bad values (for example `enabled = 'yes'`) only in the sections
+they read. The daemon checks the whole file when it starts.
+If no compatible daemon runs, they start one. At startup, including explicit
+`docbank daemon run` / `daemon start`, the daemon validates the whole
+`$DOCBANK_HOME/config.toml` file and inherits the shell's environment.
+Invalid policy reports `daemon config invalid:` followed by the section and
+reason. Data commands never read the file; they use the daemon's startup
+settings and start a daemon if needed.
+The file is optional. Nonempty environment settings override the
 supported startup fields after TOML is loaded. Empty values preserve TOML,
 and overrides are never written back. `DOCBANK_HOME` selects the vault.
 Named credential bindings read their configured environment variables. MCP

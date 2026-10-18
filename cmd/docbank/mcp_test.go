@@ -192,6 +192,10 @@ func TestMCPCommandValidatesTransportSpecificOptionsBeforeStarting(t *testing.T)
 func TestResolveMCPHTTPBearerReadsNamedBindingOncePerStartup(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(`
+[[watch]]
+name='relative'
+source='relative/path'
+
 [mcp.http]
 credential_binding = "credential:mcp-http"
 

@@ -35,19 +35,19 @@ With --no-browser, the authenticated URL is printed instead. It contains the
 browser credentials: do not paste it into logs, issue trackers, or chat.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if !docweb.Available() {
-			return errors.New("this binary does not contain the web application; rebuild with make build")
-		}
 		layout, err := home.Resolve()
 		if err != nil {
 			return err
 		}
-		cfg, err := config.LoadWeb(layout.Root)
+		enabled, err := config.WebEnabled(layout.Root)
 		if err != nil {
 			return err
 		}
-		if !cfg.Web.Enabled {
+		if !enabled {
 			return errors.New("the web application is disabled by [web] enabled = false")
+		}
+		if !docweb.Available() {
+			return errors.New("this binary does not contain the web application; rebuild with make build")
 		}
 		c, err := daemonconn.EnsureWeb(cmd.Context())
 		if err != nil {

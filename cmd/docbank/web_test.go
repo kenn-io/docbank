@@ -104,3 +104,17 @@ func TestRunWebRejectsNonLoopbackClientBeforeOpeningOrPrinting(t *testing.T) {
 	assert.False(t, called)
 	assert.Empty(t, out.String())
 }
+
+func TestWebDisabledIgnoresUnrelatedDaemonConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	t.Setenv("DOCBANK_API_PORT", "invalid")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(`[web]
+enabled=false
+[[watch]]
+name='relative'
+source='relative/path'
+`), 0600))
+	err := webCmd.RunE(webCmd, nil)
+	require.EqualError(t, err, "the web application is disabled by [web] enabled = false")
+}

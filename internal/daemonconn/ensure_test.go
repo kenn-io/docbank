@@ -44,6 +44,27 @@ func TestMain(m *testing.M) {
 	os.Exit(packagetest.RunWithLockRegistry(m))
 }
 
+func TestDaemonStartFailureConfigDiagnostic(t *testing.T) {
+	for _, test := range []struct {
+		name, output, want string
+	}{
+		{"trailing blank lines", "bootstrap log\nDOCBANK_DAEMON_START_PROBLEM=config_invalid\nerror: daemon config invalid: [web] session_lifetime is too short\n\n", "daemon config invalid: [web] session_lifetime is too short"},
+		{"multiline diagnostic", "bootstrap log\nDOCBANK_DAEMON_START_PROBLEM=config_invalid\nerror: daemon config invalid: [mcp.http] credential binding \"bad\nname\" is invalid\nremoving bootstrap: permission denied\n", "daemon config invalid: [mcp.http] credential binding \"bad\nname\" is invalid\nremoving bootstrap: permission denied"},
+		{"no diagnostic", "bootstrap log\nDOCBANK_DAEMON_START_PROBLEM=config_invalid\n", "daemon exited before becoming ready"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := os.CreateTemp(t.TempDir(), "bootstrap")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = output.Close() })
+			_, err = output.WriteString(test.output)
+			require.NoError(t, err)
+			err = daemonStartFailure(output, "daemon exited before becoming ready")
+			require.ErrorIs(t, err, ErrDaemonConfigInvalid)
+			require.EqualError(t, err, test.want)
+		})
+	}
+}
+
 func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	root := t.TempDir()
 	ready := filepath.Join(t.TempDir(), "child-pid")

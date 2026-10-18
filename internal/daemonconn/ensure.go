@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/home"
@@ -34,9 +33,13 @@ import (
 const ensureTimeout = 30 * time.Second
 
 const (
-	daemonStartProblemPrefix      = "DOCBANK_DAEMON_START_PROBLEM="
-	daemonStartProblemVaultLocked = "vault_locked"
+	daemonStartProblemPrefix        = "DOCBANK_DAEMON_START_PROBLEM="
+	daemonStartProblemVaultLocked   = "vault_locked"
+	daemonStartProblemConfigInvalid = "config_invalid"
 )
+
+// ErrDaemonConfigInvalid marks a configuration rejected during daemon startup.
+var ErrDaemonConfigInvalid = errors.New("daemon config invalid")
 
 // ErrTransientDaemonAcquisition marks a daemon that disappeared after
 // discovery but before its ownership-proven client was ready. A caller may
@@ -66,10 +69,16 @@ func (e *daemonStartError) Unwrap() error { return e.cause }
 // across a process boundary, so the launcher restores the small stable subset
 // needed by callers before it returns the human error.
 func WriteDaemonStartProblem(w io.Writer, err error) error {
-	if !errors.Is(err, home.ErrVaultLocked) {
+	var code string
+	switch {
+	case errors.Is(err, home.ErrVaultLocked):
+		code = daemonStartProblemVaultLocked
+	case errors.Is(err, ErrDaemonConfigInvalid):
+		code = daemonStartProblemConfigInvalid
+	default:
 		return nil
 	}
-	if _, err := fmt.Fprintln(w, daemonStartProblemPrefix+daemonStartProblemVaultLocked); err != nil {
+	if _, err := fmt.Fprintln(w, daemonStartProblemPrefix+code); err != nil {
 		return fmt.Errorf("writing daemon startup problem: %w", err)
 	}
 	return nil
@@ -294,30 +303,12 @@ func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
 	}
 }
 
-// Only diagnostics are suppressed; every acquisition still parses the file.
-var warnedConfigRoots sync.Map
-
-type configWarningWriter struct{ root string }
-
-func (w configWarningWriter) Write(data []byte) (int, error) {
-	if _, warned := warnedConfigRoots.LoadOrStore(w.root, struct{}{}); warned {
-		return len(data), nil
-	}
-	return os.Stderr.Write(data)
-}
-
 // Ensure returns a client for a version- and protocol-matched daemon,
 // starting (and if needed, replacing an incompatible) one. CLI commands call
-// this after checking global configuration parsing.
+// this.
 func Ensure(ctx context.Context) (*Connection, error) {
 	layout, err := home.Resolve()
 	if err != nil {
-		return nil, err
-	}
-	if err := layout.SecureConfig(); err != nil {
-		return nil, err
-	}
-	if err := config.CheckClient(layout.Root, configWarningWriter{root: layout.Root}); err != nil {
 		return nil, err
 	}
 	res, err := EnsureDaemon(ctx, layout.Root)
@@ -477,19 +468,6 @@ func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.R
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, err
 	}
-	// Check in the caller before spawning so a client receives the owning
-	// section's error without waiting for detached-daemon readiness. The child
-	// validates again in its own startup path before serving anything.
-	if err := (home.Layout{Root: root}).SecureConfig(); err != nil {
-		return kitdaemon.RuntimeRecord{}, fmt.Errorf("daemon config invalid: %w", err)
-	}
-	cfg, err := config.Load(root)
-	if err == nil {
-		err = cfg.Validate()
-	}
-	if err != nil {
-		return kitdaemon.RuntimeRecord{}, fmt.Errorf("daemon config invalid: %w", err)
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("resolving executable for daemon spawn: %w", err)
@@ -573,7 +551,11 @@ func daemonStartFailure(output *os.File, summary string) error {
 	}
 	detail, cause := parseDaemonStartOutput(string(data))
 	message := summary
-	if detail != "" {
+	if errors.Is(cause, ErrDaemonConfigInvalid) {
+		if start := strings.Index(detail, ErrDaemonConfigInvalid.Error()+":"); start >= 0 {
+			message = detail[start:]
+		}
+	} else if detail != "" {
 		message += ": " + detail
 	}
 	if cause != nil {
@@ -590,6 +572,8 @@ func parseDaemonStartOutput(output string) (string, error) {
 		switch strings.TrimSpace(line) {
 		case daemonStartProblemPrefix + daemonStartProblemVaultLocked:
 			cause = home.ErrVaultLocked
+		case daemonStartProblemPrefix + daemonStartProblemConfigInvalid:
+			cause = ErrDaemonConfigInvalid
 		default:
 			kept = append(kept, line)
 		}

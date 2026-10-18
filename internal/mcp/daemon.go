@@ -25,6 +25,7 @@ var (
 
 type daemonBoundaryError struct {
 	message    error
+	cause      error
 	facts      daemonconn.ProblemFacts
 	diagnostic string
 }
@@ -302,7 +303,11 @@ func sanitizedDaemonError(message, cause error) error {
 	case daemonconn.IsResponseDecodeError(cause):
 		diagnostic = "daemon_invalid_response"
 	}
-	return &daemonBoundaryError{message: message, facts: facts, diagnostic: diagnostic}
+	boundary := &daemonBoundaryError{message: message, facts: facts, diagnostic: diagnostic}
+	if errors.Is(cause, daemonconn.ErrDaemonConfigInvalid) {
+		boundary.cause = cause
+	}
+	return boundary
 }
 
 func daemonProblemFacts(err error) (daemonconn.ProblemFacts, bool) {

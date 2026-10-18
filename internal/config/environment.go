@@ -20,7 +20,7 @@ func applyEnvironment(c Config) (Config, error) {
 	if value := os.Getenv("DOCBANK_API_PORT"); value != "" {
 		port, err := strconv.Atoi(value)
 		if err != nil || port < 0 || port > 65535 {
-			return Config{}, errors.New("[server] DOCBANK_API_PORT must be an integer from 0 through 65535")
+			return Config{}, errors.New("DOCBANK_API_PORT must be an integer from 0 through 65535")
 		}
 		c.Server.APIPort = port
 	}
@@ -32,7 +32,7 @@ func applyEnvironment(c Config) (Config, error) {
 	}
 	key, selected, err := EnvironmentSecret("DOCBANK_API_KEY")
 	if err != nil {
-		return Config{}, fmt.Errorf("[server] %w", err)
+		return Config{}, err
 	}
 	if selected {
 		c.Server.APIKey = key

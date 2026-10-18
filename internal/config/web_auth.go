@@ -106,22 +106,7 @@ func browserParsesAsIPv4(host string) bool {
 }
 
 func validateWebConfig(c Config) error {
-	if err := validateWebOptions(c.Web); err != nil {
-		return err
-	}
-	if c.Web.PublicOrigin != "" {
-		if c.Server.APIKey == "" {
-			return errors.New("[web] public_origin requires enabled = true and a configured server.api_key")
-		}
-		if len(c.Server.APIKey) < minPublicAPIKeyLength {
-			return fmt.Errorf("[web] public_origin requires a server.api_key of at least %d characters; "+
-				"generate one with `openssl rand -hex 32`", minPublicAPIKeyLength)
-		}
-	}
-	return nil
-}
-
-func validateWebOptions(w WebConfig) error {
+	w := c.Web
 	for _, host := range w.AllowedHosts {
 		if _, err := WebHostAuthority(host); err != nil {
 			return err
@@ -136,8 +121,12 @@ func validateWebOptions(w WebConfig) error {
 		}
 		return nil
 	}
-	if !w.Enabled {
+	if !w.Enabled || c.Server.APIKey == "" {
 		return errors.New("[web] public_origin requires enabled = true and a configured server.api_key")
+	}
+	if len(c.Server.APIKey) < minPublicAPIKeyLength {
+		return fmt.Errorf("[web] public_origin requires a server.api_key of at least %d characters; "+
+			"generate one with `openssl rand -hex 32`", minPublicAPIKeyLength)
 	}
 	origin, err := CanonicalWebOrigin(w.PublicOrigin)
 	if err != nil {

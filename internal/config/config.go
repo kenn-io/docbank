@@ -33,11 +33,14 @@ import (
 // "30m"; "0" disables the associated timeout.
 type Duration time.Duration
 
-// UnmarshalText parses a duration string. Section validators enforce bounds.
+// UnmarshalText parses a duration string, rejecting negative durations.
 func (d *Duration) UnmarshalText(b []byte) error {
 	v, err := time.ParseDuration(string(b))
 	if err != nil {
 		return fmt.Errorf("invalid duration %q: %w", string(b), err)
+	}
+	if v < 0 {
+		return fmt.Errorf("invalid duration %q: must not be negative", string(b))
 	}
 	*d = Duration(v)
 	return nil
@@ -428,25 +431,13 @@ func Load(root string) (Config, error) {
 	return applyEnvironment(c)
 }
 
-// Parse decodes the whole file, rejecting syntax errors and unknown keys.
+// parse decodes the whole file, rejecting syntax errors and unknown keys.
 // It does not resolve paths, apply environment overrides, or validate policy.
-func Parse(root string) (Config, error) {
+func parse(root string) (Config, error) {
 	c := Default()
-	path := filepath.Join(root, "config.toml")
-	file, err := openConfig(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return c, nil
-	}
+	path, md, err := decodeFile(root, &c)
 	if err != nil {
-		return Config{}, fmt.Errorf("loading %s: %w", path, err)
-	}
-	md, decodeErr := toml.NewDecoder(file).Decode(&c)
-	closeErr := file.Close()
-	if decodeErr != nil {
-		return Config{}, fmt.Errorf("loading %s: %w", path, decodeErr)
-	}
-	if closeErr != nil {
-		return Config{}, fmt.Errorf("loading %s: %w", path, closeErr)
+		return Config{}, err
 	}
 	if undec := md.Undecoded(); len(undec) > 0 {
 		return Config{}, fmt.Errorf("loading %s: unknown key %q (typo?)", path, undec[0].String())
@@ -457,16 +448,88 @@ func Parse(root string) (Config, error) {
 	return c, nil
 }
 
+// parseSections parses the whole file as TOML but decodes only the named
+// top-level tables into their destinations, rejecting unknown keys inside
+// them. Other sections are left for the daemon to check at startup.
+func parseSections(root string, sections map[string]any) error {
+	var tables map[string]toml.Primitive
+	path, md, err := decodeFile(root, &tables)
+	if err != nil {
+		return err
+	}
+	for name, dest := range sections {
+		if table, ok := tables[name]; ok {
+			if err := md.PrimitiveDecode(table, dest); err != nil {
+				return fmt.Errorf("loading %s: %w", path, err)
+			}
+		}
+	}
+	for _, key := range md.Undecoded() {
+		if _, ok := sections[key[0]]; ok {
+			return fmt.Errorf("loading %s: unknown key %q (typo?)", path, key.String())
+		}
+	}
+	return nil
+}
+
+// decodeFile decodes <root>/config.toml into v. A missing file leaves v
+// unchanged.
+func decodeFile(root string, v any) (string, toml.MetaData, error) {
+	path := filepath.Join(root, "config.toml")
+	file, err := openConfig(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return path, toml.MetaData{}, nil
+	}
+	if err != nil {
+		return path, toml.MetaData{}, fmt.Errorf("loading %s: %w", path, err)
+	}
+	md, decodeErr := toml.NewDecoder(file).Decode(v)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return path, toml.MetaData{}, fmt.Errorf("loading %s: %w", path, decodeErr)
+	}
+	if closeErr != nil {
+		return path, toml.MetaData{}, fmt.Errorf("loading %s: %w", path, closeErr)
+	}
+	return path, md, nil
+}
+
+// WebEnabled reads the web launcher setting, checking only [web].
+func WebEnabled(root string) (bool, error) {
+	c := Default()
+	if err := parseSections(root, map[string]any{"web": &c.Web}); err != nil {
+		return false, err
+	}
+	return c.Web.Enabled, nil
+}
+
+// LoadMCPHTTP reads MCP HTTP policy without daemon startup overrides,
+// checking only [mcp] and [credential_bindings].
+func LoadMCPHTTP(root string) (Config, error) {
+	c := Default()
+	sections := map[string]any{"mcp": &c.MCP, "credential_bindings": &c.CredentialBindings}
+	if err := parseSections(root, sections); err != nil {
+		return Config{}, err
+	}
+	c = applyMCPEnvironment(c)
+	if err := validateMCPConfig(c); err != nil {
+		return Config{}, err
+	}
+	if reference := c.MCP.HTTP.CredentialBinding; reference != "" {
+		name := strings.TrimPrefix(reference, "credential:")
+		if err := validateCredentialBinding(name, c.CredentialBindings[name]); err != nil {
+			return Config{}, err
+		}
+	}
+	return c, nil
+}
+
 // loadTOML resolves all vault-local configuration without startup overrides.
 func loadTOML(root string) (Config, error) {
-	c, err := Parse(root)
+	c, err := parse(root)
 	if err != nil {
 		return Config{}, err
 	}
-	return resolveTOML(root, c)
-}
-
-func resolveTOML(root string, c Config) (Config, error) {
 	path := filepath.Join(root, "config.toml")
 	if err := resolveBackupRepo(root, &c.Backup); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
@@ -600,16 +663,71 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 	return nil
 }
 
-// Validate checks every subsystem and cross-section authorization before daemon startup.
+// Validate requires an explicit key for opt-in non-loopback binds. Plain HTTP
+// exposes credentials and contents to the selected network; operators must
+// provide a trusted transport or network. Loopback can use an ephemeral key.
 func (c Config) Validate() error {
-	for _, validate := range []func() error{
-		c.ValidateMedia, c.validateDaemonWeb, c.ValidatePageRuntime, c.ValidateBackup,
-		c.ValidateStorage, c.ValidateStoreBindings, c.ValidateProcessing,
-		c.ValidateMCPHTTP, c.ValidateMediaOrigins, c.ValidateWatches, c.ValidateServer,
-	} {
-		if err := validate(); err != nil {
+	if c.Media.MaxSourceBytes < 0 || c.Media.MaxSourceBytes > media.MaxMediaSourceBytes {
+		return fmt.Errorf("[media] max_source_bytes must be between 1 and %d (or 0 for default)", media.MaxMediaSourceBytes)
+	}
+	if err := validateWebConfig(c); err != nil {
+		return err
+	}
+	if err := c.Web.MapTiles.Validate(); err != nil {
+		return err
+	}
+	if c.PageRuntime != nil {
+		if err := c.PageRuntime.Validate(); err != nil {
+			return fmt.Errorf("[page_runtime]: %w", err)
+		}
+	}
+	if c.Backup.ZstdLevel != 0 && (c.Backup.ZstdLevel < 1 || c.Backup.ZstdLevel > 19) {
+		return fmt.Errorf("[backup] zstd_level %d: want 0 or 1-19", c.Backup.ZstdLevel)
+	}
+	if c.Storage.PackMaxBytes < 0 {
+		return errors.New("[storage] pack_max_bytes must not be negative")
+	}
+	if c.Storage.PackInterval.Std() < 0 {
+		return errors.New("[storage] pack_interval must not be negative")
+	}
+	if c.Storage.PackInterval.Std() > 0 && c.Storage.PackMaxBytes == 0 {
+		return errors.New("[storage] pack_max_bytes must be positive when pack_interval is enabled")
+	}
+	if err := validateStoreBindings(c.StoreBindings); err != nil {
+		return err
+	}
+	if err := validateProcessingProfiles(c); err != nil {
+		return err
+	}
+	if err := validateMCPConfig(c); err != nil {
+		return err
+	}
+	if err := validateMediaOrigins(c); err != nil {
+		return err
+	}
+	for _, watch := range c.Watches {
+		if err := validateWatch(watch); err != nil {
 			return err
 		}
+	}
+	if c.Server.APIPort < 0 || c.Server.APIPort > 65535 {
+		return errors.New("[server] api_port must be from 0 through 65535")
+	}
+	if c.Server.APIKey != "" && !validSecret(c.Server.APIKey) {
+		return errors.New("[server] api_key must contain 1-4096 bytes without whitespace or control bytes")
+	}
+	if err := httpboundary.ValidateHosts(c.Server.AllowedHosts); err != nil {
+		return fmt.Errorf("[server] allowed_hosts: %w", err)
+	}
+	host := c.Server.BindAddr
+	if isLoopbackHost(host) {
+		return nil
+	}
+	if net.ParseIP(host) == nil {
+		return fmt.Errorf("[server] bind_addr %q: not an IP address or localhost", host)
+	}
+	if c.Server.APIKey == "" {
+		return errors.New("[server] non-loopback bind_addr requires an explicit api_key; plain HTTP requires a trusted network or encrypted tunnel")
 	}
 	return nil
 }
@@ -626,15 +744,9 @@ func validateMCPConfig(c Config) error {
 		return errors.New("[mcp.http] credential_binding must use credential:<name>")
 	}
 	name := strings.TrimPrefix(reference, "credential:")
-	binding, ok := c.CredentialBindings[name]
+	_, ok := c.CredentialBindings[name]
 	if !ok {
 		return fmt.Errorf("[mcp.http] credential binding %q is not defined", reference)
-	}
-	if err := validateProfileName(name, fmt.Sprintf("[credential_bindings.%s]", name)); err != nil {
-		return err
-	}
-	if !environmentVariablePattern.MatchString(binding.EnvironmentVariable) {
-		return fmt.Errorf("[credential_bindings.%s] environment_variable must be a variable name", name)
 	}
 	return nil
 }
@@ -718,13 +830,20 @@ const (
 	DoclingDocumentAdapterContract = "docbank-docling-document/v1"
 )
 
+func validateCredentialBinding(name string, binding CredentialBindingConfig) error {
+	if err := validateProfileName(name, fmt.Sprintf("[credential_bindings.%s]", name)); err != nil {
+		return err
+	}
+	if !environmentVariablePattern.MatchString(binding.EnvironmentVariable) {
+		return fmt.Errorf("[credential_bindings.%s] environment_variable must be a variable name", name)
+	}
+	return nil
+}
+
 func validateProcessingProfiles(c Config) error {
 	for name, binding := range c.CredentialBindings {
-		if err := validateProfileName(name, fmt.Sprintf("[credential_bindings.%s]", name)); err != nil {
+		if err := validateCredentialBinding(name, binding); err != nil {
 			return err
-		}
-		if !environmentVariablePattern.MatchString(binding.EnvironmentVariable) {
-			return fmt.Errorf("[credential_bindings.%s] environment_variable must be a variable name", name)
 		}
 	}
 	for name, profile := range c.RenditionProfiles {
