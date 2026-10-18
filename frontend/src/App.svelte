@@ -346,7 +346,9 @@
           ? mapPhotos
           : photoState?.photos;
   const retainedPhotoEditor = () =>
-    hiddenMode ? hiddenWorkspace?.retainedEditor() : activePhotos()?.authored;
+    hiddenMode
+      ? hiddenWorkspace?.retainedEditor()
+      : (activePhotos()?.cullEditor ?? activePhotos()?.authored);
   // A discarded workspace takes its draft with it, so the draft cannot hold the viewer open.
   function clearPhoto(discarded = false) {
     if (!photoID) return;
@@ -747,6 +749,30 @@
   let tagCatalogLoading = $state(false);
   let tagCatalogError = $state("");
   let vaultID = $state("");
+  function applyVaultID(id: string | undefined) {
+    const next = isTagHotkeyVaultID(id) ? id : "";
+    if (vaultID === next) return;
+    vaultID = next;
+    const storage = localPreferenceStorage();
+    tagHotkeys = storage && next ? loadTagHotkeys(storage, next) : {};
+  }
+
+  $effect(() => {
+    const session = webSession;
+    if (!session || !photoMode || untrack(() => !!vaultID)) return;
+    const controller = new AbortController();
+    void generated
+      .auditStatus({}, { session, signal: controller.signal })
+      .then((status) => {
+        if (controller.signal.aborted) return;
+        applyVaultID(status.vault_id);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) handleFailure(cause);
+      });
+    return () => controller.abort();
+  });
+
   let tagHotkeys = $state<TagHotkeyBindings>({});
   let pendingTagHotkey = $state<TagHotkey | "">("");
   let shortcutNotice = $state("");
@@ -2218,16 +2244,7 @@
       const status = await generated.auditStatus({ node_id: nodeID }, { session });
       if (!inspectorRequestCurrent(request, auditGeneration, session, nodeID, sourceKey)) return;
       selectedAudit = status;
-      if (isTagHotkeyVaultID(status.vault_id)) {
-        if (vaultID !== status.vault_id) {
-          vaultID = status.vault_id;
-          const storage = localPreferenceStorage();
-          tagHotkeys = storage ? loadTagHotkeys(storage, vaultID) : {};
-        }
-      } else {
-        vaultID = "";
-        tagHotkeys = {};
-      }
+      applyVaultID(status.vault_id);
     } catch (cause) {
       if (!inspectorRequestCurrent(request, auditGeneration, session, nodeID, sourceKey)) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -3241,6 +3258,7 @@
                 }}
               />{/if}
           {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace
+                  {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
                   tagsError={tagCatalogError}
@@ -3270,6 +3288,7 @@
                 ></EmptyState
               >
             {:else if !tiles.tile_url}<PhotosWorkspace
+                {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
                 tagsError={tagCatalogError}
@@ -3284,6 +3303,7 @@
                 photos={photoState.photos}
                 cache={photoState.cache}
               />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace
+                  {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
                   tagsError={tagCatalogError}
@@ -3309,6 +3329,7 @@
                   oninvalidate={invalidateLibrary}
                 />{/key}{/if}
           {:else}{#key photoState.photos.contextID}<PhotosWorkspace
+                {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
                 tagsError={tagCatalogError}
@@ -3732,7 +3753,7 @@
                   {/snippet}
                 </EmptyState>
               {:else}
-                <Table ariaLabel="Documents" zebra={false}>
+                <Table ariaLabel="Documents" zebra={false} unsorted>
                   {#snippet header()}
                     <th class="selection-column" scope="col">
                       <Checkbox

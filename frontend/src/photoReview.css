@@ -1,0 +1,16 @@
+.review-shell .kit-modal-panel .kit-modal-body {
+  padding: 0;
+  overflow: hidden;
+}
+.review-shell .kit-modal-overlay .kit-modal-panel {
+  border: 0;
+  border-radius: 0;
+}
+.photo-review {
+  height: 100svh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}

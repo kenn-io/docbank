@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { isAppShortcutSuppressed, isPhotoShortcutSuppressed, moveInspection } from "./shortcuts.js";
+import {
+  cullKey,
+  isAppShortcutSuppressed,
+  isPhotoShortcutSuppressed,
+  moveInspection,
+} from "./shortcuts.js";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -112,4 +117,16 @@ it.each([
       ),
     ),
   ).toBe(suppressed);
+});
+
+it("maps only the cull keys and ignores modifier chords, repeated keys and text entry", () => {
+  expect(cullKey(new KeyboardEvent("keydown", { key: "P" }))).toBe("pick");
+  expect(cullKey(new KeyboardEvent("keydown", { key: "4" }))).toBe(4);
+  expect(cullKey(new KeyboardEvent("keydown", { key: "?", shiftKey: true }))).toBe("help");
+  for (const modifier of ["ctrlKey", "metaKey", "altKey", "repeat", "isComposing"])
+    expect(cullKey(new KeyboardEvent("keydown", { key: "p", [modifier]: true }))).toBeUndefined();
+  expect(cullKey(new KeyboardEvent("keydown", { key: " " }))).toBeUndefined();
+  const event = new KeyboardEvent("keydown", { key: "p" });
+  Object.defineProperty(event, "target", { value: document.createElement("input") });
+  expect(cullKey(event)).toBeUndefined();
 });

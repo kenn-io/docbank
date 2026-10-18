@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fittedPhotoView } from "./photoView.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     Button,
@@ -19,7 +20,12 @@
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
   import { photoSearchSort } from "./photoSearch.js";
-  import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
+  import {
+    mapPhotoLimit,
+    maxComparePhotos,
+    type Photos,
+    type PhotoReturn,
+  } from "./photos.svelte.js";
   import { groupPhotos, monthLabel, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
@@ -41,12 +47,18 @@
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
+  import { PhotoCull as CullRun } from "./photoCull.svelte.js";
+  import { photoCullStorage } from "./photoCullStorage.js";
+  import PhotoCull from "./PhotoCull.svelte";
+  import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
+  import PhotoCompare from "./PhotoCompare.svelte";
   import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
 
   import type PhotoMap from "./PhotoMap.svelte";
   import type { MapTiles } from "./photoMap.js";
   let {
     photos,
+    vaultID = "",
     cache,
     shortcuts,
     tags,
@@ -74,6 +86,7 @@
     uploadChannelError = "",
   }: {
     photos: Photos;
+    vaultID?: string;
     cache: PhotoPreviewCache;
     shortcuts?: ShortcutManager;
     tags?: import("./generated/docbank.js").Tag[];
@@ -103,6 +116,70 @@
     onadd?: () => void;
     uploadChannelError?: string;
   } = $props();
+  let cull = $state.raw<CullRun>();
+  const culling = $derived(photos.culling);
+  const comparing = $derived(photos.comparing);
+  let enteringReview = false;
+  let cullConfirmation = $state<PhotoCullConfirmation>();
+  let returnFocus: HTMLElement | undefined;
+  $effect(() => {
+    const owner = photos;
+    const id = vaultID;
+    const review = untrack(() => {
+      if (!id) return;
+      if (owner.cullVaultID !== id) {
+        owner.cull?.cancel();
+        owner.cullEditor?.dispose();
+        owner.cullEditor = undefined;
+        owner.culling = false;
+        owner.cull = new CullRun(owner.session, photoCullStorage(id), owner.onauthfailure);
+        owner.cullVaultID = id;
+      }
+      if (!owner.culling) void owner.cull!.probe();
+      return owner.cull;
+    });
+    cull = review;
+    return () => review?.cancel();
+  });
+  async function startCull(resume = false) {
+    const review = cull;
+    if (!review || enteringReview || culling || comparing || !editor.canChangeTarget()) return;
+    enteringReview = true;
+    returnFocus = document.activeElement as HTMLElement;
+    try {
+      const captured = resume
+        ? await review.restore()
+        : await review.start(photos.query, (message) =>
+            cullConfirmation!.confirm(message, "Replace"),
+          );
+      if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
+        photos.culling = true;
+    } finally {
+      enteringReview = false;
+    }
+  }
+  function compare() {
+    if (enteringReview || culling || comparing || !editor.canChangeTarget()) return;
+    returnFocus = document.activeElement as HTMLElement;
+    const ids = [...photos.selectedIDs];
+    if (ids.length >= 2 && ids.length <= maxComparePhotos) {
+      photos.compareIDs = ids;
+      photos.comparing = true;
+    }
+  }
+  async function closeReview() {
+    photos.culling = photos.comparing = false;
+    photos.compareIDs = [];
+    photos.compareView = { ...fittedPhotoView };
+    photos.compareCrop = undefined;
+    photos.cullEditor?.dispose();
+    photos.cullEditor = undefined;
+    await cull?.flush();
+    await refresh();
+    await editor.reload();
+    await tick();
+    if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  }
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
   let editing = $state(false);
@@ -186,8 +263,29 @@
       unavailable();
       return;
     }
+    if (photoID && !current) {
+      editor.unavailable(
+        detailError
+          ? "Reload the photo before editing."
+          : "Photo is loading. Try again when it finishes.",
+      );
+      return;
+    }
     const scope = photoID ? { asset_ids: [photoID] } : photos.scope();
-    void editor.edit(scope, patch, photos.hidden, metadataRefresh, keywords, rotationDelta);
+    const id = photoID;
+    void editor
+      .edit(scope, patch, photos.hidden, metadataRefresh, {
+        keywords,
+        rotationDelta,
+        viewed: current && {
+          content_version_id: current.content_version_id,
+        },
+      })
+      .then(() => {
+        if (!id || id !== photoID || !editor.conflict) return;
+        reload = { id };
+        if (!editor.dirty) void editor.reload(true);
+      });
   }
   function undoShortcut() {
     if (!editor.receiptID) return;
@@ -236,7 +334,13 @@
         : []),
     ];
     const unregister = bindings.map(([key, description, handler]) =>
-      shortcuts.register(key, handler, { scope, description, allowInInput: true }),
+      shortcuts.register(
+        key,
+        () => {
+          if (!culling && !comparing) handler();
+        },
+        { scope, description, allowInInput: true },
+      ),
     );
     return () => {
       unregister.forEach((remove) => remove());
@@ -637,7 +741,27 @@
   >
 {/snippet}
 
-<svelte:window onkeydown={escape} />
+<svelte:window
+  onkeydown={escape}
+  onkeydowncapture={(event) => {
+    if ((culling || comparing) && (event.ctrlKey || event.metaKey || event.altKey))
+      event.stopPropagation();
+  }}
+/>
+<PhotoCullConfirmation bind:this={cullConfirmation} />
+{#if culling && cull}<PhotoCull
+    {cull}
+    {photos}
+    {cache}
+    {onmetadatachanged}
+    onclose={() => void closeReview()}
+  />{/if}
+{#if comparing}<PhotoCompare
+    ids={photos.compareIDs}
+    {photos}
+    {cache}
+    onclose={() => void closeReview()}
+  />{/if}
 <main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
   {#if mapMode && !tiles.tile_url}
     <EmptyState
@@ -691,7 +815,7 @@
       class:map-layout={mapMode}
       class:show-photos={mobileTab === "photos"}
       class="photo-layout"
-      inert={!!photoID}
+      inert={!!photoID || culling || comparing}
     >
       {#snippet libraryGrid()}
         <div class="library-grid">
@@ -745,6 +869,35 @@
                 >{/if}
             </div>
             <div class="toolbar-actions">
+              {#if !mapMode && !photos.hidden}
+                <Button
+                  size="sm"
+                  disabled={actionDisabled || !cull || cull.capturing || !vaultID || !photos.total}
+                  title={vaultID ? undefined : "Vault identity unavailable. Reload to retry."}
+                  onclick={() => void startCull()}>Cull</Button
+                >
+                {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}
+                    >Cancel capture</Button
+                  >{/if}
+                {#if cull?.saved}<Button
+                    size="sm"
+                    disabled={actionDisabled || cull.capturing}
+                    onclick={() => void startCull(true)}>Resume cull</Button
+                  >{/if}
+                <Button
+                  size="sm"
+                  disabled={selectionCount < 2 ||
+                    selectionCount > maxComparePhotos ||
+                    photos.allResults}
+                  title={`Select 2–${maxComparePhotos} photos to compare`}
+                  onclick={compare}>Compare</Button
+                >
+                {#if selectionCount > maxComparePhotos}<span
+                    >Select 2–{maxComparePhotos} photos to compare.</span
+                  >{/if}
+                {#if cull?.progress}<span role="status">{cull.progress}</span>{/if}
+                {#if cull?.error}<span role="alert">{cull.error}</span>{/if}
+              {/if}
               {#if !mapMode && !photos.hidden && !albumID}<Button
                   size="sm"
                   disabled={!onadd}

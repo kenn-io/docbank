@@ -9,7 +9,7 @@ export class PhotoUndoState {
 
 export class PhotoAuthoredEditor {
   asset = $state<api.PhotoAsset>();
-  targets = $state<api.PhotoPreparedTarget[]>([]);
+  targets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
   tags = $state<api.Tag[]>([]);
   tagsError = $state("");
   tagsLoading = $state(false);
@@ -171,12 +171,12 @@ export class PhotoAuthoredEditor {
     this.validating = false;
     this.concealed = false;
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false) {
+  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false, keepError = false) {
     this.read.abort();
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
     this.loading = true;
-    this.error = "";
+    if (!keepError) this.error = "";
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
     try {
       const prepared = await this.request(() =>
@@ -218,7 +218,7 @@ export class PhotoAuthoredEditor {
       if (!signal.aborted) this.loading = false;
     }
   }
-  async reload() {
+  async reload(keepError = false) {
     if (this.busy || this.loading || !this.targets.length) return;
     await this.prepare(
       {
@@ -227,6 +227,7 @@ export class PhotoAuthoredEditor {
         skip_unavailable: true,
       },
       true,
+      keepError,
     );
   }
   reviewMembers() {
@@ -327,8 +328,21 @@ export class PhotoAuthoredEditor {
     patch: api.PhotoAuthoredPatch,
     hidden: boolean,
     refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
-    keywords?: api.PhotoKeywordEdit[],
-    rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"],
+    {
+      keywords,
+      rotationDelta,
+      viewed,
+      beforeStage,
+      beforeWrite,
+    }: {
+      keywords?: api.PhotoKeywordEdit[];
+      rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"];
+      viewed?: { content_version_id: string };
+      beforeStage?: (
+        targets: PhotoAuthoredEditor["targets"],
+      ) => { error?: string; fileID?: string } | void;
+      beforeWrite?: () => Promise<boolean>;
+    } = {},
   ) {
     if (this.conflict) {
       this.unavailable("Reload metadata before editing.");
@@ -339,8 +353,30 @@ export class PhotoAuthoredEditor {
       return;
     }
     if (this.controller.signal.aborted) return;
-    if (!this.targets.length) await this.prepare({ ...scope, hidden });
-    if (!this.targets.length || this.conflict) return;
+    if (!this.targets.length) {
+      await this.prepare({ ...scope, hidden });
+      if (this.error) return;
+    }
+    if (this.conflict) return;
+    if (!this.targets.length) return;
+    const staging = beforeStage?.(this.targets);
+    if (staging?.error) {
+      this.error = staging.error;
+      this.conflict = true;
+      return;
+    }
+    if (staging?.fileID) this.fileID = staging.fileID;
+    if (viewed) {
+      this.targets = this.targets.map((target) => ({
+        ...target,
+        content_version_id: viewed.content_version_id,
+      }));
+    }
+    const draft = viewed && {
+      patch: this.patch,
+      rotationDelta: this.rotationDelta,
+      keywords: this.keywords,
+    };
     this.stage(patch, keywords);
     if (rotationDelta !== undefined) {
       const current = { ...this.patch };
@@ -358,16 +394,25 @@ export class PhotoAuthoredEditor {
         ...(this.rotationDelta !== undefined ? ["rotation"] : []),
         ...(this.keywords.length ? ["keywords"] : []),
       ];
+      if (beforeWrite && !(await beforeWrite())) return;
       const receipt = await this.request(() =>
         api.editPhotoAuthored(
           {
             targets: this.files.map(
-              ({ asset_id, asset_revision, file_id, revision, node_revision }) => ({
+              ({
                 asset_id,
                 asset_revision,
                 file_id,
                 revision,
                 node_revision,
+                content_version_id,
+              }) => ({
+                asset_id,
+                asset_revision,
+                file_id,
+                revision,
+                node_revision,
+                content_version_id,
               }),
             ),
             patch: this.patch,
@@ -395,6 +440,11 @@ export class PhotoAuthoredEditor {
         this.error = this.failure(cause);
         if (cause instanceof APIError && cause.errors.length) this.error = cause.errors.join("; ");
         this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+        if (this.conflict && draft) {
+          this.patch = draft.patch;
+          this.rotationDelta = draft.rotationDelta;
+          this.keywords = draft.keywords;
+        }
       }
     } finally {
       this.endWrite(write);

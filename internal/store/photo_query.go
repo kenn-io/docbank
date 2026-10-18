@@ -17,6 +17,40 @@ import (
 
 const photoBrowseConfiguredCoverage = "configured"
 
+type PhotoFlagRow struct {
+	AssetID string `json:"asset_id" format:"uuid"`
+	Flag    string `json:"flag" enum:",pick,reject"`
+}
+
+// LookupPhotoFlags returns current display flags for live, visible assets in ID order.
+func (s *Store) LookupPhotoFlags(ctx context.Context, assetIDs []string) ([]PhotoFlagRow, error) {
+	for _, id := range assetIDs {
+		if err := validateUUIDv4(id); err != nil {
+			return nil, fmt.Errorf("%w: asset ID %q: %w", ErrInvalidPhotoAsset, id, err)
+		}
+	}
+	encoded, err := json.Marshal(assetIDs)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.asset_id,f.flag FROM `+photoBrowseDisplayFrom+
+		` WHERE a.asset_id IN (SELECT value FROM json_each(?)) AND `+photoBrowseLiveDisplay+
+		` AND `+photoVisibilityPredicate(false)+` ORDER BY a.asset_id`, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := []PhotoFlagRow{}
+	for rows.Next() {
+		var row PhotoFlagRow
+		if err := rows.Scan(&row.AssetID, &row.Flag); err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+	return items, rows.Err()
+}
+
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
 	Hidden   bool
@@ -51,6 +85,8 @@ type PhotoBrowseRow struct {
 	Revision           int64
 	DisplayFileID      string
 	Rotation           int
+	Rating             int
+	Flag               string
 	NodeID             int64
 	ContentVersionID   string
 	Name               string
@@ -478,7 +514,7 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
 }
 
-var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,` +
+var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,f.rating,f.flag,` +
 	// Set only when the file's mtime, not a capture date, placed the photo.
 	`pl.modified_time,` + photoTechnicalSelect
 
@@ -487,7 +523,7 @@ func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoB
 	result := make([]PhotoBrowseRow, 0)
 	for rows.Next() {
 		row := PhotoBrowseRow{position: position}
-		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.FileModifiedTime}
+		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.Rating, &row.Flag, &row.FileModifiedTime}
 		dest = append(dest, row.Fields.columnPointers()...)
 		dest = append(dest, &row.position.Key)
 		if err := rows.Scan(dest...); err != nil {

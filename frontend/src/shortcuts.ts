@@ -95,3 +95,29 @@ export function moveInspection<T extends { id: number }>(
   }
   return { id: displayed[next]!.id };
 }
+
+export function cullKey(event: KeyboardEvent): string | number | undefined {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.isComposing) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest("input,textarea,select,[contenteditable=true]"))
+    return;
+  const key = event.key.toLowerCase();
+  if (/^[0-5]$/.test(key)) return Number(key);
+  return (
+    {
+      arrowleft: "previous",
+      arrowup: "previous",
+      arrowright: "next",
+      arrowdown: "next",
+      p: "pick",
+      x: "reject",
+      u: "unflag",
+      a: "auto",
+      s: "scope",
+      z: "zoom",
+      i: "info",
+      "?": "help",
+      escape: "close",
+    } as Record<string, string>
+  )[key];
+}

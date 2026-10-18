@@ -49,6 +49,8 @@ type PhotoQuality struct {
 }
 
 type PhotoBrowseRow struct {
+	Rating               int               `json:"rating" minimum:"0" maximum:"5"`
+	Flag                 string            `json:"flag" enum:",pick,reject"`
 	Quality              *PhotoQuality     `json:"quality,omitempty"`
 	AssetID              string            `json:"asset_id" format:"uuid"`
 	Kind                 string            `json:"kind" enum:"photo,video"`

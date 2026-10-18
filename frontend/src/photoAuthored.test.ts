@@ -127,6 +127,74 @@ it("preserves multiline caption through rendered editing", async () => {
   editor.dispose();
 });
 
+it.each([
+  {
+    name: "whole pair scope",
+    fileID: "",
+    expected: [
+      {
+        asset_id: "asset",
+        asset_revision: 1,
+        file_id: "raw",
+        revision: 1,
+        node_revision: 1,
+        content_version_id: "viewed-version",
+      },
+      {
+        asset_id: "asset",
+        asset_revision: 1,
+        file_id: "jpeg",
+        revision: 1,
+        node_revision: 1,
+        content_version_id: "viewed-version",
+      },
+    ],
+  },
+  {
+    name: "RAW scope narrowed via fileID",
+    fileID: "raw",
+    expected: [
+      {
+        asset_id: "asset",
+        asset_revision: 1,
+        file_id: "raw",
+        revision: 1,
+        node_revision: 1,
+        content_version_id: "viewed-version",
+      },
+    ],
+  },
+])("binds the viewed content version without changing $name", async ({ fileID, expected }) => {
+  const editor = editorWithTargets();
+  editor.fileID = fileID;
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  await editor.edit({}, { flag: "pick" }, false, vi.fn(), {
+    viewed: { content_version_id: "viewed-version" },
+  });
+  expect(edit).toHaveBeenCalledOnce();
+  expect(edit.mock.calls[0]![0].targets).toEqual(expected);
+  expect(editor.fileID).toBe(fileID);
+  expect(editor.conflict).toBe(false);
+});
+
+it("restores the pre-edit draft when a viewed decision is refused", async () => {
+  const editor = editorWithTargets();
+  editor.stage({ caption: "River" });
+  vi.spyOn(api, "editPhotoAuthored").mockRejectedValueOnce(
+    new APIError("Photo changed", 412, "stale_revision"),
+  );
+  await editor.edit({}, { flag: "pick" }, false, vi.fn(), {
+    viewed: { content_version_id: "viewed-version" },
+    rotationDelta: 90,
+  });
+  expect(editor.conflict).toBe(true);
+  expect(editor.patch).toEqual({ caption: "River" });
+  expect(editor.dirty).toBe(true);
+  expect(editor.rotationDelta).toBeUndefined();
+});
+
 it("merges a shortcut into the staged draft", async () => {
   const editor = editorWithTargets();
   editor.fileID = "jpeg";
@@ -172,7 +240,7 @@ it("sends keyboard rotation as one atomic relative edit for each member", async 
     }),
   );
   vi.stubGlobal("fetch", fetcher);
-  await editor.edit({ asset_ids: ["asset"] }, {}, false, vi.fn(), undefined, 90);
+  await editor.edit({ asset_ids: ["asset"] }, {}, false, vi.fn(), { rotationDelta: 90 });
   const sent = JSON.parse(fetcher.mock.calls[0][1].body);
   expect(sent.rotation_delta).toBe(90);
   expect(sent.patch).toEqual({});
@@ -300,12 +368,14 @@ async function reloadPreparedMembers(
     editor.revalidate(new Set(["asset"]));
     expect(editor.membershipChanged).toBe(false);
   } else
-    await editor.edit({ asset_ids: ["asset"] }, { caption: "River" }, false, vi.fn(), [
-      { tag_id: "tag", assign: true },
-    ]);
+    await editor.edit({ asset_ids: ["asset"] }, { caption: "River" }, false, vi.fn(), {
+      keywords: [{ tag_id: "tag", assign: true }],
+    });
   expect(editor.conflict).toBe(true);
   expect(editor.dirty).toBe(true);
-  await editor.edit({}, { rating: 5 }, false, vi.fn(), [{ tag_id: "other", assign: true }]);
+  await editor.edit({}, { rating: 5 }, false, vi.fn(), {
+    keywords: [{ tag_id: "other", assign: true }],
+  });
   expect(fetcher).toHaveBeenCalledTimes(writes);
   ui(editor);
   expect((screen.getByRole("combobox", { name: /Rating:/ }) as HTMLButtonElement).disabled).toBe(
@@ -627,10 +697,12 @@ it.each(["assigned tags", "edit counts", "Undo counts"])(
       await assertCount(/Beyond the catalog/, 1);
     } else {
       const notify = vi.fn();
-      await editor.edit({}, {}, false, notify, [
-        { tag_id: assigned, assign: true },
-        { tag_id: catalogID, assign: true },
-      ]);
+      await editor.edit({}, {}, false, notify, {
+        keywords: [
+          { tag_id: assigned, assign: true },
+          { tag_id: catalogID, assign: true },
+        ],
+      });
       if (behavior === "edit counts") {
         expect(notify.mock.calls[0]?.[1]).toEqual(
           expect.arrayContaining([

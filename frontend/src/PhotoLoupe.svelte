@@ -16,6 +16,8 @@
   import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import type { PhotoAuthoredPatch, PhotoKeywordEdit } from "./generated/docbank.js";
   import PhotoCell from "./PhotoCell.svelte";
+  import { photoFacts } from "./photoFacts.js";
+  import { PhotoPreviewLoader, prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 
   let {
@@ -59,18 +61,11 @@
     reloading?: boolean;
     reloadRevision?: number;
   } = $props();
-  let url = $state("");
-  let quality = $state("");
-  let failure = $state<{ rank: number; message: string; action?: "reload" | "fit" | "large" }>();
-  let retrying = $state(false);
-  const unavailable = $derived(!retrying && !!(error || failure));
+  let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
+  const unavailable = $derived(!loader.retrying && !!(error || loader.failure));
   let busy = $state(false);
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
-  let controller: AbortController;
-  let urls: string[] = [];
-  let rank = -1;
-  let largeStarted = false;
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
@@ -85,216 +80,42 @@
       return false;
     }
   });
-  const orientations = [
-    "",
-    "Normal",
-    "Mirrored horizontally",
-    "Rotated 180°",
-    "Mirrored vertically",
-    "Mirrored horizontally, rotated 270°",
-    "Rotated 90° clockwise",
-    "Mirrored horizontally, rotated 90°",
-    "Rotated 270° clockwise",
-  ];
-  const facts = $derived(
-    photo
-      ? [
-          ["Captured", photo.file_modified_time ? undefined : photo.capture_time],
-          [
-            "File modified",
-            photo.file_modified_time
-              ? `${photo.file_modified_time.slice(0, 16).replace("T", " ")} UTC`
-              : undefined,
-          ],
-          [
-            "Dimensions",
-            photo.width_px && photo.height_px
-              ? `${photo.width_px} × ${photo.height_px}`
-              : undefined,
-          ],
-          ["Camera", [photo.camera_make, photo.camera_model].filter(Boolean).join(" ")],
-          ["Lens", [photo.lens_make, photo.lens_model].filter(Boolean).join(" ")],
-          ["ISO", photo.iso],
-          ["Aperture", photo.f_number == null ? undefined : `f/${photo.f_number}`],
-          [
-            "Exposure",
-            photo.exposure_time_seconds == null
-              ? undefined
-              : photo.exposure_time_seconds > 0 &&
-                  photo.exposure_time_seconds < 1 &&
-                  Math.abs(
-                    1 / photo.exposure_time_seconds - Math.round(1 / photo.exposure_time_seconds),
-                  ) <=
-                    1e-6 / photo.exposure_time_seconds
-                ? `1/${Math.round(1 / photo.exposure_time_seconds)} s`
-                : `${photo.exposure_time_seconds} s`,
-          ],
-          [
-            "Exposure bias",
-            photo.exposure_bias_ev == null ? undefined : `${photo.exposure_bias_ev} EV`,
-          ],
-          [
-            "Focal length",
-            photo.focal_length_mm == null ? undefined : `${photo.focal_length_mm} mm`,
-          ],
-          ["Orientation", photo.orientation == null ? undefined : orientations[photo.orientation]],
-          ["Format", photo.media_type],
-        ].filter(([, value]) => value !== undefined && value !== null && value !== "")
-      : [],
-  );
+  const facts = $derived(photoFacts(photo));
 
   $effect(() => {
     void identity;
     void reloadRevision;
     const selected = untrack(() => photo);
-    url = "";
-    quality = "";
-    failure = undefined;
     busy = false;
-    retrying = false;
-    urls = [];
-    rank = -1;
-    largeStarted = false;
-    controller = new AbortController();
-    const active = controller;
-    if (!selected) return () => active.abort();
-    void load(selected, "grid", active);
-    const timer = setTimeout(() => void load(selected, "fit", active), 150);
+    const active = new PhotoPreviewLoader(photos, cache, selected);
+    loader = active;
     void tick().then(() => {
-      if (!active.signal.aborted && image?.isZoomed()) zoom();
+      if (!active.active.signal.aborted && image?.isZoomed()) active.zoom();
     });
-    const ownedURLs = urls;
-    return () => {
-      clearTimeout(timer);
-      active.abort();
-      for (const objectURL of ownedURLs.splice(0)) URL.revokeObjectURL(objectURL);
-    };
+    return () => active.dispose();
   });
-  $effect(() => {
-    const neighbors =
+  $effect(() =>
+    prefetchPreviews(
+      photos,
+      cache,
       index < 0
         ? []
         : items
             .slice(Math.max(0, index - 2), index + 3)
-            .filter((item) => item.asset_id !== photo?.asset_id);
-    const active = new AbortController();
-    const timer = setTimeout(async () => {
-      for (const neighbor of neighbors) {
-        if (active.signal.aborted) break;
-        const signal = AbortSignal.any([active.signal, AbortSignal.timeout(30_000)]);
-        try {
-          const slot = await photos.preview(await photos.detail(neighbor, signal), "fit", signal);
-          if (slot.state === "ready" && slot.generation_id)
-            await cache.get(neighbor.asset_id, slot.generation_id, signal);
-        } catch {}
-      }
-    }, 150);
-    return () => {
-      clearTimeout(timer);
-      active.abort();
-    };
-  });
-  async function show(blobURL: string, level: number, label: string, active: AbortController) {
-    const ownedURLs = urls;
-    ownedURLs.push(blobURL);
-    try {
-      const decoded = new Image();
-      decoded.src = blobURL;
-      await decoded.decode();
-    } catch (cause) {
-      const index = ownedURLs.indexOf(blobURL);
-      if (index >= 0) {
-        ownedURLs.splice(index, 1);
-        URL.revokeObjectURL(blobURL);
-      }
-      throw cause;
-    }
-    if (!active.signal.aborted && level >= rank) {
-      rank = level;
-      url = blobURL;
-      quality = label;
-      if (failure && failure.rank <= level) failure = undefined;
-    }
-  }
-  function fail(result: NonNullable<typeof failure>, active: AbortController) {
-    untrack(() => {
-      if (!active.signal.aborted && result.rank >= rank && result.rank >= (failure?.rank ?? -1))
-        failure = result;
-    });
-  }
-  async function load(
-    selected: PhotoBrowseRow,
-    size: "grid" | "fit" | "large",
-    active: AbortController,
-    reload = false,
-  ) {
-    if (size === "large") largeStarted = true;
-    const signal = AbortSignal.any([active.signal, AbortSignal.timeout(30_000)]);
-    const level = size === "grid" ? 0 : size === "fit" ? 1 : 2;
-    try {
-      const slot =
-        size === "grid" ? selected.previews.grid : await photos.preview(selected, size, signal);
-      if (slot.state !== "ready" || !slot.generation_id) {
-        if (slot.state !== "missing")
-          fail(
-            {
-              rank: level,
-              message:
-                slot.state === "unsupported"
-                  ? "Preview unsupported. Download this photo from Documents."
-                  : "Preview unavailable for this version. Download this photo from Documents.",
-            },
-            active,
-          );
-        return;
-      }
-      const blob = await cache.get(selected.asset_id, slot.generation_id, signal, reload);
-      if (active.signal.aborted) return;
-      const objectURL = URL.createObjectURL(blob);
-      await show(objectURL, level, size, active);
-    } catch (cause) {
-      const reload =
-        cause instanceof APIError &&
-        (cause.code === "photo_display_changed" || cause.status === 404);
-      fail(
-        {
-          rank: level,
-          message: cause instanceof Error ? cause.message : String(cause),
-          action: reload ? "reload" : size === "grid" ? undefined : size,
-        },
-        active,
-      );
-      if (!active.signal.aborted && size === "large") largeStarted = false;
-    }
-  }
-  function zoom() {
-    if (!photo || largeStarted || quality === "original") return;
-    void load(photo, "large", controller);
-  }
-  async function retry() {
-    if (
-      retrying ||
-      reloading ||
-      !photo ||
-      (failure?.action !== "fit" && failure?.action !== "large")
-    )
-      return;
-    const selected = photo,
-      action = failure.action,
-      active = controller;
+            .filter((item) => item.asset_id !== photo?.asset_id),
+    ),
+  );
+  function retry() {
+    if (reloading) return;
     dialog?.focus({ preventScroll: true });
-    retrying = true;
-    try {
-      await load(selected, action, active, true);
-    } finally {
-      if (active === controller && !active.signal.aborted) retrying = false;
-    }
+    void loader.retry();
   }
   async function original() {
     if (!photo || busy) return;
     dialog?.focus({ preventScroll: true });
     const selected = photo,
-      active = controller;
+      display = loader,
+      active = display.active;
     busy = true;
     try {
       const objectURL = await photos.original(
@@ -305,19 +126,16 @@
         URL.revokeObjectURL(objectURL);
         return;
       }
-      await show(objectURL, 3, "original", active);
+      await display.show(objectURL, 3, "original");
     } catch (cause) {
-      fail(
-        {
-          rank: 3,
-          message: cause instanceof Error ? cause.message : String(cause),
-          action:
-            cause instanceof APIError && cause.code === "photo_display_changed"
-              ? "reload"
-              : undefined,
-        },
-        active,
-      );
+      display.fail({
+        rank: 3,
+        message: cause instanceof Error ? cause.message : String(cause),
+        action:
+          cause instanceof APIError && cause.code === "photo_display_changed"
+            ? "reload"
+            : undefined,
+      });
     } finally {
       if (!active.signal.aborted) busy = false;
     }
@@ -381,7 +199,7 @@
     </div>
     <Button
       size="sm"
-      disabled={!originalAllowed || busy || quality === "original"}
+      disabled={!originalAllowed || busy || loader.quality === "original"}
       onclick={original}
       >{#if busy}<Spinner size={14} />{/if}View original</Button
     >
@@ -404,19 +222,19 @@
         }}>Retry navigation</Button
       >
     </div>{/if}
-  {#if note || error || failure}<div class="loupe-error" role="alert">
-      {#if note}<span>{note}</span>{/if}{#if error}<span>{error}</span>{/if}{#if failure}<span
-          >{failure.message}</span
-        >{/if}{#if note || error || failure?.action === "reload"}<Button
+  {#if note || error || loader.failure}<div class="loupe-error" role="alert">
+      {#if note}<span>{note}</span>{/if}{#if error}<span>{error}</span
+        >{/if}{#if loader.failure}<span>{loader.failure.message}</span
+        >{/if}{#if note || error || loader.failure?.action === "reload"}<Button
           size="sm"
           disabled={reloading}
           onclick={() => {
             dialog?.focus({ preventScroll: true });
             onreload?.();
           }}>Reload photo</Button
-        >{/if}{#if (failure?.action === "fit" || failure?.action === "large") && photo}<Button
+        >{/if}{#if (loader.failure?.action === "fit" || loader.failure?.action === "large") && photo}<Button
           size="sm"
-          disabled={retrying || reloading}
+          disabled={loader.retrying || reloading}
           onclick={retry}>Retry preview</Button
         >{/if}
     </div>{/if}
@@ -438,10 +256,10 @@
       {#key identity}<PhotoLoupeImage
           rotation={photo?.rotation ?? 0}
           bind:this={image}
-          {url}
+          url={loader.url}
           {unavailable}
           name={photo?.name ?? "Photo"}
-          onzoom={zoom}
+          onzoom={() => loader.zoom()}
           onmove={move}
         />{/key}
       <div class="edge next">
@@ -449,10 +267,10 @@
           ><ChevronRight size={24} /></IconButton
         >
       </div>
-      {#if quality}<span class="quality" aria-live="polite"
-          >{quality === "original"
+      {#if loader.quality}<span class="quality" aria-live="polite"
+          >{loader.quality === "original"
             ? "Original"
-            : `${quality[0]!.toUpperCase()}${quality.slice(1)} preview`}</span
+            : `${loader.quality[0]!.toUpperCase()}${loader.quality.slice(1)} preview`}</span
         >{/if}
     </div>
     {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">
