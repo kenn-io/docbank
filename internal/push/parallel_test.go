@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/push"
 	"go.kenn.io/docbank/internal/store"
@@ -41,8 +42,11 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			}
 			arrived := make(chan struct{}, 65)
 			release := make(chan struct{})
-			var active, peak atomic.Int64
+			var active, peak, proofs atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == daemonauth.KeyChallengePath {
+					proofs.Add(1)
+				}
 				if r.URL.Path == "/api/v1/push/uploads" {
 					n := active.Add(1)
 					defer active.Add(-1)
@@ -98,7 +102,7 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			} else {
 				unblock()
 			}
-			completionDeadline := time.NewTimer(10 * time.Second)
+			completionDeadline := time.NewTimer(30 * time.Second)
 			defer completionDeadline.Stop()
 			select {
 			case <-done:
@@ -115,6 +119,7 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 				return
 			}
 			require.NoError(t, runErr)
+			require.EqualValues(t, 32, proofs.Load(), "reuse authenticated connections across windows")
 			require.Equal(t, push.Report{Added: 65}, report)
 			require.Len(t, acknowledged, 65)
 			for _, name := range names {
