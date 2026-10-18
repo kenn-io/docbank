@@ -252,7 +252,7 @@ func TestTransferPackageCanBeImportedByExternalModule(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(temp, "main.go"), []byte(
 		"package main\n\nimport transfer \"go.kenn.io/docbank/document/transfer\"\n\nfunc main() { _, _ = transfer.RecordKey(\"source\", transfer.KindEmail, \"record\") }\n",
 	), 0o600))
-	command := exec.Command("go", "build", "-tags", "fts5", ".")
+	command := exec.Command("go", "build", "-tags", "fts5", "-buildvcs=false", ".")
 	command.Dir = temp
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
