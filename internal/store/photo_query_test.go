@@ -1372,6 +1372,9 @@ func TestPhotoTimelineFollowsTheDisplayedBytes(t *testing.T) {
 	require.NoError(t, err)
 	laterStarted, err := s.BeginIngest(ctx, "cli", "second run")
 	require.NoError(t, err)
+	// Keep the initial binding strictly before later observations, even on a coarse clock.
+	earlierStarted.record.StartedAt = "1999-01-01T00:00:00.000000000Z"
+	laterStarted.record.StartedAt = "1999-01-02T00:00:00.000000000Z"
 	node := ingestMtimePhoto(t, s, laterStarted, "photo.jpg", "2024-03-05T10:00:00Z")
 	original := node.CurrentVersionID
 	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
