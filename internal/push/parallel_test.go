@@ -88,12 +88,12 @@ func TestPushOverlapsUploadsAndJoinsCancellation(t *testing.T) {
 				report, runErr = push.Run(ctx, connection, opts)
 			}()
 			defer func() { cancel(); unblock(); <-done }()
-			deadline := time.NewTimer(10 * time.Second)
-			defer deadline.Stop()
+			arrivalDeadline := time.NewTimer(10 * time.Second)
+			defer arrivalDeadline.Stop()
 			for i := range 32 {
 				select {
 				case <-arrived:
-				case <-deadline.C:
+				case <-arrivalDeadline.C:
 					t.Fatalf("only %d uploads reached the daemon concurrently", i)
 				}
 			}
@@ -102,9 +102,11 @@ func TestPushOverlapsUploadsAndJoinsCancellation(t *testing.T) {
 			} else {
 				unblock()
 			}
+			completionDeadline := time.NewTimer(10 * time.Second)
+			defer completionDeadline.Stop()
 			select {
 			case <-done:
-			case <-deadline.C:
+			case <-completionDeadline.C:
 				t.Fatal("push did not join its uploads")
 			}
 			unblock()
