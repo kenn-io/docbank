@@ -9,5 +9,7 @@ import (
 )
 
 func renameRootNoReplace(source *os.File, name string, destination *os.File, target string) error {
-	return unix.RenameatxNp(int(source.Fd()), name, int(destination.Fd()), target, unix.RENAME_EXCL)
+	return publishRootNoReplace(source, name, destination, target, func(source int, name string, destination int, target string) error {
+		return unix.RenameatxNp(source, name, destination, target, unix.RENAME_EXCL)
+	})
 }
