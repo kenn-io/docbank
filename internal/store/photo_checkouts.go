@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/filename"
@@ -380,6 +381,17 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 func validateCheckoutFilename(name string) error {
 	if !utf8.ValidString(name) || name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
 		return fmt.Errorf("%w: invalid original filename", ErrInvalidPhotoCheckout)
+	}
+	// Common filesystems cap a name at 255 bytes, or 255 UTF-16 units on Windows.
+	length := len(name)
+	if runtime.GOOS == "windows" {
+		length = 0
+		for _, r := range name {
+			length += utf16.RuneLen(r)
+		}
+	}
+	if length > 255 {
+		return fmt.Errorf("%w: original filename is too long", ErrInvalidPhotoCheckout)
 	}
 	if runtime.GOOS != "windows" {
 		return nil

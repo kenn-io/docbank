@@ -592,6 +592,31 @@ func TestPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t *testing.T) {
 	require.Equal(t, "undated/"+asset.ID+`/C:\capture.jpg`, entries[0].Path)
 }
 
+func TestPhotoCheckoutSkipsNamesTooLongForTheDestination(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	kept := albumAsset(t, s, "kept.jpg")
+	tooLong := albumAsset(t, s, strings.Repeat("a", 252)+".jpg")
+	// 404 UTF-8 bytes but 204 UTF-16 units, as a Windows source can record.
+	wide := albumAsset(t, s, strings.Repeat("é", 200)+".jpg")
+	checkout, _, estimate, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{kept.ID, tooLong.ID, wide.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	skipped := map[string]string{}
+	for _, skip := range checkout.SkippedPhotos {
+		skipped[skip.AssetID] = skip.Reason
+	}
+	require.Contains(t, skipped[tooLong.ID], "too long")
+	if runtime.GOOS == "windows" {
+		require.NotContains(t, skipped, wide.ID)
+		require.EqualValues(t, 2, estimate.Assets)
+	} else {
+		require.Contains(t, skipped[wide.ID], "too long")
+		require.EqualValues(t, 1, estimate.Assets)
+	}
+	require.NotContains(t, skipped, kept.ID)
+}
+
 func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 	t.Parallel()
 	for _, mutation := range []string{"trashed", "retargeted", "unpublished", "detached own file"} {
