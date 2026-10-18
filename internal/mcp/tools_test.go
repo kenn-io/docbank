@@ -25,6 +25,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	wantNames := []string{
 		"read_document_content",
 		"resolve_text_citation", "get_text_outline", "read_text_section",
+		"get_kata_context",
 		"get_export_plan", "get_export_problems",
 		"get_report_summary", "get_report_dates",
 		"get_export_status",
@@ -76,6 +77,7 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 	}{
 		{},
 		{options: ServerOptions{AllowProcessing: true}, writes: []string{"start_processing"}},
+		{options: ServerOptions{AllowKataWrites: true}, writes: []string{"cite_kata_evidence"}},
 		{options: ServerOptions{AllowPackageWrites: true}, writes: []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "export_bates_file", "export_load_file_package"}},
 		{options: ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, writes: []string{"start_processing", "preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "export_bates_file", "export_load_file_package"}},
 	} {

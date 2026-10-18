@@ -384,6 +384,7 @@ type EmailPDFConfig struct {
 
 // Config is the full contents of config.toml.
 type Config struct {
+	Integrations       IntegrationsConfig                 `toml:"integrations"`
 	Media              MediaConfig                        `toml:"media"`
 	PageRuntime        *pagerender.Profile                `toml:"page_runtime"`
 	EmailPDF           *EmailPDFConfig                    `toml:"email_pdf"`

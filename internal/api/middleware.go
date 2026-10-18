@@ -334,6 +334,13 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
+		if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/kata/cite" || r.URL.Path == "/api/v1/kata/context") {
+			ctx := context.WithValue(r.Context(), responseControllerContextKey{}, http.NewResponseController(w))
+			ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
