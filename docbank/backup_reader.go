@@ -77,7 +77,7 @@ func (r *BackupReader) Extra(name string) (BackupObject, error) {
 
 // CopyObject streams and verifies a snapshot member's complete hash and size.
 // Discard all output on any error, including cancellation or a failed write.
-// Copying after Close wraps fs.ErrClosed.
+// Copying a valid snapshot member after Close wraps fs.ErrClosed.
 func (r *BackupReader) CopyObject(ctx context.Context, sha256 string, dst io.Writer) (int64, error) {
 	id, err := pack.ParseBlobID(sha256)
 	if err != nil {
@@ -92,6 +92,7 @@ func (r *BackupReader) CopyObject(ctx context.Context, sha256 string, dst io.Wri
 
 // CopyExtra copies a host file with the same verification and failure
 // contract as CopyObject. The caller owns the destination and its cleanup.
+// A missing name wraps fs.ErrNotExist, including after Close.
 func (r *BackupReader) CopyExtra(ctx context.Context, name string, dst io.Writer) (int64, error) {
 	n, err := r.reader.CopyExtra(ctx, name, dst)
 	if err != nil {
@@ -102,7 +103,11 @@ func (r *BackupReader) CopyExtra(ctx context.Context, name string, dst io.Writer
 
 // Close closes pack files before releasing the repository lease. Repeated
 // calls return the first close result. Metadata lookups remain available.
+// Closing a nil or uninitialized reader does nothing.
 func (r *BackupReader) Close() error {
+	if r == nil || r.reader == nil {
+		return nil
+	}
 	if err := r.reader.Close(); err != nil {
 		return fmt.Errorf("closing backup reader: %w", err)
 	}

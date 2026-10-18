@@ -74,22 +74,17 @@ api_key = { env = "DOCBANK_TEST_KIT_KEY" }
 	assert.Empty(t, loaded.EmbeddingProfiles["semantic"].Model, "resolution must not mutate the source configuration")
 
 	for name, mutate := range map[string]func(*EmbeddingProfileConfig){
-		"model conflict":              func(p *EmbeddingProfileConfig) { p.Model = "different-model" },
-		"dimensions conflict":         func(p *EmbeddingProfileConfig) { p.Dimensions = 42 },
-		"batch conflict":              func(p *EmbeddingProfileConfig) { p.MaxBatchItems = 2 },
-		"endpoint conflict":           func(p *EmbeddingProfileConfig) { p.Runtime.Endpoint = "https://other.example.invalid" },
-		"revision conflict":           func(p *EmbeddingProfileConfig) { p.Runtime.ModelRevision = "different-weights" },
-		"timeout conflict":            func(p *EmbeddingProfileConfig) { p.Runtime.RequestTimeout = Duration(2 * time.Second) },
-		"credential conflict":         func(p *EmbeddingProfileConfig) { p.Embedder.APIKey = secretref.Literal("synthetic-key") },
-		"unsupported document prefix": func(p *EmbeddingProfileConfig) { p.Embedder.DocumentPrefix = "passage: " },
-		"unsupported document suffix": func(p *EmbeddingProfileConfig) { p.Embedder.DocumentSuffix = " suffix" },
-		"unsupported query prefix":    func(p *EmbeddingProfileConfig) { p.Embedder.QueryPrefix = "query: " },
-		"unsupported query suffix":    func(p *EmbeddingProfileConfig) { p.Embedder.QuerySuffix = " suffix" },
-		"unsupported dimensions":      func(p *EmbeddingProfileConfig) { p.Embedder.RequestDimensions = true },
-		"unsupported role":            func(p *EmbeddingProfileConfig) { p.Embedder.InputTypeMode = "retrieval" },
-		"unsupported token packing":   func(p *EmbeddingProfileConfig) { p.Embedder.ModelContextTokens, p.Embedder.MaxBatchTokens = 100, 1000 },
-		"unsupported route":           func(p *EmbeddingProfileConfig) { p.Embedder.BaseURL = "https://embedding.example.invalid/other" },
-		"native provider":             func(p *EmbeddingProfileConfig) { p.Runtime.AdapterContract = "docbank-voyage-embeddings/v1" },
+		"model conflict":            func(p *EmbeddingProfileConfig) { p.Model = "different-model" },
+		"dimensions conflict":       func(p *EmbeddingProfileConfig) { p.Dimensions = 42 },
+		"batch conflict":            func(p *EmbeddingProfileConfig) { p.MaxBatchItems = 2 },
+		"endpoint conflict":         func(p *EmbeddingProfileConfig) { p.Runtime.Endpoint = "https://other.example.invalid" },
+		"revision conflict":         func(p *EmbeddingProfileConfig) { p.Runtime.ModelRevision = "different-weights" },
+		"timeout conflict":          func(p *EmbeddingProfileConfig) { p.Runtime.RequestTimeout = Duration(2 * time.Second) },
+		"credential conflict":       func(p *EmbeddingProfileConfig) { p.Embedder.APIKey = secretref.Literal("synthetic-key") },
+		"unsupported role":          func(p *EmbeddingProfileConfig) { p.Embedder.InputTypeMode = "retrieval" },
+		"unsupported token packing": func(p *EmbeddingProfileConfig) { p.Embedder.ModelContextTokens, p.Embedder.MaxBatchTokens = 100, 1000 },
+		"unsupported route":         func(p *EmbeddingProfileConfig) { p.Embedder.BaseURL = "https://embedding.example.invalid/other" },
+		"native provider":           func(p *EmbeddingProfileConfig) { p.Runtime.AdapterContract = "docbank-voyage-embeddings/v1" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := profile

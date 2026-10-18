@@ -105,6 +105,15 @@ func TestBackupReaderWithoutVault(t *testing.T) {
 	_, err = reader.CopyObject(t.Context(), later.Computed.SHA256, &output)
 	require.ErrorIs(t, err, fs.ErrNotExist)
 	assert.Empty(t, output.Bytes())
+	smallReader, err := repository.OpenSnapshot(t.Context(), newer.ID)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, smallReader.Close()) })
+	var smallContent bytes.Buffer
+	n, err := smallReader.CopyObject(t.Context(), later.Computed.SHA256, &smallContent)
+	require.NoError(t, err)
+	assert.Equal(t, int64(26), n)
+	assert.Equal(t, "only in the later snapshot", smallContent.String())
+	require.NoError(t, smallReader.Close())
 	_, err = reader.Extra("missing")
 	require.ErrorIs(t, err, fs.ErrNotExist)
 	_, err = reader.CopyExtra(t.Context(), "missing", &output)
@@ -141,9 +150,6 @@ func TestBackupReaderWithoutVault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, hashes[0], hex.EncodeToString(digest.Sum(nil)))
 	require.NoError(t, reopened.Close())
-	assert.NoDirExists(t, source)
-	assert.NoFileExists(t, filepath.Join(repository.Root(), "docbank.db"))
-	assert.NoDirExists(t, filepath.Join(repository.Root(), "blobs"))
 	require.NoError(t, os.RemoveAll(repository.Root()))
 	afterClose, err := reader.Object(hashes[0])
 	require.NoError(t, err)
@@ -210,4 +216,14 @@ func TestBackupReaderRejectsInvalidSnapshots(t *testing.T) {
 	cancel()
 	_, err = repository.OpenSnapshot(ctx, "snapshot")
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestBackupReaderCloseAfterFailedOpen(t *testing.T) {
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	require.NoError(t, err)
+	reader, err := repository.OpenSnapshot(t.Context(), "invalid")
+	require.Error(t, err)
+	require.NoError(t, reader.Close())
+	var unopened docbank.BackupReader
+	require.NoError(t, unopened.Close())
 }

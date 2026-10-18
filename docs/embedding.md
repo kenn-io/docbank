@@ -960,7 +960,8 @@ return inspectCatalog(file.Name())
 `CopyObject` and `CopyExtra` stream both ordinary and chunked files, including
 files over 4 GiB. They verify the complete hash and size. Discard all output if
 copying or closing the destination fails. `Info`, `Object`, and `Extra` remain
-usable after `Close`; further copies fail with `fs.ErrClosed`.
+usable after `Close`. Copying a valid snapshot member after closing returns
+`fs.ErrClosed`; an invalid hash or missing extra name can fail validation first.
 
 Use each reader sequentially and close it after copying one group of files.
 Opening loads the repository index, file lists, and recipes again. The reader
@@ -969,6 +970,9 @@ caches up to 64 open packs but keeps no file payload cache.
 The repository must be writable for lease heartbeats. Opening during a backup
 or maintenance operation returns `ErrBackupRepositoryLocked`; retry later.
 A backup waits up to 60 seconds for readers, then returns the same error.
+One large copy can exceed that wait, so scheduled backups must treat the error
+as retryable. An open reader keeps renewing its lease: always close it, including
+after a failed copy, and release it before processing the copied files.
 Forced maintenance or 30 minutes without a heartbeat, such as during sleep,
 can invalidate the lease. Missing or damaged bytes then fail the copy. Closing
 and reopening reloads placement after maintenance; keep the same snapshot ID.
