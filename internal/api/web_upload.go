@@ -215,6 +215,9 @@ func handleWebUploadConnection(
 	err := wsjson.Read(authCtx, conn, &auth)
 	cancelAuth()
 	if err != nil {
+		if errors.Is(err, websocket.ErrMessageTooBig) {
+			_ = conn.Close(websocket.StatusMessageTooBig, "authentication message exceeds its limit")
+		}
 		return
 	}
 	nonce, err := base64.RawURLEncoding.DecodeString(auth.Nonce)

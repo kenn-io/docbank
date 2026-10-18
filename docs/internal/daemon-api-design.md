@@ -113,6 +113,8 @@ independent cookies.
 The cookie alone has no authority. Each authenticated request also needs its
 scoped tab token and unexpired tab state. Upload WebSockets check the tab
 authority and exact origin as well as the existing independent upload proof.
+Upload authentication messages are limited to 4096 bytes. Oversized messages
+complete a WebSocket close handshake with status 1009 before socket cleanup.
 Existing `docbank web` fragment sessions retain their random per-daemon origin
 and daemon-lifetime authority.
 
