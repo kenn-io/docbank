@@ -885,7 +885,8 @@ func targetLockRegistryPath() (string, error) {
 }
 
 func ensureTargetLockRegistryDir(dir string) error {
-	// Lock files hold no data, so skip the Windows DACL rewrite that re-walks every one.
+	// Every entry, including launch logs, is created after this check and inherits
+	// the private DACL, so skip the Windows DACL rewrite that re-walks every one.
 	if err := safefileio.EnsurePrivateDirShallow(dir); err != nil {
 		return fmt.Errorf("securing target-lock registry: %w", err)
 	}
