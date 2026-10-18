@@ -326,14 +326,17 @@ func TestPhotoAuthoredBatchConflictsAndAtomicFailure(t *testing.T) {
 func TestPhotoAuthoredBatchViewedContent(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		replace bool
-		swap    bool
-		bind    bool
-		stale   bool
+		name      string
+		replace   bool
+		swap      bool
+		bind      bool
+		bindOther bool
+		stale     bool
 	}{
 		{name: "matching", bind: true},
 		{name: "replaced", replace: true, bind: true, stale: true},
+		{name: "non-display matching", bindOther: true},
+		{name: "non-display replaced", replace: true, bindOther: true, stale: true},
 		{name: "swapped display", swap: true, bind: true, stale: true},
 		{name: "omitted after replacement", replace: true},
 		{name: "omitted after display swap", swap: true},
@@ -366,7 +369,7 @@ func TestPhotoAuthoredBatchViewedContent(t *testing.T) {
 			// Fresh preparation must still refuse a decision about the old display.
 			targets := preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}})
 			for i := range targets {
-				if tc.bind && targets[i].FileID == display.ID {
+				if (tc.bind && targets[i].FileID == display.ID) || (tc.bindOther && targets[i].FileID == other.ID) {
 					targets[i].ContentVersionID = node.CurrentVersionID
 				}
 			}

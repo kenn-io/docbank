@@ -49,6 +49,7 @@ type PhotoAuthoredTargetRevision struct {
 type PhotoAuthoredEditTarget struct {
 	PhotoAuthoredTargetRevision
 
+	// ContentVersionID fences the asset's displayed version.
 	ContentVersionID string `json:"content_version_id,omitempty" format:"uuid"`
 }
 
@@ -285,9 +286,9 @@ type photoAuthoredBatchRows struct {
 }
 
 type photoAuthoredAssetAccess struct {
-	revision      int64
-	hidden        bool
-	displayFileID sql.NullString
+	revision         int64
+	hidden           bool
+	displayVersionID sql.NullString
 }
 
 // loadPhotoAuthoredBatchRowsTx reads every target's asset, file, and node in
@@ -300,10 +301,10 @@ func loadPhotoAuthoredBatchRowsTx(ctx context.Context, tx *sql.Tx, targets []Pho
 		assetIDs = append(assetIDs, target.AssetID)
 		fileIDs = append(fileIDs, target.FileID)
 	}
-	err := queryInChunks(ctx, tx, `SELECT asset_id, revision, hidden_at IS NOT NULL, display_file_id FROM photo_assets WHERE asset_id IN (`, uniqueSorted(assetIDs), func(rows *sql.Rows) error {
+	err := queryInChunks(ctx, tx, `SELECT a.asset_id, a.revision, a.hidden_at IS NOT NULL, n.current_version_id FROM photo_assets a LEFT JOIN photo_files f ON f.file_id = a.display_file_id LEFT JOIN nodes n ON n.id = f.node_id WHERE a.asset_id IN (`, uniqueSorted(assetIDs), func(rows *sql.Rows) error {
 		var id string
 		var access photoAuthoredAssetAccess
-		if err := rows.Scan(&id, &access.revision, &access.hidden, &access.displayFileID); err != nil {
+		if err := rows.Scan(&id, &access.revision, &access.hidden, &access.displayVersionID); err != nil {
 			return err
 		}
 		loaded.assets[id] = access
@@ -380,7 +381,7 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 		if file.AssetID != expected.AssetID || asset.revision != expected.AssetRevision || len(request.Keywords) > 0 && node.Revision != expected.NodeRevision {
 			return nil, nil, ErrStaleRevision
 		}
-		if expected.ContentVersionID != "" && (asset.displayFileID.String != file.ID || node.CurrentVersionID != expected.ContentVersionID) {
+		if expected.ContentVersionID != "" && asset.displayVersionID.String != expected.ContentVersionID {
 			return nil, nil, ErrStaleRevision
 		}
 		patch := request.Patch

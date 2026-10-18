@@ -15,6 +15,7 @@ import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoMetadataResponse,
   preparedPhoto,
+  photoPreparation,
   mapPhoto,
   photo,
   touchTap,
@@ -1307,7 +1308,6 @@ it("refreshes a filtered view and restarts pending reads after a metadata edit",
   const photos = workspaceWithPreparedPhoto(before);
   photos.items = [old];
   photos.query = { ...photos.query, filters: { flags: ["pick"] } };
-  photos.authored.inspectedID = "photo-1";
   photos.authored.asset = {
     id: "photo-1",
     display_file_id: "file-1",
@@ -1332,16 +1332,16 @@ it("refreshes a filtered view and restarts pending reads after a metadata edit",
       { ...before, revision: 2, values: { ...before.values, flag: "pick", rotation: 90 as const } },
     ],
   } as PhotoAuthoredReceipt;
-  render(PhotosWorkspace, {
+  const view = render(PhotosWorkspace, {
     photos,
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    photoID: "photo-1",
   });
-  await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
   photos.authored.stage({ rating: 0 });
-  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   const notify = edit.mock.calls[0]![3];
+  await view.rerender({ photoID: "photo-1" });
+  await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
   await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
   const oldSignal = fetcher.mock.calls[0]![1].signal as AbortSignal;
   const oldLookupSignal = lookup.mock.calls[0]![1];
@@ -1839,6 +1839,130 @@ it.each([
   }
   expect(edit).not.toHaveBeenCalled();
   expect(undo).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
+it.each([false, true])("keeps RAW after a refused flag, reload fails=%s", async (reloadFails) => {
+  Element.prototype.scrollIntoView = vi.fn();
+  const photos = workspaceWithPreparedPhoto();
+  const prepared = photoPreparation([
+    preparedPhoto(1),
+    preparedPhoto(2, { asset_id: "photo-1", file_id: "raw", file_name: "Photo 1.raw" }),
+  ]);
+  prepared.assets[0]!.files[1]!.role = "raw";
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValueOnce(prepared);
+  if (reloadFails) prepare.mockRejectedValueOnce(new Error("Metadata reload failed"));
+  else prepare.mockResolvedValue(prepared);
+  const row = photo(1);
+  let finishLookup!: (value: PhotoBrowseRow) => void;
+  vi.spyOn(photos, "lookup")
+    .mockResolvedValueOnce(row)
+    .mockImplementationOnce(() => new Promise((resolve) => (finishLookup = resolve)));
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  stubPhotoFetch(vi.fn());
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockRejectedValueOnce(new APIError("Photo changed", 412, "stale_revision"))
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: row.asset_id,
+    shortcuts,
+  });
+  const loupe = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+  await within(loupe).findByRole("list", { name: "Assigned keywords" });
+  await fireEvent.click(within(loupe).getByRole("combobox", { name: /Edit members/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "RAW · Photo 1.raw" }));
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+  expect(within(loupe).queryByRole("list", { name: "Assigned keywords" })).toBeNull();
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "p", cancelable: true }));
+  await within(loupe).findByText(reloadFails ? "Metadata reload failed" : "Photo changed");
+  expect(edit).toHaveBeenCalledOnce();
+  expect(Object.values(edit.mock.calls[0]![0].targets)).toMatchObject([
+    { file_id: "raw", content_version_id: "version-1" },
+  ]);
+  expect(photos.authored.fileID).toBe("raw");
+  if (!reloadFails) {
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(photos.authored.loading).toBe(false));
+    expect(within(loupe).getByText("Photo changed")).toBeTruthy();
+  }
+  finishLookup({ ...row, content_version_id: "replacement-version" });
+  await waitFor(() =>
+    expect(photos.items[0]).toMatchObject({ content_version_id: "replacement-version" }),
+  );
+  if (!reloadFails) {
+    shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "5", cancelable: true }));
+    await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
+    expect(Object.values(edit.mock.calls[1]![0].targets)).toMatchObject([
+      { file_id: "raw", content_version_id: "replacement-version" },
+    ]);
+  }
+  photos.dispose();
+});
+
+it("blocks a loupe flag while the photo is loading", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const lookup = vi.spyOn(photos, "lookup").mockImplementation(() => new Promise(() => {}));
+  stubPhotoFetch(vi.fn());
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: "photo-1",
+    shortcuts,
+  });
+  await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "p", cancelable: true }));
+  await screen.findByText("Photo is loading. Try again when it finishes.");
+  expect(edit).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
+it("keeps the Metadata draft after a refused loupe edit until Reload metadata", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const row = photo(1);
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(row);
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValue(photoPreparation([preparedPhoto(1)]));
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  stubPhotoFetch(vi.fn());
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockRejectedValueOnce(new APIError("Photo changed", 412, "stale_revision"))
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: row.asset_id,
+    shortcuts,
+  });
+  const loupe = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+  await within(loupe).findByRole("list", { name: "Assigned keywords" });
+  prepare.mockClear();
+  photos.authored.stage({ caption: "Draft caption" });
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "p", cancelable: true }));
+  await within(loupe).findByText("Photo changed");
+  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+  expect(prepare).not.toHaveBeenCalled();
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "5", cancelable: true }));
+  await within(loupe).findByText("Reload metadata before editing.");
+  expect(edit).toHaveBeenCalledOnce();
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Reload metadata" }));
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  await waitFor(() => expect(photos.authored.conflict).toBe(false));
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "5", cancelable: true }));
+  await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
+  expect(edit.mock.calls[1]![0].patch).toEqual({ caption: "Draft caption", rating: 5 });
   photos.dispose();
 });
 
