@@ -932,7 +932,10 @@ func waitForCheckoutValidation(ctx context.Context, check func(context.Context) 
 	})
 }
 
-const checkoutStartupTimeout = 5 * time.Second
+const (
+	checkoutStartupTimeout = 5 * time.Second
+	checkoutAbandonGrace   = time.Second
+)
 
 func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, check func(context.Context, config.StoreBindingConfig) error) (map[string]error, error) {
 	checkCtx, cancel := context.WithTimeout(ctx, checkoutStartupTimeout)
@@ -941,8 +944,9 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 		id  string
 		err error
 	}
+	// The buffer lets checks abandoned at the deadline finish without a reader.
 	results := make(chan result, len(stores))
-	checks := 0
+	outstanding := make(map[string]bool)
 	pending := make(map[string]error)
 	for _, item := range stores {
 		if item.Role == "primary" || item.Lifecycle == "detached" || item.Kind != "filesystem" {
@@ -952,20 +956,41 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 		if !ok {
 			continue
 		}
-		if _, err := os.Stat(binding.Path); errors.Is(err, fs.ErrNotExist) {
-			pending[item.ID] = err
-			continue
-		}
-		checks++
-		go func() { results <- result{item.ID, check(checkCtx, binding)} }()
+		outstanding[item.ID] = true
+		go func() {
+			if _, err := os.Stat(binding.Path); errors.Is(err, fs.ErrNotExist) {
+				results <- result{item.ID, err}
+				return
+			}
+			results <- result{item.ID, check(checkCtx, binding)}
+		}()
 	}
 	var failure error
-	for range checks {
-		result := <-results
+	record := func(result result) {
+		delete(outstanding, result.id)
 		if result.err != nil && !checkoutValidationPending(ctx, result.err) {
 			failure = errors.Join(failure, result.err)
 		} else if result.err != nil {
 			pending[result.id] = result.err
+		}
+	}
+	deadline := checkCtx.Done()
+	var abandon <-chan time.Time
+	for len(outstanding) > 0 {
+		select {
+		case result := <-results:
+			record(result)
+		case <-deadline:
+			// Checks that honor cancellation report their own reason. A
+			// filesystem call on a hung network mount does not; the store's
+			// background wait finishes that check instead.
+			deadline = nil
+			abandon = time.After(checkoutAbandonGrace)
+		case <-abandon:
+			for id := range outstanding {
+				pending[id] = fmt.Errorf("checking separation from checkouts: %w", checkCtx.Err())
+			}
+			clear(outstanding)
 		}
 	}
 	if err := ctx.Err(); err != nil {

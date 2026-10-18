@@ -443,6 +443,34 @@ func TestConfiguredCheckoutStartupDefersSlowBinding(t *testing.T) {
 	})
 }
 
+func TestConfiguredCheckoutStartupAbandonsStuckBinding(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := config.Default()
+		cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"stuck": {Kind: "filesystem", Path: t.TempDir()},
+			"fast":  {Kind: "filesystem", Path: t.TempDir()},
+		}
+		// Models a filesystem call on a hung mount, which never sees cancellation.
+		release := make(chan struct{})
+		defer close(release)
+		check := func(_ context.Context, binding config.StoreBindingConfig) error {
+			if binding.Path == cfg.StoreBindings["stuck"].Path {
+				<-release
+			}
+			return nil
+		}
+		started := time.Now()
+		specs, err := validateConfiguredCheckoutStartup(t.Context(), cfg, []store.BlobStore{
+			{ID: "stuck", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "stuck"},
+			{ID: "fast", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "fast"},
+		}, check)
+		require.NoError(t, err)
+		require.Equal(t, checkoutStartupTimeout+checkoutAbandonGrace, time.Since(started))
+		require.Contains(t, specs[0].UnavailableReason, context.DeadlineExceeded.Error())
+		require.Empty(t, specs[1].UnavailableReason)
+	})
+}
+
 func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
