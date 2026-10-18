@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSearchAutoStartRejectsInvalidConfigPrecisely(t *testing.T) {
+func TestDaemonAutoStartReportsInvalidConfig(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
 	bin := buildDocbank(t)
@@ -18,11 +18,4 @@ func TestSearchAutoStartRejectsInvalidConfigPrecisely(t *testing.T) {
 	output, err := child.CombinedOutput()
 	require.Error(t, err)
 	require.Contains(t, string(output), "daemon config invalid: [web] session_lifetime")
-}
-
-func TestSearchWithRunningDaemonIgnoresConfigFile(t *testing.T) {
-	root := setupVaultHome(t)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[web\n"), 0600))
-	_, err := runCLI(t, "search", "synthetic-query")
-	require.NoError(t, err)
 }

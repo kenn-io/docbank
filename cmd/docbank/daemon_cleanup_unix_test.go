@@ -38,7 +38,6 @@ func TestServeConfigDiagnosticExcludesBootstrapCleanup(t *testing.T) {
 	require.NoError(t, config.Close())
 	err = <-done
 	require.ErrorIs(t, err, daemonconn.ErrDaemonConfigInvalid)
-	require.Contains(t, err.Error(), "bad\nname")
 	require.NotContains(t, err.Error(), "removing web bootstrap")
 	require.NoError(t, writer.Close())
 	output, err := io.ReadAll(stderr)

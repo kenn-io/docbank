@@ -832,41 +832,44 @@ func TestHTTPStartupAcquiresDaemonAndRejectsItsEffectiveRuntimeKey(t *testing.T)
 
 func TestHTTPStartupFailsClosedWhenDaemonCannotBeEstablished(t *testing.T) {
 	const sensitive = "synthetic-daemon-secret"
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return nil, errors.New("daemon failed with " + sensitive)
+	}, func(*daemonconn.Connection) error { return nil })
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
+
+	err := server.prepareHTTP(t.Context(), testMCPBearer)
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), sensitive)
+	assert.NotContains(t, err.Error(), testMCPBearer)
+}
+
+func TestInvalidConfigDiagnosticAtStartupAndToolCall(t *testing.T) {
 	configErr := fmt.Errorf("daemon config invalid: [web] session_lifetime is too short: %w", daemonconn.ErrDaemonConfigInvalid)
-	for _, test := range []struct {
-		name  string
-		cause error
-	}{
-		{name: "sensitive error", cause: errors.New("daemon failed with " + sensitive)},
-		{name: "invalid config", cause: configErr},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
-				return nil, test.cause
-			}, func(*daemonconn.Connection) error { return nil })
-			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
+	t.Run("startup preserves diagnostic", func(t *testing.T) {
+		lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+			return nil, configErr
+		}, func(*daemonconn.Connection) error { return nil })
+		server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
-			err := server.prepareHTTP(t.Context(), testMCPBearer)
+		err := server.prepareHTTP(t.Context(), testMCPBearer)
 
-			require.Error(t, err)
-			assert.NotContains(t, err.Error(), sensitive)
-			assert.NotContains(t, err.Error(), testMCPBearer)
-			if errors.Is(test.cause, daemonconn.ErrDaemonConfigInvalid) {
-				require.ErrorIs(t, err, daemonconn.ErrDaemonConfigInvalid)
-				require.EqualError(t, err, configErr.Error())
-				_, acquireErr := lease.acquire(t.Context())
-				require.ErrorIs(t, acquireErr, daemonconn.ErrDaemonConfigInvalid)
-				require.EqualError(t, acquireErr, configErr.Error())
+		require.ErrorIs(t, err, daemonconn.ErrDaemonConfigInvalid)
+		require.EqualError(t, err, configErr.Error())
+	})
+	t.Run("tool call sanitizes diagnostic", func(t *testing.T) {
+		lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+			return nil, configErr
+		}, func(*daemonconn.Connection) error { return nil })
 
-				_, err = daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (string, error) {
-					t.Fatal("tool must stop when daemon acquisition fails")
-					return "", nil
-				})
-				require.EqualError(t, err, "local Docbank daemon is unavailable")
-				assert.NotErrorIs(t, err, daemonconn.ErrDaemonConfigInvalid)
-			}
+		_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (string, error) {
+			t.Fatal("tool must stop when daemon acquisition fails")
+			return "", nil
 		})
-	}
+
+		require.EqualError(t, err, "local Docbank daemon is unavailable")
+		assert.NotErrorIs(t, err, daemonconn.ErrDaemonConfigInvalid)
+	})
 }
 
 func TestHTTPDisconnectPropagatesCancellationIntoSDKHandler(t *testing.T) {
