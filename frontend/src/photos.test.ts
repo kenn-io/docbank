@@ -1,7 +1,15 @@
+import { waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
-import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
+import {
+  Photos,
+  lookupPhotoRows,
+  loadDensity,
+  photoQuery,
+  mapPhotoLimit,
+  type PhotoRow,
+} from "./photos.svelte.js";
 import {
   photo,
   preparedPhoto,
@@ -47,6 +55,98 @@ const savedSmartSet = async (revision = 1, id = "00000000-0000-4000-8000-0000000
 };
 const savedSmartSetResponse = (saved: { revision: number }) =>
   Response.json(saved, { headers: { ETag: `"${saved.revision}"` } });
+
+it("moves compare backward locally after its next page fails, then retries that page", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ detail: "Unavailable" }, { status: 503 }))
+    .mockResolvedValue(Response.json({ items: [photo(4)], total: 4 }));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2), photo(3)];
+  photos.started = true;
+  photos.cursor = "next";
+  const group = ["photo-2", "photo-3"];
+  expect(await photos.moveGroup(group, 1)).toEqual({ status: "failed", error: "Unavailable" });
+  expect(await photos.moveGroup(group, -1)).toEqual({
+    status: "moved",
+    ids: ["photo-1", "photo-2"],
+  });
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(await photos.moveGroup(group, 1)).toEqual({
+    status: "moved",
+    ids: ["photo-3", "photo-4"],
+  });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(fetcher.mock.calls[1]![1].body).cursor).toBe("next");
+  photos.dispose();
+});
+
+it.each(["replacement", "stalled continuation"])(
+  "reports a missing compare member after %s",
+  async (mode) => {
+    const replacing = mode === "replacement";
+    const fetcher = vi.fn();
+    if (replacing)
+      fetcher.mockResolvedValueOnce(Response.json({ code: "cursor_expired" }, { status: 410 }));
+    fetcher.mockResolvedValue(
+      response(
+        replacing ? [photo(1), photo(3)] : [photo(1), photo(2)],
+        replacing ? undefined : "same",
+      ),
+    );
+    stubPhotoFetch(fetcher);
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    photos.cursor = replacing ? "expired" : "same";
+    if (replacing) await photos.loadMore();
+    expect(await photos.moveGroup(["photo-1", replacing ? "photo-2" : "photo-3"], 1)).toEqual({
+      status: "failed",
+      error: "A compared photo is no longer in this query. Exit compare and select photos again.",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(replacing ? 2 : 1);
+    photos.dispose();
+  },
+);
+
+it.each([-1, 1] as const)(
+  "replaces an expired cursor and retries compare direction %s atomically",
+  async (direction) => {
+    const rows = [photo(1), photo(2), photo(3), photo(4)];
+    const cursors: (string | undefined)[] = [];
+    stubPhotoFetch(async (_url, init) => {
+      const cursor = JSON.parse(String(init.body)).cursor;
+      cursors.push(cursor);
+      if (cursor === "expired")
+        return Response.json({ code: "cursor_expired", detail: "Cursor expired" }, { status: 410 });
+      if (!cursor)
+        return Response.json({ items: [rows[0]], total: 4, next_cursor: "replacement-2" });
+      if (cursor === "replacement-2")
+        return Response.json({ items: [rows[1]], total: 4, next_cursor: "replacement-3" });
+      if (cursor === "replacement-3")
+        return Response.json({ items: [rows[2]], total: 4, next_cursor: "replacement-4" });
+      return Response.json({ items: [rows[3]], total: 4 });
+    });
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = rows.slice(0, 2);
+    photos.started = true;
+    photos.cursor = "expired";
+    const group = ["photo-2", "photo-3"];
+    expect(await photos.moveGroup(group, direction)).toMatchObject({ status: "failed" });
+    expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2"]);
+    expect(await photos.moveGroup(group, direction)).toEqual({
+      status: "moved",
+      ids: direction > 0 ? ["photo-3", "photo-4"] : ["photo-1", "photo-2"],
+    });
+    expect(cursors).toEqual(
+      direction > 0
+        ? ["expired", undefined, "replacement-2", "replacement-3", "replacement-4"]
+        : ["expired", undefined, "replacement-2", "replacement-3"],
+    );
+    photos.dispose();
+  },
+);
 
 it("keeps Library continuation totals without a page timeout", async () => {
   const timeout = vi.spyOn(AbortSignal, "timeout");
@@ -2900,3 +3000,35 @@ it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
     photos.dispose();
   },
 );
+
+it("looks up large captured sets in at most four concurrent 64-ID queries, preserving input order", async () => {
+  const ids = Array.from({ length: 321 }, (_, index) => `photo-${index + 1}`);
+  let active = 0,
+    peak = 0;
+  const sizes: number[] = [];
+  const waiting: (() => void)[] = [];
+  stubPhotoFetch(async (_url, init) => {
+    const request = JSON.parse(String(init.body));
+    expect(request.page_size).toBe(250);
+    expect(request.hidden).toBe(false);
+    const batch: string[] = request.query.filters.asset_ids;
+    sizes.push(batch.length);
+    peak = Math.max(peak, ++active);
+    await new Promise<void>((resolve) => waiting.push(resolve));
+    active--;
+    return response(
+      batch
+        .slice()
+        .reverse()
+        .map((id) => ({ ...photo(1), asset_id: id })),
+    );
+  });
+  const result = lookupPhotoRows("session", ids);
+  await waitFor(() => expect(waiting).toHaveLength(4));
+  waiting.splice(0).forEach((resolve) => resolve());
+  await waitFor(() => expect(waiting).toHaveLength(2));
+  waiting.splice(0).forEach((resolve) => resolve());
+  expect((await result).map((row) => row.asset_id)).toEqual(ids);
+  expect(peak).toBe(4);
+  expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
+});

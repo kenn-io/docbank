@@ -3421,6 +3421,16 @@ export interface JobRequest {
   plan_id: string;
 }
 
+export interface LookupPhotoFlagsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minItems 1
+     * @maxItems 20000
+     */
+  asset_ids: string[];
+}
+
 export interface MailboxArchive {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5302,6 +5312,7 @@ export interface PhotoAuthoredEditTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
+  content_version_id?: string;
   file_id: string;
   /** @minimum 1 */
   node_revision: number;
@@ -5406,6 +5417,15 @@ export type PhotoBrowsePageFacetsItem = {
   /** @maxItems 114 */
   values: WorkspaceFacetValue[];
 };
+
+export type PhotoBrowseRowFlag = typeof PhotoBrowseRowFlag[keyof typeof PhotoBrowseRowFlag];
+
+
+export const PhotoBrowseRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
 
 export type PhotoBrowseRowKind = typeof PhotoBrowseRowKind[keyof typeof PhotoBrowseRowKind];
 
@@ -5550,6 +5570,7 @@ export interface PhotoBrowseRow {
      * @nullable
      */
   file_modified_time: string | null;
+  flag: PhotoBrowseRowFlag;
   /** @nullable */
   focal_length_mm: number | null;
   /** @nullable */
@@ -5570,6 +5591,11 @@ export interface PhotoBrowseRow {
   orientation: number | null;
   previews: PhotoPreviewSlots;
   quality?: PhotoBrowseRowQuality;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating: number;
   /** @minimum 1 */
   revision: number;
   rotation: PhotoBrowseRowRotation;
@@ -5743,6 +5769,26 @@ export interface PhotoFaceResult {
   readonly $schema?: string;
   assertion?: PhotoPersonAssertion;
   face?: PhotoFace;
+}
+
+export type PhotoFlagRowFlag = typeof PhotoFlagRowFlag[keyof typeof PhotoFlagRowFlag];
+
+
+export const PhotoFlagRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export interface PhotoFlagRow {
+  asset_id: string;
+  flag: PhotoFlagRowFlag;
+}
+
+export interface PhotoFlagsResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PhotoFlagRow[];
 }
 
 export interface PhotoHiddenPasscodeRequest {
@@ -7003,6 +7049,18 @@ export const WorkspaceQueryResponsePageSize = {
   NUMBER_250: 250,
 } as const;
 
+/**
+ * Display-file flag in a photo snapshot; absent in a document snapshot.
+ */
+export type WorkspaceQueryRowFlag = typeof WorkspaceQueryRowFlag[keyof typeof WorkspaceQueryRowFlag];
+
+
+export const WorkspaceQueryRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
 export interface WorkspaceQueryTag {
   id: string;
   name: string;
@@ -7023,6 +7081,8 @@ export interface WorkspaceQueryRow {
   /** @nullable */
   display_collection_label?: string | null;
   excerpt?: string;
+  /** Display-file flag in a photo snapshot; absent in a document snapshot. */
+  flag?: WorkspaceQueryRowFlag;
   media_family: string;
   mime_type: string;
   modified_at: string;
@@ -7890,6 +7950,7 @@ export interface WorkspaceQueryCreateRequest {
   /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
+  photos?: boolean;
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;
@@ -15705,6 +15766,44 @@ return sessionJSON<PhotoAsset>(getCreatePhotoAssetUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(createPhotoAssetRequest)
+  }
+);}
+
+
+
+export const getLookupPhotoFlagsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/assets/flags`
+}
+
+/**
+ * @summary Read current flags for visible photo assets
+ */
+export const lookupPhotoFlags = async (lookupPhotoFlagsRequest: NonReadonly<LookupPhotoFlagsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFlagsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoFlagsResponse>(getLookupPhotoFlagsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(lookupPhotoFlagsRequest)
   }
 );}
 

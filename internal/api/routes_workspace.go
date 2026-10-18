@@ -7,6 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -25,7 +26,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if err != nil {
 			return nil, err
 		}
-		selection, err := selectCollectionProfile(d.Cfg, in.Body.Profile)
+		coverage, err := workspaceQueryCoverage(d.Cfg, in.Body.Photos, in.Body.Profile)
 		if err != nil {
 			return nil, err
 		}
@@ -33,7 +34,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
 		page, err := service.Create(ctx, owner, store.SnapshotRequest{
-			Query: value, Coverage: selection.Coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			Photos: in.Body.Photos, Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		})
 		if err != nil {
 			return nil, workspaceQueryError(err)
@@ -70,6 +71,14 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		}
 		return &struct{ Body WorkspaceQueryResponse }{Body: response}, nil
 	})
+}
+
+func workspaceQueryCoverage(cfg config.Config, photos bool, profile string) (store.CoverageSelection, error) {
+	if photos && profile == "" {
+		return store.CoverageSelection{Configuration: "unconfigured"}, nil
+	}
+	selection, err := selectCollectionProfile(cfg, profile)
+	return selection.Coverage, err
 }
 
 func parseWorkspaceQuery(raw QueryPayload) (query.Query, error) {

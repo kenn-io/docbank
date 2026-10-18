@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestPhotoSnapshotOrderMatchesBrowse(t *testing.T) {
+func TestPhotoSnapshotOrderAndFlagsMatchBrowse(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	var assetIDs []string
@@ -27,13 +27,16 @@ func TestPhotoSnapshotOrderMatchesBrowse(t *testing.T) {
 	} {
 		node, err := s.CreateFile(t.Context(), s.RootID(), file.name, browseHash(file.name), int64(file.size), file.mime)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, fmt.Sprintf("2024-01-%02dT00:00:00.000000000Z", file.modifiedDay), node.ID)
-		require.NoError(t, err)
 		stamp := fmt.Sprintf("2024-01-%02dT00:00:00Z", file.captureDay)
 		browsePhotoMetadata(t, s, node, file.name, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneUTC, "")))
 		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		assetIDs = append(assetIDs, asset.ID)
+		display := asset.Files[0]
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: display.ID, Revision: display.Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
+		require.NoError(t, err)
+		_, err = s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, fmt.Sprintf("2024-01-%02dT00:00:00.000000000Z", file.modifiedDay), node.ID)
+		require.NoError(t, err)
 	}
 	service := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -53,6 +56,7 @@ func TestPhotoSnapshotOrderMatchesBrowse(t *testing.T) {
 		require.Len(t, page.Rows, 4)
 		for i, row := range page.Rows {
 			require.Equal(t, browse.Items[i].AssetID, row.AssetID, field)
+			require.Equal(t, new("pick"), row.Flag, field)
 		}
 	}
 }
@@ -89,7 +93,7 @@ func TestPhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows(t *tes
 					}
 				}
 				require.NotEmpty(t, frozenFile.ID)
-				_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: frozenFile.ID, Revision: frozenFile.Revision, Patch: PhotoAuthoredPatch{Caption: new("Updated caption")}}})
+				_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: frozenFile.ID, Revision: frozenFile.Revision, Patch: PhotoAuthoredPatch{Caption: new("Updated caption"), Flag: new("reject")}}})
 				require.NoError(t, err)
 				tag, err := s.CreateTag(t.Context(), "Later tag")
 				require.NoError(t, err)

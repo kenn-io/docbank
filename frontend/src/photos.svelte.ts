@@ -44,10 +44,69 @@ import {
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+import type { PhotoCull } from "./photoCull.svelte.js";
+import { fittedPhotoView, type PhotoView } from "./photoView.js";
 
+export const maxComparePhotos = 8;
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
 );
+// QueryV1 accepts at most 64 asset IDs per request.
+export function lookupPhotoRows(
+  session: string,
+  ids: string[],
+  signal?: AbortSignal,
+  hidden?: boolean,
+): Promise<PhotoBrowseRow[]>;
+export function lookupPhotoRows<Row extends { asset_id: string }>(
+  session: string,
+  ids: string[],
+  signal: AbortSignal | undefined,
+  hidden: boolean,
+  read: (batch: string[], signal: AbortSignal) => Promise<{ items: Row[] }>,
+): Promise<Row[]>;
+export async function lookupPhotoRows(
+  session: string,
+  ids: string[],
+  signal?: AbortSignal,
+  hidden = false,
+  read?: (batch: string[], signal: AbortSignal) => Promise<{ items: { asset_id: string }[] }>,
+): Promise<{ asset_id: string }[]> {
+  const controller = new AbortController();
+  signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  const rows: { asset_id: string }[] = [];
+  let offset = 0;
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(4, Math.ceil(ids.length / 64)) }, async () => {
+        while (offset < ids.length) {
+          signal?.throwIfAborted();
+          const batch = ids.slice(offset, (offset += 64));
+          let items: { asset_id: string }[];
+          if (read) items = (await read(batch, signal!)).items;
+          else {
+            const page = await listPhotoAssets(
+              {
+                query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+                page_size: 250,
+                hidden,
+              },
+              { session, signal },
+            );
+            items = page.items;
+          }
+          signal?.throwIfAborted();
+          rows.push(...items);
+        }
+      }),
+    );
+  } catch (cause) {
+    controller.abort();
+    throw cause;
+  }
+  const byID = new Map(rows.map((row) => [row.asset_id, row]));
+  return ids.flatMap((id) => (byID.has(id) ? [byID.get(id)!] : []));
+}
 export const mapPhotoLimit = 20_000;
 const mapPageLimit = 20;
 const photoFacets = [
@@ -113,6 +172,14 @@ interface PhotosOptions {
 
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
+  cullEditor = $state.raw<PhotoAuthoredEditor>();
+  cull?: PhotoCull;
+  cullVaultID = "";
+  culling = $state(false);
+  comparing = $state(false);
+  compareIDs = $state.raw<string[]>([]);
+  compareView = $state<PhotoView>({ ...fittedPhotoView });
+  compareCrop = $state<PhotoView>();
   editScopeRevision = $state(0);
   private changeEditScope() {
     if (!this.authored.canChangeTarget()) return false;
@@ -375,6 +442,51 @@ export class Photos {
     return this.loadMore();
   }
 
+  async moveGroup(
+    ids: string[],
+    direction: -1 | 1,
+  ): Promise<
+    | { status: "moved"; ids: string[] }
+    | { status: "boundary" }
+    | { status: "failed"; error: string }
+  > {
+    if (this.disposed || this.loading) return { status: "boundary" };
+    const missingMember =
+      "A compared photo is no longer in this query. Exit compare and select photos again.";
+    while (!this.disposed) {
+      const order = this.items.map((item) => item.asset_id);
+      const positions = ids.map((id) => order.indexOf(id));
+      if (positions.every((index) => index >= 0)) {
+        if (positions.some((index) => index + direction < 0)) return { status: "boundary" };
+        if (positions.every((index) => index + direction < order.length))
+          return { status: "moved", ids: positions.map((index) => order[index + direction]!) };
+      }
+      if (this.error) {
+        await this.retry();
+        if (this.error) return { status: "failed", error: this.error };
+        continue;
+      }
+      if (!this.cursor)
+        return positions.some((index) => index < 0)
+          ? {
+              status: "failed",
+              error: missingMember,
+            }
+          : { status: "boundary" };
+      const cursor = this.cursor;
+      await this.loadMore();
+      if (this.error) return { status: "failed", error: this.error };
+      if (this.cursor === cursor && this.items.length === order.length)
+        return {
+          status: "failed",
+          error: positions.some((index) => index < 0)
+            ? missingMember
+            : "Could not load more photos. Retry navigation.",
+        };
+    }
+    return { status: "boundary" };
+  }
+
   private authFailure(cause: unknown) {
     const expired =
       cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403));
@@ -402,21 +514,20 @@ export class Photos {
       : { asset_ids: [...this.selection.selectedIDs] };
   }
 
-  async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
-    const query = photoQuery;
+  async lookupMany(ids: string[], signal: AbortSignal) {
     try {
-      const page = await listPhotoAssets(
-        {
-          query: { ...query, filters: { ...query.filters, asset_ids: [assetID] } },
-          page_size: 1,
-          hidden: this.hidden,
-        },
-        { session: this.session, signal },
-      );
-      if (!page.items[0])
-        throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      signal.throwIfAborted();
-      return page.items[0];
+      return await lookupPhotoRows(this.session, ids, signal, this.hidden);
+    } catch (cause) {
+      if (!signal.aborted) this.authFailure(cause);
+      throw cause;
+    }
+  }
+
+  async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
+    try {
+      const [row] = await lookupPhotoRows(this.session, [assetID], signal, this.hidden);
+      if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
+      return row;
     } catch (cause) {
       if (!signal.aborted) this.authFailure(cause);
       throw cause;
@@ -898,15 +1009,18 @@ export class Photos {
         ...this.authored.targets.map((target) => target.asset_id),
       ]),
     ].filter((id) => !eligible.has(id));
-    for (let offset = 0; offset < absent.length; offset += 64) {
-      const asset_ids = absent.slice(offset, offset + 64);
-      const page = await this.page(
-        { ...query, filters: { ...query.filters, asset_ids } },
-        AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-      );
-      signal.throwIfAborted();
-      for (const row of page.items) eligible.add(row.asset_id);
-    }
+    const rows = await lookupPhotoRows<PhotoRow>(
+      this.session,
+      absent,
+      signal,
+      this.hidden,
+      (asset_ids, signal) =>
+        this.page(
+          { ...query, filters: { ...query.filters, asset_ids } },
+          AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+        ),
+    );
+    for (const row of rows) eligible.add(row.asset_id);
     return eligible;
   }
 
@@ -1412,6 +1526,8 @@ export class Photos {
   dispose() {
     this.clearFrozen();
     this.authored.dispose();
+    this.cullEditor?.dispose();
+    this.cull?.cancel();
     this.viewerReturn = undefined;
     this.disposed = true;
     this.staged = undefined;
