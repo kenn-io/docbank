@@ -817,7 +817,7 @@ func TestPhotoCheckoutSkipsNamesTooLongForTheDestination(t *testing.T) {
 	tooLong := albumAsset(t, s, strings.Repeat("a", 252)+".jpg")
 	// 404 UTF-8 bytes but 204 UTF-16 units, as a Windows source can record.
 	wide := albumAsset(t, s, strings.Repeat("é", 200)+".jpg")
-	checkout, _, estimate, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{kept.ID, tooLong.ID, wide.ID}}, "checkout", 0)
+	checkout, _, estimate, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{kept.ID, tooLong.ID, wide.ID}}, "checkout", "", 0)
 	require.NoError(t, err)
 	skipped := map[string]string{}
 	for _, skip := range checkout.SkippedPhotos {
