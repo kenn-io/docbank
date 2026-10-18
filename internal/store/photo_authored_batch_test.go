@@ -240,7 +240,7 @@ func preparedPhotoTargets(ctx context.Context, t *testing.T, s *Store, selection
 	require.NoError(t, err)
 	targets := make([]PhotoAuthoredEditTarget, len(prepared.Targets))
 	for i, target := range prepared.Targets {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	return targets
 }
@@ -321,6 +321,77 @@ func TestPhotoAuthoredBatchConflictsAndAtomicFailure(t *testing.T) {
 		_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: targets, Patch: PhotoAuthoredPatch{Rating: new(5)}})
 		require.ErrorIs(t, err, ErrStaleRevision)
 	})
+}
+
+func TestPhotoAuthoredBatchViewedContent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		replace   bool
+		swap      bool
+		bind      bool
+		bindOther bool
+		stale     bool
+	}{
+		{name: "matching", bind: true},
+		{name: "replaced", replace: true, bind: true, stale: true},
+		{name: "non-display matching", bindOther: true},
+		{name: "non-display replaced", replace: true, bindOther: true, stale: true},
+		{name: "swapped display", swap: true, bind: true, stale: true},
+		{name: "omitted after replacement", replace: true},
+		{name: "omitted after display swap", swap: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := authoredPair(t, s)
+			var display, other PhotoFile
+			for _, file := range asset.Files {
+				if file.ID == *asset.DisplayFileID {
+					display = file
+				} else {
+					other = file
+				}
+			}
+			node, err := s.NodeByID(ctx, display.NodeID)
+			require.NoError(t, err)
+			page := browsePhotoPage(t, s, `{}`)
+			require.Len(t, page.Items, 1)
+			require.Equal(t, node.CurrentVersionID, page.Items[0].ContentVersionID)
+			if tc.replace {
+				_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("viewed-replacement"), 20, "image/jpeg")
+				require.NoError(t, err)
+			}
+			if tc.swap {
+				_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &other.ID)
+				require.NoError(t, err)
+			}
+			// Fresh preparation must still refuse a decision about the old display.
+			targets := preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			for i := range targets {
+				if (tc.bind && targets[i].FileID == display.ID) || (tc.bindOther && targets[i].FileID == other.ID) {
+					targets[i].ContentVersionID = node.CurrentVersionID
+				}
+			}
+			receipt, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: targets, Patch: PhotoAuthoredPatch{Flag: new("pick")}})
+			if tc.stale {
+				require.ErrorIs(t, err, ErrStaleRevision)
+				require.Empty(t, receipt.ReceiptID)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, receipt.After, 2)
+			}
+			current, err := s.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			for _, file := range current.Files {
+				if tc.stale {
+					require.Empty(t, file.Flag)
+				} else {
+					require.Equal(t, "pick", file.Flag)
+				}
+			}
+		})
+	}
 }
 
 func TestPhotoAuthoredBatchRequestValidation(t *testing.T) {

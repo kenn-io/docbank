@@ -32,6 +32,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    setupFiles: ["./src/test-setup.ts"],
     // Node 25+ defines its own localStorage, which hides jsdom's unless disabled.
     execArgv: ["--no-experimental-webstorage"],
     exclude: ["docs-site/**", "node_modules/**"],

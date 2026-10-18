@@ -38,12 +38,19 @@ const maxPhotoKeywordEdits = 100
 var ErrPhotoEditFileLimit = errors.New("edit at most 1,000 files at once; RAW/JPEG pairs count as two files. Select fewer photos")
 var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 1 MiB limit")
 
-type PhotoAuthoredEditTarget struct {
+type PhotoAuthoredTargetRevision struct {
 	AssetID       string `json:"asset_id" format:"uuid"`
 	AssetRevision int64  `json:"asset_revision" minimum:"1"`
 	FileID        string `json:"file_id" format:"uuid"`
 	Revision      int64  `json:"revision" minimum:"1"`
 	NodeRevision  int64  `json:"node_revision" minimum:"1"`
+}
+
+type PhotoAuthoredEditTarget struct {
+	PhotoAuthoredTargetRevision
+
+	// ContentVersionID fences the asset's displayed version.
+	ContentVersionID string `json:"content_version_id,omitempty" format:"uuid"`
 }
 
 type photoAuthoredLoaded struct {
@@ -52,7 +59,7 @@ type photoAuthoredLoaded struct {
 }
 
 type PhotoPreparedTarget struct {
-	PhotoAuthoredEditTarget
+	PhotoAuthoredTargetRevision
 
 	FileName string        `json:"file_name"`
 	NodeID   int64         `json:"node_id"`
@@ -279,8 +286,9 @@ type photoAuthoredBatchRows struct {
 }
 
 type photoAuthoredAssetAccess struct {
-	revision int64
-	hidden   bool
+	revision         int64
+	hidden           bool
+	displayVersionID sql.NullString
 }
 
 // loadPhotoAuthoredBatchRowsTx reads every target's asset, file, and node in
@@ -293,10 +301,10 @@ func loadPhotoAuthoredBatchRowsTx(ctx context.Context, tx *sql.Tx, targets []Pho
 		assetIDs = append(assetIDs, target.AssetID)
 		fileIDs = append(fileIDs, target.FileID)
 	}
-	err := queryInChunks(ctx, tx, `SELECT asset_id, revision, hidden_at IS NOT NULL FROM photo_assets WHERE asset_id IN (`, uniqueSorted(assetIDs), func(rows *sql.Rows) error {
+	err := queryInChunks(ctx, tx, `SELECT a.asset_id, a.revision, a.hidden_at IS NOT NULL, n.current_version_id FROM photo_assets a LEFT JOIN photo_files f ON f.file_id = a.display_file_id LEFT JOIN nodes n ON n.id = f.node_id WHERE a.asset_id IN (`, uniqueSorted(assetIDs), func(rows *sql.Rows) error {
 		var id string
 		var access photoAuthoredAssetAccess
-		if err := rows.Scan(&id, &access.revision, &access.hidden); err != nil {
+		if err := rows.Scan(&id, &access.revision, &access.hidden, &access.displayVersionID); err != nil {
 			return err
 		}
 		loaded.assets[id] = access
@@ -371,6 +379,9 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 		}
 		loaded[file.ID] = photoAuthoredLoaded{file, node}
 		if file.AssetID != expected.AssetID || asset.revision != expected.AssetRevision || len(request.Keywords) > 0 && node.Revision != expected.NodeRevision {
+			return nil, nil, ErrStaleRevision
+		}
+		if expected.ContentVersionID != "" && asset.displayVersionID.String != expected.ContentVersionID {
 			return nil, nil, ErrStaleRevision
 		}
 		patch := request.Patch

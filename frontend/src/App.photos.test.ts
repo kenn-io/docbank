@@ -15,6 +15,9 @@ import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
+import { PhotoCull } from "./photoCull.svelte.js";
+import { photoCullStorage } from "./photoCullStorage.js";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
@@ -60,6 +63,77 @@ afterEach(() => {
   localStorage.clear();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   new Photos("scoped", vi.fn()).setDensity("comfortable");
+});
+
+it("retains the navigated comparison and closeup across a browser tab switch", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const rows = [photo(1), photo(2), photo(3)];
+  const lookup = vi.spyOn(Photos.prototype, "lookupMany");
+  const lookups: string[][] = [];
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+    if (url.endsWith("/photos/assets/query")) {
+      const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
+      if (ids) lookups.push(ids);
+      return Response.json({
+        items: ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows,
+        total: rows.length,
+      });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  for (const id of [1, 2])
+    await fireEvent.click(
+      await screen.findByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }),
+    );
+  await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+  let dialog = await screen.findByRole("dialog", { name: "Compare photos" });
+  await within(dialog).findByText("Photo 1.jpg");
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await within(dialog).findByText("Photo 3.jpg");
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
+  const frame = within(dialog).getByRole("button", { name: "Position closeup on Photo 2.jpg" });
+  await fireEvent.keyDown(frame, { key: "ArrowRight" });
+  await fireEvent.keyDown(frame, { key: "Enter" });
+  await fireEvent.click(frame);
+  await within(dialog).findByLabelText("Matching closeups");
+  await fireEvent.click(within(dialog).getByRole("button", { name: "1:1 (Z)" }));
+  const lookupCount = lookups.length;
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  dialog = await screen.findByRole("dialog", { name: "Compare photos" });
+  const closeups = await within(dialog).findByLabelText("Matching closeups");
+  await waitFor(() =>
+    expect(
+      within(closeups)
+        .getAllByRole("heading")
+        .map((heading) => heading.textContent),
+    ).toEqual(["Photo 2.jpg", "Photo 3.jpg"]),
+  );
+  const owner = lookup.mock.contexts.at(-1) as Photos;
+  expect(owner.compareView).toEqual({ scale: 1, x: 0.5, y: 0.5, actual: true });
+  expect(owner.compareCrop).toEqual({ scale: 1 / 0.15, x: 0.55, y: 0.5, actual: false });
+  expect(lookups.slice(lookupCount)).toContainEqual(["photo-2", "photo-3"]);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Exit compare" }));
+  await screen.findByRole("button", { name: "Compare" });
+  expect(owner.compareIDs).toEqual([]);
+  expect(owner.compareCrop).toBeUndefined();
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
 });
 
 it("removes a delayed direct-link photo fragment on tab switch without history.back", async () => {
@@ -2536,20 +2610,15 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
       { label: "red" },
       false,
       expect.any(Function),
-      undefined,
-      undefined,
+      { keywords: undefined, rotationDelta: undefined },
     ),
   );
   await fireEvent.keyDown(window, { key: "r" });
   await waitFor(() =>
-    expect(edit).toHaveBeenCalledWith(
-      { asset_ids: ["photo-1"] },
-      {},
-      false,
-      expect.any(Function),
-      undefined,
-      90,
-    ),
+    expect(edit).toHaveBeenCalledWith({ asset_ids: ["photo-1"] }, {}, false, expect.any(Function), {
+      keywords: undefined,
+      rotationDelta: 90,
+    }),
   );
   document.body.focus();
   await fireEvent.keyDown(window, { key: "?", shiftKey: true });
@@ -2608,6 +2677,76 @@ it("refuses draft navigation until Clear edits releases it", async () => {
     expect(screen.getByRole("textbox", { name: "Caption" }).hasAttribute("disabled")).toBe(false),
   );
   expect(unloadBlocked()).toBe(false);
+});
+
+it("guards reload for a failed cull decision after vault identity arrives", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("navigation", undefined);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
+  vi.spyOn(PhotoCull.prototype, "flush").mockResolvedValue();
+  vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
+    this.run = {
+      ids: ["photo-1", "photo-2"],
+      checkpoint: {
+        runID: "run",
+        revision: 0,
+        pass: ["photo-1", "photo-2"],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all",
+        autoAdvance: true,
+      },
+    };
+    await photoCullStorage("11111111-1111-4111-8111-111111111111").replace(this.run);
+    return true;
+  });
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/assets/query"))
+      return Response.json({ items: [photo(1), photo(2)], total: 2 });
+    if (url.endsWith("/photos/authored/edit"))
+      return Response.json(
+        { title: "Unavailable", status: 503, detail: "Metadata store offline" },
+        { status: 503 },
+      );
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.includes("/audit/status"))
+      return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
+    if (url.startsWith("/api/v1/path?") || url === "/api/v1/nodes/1") return Response.json(root);
+    if (url.startsWith("/api/v1/nodes/1/children"))
+      return Response.json({ directory: root, items: [], total: 0 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Photos" }));
+  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+  await waitFor(() =>
+    expect((screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  await within(dialog).findByText("Photo 1.jpg");
+  await fireEvent.keyDown(dialog.querySelector(".photo-cull")!, { key: "x" });
+  await within(dialog).findByRole("button", { name: "Discard edit" });
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
 });
 
 it("closes the viewer to the grid after refusing a typed photo hash", async () => {

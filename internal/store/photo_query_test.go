@@ -1645,3 +1645,54 @@ func TestPhotoAuthoredSearch(t *testing.T) {
 		indexed(0)
 	})
 }
+
+func TestLookupPhotoFlags(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	ids := []string{"00000000-0000-4000-8000-000000000001"}
+	want := []PhotoFlagRow{}
+	for _, name := range []string{"pick", "reject", "unflagged", "trashed", "excluded", "hidden"} {
+		node := browsePhotoNode(t, s, name+".jpg", browseHash(name), "image/jpeg")
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		ids = append(ids, asset.ID)
+		switch name {
+		case "pick", "reject":
+			_, err = editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new(name)}}})
+			want = append(want, PhotoFlagRow{AssetID: asset.ID, Flag: name})
+		case "unflagged":
+			want = append(want, PhotoFlagRow{AssetID: asset.ID})
+		case "trashed":
+			_, _, err = s.Trash(ctx, node.ID, node.Revision)
+		case "excluded":
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+		case "hidden":
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+		}
+		require.NoError(t, err)
+	}
+	pair := authoredPair(t, s)
+	var display, other PhotoFile
+	for _, file := range pair.Files {
+		if file.ID == *pair.DisplayFileID {
+			display = file
+		} else {
+			other = file
+		}
+	}
+	for _, target := range []PhotoAuthoredTarget{
+		{FileID: other.ID, Revision: other.Revision, Patch: PhotoAuthoredPatch{Flag: new("reject")}},
+		{FileID: display.ID, Revision: display.Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}},
+	} {
+		_, err := editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{target})
+		require.NoError(t, err)
+	}
+	ids = append(ids, pair.ID, pair.ID)
+	want = append(want, PhotoFlagRow{AssetID: pair.ID, Flag: "pick"})
+	slices.SortFunc(want, func(a, b PhotoFlagRow) int { return strings.Compare(a.AssetID, b.AssetID) })
+	got, err := s.LookupPhotoFlags(ctx, ids)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+}
