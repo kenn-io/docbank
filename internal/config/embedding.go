@@ -55,6 +55,9 @@ func (c Config) EmbeddingProfile(name string) (EmbeddingProfileConfig, error) {
 
 func resolveEmbedder(profile *EmbeddingProfileConfig) error {
 	e := profile.Embedder
+	if err := validateEmbedderOptions(e); err != nil {
+		return err
+	}
 	if err := e.Validate(); err != nil {
 		return fmt.Errorf("invalid Kit configuration: %w", err)
 	}
@@ -113,6 +116,22 @@ func resolveEmbedder(profile *EmbeddingProfileConfig) error {
 	}
 	if runtime.DeploymentEpoch == "" && runtime.ProviderRevisionHeader == "" {
 		runtime.DeploymentEpoch = runtime.ModelRevision
+	}
+	return nil
+}
+
+// Docbank pins formatting in model_input and does not use Kit's request builder.
+func validateEmbedderOptions(e *embedconfig.Embedder) error {
+	for _, setting := range []struct{ name, value string }{
+		{"document_prefix", e.DocumentPrefix}, {"document_suffix", e.DocumentSuffix},
+		{"query_prefix", e.QueryPrefix}, {"query_suffix", e.QuerySuffix},
+	} {
+		if setting.value != "" {
+			return fmt.Errorf("unsupported embedder setting %q; use model_input for document/query formatting", setting.name)
+		}
+	}
+	if e.RequestDimensions {
+		return errors.New("unsupported embedder setting request_dimensions; dims only declares the expected response width")
 	}
 	return nil
 }
