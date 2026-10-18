@@ -83,6 +83,41 @@ func TestLoadPartialFileKeepsDefaults(t *testing.T) {
 	assert.True(t, c.Web.Enabled)
 }
 
+func TestSelectiveLoadersMatchMixedCaseTables(t *testing.T) {
+	dir := privateTestConfigDir(t)
+	for _, unknown := range []string{"", "[WEB]\ntypo = true", "[MCP.http]\ntypo = true", "[Credential_Bindings.named]\ntypo = true"} {
+		t.Run(unknown, func(t *testing.T) {
+			body := "[WEB]\nenabled = false\n[MCP.http]\ncredential_binding = 'credential:named'\n[Credential_Bindings.named]\nenvironment_variable = 'DOCBANK_MCP_HTTP_TOKEN'\n"
+			// Put an unknown key in its existing table, without declaring it twice.
+			if unknown != "" {
+				header, key, _ := strings.Cut(unknown, "\n")
+				body = strings.Replace(body, header+"\n", header+"\n"+key+"\n", 1)
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600))
+			full, fullErr := Load(dir)
+			enabled, webErr := WebEnabled(dir)
+			mcp, mcpErr := LoadMCPHTTP(dir)
+			if unknown == "" {
+				require.NoError(t, fullErr)
+				require.NoError(t, webErr)
+				require.NoError(t, mcpErr)
+				assert.False(t, full.Web.Enabled)
+				assert.Equal(t, full.Web.Enabled, enabled)
+				assert.Equal(t, "credential:named", full.MCP.HTTP.CredentialBinding)
+				assert.Equal(t, full.MCP, mcp.MCP)
+				assert.Equal(t, full.CredentialBindings, mcp.CredentialBindings)
+			} else {
+				require.ErrorContains(t, fullErr, "unknown key")
+				if strings.HasPrefix(unknown, "[WEB]") {
+					require.EqualError(t, webErr, fullErr.Error())
+				} else {
+					require.EqualError(t, mcpErr, fullErr.Error())
+				}
+			}
+		})
+	}
+}
+
 func TestLoadMCPHTTPCredentialBindingWithoutResolvingSecret(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`

@@ -107,9 +107,6 @@ func (server *Server) prepareHTTP(ctx context.Context, bearer string) error {
 		return err
 	}
 	_, err := server.daemon.acquire(ctx)
-	if boundary, ok := errors.AsType[*daemonBoundaryError](err); ok && errors.Is(boundary.cause, daemonconn.ErrDaemonConfigInvalid) {
-		return boundary.cause
-	}
 	return err
 }
 

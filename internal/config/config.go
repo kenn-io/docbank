@@ -457,16 +457,25 @@ func parseSections(root string, sections map[string]any) error {
 	if err != nil {
 		return err
 	}
-	for name, dest := range sections {
-		if table, ok := tables[name]; ok {
+	for name, table := range tables {
+		if dest := sectionDestination(sections, name); dest != nil {
 			if err := md.PrimitiveDecode(table, dest); err != nil {
 				return fmt.Errorf("loading %s: %w", path, err)
 			}
 		}
 	}
 	for _, key := range md.Undecoded() {
-		if _, ok := sections[key[0]]; ok {
+		if sectionDestination(sections, key[0]) != nil {
 			return fmt.Errorf("loading %s: unknown key %q (typo?)", path, key.String())
+		}
+	}
+	return nil
+}
+
+func sectionDestination(sections map[string]any, name string) any {
+	for section, dest := range sections {
+		if strings.EqualFold(section, name) {
+			return dest
 		}
 	}
 	return nil
@@ -744,8 +753,7 @@ func validateMCPConfig(c Config) error {
 		return errors.New("[mcp.http] credential_binding must use credential:<name>")
 	}
 	name := strings.TrimPrefix(reference, "credential:")
-	_, ok := c.CredentialBindings[name]
-	if !ok {
+	if _, ok := c.CredentialBindings[name]; !ok {
 		return fmt.Errorf("[mcp.http] credential binding %q is not defined", reference)
 	}
 	return nil

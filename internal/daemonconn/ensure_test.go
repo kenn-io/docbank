@@ -49,7 +49,7 @@ func TestDaemonStartFailureConfigDiagnostic(t *testing.T) {
 		name, output, want string
 	}{
 		{"trailing blank lines", "bootstrap log\nDOCBANK_DAEMON_START_PROBLEM=config_invalid\nerror: daemon config invalid: [web] session_lifetime is too short\n\n", "daemon config invalid: [web] session_lifetime is too short"},
-		{"multiline diagnostic", "bootstrap log\nDOCBANK_DAEMON_START_PROBLEM=config_invalid\nerror: daemon config invalid: [mcp.http] credential binding \"bad\nname\" is invalid\nremoving bootstrap: permission denied\n", "daemon config invalid: [mcp.http] credential binding \"bad\nname\" is invalid\nremoving bootstrap: permission denied"},
+		{"multiline diagnostic", "bootstrap log\nremoving web bootstrap: permission denied\nDOCBANK_DAEMON_START_PROBLEM=config_invalid\nerror: daemon config invalid: [credential_bindings.bad\nname] name is invalid\n", "daemon config invalid: [credential_bindings.bad\nname] name is invalid"},
 		{"no diagnostic", "bootstrap log\nDOCBANK_DAEMON_START_PROBLEM=config_invalid\n", "daemon exited before becoming ready"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

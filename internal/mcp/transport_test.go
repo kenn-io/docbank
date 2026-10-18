@@ -854,6 +854,9 @@ func TestHTTPStartupFailsClosedWhenDaemonCannotBeEstablished(t *testing.T) {
 			if errors.Is(test.cause, daemonconn.ErrDaemonConfigInvalid) {
 				require.ErrorIs(t, err, daemonconn.ErrDaemonConfigInvalid)
 				require.EqualError(t, err, configErr.Error())
+				_, acquireErr := lease.acquire(t.Context())
+				require.ErrorIs(t, acquireErr, daemonconn.ErrDaemonConfigInvalid)
+				require.EqualError(t, acquireErr, configErr.Error())
 
 				_, err = daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (string, error) {
 					t.Fatal("tool must stop when daemon acquisition fails")

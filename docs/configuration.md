@@ -105,9 +105,12 @@ owns or creates the vault root.
 
 ## config.toml
 
-With a compatible daemon running, `docbank mcp --transport http` and
-`docbank web` skip unrelated policy and daemon-only environment overrides.
-MCP reads `[mcp.http]` and its named credential binding; web reads `[web] enabled`.
+`docbank mcp --transport http` and `docbank web` skip unrelated policy and
+daemon-only environment overrides, whether or not a daemon is running.
+MCP reads the whole `[mcp]` table and its named credential binding; web reads
+the whole `[web]` table. Both launchers check the types of every setting in
+those tables. For example, an invalid `session_lifetime` or a `public_origin`
+with the wrong type stops the web launcher even with a healthy daemon running.
 Both launchers reject TOML syntax errors anywhere in the file, but reject
 unknown keys and bad values (for example `enabled = 'yes'`) only in the sections
 they read. The daemon checks the whole file when it starts.

@@ -25,7 +25,6 @@ var (
 
 type daemonBoundaryError struct {
 	message    error
-	cause      error
 	facts      daemonconn.ProblemFacts
 	diagnostic string
 }
@@ -183,7 +182,7 @@ func (lease *daemonLease) completeAcquisition(acquiring *daemonAcquisition) {
 		lease.acquireErr = nil
 		acquiring.daemonconn = leasedDaemonClient{daemonconn: c, generation: lease.generation}
 	} else {
-		acquiring.err = sanitizedDaemonError(errDaemonUnavailable, err)
+		acquiring.err = daemonStartupAcquisitionError(err)
 		lease.acquireErr = acquiring.err
 	}
 	lease.acquiring = nil
@@ -229,7 +228,7 @@ func daemonRead[T any](
 	var zero T
 	current, err := lease.acquire(ctx)
 	if err != nil {
-		return zero, err
+		return zero, daemonAcquisitionError(err)
 	}
 	// A tool may make several daemon requests. Once any response starts, the
 	// callback must not replay earlier reads such as cursor-page acquisition.
@@ -254,7 +253,7 @@ func daemonRead[T any](
 
 	replacement, replaceErr := lease.replace(ctx, current)
 	if replaceErr != nil {
-		return zero, replaceErr
+		return zero, daemonAcquisitionError(replaceErr)
 	}
 	result, err = read(ctx, replacement.daemonconn)
 	if err == nil {
@@ -277,7 +276,7 @@ func daemonProcessingStart[T any](
 	var zero T
 	current, err := lease.acquire(ctx)
 	if err != nil {
-		return zero, err
+		return zero, daemonAcquisitionError(err)
 	}
 	result, err := start(current.daemonconn)
 	if err == nil {
@@ -294,6 +293,20 @@ func daemonProcessingStart[T any](
 	return zero, sanitizedDaemonError(errDaemonRequestFailed, err)
 }
 
+func daemonStartupAcquisitionError(err error) error {
+	if errors.Is(err, daemonconn.ErrDaemonConfigInvalid) {
+		return err
+	}
+	return sanitizedDaemonError(errDaemonUnavailable, err)
+}
+
+func daemonAcquisitionError(err error) error {
+	if errors.Is(err, daemonconn.ErrDaemonConfigInvalid) {
+		return sanitizedDaemonError(errDaemonUnavailable, err)
+	}
+	return err
+}
+
 func sanitizedDaemonError(message, cause error) error {
 	facts, _ := daemonconn.ExtractProblemFacts(cause)
 	diagnostic := "daemon_request_failed"
@@ -303,11 +316,7 @@ func sanitizedDaemonError(message, cause error) error {
 	case daemonconn.IsResponseDecodeError(cause):
 		diagnostic = "daemon_invalid_response"
 	}
-	boundary := &daemonBoundaryError{message: message, facts: facts, diagnostic: diagnostic}
-	if errors.Is(cause, daemonconn.ErrDaemonConfigInvalid) {
-		boundary.cause = cause
-	}
-	return boundary
+	return &daemonBoundaryError{message: message, facts: facts, diagnostic: diagnostic}
 }
 
 func daemonProblemFacts(err error) (daemonconn.ProblemFacts, bool) {

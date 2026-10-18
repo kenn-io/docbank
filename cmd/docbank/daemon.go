@@ -119,6 +119,12 @@ func vectorIndexRetryPolicy(isBusy func(error) bool) func(error) bool {
 	}
 }
 
+func removeWebBootstrap(root string) {
+	if err := docweb.RemoveBootstrap(root); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
 func runServe(ctx context.Context) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
@@ -142,7 +148,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := docweb.RemoveBootstrap(layout.Root); err != nil {
 		return err
 	}
-	defer func() { retErr = errors.Join(retErr, docweb.RemoveBootstrap(layout.Root)) }()
+	defer removeWebBootstrap(layout.Root)
 
 	if err := backupapp.RecoverInterruptedPrimaryHandoff(
 		ctx, layout.Root, store.DefaultSQLiteDriver(),
