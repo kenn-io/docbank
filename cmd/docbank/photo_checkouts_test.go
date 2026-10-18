@@ -121,7 +121,7 @@ func TestPhotoCheckoutCLIScanCommitRebind(t *testing.T) {
 	const operationID = "00000000-0000-4000-8000-000000000002"
 	destination, err := filepath.Abs("checkout-edits")
 	require.NoError(t, err)
-	committed := api.PhotoCheckoutCreateResult{Checkout: store.PhotoCheckout{ID: id, OperationID: operationID, LastOperationID: operationID, OperationKind: "photo_checkout_commit", State: "completed", OperationState: "queued", Selection: store.PhotoCheckoutSelection{All: true}, ByteLimit: 100, Destination: destination}, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout_commit", State: "queued"}}
+	committed := api.PhotoCheckoutCreateResult{Checkout: store.PhotoCheckout{ID: id, OperationID: operationID, LastOperationID: operationID, LastOperationKind: "photo_checkout_commit", State: "completed", LastOperationState: "queued", Selection: store.PhotoCheckoutSelection{All: true}, ByteLimit: 100, Destination: destination}, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout_commit", State: "queued"}}
 	seen := make(chan string, 3)
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
@@ -130,7 +130,7 @@ func TestPhotoCheckoutCLIScanCommitRebind(t *testing.T) {
 		case "/api/v1/photos/checkouts/" + id + "/scan":
 			seen <- "scan"
 			out := committed
-			out.Checkout.LastOperationID, out.Checkout.OperationKind = operationID, "photo_checkout_scan"
+			out.Checkout.LastOperationID, out.Checkout.LastOperationKind = operationID, "photo_checkout_scan"
 			out.Operation.Kind = "photo_checkout_scan"
 			w.WriteHeader(http.StatusAccepted)
 			assert.NoError(t, json.MarshalWrite(w, out))
@@ -144,7 +144,7 @@ func TestPhotoCheckoutCLIScanCommitRebind(t *testing.T) {
 			assert.Equal(t, destination, request.Destination)
 			seen <- "rebind"
 			out := committed
-			out.Checkout.LastOperationID, out.Checkout.OperationKind = operationID, "photo_checkout_rebind"
+			out.Checkout.LastOperationID, out.Checkout.LastOperationKind = operationID, "photo_checkout_rebind"
 			out.Operation.Kind = "photo_checkout_rebind"
 			w.WriteHeader(http.StatusAccepted)
 			assert.NoError(t, json.MarshalWrite(w, out))

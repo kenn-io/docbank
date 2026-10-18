@@ -273,7 +273,7 @@ type Watcher struct {
 	process       func(context.Context, string, *watchObservation, localFileOpener) error
 	reject        func(context.Context, string, error) error
 	excluded      func(context.Context, string) error
-	sourceChanged func(context.Context, string) error
+	sourceChanged func(context.Context, string, error) error
 	beforeFile    func(context.Context, string) error
 	rejected      map[string]struct{}
 	immediate     bool
@@ -1022,8 +1022,8 @@ func (w *Watcher) scanDirectory(
 		if err != nil {
 			if errors.Is(err, ErrSourceChanged) {
 				if w.immediate && w.sourceChanged != nil {
-					if err := w.sourceChanged(ctx, rel); err != nil {
-						return err
+					if changeErr := w.sourceChanged(ctx, rel, err); changeErr != nil {
+						return changeErr
 					}
 					seen[rel] = struct{}{}
 					continue
@@ -1104,8 +1104,8 @@ func (w *Watcher) scanDirectory(
 			continue
 		}
 		if errors.Is(err, ErrSourceChanged) && w.immediate && w.sourceChanged != nil {
-			if err := w.sourceChanged(ctx, rel); err != nil {
-				return err
+			if changeErr := w.sourceChanged(ctx, rel, err); changeErr != nil {
+				return changeErr
 			}
 			continue
 		}

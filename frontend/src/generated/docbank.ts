@@ -5707,14 +5707,14 @@ export interface PhotoCheckoutSkip {
 export interface PhotoCheckout {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  active_operation_kind: string;
-  active_operation_state: string;
   byte_limit: number;
   created_at: string;
   destination: string;
   error: string;
   id: string;
   last_operation_id: string;
+  last_operation_kind: string;
+  last_operation_state: string;
   operation_id: string;
   retention_released: boolean;
   /** @nullable */

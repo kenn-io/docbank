@@ -64,7 +64,10 @@ func (s Service) RunCommit(ctx context.Context, c store.PhotoCheckout) error {
 	}
 	var pending, conflicts, edited []string
 	var only map[string]bool
-	for pass := range 2 {
+	// hashed marks retried files whose previous pass recorded their bytes. A
+	// file that changed mid-read has no baseline yet, so it gets one more pass.
+	hashed := make(map[string]bool)
+	for pass := range 3 {
 		// Recheck admission before a retry, even when the settlement wait is short.
 		if pass > 0 {
 			progress.filesSinceCheck = checkoutCheckpointFiles
@@ -102,23 +105,28 @@ func (s Service) RunCommit(ctx context.Context, c store.PhotoCheckout) error {
 			return finish(err)
 		}
 		pending, conflicts, edited = nil, nil, nil
+		retry := make(map[string]bool)
 		for _, entry := range entries {
 			switch entry.WorkingState {
 			case "conflict":
 				conflicts = append(conflicts, entry.Path)
 			case "pending":
 				pending = append(pending, entry.Path)
+				if !hashed[entry.FileID] {
+					retry[entry.FileID] = true
+				}
 			case "edited":
 				edited = append(edited, entry.Path)
 			}
 		}
-		if len(pending) == 0 || pass == 1 {
+		if len(retry) == 0 || pass == 2 {
 			break
 		}
-		only = make(map[string]bool)
+		only = retry
+		hashed = make(map[string]bool)
 		for _, entry := range entries {
-			if entry.WorkingState == "pending" {
-				only[entry.FileID] = true
+			if retry[entry.FileID] && entry.ObservedHash != "" {
+				hashed[entry.FileID] = true
 			}
 		}
 		if err := jobs.Wait(ctx, s.settlement()); err != nil {
@@ -143,10 +151,7 @@ func (s Service) RunCommit(ctx context.Context, c store.PhotoCheckout) error {
 	if len(edited) > 0 {
 		failure = errors.Join(failure, fmt.Errorf("%w: checkout edited: %s", ingest.ErrSourceChanged, strings.Join(edited, ", ")))
 	}
-	if failure != nil {
-		return finish(failure)
-	}
-	return finish(nil)
+	return finish(failure)
 }
 
 var errCommitCancelled = errors.New("checkout commit cancelled")

@@ -155,11 +155,11 @@ func NewFolderScanner(
 		}
 		return nil
 	}
-	w.sourceChanged = func(ctx context.Context, ref string) error {
+	w.sourceChanged = func(ctx context.Context, ref string, err error) error {
 		if scanner.SourceChanged != nil {
 			return scanner.SourceChanged(ctx, ref)
 		}
-		return ErrSourceChanged
+		return err
 	}
 	w.excluded = func(ctx context.Context, ref string) error {
 		if scanner.Excluded != nil {
@@ -297,7 +297,7 @@ func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
 		workers.Go(func() {
 			err := process(ctx, ref, &admitted, open)
 			if errors.Is(err, ErrSourceChanged) {
-				err = s.watcher.sourceChanged(ctx, ref)
+				err = s.watcher.sourceChanged(ctx, ref, err)
 			}
 			if access, ok := errors.AsType[*SourceAccessError](err); ok && !errors.Is(err, ErrSourceChanged) {
 				err = s.watcher.reject(ctx, ref, access.Err)

@@ -12516,10 +12516,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        active_operation_kind:
-          type: string
-        active_operation_state:
-          type: string
         byte_limit:
           format: int64
           type: integer
@@ -12532,6 +12528,10 @@ components:
         id:
           type: string
         last_operation_id:
+          type: string
+        last_operation_kind:
+          type: string
+        last_operation_state:
           type: string
         operation_id:
           type: string
@@ -12558,9 +12558,9 @@ components:
       required:
         - skipped_photos
         - skipped_photo_count
-        - active_operation_state
+        - last_operation_state
         - last_operation_id
-        - active_operation_kind
+        - last_operation_kind
         - retirement_requested
         - retired_at
         - retention_released

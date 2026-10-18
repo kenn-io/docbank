@@ -64,9 +64,9 @@ type PhotoCheckoutEstimate struct {
 type PhotoCheckout struct {
 	SkippedPhotos       []PhotoCheckoutSkip    `json:"skipped_photos" maxItems:"20"`
 	SkippedPhotoCount   int64                  `json:"skipped_photo_count"`
-	OperationState      string                 `json:"active_operation_state"`
+	LastOperationState  string                 `json:"last_operation_state"`
 	LastOperationID     string                 `json:"last_operation_id"`
-	OperationKind       string                 `json:"active_operation_kind"`
+	LastOperationKind   string                 `json:"last_operation_kind"`
 	DestinationIdentity string                 `json:"-"`
 	RetirementRequested bool                   `json:"retirement_requested"`
 	RetiredAt           *string                `json:"retired_at"`
@@ -365,7 +365,7 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 		if err != nil {
 			return err
 		}
-		checkout = PhotoCheckout{SkippedPhotos: estimate.SkippedPhotos, SkippedPhotoCount: estimate.SkippedPhotoCount, ID: id, Selection: selection, ByteLimit: byteLimit, CreatedAt: nowRFC3339(), Destination: destination, OperationID: operation.ID, State: "queued", OperationState: string(StorageOperationQueued), DestinationReserved: true, DestinationIdentity: identity}
+		checkout = PhotoCheckout{SkippedPhotos: estimate.SkippedPhotos, SkippedPhotoCount: estimate.SkippedPhotoCount, ID: id, Selection: selection, ByteLimit: byteLimit, CreatedAt: nowRFC3339(), Destination: destination, OperationID: operation.ID, State: "queued", LastOperationKind: StorageOperationKindPhotoCheckout, LastOperationState: string(StorageOperationQueued), DestinationReserved: true, DestinationIdentity: identity}
 		if checkout.SkippedPhotos == nil {
 			checkout.SkippedPhotos = []PhotoCheckoutSkip{}
 		}
@@ -435,12 +435,12 @@ func validateCheckoutPath(name string) error {
 	return nil
 }
 
-const photoCheckoutSelect = `SELECT c.checkout_id,c.selection_json,c.skipped_photos_json,c.skipped_photo_count,c.byte_limit,c.created_at,COALESCE(c.destination,''),COALESCE(c.operation_id,''),CASE WHEN COALESCE(c.destination,'')='' OR c.last_operation_id IS NOT NULL THEN c.state ELSE COALESCE(o.state,c.state) END,CASE WHEN c.last_operation_id IS NOT NULL AND o.state='failed' THEN o.error WHEN COALESCE(c.destination,'')='' OR c.last_operation_id IS NOT NULL THEN c.error ELSE COALESCE(o.error,c.error) END,c.retention_released,c.retired_at,c.destination_identity,c.retirement_requested,c.destination_reserved,COALESCE(c.last_operation_id,''),CASE WHEN c.last_operation_id IS NULL THEN '' ELSE COALESCE(o.kind,'') END,COALESCE(o.state,'') FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=COALESCE(c.last_operation_id,c.operation_id)`
+const photoCheckoutSelect = `SELECT c.checkout_id,c.selection_json,c.skipped_photos_json,c.skipped_photo_count,c.byte_limit,c.created_at,COALESCE(c.destination,''),COALESCE(c.operation_id,''),CASE WHEN COALESCE(c.destination,'')='' OR c.last_operation_id IS NOT NULL THEN c.state ELSE COALESCE(o.state,c.state) END,CASE WHEN c.last_operation_id IS NOT NULL AND o.state='failed' THEN o.error WHEN COALESCE(c.destination,'')='' OR c.last_operation_id IS NOT NULL THEN c.error ELSE COALESCE(o.error,c.error) END,c.retention_released,c.retired_at,c.destination_identity,c.retirement_requested,c.destination_reserved,COALESCE(c.last_operation_id,''),COALESCE(o.kind,''),COALESCE(o.state,'') FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=COALESCE(c.last_operation_id,c.operation_id)`
 
 func scanPhotoCheckout(row scanner) (PhotoCheckout, error) {
 	var out PhotoCheckout
 	var encoded, skipped string
-	if err := row.Scan(&out.ID, &encoded, &skipped, &out.SkippedPhotoCount, &out.ByteLimit, &out.CreatedAt, &out.Destination, &out.OperationID, &out.State, &out.Error, &out.RetentionReleased, &out.RetiredAt, &out.DestinationIdentity, &out.RetirementRequested, &out.DestinationReserved, &out.LastOperationID, &out.OperationKind, &out.OperationState); err != nil {
+	if err := row.Scan(&out.ID, &encoded, &skipped, &out.SkippedPhotoCount, &out.ByteLimit, &out.CreatedAt, &out.Destination, &out.OperationID, &out.State, &out.Error, &out.RetentionReleased, &out.RetiredAt, &out.DestinationIdentity, &out.RetirementRequested, &out.DestinationReserved, &out.LastOperationID, &out.LastOperationKind, &out.LastOperationState); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, ErrNotFound
 		}
@@ -720,7 +720,7 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 		if err != nil {
 			return err
 		}
-		switch out.OperationState {
+		switch out.LastOperationState {
 		case string(StorageOperationQueued), string(StorageOperationRunning):
 			_, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retirement_requested=1 WHERE checkout_id=?`, id)
 			out.RetirementRequested = true

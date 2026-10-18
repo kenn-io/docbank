@@ -462,7 +462,7 @@ func TestPhotoCheckoutOperationEligibility(t *testing.T) {
 		require.NoError(t, ValidatePhotoCheckoutScanOrCommit(c, StorageOperationKindPhotoCheckoutCommit))
 		switch state {
 		case "queued", "running":
-			c.OperationState = state
+			c.LastOperationState = state
 		case "unbound":
 			c.State, c.Destination = state, ""
 		case "retired":
@@ -598,8 +598,8 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, creationState, status.Checkout.State, kind)
 				require.Equal(t, wantError, status.Checkout.Error, kind)
-				require.Equal(t, string(outcome), status.Checkout.OperationState)
-				require.Equal(t, kind, status.Checkout.OperationKind)
+				require.Equal(t, string(outcome), status.Checkout.LastOperationState)
+				require.Equal(t, kind, status.Checkout.LastOperationKind)
 			}
 		}
 	})

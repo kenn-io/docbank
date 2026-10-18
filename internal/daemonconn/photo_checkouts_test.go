@@ -193,10 +193,10 @@ func TestValidateCheckoutOperationResponse(t *testing.T) {
 	const operationID = "00000000-0000-4000-8000-000000000012"
 	for _, kind := range []string{store.StorageOperationKindPhotoCheckoutCommit, store.StorageOperationKindPhotoCheckoutScan, store.StorageOperationKindPhotoCheckoutRebind} {
 		out := api.PhotoCheckoutCreateResult{
-			Checkout:  store.PhotoCheckout{ID: id, OperationID: operationID, Selection: store.PhotoCheckoutSelection{All: true}, ByteLimit: 10, Destination: t.TempDir(), State: "completed", OperationState: "queued"},
+			Checkout:  store.PhotoCheckout{ID: id, OperationID: operationID, Selection: store.PhotoCheckoutSelection{All: true}, ByteLimit: 10, Destination: t.TempDir(), State: "completed", LastOperationState: "queued"},
 			Operation: api.StorageOperation{ID: operationID, Kind: kind, State: "queued"},
 		}
-		out.Checkout.LastOperationID, out.Checkout.OperationKind = operationID, kind
+		out.Checkout.LastOperationID, out.Checkout.LastOperationKind = operationID, kind
 		got, err := validateCheckoutOperationResponse(&out, nil, id, kind)
 		require.NoError(t, err, kind)
 		require.Equal(t, out, got)

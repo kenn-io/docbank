@@ -120,6 +120,71 @@ func TestCheckoutCommitRejectsAmbiguousStoredPaths(t *testing.T) {
 	require.ErrorIs(t, verificationErr, store.ErrInvalidPhotoCheckout)
 }
 
+func TestCheckoutCommitSettlesFileChangedDuringFirstHash(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	s.settleTime = time.Millisecond
+	asset := checkoutPhoto(t, s, "photo.jpg", "original")
+	c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
+	name := filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
+	require.NoError(t, os.WriteFile(name, []byte("edited"), 0o600))
+	c, op, err := s.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutCommit, "")
+	require.NoError(t, err)
+	final := []byte("edited and saved again")
+	changed := false
+	// The first progress report arrives while the first pass is reading the file.
+	s.Mutate = func(_ context.Context, fn func() error) error {
+		if !changed {
+			changed = true
+			require.NoError(t, os.WriteFile(name, final, 0o600))
+		}
+		return fn()
+	}
+	require.NoError(t, s.RunCommit(t.Context(), c))
+	require.True(t, changed)
+	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationCompleted, finished.State)
+	_, total, err := s.Store.ContentVersions(t.Context(), asset.Files[0].NodeID, 100, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	after, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, "clean", after[0].WorkingState)
+	require.Equal(t, int64(len(final)), after[0].Size)
+}
+
+func TestCheckoutWorkerFailureReleasesOperation(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	asset := checkoutPhoto(t, s, "photo.jpg", "original")
+	c, _ := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
+	db, err := s.Store.SQLiteDriver().Open(filepath.Join(s.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	// Fail the worker after it claims the job but before it finishes it.
+	_, err = db.ExecContext(t.Context(), `CREATE TRIGGER fail_checkout_finalize BEFORE UPDATE OF cursor ON storage_operations
+ WHEN NEW.cursor='@finalizing' BEGIN SELECT RAISE(ABORT,'injected finalize failure'); END`)
+	require.NoError(t, err)
+	c, op, err := s.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutCommit, "")
+	require.NoError(t, err)
+	supervisor := jobs.New(t.Context(), nil)
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	require.NoError(t, s.StartOperation(supervisor, c))
+	require.Eventually(t, func() bool {
+		registered := supervisor.Snapshot()
+		return len(registered) == 1 && registered[0].FinishedAt != nil
+	}, 5*time.Second, 10*time.Millisecond)
+	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationFailed, finished.State)
+	require.Contains(t, finished.Error, "injected finalize failure")
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_checkout_finalize`)
+	require.NoError(t, err)
+	_, _, err = s.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutScan, "")
+	require.NoError(t, err, "a failed worker must leave the checkout available")
+}
+
 func TestCheckoutFailedCreationRebindsReleasedDestination(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
@@ -500,7 +565,7 @@ func TestCheckoutConflictsAllowIndependentCommits(t *testing.T) {
 						require.NoError(t, statusErr)
 						require.Equal(t, "completed", status.Checkout.State)
 						require.Equal(t, err.Error(), status.Checkout.Error)
-						require.Equal(t, "failed", status.Checkout.OperationState)
+						require.Equal(t, "failed", status.Checkout.LastOperationState)
 					} else {
 						require.NoError(t, err)
 					}

@@ -109,7 +109,7 @@ func ValidatePhotoCheckoutScanOrCommit(c PhotoCheckout, kind string) error {
 
 // ValidatePhotoCheckoutRebind permits an idle checkout or its admitted rebind operation.
 func ValidatePhotoCheckoutRebind(c PhotoCheckout, operationID string) error {
-	if c.RetiredAt == nil && (!c.RetirementRequested && !photoCheckoutOperationActive(c) || operationID != "" && c.LastOperationID == operationID && c.OperationKind == StorageOperationKindPhotoCheckoutRebind) {
+	if c.RetiredAt == nil && (!c.RetirementRequested && !photoCheckoutOperationActive(c) || operationID != "" && c.LastOperationID == operationID && c.LastOperationKind == StorageOperationKindPhotoCheckoutRebind) {
 		return nil
 	}
 	return fmt.Errorf("%w: checkout must be idle and available before rebind", ErrInvalidPhotoCheckout)
@@ -165,7 +165,7 @@ func openPreviousPhotoCheckoutRoot(destination string) (*os.Root, error) {
 }
 
 func photoCheckoutOperationActive(c PhotoCheckout) bool {
-	return c.OperationState == string(StorageOperationQueued) || c.OperationState == string(StorageOperationRunning)
+	return c.LastOperationState == string(StorageOperationQueued) || c.LastOperationState == string(StorageOperationRunning)
 }
 
 type checkoutCommitState struct {

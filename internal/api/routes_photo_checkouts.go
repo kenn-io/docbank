@@ -102,29 +102,17 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return &struct{ Body PhotoCheckoutCreateResult }{PhotoCheckoutCreateResult{Checkout: c, Operation: storageOperationAPI(op)}}, nil
 	}
-	for _, rebind := range []bool{false, true} {
-		action, summary := "scan", "Inspect checkout edits"
-		kind := store.StorageOperationKindPhotoCheckoutScan
-		if rebind {
-			action, summary = "rebind", "Verify a checkout folder"
-			kind = store.StorageOperationKindPhotoCheckoutRebind
-		}
-		operation := huma.Operation{OperationID: action + "PhotoCheckout", Method: http.MethodPost, Path: "/api/v1/photos/checkouts/{id}/" + action, Summary: summary, DefaultStatus: http.StatusAccepted}
-		if rebind {
-			huma.Register(api, operation, func(ctx context.Context, in *struct {
-				ID   string `path:"id" format:"uuid"`
-				Body PhotoCheckoutRebindRequest
-			}) (*struct{ Body PhotoCheckoutCreateResult }, error) {
-				return start(ctx, in.ID, kind, in.Body.Destination)
-			})
-		} else {
-			huma.Register(api, operation, func(ctx context.Context, in *struct {
-				ID string `path:"id" format:"uuid"`
-			}) (*struct{ Body PhotoCheckoutCreateResult }, error) {
-				return start(ctx, in.ID, kind, "")
-			})
-		}
-	}
+	huma.Register(api, huma.Operation{OperationID: "scanPhotoCheckout", Method: http.MethodPost, Path: "/api/v1/photos/checkouts/{id}/scan", Summary: "Inspect checkout edits", DefaultStatus: http.StatusAccepted}, func(ctx context.Context, in *struct {
+		ID string `path:"id" format:"uuid"`
+	}) (*struct{ Body PhotoCheckoutCreateResult }, error) {
+		return start(ctx, in.ID, store.StorageOperationKindPhotoCheckoutScan, "")
+	})
+	huma.Register(api, huma.Operation{OperationID: "rebindPhotoCheckout", Method: http.MethodPost, Path: "/api/v1/photos/checkouts/{id}/rebind", Summary: "Verify a checkout folder", DefaultStatus: http.StatusAccepted}, func(ctx context.Context, in *struct {
+		ID   string `path:"id" format:"uuid"`
+		Body PhotoCheckoutRebindRequest
+	}) (*struct{ Body PhotoCheckoutCreateResult }, error) {
+		return start(ctx, in.ID, store.StorageOperationKindPhotoCheckoutRebind, in.Body.Destination)
+	})
 	huma.Register(api, huma.Operation{OperationID: "commitPhotoCheckout", Method: http.MethodPost, Path: "/api/v1/photos/checkouts/{id}/commit", Summary: "Commit settled checkout edits as new versions", DefaultStatus: http.StatusAccepted}, func(ctx context.Context, in *struct {
 		ID string `path:"id" format:"uuid"`
 	}) (*struct{ Body PhotoCheckoutCreateResult }, error) {

@@ -143,7 +143,12 @@ Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
-	for _, action := range []string{"scan", "commit", "rebind"} {
+	for _, spec := range []struct{ action, short string }{
+		{"scan", "Inspect checkout edits and untracked files"},
+		{"commit", "Commit stable checkout edits as new versions"},
+		{"rebind", "Verify and bind a restored checkout folder"},
+	} {
+		action := spec.action
 		args := cobra.ExactArgs(1)
 		use := action + " <checkout-id>"
 		example := "  docbank photos checkout " + action + " 00000000-0000-4000-8000-000000000001"
@@ -152,7 +157,7 @@ Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.
 			args = cobra.ExactArgs(2)
 			example += " ./photos"
 		}
-		command.AddCommand(&cobra.Command{Use: use, Example: example, Short: map[string]string{"scan": "Inspect checkout edits and untracked files", "commit": "Commit stable checkout edits as new versions", "rebind": "Verify and bind a restored checkout folder"}[action], Args: args, RunE: func(cmd *cobra.Command, args []string) error {
+		command.AddCommand(&cobra.Command{Use: use, Example: example, Short: spec.short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
 			if action == "rebind" && args[1] == "" {
 				return usageError(errors.New("destination must not be empty"))
 			}

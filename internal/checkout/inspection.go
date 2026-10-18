@@ -90,17 +90,38 @@ func (s Service) StartOperation(supervisor *jobs.Supervisor, c store.PhotoChecko
 		return errors.New("photo checkout requires a job supervisor")
 	}
 	err := supervisor.Start("storage:"+c.LastOperationID, func(ctx context.Context) error {
-		return jobs.RetryStorageOperation(ctx, time.Second, func() error {
-			if c.OperationKind == store.StorageOperationKindPhotoCheckoutCommit {
+		err := jobs.RetryStorageOperation(ctx, time.Second, func() error {
+			if c.LastOperationKind == store.StorageOperationKindPhotoCheckoutCommit {
 				return s.RunCommit(ctx, c)
 			}
 			return s.RunInspection(ctx, c)
 		})
+		if err != nil && ctx.Err() == nil {
+			err = errors.Join(err, s.failUnfinished(ctx, c, err))
+		}
+		return err
 	})
 	if err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 		return errors.Join(err, s.Store.FinishPhotoCheckoutOperation(context.Background(), c, store.StorageOperationFailed, "{}", err.Error()))
 	}
 	return err
+}
+
+// failUnfinished records a permanent worker error that returned before the
+// operation finished, so the checkout does not stay busy until restart.
+func (s Service) failUnfinished(ctx context.Context, c store.PhotoCheckout, failure error) error {
+	op, err := s.Store.StorageOperation(ctx, c.LastOperationID)
+	if err != nil {
+		return err
+	}
+	if op.State != store.StorageOperationQueued && op.State != store.StorageOperationRunning {
+		return nil
+	}
+	receipt := op.ReceiptJSON
+	if receipt == "" {
+		receipt = "{}"
+	}
+	return s.Store.FinishPhotoCheckoutOperation(ctx, c, store.StorageOperationFailed, receipt, failure.Error())
 }
 
 const checkoutCheckpointFiles = 64
@@ -216,7 +237,7 @@ func (s Service) RunInspection(ctx context.Context, c store.PhotoCheckout) error
 			}
 			return nil
 		}
-		if c.OperationKind == store.StorageOperationKindPhotoCheckoutRebind {
+		if c.LastOperationKind == store.StorageOperationKindPhotoCheckoutRebind {
 			var request store.PhotoCheckoutInspection
 			err = json.Unmarshal([]byte(op.RequestJSON), &request)
 			if err == nil {

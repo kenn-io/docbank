@@ -53,7 +53,7 @@ func (s *Store) PreparePhotoCheckoutOperation(ctx context.Context, request Photo
 		if err != nil {
 			return err
 		}
-		c.LastOperationID, c.OperationKind, c.OperationState = op.ID, kind, string(StorageOperationQueued)
+		c.LastOperationID, c.LastOperationKind, c.LastOperationState = op.ID, kind, string(StorageOperationQueued)
 		return err
 	})
 	return c, op, err

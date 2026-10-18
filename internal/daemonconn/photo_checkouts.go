@@ -35,7 +35,7 @@ func validatePhotoCheckoutResponse(c store.PhotoCheckout, id string) error {
 		// (queued or running) always keeps an absolute destination.
 		releasedTerminal := c.RetentionReleased && slices.Contains([]string{"completed", checkoutStateFailed, "cancelled"}, c.State)
 		if c.Destination == "" {
-			if !releasedTerminal && c.OperationKind != store.StorageOperationKindPhotoCheckoutRebind {
+			if !releasedTerminal && c.LastOperationKind != store.StorageOperationKindPhotoCheckoutRebind {
 				return errors.New("photo checkout response has invalid local bindings")
 			}
 		} else if !filepath.IsAbs(c.Destination) {
@@ -156,7 +156,7 @@ func (c *Connection) RetirePhotoCheckout(ctx context.Context, id string) (store.
 	if err := validatePhotoCheckoutResponse(*out, parsed.String()); err != nil {
 		return store.PhotoCheckout{}, err
 	}
-	if out.RetiredAt == nil && (!out.RetirementRequested || !slices.Contains([]string{"queued", "running"}, out.OperationState)) || out.RetiredAt != nil && !out.RetentionReleased {
+	if out.RetiredAt == nil && (!out.RetirementRequested || !slices.Contains([]string{"queued", "running"}, out.LastOperationState)) || out.RetiredAt != nil && !out.RetentionReleased {
 		return store.PhotoCheckout{}, errors.New("photo checkout retirement did not release retention")
 	}
 	return *out, nil
@@ -188,10 +188,10 @@ func validateCheckoutOperationResponse(out *api.PhotoCheckoutCreateResult, err e
 		return api.PhotoCheckoutCreateResult{}, errors.New("missing checkout operation")
 	}
 	operationID := out.Checkout.LastOperationID
-	if out.Checkout.OperationKind != kind {
+	if out.Checkout.LastOperationKind != kind {
 		return api.PhotoCheckoutCreateResult{}, errors.New("invalid checkout verification operation")
 	}
-	if out.Checkout.ID != id || !validUUIDv4(out.Operation.ID) || out.Operation.ID != operationID || out.Operation.Kind != kind || out.Operation.State != out.Checkout.OperationState {
+	if out.Checkout.ID != id || !validUUIDv4(out.Operation.ID) || out.Operation.ID != operationID || out.Operation.Kind != kind || out.Operation.State != out.Checkout.LastOperationState {
 		return api.PhotoCheckoutCreateResult{}, errors.New("invalid checkout operation")
 	}
 
