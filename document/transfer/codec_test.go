@@ -245,7 +245,10 @@ func TestProducerAndSelectionDigestsBindTheirExactCanonicalInputs(t *testing.T) 
 func TestTransferPackageCanBeImportedByExternalModule(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
-	temp := t.TempDir()
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".git"), 0o700))
+	temp := filepath.Join(root, "consumer")
+	require.NoError(t, os.Mkdir(temp, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(temp, "go.mod"), []byte(
 		"module example.test/transfer-consumer\n\ngo 1.27.0\n\nrequire go.kenn.io/docbank v0.0.0\n\nreplace go.kenn.io/docbank => "+repoRoot+"\n",
 	), 0o600))
