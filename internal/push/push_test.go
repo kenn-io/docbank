@@ -371,7 +371,7 @@ func TestPushRejectsMalformedSuccessAndDigestMismatch(t *testing.T) {
 	}
 }
 
-func TestPushCancellationDoesNotReportSuccess(t *testing.T) {
+func TestPushCanceledBeforeStartDoesNotUpload(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
