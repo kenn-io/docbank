@@ -40,7 +40,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 				"the running daemon has no storage binding registry; restart it after updating config.toml")
 		}
 		var output *previewOutput
-		err := g.mutate(func() error {
+		err := func() error {
 			plan, err := previewStorageRegistration(
 				ctx, d, in.Body.Name, in.Body.Binding, in.Body.Takeover,
 			)
@@ -61,7 +61,7 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 				PreviewToken: token, ExpiresAt: expiresAt.Format(time.RFC3339Nano),
 			}}
 			return nil
-		})
+		}()
 		return output, err
 	})
 
@@ -76,12 +76,44 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 		}
 	}) (*storeOutput, error) {
 		var output *storeOutput
-		err := g.mutate(func() error {
-			plan, err := previews.take(in.Body.PreviewToken)
+		plan, err := previews.take(in.Body.PreviewToken)
+		if err != nil {
+			return nil, NewError(http.StatusConflict, "storage_preview_stale", err.Error())
+		}
+		paths, err := storageProtectionPaths(ctx, d, plan.binding)
+		if err != nil {
+			return nil, err
+		}
+		var proof *ingest.PathProtection
+		if len(paths) > 0 {
+			proof, err = ingest.CapturePathProtection(paths)
 			if err != nil {
-				return NewError(http.StatusConflict, "storage_preview_stale", err.Error())
+				return nil, err
 			}
-			result, err := applyStorageRegistration(ctx, d, plan)
+		}
+		stores, err := d.Store.BlobStores(ctx)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		for _, existing := range stores {
+			if existing.ID == plan.store.ID || existing.Name == plan.store.Name {
+				return nil, NewError(http.StatusConflict, "storage_preview_stale", "the catalog changed after preview; preview the registration again")
+			}
+		}
+		if err := validateStorageNamespace(ctx, d, plan.store.Binding, plan.binding, stores, false); err != nil {
+			return nil, err
+		}
+		err = g.mutate(func() error {
+			if proof != nil {
+				paths, err := storageProtectionPaths(ctx, d, plan.binding)
+				if err != nil {
+					return err
+				}
+				if err := proof.Check(paths); err != nil {
+					return NewError(http.StatusConflict, "storage_preview_stale", err.Error())
+				}
+			}
+			result, err := applyStorageRegistration(ctx, d, plan, true)
 			if err != nil {
 				return err
 			}
@@ -193,7 +225,7 @@ func previewStorageRegistration(
 		store: candidate, binding: binding, markerAction: "create", takeover: takeover,
 	}
 	if err := validateStorageNamespace(
-		d, bindingName, binding, existingStores,
+		ctx, d, bindingName, binding, existingStores, false,
 	); err != nil {
 		return storageRegistrationPlan{}, err
 	}
@@ -239,7 +271,7 @@ func previewStorageRegistration(
 }
 
 func applyStorageRegistration(
-	ctx context.Context, d Deps, plan storageRegistrationPlan,
+	ctx context.Context, d Deps, plan storageRegistrationPlan, separationChecked bool,
 ) (BlobStore, error) {
 	stores, err := d.Store.BlobStores(ctx)
 	if err != nil {
@@ -252,7 +284,7 @@ func applyStorageRegistration(
 		}
 	}
 	if err := validateStorageNamespace(
-		d, plan.store.Binding, plan.binding, stores,
+		ctx, d, plan.store.Binding, plan.binding, stores, separationChecked,
 	); err != nil {
 		return BlobStore{}, err
 	}
@@ -260,6 +292,13 @@ func applyStorageRegistration(
 		return BlobStore{}, err
 	}
 	if plan.binding.Kind == "filesystem" {
+		checkouts, err := d.Store.ListPhotoCheckouts(ctx)
+		if err != nil {
+			return BlobStore{}, FromStoreError(err)
+		}
+		if err := ingest.ReleaseClearedCheckoutDestinations(ctx, d.Store, checkouts, plan.binding.Path); err != nil {
+			return BlobStore{}, FromStoreError(err)
+		}
 		if err := blob.EnsureFilesystemNamespace(plan.binding.Path); err != nil {
 			return BlobStore{}, NewError(http.StatusServiceUnavailable,
 				"store_unavailable", fmt.Sprintf("preparing storage namespace: %v", err))
@@ -361,10 +400,11 @@ func requireEmptyUnmarkedNamespace(
 }
 
 func validateStorageNamespace(
-	d Deps,
+	ctx context.Context, d Deps,
 	bindingName string,
 	binding config.StoreBindingConfig,
 	stores []store.BlobStore,
+	separationChecked bool,
 ) error {
 	if binding.Kind == "s3" {
 		if _, err := storenamespace.CanonicalS3(storageS3Binding(binding)); err != nil {
@@ -374,7 +414,7 @@ func validateStorageNamespace(
 		}
 	}
 	if binding.Kind == "filesystem" {
-		overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
+		overlap, err := ingest.PathsOverlapContext(ctx, binding.Path, d.VaultRoot)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return NewError(
 				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
@@ -386,21 +426,34 @@ func validateStorageNamespace(
 				fmt.Sprintf("binding %q overlaps the live vault root", bindingName),
 			)
 		}
-		watchName, watchOverlap, err := ingest.WatchBindingOverlap(
-			d.Cfg.Watches, binding,
-		)
-		if err != nil {
-			return NewError(
-				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
+		if !separationChecked {
+			checkouts, err := d.Store.ListPhotoCheckouts(ctx)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			checkoutID, overlap, err := ingest.CheckoutPathOverlap(ctx, checkouts, binding.Path)
+			if err != nil {
+				return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
+			}
+			if overlap {
+				return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps reserved checkout %s", bindingName, checkoutID))
+			}
+			watchName, watchOverlap, err := ingest.WatchBindingOverlapContext(
+				ctx, d.Cfg.Watches, binding,
 			)
-		}
-		if watchOverlap {
-			return NewError(
-				http.StatusConflict, "storage_namespace_overlap",
-				fmt.Sprintf(
-					"binding %q overlaps configured watch %q", bindingName, watchName,
-				),
-			)
+			if err != nil {
+				return NewError(
+					http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
+				)
+			}
+			if watchOverlap {
+				return NewError(
+					http.StatusConflict, "storage_namespace_overlap",
+					fmt.Sprintf(
+						"binding %q overlaps configured watch %q", bindingName, watchName,
+					),
+				)
+			}
 		}
 	}
 	for _, existing := range stores {
@@ -566,4 +619,50 @@ func blobStoreSpec(item store.BlobStore) blob.StoreSpec {
 		ID: item.ID, Kind: item.Kind, Role: item.Role, Lifecycle: item.Lifecycle,
 		Binding: item.Binding, OwnershipEpoch: item.OwnershipEpoch,
 	}
+}
+
+func storageProtectionPaths(ctx context.Context, d Deps, binding config.StoreBindingConfig) ([]string, error) {
+	if binding.Kind != "filesystem" {
+		return nil, nil
+	}
+	paths := []string{d.VaultRoot, binding.Path}
+	for _, watch := range d.Cfg.Watches {
+		paths = append(paths, watch.Source)
+	}
+	stores, err := d.Store.BlobStores(ctx)
+	if err != nil {
+		return nil, FromStoreError(err)
+	}
+	for _, item := range stores {
+		if item.Lifecycle == "detached" {
+			continue
+		}
+		b, ok := d.BlobRegistry.Binding(item.Binding)
+		if ok && b.Kind == "filesystem" {
+			paths = append(paths, b.Path)
+		}
+	}
+	checkouts, err := d.Store.ListPhotoCheckouts(ctx)
+	if err != nil {
+		return nil, FromStoreError(err)
+	}
+	for _, c := range checkouts {
+		protected, err := storageCheckoutProtectsPath(ctx, c, binding.Path)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
+		}
+		if protected {
+			paths = append(paths, c.Destination)
+		}
+	}
+	return paths, nil
+}
+
+func storageCheckoutProtectsPath(ctx context.Context, checkout store.PhotoCheckout, pathname string) (bool, error) {
+	protected, err := ingest.PhotoCheckoutProtectsDestination(checkout)
+	if err == nil {
+		return protected, nil
+	}
+	_, overlap, err := ingest.CheckoutPathOverlap(ctx, []store.PhotoCheckout{checkout}, pathname)
+	return overlap, err
 }

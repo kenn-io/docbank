@@ -1,7 +1,9 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -270,16 +274,20 @@ func TestWatcherRetriesFileThatDisappearsBeforeIngest(t *testing.T) {
 
 func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	ing := newTestIngester(t)
+	ctx := t.Context()
+
 	vaultRoot := t.TempDir()
 	overlapping := filepath.Join(vaultRoot, "incoming")
 	require.NoError(t, os.Mkdir(overlapping, 0o700))
-	watcher, err := NewWatcher(ing, vaultRoot, config.WatchConfig{
-		Name: "overlap", Source: overlapping, Destination: "/inbox",
-		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
-	}, runTestMutation, nil)
-	require.NoError(t, err)
-	_, err = watcher.openRoot(t.Context())
-	require.ErrorContains(t, err, "overlaps the vault root")
+	t.Run("vault", func(t *testing.T) {
+		watcher, err := NewWatcher(ing, vaultRoot, config.WatchConfig{
+			Name: "vault", Source: overlapping, Destination: "/inbox",
+			SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+		}, runTestMutation, nil)
+		require.NoError(t, err)
+		_, err = watcher.openRoot(ctx)
+		require.ErrorContains(t, err, "overlaps the vault root")
+	})
 
 	source := writeTree(t, map[string]string{"conflict.txt": "watched"})
 	parent, err := ing.Store.MkdirAll(t.Context(), "/inbox")
@@ -292,7 +300,7 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	fingerprint, err := observeLocalFileFingerprint(conflictPath)
 	require.NoError(t, err)
 	_, err = ing.ingestWatchedFile(
-		t.Context(), "conflict", "/inbox", "conflict.txt", fingerprint,
+		ctx, "conflict", "/inbox", "conflict.txt", fingerprint,
 		func() (*os.File, error) { return blob.OpenNoFollow(conflictPath) },
 	)
 	require.ErrorIs(t, err, store.ErrExists)
@@ -480,6 +488,38 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 	assert.True(t, changed)
 }
 
+func stringsReader(value string) io.Reader { return strings.NewReader(value) }
+
+func runTestMutation(fn func() error) error { return fn() }
+
+func TestWatchTreeTraversalHonorsContext(t *testing.T) {
+	t.Parallel()
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			root, err := os.OpenRoot(writeTree(t, map[string]string{"nested/file.txt": "content"}))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, root.Close()) }()
+			mount, err := watchMountForRoot(root)
+			require.NoError(t, err)
+			target, err := os.Stat(t.TempDir())
+			require.NoError(t, err)
+			var ctx context.Context
+			var cancel context.CancelFunc
+			want := context.Canceled
+			if expired {
+				ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+				want = context.DeadlineExceeded
+			} else {
+				ctx, cancel = context.WithCancel(t.Context())
+				cancel()
+			}
+			defer cancel()
+			_, err = watchTreeContainsAnyDirectory(ctx, root, mount, []fs.FileInfo{target}, exclusions{}, "", nil)
+			require.ErrorIs(t, err, want)
+		})
+	}
+}
+
 func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
 	ing := newTestIngester(t)
 	dir := t.TempDir()
@@ -509,6 +549,100 @@ func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
 	assert.True(t, replaced)
 }
 
-func stringsReader(value string) io.Reader { return strings.NewReader(value) }
-
-func runTestMutation(fn func() error) error { return fn() }
+func TestWatcherCheckoutAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		retired bool
+		files   bool
+	}{
+		{name: "reserved blocks until cancel"},
+		{name: "retired empty admits immediately", retired: true},
+		{name: "retired files wait until cleared", retired: true, files: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ing := newTestIngester(t)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				destination := t.TempDir()
+				watchSource := destination
+				if tc.files {
+					destination = filepath.Join(watchSource, "checkout")
+					require.NoError(t, os.Mkdir(destination, 0o700))
+				}
+				node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+				require.NoError(t, err)
+				asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+				require.NoError(t, err)
+				checkout, op, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+				require.NoError(t, err)
+				if tc.retired {
+					require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+					_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
+					require.NoError(t, err)
+				}
+				partial := filepath.Join(destination, "edited.jpg")
+				if tc.files {
+					require.NoError(t, os.WriteFile(partial, []byte("edits"), 0o600))
+				}
+				var log bytes.Buffer
+				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: watchSource, Destination: "/inbox", ScanInterval: config.Duration(time.Hour)}, runTestMutation, slog.New(slog.NewTextHandler(&log, nil)))
+				require.NoError(t, err)
+				done := make(chan error, 1)
+				var supervisor *jobs.Supervisor
+				if tc.files {
+					supervisor = jobs.New(ctx, nil)
+					defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+					require.NoError(t, supervisor.Start("watch:inbox", watcher.Run))
+				} else {
+					go func() {
+						root, err := watcher.openRoot(ctx)
+						if err == nil {
+							err = root.Close()
+						}
+						done <- err
+					}()
+				}
+				synctest.Wait()
+				if !tc.retired || tc.files {
+					if !tc.retired {
+						select {
+						case err := <-done:
+							t.Fatalf("watch stopped before checkout cleared: %v", err)
+						default:
+						}
+						cancel()
+						require.ErrorIs(t, <-done, context.Canceled)
+						return
+					}
+					snapshot := supervisor.Snapshot()[0]
+					require.Equal(t, jobs.StatusRunning, snapshot.Status)
+					require.Contains(t, snapshot.Error, destination)
+					require.Contains(t, snapshot.Error, checkout.ID)
+					require.Contains(t, snapshot.Error, "clear or move")
+					time.Sleep(2 * time.Minute)
+					synctest.Wait()
+					require.Equal(t, 1, strings.Count(log.String(), "watch is waiting"))
+					require.NoError(t, os.Remove(partial))
+				} else {
+					select {
+					case err := <-done:
+						require.NoError(t, err)
+					default:
+						t.Fatal("clear watch source did not admit immediately")
+					}
+				}
+				if tc.files {
+					time.Sleep(30 * time.Second)
+					synctest.Wait()
+					snapshot := supervisor.Snapshot()[0]
+					require.Equal(t, jobs.StatusRunning, snapshot.Status)
+					require.Empty(t, snapshot.Error)
+					released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
+					require.NoError(t, err)
+					require.Empty(t, released.Destination)
+				}
+			})
+		})
+	}
+}

@@ -70,6 +70,8 @@ type PhotoRejectsMoved struct {
 func (s *Store) MovePhotoRejects(
 	ctx context.Context, hidden bool, targets []PhotoRejectTarget,
 ) (PhotoRejectsMoved, error) {
+	s.photoPublicationTreeMu.Lock()
+	defer s.photoPublicationTreeMu.Unlock()
 	if err := validatePhotoRejectTargets(targets); err != nil {
 		return PhotoRejectsMoved{}, err
 	}

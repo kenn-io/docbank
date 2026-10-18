@@ -19,6 +19,8 @@ const maxTrashPageSize = 1000
 // re-parents the node (making the path uncomputable afterwards) and a
 // concurrent ancestor move could stale a path captured beforehand.
 func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error) {
+	s.photoPublicationTreeMu.Lock()
+	defer s.photoPublicationTreeMu.Unlock()
 	if id == s.rootID {
 		return Node{}, "", ErrIsRoot
 	}
@@ -71,6 +73,8 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error
 func (s *Store) TrashPathRevision(
 	ctx context.Context, path string, ifRev int64,
 ) (Node, string, error) {
+	s.photoPublicationTreeMu.Lock()
+	defer s.photoPublicationTreeMu.Unlock()
 	var trashed Node
 	var origPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -404,7 +408,7 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 
 // TrashEmptyBounded finishes the last complete photo group even if it exceeds maxRoots.
 // More reports whether another deletable root existed beyond this batch.
-// Retained counts all age-matching email-retained roots, outside the batch limit.
+// Retained counts all age-matching roots retained by email publications or photo checkouts, outside the batch limit.
 // Held counts photo-held roots that the batch reached before it stopped.
 func (s *Store) TrashEmptyBounded(
 	ctx context.Context, olderThan time.Duration, maxRoots int, run bool,
@@ -455,20 +459,21 @@ func (s *Store) trashEmpty(
 	)`
 	// Protect the entire trash root when any descendant version is retained.
 	// UNION deduplicates ancestors shared by multiple retained occurrences.
-	const emailRetainedNodes = `WITH RECURSIVE retained(id) AS (
+	const retainedNodes = `WITH RECURSIVE retained(id) AS (
 		SELECT v.node_id FROM content_versions v
 		WHERE EXISTS(SELECT 1 FROM email_document_publications p WHERE p.parent_version_id=v.version_id)
 		   OR EXISTS(SELECT 1 FROM email_document_relations r WHERE r.child_version_id=v.version_id)
+		   OR EXISTS(SELECT 1 FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE e.version_id=v.version_id AND (` + photoCheckoutHoldPredicate + `))
 		UNION
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
-	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
+	deletable += ` AND id NOT IN (` + retainedNodes + `)`
 	runTx := s.photoReadTx
 	if run {
 		runTx = s.withLogicalTx
 	}
 	err := runTx(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+emailRetainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+retainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
 			return fmt.Errorf("counting retained trash roots: %w", err)
 		}
 		batch, err := photoTrashSelectionTx(ctx, tx, deletable, args, maxRoots)

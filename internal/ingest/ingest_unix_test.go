@@ -23,8 +23,7 @@ func TestImportRefusesSymlinkAtOpen(t *testing.T) {
 	link := filepath.Join(src, "link.txt")
 	require.NoError(t, os.Symlink(filepath.Join(src, "real.txt"), link))
 
-	// Classification via Lstat/WalkDir can be raced by a swap, so "symlinks
-	// are skipped" has to hold at the point the file is opened for reading.
+	// A symlink swapped in after discovery must still be refused when opened.
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	files := &filesystemIngest{ing: ing, run: ingestID}

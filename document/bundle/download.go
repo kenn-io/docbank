@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"go.kenn.io/docbank/internal/filename"
 )
 
 // DownloadRequest affects Content-Disposition only, never archive paths.
@@ -26,8 +28,7 @@ func DownloadBasename(name string) (string, error) {
 		}
 	}
 	stem := strings.ToUpper(strings.TrimRight(strings.SplitN(name, ".", 2)[0], " ."))
-	alias := []rune(stem)
-	if stem == "" || stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" || stem == "CONIN$" || stem == "CONOUT$" || (len(alias) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) && strings.ContainsRune("123456789¹²³", alias[3])) {
+	if stem == "" || filename.IsWindowsDeviceName(stem) {
 		return invalid()
 	}
 	return name, nil

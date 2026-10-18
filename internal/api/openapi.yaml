@@ -12492,6 +12492,281 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoCheckout:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckout.json
+          format: uri
+          readOnly: true
+          type: string
+        byte_limit:
+          format: int64
+          type: integer
+        created_at:
+          type: string
+        destination:
+          type: string
+        error:
+          type: string
+        id:
+          type: string
+        operation_id:
+          type: string
+        retention_released:
+          type: boolean
+        retired_at:
+          type:
+            - string
+            - "null"
+        selection:
+          $ref: "#/components/schemas/PhotoCheckoutSelection"
+        skipped_photo_count:
+          format: int64
+          type: integer
+        skipped_photos:
+          items:
+            $ref: "#/components/schemas/PhotoCheckoutSkip"
+          maxItems: 20
+          type: array
+        state:
+          type: string
+      required:
+        - skipped_photos
+        - skipped_photo_count
+        - retired_at
+        - retention_released
+        - id
+        - selection
+        - byte_limit
+        - created_at
+        - destination
+        - operation_id
+        - state
+        - error
+      type: object
+      x-go-type: store.PhotoCheckout
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoCheckoutCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckoutCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        byte_limit:
+          format: int64
+          minimum: 0
+          type: integer
+        destination:
+          maxLength: 4096
+          minLength: 1
+          type: string
+        selection:
+          $ref: "#/components/schemas/PhotoCheckoutSelection"
+      required:
+        - selection
+        - destination
+        - byte_limit
+      type: object
+      x-go-type: api.PhotoCheckoutCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoCheckoutCreateResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckoutCreateResult.json
+          format: uri
+          readOnly: true
+          type: string
+        checkout:
+          $ref: "#/components/schemas/PhotoCheckout"
+        operation:
+          $ref: "#/components/schemas/StorageOperation"
+      required:
+        - checkout
+        - operation
+      type: object
+      x-go-type: api.PhotoCheckoutCreateResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoCheckoutEstimate:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckoutEstimate.json
+          format: uri
+          readOnly: true
+          type: string
+        assets:
+          format: int64
+          type: integer
+        bytes:
+          format: int64
+          type: integer
+        files:
+          format: int64
+          type: integer
+        skipped_photo_count:
+          format: int64
+          type: integer
+        skipped_photos:
+          items:
+            $ref: "#/components/schemas/PhotoCheckoutSkip"
+          maxItems: 20
+          type: array
+      required:
+        - skipped_photos
+        - skipped_photo_count
+        - assets
+        - files
+        - bytes
+      type: object
+      x-go-type: store.PhotoCheckoutEstimate
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoCheckoutList:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckoutList.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PhotoCheckout"
+          type: array
+      required:
+        - items
+      type: object
+      x-go-type: api.PhotoCheckoutList
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoCheckoutSelection:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckoutSelection.json
+          format: uri
+          readOnly: true
+          type: string
+        album_ids:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+        all:
+          type: boolean
+        asset_ids:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+        years:
+          $ref: "#/components/schemas/PhotoCheckoutYears"
+      type: object
+      x-go-type: store.PhotoCheckoutSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoCheckoutSkip:
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+        file_id:
+          type: string
+        name:
+          type: string
+        reason:
+          type: string
+      required:
+        - asset_id
+        - file_id
+        - name
+        - reason
+      type: object
+      x-go-type: store.PhotoCheckoutSkip
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoCheckoutStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckoutStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        bytes:
+          format: int64
+          type: integer
+        checkout:
+          $ref: "#/components/schemas/PhotoCheckout"
+        files:
+          format: int64
+          type: integer
+        published_bytes:
+          format: int64
+          type: integer
+        published_files:
+          format: int64
+          type: integer
+      required:
+        - checkout
+        - files
+        - bytes
+        - published_files
+        - published_bytes
+      type: object
+      x-go-type: store.PhotoCheckoutStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoCheckoutYears:
+      additionalProperties: false
+      properties:
+        from:
+          format: int64
+          maximum: 9999
+          minimum: 1
+          type: integer
+        to:
+          format: int64
+          maximum: 9999
+          minimum: 1
+          type: integer
+      required:
+        - from
+        - to
+      type: object
+      x-go-type: store.PhotoCheckoutYears
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoExportSelection:
       additionalProperties: false
       properties:
@@ -25862,6 +26137,116 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Undo photo fields and keywords if their revisions still match
+  /api/v1/photos/checkouts:
+    get:
+      operationId: listPhotoCheckouts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckoutList"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List photo checkouts
+    post:
+      operationId: createPhotoCheckout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoCheckoutCreateRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckoutCreateResult"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create verified writable photo copies in an empty daemon-host folder
+  /api/v1/photos/checkouts/estimate:
+    post:
+      operationId: estimatePhotoCheckout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoCheckoutSelection"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckoutEstimate"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Estimate writable photo copies
+  /api/v1/photos/checkouts/{id}:
+    get:
+      operationId: getPhotoCheckout
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckoutStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect photo checkout progress
+  /api/v1/photos/checkouts/{id}/retire:
+    post:
+      operationId: retirePhotoCheckout
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckout"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Release photo checkout holds and destination
   /api/v1/photos/face-decisions/{receipt_id}/undo:
     post:
       operationId: undoPhotoFaceDecision

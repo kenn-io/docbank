@@ -5667,6 +5667,122 @@ export interface PhotoBrowseRequest {
   query: SavedQueryV1Schema;
 }
 
+export interface PhotoCheckoutYears {
+  /**
+     * @minimum 1
+     * @maximum 9999
+     */
+  from: number;
+  /**
+     * @minimum 1
+     * @maximum 9999
+     */
+  to: number;
+}
+
+export interface PhotoCheckoutSelection {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 64 */
+  album_ids?: string[];
+  all?: boolean;
+  /** @maxItems 64 */
+  asset_ids?: string[];
+  years?: PhotoCheckoutYears;
+}
+
+export interface PhotoCheckoutSkip {
+  asset_id: string;
+  file_id: string;
+  name: string;
+  reason: string;
+}
+
+export interface PhotoCheckout {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  byte_limit: number;
+  created_at: string;
+  destination: string;
+  error: string;
+  id: string;
+  operation_id: string;
+  retention_released: boolean;
+  /** @nullable */
+  retired_at: string | null;
+  selection: PhotoCheckoutSelection;
+  skipped_photo_count: number;
+  /** @maxItems 20 */
+  skipped_photos: PhotoCheckoutSkip[];
+  state: string;
+}
+
+export interface PhotoCheckoutCreateRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  byte_limit: number;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  destination: string;
+  selection: PhotoCheckoutSelection;
+}
+
+export interface StorageOperation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  cancel_requested: boolean;
+  completed_objects: number;
+  copied_bytes: number;
+  copied_objects: number;
+  created_at: string;
+  error?: string;
+  finished_at?: string;
+  id: string;
+  kind: string;
+  plan_digest: string;
+  receipt?: unknown;
+  state: string;
+  total_objects: number;
+  updated_at: string;
+}
+
+export interface PhotoCheckoutCreateResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  checkout: PhotoCheckout;
+  operation: StorageOperation;
+}
+
+export interface PhotoCheckoutEstimate {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assets: number;
+  bytes: number;
+  files: number;
+  skipped_photo_count: number;
+  /** @maxItems 20 */
+  skipped_photos: PhotoCheckoutSkip[];
+}
+
+export interface PhotoCheckoutList {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PhotoCheckout[];
+}
+
+export interface PhotoCheckoutStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  bytes: number;
+  checkout: PhotoCheckout;
+  files: number;
+  published_bytes: number;
+  published_files: number;
+}
+
 export interface Sort {
   direction: string;
   field: string;
@@ -7254,25 +7370,6 @@ export interface StartStorageSalvageRequest {
      * @maxLength 43
      */
   preview_token: string;
-}
-
-export interface StorageOperation {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  cancel_requested: boolean;
-  completed_objects: number;
-  copied_bytes: number;
-  copied_objects: number;
-  created_at: string;
-  error?: string;
-  finished_at?: string;
-  id: string;
-  kind: string;
-  plan_digest: string;
-  receipt?: unknown;
-  state: string;
-  total_objects: number;
-  updated_at: string;
 }
 
 export interface StoragePackReport {
@@ -16269,6 +16366,154 @@ export const getUndoPhotoAuthoredUrl = (receiptId: string,) => {
 export const undoPhotoAuthored = async (receiptId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt> => {
 
   return sessionJSON<PhotoAuthoredReceipt>(getUndoPhotoAuthoredUrl(receiptId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getListPhotoCheckoutsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/checkouts`
+}
+
+/**
+ * @summary List photo checkouts
+ */
+export const listPhotoCheckouts = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutList> => {
+
+  return sessionJSON<PhotoCheckoutList>(getListPhotoCheckoutsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreatePhotoCheckoutUrl = () => {
+
+
+
+
+  return `/api/v1/photos/checkouts`
+}
+
+/**
+ * @summary Create verified writable photo copies in an empty daemon-host folder
+ */
+export const createPhotoCheckout = async (photoCheckoutCreateRequest: NonReadonly<PhotoCheckoutCreateRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutCreateResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoCheckoutCreateResult>(getCreatePhotoCheckoutUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoCheckoutCreateRequest)
+  }
+);}
+
+
+
+export const getEstimatePhotoCheckoutUrl = () => {
+
+
+
+
+  return `/api/v1/photos/checkouts/estimate`
+}
+
+/**
+ * @summary Estimate writable photo copies
+ */
+export const estimatePhotoCheckout = async (photoCheckoutSelection: NonReadonly<PhotoCheckoutSelection>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutEstimate> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoCheckoutEstimate>(getEstimatePhotoCheckoutUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoCheckoutSelection)
+  }
+);}
+
+
+
+export const getGetPhotoCheckoutUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Inspect photo checkout progress
+ */
+export const getPhotoCheckout = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutStatus> => {
+
+  return sessionJSON<PhotoCheckoutStatus>(getGetPhotoCheckoutUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getRetirePhotoCheckoutUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}/retire`
+}
+
+/**
+ * @summary Release photo checkout holds and destination
+ */
+export const retirePhotoCheckout = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckout> => {
+
+  return sessionJSON<PhotoCheckout>(getRetirePhotoCheckoutUrl(id),
   {
     ...options,
     method: 'POST'

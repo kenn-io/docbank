@@ -35,15 +35,16 @@ type metadataPhotoAssetBeforeHidden struct {
 }
 
 type metadataPhotoFile struct {
-	Confirmed PhotoAuthoredFields `json:"confirmed_fields" db:"confirmed_fields"`
-	Revision  int64               `json:"revision" db:"revision"`
-	Rating    int                 `json:"rating" db:"rating"`
-	Flag      string              `json:"flag" db:"flag"`
-	Label     string              `json:"label" db:"label"`
-	Caption   string              `json:"caption" db:"caption"`
-	Creator   string              `json:"creator" db:"creator"`
-	Copyright string              `json:"copyright" db:"copyright"`
-	Rotation  int                 `json:"rotation" db:"rotation"`
+	SourceProvenanceIdentity *string             `json:"source_provenance_identity,omitempty" db:"source_provenance_identity"`
+	Confirmed                PhotoAuthoredFields `json:"confirmed_fields" db:"confirmed_fields"`
+	Revision                 int64               `json:"revision" db:"revision"`
+	Rating                   int                 `json:"rating" db:"rating"`
+	Flag                     string              `json:"flag" db:"flag"`
+	Label                    string              `json:"label" db:"label"`
+	Caption                  string              `json:"caption" db:"caption"`
+	Creator                  string              `json:"creator" db:"creator"`
+	Copyright                string              `json:"copyright" db:"copyright"`
+	Rotation                 int                 `json:"rotation" db:"rotation"`
 
 	Type        string  `json:"type"`
 	FileID      string  `json:"file_id" db:"file_id"`
@@ -211,6 +212,9 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 }
 
 func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
+	if v.SourceProvenanceIdentity != nil && validateCatalogSHA256(*v.SourceProvenanceIdentity, "photo source provenance identity") != nil {
+		return errors.New("invalid photo source provenance identity")
+	}
 	if v.Type != metadataPhotoFileType || validateUUIDv4(v.FileID) != nil || v.AssetID != nil && validateUUIDv4(*v.AssetID) != nil || v.NodeID < 1 || !photoRoleValid(v.Role) {
 		return errors.New("invalid photo file metadata")
 	}
@@ -310,6 +314,16 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
 	}
+	if version >= photoCheckoutsStorageSchemaVersion {
+		var invalid int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f LEFT JOIN provenance p ON p.identity=f.source_provenance_identity LEFT JOIN ingests i ON i.id=p.ingest_id
+ WHERE f.source_provenance_identity IS NOT NULL AND (p.identity IS NULL OR p.node_id<>f.node_id OR i.source_kind LIKE 'embedded:%')`).Scan(&invalid); err != nil {
+			return err
+		}
+		if invalid != 0 {
+			return errors.New("invalid photo source provenance reference")
+		}
+	}
 	var orphans int
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM photo_change_receipts r
@@ -329,6 +343,11 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 	for _, table := range photoMetadataTablesForSchema(version) {
 		if err := table.validateRows(ctx, tx); err != nil {
 			return fmt.Errorf("validating photo metadata: %w", err)
+		}
+	}
+	if version >= photoCheckoutsStorageSchemaVersion {
+		if err := validatePhotoCheckoutReferences(ctx, tx); err != nil {
+			return err
 		}
 	}
 	if version >= photoAuthoredStorageSchemaVersion {
@@ -428,6 +447,9 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 		if version < photoHiddenStorageSchemaVersion && table.kind() == metadataPhotoAssetType {
 			tables[i] = photoAssetMetadataBeforeHidden
 		}
+	}
+	if version >= photoCheckoutsStorageSchemaVersion {
+		tables = append(tables, photoCheckoutMetadataTables...)
 	}
 	if version >= photoHiddenStorageSchemaVersion {
 		return append(tables, photoHiddenMetadataTables...)
