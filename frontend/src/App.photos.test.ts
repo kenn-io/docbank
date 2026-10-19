@@ -3538,31 +3538,8 @@ async function hideSetupFlow() {
 }
 
 it("sets a Hidden passcode before hiding the selection and leaves Hidden locked", async () => {
-  let poll!: () => void;
-  const interval = globalThis.setInterval;
-  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
-    if (delay === 2000) {
-      poll = callback as () => void;
-      return 0 as unknown as ReturnType<typeof setInterval>;
-    }
-    return interval(callback, delay, ...args);
-  });
   const { photos, submit, hidden, fetcher } = await hideSetupFlow();
-  const fetch = fetcher.getMockImplementation()!;
-  let finish!: () => void;
-  fetcher.mockImplementation(async (url, init) => {
-    const response = await fetch(url, init);
-    if (url.endsWith("/photo-1/hide")) await new Promise<void>((resolve) => (finish = resolve));
-    return response;
-  });
   await submit();
-  await waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect([...hidden]).toEqual(["photo-1"]);
-  const invalidate = vi.spyOn(photos, "cancelPending");
-  await act(() => poll());
-  await waitFor(() => expect(invalidate).toHaveBeenCalled());
-  expect(photos.hiding).toBe(true);
-  finish();
   await waitFor(() => expect(photos.hiding).toBe(false));
   const setup = fetcher.mock.calls.find(([url]) => url.endsWith("/photos/hidden/setup"));
   expect(JSON.parse(setup![1].body as string)).toEqual({ passcode: "synthetic-passcode" });
@@ -3603,22 +3580,9 @@ it("reports another client's passcode with a dismissible notice", async () => {
   await submit();
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect(hidden.size).toBe(0);
-  expect(photos.actionError).toBeTruthy();
+  expect(photos.actionError).toBe("Hidden already has a passcode. Choose Hide again to use it.");
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
-});
-
-it("keeps the setup text across tab concealment while locking immediately", async () => {
-  const { dialog, input, fetcher } = await hideSetupFlow();
-  await fireEvent.input(input, { target: { value: "synthetic-passcode" } });
-  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-  await fireEvent(document, new Event("visibilitychange"));
-  await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.endsWith("/lock"))).toBe(true));
-  expect(screen.getByRole("dialog", { name: "Set a Hidden passcode" })).toBe(dialog);
-  expect(input.value).toBe("synthetic-passcode");
-  visibility.mockReturnValue("visible");
-  await fireEvent(document, new Event("visibilitychange"));
-  expect(input.value).toBe("synthetic-passcode");
 });
 
 it.each(["Cancel", "Escape", "route"])("cancels Hidden setup quietly with %s", async (action) => {

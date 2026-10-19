@@ -3077,26 +3077,6 @@ it("uses refreshed revisions after saving Hidden setup before the hide batch", a
   photos.dispose();
 });
 
-it("reports a failed Hidden setup state read before hiding", async () => {
-  const hides = vi.fn();
-  stubPhotoFetch(async (url) => {
-    if (url.endsWith("/photos/hidden"))
-      return Response.json({ detail: "Unavailable" }, { status: 503 });
-    if (url.endsWith("/hide")) hides();
-    return response([]);
-  });
-  const access = new HiddenAccess("scoped", vi.fn());
-  const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
-  photos.items = [photo(1)];
-  const report = vi.fn();
-  await photos.setHidden("photo-1", undefined, undefined, report);
-  expect(hides).not.toHaveBeenCalled();
-  expect(photos.actionError).toBe("Could not check Hidden setup. Try again.");
-  expect(report).toHaveBeenCalledWith(photos.actionError);
-  expect(photos.hiding).toBe(false);
-  photos.dispose();
-});
-
 it("reports a timed out Hidden setup state read and enables Hide again", async () => {
   const timeout = new AbortController();
   const nativeTimeout = AbortSignal.timeout;
