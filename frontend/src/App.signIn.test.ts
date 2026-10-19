@@ -149,8 +149,6 @@ it("clears an open Manage tags dialog after session expiry before signing in aga
   let logins = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/daemon/telemetry/events" && init?.method === "POST")
-      return Response.json({ status: "queued" }, { status: 202 });
     if (url === "/api/daemon/web-auth") return json({ enabled: true });
     if (url.endsWith("/login")) {
       logins += 1;
@@ -267,8 +265,6 @@ it("keeps a new sign-in after an old tag request returns a delayed 401", async (
   let logins = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/daemon/telemetry/events" && init?.method === "POST")
-      return Response.json({ status: "queued" }, { status: 202 });
     if (url === "/api/daemon/web-auth") return json({ enabled: true });
     if (url.endsWith("/login")) {
       logins += 1;
@@ -389,8 +385,6 @@ it("ignores a delayed trash success after signing in again", async () => {
   let logins = 0;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/daemon/telemetry/events" && init?.method === "POST")
-      return Response.json({ status: "queued" }, { status: 202 });
     if (url === "/api/daemon/web-auth") return json({ enabled: true });
     if (url.endsWith("/login")) {
       logins += 1;
@@ -525,8 +519,6 @@ function delayedReplyFixture(isDelayed: (url: string, init?: RequestInit) => boo
   const state = { logins: 0 };
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/daemon/telemetry/events" && init?.method === "POST")
-      return Response.json({ status: "queued" }, { status: 202 });
     if (isDelayed(url, init)) {
       markStarted();
       return delayed;

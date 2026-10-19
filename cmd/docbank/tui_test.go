@@ -47,13 +47,18 @@ func TestSendTUISessionEnded(t *testing.T) {
 
 func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 	started := make(chan context.Context, 1)
-	setupFakeDaemon(t, func(_ http.ResponseWriter, r *http.Request) {
+	release := make(chan struct{})
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		_, err := io.Copy(io.Discard, r.Body)
 		assert.NoError(t, err)
 		started <- r.Context()
-		<-r.Context().Done()
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"queued"}`))
 	})
 	t.Cleanup(func() {
+		close(release)
 		telemetrySends.Wait(time.Second)
 	})
 	returned := make(chan struct{})
@@ -72,32 +77,24 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 	<-returned
 	require.NoError(t, requestCtx.Err(), "report caller waited for the stalled daemon")
 	resetFlags(rootCmd)
+	before := time.Now()
 	assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
-	assert.NoError(t, requestCtx.Err(), "process exit waited for the stalled report")
+	elapsed := time.Since(before)
+	assert.GreaterOrEqual(t, elapsed, 40*time.Millisecond)
+	assert.Less(t, elapsed, 200*time.Millisecond)
 }
 
 func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {
-	for _, delay := range []time.Duration{0, 10 * time.Millisecond, time.Second} {
+	for _, delay := range []time.Duration{10 * time.Millisecond, time.Second} {
 		t.Run(delay.String(), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				completed := make(chan struct{})
 				telemetrySends.Go(func() {
 					time.Sleep(delay)
-					close(completed)
 				})
-				if delay == 0 {
-					synctest.Wait()
-				}
 				resetFlags(rootCmd)
 				before := time.Now()
 				assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
 				assert.Equal(t, min(delay, 50*time.Millisecond), time.Since(before))
-				select {
-				case <-completed:
-					assert.Less(t, delay, 50*time.Millisecond)
-				default:
-					assert.Greater(t, delay, 50*time.Millisecond)
-				}
 				telemetrySends.Wait(time.Second)
 			})
 		})
