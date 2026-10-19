@@ -46,7 +46,7 @@ func TestSendTUISessionEnded(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load())
 }
 
-func TestReportTUISessionEndedQueuesSend(t *testing.T) {
+func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {

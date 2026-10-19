@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -105,6 +106,14 @@ func TestTelemetryEventRouteAbsentWithoutCapture(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status, body)
 }
 
+type failingTelemetryCapture struct {
+	telemetry.CaptureEndpoint
+}
+
+func (failingTelemetryCapture) Capture(string, map[string]any) error {
+	return errors.New("synthetic capture failure")
+}
+
 func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
@@ -133,7 +142,7 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			reporter, err := posthog.NewReporter(posthog.Options{
 				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
 			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-				posthog.RequireProperty("surface", func(value any) (any, bool) { return value, value == "web" && !tc.fails }),
+				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
 				posthog.AllowProperty("duration_bucket", func(value any) (any, bool) {
 					bucket, ok := value.(string)
 					return bucket, ok
@@ -143,15 +152,14 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			ts, _ := newTestServer(t, func(d *api.Deps) {
 				d.Logger = logger
 				d.TelemetryCapture = telemetry.CaptureHandler(reporter, t.TempDir())
+				if tc.fails {
+					d.TelemetryCapture = failingTelemetryCapture{d.TelemetryCapture}
+				}
 			})
 			session := issueWebSession(t, ts)
 			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
 			if tc.master {
 				browser = nil
-			}
-			if tc.want {
-				status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events", `{"event":"session_ended","properties":{"surface":"web"}}`, browser)
-				require.Equal(t, http.StatusAccepted, status, body)
 			}
 			url := ts.URL + "/api/daemon/web-session"
 			if tc.bucket != "" {
@@ -170,16 +178,15 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 					data, err := os.ReadFile(logs.Name())
 					require.NoError(t, err)
 					assert.Contains(t, string(data), `"level":"DEBUG","msg":"final session_ended capture failed"`)
-					assert.Contains(t, string(data), "capture telemetry event:")
+					assert.Contains(t, string(data), "synthetic capture failure")
 				}
 				return
 			}
 			events := collected()
-			require.Len(t, events, 2)
-			assert.NotContains(t, events[0].Properties, "duration_bucket")
-			assert.Equal(t, "session_ended", events[1].Event)
-			assert.Equal(t, "web", events[1].Properties["surface"])
-			assert.Equal(t, tc.bucket, events[1].Properties["duration_bucket"])
+			require.Len(t, events, 1)
+			assert.Equal(t, "session_ended", events[0].Event)
+			assert.Equal(t, "web", events[0].Properties["surface"])
+			assert.Equal(t, tc.bucket, events[0].Properties["duration_bucket"])
 		})
 	}
 }

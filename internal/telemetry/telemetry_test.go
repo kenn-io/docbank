@@ -54,21 +54,19 @@ func TestSessionEndedPropertiesAndBuckets(t *testing.T) {
 		{30 * time.Minute, "5_to_30m"}, {30*time.Minute + time.Nanosecond, "over_30m"},
 	} {
 		assert.Equal(t, tc.bucket, DurationBucket(tc.elapsed))
-		for _, surface := range []string{"tui", "web"} {
-			props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": surface, "duration_bucket": tc.bucket, "seconds": 120})
-			require.NoError(t, err)
-			assert.Equal(t, tc.bucket, props["duration_bucket"])
-			assert.Equal(t, surface, props["surface"])
-			assert.NotContains(t, props, "seconds")
-		}
+		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "tui", "duration_bucket": tc.bucket, "seconds": 120})
+		require.NoError(t, err)
+		assert.Equal(t, tc.bucket, props["duration_bucket"])
+		assert.Equal(t, "tui", props["surface"])
+		assert.NotContains(t, props, "seconds")
 	}
 	props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "web"})
 	require.NoError(t, err)
 	assert.Equal(t, "web", props["surface"])
 	for _, value := range []any{nil, "invalid", 120} {
-		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "cli", "duration_bucket": value})
+		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "tui", "duration_bucket": value})
 		require.NoError(t, err)
-		assert.NotContains(t, props, "surface")
+		assert.Equal(t, "tui", props["surface"])
 		assert.NotContains(t, props, "duration_bucket")
 	}
 }

@@ -95,10 +95,6 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.reporter.Capture(event, request.Properties); err != nil {
-		if errors.Is(err, posthog.ErrInvalidProperty) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
 		return
 	}

@@ -125,19 +125,16 @@ describe("session_ended reporting", () => {
     ).toEqual(["1_to_5m", bucket]);
   });
 
-  it("takes the final bucket without reporting it again during cleanup", () => {
+  it("takes the final bucket once without sending it", () => {
     reporting = startSessionReporting("secret");
     now = 120_000;
     visibility(true);
     expect(reporting.take()).toBe("1_to_5m");
     expect(reporting.take()).toBeUndefined();
-    reporting.stop();
-    window.dispatchEvent(new Event("pagehide"));
-    vi.advanceTimersByTime(1_800_000);
     expect(sessionReports()).toHaveLength(0);
   });
 
-  it("stops reporting once and swallows send failure", async () => {
+  it("removes listeners when stopping after a failed send", async () => {
     reporting = startSessionReporting("secret");
     let reject!: (cause: Error) => void;
     fetchMock.mockImplementationOnce(

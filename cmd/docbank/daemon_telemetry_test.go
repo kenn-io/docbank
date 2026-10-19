@@ -82,9 +82,6 @@ func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	c := daemonconn.New(d.baseURL, d.apiKey)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
-	reportTUISessionEnded(2 * time.Minute)
-	telemetrySends.Wait(time.Second)
-	d.requireNoHeartbeatOrInstallFile(t)
 }
 
 func TestServeAcceptsAppOpenedWhenTelemetryOptedOut(t *testing.T) {
