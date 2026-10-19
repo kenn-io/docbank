@@ -18582,7 +18582,7 @@ components:
       additionalProperties: false
       properties:
         duration_bucket:
-          description: How long a session_ended session lasted.
+          description: Optional session_ended duration. DELETE web-session reports only when this value is valid.
           enum:
             - under_1m
             - 1_to_5m
@@ -20155,7 +20155,7 @@ paths:
                   type: string
                 properties:
                   $ref: "#/components/schemas/TelemetryEventProperties"
-                  description: Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket.
+                  description: Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket.
               required:
                 - event
               type: object

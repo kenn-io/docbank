@@ -705,8 +705,14 @@ func registerWebSession(
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get(WebSessionHeader)
 		sessions.reportAndRevoke(token, func() {
+			bucket := r.URL.Query().Get("duration_bucket")
+			switch bucket {
+			case "under_1m", "1_to_5m", "5_to_30m", "over_30m":
+			default:
+				return
+			}
 			if capture != nil {
-				if err := capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": r.URL.Query().Get("duration_bucket")}); err != nil {
+				if err := capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket}); err != nil {
 					logger.DebugContext(r.Context(), "final session_ended capture failed", "error", err)
 				}
 			}

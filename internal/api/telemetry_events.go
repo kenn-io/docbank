@@ -12,7 +12,7 @@ const telemetryEventsPath = "/api/daemon/telemetry/events"
 
 // TelemetryEventRequest documents what interfaces post; the daemon's capture handler decodes it.
 type TelemetryEventRequest struct {
-	Properties *TelemetryEventProperties `json:"properties,omitempty" doc:"Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket."`
+	Properties *TelemetryEventProperties `json:"properties,omitempty" doc:"Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket."`
 	Event      string                    `json:"event" minLength:"1" doc:"An event the daemon's telemetry allowlist names. Other events return 400."`
 }
 
@@ -20,7 +20,7 @@ type TelemetryEventRequest struct {
 type TelemetryEventProperties struct {
 	Screen         string `json:"screen,omitempty" doc:"The screen shown. Other values return 400 for screen_viewed."`
 	Surface        string `json:"surface,omitempty" enum:"web,tui" doc:"The interface that sent the event."`
-	DurationBucket string `json:"duration_bucket,omitempty" enum:"under_1m,1_to_5m,5_to_30m,over_30m" doc:"How long a session_ended session lasted."`
+	DurationBucket string `json:"duration_bucket,omitempty" enum:"under_1m,1_to_5m,5_to_30m,over_30m" doc:"Optional session_ended duration. DELETE web-session reports only when this value is valid."`
 }
 
 // TransformSchema publishes the telemetry allowlist's screen names as the screen enum.

@@ -118,10 +118,13 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		bucket string
 		master bool
 		want   bool
+		fails  bool
 	}{
 		{name: "one to five minutes", bucket: "1_to_5m", want: true},
 		{name: "master key without browser session", bucket: "1_to_5m", master: true},
+		{name: "missing bucket"},
 		{name: "invalid bucket", bucket: "bogus"},
+		{name: "capture failure", bucket: "over_30m", fails: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(telemetry.EnabledEnv, "1")
@@ -130,10 +133,10 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			reporter, err := posthog.NewReporter(posthog.Options{
 				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
 			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-				posthog.RequireProperty("duration_bucket", func(value any) (any, bool) {
+				posthog.RequireProperty("surface", func(value any) (any, bool) { return value, value == "web" && !tc.fails }),
+				posthog.AllowProperty("duration_bucket", func(value any) (any, bool) {
 					bucket, ok := value.(string)
-					return bucket, ok && bucket != "bogus"
+					return bucket, ok
 				})))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
@@ -146,7 +149,14 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			if tc.master {
 				browser = nil
 			}
-			url := ts.URL + "/api/daemon/web-session?duration_bucket=" + tc.bucket
+			if tc.want {
+				status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events", `{"event":"session_ended","properties":{"surface":"web"}}`, browser)
+				require.Equal(t, http.StatusAccepted, status, body)
+			}
+			url := ts.URL + "/api/daemon/web-session"
+			if tc.bucket != "" {
+				url += "?duration_bucket=" + tc.bucket
+			}
 			status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
 			require.Equal(t, http.StatusNoContent, status, body)
 			if !tc.master {
@@ -156,7 +166,7 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			require.NoError(t, reporter.Close())
 			if !tc.want {
 				require.Empty(t, collected())
-				if !tc.master {
+				if tc.fails {
 					data, err := os.ReadFile(logs.Name())
 					require.NoError(t, err)
 					assert.Contains(t, string(data), `"level":"DEBUG","msg":"final session_ended capture failed"`)
@@ -165,10 +175,11 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 				return
 			}
 			events := collected()
-			require.Len(t, events, 1)
-			assert.Equal(t, "session_ended", events[0].Event)
-			assert.Equal(t, "web", events[0].Properties["surface"])
-			assert.Equal(t, tc.bucket, events[0].Properties["duration_bucket"])
+			require.Len(t, events, 2)
+			assert.NotContains(t, events[0].Properties, "duration_bucket")
+			assert.Equal(t, "session_ended", events[1].Event)
+			assert.Equal(t, "web", events[1].Properties["surface"])
+			assert.Equal(t, tc.bucket, events[1].Properties["duration_bucket"])
 		})
 	}
 }

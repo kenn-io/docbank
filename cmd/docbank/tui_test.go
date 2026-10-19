@@ -49,7 +49,6 @@ func TestSendTUISessionEnded(t *testing.T) {
 func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	finished := make(chan struct{})
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/daemon/telemetry/events" {
@@ -60,7 +59,6 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 			if event.Event == "session_ended" {
 				close(started)
 				<-release
-				close(finished)
 			}
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"status":"queued"}`))
@@ -93,20 +91,17 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 	returned := make(chan int, 1)
 	go func() { returned <- runProcess([]string{"tui"}, io.Discard, &stderr) }()
 	select {
-	case code := <-returned:
-		require.Equal(t, exitSuccess, code, stderr.String())
-	case <-ctx.Done():
-		t.Fatal("TUI did not quit after q")
-	}
-	select {
 	case <-started:
 	case <-ctx.Done():
 		t.Fatal("TUI quit did not report session_ended")
 	}
+	quitCtx, stop := context.WithTimeout(ctx, 250*time.Millisecond) //nolint:kennlint // real loopback HTTP cannot run in synctest; this bound rejects the synchronous one-second send
+	defer stop()
 	select {
-	case <-finished:
-		t.Fatal("session report finished before the handler was released")
-	default:
+	case code := <-returned:
+		require.Equal(t, exitSuccess, code, stderr.String())
+	case <-quitCtx.Done():
+		t.Fatal("TUI quit waited for the stalled session report")
 	}
 }
 

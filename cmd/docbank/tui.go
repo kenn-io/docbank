@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/signal"
 	"strconv"
 	"sync"
@@ -64,7 +65,11 @@ enrollment remain outside the TUI.`,
 		ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGHUP)
 		defer stop()
 		started := time.Now()
-		_, err = tea.NewProgram(model, tea.WithContext(ctx), tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout())).Run()
+		opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())}
+		if input := cmd.InOrStdin(); input != os.Stdin {
+			opts = append(opts, tea.WithInput(input))
+		}
+		_, err = tea.NewProgram(model, opts...).Run()
 		if tuiProgramRan(err) {
 			// Usage reporting is best effort.
 			reportTUISessionEnded(time.Since(started))

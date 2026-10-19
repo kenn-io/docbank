@@ -62,7 +62,7 @@ type CaptureEndpoint interface {
 // Responses: 202 {"status":"queued"} when the event is queued or was already
 // sent today; 202 {"status":"disabled"} when telemetry is off; 400 for a
 // malformed body, an event the allowlist omits, or a screen_viewed without an
-// allowed screen and surface, or a session_ended without an allowed duration;
+// allowed screen and surface; session_ended properties are optional.
 // 413 for a body over 64 KiB; 415 for a content
 // type other than application/json; 500 when Capture fails.
 func CaptureHandler(r *Reporter, dir string) CaptureEndpoint {

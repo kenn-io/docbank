@@ -7694,7 +7694,7 @@ export interface TaggedNodePage {
 }
 
 /**
- * How long a session_ended session lasted.
+ * Optional session_ended duration. DELETE web-session reports only when this value is valid.
  */
 export type TelemetryEventPropertiesDurationBucket = typeof TelemetryEventPropertiesDurationBucket[keyof typeof TelemetryEventPropertiesDurationBucket];
 
@@ -7756,7 +7756,7 @@ export const TelemetryEventPropertiesSurface = {
 } as const;
 
 export interface TelemetryEventProperties {
-  /** How long a session_ended session lasted. */
+  /** Optional session_ended duration. DELETE web-session reports only when this value is valid. */
   duration_bucket?: TelemetryEventPropertiesDurationBucket;
   /** The screen shown. Other values return 400 for screen_viewed. */
   screen?: TelemetryEventPropertiesScreen;
@@ -8189,7 +8189,7 @@ export type ReportTelemetryEventBody = {
      * @minLength 1
      */
   event: string;
-  /** Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket. */
+  /** Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket. */
   properties?: TelemetryEventProperties;
 };
 
