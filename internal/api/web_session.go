@@ -703,7 +703,7 @@ func registerWebSession(
 		token := r.Header.Get(WebSessionHeader)
 		sessions.reportAndRevoke(token, func() {
 			values, err := url.ParseQuery(r.URL.RawQuery)
-			if err != nil || len(values) != 1 || len(values["duration_bucket"]) != 1 {
+			if err != nil || len(values["duration_bucket"]) != 1 {
 				return
 			}
 			bucket := values.Get("duration_bucket")

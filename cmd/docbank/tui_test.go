@@ -95,7 +95,7 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("TUI quit did not report session_ended")
 	}
-	quitCtx, stop := context.WithTimeout(ctx, 750*time.Millisecond) //nolint:kennlint // real loopback HTTP cannot run in synctest; this bound rejects the synchronous one-second send
+	quitCtx, stop := context.WithTimeout(ctx, 250*time.Millisecond) //nolint:kennlint // real loopback HTTP cannot run in synctest; allow scheduling margin over the 50 ms exit cap
 	defer stop()
 	select {
 	case code := <-returned:

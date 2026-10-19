@@ -78,8 +78,10 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 
 func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
-	d := startTelemetryTestDaemon(t)
-	c := daemonconn.New(d.baseURL, d.apiKey)
+	startTelemetryTestDaemon(t)
+	c, running, err := daemonconn.Running(t.Context())
+	require.NoError(t, err)
+	require.True(t, running)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
 }
