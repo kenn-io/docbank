@@ -272,6 +272,9 @@ func watchMountForRoot(root *os.Root) (watchMount, error) {
 type Watcher struct {
 	process       func(context.Context, string, *watchObservation, localFileOpener) error
 	reject        func(context.Context, string, error) error
+	excluded      func(context.Context, string) error
+	sourceChanged func(context.Context, string, error) error
+	beforeFile    func(context.Context, string) error
 	rejected      map[string]struct{}
 	immediate     bool
 	ing           *Ingester
@@ -900,6 +903,11 @@ func (w *Watcher) scanDirectory(
 		rel := path.Join(relDir, entry.Name())
 		filePath := filepath.Join(root.path, filepath.FromSlash(rel))
 		if w.excludes.match(root.path, filePath) {
+			if w.excluded != nil {
+				if err := w.excluded(ctx, rel); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		info, err := dir.Lstat(entry.Name())
@@ -916,6 +924,11 @@ func (w *Watcher) scanDirectory(
 			return fmt.Errorf("checking entry %q: %w", rel, err)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
+			if w.excluded != nil {
+				if err := w.excluded(ctx, rel); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if info.IsDir() {
@@ -952,6 +965,11 @@ func (w *Watcher) scanDirectory(
 			}
 			if !w.sourceMount.same(childMount) {
 				_ = child.Close()
+				if w.excluded != nil {
+					if err := w.excluded(ctx, rel); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			scanErr := w.scanDirectory(ctx, root, child, rel, seen)
@@ -972,6 +990,11 @@ func (w *Watcher) scanDirectory(
 			continue
 		}
 		if !info.Mode().IsRegular() {
+			if w.excluded != nil {
+				if err := w.excluded(ctx, rel); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if err := validateSourcePath(rel); err != nil {
@@ -983,6 +1006,14 @@ func (w *Watcher) scanDirectory(
 			}
 			return err
 		}
+		if w.beforeFile != nil {
+			if err := w.beforeFile(ctx, rel); err != nil {
+				if errors.Is(err, filepath.SkipDir) {
+					continue
+				}
+				return err
+			}
+		}
 		source := watchSource{root: root, ref: rel}
 		if w.beforeObserve != nil {
 			w.beforeObserve(rel)
@@ -990,6 +1021,13 @@ func (w *Watcher) scanDirectory(
 		fingerprint, sourceMount, err := source.observe()
 		if err != nil {
 			if errors.Is(err, ErrSourceChanged) {
+				if w.immediate && w.sourceChanged != nil {
+					if changeErr := w.sourceChanged(ctx, rel, err); changeErr != nil {
+						return changeErr
+					}
+					seen[rel] = struct{}{}
+					continue
+				}
 				delete(w.observations, rel)
 				if w.immediate {
 					return err
@@ -1009,6 +1047,11 @@ func (w *Watcher) scanDirectory(
 			return fmt.Errorf("checking entry %q: %w", rel, err)
 		}
 		if !w.sourceMount.same(sourceMount) {
+			if w.excluded != nil {
+				if err := w.excluded(ctx, rel); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		observedAt := w.now()
@@ -1057,6 +1100,12 @@ func (w *Watcher) scanDirectory(
 			(!transientWatchObservationError(err) || w.reportsHeldEntry(err)) {
 			if err := w.rejectEntry(ctx, rel, access.Err, seen); err != nil {
 				return err
+			}
+			continue
+		}
+		if errors.Is(err, ErrSourceChanged) && w.immediate && w.sourceChanged != nil {
+			if changeErr := w.sourceChanged(ctx, rel, err); changeErr != nil {
+				return changeErr
 			}
 			continue
 		}

@@ -1234,22 +1234,26 @@ type VerifyReport struct {
 // Job is the observable state of one daemon-owned background task. Names are
 // stable within a daemon run; durable storage operations follow their retention.
 type Job struct {
-	Controllable      bool   `json:"controllable"`
-	Paused            bool   `json:"paused"`
-	Concurrency       int    `json:"concurrency,omitzero"`
-	ControlRevision   int64  `json:"control_revision,omitzero"`
-	CanSetConcurrency bool   `json:"can_set_concurrency"`
-	Name              string `json:"name"`
-	Status            string `json:"status" enum:"queued,running,completed,failed,cancelled"`
-	StartedAt         string `json:"started_at"`
-	FinishedAt        string `json:"finished_at,omitzero"`
-	Error             string `json:"error,omitzero"`
-	OperationID       string `json:"operation_id,omitzero" format:"uuid"`
-	Kind              string `json:"kind,omitzero"`
-	CompletedObjects  int64  `json:"completed_objects,omitzero"`
-	TotalObjects      int64  `json:"total_objects,omitzero"`
-	CanCancel         bool   `json:"can_cancel,omitzero"`
-	CancelRequested   bool   `json:"cancel_requested,omitzero"`
+	Lane              string           `json:"lane"`
+	CheckoutResults   map[string]int64 `json:"checkout_results,omitempty"`
+	ProcessedBytes    int64            `json:"processed_bytes,omitzero"`
+	TotalBytes        int64            `json:"total_bytes,omitzero"`
+	Controllable      bool             `json:"controllable"`
+	Paused            bool             `json:"paused"`
+	Concurrency       int              `json:"concurrency,omitzero"`
+	ControlRevision   int64            `json:"control_revision,omitzero"`
+	CanSetConcurrency bool             `json:"can_set_concurrency"`
+	Name              string           `json:"name"`
+	Status            string           `json:"status" enum:"queued,running,completed,failed,cancelled"`
+	StartedAt         string           `json:"started_at"`
+	FinishedAt        string           `json:"finished_at,omitzero"`
+	Error             string           `json:"error,omitzero"`
+	OperationID       string           `json:"operation_id,omitzero" format:"uuid"`
+	Kind              string           `json:"kind,omitzero"`
+	CompletedObjects  int64            `json:"completed_objects,omitzero"`
+	TotalObjects      int64            `json:"total_objects,omitzero"`
+	CanCancel         bool             `json:"can_cancel,omitzero"`
+	CancelRequested   bool             `json:"cancel_requested,omitzero"`
 }
 
 type LaneControl struct {

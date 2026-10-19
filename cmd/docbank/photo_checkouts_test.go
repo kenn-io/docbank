@@ -115,3 +115,66 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 		}
 	}
 }
+
+func TestPhotoCheckoutCLIScanCommitRebind(t *testing.T) {
+	const id = "aaaaaaaa-0000-4000-8000-000000000001"
+	const operationID = "00000000-0000-4000-8000-000000000002"
+	destination, err := filepath.Abs("checkout-edits")
+	require.NoError(t, err)
+	committed := api.PhotoCheckoutCreateResult{Checkout: store.PhotoCheckout{ID: id, OperationID: operationID, LastOperationID: operationID, LastOperationKind: "photo_checkout_commit", State: "completed", LastOperationState: "queued", Selection: store.PhotoCheckoutSelection{All: true}, ByteLimit: 100, Destination: destination}, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout_commit", State: "queued"}}
+	seen := make(chan string, 3)
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/photos/checkouts/" + id + "/scan":
+			seen <- "scan"
+			out := committed
+			out.Checkout.LastOperationID, out.Checkout.LastOperationKind = operationID, "photo_checkout_scan"
+			out.Operation.Kind = "photo_checkout_scan"
+			w.WriteHeader(http.StatusAccepted)
+			assert.NoError(t, json.MarshalWrite(w, out))
+		case "/api/v1/photos/checkouts/" + id + "/commit":
+			seen <- "commit"
+			w.WriteHeader(http.StatusAccepted)
+			assert.NoError(t, json.MarshalWrite(w, committed))
+		case "/api/v1/photos/checkouts/" + id + "/rebind":
+			var request api.PhotoCheckoutRebindRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+			assert.Equal(t, destination, request.Destination)
+			seen <- "rebind"
+			out := committed
+			out.Checkout.LastOperationID, out.Checkout.LastOperationKind = operationID, "photo_checkout_rebind"
+			out.Operation.Kind = "photo_checkout_rebind"
+			w.WriteHeader(http.StatusAccepted)
+			assert.NoError(t, json.MarshalWrite(w, out))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	for _, action := range []string{"scan", "commit", "rebind"} {
+		t.Run(action, func(t *testing.T) {
+			args := []string{"photos", "checkout", action, strings.ToUpper(id)}
+			if action == "rebind" {
+				args = append(args, "checkout-edits")
+			}
+			out, err := runCLI(t, args...)
+			require.NoError(t, err, out)
+			require.Equal(t, action, <-seen)
+			if action == "commit" {
+				require.Contains(t, out, "photo_checkout_commit")
+			} else {
+				require.Contains(t, out, "photo_checkout_"+action)
+				require.Contains(t, out, operationID)
+			}
+		})
+	}
+}
+
+func TestPhotoCheckoutCLIEmptyRebind(t *testing.T) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unexpected daemon request", http.StatusInternalServerError)
+	})
+	_, err := runCLI(t, "photos", "checkout", "rebind", "00000000-0000-4000-8000-000000000001", "")
+	require.ErrorContains(t, err, "destination must not be empty")
+}

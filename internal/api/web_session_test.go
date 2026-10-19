@@ -65,6 +65,9 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/photos/checkouts"},
 		{http.MethodGet, checkout},
 		{http.MethodPost, checkout + "/retire"},
+		{http.MethodPost, checkout + "/scan"},
+		{http.MethodPost, checkout + "/commit"},
+		{http.MethodPost, checkout + "/rebind"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
 	}

@@ -255,6 +255,9 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
 		return errors.New("invalid photo receipt metadata")
 	}
+	if v.Operation == "checkout_commit" {
+		return validateCheckoutCommitReceipt(v)
+	}
 	if v.Operation == "face_decision" {
 		if v.AssetID == nil || validateUUIDv4(*v.AssetID) != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
 			return ErrInvalidPhotoFace
@@ -348,6 +351,15 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 	if version >= photoCheckoutsStorageSchemaVersion {
 		if err := validatePhotoCheckoutReferences(ctx, tx); err != nil {
 			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
+ LEFT JOIN photo_checkouts c ON c.checkout_id=json_extract(r.after_json,'$.checkout_id')
+ LEFT JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id AND e.file_id=json_extract(r.after_json,'$.file_id') AND e.asset_id=r.asset_id
+ WHERE r.operation='checkout_commit' AND (c.checkout_id IS NULL OR e.file_id IS NULL)`).Scan(&orphans); err != nil {
+			return fmt.Errorf("checking checkout commit receipt references: %w", err)
+		}
+		if orphans > 0 {
+			return fmt.Errorf("%w: %d checkout commit receipts reference missing checkouts or entries", ErrInvalidPhotoCheckout, orphans)
 		}
 	}
 	if version >= photoAuthoredStorageSchemaVersion {

@@ -246,8 +246,11 @@ func (s *Store) photoImportChangedSourceTx(
 		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+photoFilter+` AND p.original_path=?
 		  -- A node shared with another source path keeps its bytes; the edit becomes its own file.
+		  -- Checkout observations record edits to this node, not independent import sources.
 		  AND NOT EXISTS (SELECT 1 FROM provenance other
+		    JOIN ingests other_ingest ON other_ingest.id=other.ingest_id
 		    WHERE other.node_id=n.id AND other.original_path IS NOT ?
+		      AND other_ingest.source_kind<>'photo-checkout'
 		      AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=other.identity))
 		ORDER BY n.id`, append(roleArgs, member.OriginalPath, member.OriginalPath)...)
 	if err != nil {

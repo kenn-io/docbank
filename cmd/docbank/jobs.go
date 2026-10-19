@@ -142,8 +142,8 @@ func writeJobs(w io.Writer, items []api.Job) error {
 			if job.CanSetConcurrency {
 				control += fmt.Sprintf(" limit=%d", job.Concurrency)
 			}
-			if job.Kind != "" {
-				control += " lane=" + job.Kind
+			if job.Lane != "" && job.Lane != job.Name {
+				control += " lane=" + job.Lane
 			}
 		}
 		finished, problem := job.FinishedAt, job.Error

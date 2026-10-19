@@ -274,6 +274,34 @@ func TestMediaRetryOutlivesRequestTimeout(t *testing.T) {
 	})
 }
 
+func TestPhotoCheckoutInspectionTimeoutBoundary(t *testing.T) {
+	t.Parallel()
+	const checkout = "/api/v1/photos/checkouts/11111111-1111-4111-8111-111111111111"
+	for _, test := range []struct {
+		method, path string
+		deadline     bool
+	}{
+		{http.MethodPost, checkout + "/scan", false},
+		{http.MethodPost, checkout + "/rebind", false},
+		{http.MethodPost, "/api/v1/photos/checkouts/{id}/scan", false},
+		{http.MethodPost, "/api/v1/photos/checkouts/{id}/rebind", false},
+		{http.MethodPost, "/api/v1/photos/checkouts/{id}/commit", false},
+		{http.MethodGet, checkout + "/scan", true},
+		{http.MethodPost, checkout + "/commit", false},
+	} {
+		t.Run(test.method+test.path, func(t *testing.T) {
+			called := false
+			handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				called = true
+				_, present := r.Context().Deadline()
+				assert.Equal(t, test.deadline, present)
+			}))
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil))
+			require.True(t, called)
+		})
+	}
+}
+
 func TestPackagePreflightHasNoRequestDeadline(t *testing.T) {
 	t.Parallel()
 	handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {

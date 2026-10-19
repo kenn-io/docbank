@@ -169,3 +169,8 @@ func CleanupRootStages(root *os.Root) error {
 	}
 	return nil
 }
+
+// IsRootStagePath identifies checkout publisher scratch entries at the root.
+func IsRootStagePath(name string) bool {
+	return !strings.Contains(name, "/") && isStageName(name, rootStagePrefix)
+}

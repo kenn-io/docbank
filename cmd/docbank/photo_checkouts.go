@@ -111,12 +111,14 @@ Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
-	command.AddCommand(&cobra.Command{Use: "status <checkout-id>", Short: "Inspect photo checkout progress", Example: "  docbank photos checkout status 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	status := &cobra.Command{Use: "status <checkout-id>", Short: "Inspect photo checkout progress", Example: "  docbank photos checkout status 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		out, err := connection.PhotoCheckoutStatus(cmd.Context(), args[0])
+		after, _ := cmd.Flags().GetString("after")
+		limit, _ := cmd.Flags().GetInt("limit")
+		out, err := connection.PhotoCheckoutStatus(cmd.Context(), args[0], after, limit)
 		if err != nil {
 			return err
 		}
@@ -126,7 +128,10 @@ Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.
 			}
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
-	}})
+	}}
+	status.Flags().String("after", "", "file ID from the previous page")
+	status.Flags().Int("limit", 100, "entries per page (1-250)")
+	command.AddCommand(status)
 	command.AddCommand(&cobra.Command{Use: "retire <checkout-id>", Short: "Release source holds; the destination stays protected until copies are cleared", Example: "  docbank photos checkout retire 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -138,6 +143,51 @@ Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
+	for _, spec := range []struct{ action, short string }{
+		{"scan", "Inspect checkout edits and untracked files"},
+		{"commit", "Commit stable checkout edits as new versions"},
+		{"rebind", "Verify and bind a restored checkout folder"},
+	} {
+		action := spec.action
+		args := cobra.ExactArgs(1)
+		use := action + " <checkout-id>"
+		example := "  docbank photos checkout " + action + " 00000000-0000-4000-8000-000000000001"
+		if action == "rebind" {
+			use += " <destination>"
+			args = cobra.ExactArgs(2)
+			example += " ./photos"
+		}
+		command.AddCommand(&cobra.Command{Use: use, Example: example, Short: spec.short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
+			if action == "rebind" && args[1] == "" {
+				return usageError(errors.New("destination must not be empty"))
+			}
+			connection, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if action == "commit" {
+				out, err := connection.CommitPhotoCheckout(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				return writeCLIJSON(cmd.OutOrStdout(), out)
+			}
+			var out api.PhotoCheckoutCreateResult
+			if action == "scan" {
+				out, err = connection.ScanPhotoCheckout(cmd.Context(), args[0])
+			} else {
+				destination, pathErr := filepath.Abs(args[1])
+				if pathErr != nil {
+					return pathErr
+				}
+				out, err = connection.RebindPhotoCheckout(cmd.Context(), args[0], destination)
+			}
+			if err != nil {
+				return err
+			}
+			return writeCLIJSON(cmd.OutOrStdout(), out)
+		}})
+	}
 	return command
 }
 
