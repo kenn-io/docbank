@@ -20,14 +20,17 @@ type TelemetryEventRequest struct {
 type TelemetryEventProperties struct {
 	Screen         string `json:"screen,omitempty" doc:"The screen shown. Other values return 400 for screen_viewed."`
 	Surface        string `json:"surface,omitempty" enum:"web,tui" doc:"The interface that sent the event."`
-	DurationBucket string `json:"duration_bucket,omitempty" enum:"under_1m,1_to_5m,5_to_30m,over_30m" doc:"Optional session_ended duration. DELETE web-session reports only when this value is valid."`
+	DurationBucket string `json:"duration_bucket,omitempty" doc:"Optional session_ended duration. DELETE web-session reports only when this value is valid."`
 }
 
-// TransformSchema publishes the telemetry allowlist's screen names as the screen enum.
+// TransformSchema publishes telemetry's allowed screen and duration values.
 func (TelemetryEventProperties) TransformSchema(_ huma.Registry, s *huma.Schema) *huma.Schema {
 	screen := s.Properties["screen"]
 	for _, name := range telemetry.ScreenNames() {
 		screen.Enum = append(screen.Enum, name)
+	}
+	for _, bucket := range telemetry.DurationBuckets() {
+		s.Properties["duration_bucket"].Enum = append(s.Properties["duration_bucket"].Enum, bucket)
 	}
 	return s
 }

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -490,11 +491,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if method == http.MethodDelete && path == webSessionPath {
-		if r.URL.RawQuery == "" {
-			return true
-		}
-		values, err := url.ParseQuery(r.URL.RawQuery)
-		return err == nil && len(values) == 1 && len(values["duration_bucket"]) == 1
+		return true
 	}
 	if method != http.MethodGet {
 		return false
@@ -705,10 +702,12 @@ func registerWebSession(
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get(WebSessionHeader)
 		sessions.reportAndRevoke(token, func() {
-			bucket := r.URL.Query().Get("duration_bucket")
-			switch bucket {
-			case "under_1m", "1_to_5m", "5_to_30m", "over_30m":
-			default:
+			values, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil || len(values) != 1 || len(values["duration_bucket"]) != 1 {
+				return
+			}
+			bucket := values.Get("duration_bucket")
+			if !slices.Contains(telemetry.DurationBuckets(), bucket) {
 				return
 			}
 			if capture != nil {

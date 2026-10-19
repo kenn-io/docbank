@@ -20,6 +20,11 @@ const (
 	// HeartbeatJobName is the supervised job that sends daemon_started and daemon_active.
 	HeartbeatJobName = "telemetry:heartbeat"
 
+	durationUnderMinute         = "under_1m"
+	durationOneToFiveMinutes    = "1_to_5m"
+	durationFiveToThirtyMinutes = "5_to_30m"
+	durationOverThirtyMinutes   = "over_30m"
+
 	application = "docbank"
 	envPrefix   = "DOCBANK"
 	// PostHog project API keys are public ingest identifiers, not credentials.
@@ -74,7 +79,7 @@ func New(opts Options) *Reporter {
 			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui"))),
 		posthog.WithAllowedEvent(EventSessionEnded,
 			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui")),
-			posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m")),
+			posthog.AllowProperty("duration_bucket", posthog.AllowStringValues(DurationBuckets()...)),
 		),
 	)
 	if err != nil {
@@ -84,17 +89,22 @@ func New(opts Options) *Reporter {
 	return reporter
 }
 
+// DurationBuckets returns the allowed session duration values in ascending order.
+func DurationBuckets() []string {
+	return []string{durationUnderMinute, durationOneToFiveMinutes, durationFiveToThirtyMinutes, durationOverThirtyMinutes}
+}
+
 // DurationBucket groups elapsed time without sending an exact duration.
 func DurationBucket(elapsed time.Duration) string {
 	switch {
 	case elapsed < time.Minute:
-		return "under_1m"
+		return durationUnderMinute
 	case elapsed < 5*time.Minute:
-		return "1_to_5m"
+		return durationOneToFiveMinutes
 	case elapsed <= 30*time.Minute:
-		return "5_to_30m"
+		return durationFiveToThirtyMinutes
 	default:
-		return "over_30m"
+		return durationOverThirtyMinutes
 	}
 }
 
