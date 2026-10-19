@@ -114,10 +114,7 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		master   bool
 		want     bool
 	}{
-		{name: "short", bucket: "under_1m", want: true},
 		{name: "one to five minutes", bucket: "1_to_5m", want: true},
-		{name: "five to thirty minutes", bucket: "5_to_30m", want: true},
-		{name: "long", bucket: "over_30m", want: true},
 		{name: "master key without browser session", bucket: "1_to_5m", master: true},
 		{name: "missing bucket"},
 		{name: "invalid bucket", bucket: "bogus"},

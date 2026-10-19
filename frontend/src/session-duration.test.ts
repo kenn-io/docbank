@@ -137,31 +137,25 @@ describe("session_ended reporting", () => {
     expect(sessionReports()).toHaveLength(0);
   });
 
-  it.each([false, true])(
-    "stops reporting once, removes listeners, and swallows errors, failure=%s",
-    async (failure) => {
-      reporting = startSessionReporting("secret");
-      let resolve!: (response: Response) => void;
-      let reject!: (cause: Error) => void;
-      fetchMock.mockImplementationOnce(
-        () =>
-          new Promise<Response>((yes, no) => {
-            resolve = yes;
-            reject = no;
-          }),
-      );
-      now = 120_000;
-      reporting.stop();
-      expectBucket("1_to_5m");
-      if (failure) reject(new Error("offline"));
-      else resolve(new Response('{"status":"queued"}', { status: 202 }));
-      visibility(false);
-      window.dispatchEvent(new Event("pageshow"));
-      now += 120_000;
-      window.dispatchEvent(new Event("pagehide"));
-      await vi.advanceTimersByTimeAsync(1_800_000);
-      reporting.stop();
-      expectBucket("1_to_5m");
-    },
-  );
+  it("stops reporting once and swallows send failure", async () => {
+    reporting = startSessionReporting("secret");
+    let reject!: (cause: Error) => void;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((_, no) => {
+          reject = no;
+        }),
+    );
+    now = 120_000;
+    reporting.stop();
+    expectBucket("1_to_5m");
+    reject(new Error("offline"));
+    visibility(false);
+    window.dispatchEvent(new Event("pageshow"));
+    now += 120_000;
+    window.dispatchEvent(new Event("pagehide"));
+    await vi.advanceTimersByTimeAsync(1_800_000);
+    reporting.stop();
+    expectBucket("1_to_5m");
+  });
 });

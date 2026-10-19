@@ -76,7 +76,7 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(d.root, posthog.InstallFileName))
 }
 
-func TestTUISessionEndedReachesRunningDaemon(t *testing.T) {
+func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
 	d := startTelemetryTestDaemon(t)
 	c := daemonconn.New(d.baseURL, d.apiKey)

@@ -42,7 +42,7 @@ it("shows sign-in before the final duration revoke finishes", async () => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-  let resolveRevoke!: (response: Response) => void;
+  let rejectRevoke!: (cause: Error) => void;
   history.replaceState(null, "", "/");
   vi.stubGlobal(
     "ResizeObserver",
@@ -69,8 +69,8 @@ it("shows sign-in before the final duration revoke finishes", async () => {
         total: 0,
       });
     if (url.startsWith("/api/daemon/web-session"))
-      return new Promise<Response>((resolve) => {
-        resolveRevoke = resolve;
+      return new Promise<Response>((_, reject) => {
+        rejectRevoke = reject;
       });
     return Response.json({ items: [], total: 0 });
   });
@@ -89,8 +89,16 @@ it("shows sign-in before the final duration revoke finishes", async () => {
   expect(revokes).toHaveLength(1);
   expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
   expect(new Headers(revokes[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
-  await act(() => resolveRevoke(new Response(null, { status: 204 })));
+  expect(
+    fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        String(input) === "/api/daemon/telemetry/events" &&
+        JSON.parse(String(init?.body)).event === "session_ended",
+    ),
+  ).toHaveLength(0);
+  await act(() => rejectRevoke(new Error("offline")));
   expect(screen.getByLabelText("API key")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("clears an open Manage tags dialog after session expiry before signing in again", async () => {
