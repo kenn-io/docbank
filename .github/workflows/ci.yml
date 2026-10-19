@@ -31,6 +31,12 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -111,6 +117,12 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -145,6 +157,12 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
 
       - name: Check Unix installer
         run: sh -n scripts/install.sh
@@ -210,6 +228,9 @@ jobs:
             docker rm -f "$DOCBANK_S3_CONTAINER" >/dev/null 2>&1 || true
           fi
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+
   purego:
     name: Pure-Go SQLite
     runs-on: ubuntu-24.04
@@ -225,12 +246,21 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-purego
 
       - name: Vet
         run: go vet -tags fts5 ./...
 
       - name: Test
         run: bash scripts/test-go-ci.sh
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
 
   lint:
     name: golangci-lint
@@ -245,17 +275,29 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-lint
+          extra-path: ~/.cache/golangci-lint
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
+          # The job's Go cache group carries the analysis cache; the action's own key never refreshes.
+          skip-cache: true
 
       # Reuse the binary the action built; a second action step would build it for Windows.
       - name: Run golangci-lint for Windows
         env:
           GOOS: windows
         run: ./custom-gcl run ./...
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
 
   windows:
     name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}
@@ -283,6 +325,12 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: windows-${{ matrix.goarch }}
 
       - name: Check PowerShell installer
         if: matrix.goarch == 'amd64'
@@ -332,3 +380,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         shell: pwsh
         run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }} -ShardCount 4
+
+      - name: Save Go caches
+        if: matrix.shard == 4
+        uses: ./.github/actions/go-cache-save
