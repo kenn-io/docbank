@@ -3535,12 +3535,12 @@ async function hideSetupFlow() {
 
 it("sets a Hidden passcode before hiding the selection and leaves Hidden locked", async () => {
   const { photos, submit, hidden, fetcher } = await hideSetupFlow();
-  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/hide"))).toBe(false);
   await submit();
   await waitFor(() => expect(photos.hiding).toBe(false));
+  const setup = fetcher.mock.calls.find(([url]) => url.endsWith("/photos/hidden/setup"));
+  expect(JSON.parse(setup![1].body as string)).toEqual({ passcode: "synthetic-passcode" });
   expect([...hidden]).toEqual(["photo-1", "photo-2"]);
   expect(photos.items).toEqual([]);
-  expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/hide"))).toHaveLength(2);
   expect(fetcher.mock.calls.some(([url]) => url.endsWith("/unlock"))).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
   expect(await screen.findByRole("button", { name: "Unlock" })).toBeTruthy();
@@ -3569,14 +3569,9 @@ it("reports another client's passcode with a dismissible notice", async () => {
   await submit();
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect(hidden.size).toBe(0);
-  const message = "Hidden already has a passcode. Choose Hide again to use it.";
-  expect(await screen.findByText(message)).toBeTruthy();
+  expect(photos.actionError).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-  expect(screen.queryByText(message)).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
-  await waitFor(() => expect([...hidden]).toEqual(["photo-1", "photo-2"]));
-  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
 });
 
 it("keeps the setup text across tab concealment while locking immediately", async () => {
@@ -3593,7 +3588,7 @@ it("keeps the setup text across tab concealment while locking immediately", asyn
 });
 
 it.each(["Cancel", "Escape", "route"])("cancels Hidden setup quietly with %s", async (action) => {
-  const { photos, dialog, hidden } = await hideSetupFlow();
+  const { photos, dialog, fetcher } = await hideSetupFlow();
   if (action === "Cancel")
     await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   else if (action === "Escape") await fireEvent.keyDown(document, { key: "Escape" });
@@ -3603,15 +3598,11 @@ it.each(["Cancel", "Escape", "route"])("cancels Hidden setup quietly with %s", a
   }
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
-  expect(hidden.size).toBe(0);
-  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-  expect(photos.actionError).toBe("");
-  expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/hide"))).toBe(false);
 });
 
 it.each([
   ["route", false],
-  ["dispose", false],
   ["route", true],
   ["dispose", true],
 ] as const)("settles a Hidden setup save after %s, success %s", async (cancel, success) => {

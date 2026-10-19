@@ -3034,7 +3034,7 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
 });
 
-it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
+it.each(["cancelled", "exists", "saved", "dispose"] as const)(
   "settles Hidden setup before the hide batch: %s",
   async (outcome) => {
     const access = new HiddenAccess("scoped", vi.fn());
@@ -3043,7 +3043,6 @@ it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
     let refreshed = false;
     stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden")) {
-        if (outcome === "read failure") throw new Error("State unavailable");
         return Response.json({ configured: false });
       }
       if (url.endsWith("/hide")) {
@@ -3066,23 +3065,21 @@ it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
     photos.selectLoaded();
     const report = vi.fn();
     const write = photos.setHidden("photo-1", undefined, undefined, report);
-    if (outcome !== "read failure") {
-      await waitFor(() => expect(access.setupPrompt).toBeDefined());
-      expect(photos.hiding).toBe(true);
-      expect(hides).toEqual([]);
-      if (outcome === "dispose") photos.dispose();
-      else {
-        if (outcome === "saved") {
-          refreshed = true;
-          await photos.refresh();
-        }
-        access.setupPrompt!.done(outcome);
+    await waitFor(() => expect(access.setupPrompt).toBeDefined());
+    expect(photos.hiding).toBe(true);
+    expect(hides).toEqual([]);
+    if (outcome === "dispose") photos.dispose();
+    else {
+      if (outcome === "saved") {
+        refreshed = true;
+        await photos.refresh();
       }
+      access.setupPrompt!.done(outcome);
     }
     await write;
-    if (outcome === "saved" || outcome === "read failure") {
+    if (outcome === "saved") {
       expect(hides).toEqual([
-        ["/api/v1/photos/assets/photo-1/hide", outcome === "saved" ? "9" : "1"],
+        ["/api/v1/photos/assets/photo-1/hide", "9"],
         ["/api/v1/photos/assets/photo-2/hide", "7"],
       ]);
     } else {

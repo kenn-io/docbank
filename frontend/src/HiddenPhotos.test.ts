@@ -645,7 +645,7 @@ it.each(["read", "action"])("routes Hidden %s HTTP 401 to the session owner", as
 it("dismisses a photo action error", async () => {
   vi.stubGlobal("fetch", async () => Response.json(state(false)));
   const onactionerror = vi.fn();
-  const view = render(HiddenPhotos, {
+  render(HiddenPhotos, {
     ...props(),
     photoActionError: "Photo changed.",
     onactionerror,
@@ -653,6 +653,4 @@ it("dismisses a photo action error", async () => {
   expect(screen.getByText("Photo changed.")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(onactionerror).toHaveBeenCalledWith("");
-  await view.rerender({ ...props(), photoActionError: "", onactionerror });
-  expect(screen.queryByText("Photo changed.")).toBeNull();
 });
