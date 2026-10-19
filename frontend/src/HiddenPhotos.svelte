@@ -67,7 +67,7 @@
     ontrashed?: () => void;
     onunhidden?: () => void;
     onactionerror?: (error: string) => void;
-    onstate?: (state: PhotoHiddenState) => void;
+    onstate?: (state: PhotoHiddenState, configuredVersion: number) => void;
     onaccessfailure?: () => void;
     onexport?: (input: ExportInput) => void;
   } = $props();
@@ -135,8 +135,13 @@
     if (cause instanceof APIError && cause.status === 401) access.onauthfailure(cause);
     else void checkAccess();
   }
-  async function applyState(result: PhotoHiddenState, signal: AbortSignal, requestedAt: number) {
-    onstate?.(result);
+  async function applyState(
+    result: PhotoHiddenState,
+    signal: AbortSignal,
+    requestedAt: number,
+    configuredVersion: number,
+  ) {
+    onstate?.(result, configuredVersion);
     if (
       workspace &&
       (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)
@@ -189,6 +194,7 @@
     try {
       // Anchoring at send time can only end access early, never late.
       let requestedAt = Date.now();
+      let configuredVersion = access.configuredVersion;
       let result = await getPhotoHiddenState({
         session: access.session,
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
@@ -198,13 +204,14 @@
         await access.settled();
         if (controller.signal.aborted || disposed) return;
         requestedAt = Date.now();
+        configuredVersion = access.configuredVersion;
         result = await getPhotoHiddenState({
           session: access.session,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
       }
       if (controller.signal.aborted || disposed) return;
-      await applyState(result, controller.signal, requestedAt);
+      await applyState(result, controller.signal, requestedAt, configuredVersion);
     } catch (cause) {
       if (!controller.signal.aborted && !disposed) {
         readError = cause instanceof Error ? cause.message : String(cause);

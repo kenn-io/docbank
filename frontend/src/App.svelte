@@ -486,8 +486,8 @@
     state.cache = view.cache;
     return revalidated;
   }
-  async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
-    if (hiddenAccess) hiddenAccess.configured = result.configured;
+  async function acceptPhotoAccess(result: generated.PhotoHiddenState, configuredVersion: number) {
+    hiddenAccess?.recordConfigured(result.configured, configuredVersion);
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && changed) await invalidateLibrary(false);
@@ -644,12 +644,14 @@
       pending = true;
       controller = new AbortController();
       try {
+        const configuredVersion = hiddenAccess!.configuredVersion;
         const result = await generated.getPhotoHiddenState({
           session,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
+        if (current && !controller.signal.aborted)
+          await acceptPhotoAccess(result, configuredVersion);
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -3237,8 +3239,8 @@
             {photoID}
             onphotochange={changePhoto}
             onconceal={clearPhoto}
-            onstate={(result) => {
-              void acceptPhotoAccess(result).catch((cause) => {
+            onstate={(result, configuredVersion) => {
+              void acceptPhotoAccess(result, configuredVersion).catch((cause) => {
                 void invalidateLibrary();
                 photoAccessError = cause instanceof Error ? cause.message : String(cause);
               });

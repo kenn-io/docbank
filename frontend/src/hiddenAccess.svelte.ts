@@ -11,7 +11,18 @@ export function passcodeValidation(value: string, empty: string) {
 type SetupResult = "ready" | "saved" | "exists" | "cancelled";
 
 export class HiddenAccess {
-  configured = $state<boolean>();
+  private configuredValue = $state<boolean>();
+  configuredVersion = 0;
+  get configured() {
+    return this.configuredValue;
+  }
+  set configured(value: boolean | undefined) {
+    this.configuredVersion++;
+    this.configuredValue = value;
+  }
+  recordConfigured(value: boolean, requestedVersion: number) {
+    if (requestedVersion === this.configuredVersion) this.configuredValue = value;
+  }
   lockError = $state("");
   setupPrompt = $state<{ done: (result: SetupResult) => void; signal: AbortSignal }>();
   private setupAbort?: AbortController;

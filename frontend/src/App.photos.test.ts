@@ -3463,7 +3463,11 @@ it.each([false, true])(
   },
 );
 
-async function startHideSetup(staleConfigured = false) {
+async function startHideSetup({
+  staleConfigured = false,
+  firstHideSucceeds = false,
+  selection = [1, 2],
+} = {}) {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();
   vi.stubGlobal(
@@ -3490,12 +3494,13 @@ async function startHideSetup(staleConfigured = false) {
     }
     if (url.endsWith("/photos/hidden"))
       return Response.json({
-        configured: configured || staleConfigured,
+        configured: configured || (staleConfigured && !hidden.size),
         change_id: hidden.size ? String(hidden.size) : undefined,
       });
     if (url.endsWith("/hide")) {
-      if (!configured) return Response.json({ code: "hidden_not_configured" }, { status: 409 });
       const id = url.split("/").at(-2)!;
+      if (!configured && !(firstHideSucceeds && id === "photo-1"))
+        return Response.json({ code: "hidden_not_configured" }, { status: 409 });
       hidden.add(id);
       return Response.json({ id, revision: 2 });
     }
@@ -3505,7 +3510,7 @@ async function startHideSetup(staleConfigured = false) {
   stubPhotoFetch(fetcher);
   const hide = vi.spyOn(Photos.prototype, "setHidden");
   render(App);
-  for (const id of [1, 2])
+  for (const id of selection)
     await fireEvent.click(
       await screen.findByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }),
     );
@@ -3521,8 +3526,14 @@ async function startHideSetup(staleConfigured = false) {
   };
 }
 
-async function hideSetupFlow(staleConfigured = false) {
-  const flow = await startHideSetup(staleConfigured);
+async function hideSetupFlow(staleConfigured = false, selection = [1, 2]) {
+  const flow = await startHideSetup({ staleConfigured, selection });
+  if (staleConfigured) {
+    await waitFor(() => expect(flow.photos.hiding).toBe(false));
+    expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  }
   const dialog = await screen.findByRole("dialog", { name: "Set a Hidden passcode" });
   const input = within(dialog).getByLabelText("Passcode") as HTMLInputElement;
   const submit = async () => {
@@ -3550,8 +3561,29 @@ it("prompts after polling configured=false, sets a passcode, and hides with Hidd
   expect(await screen.findByRole("button", { name: "Unlock" })).toBeTruthy();
 });
 
+it("ignores a configured poll that started before saving the Hidden passcode", async () => {
+  const { photos, submit, hidden, fetcher } = await hideSetupFlow(false, [1]);
+  const request = fetcher.getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  fetcher.mockImplementation(async (url, init) => {
+    if (url.endsWith("/photos/hidden"))
+      return new Promise<Response>((resolve) => (finish = resolve));
+    return request(url, init);
+  });
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await submit();
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect([...hidden]).toEqual(["photo-1"]);
+  await act(async () => finish(Response.json({ configured: false })));
+  await fireEvent.click(await screen.findByRole("button", { name: "Actions for Photo 2.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  await waitFor(() => expect([...hidden]).toEqual(["photo-1", "photo-2"]));
+  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
+});
+
 it.each(["save", "cancel"])(
-  "opens setup after a stale configured hide failure, then %s",
+  "opens setup on an explicit second Hide after a stale configured failure, then %s",
   async (action) => {
     const { photos, dialog, submit, hidden, fetcher } = await hideSetupFlow(true);
     expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/hide"))).toHaveLength(2);
@@ -3576,6 +3608,36 @@ it.each(["save", "cancel"])(
     }
   },
 );
+
+it("keeps a partial Hide success and sets up Hidden on an explicit Hide of the remaining photo", async () => {
+  const { photos, hidden, fetcher } = await startHideSetup({
+    staleConfigured: true,
+    firstHideSucceeds: true,
+  });
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect([...hidden]).toEqual(["photo-1"]);
+  expect([...photos.selectedIDs]).toEqual(["photo-2"]);
+  expect(photos.actionError).toBe(
+    "1 photo failed: Hidden has no passcode. Choose Hide again to set one.",
+  );
+  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
+  await fireEvent(document, new Event("visibilitychange"));
+  await fireEvent.click(await screen.findByRole("button", { name: "Actions for Photo 2.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  const dialog = await screen.findByRole("dialog", { name: "Set a Hidden passcode" });
+  const input = within(dialog).getByLabelText("Passcode");
+  await fireEvent.input(input, { target: { value: "synthetic-passcode" } });
+  await fireEvent.submit(input.closest("form")!);
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect([...hidden]).toEqual(["photo-1", "photo-2"]);
+  expect(photos.items).toEqual([]);
+  expect(photos.actionError).toBe("");
+  expect(
+    fetcher.mock.calls
+      .filter(([url]) => url.endsWith("/hide"))
+      .map(([url]) => url.split("/").at(-2)),
+  ).toEqual(["photo-1", "photo-2", "photo-2"]);
+});
 
 it.each([
   ["empty", "", "Enter a passcode."],
