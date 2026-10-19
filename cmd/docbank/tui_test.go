@@ -81,10 +81,11 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	resetFlags(rootCmd)
-	rootCmd.SetIn(strings.NewReader("q"))
+	previousOptions := tuiProgramOptions
+	tuiProgramOptions = []tea.ProgramOption{tea.WithInput(strings.NewReader("q"))}
 	tuiCmd.SetContext(ctx)
 	t.Cleanup(func() {
-		rootCmd.SetIn(nil)
+		tuiProgramOptions = previousOptions
 		tuiCmd.SetContext(context.Background())
 	})
 	var stderr bytes.Buffer

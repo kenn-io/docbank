@@ -3,7 +3,6 @@ package telemetry
 import (
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -42,7 +41,7 @@ type screenClaims struct {
 }
 
 type captureHandler struct {
-	reporter *Reporter
+	*Reporter
 
 	dir    string
 	mu     sync.Mutex
@@ -67,14 +66,7 @@ type CaptureEndpoint interface {
 // 413 for a body over 64 KiB; 415 for a content
 // type other than application/json; 500 when Capture fails.
 func CaptureHandler(r *Reporter, dir string) CaptureEndpoint {
-	return &captureHandler{reporter: r, dir: dir, now: time.Now}
-}
-
-func (h *captureHandler) Capture(event string, properties map[string]any) error {
-	if err := h.reporter.Capture(event, properties); err != nil {
-		return fmt.Errorf("capture telemetry event: %w", err)
-	}
-	return nil
+	return &captureHandler{Reporter: r, dir: dir, now: time.Now}
 }
 
 func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +75,7 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	event := strings.TrimSpace(request.Event)
-	if !h.reporter.EventAllowed(event) {
+	if !h.EventAllowed(event) {
 		http.Error(w, posthog.ErrUnsupportedEvent.Error(), http.StatusBadRequest)
 		return
 	}
@@ -91,7 +83,7 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveScreen(w, request.Properties)
 		return
 	}
-	if !h.reporter.Enabled() {
+	if !h.Enabled() {
 		writeCaptureStatus(w, "disabled")
 		return
 	}
@@ -122,14 +114,14 @@ func decodeCaptureRequest(w http.ResponseWriter, r *http.Request) (captureReques
 }
 
 func (h *captureHandler) serveScreen(w http.ResponseWriter, raw map[string]any) {
-	properties, err := h.reporter.SanitizeProperties(EventScreenViewed, raw)
+	properties, err := h.SanitizeProperties(EventScreenViewed, raw)
 	screen, validScreen := properties["screen"].(string)
 	surface, validSurface := properties["surface"].(string)
 	if err != nil || !validScreen || !validSurface {
 		http.Error(w, "screen_viewed requires an allowed screen and surface", http.StatusBadRequest)
 		return
 	}
-	if !h.reporter.Enabled() {
+	if !h.Enabled() {
 		writeCaptureStatus(w, "disabled")
 		return
 	}
@@ -147,7 +139,7 @@ func (h *captureHandler) serveScreen(w http.ResponseWriter, raw map[string]any) 
 		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
 		return
 	}
-	if !h.reporter.Enabled() {
+	if !h.Enabled() {
 		writeCaptureStatus(w, "disabled")
 		return
 	}

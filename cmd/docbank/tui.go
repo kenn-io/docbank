@@ -22,6 +22,8 @@ import (
 	doctui "go.kenn.io/docbank/internal/tui"
 )
 
+var tuiProgramOptions []tea.ProgramOption
+
 var tuiCmd = &cobra.Command{
 	Example: `  docbank tui`,
 	GroupID: groupInterfaces,
@@ -64,7 +66,8 @@ enrollment remain outside the TUI.`,
 		ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGHUP)
 		defer stop()
 		started := time.Now()
-		opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout()), tea.WithInput(cmd.InOrStdin())}
+		opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())}
+		opts = append(opts, tuiProgramOptions...)
 		_, err = tea.NewProgram(model, opts...).Run()
 		if tuiProgramRan(err) {
 			// Usage reporting is best effort.

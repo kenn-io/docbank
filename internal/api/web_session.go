@@ -193,10 +193,6 @@ func (r *webSessionRegistry) revoke(token string) bool {
 func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) bool {
 	r.mu.Lock()
 	state, ok := r.tokens[digest]
-	if r.closing {
-		r.mu.Unlock()
-		return false
-	}
 	delete(r.tokens, digest)
 	if ok && r.onRevoke != nil {
 		// Register while holding mu so closeAll cannot begin waiting before an
