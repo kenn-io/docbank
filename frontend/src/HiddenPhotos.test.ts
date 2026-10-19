@@ -199,6 +199,8 @@ it("associates incorrect unlock feedback with its field and preserves it through
 
 it("keeps management credentials independent and lets Disable ignore an invalid new passcode", async () => {
   let configured = true;
+  const options = props();
+  options.access.configured = true;
   const requests: unknown[] = [];
   vi.stubGlobal(
     "fetch",
@@ -215,7 +217,7 @@ it("keeps management credentials independent and lets Disable ignore an invalid 
       return new Response(JSON.stringify({ configured }));
     }),
   );
-  render(HiddenPhotos, props());
+  render(HiddenPhotos, options);
   await screen.findByRole("button", { name: "Unlock" });
   await fireEvent.click(screen.getByText("Manage passcode"));
   const current = screen.getByLabelText("Current passcode", { exact: true });
@@ -238,6 +240,7 @@ it("keeps management credentials independent and lets Disable ignore an invalid 
   );
   await fireEvent.click(screen.getByRole("button", { name: "Disable Hidden" }));
   await screen.findByRole("button", { name: "Set passcode" });
+  expect(options.access.configured).toBe(false);
   expect(requests.at(-1)).toEqual({ passcode: "current" });
   expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).value).toBe("");
 });

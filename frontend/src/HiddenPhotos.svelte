@@ -265,6 +265,7 @@
           else {
             disableDispatched = true;
             await disablePhotoHidden({ passcode: submitted.currentPasscode }, options());
+            access.configured = false;
           }
         });
       passcode = "";

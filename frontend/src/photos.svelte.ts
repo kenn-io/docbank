@@ -829,6 +829,7 @@ export class Photos {
     this.actionError = "";
     let failure = "";
     let failures = 0;
+    let needsSetup = false;
     await this.mutateBatch(
       members,
       async (member) => {
@@ -843,6 +844,15 @@ export class Photos {
       },
       (cause) => {
         failures++;
+        if (
+          cause instanceof APIError &&
+          cause.code === "hidden_not_configured" &&
+          this.hiddenAccess &&
+          !this.hidden
+        ) {
+          this.hiddenAccess.configured = false;
+          needsSetup = true;
+        }
         failure =
           cause instanceof APIError && cause.code === "hidden_not_configured"
             ? "Hidden has no passcode. Choose Hide again to set one."
@@ -865,6 +875,7 @@ export class Photos {
       preserve,
       oninvalidate,
     );
+    if (needsSetup) await this.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
 
   cancelPending(invalidateReplacement = false) {

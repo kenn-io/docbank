@@ -3463,7 +3463,7 @@ it.each([false, true])(
   },
 );
 
-async function startHideSetup() {
+async function startHideSetup(staleConfigured = false) {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();
   vi.stubGlobal(
@@ -3490,7 +3490,7 @@ async function startHideSetup() {
     }
     if (url.endsWith("/photos/hidden"))
       return Response.json({
-        configured,
+        configured: configured || staleConfigured,
         change_id: hidden.size ? String(hidden.size) : undefined,
       });
     if (url.endsWith("/hide")) {
@@ -3521,8 +3521,8 @@ async function startHideSetup() {
   };
 }
 
-async function hideSetupFlow() {
-  const flow = await startHideSetup();
+async function hideSetupFlow(staleConfigured = false) {
+  const flow = await startHideSetup(staleConfigured);
   const dialog = await screen.findByRole("dialog", { name: "Set a Hidden passcode" });
   const input = within(dialog).getByLabelText("Passcode") as HTMLInputElement;
   const submit = async () => {
@@ -3550,26 +3550,60 @@ it("prompts after polling configured=false, sets a passcode, and hides with Hidd
   expect(await screen.findByRole("button", { name: "Unlock" })).toBeTruthy();
 });
 
-it("keeps an invalid passcode open for retry after a 422 response", async () => {
-  const { photos, dialog, submit, hidden, setSave } = await hideSetupFlow();
+it.each(["save", "cancel"])(
+  "opens setup after a stale configured hide failure, then %s",
+  async (action) => {
+    const { photos, dialog, submit, hidden, fetcher } = await hideSetupFlow(true);
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/hide"))).toHaveLength(2);
+    expect([...photos.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+    expect(photos.actionError).toBe(
+      "2 photos failed: Hidden has no passcode. Choose Hide again to set one.",
+    );
+    if (action === "cancel") {
+      await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(photos.hiding).toBe(false));
+      expect(hidden.size).toBe(0);
+      expect([...photos.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+      expect(photos.actionError).toBe(
+        "2 photos failed: Hidden has no passcode. Choose Hide again to set one.",
+      );
+    } else {
+      await submit();
+      await waitFor(() => expect(photos.hiding).toBe(false));
+      expect([...hidden]).toEqual(["photo-1", "photo-2"]);
+      expect(photos.items).toEqual([]);
+      expect(photos.actionError).toBe("");
+    }
+  },
+);
+
+it.each([
+  ["empty", "", "Enter a passcode."],
+  ["over 1,024 bytes", "é".repeat(513), "Use 1 to 1,024 bytes."],
+])("rejects %s setup input before sending a request", async (_kind, value, message) => {
+  const { dialog, input, fetcher } = await hideSetupFlow();
+  await fireEvent.input(input, { target: { value } });
+  await fireEvent.submit(input.closest("form")!);
+  expect(await within(dialog).findByText(message)).toBeTruthy();
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/hidden/setup"))).toBe(false);
+});
+
+it("retains the passcode after a 503 save failure and hides on retry", async () => {
+  const { photos, dialog, input, submit, hidden, setSave } = await hideSetupFlow();
   let finish!: (response: Response) => void;
   setSave(() => new Promise<Response>((resolve) => (finish = resolve)));
   await submit();
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   await fireEvent.keyDown(document, { key: "Escape" });
-  finish(
-    Response.json(
-      { code: "invalid_hidden_passcode", detail: "Use a different passcode." },
-      { status: 422 },
-    ),
-  );
+  finish(Response.json({ detail: "Save unavailable" }, { status: 503 }));
   await waitFor(() =>
     expect(screen.getByRole("dialog", { name: "Set a Hidden passcode" })).toBe(dialog),
   );
-  expect(await within(dialog).findByText("Use a different passcode.")).toBeTruthy();
+  expect((await within(dialog).findByRole("alert")).textContent).toBe("Save unavailable");
+  expect(input.value).toBe("synthetic-passcode");
   expect(hidden.size).toBe(0);
   setSave(async () => Response.json({ configured: true }));
-  await submit();
+  await fireEvent.submit(input.closest("form")!);
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect([...hidden]).toEqual(["photo-1", "photo-2"]);
 });
