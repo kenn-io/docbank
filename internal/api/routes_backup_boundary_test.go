@@ -92,6 +92,8 @@ func TestBackupExplicitRepositoryRejectsNetworkPeers(t *testing.T) {
 		method, path string
 		body         any
 	}{
+		{http.MethodPost, "/api/v1/backup/forget", map[string]any{"repo": explicitRepo, "snapshot_ids": []string{"exact-id"}}},
+		{http.MethodPost, "/api/v1/backup/prune", map[string]any{"repo": explicitRepo}},
 		{http.MethodPost, "/api/v1/backup/init", map[string]any{"repo": explicitRepo}},
 		{http.MethodPost, "/api/v1/backup/snapshots", map[string]any{"repo": explicitRepo}},
 		{http.MethodPost, "/api/v1/backup/snapshots/stream", map[string]any{"repo": explicitRepo}},

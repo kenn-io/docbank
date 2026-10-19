@@ -74,7 +74,7 @@ Exports and productions:
 
 Vault operations:
   audit  Protect permanent document history and inspect its evidence
-  backup  Create and inspect immutable vault snapshots
+  backup  Create, restore, and clean up vault snapshots
   daemon  Manage the docbank daemon
   gc  Reclaim unreachable blobs (dry-run unless --run)
   info  Identify the selected vault and summarize its contents

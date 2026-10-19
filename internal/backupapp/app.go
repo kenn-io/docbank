@@ -33,6 +33,7 @@ type Stats struct {
 	Tags                int64                     `json:"tags"`
 	NodeTags            int64                     `json:"node_tags"`
 	ExtractedText       int64                     `json:"extracted_text"`
+	Coverage            *BackupCoverage           `json:"coverage,omitempty"`
 	DerivativeAuthority *DerivativeAuthorityStats `json:"derivative_authority,omitempty"`
 }
 
@@ -66,12 +67,14 @@ const restoredExtractedTextStatsQuery = `SELECT COUNT(*) FROM extracted_text`
 // scoped manifest, while pre-scope v1 snapshots carried every row and keep
 // restoring against their unscoped recorded stats.
 type statsScope struct {
+	coverage      bool
 	blobs         string
 	extractedText string
 }
 
 var captureStatsScope = statsScope{
-	blobs: authorizedContentStatsQuery, extractedText: authorizedExtractedTextStatsQuery,
+	coverage: true,
+	blobs:    authorizedContentStatsQuery, extractedText: authorizedExtractedTextStatsQuery,
 }
 
 var restoredStatsScope = statsScope{
@@ -114,11 +117,21 @@ func computeStats(ctx context.Context, q rowQuerier, scope statsScope) (Stats, e
 	if hasDerivatives {
 		stats.DerivativeAuthority = derivatives
 	}
+	if scope.coverage {
+		coverage, err := computeCoverage(ctx, q)
+		if err != nil {
+			return Stats{}, err
+		}
+		stats.Coverage = coverage
+	}
 	return stats, nil
 }
 
 // App implements backup.App for docbank.
-type App struct{ version string }
+type App struct {
+	version      string
+	restoreStats *Stats
+}
 
 var _ backup.App = (*App)(nil)
 
@@ -247,19 +260,27 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 }
 
 func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, error) {
-	stats, err := computeStats(ctx, db, restoredStatsScope)
+	scope := restoredStatsScope
+	scope.coverage = a.restoreStats.Coverage != nil
+	stats, err := computeStats(ctx, db, scope)
 	if err != nil {
 		return nil, err
+	}
+	if stats.Coverage != nil {
+		stats.Coverage.Excluded = a.restoreStats.Coverage.Excluded
 	}
 	return json.Marshal(stats)
 }
 
 func (a *App) CheckManifest(manifest *backup.Manifest) []string {
 	stats, err := ParseStats(manifest.Stats)
-	if err != nil {
+	var problems []string
+	if unsupported, ok := errors.AsType[*UnsupportedCoverageVersionError](err); ok {
+		// Base statistics remain readable; only the coverage payload needs a newer reader.
+		problems = append(problems, unsupported.Error()+"; upgrade Docbank to verify this snapshot")
+	} else if err != nil {
 		return []string{fmt.Sprintf("manifest stats unreadable: %v", err)}
 	}
-	var problems []string
 	if stats.Blobs != manifest.Attachments.Blobs {
 		problems = append(problems, fmt.Sprintf("stats.blobs %d != attachments.blobs %d",
 			stats.Blobs, manifest.Attachments.Blobs))
@@ -275,12 +296,54 @@ func (a *App) CheckManifest(manifest *backup.Manifest) []string {
 	return problems
 }
 
+// UnsupportedCoverageVersionError identifies coverage a reader cannot interpret.
+type UnsupportedCoverageVersionError struct{ Version int }
+
+func (e *UnsupportedCoverageVersionError) Error() string {
+	return fmt.Sprintf("backupapp: unsupported backup coverage version %d", e.Version)
+}
+
 func ParseStats(raw jsontext.Value) (Stats, error) {
-	var stats Stats
-	if err := json.Unmarshal(raw, &stats); err != nil {
+	// Decode base statistics separately so a future coverage version can change
+	// everything in its object except the version number.
+	type baseStats Stats
+	var envelope struct {
+		baseStats
+
+		Coverage jsontext.Value `json:"coverage"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return Stats{}, fmt.Errorf("backupapp: parsing manifest stats: %w", err)
 	}
+	stats := Stats(envelope.baseStats)
+	if len(envelope.Coverage) == 0 || string(envelope.Coverage) == "null" {
+		return stats, nil
+	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(envelope.Coverage, &header); err != nil {
+		return Stats{}, fmt.Errorf("backupapp: parsing coverage version: %w", err)
+	}
+	if header.Version < 1 {
+		return Stats{}, fmt.Errorf("backupapp: coverage version %d is invalid; versions start at 1", header.Version)
+	}
+	if header.Version != 1 {
+		return stats, &UnsupportedCoverageVersionError{Version: header.Version}
+	}
+	if err := json.Unmarshal(envelope.Coverage, &stats.Coverage); err != nil {
+		return Stats{}, fmt.Errorf("backupapp: parsing coverage: %w", err)
+	}
 	return stats, nil
+}
+
+// ParseSummaryStats preserves base statistics when coverage requires a newer reader.
+func ParseSummaryStats(raw jsontext.Value) (Stats, string, error) {
+	stats, err := ParseStats(raw)
+	if unsupported, ok := errors.AsType[*UnsupportedCoverageVersionError](err); ok {
+		return stats, unsupported.Error(), nil
+	}
+	return stats, "", err
 }
 
 // BlobStreamer is the verified mixed loose/packed read surface backup capture

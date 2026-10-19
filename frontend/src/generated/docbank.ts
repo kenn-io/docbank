@@ -563,6 +563,25 @@ export interface AuthorizedUploadMetadata {
   sha256: string;
 }
 
+export interface CoverageIncluded {
+  album_members: number;
+  albums: number;
+  checkout_definitions: number;
+  checkout_entries: number;
+  hidden_photos: number;
+  photo_assets: number;
+  photo_blob_bytes: number;
+  photo_files: number;
+  retained_receipts: number;
+  trashed_photos: number;
+}
+
+export interface BackupCoverage {
+  excluded: string[];
+  included: CoverageIncluded;
+  version: number;
+}
+
 export type BackupCreateEventType = typeof BackupCreateEventType[keyof typeof BackupCreateEventType];
 
 
@@ -572,6 +591,26 @@ export const BackupCreateEventType = {
   error: 'error',
 } as const;
 
+export interface BackupForgetReport {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  forgotten: string[];
+  selected: string[];
+}
+
+export interface BackupPruneReport {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  bytes_removed: number;
+  bytes_to_remove: number;
+  bytes_written: number;
+  /** @minimum 0 */
+  live_bytes_to_rewrite: number;
+  packs_to_remove: string[];
+  packs_to_repack: string[];
+  removed_packs: string[];
+}
+
 export interface ErrorPosition {
   end: number;
   offset: number;
@@ -580,6 +619,8 @@ export interface ErrorPosition {
 export interface Error {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  backup_forget?: BackupForgetReport;
+  backup_prune?: BackupPruneReport;
   code?: string;
   detail?: string;
   errors?: string[];
@@ -609,6 +650,8 @@ export interface BackupSnapshot {
   blob_bytes: number;
   blobs: number;
   bytes_added: number;
+  coverage?: BackupCoverage;
+  coverage_warning?: string;
   created_at: string;
   duration_seconds: number;
   files: number;
@@ -3097,6 +3140,17 @@ export interface Filters {
   tag_ids?: string[];
   text_coverage?: string[];
   unevaluated?: boolean;
+}
+
+export interface ForgetBackupSnapshotsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allow_empty?: boolean;
+  dry_run?: boolean;
+  force_unlock?: boolean;
+  repo?: string;
+  /** @minItems 1 */
+  snapshot_ids: string[];
 }
 
 export type FormatCapabilityV1Capabilities = {[key: string]: CapabilityStateV1};
@@ -6609,6 +6663,14 @@ export interface ProvenancePage {
   total: number;
 }
 
+export interface PruneBackupRepositoryRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  dry_run?: boolean;
+  force_unlock?: boolean;
+  repo?: string;
+}
+
 export interface PushSourceCursor {
   /** @pattern ^[0-9a-f]{64}$ */
   hash: string;
@@ -8425,6 +8487,8 @@ export type GetExportJobEvents200 = {
 };
 
 export type GetExportJobEventsDefault = {
+  backup_forget?: BackupForgetReport;
+  backup_prune?: BackupPruneReport;
   code?: string;
   detail?: string;
   errors?: string[];
@@ -9784,6 +9848,44 @@ return sessionJSON<AuditVerifyReport>(getVerifyAuditUrl(),
 
 
 
+export const getForgetBackupSnapshotsUrl = () => {
+
+
+
+
+  return `/api/v1/backup/forget`
+}
+
+/**
+ * @summary Remove selected backup recovery points
+ */
+export const forgetBackupSnapshots = async (forgetBackupSnapshotsRequest: NonReadonly<ForgetBackupSnapshotsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupForgetReport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BackupForgetReport>(getForgetBackupSnapshotsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(forgetBackupSnapshotsRequest)
+  }
+);}
+
+
+
 export const getInitBackupRepositoryUrl = () => {
 
 
@@ -9817,6 +9919,44 @@ return sessionJSON<BackupRepository>(getInitBackupRepositoryUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(initBackupRepositoryRequest)
+  }
+);}
+
+
+
+export const getPruneBackupRepositoryUrl = () => {
+
+
+
+
+  return `/api/v1/backup/prune`
+}
+
+/**
+ * @summary Reclaim unused backup storage
+ */
+export const pruneBackupRepository = async (pruneBackupRepositoryRequest: NonReadonly<PruneBackupRepositoryRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupPruneReport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BackupPruneReport>(getPruneBackupRepositoryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(pruneBackupRepositoryRequest)
   }
 );}
 

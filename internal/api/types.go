@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -1308,18 +1309,20 @@ type BackupRepository struct {
 // BackupSnapshot is the stable API summary of one Docbank snapshot manifest.
 // It deliberately omits Kit's physical pack/index details.
 type BackupSnapshot struct {
-	ID              string  `json:"id"`
-	ParentID        string  `json:"parent_id,omitzero"`
-	CreatedAt       string  `json:"created_at"`
-	Tag             string  `json:"tag,omitzero"`
-	MetadataFormat  string  `json:"metadata_format"`
-	Nodes           int64   `json:"nodes"`
-	Files           int64   `json:"files"`
-	Blobs           int64   `json:"blobs"`
-	BlobBytes       int64   `json:"blob_bytes"`
-	PacksAdded      int     `json:"packs_added"`
-	BytesAdded      int64   `json:"bytes_added"`
-	DurationSeconds float64 `json:"duration_seconds"`
+	ID              string                    `json:"id"`
+	ParentID        string                    `json:"parent_id,omitzero"`
+	CreatedAt       string                    `json:"created_at"`
+	Tag             string                    `json:"tag,omitzero"`
+	MetadataFormat  string                    `json:"metadata_format"`
+	Nodes           int64                     `json:"nodes"`
+	Files           int64                     `json:"files"`
+	Blobs           int64                     `json:"blobs"`
+	BlobBytes       int64                     `json:"blob_bytes"`
+	PacksAdded      int                       `json:"packs_added"`
+	BytesAdded      int64                     `json:"bytes_added"`
+	DurationSeconds float64                   `json:"duration_seconds"`
+	Coverage        *backupapp.BackupCoverage `json:"coverage,omitempty"`
+	CoverageWarning string                    `json:"coverage_warning,omitzero"`
 }
 
 // BackupSnapshotList is returned as an object so later pagination can be

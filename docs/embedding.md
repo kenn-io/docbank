@@ -849,6 +849,8 @@ snapshot's `ID` and `MinReaderVersion` with your recovery record.
 Pass the saved snapshot ID to verification and restore so a newer backup on a
 shared repository cannot change which recovery point you use.
 
+`BackupSnapshot.Coverage` records photo assets and files, distinct verified photo bytes, albums and members, hidden and trashed photos, checkout definitions and entries, and retained receipts. A nil pointer with an empty `BackupSnapshot.CoverageWarning` means the historical snapshot did not record coverage. Unsupported coverage yields a nil pointer and a version-specific warning while preserving the snapshot ID and base statistics for listing and cleanup. Total verified bytes remain in `BackupSnapshot.BlobBytes`. The trash count includes an asset when any managed file is trashed. `Coverage.Excluded` names omitted runtime state and rebuildable projections, including `photo_technical_metadata`. Restore recounts version-1 coverage before publication and rejects unsupported versions with `*UnsupportedBackupCoverageError`, whose `Version` names the recorded version. Verification checks manifest consistency and physical content, and reports unsupported coverage versions; it does not recount photo coverage. [Older readers require an upgrade](usage/backup.md#what-each-snapshot-contains) before restoring coverage-bearing snapshots. See [Backup coverage](usage/backup.md#what-each-snapshot-contains) for the complete exclusions and restore rules.
+
 Capture prevents content reclamation for the whole snapshot. Ordinary appends
 resume once Docbank fixes the SQLite view that the backup will use. Physical
 maintenance waits until Docbank publishes the manifest.
@@ -1020,8 +1022,7 @@ their encoded payload still needed. Mostly-live packs retain unused bytes, so
 this is not full compaction or secure erasure. Planned byte counts cover old
 pack files and copied payload, not exact net savings or temporary-space needs.
 Inspect the returned report even when an error occurs: completed removals and
-writes may be partial. Interrupted pruning can be retried. These embedded
-operations do not add automatic retention or standalone CLI cleanup commands.
+writes may be partial. Interrupted pruning can be retried. Standalone operators use [daemon-backed CLI cleanup commands](usage/backup.md#remove-recovery-points-and-reclaim-storage), which also print partial reports before returning an error. Retention schedules remain the caller's policy.
 
 ## Maintain physical storage
 

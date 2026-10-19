@@ -68,7 +68,7 @@ func decodeBackupRestoreEvents(t *testing.T, body string) []api.BackupRestoreEve
 	}
 }
 
-func TestBackupInitCreateListRoundTrip(t *testing.T) {
+func TestBackupSnapshots(t *testing.T) {
 	t.Parallel()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
@@ -92,6 +92,7 @@ func TestBackupInitCreateListRoundTrip(t *testing.T) {
 	assert.Equal(t, backupapp.MetadataFormat, snapshot.MetadataFormat)
 	assert.Equal(t, int64(1), snapshot.Files)
 	assert.Equal(t, int64(1), snapshot.Blobs)
+	require.NotNil(t, snapshot.Coverage)
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots", nil,
 		map[string]any{"tag": "second", "jobs": 1})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -99,6 +100,8 @@ func TestBackupInitCreateListRoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	assert.Equal(t, snapshot.ID, second.ParentID)
 
+	repo, err := backup.Open(repoPath)
+	require.NoError(t, err)
 	resp, body = get(t, ts, "/api/v1/backup/snapshots", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var listed api.BackupSnapshotList
@@ -107,10 +110,9 @@ func TestBackupInitCreateListRoundTrip(t *testing.T) {
 	assert.Equal(t, repository, *listed.Repository)
 	require.Len(t, listed.Items, 2)
 	assert.Equal(t, snapshot.ID, listed.Items[0].ID)
+	assert.Equal(t, snapshot.Coverage, listed.Items[0].Coverage)
 	assert.Equal(t, second.ID, listed.Items[1].ID)
 
-	repo, err := backup.Open(repoPath)
-	require.NoError(t, err)
 	verified, err := backup.Verify(t.Context(), repo, backupapp.New("test"), backup.VerifyOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, verified.Problems)
@@ -148,6 +150,12 @@ func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 		map[string]any{"repo": repoPath})
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 	assert.Contains(t, body, `"code":"backup_locked"`)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{"repo": repoPath})
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+	var problem api.Error
+	require.NoError(t, json.Unmarshal([]byte(body), &problem))
+	assert.Equal(t, "backup_locked", problem.Code)
+	assert.Nil(t, problem.BackupPrune)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots/stream", nil,
 		map[string]any{"repo": repoPath})
@@ -252,6 +260,17 @@ func TestBackupVerifySelectionAndProgressStream(t *testing.T) { //nolint:paralle
 	require.NoError(t, err)
 	manifest, err := repo.LoadManifest(first.ID)
 	require.NoError(t, err)
+	futureManifest := *manifest
+	futureManifest.Stats = jsontext.Value(`{"coverage":{"version":2}}`)
+	futureID, err := repo.WriteManifest(&futureManifest)
+	require.NoError(t, err)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/verify", nil,
+		map[string]any{"snapshot_id": futureID, "quick": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, []string{futureID}, report.Snapshots)
+	require.NotEmpty(t, report.Problems)
+	assert.Equal(t, futureID, report.Problems[0].SnapshotID)
 	require.NotEmpty(t, manifest.NewPacks)
 	packID := manifest.NewPacks[0]
 	packPath := repo.Path("packs", packID[:2], packID+packstore.PackExt)
@@ -387,4 +406,79 @@ func TestBackupRestoreProgressProofAndConfinement(t *testing.T) { //nolint:paral
 		})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"restore_store_map_invalid"`)
+
+	repo, err := backup.Open(repoPath)
+	require.NoError(t, err)
+	t.Run("unsupported-coverage-restore", func(t *testing.T) {
+		manifest, err := repo.LoadManifest(snapshot.ID)
+		require.NoError(t, err)
+		var stats map[string]any
+		require.NoError(t, json.Unmarshal(manifest.Stats, &stats))
+		stats["coverage"] = map[string]any{"version": 2, "included": []string{"future-shape"}}
+		manifest.Stats, err = json.Marshal(stats)
+		require.NoError(t, err)
+		futureID, err := repo.WriteManifest(manifest)
+		require.NoError(t, err)
+		target := filepath.Join(t.TempDir(), "unsupported-restore")
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/restore", nil, map[string]any{"snapshot_id": futureID, "target": target})
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		var problem api.Error
+		require.NoError(t, json.Unmarshal([]byte(body), &problem))
+		assert.Equal(t, "backup_coverage_unsupported", problem.Code)
+	})
+}
+
+func TestBackupCleanupReportsAndConflicts(t *testing.T) {
+	t.Parallel()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	ts, live := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	for _, selection := range []map[string]any{{}, {"snapshot_ids": nil}, {"snapshot_ids": []string{}}} {
+		resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, selection)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	}
+	request := map[string]any{"snapshot_ids": []string{"20260101T000000Z-11111111111111111111111111111111"}}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, request)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"backup_snapshot_not_found"`)
+	var problem api.Error
+	require.NoError(t, json.Unmarshal([]byte(body), &problem))
+	assert.Nil(t, problem.BackupForget)
+	require.NoError(t, os.Remove(filepath.Join(repoPath, "snapshots")))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, request)
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"backup_failed"`)
+	require.NoError(t, os.Mkdir(filepath.Join(repoPath, "snapshots"), 0o700))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var snapshot api.BackupSnapshot
+	require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, map[string]any{"snapshot_ids": []string{snapshot.ID}})
+	require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	problem = api.Error{}
+	require.NoError(t, json.Unmarshal([]byte(body), &problem))
+	assert.Equal(t, "backup_last_snapshot", problem.Code)
+	assert.Nil(t, problem.BackupForget)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, map[string]any{"snapshot_ids": []string{snapshot.ID}, "allow_empty": true, "dry_run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var forget api.BackupForgetReport
+	require.NoError(t, json.Unmarshal([]byte(body), &forget))
+	assert.Equal(t, []string{snapshot.ID}, forget.Selected)
+	assert.Empty(t, forget.Forgotten)
+
+	repo, err := backup.Open(repoPath)
+	require.NoError(t, err)
+	opts := backup.CreateOptions{DBPath: live.DBPath, SQLiteOpener: backupapp.SQLiteOpener(live.SQLiteDriver())}
+	parent, err := backup.Create(t.Context(), repo, backupapp.New("test"), opts)
+	require.NoError(t, err)
+	_, err = live.Mkdir(t.Context(), live.RootID(), "after-first")
+	require.NoError(t, err)
+	child, err := backup.Create(t.Context(), repo, backupapp.New("test"), opts)
+	require.NoError(t, err)
+	require.Positive(t, child.DB.MapChainDepth)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, map[string]any{"snapshot_ids": []string{parent.SnapshotID}})
+	require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"backup_snapshot_required"`)
 }

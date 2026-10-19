@@ -53,6 +53,7 @@ type backupRestoreRequest struct {
 }
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
+	registerBackupCleanupRoutes(api, d)
 	type initOutput struct{ Body BackupRepository }
 	huma.Register(api, huma.Operation{
 		OperationID: "initBackupRepository", Method: http.MethodPost, Path: "/api/v1/backup/init",
@@ -165,6 +166,9 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			snapshot, err := backupSnapshot(manifest)
 			if err != nil {
 				return nil, NewError(http.StatusInternalServerError, "backup_manifest", err.Error())
+			}
+			if browserSessionRequest(ctx) {
+				snapshot.Coverage = nil
 			}
 			out.Body.Items = append(out.Body.Items, snapshot)
 		}
@@ -368,7 +372,7 @@ func verifyBackupRepository(
 		return BackupVerifyReport{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"snapshot_id and all are mutually exclusive")
 	}
-	result, err := backup.Verify(ctx, repo, backupapp.New(version.Version), backup.VerifyOptions{
+	result, err := backupapp.Verify(ctx, repo, version.Version, backup.VerifyOptions{
 		SnapshotID: in.SnapshotID, All: in.All, Quick: in.Quick, Jobs: in.Jobs,
 		ForceUnlock: in.ForceUnlock, Progress: progress,
 	})
@@ -749,7 +753,7 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 	if manifest == nil {
 		return BackupSnapshot{}, errors.New("backup manifest is nil")
 	}
-	stats, err := backupapp.ParseStats(manifest.Stats)
+	stats, warning, err := backupapp.ParseSummaryStats(manifest.Stats)
 	if err != nil {
 		return BackupSnapshot{}, fmt.Errorf("snapshot %s: %w", manifest.SnapshotID, err)
 	}
@@ -763,6 +767,7 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes,
 		PacksAdded: len(manifest.NewPacks), BytesAdded: manifest.BytesAdded,
 		DurationSeconds: manifest.DurationSeconds,
+		Coverage:        stats.Coverage, CoverageWarning: warning,
 	}, nil
 }
 
@@ -773,6 +778,16 @@ func fromBackupError(err error) error {
 func backupProblem(err error) *Error {
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
+	}
+	if unsupported, ok := errors.AsType[*backupapp.UnsupportedCoverageVersionError](err); ok {
+		return NewError(http.StatusUnprocessableEntity, "backup_coverage_unsupported",
+			unsupported.Error()+"; upgrade Docbank to restore this snapshot")
+	}
+	if errors.Is(err, backup.ErrLastSnapshot) {
+		return NewError(http.StatusConflict, "backup_last_snapshot", err.Error())
+	}
+	if errors.Is(err, backup.ErrSnapshotRequired) {
+		return NewError(http.StatusConflict, "backup_snapshot_required", err.Error())
 	}
 	if errors.Is(err, backup.ErrRepoLocked) {
 		return NewError(http.StatusConflict, "backup_locked", err.Error())

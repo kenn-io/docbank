@@ -30,8 +30,7 @@ for the repository format.
     Protect the repository with filesystem permissions and encrypted storage,
     especially before placing it on removable or cloud-synchronized media.
 
-The CLI has no snapshot pruning or retention commands. Embedded applications
-can [remove selected snapshots and reclaim backup storage](../embedding.md#remove-recovery-points-and-reclaim-storage).
+Use `backup forget` to remove selected recovery points and `backup prune` to reclaim their storage. Embedded applications can use the [same cleanup operations](../embedding.md#remove-recovery-points-and-reclaim-storage).
 
 ## Quick start
 
@@ -111,9 +110,42 @@ docbank backup list [--repo DIR] [--json]
 ```
 
 The table reports each snapshot's ID, creation time, logical file/blob counts,
-bytes newly added to the repository, and tag. `--json` returns the same typed
+total blob bytes, bytes newly added to the repository, recorded coverage, and
+tag. `--json` returns the same typed
 snapshot summaries as `GET /api/v1/backup/snapshots`, including the metadata
 format and parent snapshot ID.
+
+## What each snapshot contains
+
+Create and list output include recorded coverage: photo assets and files, distinct verified photo bytes, albums and members, hidden and trashed photos, checkout definitions and entries, and retained change receipts. Browser sessions receive snapshot lists without coverage. JSON summaries expose these under `coverage`, with `version: 1`, `included`, and `excluded`; top-level `blob_bytes` records all verified blob bytes. List shows one row per snapshot and one shared exclusions line. Older snapshots show `unrecorded` in the coverage columns and omit the JSON field. Snapshots with a newer coverage version show `unsupported` and an ID-specific warning; JSON includes `coverage_warning` and omits `coverage`. Their base statistics and IDs remain available for cleanup. Restore recounts version-1 coverage before publication, preserves the recorded exclusions, and rejects unsupported versions with upgrade guidance. Verification checks manifest consistency and physical content, and reports unsupported coverage versions; it does not recount photo coverage.
+
+Upgrade Docbank before restoring snapshots that record coverage version 1 with a binary predating that coverage format. Older binaries refuse publication with a statistics mismatch; the manifest’s physical reader version does not express this application requirement.
+
+Coverage excludes browser sessions, hidden unlock sessions, transient storage operations, checkout destination bindings, and rebuildable search indexes, photo timelines, quality signals, `photo_technical_metadata`, and vector indexes. Hidden passcodes and lockout decisions remain included. Ingest provenance, saved-query runs, and term-report history remain included too. The trashed-photo count includes any asset with at least one trashed managed file, even when another member remains live. Restored checkouts are unbound until you explicitly rebind them.
+
+## Remove recovery points and reclaim storage
+
+```bash
+docbank backup forget SNAPSHOT [SNAPSHOT...] [--repo DIR] [--dry-run] [--allow-empty] [--force-unlock] [--json]
+docbank backup prune [--repo DIR] [--dry-run] [--force-unlock] [--json]
+```
+
+Use exact IDs from `backup list`; unknown or misspelled IDs return 404. Forget refuses the last recovery point unless you pass `--allow-empty`, and refuses a parent required by a retained incremental snapshot. Forget removes manifests; prune separately removes unused packs and rewrites packs with less than half their encoded content still live. Dry runs take the same repository lock and report the planned work. Text output starts with `dry run: nothing removed`.
+
+These commands require the master daemon credential. Browser sessions cannot run them. Cleanup errors with selected, planned, or completed work include partial reports in the API problem's `backup_forget` or `backup_prune` field. The CLI prints the report in text or JSON before returning the cleanup error and exiting nonzero. Text lists selected and forgotten snapshot IDs, planned pack removals and rewrites, and removed pack names. Items absent from completed lists remain pending or unconfirmed; bytes written alone do not prove a rewrite completed. Planned bytes are not net savings, and cleanup does not securely erase content.
+
+## Recover on a fresh installation
+
+Use a temporary fresh home to run the recovery daemon, and restore into a separate directory. The target must be disjoint from that home and the backup repository.
+
+```bash
+DOCBANK_HOME=~/Recovery/control docbank daemon start
+DOCBANK_HOME=~/Recovery/control docbank backup restore --repo ~/Backups/docbank --target ~/Recovery/vault
+DOCBANK_HOME=~/Recovery/control docbank daemon stop
+DOCBANK_HOME=~/Recovery/vault docbank info
+```
+
+Restore validates photo relationships and recorded coverage before publishing the database, verifies managed content, clears sessions, and leaves checkouts unbound. Keep the backup repository available until you've checked the restored vault.
 
 ## Verify repository integrity
 
@@ -129,13 +161,13 @@ A full verification performs these checks:
 1. Read the repository indexes and pack footers.
 2. Reconstruct the snapshot's JSONL metadata.
 3. Read every referenced content object and verify its SHA-256 hash.
-4. Compare the recovered logical totals with Docbank's recorded totals.
+4. Check recorded totals against manifest attachment totals and report unsupported coverage versions. Restore separately recounts version-1 coverage from the staged database before publication.
 
 Content shared by several selected snapshots is read only once during one
 verification pass. Every finding is reported with the affected snapshot, and
 the command exits non-zero if any problems were found.
 
-`--quick` checks manifests, indexes, pack structure, metadata, and logical
+`--quick` checks manifest statistics and coverage versions, indexes, pack structure, metadata, and logical
 references without reading document content. Its `bytes_read` therefore still
 includes metadata bytes. It is useful after each capture, but it does not prove
 the storage medium still holds every content byte. Run full verification

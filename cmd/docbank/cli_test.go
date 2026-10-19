@@ -1693,6 +1693,7 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "created snapshot")
 	assert.Contains(t, out, "1 file(s), 1 blob(s)")
+	assert.Contains(t, out, "0 photo asset(s), 0 photo file(s), 0 verified photo byte(s)")
 	for _, stage := range []string{"freeze:", "metadata:", "attachments:", "seal:"} {
 		assert.Contains(t, out, stage)
 	}
