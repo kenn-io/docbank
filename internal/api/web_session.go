@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -656,6 +657,7 @@ func registerWebSession(
 	enabled bool,
 	webURL string,
 	sessions *webSessionRegistry,
+	reporter *telemetry.Reporter,
 ) {
 	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, _ *http.Request) {
 		if !enabled || webURL == "" {
@@ -677,6 +679,13 @@ func registerWebSession(
 		}{Token: token, UploadSecret: uploadSecret, URL: webURL})
 	})
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
+		if reporter != nil {
+			bucket := r.URL.Query().Get("duration_bucket")
+			switch bucket {
+			case "under_1m", "1_to_5m", "5_to_30m", "over_30m":
+				_ = reporter.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket})
+			}
+		}
 		sessions.revoke(r.Header.Get(WebSessionHeader))
 		w.WriteHeader(http.StatusNoContent)
 	})

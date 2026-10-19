@@ -503,11 +503,12 @@ func (c *Client) PrepareWebDownload(ctx context.Context, options *PrepareWebDown
 }
 
 // RevokeWebSession Revoke the current browser session
-func (c *Client) RevokeWebSession(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+func (c *Client) RevokeWebSession(ctx context.Context, options *RevokeWebSessionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/web-session",
 		Method:     "DELETE",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -15209,6 +15210,37 @@ func (o *PrepareWebDownloadRequestOptions) GetHeader() (map[string]string, error
 	return nil, nil
 }
 
+// RevokeWebSessionRequestOptions is the options needed to make a request to RevokeWebSession.
+type RevokeWebSessionRequestOptions struct {
+	Query *RevokeWebSessionQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RevokeWebSessionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RevokeWebSessionRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RevokeWebSessionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RevokeWebSessionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // EnableAuditRequestOptions is the options needed to make a request to EnableAudit.
 type EnableAuditRequestOptions struct {
 	Body *EnableAuditBody
@@ -24688,6 +24720,15 @@ const (
 	Queued   ReportTelemetryEventResponseStatus = "queued"
 )
 
+type RevokeWebSessionQueryDurationBucket string
+
+const (
+	N1To5M  RevokeWebSessionQueryDurationBucket = "1_to_5m"
+	N5To30M RevokeWebSessionQueryDurationBucket = "5_to_30m"
+	Over30M RevokeWebSessionQueryDurationBucket = "over_30m"
+	Under1M RevokeWebSessionQueryDurationBucket = "under_1m"
+)
+
 type ListDocumentsQuerySort string
 
 const (
@@ -25894,6 +25935,11 @@ type ChallengeAPIKeyQuery struct {
 
 type CancelWebDownloadQuery struct {
 	Ticket string `json:"ticket"`
+}
+
+type RevokeWebSessionQuery struct {
+	// DurationBucket Final visible session duration to report before revocation. Missing or invalid values emit no event.
+	DurationBucket *RevokeWebSessionQueryDurationBucket `json:"duration_bucket,omitempty"`
 }
 
 type AuditNodeHistoryQuery struct {

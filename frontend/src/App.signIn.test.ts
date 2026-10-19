@@ -38,58 +38,80 @@ it("offers the API key and clears it after rejected sign-in", async () => {
   ).toBe(false);
 });
 
-it("signs out with a DELETE request and the tab-token session header", async () => {
-  history.replaceState(null, "", "/");
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url === "/api/daemon/web-auth") return new Response(JSON.stringify({ enabled: true }));
-    if (url.endsWith("/login"))
-      return new Response(
-        JSON.stringify({ enabled: true, session: { token: "tab-token", upload_secret: "proof" } }),
+it.each([false, true])(
+  "signs out immediately with a final duration, failure=%s",
+  async (failure) => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    let resolveRevoke!: (response: Response) => void;
+    let rejectRevoke!: (cause: Error) => void;
+    history.replaceState(null, "", "/");
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/daemon/web-auth") return new Response(JSON.stringify({ enabled: true }));
+      if (url.endsWith("/login"))
+        return new Response(
+          JSON.stringify({
+            enabled: true,
+            session: { token: "tab-token", upload_secret: "proof" },
+          }),
+        );
+      if (url.startsWith("/api/v1/path"))
+        return new Response(
+          JSON.stringify({ id: 1, kind: "dir", name: "", path: "/", revision: 1 }),
+        );
+      if (url.includes("/children"))
+        return new Response(
+          JSON.stringify({
+            directory: { id: 1, kind: "dir", path: "/", revision: 1 },
+            items: [],
+            total: 0,
+          }),
+        );
+      if (url.startsWith("/api/daemon/web-session"))
+        return new Promise<Response>((resolve, reject) => {
+          resolveRevoke = resolve;
+          rejectRevoke = reject;
+        });
+      return new Response(JSON.stringify({ items: [], total: 0 }));
+    });
+    render(App);
+    const key = await screen.findByLabelText("API key");
+    await fireEvent.input(key, { target: { value: "synthetic-master-key" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    const signOut = await screen.findByRole("button", { name: "Sign out" });
+    now = 120_000;
+    await fireEvent.click(signOut);
+    expect(screen.getByLabelText("API key")).toBeTruthy();
+    const revokes = fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        String(input).startsWith("/api/daemon/web-session") && init?.method === "DELETE",
+    );
+    expect(revokes).toHaveLength(1);
+    expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
+    expect(new Headers(revokes[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
+    const reports = () =>
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          String(input) === "/api/daemon/telemetry/events" &&
+          JSON.parse(String(init?.body)).event === "session_ended",
       );
-    if (url.startsWith("/api/v1/path"))
-      return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", path: "/", revision: 1 }));
-    if (url.includes("/children"))
-      return new Response(
-        JSON.stringify({
-          directory: { id: 1, kind: "dir", path: "/", revision: 1 },
-          items: [],
-          total: 0,
-        }),
-      );
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
-    return new Response(JSON.stringify({ items: [], total: 0 }));
-  });
-  render(App);
-  const key = await screen.findByLabelText("API key");
-  await fireEvent.input(key, { target: { value: "synthetic-master-key" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-  const signOut = await screen.findByRole("button", { name: "Sign out" });
-  await fireEvent.click(signOut);
-  await waitFor(() => expect(screen.getByLabelText("API key")).toBeTruthy());
-  await waitFor(
-    () =>
-      expect(
-        fetchMock.mock.calls.some(
-          ([input, init]) =>
-            String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
-        ),
-      ).toBe(true),
-    { timeout: 10_000 },
-  );
-  const call = fetchMock.mock.calls.find(
-    ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
-  );
-  expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
-});
+    expect(reports()).toHaveLength(0);
+    if (failure) rejectRevoke(new Error("offline"));
+    else resolveRevoke(new Response(null, { status: 204 }));
+    cleanup();
+    expect(reports()).toHaveLength(0);
+  },
+);
 
 it("clears an open Manage tags dialog after session expiry before signing in again", async () => {
   history.replaceState(null, "", "/");

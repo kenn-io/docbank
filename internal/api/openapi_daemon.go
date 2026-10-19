@@ -29,7 +29,10 @@ func registerDaemonOpenAPI(api huma.API) {
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "revokeWebSession", Method: http.MethodDelete, Path: webSessionPath,
-		Summary:   "Revoke the current browser session",
+		Summary: "Revoke the current browser session",
+		Parameters: []*huma.Param{{Name: "duration_bucket", In: "query",
+			Description: "Final visible session duration to report before revocation. Missing or invalid values emit no event.",
+			Schema:      &huma.Schema{Type: openAPIStringType, Enum: []any{"under_1m", "1_to_5m", "5_to_30m", "over_30m"}}}},
 		Responses: map[string]*huma.Response{"204": {Description: "Session revoked"}},
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{

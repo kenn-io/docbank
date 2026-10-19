@@ -20355,6 +20355,17 @@ paths:
   /api/daemon/web-session:
     delete:
       operationId: revokeWebSession
+      parameters:
+        - description: Final visible session duration to report before revocation. Missing or invalid values emit no event.
+          in: query
+          name: duration_bucket
+          schema:
+            enum:
+              - under_1m
+              - 1_to_5m
+              - 5_to_30m
+              - over_30m
+            type: string
       responses:
         "204":
           description: Session revoked

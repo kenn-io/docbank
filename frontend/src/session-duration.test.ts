@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { startSessionReporting } from "./session-duration.js";
 
 describe("session_ended reporting", () => {
-  let stop: (() => Promise<void>) | undefined;
+  let reporting: ReturnType<typeof startSessionReporting> | undefined;
   let now: number;
   let hidden: boolean;
   let fetchMock: MockInstance<typeof fetch>;
@@ -20,8 +20,8 @@ describe("session_ended reporting", () => {
   });
 
   afterEach(() => {
-    void stop?.();
-    stop = undefined;
+    reporting?.stop();
+    reporting = undefined;
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -48,16 +48,16 @@ describe("session_ended reporting", () => {
 
   it("reports nothing for a hidden-only page", async () => {
     hidden = true;
-    stop = startSessionReporting("secret");
+    reporting = startSessionReporting("secret");
     now = 3_600_000;
     await vi.advanceTimersByTimeAsync(3_600_000);
     window.dispatchEvent(new Event("pagehide"));
-    await stop();
+    reporting.stop();
     expect(sessionReports()).toHaveLength(0);
   });
 
   it("sums twenty one-minute visible stretches into one session", async () => {
-    stop = startSessionReporting("secret");
+    reporting = startSessionReporting("secret");
     for (let i = 0; i < 20; i++) {
       now += 60_000;
       visibility(true);
@@ -67,12 +67,12 @@ describe("session_ended reporting", () => {
       visibility(false);
     }
     window.dispatchEvent(new Event("pagehide"));
-    await stop();
+    reporting.stop();
     expectBucket("5_to_30m");
   });
 
   it("ends the session after thirty hidden minutes without a second pagehide report", async () => {
-    stop = startSessionReporting("secret");
+    reporting = startSessionReporting("secret");
     now = 120_000;
     visibility(true);
     now += 1_800_000;
@@ -81,7 +81,7 @@ describe("session_ended reporting", () => {
     await vi.advanceTimersByTimeAsync(1);
     expectBucket("1_to_5m");
     window.dispatchEvent(new Event("pagehide"));
-    await stop();
+    reporting.stop();
     expectBucket("1_to_5m");
   });
 
@@ -94,10 +94,10 @@ describe("session_ended reporting", () => {
     [1_800_000, "5_to_30m"],
     [1_800_001, "over_30m"],
   ])("buckets %i visible milliseconds as %s", async (elapsed, bucket) => {
-    stop = startSessionReporting("secret");
+    reporting = startSessionReporting("secret");
     now = Number(elapsed);
     window.dispatchEvent(new Event("pagehide"));
-    await stop();
+    reporting.stop();
     expectBucket(String(bucket));
   });
 
@@ -106,7 +106,7 @@ describe("session_ended reporting", () => {
     ["visibilitychange with a suspended timer", 240_000, "1_to_5m"],
     ["pageshow with a suspended timer", 240_000, "1_to_5m"],
   ])("starts a fresh session on %s", async (resume, elapsed, bucket) => {
-    stop = startSessionReporting("secret");
+    reporting = startSessionReporting("secret");
     now = 120_000;
     if (resume === "bfcache restore") window.dispatchEvent(new Event("pagehide"));
     else visibility(true);
@@ -119,16 +119,35 @@ describe("session_ended reporting", () => {
     }
     now += Number(elapsed);
     window.dispatchEvent(new Event("pagehide"));
-    await stop();
+    reporting.stop();
     expect(
       sessionReports().map(([, init]) => JSON.parse(String(init?.body)).properties.duration_bucket),
     ).toEqual(["1_to_5m", bucket]);
   });
 
+  it("takes the final bucket without reporting it again during cleanup", () => {
+    reporting = startSessionReporting("secret");
+    now = 120_000;
+    visibility(true);
+    expect(reporting.take()).toBe("1_to_5m");
+    expect(reporting.take()).toBeUndefined();
+    reporting.stop();
+    window.dispatchEvent(new Event("pagehide"));
+    vi.advanceTimersByTime(1_800_000);
+    expect(sessionReports()).toHaveLength(0);
+  });
+
+  it("takes no bucket without visible time", () => {
+    reporting = startSessionReporting("secret");
+    expect(reporting.take()).toBeUndefined();
+    reporting.stop();
+    expect(sessionReports()).toHaveLength(0);
+  });
+
   it.each([false, true])(
-    "stop waits for the pending send and never rejects, failure=%s",
+    "disposes without waiting for a pending report, failure=%s",
     async (failure) => {
-      stop = startSessionReporting("secret");
+      reporting = startSessionReporting("secret");
       let resolve!: (response: Response) => void;
       let reject!: (cause: Error) => void;
       fetchMock.mockImplementationOnce(
@@ -139,21 +158,15 @@ describe("session_ended reporting", () => {
           }),
       );
       now = 120_000;
-      visibility(true);
-      const stopped = vi.fn();
-      const pending = stop().then(stopped);
+      expect(reporting.stop()).toBeUndefined();
       expectBucket("1_to_5m");
-      await vi.advanceTimersByTimeAsync(0);
-      expect(stopped).not.toHaveBeenCalled();
       if (failure) reject(new Error("offline"));
       else resolve(new Response('{"status":"queued"}', { status: 202 }));
-      await pending;
-      expect(stopped).toHaveBeenCalledOnce();
       visibility(false);
       now += 120_000;
       window.dispatchEvent(new Event("pagehide"));
       await vi.advanceTimersByTimeAsync(1_800_000);
-      await stop();
+      reporting.stop();
       expectBucket("1_to_5m");
     },
   );

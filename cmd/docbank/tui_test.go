@@ -46,7 +46,7 @@ func TestSendTUISessionEnded(t *testing.T) {
 }
 
 func TestReportTUISessionEndedQueuesSend(t *testing.T) {
-	started := make(chan struct{})
+	started := make(chan context.Context, 1)
 	release := make(chan struct{})
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
@@ -55,7 +55,7 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
 		assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
-		close(started)
+		started <- r.Context()
 		<-release
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
@@ -65,23 +65,21 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 		close(release)
 		telemetrySends.Wait(time.Second)
 	})
-	before := time.Now()
 	reportTUISessionEnded(2 * time.Minute)
-	assert.Less(t, time.Since(before), 250*time.Millisecond, "reporting blocked the caller")
+	var requestCtx context.Context
 	select {
-	case <-started:
+	case requestCtx = <-started:
 	case <-time.After(time.Second):
 		t.Fatal("queued report did not reach the daemon")
 	}
 
 	resetFlags(rootCmd)
-	before = time.Now()
 	assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
-	assert.Less(t, time.Since(before), 250*time.Millisecond, "exit waited for the stalled report")
+	assert.NoError(t, requestCtx.Err(), "exit waited until the stalled request timed out")
 }
 
 func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {
-	for _, delay := range []time.Duration{10 * time.Millisecond, time.Second} {
+	for _, delay := range []time.Duration{0, 10 * time.Millisecond, time.Second} {
 		t.Run(delay.String(), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				completed := make(chan struct{})
@@ -89,6 +87,9 @@ func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {
 					time.Sleep(delay)
 					close(completed)
 				})
+				if delay == 0 {
+					synctest.Wait()
+				}
 				resetFlags(rootCmd)
 				before := time.Now()
 				assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))

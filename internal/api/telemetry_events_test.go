@@ -76,6 +76,88 @@ func TestTelemetryEventRouteAbsentWithoutCapture(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status, body)
 }
 
+func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
+	if posthog.ProcessDisabled() {
+		t.Skip("built with kit_posthog_disabled")
+	}
+	for _, tc := range []struct {
+		name     string
+		bucket   string
+		disabled bool
+		missing  bool
+		want     bool
+	}{
+		{name: "short", bucket: "under_1m", want: true},
+		{name: "one to five minutes", bucket: "1_to_5m", want: true},
+		{name: "five to thirty minutes", bucket: "5_to_30m", want: true},
+		{name: "long", bucket: "over_30m", want: true},
+		{name: "missing bucket"},
+		{name: "invalid bucket", bucket: "bogus"},
+		{name: "disabled telemetry", bucket: "1_to_5m", disabled: true},
+		{name: "missing reporter", bucket: "1_to_5m", missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(telemetry.EnabledEnv, "1")
+			t.Setenv(posthog.GenericEnabledEnv, "1")
+			if tc.disabled {
+				t.Setenv(telemetry.EnabledEnv, "0")
+			}
+			var mu sync.Mutex
+			var events []struct {
+				Event      string         `json:"event"`
+				Properties map[string]any `json:"properties"`
+			}
+			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var batch struct {
+					Batch []struct {
+						Event      string         `json:"event"`
+						Properties map[string]any `json:"properties"`
+					} `json:"batch"`
+				}
+				assert.NoError(t, json.UnmarshalRead(r.Body, &batch))
+				mu.Lock()
+				events = append(events, batch.Batch...)
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(collector.Close)
+			reporter, err := posthog.NewReporter(posthog.Options{
+				APIKey: "synthetic-api-key", Endpoint: collector.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
+			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
+				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
+				posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+			ts, _ := newTestServer(t, func(d *api.Deps) {
+				if !tc.missing {
+					d.TelemetryReporter = reporter
+				}
+			})
+			session := issueWebSession(t, ts)
+			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
+			url := ts.URL + "/api/daemon/web-session"
+			if tc.bucket != "" {
+				url += "?duration_bucket=" + tc.bucket
+			}
+			status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
+			require.Equal(t, http.StatusNoContent, status, body)
+			status, body = postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
+			require.Equal(t, http.StatusUnauthorized, status, body)
+			require.NoError(t, reporter.Close())
+			mu.Lock()
+			defer mu.Unlock()
+			if !tc.want {
+				require.Empty(t, events)
+				return
+			}
+			require.Len(t, events, 1)
+			assert.Equal(t, "session_ended", events[0].Event)
+			assert.Equal(t, "web", events[0].Properties["surface"])
+			assert.Equal(t, tc.bucket, events[0].Properties["duration_bucket"])
+		})
+	}
+}
+
 func TestScreenViewedTelemetryEventRoute(t *testing.T) {
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
