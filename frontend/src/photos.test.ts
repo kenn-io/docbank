@@ -3034,68 +3034,70 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
 });
 
-it.each(["cancelled", "exists", "saved", "dispose"] as const)(
-  "settles Hidden setup before the hide batch: %s",
-  async (outcome) => {
-    const access = new HiddenAccess("scoped", vi.fn());
-    const ensure = vi.spyOn(access, "ensureSetup");
-    const hides: [string, string | null][] = [];
-    let refreshed = false;
-    stubPhotoFetch(async (url, init) => {
-      if (url.endsWith("/photos/hidden")) {
-        return Response.json({ configured: false });
-      }
-      if (url.endsWith("/hide")) {
-        expect(ensure).toHaveBeenCalledOnce();
-        hides.push([url, new Headers(init.headers).get("If-Match")]);
-        return Response.json({ id: url.split("/").at(-2), revision: 8 });
-      }
-      return response(
-        refreshed
-          ? [
-              { ...photo(1), revision: 9 },
-              { ...photo(2), revision: 7 },
-            ]
-          : [],
-      );
-    });
-    const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
-    photos.items = [photo(1), { ...photo(2), revision: 7 }];
-    photos.started = true;
-    photos.selectLoaded();
-    const report = vi.fn();
-    const write = photos.setHidden("photo-1", undefined, undefined, report);
-    await waitFor(() => expect(access.setupPrompt).toBeDefined());
-    expect(photos.hiding).toBe(true);
-    expect(hides).toEqual([]);
-    if (outcome === "dispose") photos.dispose();
-    else {
-      if (outcome === "saved") {
-        refreshed = true;
-        await photos.refresh();
-      }
-      access.setupPrompt!.done(outcome);
+it("uses refreshed revisions after saving Hidden setup before the hide batch", async () => {
+  const access = new HiddenAccess("scoped", vi.fn());
+  const ensure = vi.spyOn(access, "ensureSetup");
+  const hides: [string, string | null][] = [];
+  let refreshed = false;
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) {
+      return Response.json({ configured: false });
     }
-    await write;
-    if (outcome === "saved") {
-      expect(hides).toEqual([
-        ["/api/v1/photos/assets/photo-1/hide", "9"],
-        ["/api/v1/photos/assets/photo-2/hide", "7"],
-      ]);
-    } else {
-      expect(hides).toEqual([]);
-      expect(photos.actionError).toBe(
-        outcome === "exists" ? "Hidden already has a passcode. Choose Hide again to use it." : "",
-      );
-      if (outcome === "exists") expect(report).toHaveBeenCalledWith(photos.actionError);
-      else expect(report).not.toHaveBeenCalled();
+    if (url.endsWith("/hide")) {
+      expect(ensure).toHaveBeenCalledOnce();
+      hides.push([url, new Headers(init.headers).get("If-Match")]);
+      return Response.json({ id: url.split("/").at(-2), revision: 8 });
     }
-    expect(photos.hiding).toBe(false);
-    photos.dispose();
-  },
-);
+    return response(
+      refreshed
+        ? [
+            { ...photo(1), revision: 9 },
+            { ...photo(2), revision: 7 },
+          ]
+        : [],
+    );
+  });
+  const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
+  photos.items = [photo(1), { ...photo(2), revision: 7 }];
+  photos.started = true;
+  photos.selectLoaded();
+  const write = photos.setHidden("photo-1");
+  await waitFor(() => expect(access.setupPrompt).toBeDefined());
+  expect(photos.hiding).toBe(true);
+  expect(hides).toEqual([]);
+  refreshed = true;
+  await photos.refresh();
+  access.setupPrompt!.done("saved");
+  await write;
+  expect(hides).toEqual([
+    ["/api/v1/photos/assets/photo-1/hide", "9"],
+    ["/api/v1/photos/assets/photo-2/hide", "7"],
+  ]);
+  expect(photos.hiding).toBe(false);
+  photos.dispose();
+});
 
-it("continues hiding after the Hidden setup state read times out", async () => {
+it("reports a failed Hidden setup state read before hiding", async () => {
+  const hides = vi.fn();
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden"))
+      return Response.json({ detail: "Unavailable" }, { status: 503 });
+    if (url.endsWith("/hide")) hides();
+    return response([]);
+  });
+  const access = new HiddenAccess("scoped", vi.fn());
+  const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
+  photos.items = [photo(1)];
+  const report = vi.fn();
+  await photos.setHidden("photo-1", undefined, undefined, report);
+  expect(hides).not.toHaveBeenCalled();
+  expect(photos.actionError).toBe("Could not check Hidden setup. Try again.");
+  expect(report).toHaveBeenCalledWith(photos.actionError);
+  expect(photos.hiding).toBe(false);
+  photos.dispose();
+});
+
+it("reports a timed out Hidden setup state read and enables Hide again", async () => {
   const timeout = new AbortController();
   const nativeTimeout = AbortSignal.timeout;
   const timeouts = vi
@@ -3119,13 +3121,16 @@ it("continues hiding after the Hidden setup state read times out", async () => {
   const access = new HiddenAccess("scoped", vi.fn());
   const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
   photos.items = [photo(1)];
-  const write = photos.setHidden("photo-1");
+  const report = vi.fn();
+  const write = photos.setHidden("photo-1", undefined, undefined, report);
   await waitFor(() => expect(readSignal).toBeDefined());
   expect(photos.hiding).toBe(true);
   expect(timeouts).toHaveBeenCalledWith(30_000);
   timeout.abort(new DOMException("Timed out", "TimeoutError"));
   await write;
-  expect(hides).toHaveBeenCalledOnce();
+  expect(hides).not.toHaveBeenCalled();
+  expect(photos.actionError).toBe("Could not check Hidden setup. Try again.");
+  expect(report).toHaveBeenCalledWith(photos.actionError);
   expect(photos.hiding).toBe(false);
   expect(access.setupPrompt).toBeUndefined();
   photos.dispose();

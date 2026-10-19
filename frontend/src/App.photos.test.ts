@@ -3488,7 +3488,11 @@ async function startHideSetup() {
         configured = true;
       return result;
     }
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured });
+    if (url.endsWith("/photos/hidden"))
+      return Response.json({
+        configured,
+        change_id: hidden.size ? String(hidden.size) : undefined,
+      });
     if (url.endsWith("/hide")) {
       if (!configured) return Response.json({ code: "hidden_not_configured" }, { status: 409 });
       const id = url.split("/").at(-2)!;
@@ -3534,8 +3538,31 @@ async function hideSetupFlow() {
 }
 
 it("sets a Hidden passcode before hiding the selection and leaves Hidden locked", async () => {
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      poll = callback as () => void;
+      return 0 as unknown as ReturnType<typeof setInterval>;
+    }
+    return interval(callback, delay, ...args);
+  });
   const { photos, submit, hidden, fetcher } = await hideSetupFlow();
+  const fetch = fetcher.getMockImplementation()!;
+  let finish!: () => void;
+  fetcher.mockImplementation(async (url, init) => {
+    const response = await fetch(url, init);
+    if (url.endsWith("/photo-1/hide")) await new Promise<void>((resolve) => (finish = resolve));
+    return response;
+  });
   await submit();
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect([...hidden]).toEqual(["photo-1"]);
+  const invalidate = vi.spyOn(photos, "cancelPending");
+  await act(() => poll());
+  await waitFor(() => expect(invalidate).toHaveBeenCalled());
+  expect(photos.hiding).toBe(true);
+  finish();
   await waitFor(() => expect(photos.hiding).toBe(false));
   const setup = fetcher.mock.calls.find(([url]) => url.endsWith("/photos/hidden/setup"));
   expect(JSON.parse(setup![1].body as string)).toEqual({ passcode: "synthetic-passcode" });
@@ -3548,13 +3575,20 @@ it("sets a Hidden passcode before hiding the selection and leaves Hidden locked"
 
 it("keeps an invalid passcode open for retry after a 422 response", async () => {
   const { photos, dialog, submit, hidden, setSave } = await hideSetupFlow();
-  setSave(async () =>
+  let finish!: (response: Response) => void;
+  setSave(() => new Promise<Response>((resolve) => (finish = resolve)));
+  await submit();
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await fireEvent.keyDown(document, { key: "Escape" });
+  finish(
     Response.json(
       { code: "invalid_hidden_passcode", detail: "Use a different passcode." },
       { status: 422 },
     ),
   );
-  await submit();
+  await waitFor(() =>
+    expect(screen.getByRole("dialog", { name: "Set a Hidden passcode" })).toBe(dialog),
+  );
   expect(await within(dialog).findByText("Use a different passcode.")).toBeTruthy();
   expect(hidden.size).toBe(0);
   setSave(async () => Response.json({ configured: true }));

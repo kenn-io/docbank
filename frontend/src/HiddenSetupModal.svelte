@@ -12,6 +12,10 @@
   const focusPasscode = () => document.getElementById("hidden-setup-passcode")?.focus();
   onMount(focusPasscode);
 
+  function cancel() {
+    if (!busy) access.cancelSetup();
+  }
+
   async function save() {
     if (busy) return;
     passcodeError = passcodeValidation(passcode, "Enter a passcode.");
@@ -24,7 +28,7 @@
       passcode = "";
       prompt?.done("saved");
     } catch (cause) {
-      if (cause instanceof APIError && cause.status === 401) {
+      if (prompt?.signal.aborted || (cause instanceof APIError && cause.status === 401)) {
         prompt?.done("cancelled");
         return;
       }
@@ -38,12 +42,7 @@
   }
 </script>
 
-<Modal
-  title="Set a Hidden passcode"
-  onclose={() => access.cancelSetup()}
-  closable={!busy}
-  closeOnOverlayClick={!busy}
->
+<Modal title="Set a Hidden passcode" onclose={cancel} closable={!busy} closeOnOverlayClick={!busy}>
   <form
     onsubmit={(event) => {
       event.preventDefault();
@@ -69,7 +68,7 @@
   </form>
   {#if error}<p role="alert">{error}</p>{/if}
   {#snippet footer()}
-    <Button disabled={busy} onclick={() => access.setupPrompt?.done("cancelled")}>Cancel</Button>
+    <Button disabled={busy} onclick={cancel}>Cancel</Button>
     <Button tone="info" disabled={busy} onclick={() => void save()}
       >{busy ? "Saving…" : "Set passcode and hide"}</Button
     >

@@ -8,7 +8,7 @@ export function passcodeValidation(value: string, empty: string) {
       ? "Use 1 to 1,024 bytes."
       : "";
 }
-type SetupResult = "ready" | "saved" | "exists" | "cancelled";
+type SetupResult = "ready" | "saved" | "exists" | "cancelled" | "failed";
 
 export class HiddenAccess {
   lockError = $state("");
@@ -36,6 +36,7 @@ export class HiddenAccess {
       if (state.configured) return "ready";
       return await new Promise<SetupResult>((resolve) => {
         const done = (result: SetupResult) => {
+          if (this.setupPrompt?.done !== done) return;
           signal.removeEventListener("abort", abort);
           this.setupPrompt = undefined;
           resolve(result);
@@ -47,7 +48,7 @@ export class HiddenAccess {
         signal.addEventListener("abort", abort, { once: true });
       });
     } catch {
-      return signal.aborted ? "cancelled" : "ready";
+      return signal.aborted ? "cancelled" : "failed";
     } finally {
       this.setupAbort = undefined;
     }
@@ -65,7 +66,6 @@ export class HiddenAccess {
         ),
       );
     } catch (cause) {
-      if (this.setupPrompt?.signal.aborted) this.setupPrompt.done("cancelled");
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
       throw cause;
     } finally {
