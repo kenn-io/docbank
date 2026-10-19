@@ -21,7 +21,7 @@ func TestTelemetryEventBrowserAllowlist(t *testing.T) {
 		httptest.NewRequest(http.MethodDelete, webSessionPath+"?extra=1", nil),
 		httptest.NewRequest(http.MethodDelete, webSessionPath+"?duration_bucket=1_to_5m&extra=1", nil),
 		httptest.NewRequest(http.MethodDelete, webSessionPath+"?duration_bucket=1_to_5m&duration_bucket=over_30m", nil),
-		httptest.NewRequest(http.MethodDelete, webSessionPath+"?duration_bucket=%ZZ", nil),
+		httptest.NewRequest(http.MethodDelete, webSessionPath+"?duration_bucket=1_to_5m&x=%ZZ", nil),
 		httptest.NewRequest(http.MethodGet, telemetryEventsPath, nil),
 		httptest.NewRequest(http.MethodPost, telemetryEventsPath+"?x=1", nil),
 		httptest.NewRequest(http.MethodPost, telemetryEventsPath+"/extra", nil),

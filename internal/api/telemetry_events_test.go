@@ -126,21 +126,16 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(telemetry.EnabledEnv, "1")
 			t.Setenv(posthog.GenericEnabledEnv, "1")
-			var reporter *telemetry.Reporter
-			var collected func() []collectedTelemetryEvent
-			if tc.bucket == "bogus" {
-				reporter = telemetry.New(telemetry.Options{Dir: t.TempDir()})
-			} else {
-				var endpoint string
-				endpoint, collected = newTelemetryCollector(t)
-				var err error
-				reporter, err = posthog.NewReporter(posthog.Options{
-					APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
-				}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-					posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-					posthog.RequireProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
-				require.NoError(t, err)
-			}
+			endpoint, collected := newTelemetryCollector(t)
+			reporter, err := posthog.NewReporter(posthog.Options{
+				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
+			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
+				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
+				posthog.RequireProperty("duration_bucket", func(value any) (any, bool) {
+					bucket, ok := value.(string)
+					return bucket, ok && bucket != "bogus"
+				})))
+			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 			ts, _ := newTestServer(t, func(d *api.Deps) {
 				d.Logger = logger
@@ -160,9 +155,7 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			}
 			require.NoError(t, reporter.Close())
 			if !tc.want {
-				if collected != nil {
-					require.Empty(t, collected())
-				}
+				require.Empty(t, collected())
 				if !tc.master {
 					data, err := os.ReadFile(logs.Name())
 					require.NoError(t, err)

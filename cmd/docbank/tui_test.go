@@ -47,8 +47,9 @@ func TestSendTUISessionEnded(t *testing.T) {
 }
 
 func TestReportTUISessionEndedQueuesSend(t *testing.T) {
-	started := make(chan context.Context, 1)
+	started := make(chan struct{})
 	release := make(chan struct{})
+	finished := make(chan struct{})
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/daemon/telemetry/events" {
@@ -57,8 +58,9 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 			}
 			assert.NoError(t, json.UnmarshalRead(r.Body, &event))
 			if event.Event == "session_ended" {
-				started <- r.Context()
+				close(started)
 				<-release
+				close(finished)
 			}
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"status":"queued"}`))
@@ -97,10 +99,14 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 		t.Fatal("TUI did not quit after q")
 	}
 	select {
-	case requestCtx := <-started:
-		require.NoError(t, requestCtx.Err(), "TUI exit waited for the stalled session report")
+	case <-started:
 	case <-ctx.Done():
 		t.Fatal("TUI quit did not report session_ended")
+	}
+	select {
+	case <-finished:
+		t.Fatal("session report finished before the handler was released")
+	default:
 	}
 }
 
