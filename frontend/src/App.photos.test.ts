@@ -3537,7 +3537,7 @@ async function hideSetupFlow() {
   };
 }
 
-it("sets a Hidden passcode before hiding the selection and leaves Hidden locked", async () => {
+it("prompts after polling configured=false, sets a passcode, and hides with Hidden locked", async () => {
   const { photos, submit, hidden, fetcher } = await hideSetupFlow();
   await submit();
   await waitFor(() => expect(photos.hiding).toBe(false));

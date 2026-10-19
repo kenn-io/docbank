@@ -1,4 +1,4 @@
-import { getPhotoHiddenState, lockPhotoHidden, setupPhotoHidden } from "./generated/docbank.js";
+import { lockPhotoHidden, setupPhotoHidden } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 
 export function passcodeValidation(value: string, empty: string) {
@@ -8,9 +8,10 @@ export function passcodeValidation(value: string, empty: string) {
       ? "Use 1 to 1,024 bytes."
       : "";
 }
-type SetupResult = "ready" | "saved" | "exists" | "cancelled" | "failed";
+type SetupResult = "ready" | "saved" | "exists" | "cancelled";
 
 export class HiddenAccess {
+  configured = $state<boolean>();
   lockError = $state("");
   setupPrompt = $state<{ done: (result: SetupResult) => void; signal: AbortSignal }>();
   private setupAbort?: AbortController;
@@ -24,16 +25,12 @@ export class HiddenAccess {
   ) {}
 
   async ensureSetup(lifetime: AbortSignal): Promise<SetupResult> {
+    if (lifetime.aborted) return "cancelled";
+    if (this.configured !== false) return "ready";
     if (this.setupAbort) return "cancelled";
     const controller = (this.setupAbort = new AbortController());
     const signal = AbortSignal.any([lifetime, controller.signal]);
     try {
-      const state = await getPhotoHiddenState({
-        session: this.session,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-      });
-      if (signal.aborted) return "cancelled";
-      if (state.configured) return "ready";
       return await new Promise<SetupResult>((resolve) => {
         const done = (result: SetupResult) => {
           if (this.setupPrompt?.done !== done) return;
@@ -47,8 +44,6 @@ export class HiddenAccess {
         this.setupPrompt = { done, signal };
         signal.addEventListener("abort", abort, { once: true });
       });
-    } catch {
-      return signal.aborted ? "cancelled" : "failed";
     } finally {
       this.setupAbort = undefined;
     }
@@ -56,15 +51,16 @@ export class HiddenAccess {
   cancelSetup() {
     this.setupAbort?.abort();
   }
+  setupPasscode(passcode: string) {
+    return setupPhotoHidden(
+      { passcode },
+      { session: this.session, signal: AbortSignal.timeout(30_000) },
+    );
+  }
   async createPasscode(passcode: string) {
     this.setupSaving = true;
     try {
-      return await this.run(() =>
-        setupPhotoHidden(
-          { passcode },
-          { session: this.session, signal: AbortSignal.timeout(30_000) },
-        ),
-      );
+      return await this.run(() => this.setupPasscode(passcode));
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
       throw cause;

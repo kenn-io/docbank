@@ -807,13 +807,10 @@ export class Photos {
     this.hiding = true;
     if (!this.hidden && this.hiddenAccess) {
       const result = await this.hiddenAccess.ensureSetup(this.lifetime.signal);
-      if (this.disposed || result === "cancelled" || result === "exists" || result === "failed") {
+      if (this.disposed || result === "cancelled" || result === "exists") {
         this.hiding = false;
-        if (result === "exists" || result === "failed") {
-          this.actionError =
-            result === "failed"
-              ? "Could not check Hidden setup. Try again."
-              : "Hidden already has a passcode. Choose Hide again to use it.";
+        if (result === "exists") {
+          this.actionError = "Hidden already has a passcode. Choose Hide again to use it.";
           onactionerror?.(this.actionError);
         } else if (this.disposed && result === "saved") {
           onactionerror?.("Hidden passcode saved. Choose Hide again.");

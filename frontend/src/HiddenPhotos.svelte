@@ -3,7 +3,6 @@
   import { Button, FormField, Spinner } from "@kenn-io/kit-ui";
   import {
     getPhotoHiddenState,
-    setupPhotoHidden,
     unlockPhotoHidden,
     changePhotoHidden,
     disablePhotoHidden,
@@ -256,8 +255,7 @@
       else
         await access.run(async () => {
           if (kind === "enter") {
-            if (!submitted.configured)
-              await setupPhotoHidden({ passcode: submitted.passcode }, options());
+            if (!submitted.configured) await access.setupPasscode(submitted.passcode);
             await unlockPhotoHidden({ passcode: submitted.passcode }, options());
           } else if (kind === "change")
             await changePhotoHidden(

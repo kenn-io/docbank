@@ -487,6 +487,7 @@
     return revalidated;
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
+    if (hiddenAccess) hiddenAccess.configured = result.configured;
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && changed) await invalidateLibrary(false);

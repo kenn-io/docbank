@@ -3036,15 +3036,11 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
 
 it("uses refreshed revisions after saving Hidden setup before the hide batch", async () => {
   const access = new HiddenAccess("scoped", vi.fn());
-  const ensure = vi.spyOn(access, "ensureSetup");
+  access.configured = false;
   const hides: [string, string | null][] = [];
   let refreshed = false;
   stubPhotoFetch(async (url, init) => {
-    if (url.endsWith("/photos/hidden")) {
-      return Response.json({ configured: false });
-    }
     if (url.endsWith("/hide")) {
-      expect(ensure).toHaveBeenCalledOnce();
       hides.push([url, new Headers(init.headers).get("If-Match")]);
       return Response.json({ id: url.split("/").at(-2), revision: 8 });
     }
@@ -3077,41 +3073,25 @@ it("uses refreshed revisions after saving Hidden setup before the hide batch", a
   photos.dispose();
 });
 
-it("reports a timed out Hidden setup state read and enables Hide again", async () => {
-  const timeout = new AbortController();
-  const nativeTimeout = AbortSignal.timeout;
-  const timeouts = vi
-    .spyOn(AbortSignal, "timeout")
-    .mockImplementation((ms) => (ms === 30_000 ? timeout.signal : nativeTimeout(ms)));
-  let readSignal: AbortSignal | undefined;
-  const hides = vi.fn();
-  stubPhotoFetch(async (url, init) => {
-    if (url.endsWith("/photos/hidden")) {
-      readSignal = init.signal!;
-      return new Promise<Response>((_resolve, reject) =>
-        readSignal!.addEventListener("abort", () => reject(readSignal!.reason), { once: true }),
-      );
-    }
-    if (url.endsWith("/hide")) {
-      hides();
+it.each([true, undefined])(
+  "hides without a setup prompt when configured=%s",
+  async (configured) => {
+    const hides: [string, string | null][] = [];
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/assets/query")) return response([]);
+      if (!url.endsWith("/hide")) throw new Error(`Unexpected request: ${url}`);
+      hides.push([url, new Headers(init.headers).get("If-Match")]);
       return Response.json({ id: "photo-1", revision: 2 });
-    }
-    return response([]);
-  });
-  const access = new HiddenAccess("scoped", vi.fn());
-  const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
-  photos.items = [photo(1)];
-  const report = vi.fn();
-  const write = photos.setHidden("photo-1", undefined, undefined, report);
-  await waitFor(() => expect(readSignal).toBeDefined());
-  expect(photos.hiding).toBe(true);
-  expect(timeouts).toHaveBeenCalledWith(30_000);
-  timeout.abort(new DOMException("Timed out", "TimeoutError"));
-  await write;
-  expect(hides).not.toHaveBeenCalled();
-  expect(photos.actionError).toBe("Could not check Hidden setup. Try again.");
-  expect(report).toHaveBeenCalledWith(photos.actionError);
-  expect(photos.hiding).toBe(false);
-  expect(access.setupPrompt).toBeUndefined();
-  photos.dispose();
-});
+    });
+    const access = new HiddenAccess("scoped", vi.fn());
+    access.configured = configured;
+    const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
+    photos.items = [photo(1)];
+    await photos.setHidden("photo-1");
+    expect(hides).toEqual([["/api/v1/photos/assets/photo-1/hide", "1"]]);
+    expect(photos.actionError).toBe("");
+    expect(photos.hiding).toBe(false);
+    expect(access.setupPrompt).toBeUndefined();
+    photos.dispose();
+  },
+);
