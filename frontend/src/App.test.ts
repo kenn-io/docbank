@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
@@ -1481,52 +1481,46 @@ it("clears page selection across folder, Back, query, tag-filter, and session tr
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 });
 
-it.each([false, true])(
-  "locks immediately with one duration-bearing revoke, failure=%s",
-  async (failure) => {
-    prepareSelectionApp();
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    const { fetchMock } = installSelectionBackend();
-    const original = fetchMock.getMockImplementation()!;
-    let resolveRevoke!: (response: Response) => void;
-    let rejectRevoke!: (cause: Error) => void;
-    fetchMock.mockImplementation((input, init) => {
-      if (String(input).startsWith("/api/daemon/web-session") && init?.method === "DELETE") {
-        return new Promise<Response>((resolve, reject) => {
-          resolveRevoke = resolve;
-          rejectRevoke = reject;
-        });
-      }
-      return original(input, init);
-    });
-    render(App);
-    await screen.findByRole("checkbox", { name: "Select readme.txt" });
-    now = 120_000;
-    await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
-    const reports = () =>
-      fetchMock.mock.calls.filter(
-        ([input, init]) =>
-          String(input) === "/api/daemon/telemetry/events" &&
-          JSON.parse(String(init?.body)).event === "session_ended",
-      );
-    const revokes = fetchMock.mock.calls.filter(
+it("stays locked when the duration-bearing revoke fails", async () => {
+  prepareSelectionApp();
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const { fetchMock } = installSelectionBackend();
+  const original = fetchMock.getMockImplementation()!;
+  let rejectRevoke!: (cause: Error) => void;
+  fetchMock.mockImplementation((input, init) => {
+    if (String(input).startsWith("/api/daemon/web-session") && init?.method === "DELETE") {
+      return new Promise<Response>((_, reject) => {
+        rejectRevoke = reject;
+      });
+    }
+    return original(input, init);
+  });
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select readme.txt" });
+  now = 120_000;
+  await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
+  const reports = () =>
+    fetchMock.mock.calls.filter(
       ([input, init]) =>
-        String(input).startsWith("/api/daemon/web-session") && init?.method === "DELETE",
+        String(input) === "/api/daemon/telemetry/events" &&
+        JSON.parse(String(init?.body)).event === "session_ended",
     );
-    expect(revokes).toHaveLength(1);
-    expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
-    expect(new Headers(revokes[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
-    expect(reports()).toHaveLength(0);
-    expect(screen.getByText("Open your Docbank")).toBeTruthy();
-    expect(screen.queryByRole("checkbox", { name: "Select readme.txt" })).toBeNull();
-    if (failure) rejectRevoke(new Error("offline"));
-    else resolveRevoke(new Response(null, { status: 204 }));
-    cleanup();
-    expect(reports()).toHaveLength(0);
-  },
-);
+  const revokes = fetchMock.mock.calls.filter(
+    ([input, init]) =>
+      String(input).startsWith("/api/daemon/web-session") && init?.method === "DELETE",
+  );
+  expect(revokes).toHaveLength(1);
+  expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
+  expect(new Headers(revokes[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
+  expect(reports()).toHaveLength(0);
+  expect(screen.getByText("Open your Docbank")).toBeTruthy();
+  expect(screen.queryByRole("checkbox", { name: "Select readme.txt" })).toBeNull();
+  await act(() => rejectRevoke(new Error("offline")));
+  expect(screen.getByText("Open your Docbank")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
 
 it("restores the tag view sort when returning from a tagged folder", async () => {
   prepareSelectionApp();

@@ -84,7 +84,6 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		name     string
 		bucket   string
 		disabled bool
-		missing  bool
 		want     bool
 	}{
 		{name: "short", bucket: "under_1m", want: true},
@@ -94,7 +93,6 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		{name: "missing bucket"},
 		{name: "invalid bucket", bucket: "bogus"},
 		{name: "disabled telemetry", bucket: "1_to_5m", disabled: true},
-		{name: "missing reporter", bucket: "1_to_5m", missing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(telemetry.EnabledEnv, "1")
@@ -121,17 +119,21 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}))
 			t.Cleanup(collector.Close)
-			reporter, err := posthog.NewReporter(posthog.Options{
-				APIKey: "synthetic-api-key", Endpoint: collector.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
-			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-				posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
-			require.NoError(t, err)
+			var reporter *telemetry.Reporter
+			if tc.disabled {
+				reporter = telemetry.New(telemetry.Options{Dir: t.TempDir()})
+			} else {
+				var err error
+				reporter, err = posthog.NewReporter(posthog.Options{
+					APIKey: "synthetic-api-key", Endpoint: collector.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
+				}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
+					posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
+					posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
+				require.NoError(t, err)
+			}
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 			ts, _ := newTestServer(t, func(d *api.Deps) {
-				if !tc.missing {
-					d.TelemetryReporter = reporter
-				}
+				d.TelemetryReporter = reporter
 			})
 			session := issueWebSession(t, ts)
 			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}

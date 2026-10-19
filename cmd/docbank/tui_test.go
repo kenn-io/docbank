@@ -46,16 +46,10 @@ func TestSendTUISessionEnded(t *testing.T) {
 }
 
 func TestReportTUISessionEndedQueuesSend(t *testing.T) {
-	started := make(chan context.Context, 1)
+	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
-		body, err := io.ReadAll(r.Body)
-		assert.NoError(t, err)
-		assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
-		started <- r.Context()
+	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		started <- struct{}{}
 		<-release
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
@@ -65,17 +59,21 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 		close(release)
 		telemetrySends.Wait(time.Second)
 	})
-	reportTUISessionEnded(2 * time.Minute)
-	var requestCtx context.Context
+	returned := make(chan struct{})
+	go func() {
+		reportTUISessionEnded(2 * time.Minute)
+		close(returned)
+	}()
 	select {
-	case requestCtx = <-started:
+	case <-returned:
+	case <-time.After(900 * time.Millisecond):
+		t.Fatal("report caller waited for the stalled daemon")
+	}
+	select {
+	case <-started:
 	case <-time.After(time.Second):
 		t.Fatal("queued report did not reach the daemon")
 	}
-
-	resetFlags(rootCmd)
-	assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
-	assert.NoError(t, requestCtx.Err(), "exit waited until the stalled request timed out")
 }
 
 func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {

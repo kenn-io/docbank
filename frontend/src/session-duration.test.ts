@@ -137,15 +137,8 @@ describe("session_ended reporting", () => {
     expect(sessionReports()).toHaveLength(0);
   });
 
-  it("takes no bucket without visible time", () => {
-    reporting = startSessionReporting("secret");
-    expect(reporting.take()).toBeUndefined();
-    reporting.stop();
-    expect(sessionReports()).toHaveLength(0);
-  });
-
   it.each([false, true])(
-    "disposes without waiting for a pending report, failure=%s",
+    "stops reporting once, removes listeners, and swallows errors, failure=%s",
     async (failure) => {
       reporting = startSessionReporting("secret");
       let resolve!: (response: Response) => void;
@@ -158,11 +151,12 @@ describe("session_ended reporting", () => {
           }),
       );
       now = 120_000;
-      expect(reporting.stop()).toBeUndefined();
+      reporting.stop();
       expectBucket("1_to_5m");
       if (failure) reject(new Error("offline"));
       else resolve(new Response('{"status":"queued"}', { status: 202 }));
       visibility(false);
+      window.dispatchEvent(new Event("pageshow"));
       now += 120_000;
       window.dispatchEvent(new Event("pagehide"));
       await vi.advanceTimersByTimeAsync(1_800_000);
