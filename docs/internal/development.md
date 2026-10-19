@@ -269,6 +269,12 @@ arm64 uses `windows-11-vs2026-arm` with two package shards. Pull requests call
 `ci.yml` from `main`, so changes to that workflow take effect for pull requests
 after merge. Workflow validation runs against the proposed workflow changes.
 
+Go jobs restore build and module caches through `.github/actions/go-cache-restore`
+by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
+cache), and each Windows architecture. Only `main` pushes save, once per group
+per day, from the job that builds the most of that group; pull requests restore
+without saving so they cannot evict `main`'s caches from the repository quota.
+
 Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:
 
