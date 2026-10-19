@@ -52,7 +52,7 @@ it("shows sign-in before the final duration revoke finishes", async () => {
       disconnect() {}
     },
   );
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/daemon/web-auth") return Response.json({ enabled: true });
     if (url.endsWith("/login"))
@@ -68,7 +68,10 @@ it("shows sign-in before the final duration revoke finishes", async () => {
         items: [],
         total: 0,
       });
-    if (url.startsWith("/api/daemon/web-session"))
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
       return new Promise<Response>((_, reject) => {
         rejectRevoke = reject;
       });
@@ -84,7 +87,8 @@ it("shows sign-in before the final duration revoke finishes", async () => {
   expect(screen.getByLabelText("API key")).toBeTruthy();
   const revokes = fetchMock.mock.calls.filter(
     ([input, init]) =>
-      String(input).startsWith("/api/daemon/web-session") && init?.method === "DELETE",
+      new URL(String(input), window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE",
   );
   expect(revokes).toHaveLength(1);
   expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
@@ -167,7 +171,11 @@ it("clears an open Manage tags dialog after session expiry before signing in aga
       return json({ items: [tax], total: 1, limit: 1000, offset: 0 });
     if (url === `/api/v1/nodes/3/tags/${tax.id}` && init?.method === "DELETE")
       return json({ detail: "session expired" }, 401);
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
@@ -281,7 +289,11 @@ it("keeps a new sign-in after an old tag request returns a delayed 401", async (
       markDeleteStarted();
       return delayedDelete;
     }
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
@@ -375,7 +387,7 @@ it("ignores a delayed trash success after signing in again", async () => {
     markTrashStarted = resolve;
   });
   let logins = 0;
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/daemon/web-auth") return json({ enabled: true });
     if (url.endsWith("/login")) {
@@ -397,7 +409,11 @@ it("ignores a delayed trash success after signing in again", async () => {
       markTrashStarted();
       return delayedTrash;
     }
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
@@ -529,7 +545,11 @@ function delayedReplyFixture(isDelayed: (url: string, init?: RequestInit) => boo
       return json({ items: [tax], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/trash?limit=1000&offset=0")
       return json({ items: [trashed], total: 1, limit: 1000, offset: 0 });
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });

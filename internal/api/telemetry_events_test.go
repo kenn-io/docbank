@@ -108,37 +108,26 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		t.Skip("built with kit_posthog_disabled")
 	}
 	for _, tc := range []struct {
-		name     string
-		bucket   string
-		disabled bool
-		master   bool
-		want     bool
+		name   string
+		bucket string
+		master bool
+		want   bool
 	}{
 		{name: "one to five minutes", bucket: "1_to_5m", want: true},
 		{name: "master key without browser session", bucket: "1_to_5m", master: true},
 		{name: "missing bucket"},
 		{name: "invalid bucket", bucket: "bogus"},
-		{name: "disabled telemetry", bucket: "1_to_5m", disabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(telemetry.EnabledEnv, "1")
 			t.Setenv(posthog.GenericEnabledEnv, "1")
-			if tc.disabled {
-				t.Setenv(telemetry.EnabledEnv, "0")
-			}
 			endpoint, collected := newTelemetryCollector(t)
-			var reporter *telemetry.Reporter
-			if tc.disabled {
-				reporter = telemetry.New(telemetry.Options{Dir: t.TempDir()})
-			} else {
-				var err error
-				reporter, err = posthog.NewReporter(posthog.Options{
-					APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
-				}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-					posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-					posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
-				require.NoError(t, err)
-			}
+			reporter, err := posthog.NewReporter(posthog.Options{
+				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
+			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
+				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
+				posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
+			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 			ts, _ := newTestServer(t, func(d *api.Deps) {
 				d.TelemetryReporter = reporter
@@ -172,6 +161,20 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			assert.Equal(t, tc.bucket, events[0].Properties["duration_bucket"])
 		})
 	}
+}
+
+func TestWebSessionRevokeWhenTelemetryOptedOut(t *testing.T) {
+	t.Setenv(telemetry.EnabledEnv, "0")
+	reporter := telemetry.New(telemetry.Options{Dir: t.TempDir()})
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryReporter = reporter })
+	session := issueWebSession(t, ts)
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
+	url := ts.URL + "/api/daemon/web-session?duration_bucket=1_to_5m"
+	status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
+	require.Equal(t, http.StatusNoContent, status, body)
+	status, body = postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
+	assert.Equal(t, http.StatusUnauthorized, status, body)
 }
 
 func TestScreenViewedTelemetryEventRoute(t *testing.T) {

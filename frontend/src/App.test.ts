@@ -943,7 +943,10 @@ function installSelectionBackend(rootHasFiles = true) {
         tag_id: requestedTag ?? undefined,
       });
     }
-    if (url === "/api/daemon/web-session" && init?.method === "DELETE") {
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    ) {
       return new Response(null, { status: 204 });
     }
     throw new Error(`unexpected request: ${url}`);
@@ -1860,7 +1863,10 @@ function installKeyboardBackend(
         changed: true,
       });
     }
-    if (url === "/api/daemon/web-session" && init?.method === "DELETE") {
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    ) {
       return new Response(null, { status: 204 });
     }
     throw new Error(`unexpected request: ${url}`);
