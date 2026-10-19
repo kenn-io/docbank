@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -49,39 +50,58 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 	started := make(chan context.Context, 1)
 	release := make(chan struct{})
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		_, err := io.Copy(io.Discard, r.Body)
-		assert.NoError(t, err)
-		started <- r.Context()
-		<-release
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"status":"queued"}`))
+		if r.URL.Path == "/api/daemon/telemetry/events" {
+			var event struct {
+				Event string `json:"event"`
+			}
+			assert.NoError(t, json.UnmarshalRead(r.Body, &event))
+			if event.Event == "session_ended" {
+				started <- r.Context()
+				<-release
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/path" {
+			_, _ = w.Write([]byte(`{"id":1,"kind":"dir","path":"/","revision":1}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/children") {
+			_, _ = w.Write([]byte(`{"directory":{"id":1,"kind":"dir","path":"/","revision":1},"items":[],"total":0}`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
 	})
 	t.Cleanup(func() {
 		close(release)
 		telemetrySends.Wait(time.Second)
 	})
-	returned := make(chan struct{})
-	go func() {
-		reportTUISessionEnded(2 * time.Minute)
-		close(returned)
-	}()
-	var requestCtx context.Context
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	select {
-	case requestCtx = <-started:
-	case <-ctx.Done():
-		t.Fatal("queued report did not reach the daemon")
-	}
-	<-returned
-	require.NoError(t, requestCtx.Err(), "report caller waited for the stalled daemon")
 	resetFlags(rootCmd)
-	before := time.Now()
-	assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
-	elapsed := time.Since(before)
-	assert.GreaterOrEqual(t, elapsed, 40*time.Millisecond)
-	assert.Less(t, elapsed, 200*time.Millisecond)
+	rootCmd.SetIn(strings.NewReader("q"))
+	tuiCmd.SetContext(ctx)
+	t.Cleanup(func() {
+		rootCmd.SetIn(nil)
+		tuiCmd.SetContext(context.Background())
+	})
+	var stderr bytes.Buffer
+	returned := make(chan int, 1)
+	go func() { returned <- runProcess([]string{"tui"}, io.Discard, &stderr) }()
+	select {
+	case code := <-returned:
+		require.Equal(t, exitSuccess, code, stderr.String())
+	case <-ctx.Done():
+		t.Fatal("TUI did not quit after q")
+	}
+	select {
+	case requestCtx := <-started:
+		require.NoError(t, requestCtx.Err(), "TUI exit waited for the stalled session report")
+	case <-ctx.Done():
+		t.Fatal("TUI quit did not report session_ended")
+	}
 }
 
 func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {

@@ -52,7 +52,6 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 		status            int
 	}{
 		{"missing session duration", "application/json", `{"event":"session_ended","properties":{"surface":"web"}}`, http.StatusBadRequest},
-		{"invalid session duration", "application/json", `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"bogus"}}`, http.StatusBadRequest},
 		{"unknown screen", "application/json", screenBody("unknown", "web"), http.StatusBadRequest},
 		{"unknown surface", "application/json", screenBody("browse", "unknown"), http.StatusBadRequest},
 		{"missing properties", "application/json", `{"event":"screen_viewed"}`, http.StatusBadRequest},

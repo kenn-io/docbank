@@ -1168,7 +1168,11 @@ its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
 that master authority for a random daemon-lifetime browser token, an
 independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime. `DELETE /api/daemon/web-session` revokes the calling
-browser session. A configured API key also enables browser key login:
+browser session. It accepts no query or one optional `duration_bucket` with
+`under_1m`, `1_to_5m`, `5_to_30m`, or `over_30m`. For a live session, it attempts
+to queue `session_ended` with `surface: web` before revocation. Missing or
+invalid buckets emit no event and still revoke the session. A configured API
+key also enables browser key login:
 
 | Route | Authentication and behavior |
 | --- | --- |

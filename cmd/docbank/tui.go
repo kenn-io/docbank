@@ -64,7 +64,7 @@ enrollment remain outside the TUI.`,
 		ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGHUP)
 		defer stop()
 		started := time.Now()
-		_, err = tea.NewProgram(model, tea.WithContext(ctx)).Run()
+		_, err = tea.NewProgram(model, tea.WithContext(ctx), tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout())).Run()
 		if tuiProgramRan(err) {
 			// Usage reporting is best effort.
 			reportTUISessionEnded(time.Since(started))

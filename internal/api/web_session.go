@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/telemetry"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -680,6 +681,7 @@ func registerWebSession(
 	webURL string,
 	sessions *webSessionRegistry,
 	capture telemetry.CaptureEndpoint,
+	logger *slog.Logger,
 ) {
 	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, _ *http.Request) {
 		if !enabled || webURL == "" {
@@ -704,7 +706,9 @@ func registerWebSession(
 		token := r.Header.Get(WebSessionHeader)
 		sessions.reportAndRevoke(token, func() {
 			if capture != nil {
-				_ = capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": r.URL.Query().Get("duration_bucket")})
+				if err := capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": r.URL.Query().Get("duration_bucket")}); err != nil {
+					logger.DebugContext(r.Context(), "final session_ended capture failed", "error", err)
+				}
 			}
 		})
 		w.WriteHeader(http.StatusNoContent)

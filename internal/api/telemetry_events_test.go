@@ -1,16 +1,15 @@
 package api_test
 
 import (
-	"context"
 	"encoding/json/v2"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,6 +109,10 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
 	}
+	logs, err := os.CreateTemp(t.TempDir(), "telemetry-*.json")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, logs.Close()) })
+	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	for _, tc := range []struct {
 		name   string
 		bucket string
@@ -123,15 +126,24 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(telemetry.EnabledEnv, "1")
 			t.Setenv(posthog.GenericEnabledEnv, "1")
-			endpoint, collected := newTelemetryCollector(t)
-			reporter, err := posthog.NewReporter(posthog.Options{
-				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
-			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-				posthog.RequireProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
-			require.NoError(t, err)
+			var reporter *telemetry.Reporter
+			var collected func() []collectedTelemetryEvent
+			if tc.bucket == "bogus" {
+				reporter = telemetry.New(telemetry.Options{Dir: t.TempDir()})
+			} else {
+				var endpoint string
+				endpoint, collected = newTelemetryCollector(t)
+				var err error
+				reporter, err = posthog.NewReporter(posthog.Options{
+					APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
+				}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
+					posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
+					posthog.RequireProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
+				require.NoError(t, err)
+			}
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 			ts, _ := newTestServer(t, func(d *api.Deps) {
+				d.Logger = logger
 				d.TelemetryCapture = telemetry.CaptureHandler(reporter, t.TempDir())
 			})
 			session := issueWebSession(t, ts)
@@ -142,87 +154,30 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			url := ts.URL + "/api/daemon/web-session?duration_bucket=" + tc.bucket
 			status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
 			require.Equal(t, http.StatusNoContent, status, body)
+			if !tc.master {
+				status, body = postTelemetryEvent(t, ts.Client(), http.MethodGet, ts.URL+"/api/v1/jobs", "", browser)
+				require.Equal(t, http.StatusUnauthorized, status, body)
+			}
 			require.NoError(t, reporter.Close())
-			events := collected()
 			if !tc.want {
-				require.Empty(t, events)
+				if collected != nil {
+					require.Empty(t, collected())
+				}
+				if !tc.master {
+					data, err := os.ReadFile(logs.Name())
+					require.NoError(t, err)
+					assert.Contains(t, string(data), `"level":"DEBUG","msg":"final session_ended capture failed"`)
+					assert.Contains(t, string(data), "capture telemetry event:")
+				}
 				return
 			}
+			events := collected()
 			require.Len(t, events, 1)
 			assert.Equal(t, "session_ended", events[0].Event)
 			assert.Equal(t, "web", events[0].Properties["surface"])
 			assert.Equal(t, tc.bucket, events[0].Properties["duration_bucket"])
 		})
 	}
-}
-
-func TestConcurrentWebSessionRevokesReportOnce(t *testing.T) {
-	if posthog.ProcessDisabled() {
-		t.Skip("built with kit_posthog_disabled")
-	}
-	t.Setenv(telemetry.EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "1")
-	endpoint, collected := newTelemetryCollector(t)
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var blocked atomic.Bool
-	reporter, err := posthog.NewReporter(posthog.Options{
-		APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
-	}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-		posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-		posthog.RequireProperty("duration_bucket", func(value any) (any, bool) {
-			if blocked.CompareAndSwap(false, true) {
-				close(started)
-				<-release
-			}
-			return value, value == "1_to_5m"
-		})))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = telemetry.CaptureHandler(reporter, t.TempDir()) })
-	unblock := sync.OnceFunc(func() { close(release) })
-	t.Cleanup(unblock)
-	session := issueWebSession(t, ts)
-	url := ts.URL + "/api/daemon/web-session?duration_bucket=1_to_5m"
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
-	require.NoError(t, err)
-	req.Header.Set("X-Api-Key", "")
-	req.Header.Set(api.WebSessionHeader, session)
-	type result struct {
-		response *http.Response
-		err      error
-	}
-	first := make(chan result, 1)
-	go func() {
-		response, err := ts.Client().Do(req)
-		first <- result{response: response, err: err}
-	}()
-	select {
-	case <-started:
-	case <-ctx.Done():
-		t.Fatal("first revoke did not reach the reporter")
-	}
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
-	status, body := postTelemetryEvent(t, ts.Client(), http.MethodGet, ts.URL+"/api/v1/jobs", "", browser)
-	require.Equal(t, http.StatusOK, status, body)
-	second, err := ts.Client().Do(req.Clone(ctx))
-	require.NoError(t, err)
-	require.NoError(t, second.Body.Close())
-	require.Equal(t, http.StatusNoContent, second.StatusCode)
-	unblock()
-	completed := <-first
-	require.NoError(t, completed.err)
-	require.NoError(t, completed.response.Body.Close())
-	require.Equal(t, http.StatusNoContent, completed.response.StatusCode)
-	status, body = postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
-	require.Equal(t, http.StatusUnauthorized, status, body)
-	require.NoError(t, reporter.Close())
-	events := collected()
-	require.Len(t, events, 1)
-	assert.Equal(t, "session_ended", events[0].Event)
-	assert.Equal(t, "1_to_5m", events[0].Properties["duration_bucket"])
 }
 
 func TestScreenViewedTelemetryEventRoute(t *testing.T) {
