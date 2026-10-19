@@ -134,6 +134,7 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		{name: "master key without browser session", bucket: "1_to_5m", master: true},
 		{name: "missing bucket"},
 		{name: "invalid bucket", query: "duration_bucket=bogus&extra=1"},
+		{name: "repeated bucket", query: "duration_bucket=1_to_5m&duration_bucket=over_30m"},
 		{name: "capture failure", bucket: "over_30m", fails: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

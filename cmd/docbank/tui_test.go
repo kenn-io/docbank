@@ -95,12 +95,11 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("TUI quit did not report session_ended")
 	}
-	quitCtx, stop := context.WithTimeout(ctx, 250*time.Millisecond) //nolint:kennlint // real loopback HTTP cannot run in synctest; allow scheduling margin over the 50 ms exit cap
-	defer stop()
+	// The report stays stalled until cleanup, so any return precedes its completion.
 	select {
 	case code := <-returned:
 		require.Equal(t, exitSuccess, code, stderr.String())
-	case <-quitCtx.Done():
+	case <-ctx.Done():
 		t.Fatal("TUI quit waited for the stalled session report")
 	}
 }

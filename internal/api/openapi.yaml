@@ -18582,7 +18582,7 @@ components:
       additionalProperties: false
       properties:
         duration_bucket:
-          description: Optional session_ended duration. DELETE web-session reports only when this value is valid.
+          description: How long a session_ended session lasted.
           enum:
             - under_1m
             - 1_to_5m
