@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -83,58 +82,4 @@ func TestWebSessionCloseAllWaitsForInFlightRevocation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("closeAll did not finish after owner cleanup")
 	}
-}
-
-func TestConcurrentWebSessionRevokesReportOnce(t *testing.T) {
-	t.Parallel()
-	sessions := newWebSessionRegistry()
-	token, _, err := sessions.issue()
-	require.NoError(t, err)
-	started := make(chan struct{})
-	release := make(chan struct{})
-	unblock := sync.OnceFunc(func() { close(release) })
-	t.Cleanup(unblock)
-	var calls atomic.Int32
-	report := func() {
-		if calls.Add(1) == 1 {
-			close(started)
-			<-release
-		}
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	first := make(chan struct{})
-	go func() {
-		sessions.reportAndRevoke(token, report)
-		close(first)
-	}()
-	select {
-	case <-started:
-	case <-ctx.Done():
-		t.Fatal("first revoke did not reach the report callback")
-	}
-	_, _, ok := sessions.authenticate(token)
-	require.True(t, ok, "session remains live during capture")
-	second := make(chan struct{})
-	go func() {
-		sessions.reportAndRevoke(token, report)
-		close(second)
-	}()
-	select {
-	case <-second:
-	case <-ctx.Done():
-		t.Fatal("duplicate revoke blocked on the report callback")
-	}
-	require.EqualValues(t, 1, calls.Load())
-	_, _, ok = sessions.authenticate(token)
-	require.True(t, ok, "duplicate revoke leaves the in-flight session live")
-	unblock()
-	select {
-	case <-first:
-	case <-ctx.Done():
-		t.Fatal("first revoke did not finish after capture")
-	}
-	_, _, ok = sessions.authenticate(token)
-	require.False(t, ok)
-	require.EqualValues(t, 1, calls.Load())
 }

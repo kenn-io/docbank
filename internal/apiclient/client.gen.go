@@ -25938,7 +25938,7 @@ type CancelWebDownloadQuery struct {
 }
 
 type RevokeWebSessionQuery struct {
-	// DurationBucket Final visible session duration to report before revocation. Missing or invalid values emit no event.
+	// DurationBucket Final visible session duration to report after revocation. Missing or invalid values emit no event.
 	DurationBucket *RevokeWebSessionQueryDurationBucket `json:"duration_bucket,omitempty"`
 }
 

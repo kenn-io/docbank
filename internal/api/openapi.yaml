@@ -20356,7 +20356,7 @@ paths:
     delete:
       operationId: revokeWebSession
       parameters:
-        - description: Final visible session duration to report before revocation. Missing or invalid values emit no event.
+        - description: Final visible session duration to report after revocation. Missing or invalid values emit no event.
           in: query
           name: duration_bucket
           schema:

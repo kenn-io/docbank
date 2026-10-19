@@ -47,7 +47,7 @@ func TestSendTUISessionEnded(t *testing.T) {
 }
 
 func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
-	started := make(chan struct{})
+	started := make(chan context.Context, 1)
 	release := make(chan struct{})
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -57,7 +57,7 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 			}
 			assert.NoError(t, json.UnmarshalRead(r.Body, &event))
 			if event.Event == "session_ended" {
-				close(started)
+				started <- r.Context()
 				<-release
 			}
 			w.WriteHeader(http.StatusAccepted)
@@ -90,15 +90,20 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	var stderr bytes.Buffer
 	returned := make(chan int, 1)
 	go func() { returned <- runProcess([]string{"tui"}, io.Discard, &stderr) }()
+	var reportContext context.Context
 	select {
-	case <-started:
+	case reportContext = <-started:
 	case <-ctx.Done():
 		t.Fatal("TUI quit did not report session_ended")
 	}
-	// The report stays stalled until cleanup, so any return precedes its completion.
+	// Hold the handler even if the client times out. A synchronous report can
+	// return on cancellation without ever receiving the handler's response.
 	select {
 	case code := <-returned:
 		require.Equal(t, exitSuccess, code, stderr.String())
+		require.NoError(t, reportContext.Err(), "TUI quit waited for the session report's client cancellation")
+	case <-reportContext.Done():
+		t.Fatal("session report's client canceled before TUI quit returned")
 	case <-ctx.Done():
 		t.Fatal("TUI quit waited for the stalled session report")
 	}

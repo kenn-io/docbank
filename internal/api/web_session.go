@@ -48,7 +48,6 @@ type webSessionRegistry struct {
 
 type webSessionState struct {
 	login        bool
-	ending       bool
 	createdAt    time.Time
 	expiresAt    time.Time
 	expires      *time.Timer
@@ -187,30 +186,17 @@ func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
 	}
 }
 
-func (r *webSessionRegistry) revoke(token string) {
-	r.revokeDigest(sha256.Sum256([]byte(token)))
+func (r *webSessionRegistry) revoke(token string) bool {
+	return r.revokeDigest(sha256.Sum256([]byte(token)))
 }
 
-// reportAndRevoke gives one DELETE ownership of the final report while the
-// token remains live. Reporter calls run outside the registry mutex.
-func (r *webSessionRegistry) reportAndRevoke(token string, report func()) {
-	digest := sha256.Sum256([]byte(token))
+func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) bool {
 	r.mu.Lock()
 	state, ok := r.tokens[digest]
-	if !ok || state.ending || r.closing {
+	if r.closing {
 		r.mu.Unlock()
-		return
+		return false
 	}
-	state.ending = true
-	r.tokens[digest] = state
-	r.mu.Unlock()
-	defer r.revokeDigest(digest)
-	report()
-}
-
-func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
-	r.mu.Lock()
-	state, ok := r.tokens[digest]
 	delete(r.tokens, digest)
 	if ok && r.onRevoke != nil {
 		// Register while holding mu so closeAll cannot begin waiting before an
@@ -219,7 +205,7 @@ func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
 	}
 	r.mu.Unlock()
 	if !ok {
-		return
+		return false
 	}
 	state.cancel()
 	if state.expires != nil {
@@ -232,6 +218,7 @@ func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
 		defer r.revokeGroup.Done()
 		r.onRevoke(hex.EncodeToString(digest[:]))
 	}
+	return true
 }
 
 func (r *webSessionRegistry) closeAll(ctx context.Context) error {
@@ -701,21 +688,14 @@ func registerWebSession(
 	})
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get(WebSessionHeader)
-		sessions.reportAndRevoke(token, func() {
-			values, err := url.ParseQuery(r.URL.RawQuery)
-			if err != nil || len(values["duration_bucket"]) != 1 {
-				return
+		live := sessions.revoke(token)
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		bucket := values.Get("duration_bucket")
+		if live && err == nil && len(values["duration_bucket"]) == 1 && slices.Contains(telemetry.DurationBuckets(), bucket) && capture != nil {
+			if err := capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket}); err != nil {
+				logger.DebugContext(r.Context(), "final session_ended capture failed", "error", err)
 			}
-			bucket := values.Get("duration_bucket")
-			if !slices.Contains(telemetry.DurationBuckets(), bucket) {
-				return
-			}
-			if capture != nil {
-				if err := capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket}); err != nil {
-					logger.DebugContext(r.Context(), "final session_ended capture failed", "error", err)
-				}
-			}
-		})
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

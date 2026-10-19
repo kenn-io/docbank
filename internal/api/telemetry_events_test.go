@@ -172,6 +172,8 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
 			require.Equal(t, http.StatusNoContent, status, body)
 			if !tc.master {
+				status, body = postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
+				require.Equal(t, http.StatusUnauthorized, status, body)
 				status, body = postTelemetryEvent(t, ts.Client(), http.MethodGet, ts.URL+"/api/v1/jobs", "", browser)
 				require.Equal(t, http.StatusUnauthorized, status, body)
 			}

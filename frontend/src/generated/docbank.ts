@@ -8255,7 +8255,7 @@ export type PrepareWebDownload200 = {
 
 export type RevokeWebSessionParams = {
 /**
- * Final visible session duration to report before revocation. Missing or invalid values emit no event.
+ * Final visible session duration to report after revocation. Missing or invalid values emit no event.
  */
 duration_bucket?: RevokeWebSessionDurationBucket;
 };

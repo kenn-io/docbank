@@ -1170,7 +1170,7 @@ independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime. `DELETE /api/daemon/web-session` revokes the calling
 browser session. Exactly one `duration_bucket` query value of `under_1m`, `1_to_5m`,
 `5_to_30m`, or `over_30m` makes it attempt to queue `session_ended` with
-`surface: web` before revocation. Unrelated query keys are ignored. Missing,
+`surface: web` after revoking a live token. Unrelated query keys are ignored. Missing,
 invalid, or repeated buckets and malformed queries emit no event and still
 revoke the session.
 A configured API key also enables browser key login:
