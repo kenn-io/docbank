@@ -46,17 +46,14 @@ func TestSendTUISessionEnded(t *testing.T) {
 }
 
 func TestReportTUISessionEndedQueuesSend(t *testing.T) {
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
-		started <- struct{}{}
-		<-release
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{}`))
+	started := make(chan context.Context, 1)
+	setupFakeDaemon(t, func(_ http.ResponseWriter, r *http.Request) {
+		_, err := io.Copy(io.Discard, r.Body)
+		assert.NoError(t, err)
+		started <- r.Context()
+		<-r.Context().Done()
 	})
 	t.Cleanup(func() {
-		close(release)
 		telemetrySends.Wait(time.Second)
 	})
 	returned := make(chan struct{})
@@ -64,16 +61,9 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 		reportTUISessionEnded(2 * time.Minute)
 		close(returned)
 	}()
-	select {
-	case <-returned:
-	case <-time.After(900 * time.Millisecond):
-		t.Fatal("report caller waited for the stalled daemon")
-	}
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("queued report did not reach the daemon")
-	}
+	requestCtx := <-started
+	<-returned
+	assert.NoError(t, requestCtx.Err(), "report caller waited for the stalled daemon")
 }
 
 func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {
