@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -76,7 +75,6 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	})
 	t.Cleanup(func() {
 		close(release)
-		telemetrySends.Wait(time.Second)
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -107,23 +105,6 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 		t.Fatal("session report's client canceled before TUI quit returned")
 	case <-ctx.Done():
 		t.Fatal("TUI quit waited for the stalled session report")
-	}
-}
-
-func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {
-	for _, delay := range []time.Duration{10 * time.Millisecond, time.Second} {
-		t.Run(delay.String(), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				telemetrySends.Go(func() {
-					time.Sleep(delay)
-				})
-				resetFlags(rootCmd)
-				before := time.Now()
-				assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
-				assert.Equal(t, min(delay, 50*time.Millisecond), time.Since(before))
-				telemetrySends.Wait(time.Second)
-			})
-		})
 	}
 }
 

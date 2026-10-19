@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -85,8 +86,11 @@ func tuiProgramRan(err error) bool {
 }
 
 // reportTUISessionEnded sends session_ended only to an already-running daemon.
+// A report that doesn't finish within 50 ms is dropped.
 func reportTUISessionEnded(elapsed time.Duration) {
-	telemetrySends.Go(func() {
+	var sends posthog.SendGroup
+	defer sends.Wait(50 * time.Millisecond)
+	sends.Go(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		c, ok, err := daemonconn.Running(ctx)
