@@ -2751,12 +2751,7 @@
 
   async function lock(): Promise<void> {
     const session = webSession;
-    const stopReporting = stopSessionReporting;
     resetLocalSessionUI();
-    await Promise.race([
-      stopReporting?.(),
-      new Promise<void>((resolve) => setTimeout(resolve, 1000)),
-    ]);
     try {
       if (session) await generated.revokeWebSession({ session });
     } catch {

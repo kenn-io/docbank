@@ -66,8 +66,8 @@ enrollment remain outside the TUI.`,
 		started := time.Now()
 		_, err = tea.NewProgram(model, tea.WithContext(ctx)).Run()
 		if tuiProgramRan(err) {
-			// Usage reporting is best effort and must not change how the TUI exits.
-			_ = reportTUISessionEnded(time.Since(started))
+			// Usage reporting is best effort.
+			reportTUISessionEnded(time.Since(started))
 		}
 		if err != nil {
 			return fmt.Errorf("running docbank TUI: %w", err)
@@ -81,15 +81,17 @@ func tuiProgramRan(err error) bool {
 }
 
 // reportTUISessionEnded sends session_ended only to an already-running daemon.
-func reportTUISessionEnded(elapsed time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	c, ok, err := daemonconn.Running(ctx)
-	if err != nil || !ok {
-		return err
-	}
-	defer func() { _ = c.Close() }()
-	return sendTUISessionEnded(ctx, c, elapsed)
+func reportTUISessionEnded(elapsed time.Duration) {
+	telemetrySends.Go(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		c, ok, err := daemonconn.Running(ctx)
+		if err != nil || !ok {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_ = sendTUISessionEnded(ctx, c, elapsed)
+	})
 }
 
 func sendTUISessionEnded(ctx context.Context, c *daemonconn.Connection, elapsed time.Duration) error {

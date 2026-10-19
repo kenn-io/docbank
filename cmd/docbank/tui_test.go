@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -42,6 +43,66 @@ func TestSendTUISessionEnded(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
 	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestReportTUISessionEndedQueuesSend(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
+		close(started)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	t.Cleanup(func() {
+		close(release)
+		telemetrySends.Wait(time.Second)
+	})
+	before := time.Now()
+	reportTUISessionEnded(2 * time.Minute)
+	assert.Less(t, time.Since(before), 250*time.Millisecond, "reporting blocked the caller")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("queued report did not reach the daemon")
+	}
+
+	resetFlags(rootCmd)
+	before = time.Now()
+	assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
+	assert.Less(t, time.Since(before), 250*time.Millisecond, "exit waited for the stalled report")
+}
+
+func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {
+	for _, delay := range []time.Duration{10 * time.Millisecond, time.Second} {
+		t.Run(delay.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				completed := make(chan struct{})
+				telemetrySends.Go(func() {
+					time.Sleep(delay)
+					close(completed)
+				})
+				resetFlags(rootCmd)
+				before := time.Now()
+				assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
+				assert.Equal(t, min(delay, 50*time.Millisecond), time.Since(before))
+				select {
+				case <-completed:
+					assert.Less(t, delay, 50*time.Millisecond)
+				default:
+					assert.Greater(t, delay, 50*time.Millisecond)
+				}
+				telemetrySends.Wait(time.Second)
+			})
+		})
+	}
 }
 
 func TestTUIProgramRan(t *testing.T) {
