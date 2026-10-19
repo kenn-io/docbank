@@ -450,11 +450,19 @@ var codeToTypedErr = map[string]error{
 	"invalid_saved_query_run":         store.ErrInvalidSavedQueryRun,
 }
 
+// maxErrorResponseBytes bounds daemon problem bodies while leaving room for
+// backup cleanup reports that list every selected or removed pack.
+const maxErrorResponseBytes = 64 << 20
+
 func decodeError(resp *http.Response) error {
 	var e api.Error
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorResponseBytes+1))
 	if err != nil {
 		return &responseError{status: resp.StatusCode, err: fmt.Errorf("reading daemon error response: %w", err)}
+	}
+	if len(body) > maxErrorResponseBytes {
+		return &responseError{status: resp.StatusCode,
+			err: fmt.Errorf("daemon returned %s with an error response over %d bytes", resp.Status, maxErrorResponseBytes)}
 	}
 	if err := json.Unmarshal(body, &e); err != nil || e.Status == 0 {
 		return &responseError{status: resp.StatusCode,

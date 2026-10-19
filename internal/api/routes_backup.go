@@ -762,12 +762,12 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 		metadataFormat = manifest.Metadata.Format
 	}
 	return BackupSnapshot{
-		CoverageWarning: warning,
-		ID:              manifest.SnapshotID, ParentID: manifest.ParentID, CreatedAt: manifest.CreatedAt,
+		ID: manifest.SnapshotID, ParentID: manifest.ParentID, CreatedAt: manifest.CreatedAt,
 		Tag: manifest.Options.Tag, MetadataFormat: metadataFormat,
-		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes, Coverage: stats.Coverage,
+		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes,
 		PacksAdded: len(manifest.NewPacks), BytesAdded: manifest.BytesAdded,
 		DurationSeconds: manifest.DurationSeconds,
+		Coverage:        stats.Coverage, CoverageWarning: warning,
 	}, nil
 }
 

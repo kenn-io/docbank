@@ -3221,6 +3221,8 @@ func TestParseStatsCoverageVersionsAndMalformedPayloads(t *testing.T) {
 		`{"files":"bad","coverage":{"version":2}}`,
 		`{"coverage":{"version":1,"included":["bad"]}}`,
 		`{"coverage":{"version":"bad"}}`,
+		`{"coverage":{}}`,
+		`{"coverage":{"version":0}}`,
 	} {
 		_, err := backupapp.ParseStats(jsontext.Value(raw))
 		require.Error(t, err)
@@ -3244,9 +3246,24 @@ func TestVerifyReportsUnsupportedCoverage(t *testing.T) {
 	manifest, err := backupapp.Create(t.Context(), repo, "coverage", fixture.metadata, fixture.blobs, backup.CreateOptions{})
 	require.NoError(t, err)
 	supportedID := manifest.SnapshotID
-	manifest.Stats = jsontext.Value(`{"coverage":{"version":2,"included":["future"]}}`)
+	var futureStats map[string]any
+	require.NoError(t, json.Unmarshal(manifest.Stats, &futureStats))
+	futureStats["coverage"] = map[string]any{"version": 2, "included": []string{"future"}}
+	manifest.Stats, err = json.Marshal(futureStats)
+	require.NoError(t, err)
 	futureID, err := repo.WriteManifest(manifest)
 	require.NoError(t, err)
+
+	// A newer coverage version does not hide inconsistent base totals.
+	inconsistent := *manifest
+	futureStats["blobs"] = manifest.Attachments.Blobs + 1
+	inconsistent.Stats, err = json.Marshal(futureStats)
+	require.NoError(t, err)
+	problems := backupapp.New("test").CheckManifest(&inconsistent)
+	require.Len(t, problems, 3)
+	assert.Equal(t, "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot", problems[0])
+	assert.Contains(t, problems[1], "stats.blobs")
+	assert.Contains(t, problems[2], "attachments.rows")
 	for _, quick := range []bool{false, true} {
 		for _, all := range []bool{false, true} {
 			opts := backup.VerifyOptions{Quick: quick, All: all, Jobs: 1}

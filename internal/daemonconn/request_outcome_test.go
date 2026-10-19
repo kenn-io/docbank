@@ -159,4 +159,13 @@ func TestRequestOutcomeClassifiesOnlyFailureBeforeResponseAsTransport(t *testing
 		assert.Equal(t, removed, partial.Prune.RemovedPacks)
 		assert.Equal(t, int64(22000), partial.Prune.BytesRemoved)
 	})
+	t.Run("oversized error response", func(t *testing.T) {
+		body := `{"status":500,"code":"backup_failed","detail":"` + strings.Repeat("x", maxErrorResponseBytes) + `"}`
+		err := decodeError(&http.Response{StatusCode: http.StatusInternalServerError, Status: "500 Internal Server Error", Body: io.NopCloser(strings.NewReader(body))})
+		require.ErrorContains(t, err, "error response over")
+		assert.NotErrorAs(t, err, new(*BackupCleanupError))
+		status, received := ResponseStatus(err)
+		assert.True(t, received)
+		assert.Equal(t, http.StatusInternalServerError, status)
+	})
 }

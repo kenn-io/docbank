@@ -352,7 +352,7 @@ func writeBackupList(w io.Writer, snapshots []api.BackupSnapshot) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "SNAPSHOT\tCREATED\tFILES\tBLOBS\tBYTES ADDED\tTAG\tBLOB BYTES\tPHOTO ASSETS/FILES/BYTES\tALBUMS/MEMBERS\tHIDDEN/TRASHED\tCHECKOUTS/ENTRIES\tRECEIPTS"); err != nil {
+	if _, err := fmt.Fprintln(tw, "SNAPSHOT\tCREATED\tFILES\tBLOBS\tBLOB BYTES\tBYTES ADDED\tPHOTO ASSETS/FILES/BYTES\tALBUMS/MEMBERS\tHIDDEN/TRASHED\tCHECKOUTS/ENTRIES\tRECEIPTS\tTAG"); err != nil {
 		return fmt.Errorf("writing backup list header: %w", err)
 	}
 	var warnings []string
@@ -376,7 +376,7 @@ func writeBackupList(w io.Writer, snapshots []api.BackupSnapshot) error {
 				}
 			}
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%d\t%s\n", snapshot.ID, snapshot.CreatedAt, snapshot.Files, snapshot.Blobs, snapshot.BytesAdded, tag, snapshot.BlobBytes, coverage); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\n", snapshot.ID, snapshot.CreatedAt, snapshot.Files, snapshot.Blobs, snapshot.BlobBytes, snapshot.BytesAdded, coverage, tag); err != nil {
 			return fmt.Errorf("writing backup list row: %w", err)
 		}
 	}

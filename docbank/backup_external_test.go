@@ -259,6 +259,14 @@ func TestEmbeddedBackup(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []string{futureID}, verified.Snapshots)
 		require.Equal(t, []docbank.BackupVerifyProblem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, verified.Problems)
+
+		target := filepath.Join(t.TempDir(), "future")
+		_, err = vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{SnapshotID: futureID, Target: target})
+		unsupported, ok := errors.AsType[*docbank.UnsupportedBackupCoverageError](err)
+		require.True(t, ok, "restore error %v", err)
+		require.Equal(t, 2, unsupported.Version)
+		require.ErrorContains(t, err, "upgrade Docbank to restore this snapshot")
+		require.NoFileExists(t, filepath.Join(target, "docbank.db"))
 	})
 }
 

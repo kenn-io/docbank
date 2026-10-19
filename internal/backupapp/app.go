@@ -274,13 +274,13 @@ func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, er
 
 func (a *App) CheckManifest(manifest *backup.Manifest) []string {
 	stats, err := ParseStats(manifest.Stats)
+	var problems []string
 	if unsupported, ok := errors.AsType[*UnsupportedCoverageVersionError](err); ok {
-		return []string{unsupported.Error() + "; upgrade Docbank to verify this snapshot"}
-	}
-	if err != nil {
+		// Base statistics remain readable; only the coverage payload needs a newer reader.
+		problems = append(problems, unsupported.Error()+"; upgrade Docbank to verify this snapshot")
+	} else if err != nil {
 		return []string{fmt.Sprintf("manifest stats unreadable: %v", err)}
 	}
-	var problems []string
 	if stats.Blobs != manifest.Attachments.Blobs {
 		problems = append(problems, fmt.Sprintf("stats.blobs %d != attachments.blobs %d",
 			stats.Blobs, manifest.Attachments.Blobs))
@@ -304,7 +304,8 @@ func (e *UnsupportedCoverageVersionError) Error() string {
 }
 
 func ParseStats(raw jsontext.Value) (Stats, error) {
-	// Decode base statistics separately so future coverage payloads can change shape.
+	// Decode base statistics separately so a future coverage version can change
+	// everything in its object except the version number.
 	type baseStats Stats
 	var envelope struct {
 		baseStats
@@ -323,6 +324,9 @@ func ParseStats(raw jsontext.Value) (Stats, error) {
 	}
 	if err := json.Unmarshal(envelope.Coverage, &header); err != nil {
 		return Stats{}, fmt.Errorf("backupapp: parsing coverage version: %w", err)
+	}
+	if header.Version < 1 {
+		return Stats{}, fmt.Errorf("backupapp: coverage version %d is invalid; versions start at 1", header.Version)
 	}
 	if header.Version != 1 {
 		return stats, &UnsupportedCoverageVersionError{Version: header.Version}

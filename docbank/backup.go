@@ -99,6 +99,10 @@ type BackupProgress struct {
 // BackupCoverage records the logical records and verified bytes in a snapshot.
 type BackupCoverage = backupapp.BackupCoverage
 
+// UnsupportedBackupCoverageError means a snapshot records a coverage version
+// this Docbank cannot restore or verify; upgrade Docbank to use it.
+type UnsupportedBackupCoverageError = backupapp.UnsupportedCoverageVersionError
+
 // BackupSnapshot summarizes one immutable recovery point.
 type BackupSnapshot struct {
 	CoverageWarning  string

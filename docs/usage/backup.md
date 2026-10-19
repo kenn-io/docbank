@@ -110,7 +110,8 @@ docbank backup list [--repo DIR] [--json]
 ```
 
 The table reports each snapshot's ID, creation time, logical file/blob counts,
-bytes newly added to the repository, and tag. `--json` returns the same typed
+total blob bytes, bytes newly added to the repository, recorded coverage, and
+tag. `--json` returns the same typed
 snapshot summaries as `GET /api/v1/backup/snapshots`, including the metadata
 format and parent snapshot ID.
 

@@ -162,6 +162,9 @@ func RestoreWithPlacement(
 		return nil, errors.New("backupapp: repository has no snapshots to restore")
 	}
 	stats, err := ParseStats(manifest.Stats)
+	if _, ok := errors.AsType[*UnsupportedCoverageVersionError](err); ok {
+		return nil, fmt.Errorf("%w; upgrade Docbank to restore this snapshot", err)
+	}
 	if err != nil {
 		return nil, err
 	}

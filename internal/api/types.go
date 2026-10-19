@@ -1309,8 +1309,6 @@ type BackupRepository struct {
 // BackupSnapshot is the stable API summary of one Docbank snapshot manifest.
 // It deliberately omits Kit's physical pack/index details.
 type BackupSnapshot struct {
-	CoverageWarning string                    `json:"coverage_warning,omitzero"`
-	Coverage        *backupapp.BackupCoverage `json:"coverage,omitempty"`
 	ID              string                    `json:"id"`
 	ParentID        string                    `json:"parent_id,omitzero"`
 	CreatedAt       string                    `json:"created_at"`
@@ -1323,6 +1321,8 @@ type BackupSnapshot struct {
 	PacksAdded      int                       `json:"packs_added"`
 	BytesAdded      int64                     `json:"bytes_added"`
 	DurationSeconds float64                   `json:"duration_seconds"`
+	Coverage        *backupapp.BackupCoverage `json:"coverage,omitempty"`
+	CoverageWarning string                    `json:"coverage_warning,omitzero"`
 }
 
 // BackupSnapshotList is returned as an object so later pagination can be
