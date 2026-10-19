@@ -1,6 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { photoImportContentHashExtensions } from "./generated/photoSourceExtensions.js";
 import { APIError } from "./api-transport.js";
 import {
   getPhotoImportCheckpointHeader,
@@ -9,14 +8,14 @@ import {
   type PhotoImportCheckpoint,
   type PhotoCheckpointHeader,
 } from "./generated/docbank.js";
-import { hashFile, photoRelativePath, type TransferProgress } from "./upload.js";
+import {
+  hashFile,
+  photoRelativePath,
+  photoImportNeedsContentHash,
+  type TransferProgress,
+} from "./upload.js";
 
 export type { PhotoImportCheckpoint } from "./generated/docbank.js";
-
-function photoImportNeedsContentHash(file: File): boolean {
-  const name = photoRelativePath(file).split("/").at(-1) ?? file.name;
-  return photoImportContentHashExtensions.has(name.slice(name.lastIndexOf(".")).toLowerCase());
-}
 
 export async function photoImportManifest(
   files: File[],

@@ -211,19 +211,6 @@
         pickerKind,
       };
       const plan = await channel.planPhotoImport(files, target, next.sourceID, hashes);
-      if (plan.continuations?.length) {
-        const confirmed = await confirmation?.confirm(
-          "Continue an earlier folder?",
-          "Continue folder",
-          plan.continuations
-            .map(
-              (folder) =>
-                `The selected folder ${folder.selected_folder} continues the earlier ${folder.folder_name} folder. New photos can share burst groups and stack decisions with earlier photos.`,
-            )
-            .join(" ") + " Cancel to choose folders separately.",
-        );
-        if (!confirmed || active.signal.aborted || destroyed) return;
-      }
       if (!sessionOnly) {
         try {
           await currentStorage.replace(plan.groups.length ? next : undefined, expected);

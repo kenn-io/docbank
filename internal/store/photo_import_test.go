@@ -1043,16 +1043,15 @@ func TestBrowserPhotoDirectoryContinuation(t *testing.T) {
 		{OriginalPath: "browser:new/Card/sibling.JPG", BlobHash: fakeHash("new")},
 		{OriginalPath: "browser:new/Other/independent.JPG", BlobHash: fakeHash("unmatched")},
 	}
-	resolved, _, err := s.ResolveBrowserPhotoPaths(ctx, members)
+	resolved, err := s.ResolveBrowserPhotoPaths(ctx, members)
 	require.NoError(t, err)
 	require.Equal(t, []string{"browser:first/renamed.JPG", "browser:first/sibling.JPG", "browser:new/Other/independent.JPG"}, resolved)
 	members = append(members,
 		PhotoImportMember{OriginalPath: "browser:new/Card/another.JPG", BlobHash: fakeHash("second")},
 		PhotoImportMember{OriginalPath: "browser:new/Separate/preview.JPG", BlobHash: fakeHash("first")})
-	resolved, continuations, err := s.ResolveBrowserPhotoPaths(ctx, members)
+	resolved, err = s.ResolveBrowserPhotoPaths(ctx, members)
 	require.NoError(t, err)
 	require.Equal(t, []string{"browser:new/Card/renamed.JPG", "browser:new/Card/sibling.JPG", "browser:new/Other/independent.JPG", "browser:new/Card/another.JPG", "browser:first/preview.JPG"}, resolved)
-	require.Equal(t, []PhotoFolderContinuation{{SelectedFolder: "Separate", FolderKey: "browser:first", FolderName: "selection"}}, continuations)
 }
 
 func TestBrowserPhotoContinuationSkipsHiddenAndExcluded(t *testing.T) {
@@ -1077,10 +1076,9 @@ func TestBrowserPhotoContinuationSkipsHiddenAndExcluded(t *testing.T) {
 				{OriginalPath: "browser:new/Card/preview.JPG", BlobHash: fakeHash(state)},
 				{OriginalPath: "browser:new/Card/sibling.JPG", BlobHash: fakeHash("new")},
 			}
-			resolved, continuations, err := s.ResolveBrowserPhotoPaths(ctx, members)
+			resolved, err := s.ResolveBrowserPhotoPaths(ctx, members)
 			require.NoError(t, err)
 			require.Equal(t, []string{"browser:new/Card/preview.JPG", "browser:new/Card/sibling.JPG"}, resolved)
-			require.Empty(t, continuations)
 		})
 	}
 }

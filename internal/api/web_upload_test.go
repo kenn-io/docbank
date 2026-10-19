@@ -189,11 +189,6 @@ func browserUploadSocket(t *testing.T, ts *httptest.Server) *websocket.Conn {
 }
 
 type photoSocketResponse struct {
-	Continuations []struct {
-		SelectedFolder string `json:"selected_folder"`
-		FolderKey      string `json:"folder_key"`
-		FolderName     string `json:"folder_name"`
-	} `json:"continuations"`
 	ImportID    string         `json:"import_id"`
 	Type        string         `json:"type"`
 	Status      int            `json:"status"`
@@ -772,13 +767,6 @@ func TestBrowserPhotoFolderContinuationKeepsImportedSource(t *testing.T) {
 		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "destination": "/photos", "request_id": "plan", "source_id": source, "files": selected}))
 		plan := readPhotoResponse(t, conn)
 		require.Equal(t, "photo_import_plan", plan.Type)
-		if selection == 0 {
-			require.Empty(t, plan.Continuations)
-		} else {
-			require.Len(t, plan.Continuations, 1)
-			require.Equal(t, "folder", plan.Continuations[0].SelectedFolder)
-			require.Equal(t, "Choose files", plan.Continuations[0].FolderName)
-		}
 		for i, file := range selected {
 			hash := sha256.Sum256(data[i])
 			member := map[string]any{"relative_path": file["relative_path"], "expected_hash": hex.EncodeToString(hash[:]), "expected_size": len(data[i])}
@@ -841,7 +829,6 @@ func TestBrowserPhotoPlanSkipsLeadingUnsupportedFilesWithoutHashes(t *testing.T)
 	require.Equal(t, "photo_import_plan", plan.Type, "%s: %s", plan.Code, plan.Detail)
 	require.Equal(t, []int{0, 1}, plan.Unsupported)
 	require.Equal(t, [][]int{{2}}, plan.Groups)
-	require.Empty(t, plan.Continuations)
 	receipt := uploadBrowserPhoto(t, conn, plan.ImportID, 0, files[2], selected[2].data)
 	require.Equal(t, "photo_group_receipt", receipt.Type)
 	require.Equal(t, "added", receipt.Receipt.Status)
@@ -895,16 +882,11 @@ func TestBrowserPhotoPlanResolvesAcceptedFolderMatches(t *testing.T) {
 			plan := readPhotoResponse(t, conn)
 			require.Equal(t, "photo_import_plan", plan.Type, "%s: %s", plan.Code, plan.Detail)
 			if extension == ".jpg" {
-				require.Empty(t, plan.Continuations)
 				require.Empty(t, plan.Unsupported)
 				require.Equal(t, [][]int{{0}, {1}, {2}}, plan.Groups)
 			} else {
 				require.Equal(t, []int{1}, plan.Unsupported)
 				require.Equal(t, [][]int{{0}}, plan.Groups)
-				require.Len(t, plan.Continuations, 1)
-				require.Equal(t, "Selected", plan.Continuations[0].SelectedFolder)
-				require.Equal(t, "FolderA", plan.Continuations[0].FolderName)
-				require.Equal(t, "browser:20000000-0000-4000-8000-000000000021/FolderA", plan.Continuations[0].FolderKey)
 			}
 		})
 	}

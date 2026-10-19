@@ -78,34 +78,33 @@ type webPhotoReceipt struct {
 }
 
 type webUploadMessage struct {
-	Continuations []store.PhotoFolderContinuation `json:"continuations,omitzero"`
-	SourceID      *uuid.UUID                      `json:"source_id,omitzero"`
-	ImportID      string                          `json:"import_id,omitzero"`
-	Files         []webPhotoFile                  `json:"files,omitzero"`
-	Groups        [][]int                         `json:"groups,omitzero"`
-	Unsupported   []int                           `json:"unsupported,omitzero"`
-	SkipReasons   map[int]string                  `json:"skip_reasons,omitzero"`
-	Destination   string                          `json:"destination,omitzero"`
-	Group         int                             `json:"group,omitzero"`
-	Hashes        []string                        `json:"hashes,omitzero"`
-	PhotoReceipt  *webPhotoReceipt                `json:"photo_group_receipt,omitempty"`
-	ContainerID   string                          `json:"container_id,omitzero"`
-	ChunkIndex    int                             `json:"chunk_index,omitzero"`
-	ChunkReceipt  *store.MailboxChunk             `json:"chunk_receipt,omitempty"`
-	Type          string                          `json:"type"`
-	Token         string                          `json:"token,omitzero"`
-	Nonce         string                          `json:"nonce,omitzero"`
-	Proof         string                          `json:"proof,omitzero"`
-	RequestID     string                          `json:"request_id,omitzero"`
-	ParentID      int64                           `json:"parent_id,omitzero"`
-	Name          string                          `json:"name,omitzero"`
-	MIMEType      string                          `json:"mime_type,omitzero"`
-	ExpectedHash  string                          `json:"expected_hash,omitzero"`
-	ExpectedSize  int64                           `json:"expected_size,omitzero"`
-	Receipt       *UploadReceipt                  `json:"receipt,omitempty"`
-	Status        int                             `json:"status,omitzero"`
-	Code          string                          `json:"code,omitzero"`
-	Detail        string                          `json:"detail,omitzero"`
+	SourceID     *uuid.UUID          `json:"source_id,omitzero"`
+	ImportID     string              `json:"import_id,omitzero"`
+	Files        []webPhotoFile      `json:"files,omitzero"`
+	Groups       [][]int             `json:"groups,omitzero"`
+	Unsupported  []int               `json:"unsupported,omitzero"`
+	SkipReasons  map[int]string      `json:"skip_reasons,omitzero"`
+	Destination  string              `json:"destination,omitzero"`
+	Group        int                 `json:"group,omitzero"`
+	Hashes       []string            `json:"hashes,omitzero"`
+	PhotoReceipt *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
+	ContainerID  string              `json:"container_id,omitzero"`
+	ChunkIndex   int                 `json:"chunk_index,omitzero"`
+	ChunkReceipt *store.MailboxChunk `json:"chunk_receipt,omitempty"`
+	Type         string              `json:"type"`
+	Token        string              `json:"token,omitzero"`
+	Nonce        string              `json:"nonce,omitzero"`
+	Proof        string              `json:"proof,omitzero"`
+	RequestID    string              `json:"request_id,omitzero"`
+	ParentID     int64               `json:"parent_id,omitzero"`
+	Name         string              `json:"name,omitzero"`
+	MIMEType     string              `json:"mime_type,omitzero"`
+	ExpectedHash string              `json:"expected_hash,omitzero"`
+	ExpectedSize int64               `json:"expected_size,omitzero"`
+	Receipt      *UploadReceipt      `json:"receipt,omitempty"`
+	Status       int                 `json:"status,omitzero"`
+	Code         string              `json:"code,omitzero"`
+	Detail       string              `json:"detail,omitzero"`
 }
 
 type webUploadRequest struct {
@@ -718,7 +717,7 @@ func handleWebPhotoPlan(
 			indexes = append(indexes, index)
 		}
 	}
-	resolved, continuations, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
+	resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
 	if resolveErr != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
 	}
@@ -731,7 +730,7 @@ func handleWebPhotoPlan(
 	}
 	err := wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,
-		Groups: groups, Unsupported: unsupported, SkipReasons: skipReasons, Continuations: continuations,
+		Groups: groups, Unsupported: unsupported, SkipReasons: skipReasons,
 	})
 	return photoImport, err == nil
 }

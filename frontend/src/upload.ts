@@ -4,6 +4,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import { type BrowserSession } from "./browser-session.js";
+import { photoImportContentHashExtensions } from "./generated/photoSourceExtensions.js";
 import type { UploadReceipt } from "./generated/docbank.js";
 
 const hashChunkBytes = 1024 * 1024;
@@ -90,14 +91,7 @@ export function validateUploadReceipt(
   }
 }
 
-export interface PhotoFolderContinuation {
-  selected_folder: string;
-  folder_key: string;
-  folder_name: string;
-}
-
 export interface PhotoImportPlan {
-  continuations?: PhotoFolderContinuation[];
   import_id: string;
   groups: number[][];
   unsupported: number[];
@@ -133,7 +127,11 @@ export function photoImportDeclaration(
       relative_path: photoRelativePath(file),
       size: file.size,
       modified_time: file.lastModified,
-      expected_hash: hashes ? (hashes.get(file) ?? "") : "0".repeat(64),
+      expected_hash: hashes
+        ? (hashes.get(file) ?? "")
+        : photoImportNeedsContentHash(file)
+          ? "0".repeat(64)
+          : "",
     })),
   };
   if (utf8ToBytes(JSON.stringify(message)).byteLength > 8 * 1024 * 1024) throw tooLarge();
@@ -161,8 +159,12 @@ export function photoRelativePath(file: File): string {
   return (file.webkitRelativePath || file.name).normalize("NFC");
 }
 
+export function photoImportNeedsContentHash(file: File): boolean {
+  const name = photoRelativePath(file).split("/").at(-1) ?? file.name;
+  return photoImportContentHashExtensions.has(name.slice(name.lastIndexOf(".")).toLowerCase());
+}
+
 interface UploadMessage {
-  continuations?: PhotoFolderContinuation[];
   import_id?: string;
   files?: { relative_path: string; size: number; modified_time?: number }[];
   groups?: number[][];
@@ -368,7 +370,6 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         groups: plan.groups,
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
-        continuations: plan.continuations,
       };
     } finally {
       this.busy = false;

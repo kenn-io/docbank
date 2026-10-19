@@ -7,10 +7,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"maps"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -167,25 +165,19 @@ func photoImportRoleFilter(role string) (string, []any) {
 	}
 }
 
-type PhotoFolderContinuation struct {
-	SelectedFolder string `json:"selected_folder"`
-	FolderKey      string `json:"folder_key"`
-	FolderName     string `json:"folder_name"`
-}
-
 // ResolveBrowserPhotoPaths continues a selected directory only when its matching
 // current photo content identifies one canonical browser folder.
-func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImportMember) ([]string, []PhotoFolderContinuation, error) {
+func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImportMember) ([]string, error) {
 	hashes := make([]string, len(members))
 	for i, member := range members {
 		hashes[i] = member.BlobHash
 	}
 	encoded, err := json.Marshal(hashes)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
- SELECT cv.blob_hash, c.original_path, c.source_desc
+ SELECT cv.blob_hash, c.original_path
  FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
  JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL AND pf.role<>'sidecar'
  JOIN photo_source_claims c ON c.file_id=pf.file_id
@@ -193,15 +185,14 @@ func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImp
  AND `+photoBrowseEligibleMemberPredicate(false)+`
  AND cv.blob_hash IN (SELECT value FROM json_each(?))`, string(encoded))
 	if err != nil {
-		return nil, nil, fmt.Errorf("finding browser photo provenance: %w", err)
+		return nil, fmt.Errorf("finding browser photo provenance: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	folders := map[string]map[string]bool{}
-	names := map[string]string{}
 	for rows.Next() {
-		var hash, original, description string
-		if err := rows.Scan(&hash, &original, &description); err != nil {
-			return nil, nil, err
+		var hash, original string
+		if err := rows.Scan(&hash, &original); err != nil {
+			return nil, err
 		}
 		if !strings.HasPrefix(original, "browser:") {
 			continue
@@ -210,10 +201,9 @@ func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImp
 			folders[hash] = map[string]bool{}
 		}
 		folders[hash][path.Dir(original)] = true
-		names[path.Dir(original)] = strings.TrimPrefix(description, "browser: ")
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	directories := map[string]string{}
 	ambiguous := map[string]bool{}
@@ -236,19 +226,7 @@ func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImp
 			resolved[i] = folder + "/" + path.Base(member.OriginalPath)
 		}
 	}
-	continuations := []PhotoFolderContinuation{}
-	for _, directory := range slices.Sorted(maps.Keys(directories)) {
-		folder := directories[directory]
-		if folder == directory {
-			continue
-		}
-		_, selected, _ := strings.Cut(directory, "/")
-		if selected == "" {
-			selected = "Choose files"
-		}
-		continuations = append(continuations, PhotoFolderContinuation{SelectedFolder: selected, FolderKey: folder, FolderName: names[folder]})
-	}
-	return resolved, continuations, nil
+	return resolved, nil
 }
 
 func (s *Store) photoImportCurrentDuplicateTx(

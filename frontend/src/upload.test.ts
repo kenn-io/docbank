@@ -708,7 +708,29 @@ it("counts UTF-8 declaration bytes for folder files at the 8 MiB boundary", () =
   expect(utf8ToBytes(JSON.stringify(actual)).byteLength).toBe(limit);
   const last = files.at(-1)!;
   Object.defineProperty(last, "webkitRelativePath", {
-    value: `${last.webkitRelativePath}x`,
+    value: last.webkitRelativePath.replace(".JPG", "x.JPG"),
   });
   expect(() => photoImportDeclaration(files, "/")).toThrow(/Choose fewer files/);
+
+  const mixedFiles = Array.from({ length: 32768 }, (_, index) => {
+    const file = new File([], index === 0 ? "image.JPG" : `file-${index}.txt`, {
+      lastModified: 0,
+    });
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: `${"x".repeat(130)}/${file.name}`,
+    });
+    return file;
+  });
+  const mixedActual = photoImportDeclaration(
+    mixedFiles,
+    "/",
+    undefined,
+    undefined,
+    new Map([[mixedFiles[0], "f".repeat(64)]]),
+  );
+  expect(utf8ToBytes(JSON.stringify(mixedActual)).byteLength).toBeLessThan(limit);
+  const mixedPreflight = photoImportDeclaration(mixedFiles, "/");
+  expect(utf8ToBytes(JSON.stringify(mixedPreflight)).byteLength).toBe(
+    utf8ToBytes(JSON.stringify(mixedActual)).byteLength,
+  );
 });
