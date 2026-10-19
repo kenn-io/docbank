@@ -1027,6 +1027,8 @@ Docbank sends these events:
   Web Lock and sign-out send the final duration bucket in one revoke request,
   which queues the event before revoking the session without waiting for
   delivery.
+  The daemon can't accept the final duration after the browser session has
+  expired or been revoked.
 - `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`.
   Each screen counts once per vault per UTC day for each interface, including
   across daemon restarts. `surface` records which interface was used. The

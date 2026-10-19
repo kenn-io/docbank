@@ -46,6 +46,7 @@ type webSessionRegistry struct {
 
 type webSessionState struct {
 	login        bool
+	ending       bool
 	createdAt    time.Time
 	expiresAt    time.Time
 	expires      *time.Timer
@@ -186,6 +187,23 @@ func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
 
 func (r *webSessionRegistry) revoke(token string) {
 	r.revokeDigest(sha256.Sum256([]byte(token)))
+}
+
+// reportAndRevoke gives one DELETE ownership of the final report while the
+// token remains live. Reporter calls run outside the registry mutex.
+func (r *webSessionRegistry) reportAndRevoke(token string, report func()) {
+	digest := sha256.Sum256([]byte(token))
+	r.mu.Lock()
+	state, ok := r.tokens[digest]
+	if !ok || state.ending || r.closing {
+		r.mu.Unlock()
+		return
+	}
+	state.ending = true
+	r.tokens[digest] = state
+	r.mu.Unlock()
+	defer r.revokeDigest(digest)
+	report()
 }
 
 func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
@@ -680,14 +698,16 @@ func registerWebSession(
 	})
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get(WebSessionHeader)
-		if _, _, live := sessions.authenticate(token); live && reporter != nil {
+		sessions.reportAndRevoke(token, func() {
+			if reporter == nil {
+				return
+			}
 			bucket := r.URL.Query().Get("duration_bucket")
 			properties, err := reporter.SanitizeProperties(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket})
 			if err == nil && properties["duration_bucket"] == bucket {
 				_ = reporter.Capture(telemetry.EventSessionEnded, properties)
 			}
-		}
-		sessions.revoke(token)
+		})
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

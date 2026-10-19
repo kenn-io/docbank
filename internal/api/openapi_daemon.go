@@ -27,12 +27,13 @@ func registerDaemonOpenAPI(api huma.API) {
 			URL          string `json:"url"`
 		}]())},
 	})
+	durationBucket := huma.SchemaFromType(registry, reflect.TypeFor[TelemetryEventProperties]()).Properties["duration_bucket"]
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "revokeWebSession", Method: http.MethodDelete, Path: webSessionPath,
 		Summary: "Revoke the current browser session",
 		Parameters: []*huma.Param{{Name: "duration_bucket", In: "query",
 			Description: "Final visible session duration to report before revocation. Missing or invalid values emit no event.",
-			Schema:      &huma.Schema{Type: openAPIStringType, Enum: []any{"under_1m", "1_to_5m", "5_to_30m", "over_30m"}}}},
+			Schema:      &huma.Schema{Type: durationBucket.Type, Enum: durationBucket.Enum}}},
 		Responses: map[string]*huma.Response{"204": {Description: "Session revoked"}},
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{

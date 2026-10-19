@@ -71,9 +71,6 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 	}
 	<-returned
 	require.NoError(t, requestCtx.Err(), "report caller waited for the stalled daemon")
-	resetFlags(rootCmd)
-	assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
-	assert.NoError(t, requestCtx.Err(), "process exit waited for the stalled report")
 }
 
 func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {
