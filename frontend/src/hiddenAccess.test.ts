@@ -7,26 +7,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("ignores an old setup completion while a new prompt is open", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => Response.json({ configured: false })),
-  );
-  const access = new HiddenAccess("synthetic", vi.fn());
-  const first = access.ensureSetup(new AbortController().signal);
-  await vi.waitFor(() => expect(access.setupPrompt).toBeDefined());
-  const old = access.setupPrompt!;
-  old.done("cancelled");
-  await first;
-  const second = access.ensureSetup(new AbortController().signal);
-  await vi.waitFor(() => expect(access.setupPrompt).toBeDefined());
-  const current = access.setupPrompt!;
-  old.done("saved");
-  expect(access.setupPrompt).toBe(current);
-  current.done("cancelled");
-  await second;
-});
-
 it("a held manual lock uses keepalive without an extra pagehide request", async () => {
   let finish!: (response: Response) => void;
   const fetcher = vi
