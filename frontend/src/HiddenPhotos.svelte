@@ -21,7 +21,8 @@
   import type { ExportInput } from "./exportState.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
-  import { HiddenAccess } from "./hiddenAccess.svelte.js";
+  import PhotoActionError from "./PhotoActionError.svelte";
+  import { HiddenAccess, passcodeValidation } from "./hiddenAccess.svelte.js";
 
   let {
     tags,
@@ -219,13 +220,6 @@
       if (!controller.signal.aborted) reading = false;
     }
   }
-  function passcodeValidation(value: string, empty: string) {
-    return !value
-      ? empty
-      : new TextEncoder().encode(value).length > 1024
-        ? "Use 1 to 1,024 bytes."
-        : "";
-  }
   async function action(kind: "enter" | "lock" | "change" | "disable") {
     if (actionPending) return;
     actionError = "";
@@ -365,7 +359,7 @@
     Hidden photos stay out of Photos. Documents and document tools can still read the underlying
     files.
   </div>
-  {#if photoActionError}<p role="alert">{photoActionError}</p>{/if}
+  <PhotoActionError message={photoActionError} ondismiss={() => onactionerror?.("")} />
   {#if actionError}<p role="alert">{actionError}</p>{/if}
   {#if readError}<p role="alert">{readError}</p>
     <Button size="sm" onclick={() => void checkAccess()}>Retry</Button>{/if}

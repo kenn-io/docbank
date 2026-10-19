@@ -78,6 +78,8 @@
   import { mapTiles } from "./photoMap.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
+  import HiddenSetupModal from "./HiddenSetupModal.svelte";
+  import PhotoActionError from "./PhotoActionError.svelte";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
   import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
@@ -317,6 +319,12 @@
     };
   });
   let photoPath = $state(location.pathname);
+  $effect(() => {
+    void photoPath;
+    void photoMode;
+    const access = hiddenAccess;
+    return () => access?.cancelSetup();
+  });
   const mapMode = $derived(photoMode && isMapPath(photoPath));
   const mapAlbumID = $derived(
     photoPath.startsWith("/photos/map/") ? photoPath.slice("/photos/map/".length) : "",
@@ -3246,7 +3254,10 @@
             onactionerror={(error) => (hiddenPhotoActionError = error)}
             photoActionError={hiddenPhotoActionError}
           />{:else if photoValidated && photoState}
-          {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
+          <PhotoActionError
+            message={hiddenPhotoActionError}
+            ondismiss={() => (hiddenPhotoActionError = "")}
+          />
           {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex
                 albums={photoAlbums}
                 cache={photoState.cache}
@@ -4736,6 +4747,8 @@
     {/if}
   </div>
 {/if}
+
+{#if hiddenAccess?.setupPrompt}<HiddenSetupModal access={hiddenAccess} />{/if}
 
 <style>
   .photo-access-error {

@@ -3462,3 +3462,124 @@ it.each([false, true])(
     ]);
   },
 );
+
+async function startHideSetup() {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  let configured = false;
+  const hidden = new Set<string>();
+  let save = async () => Response.json({ configured: true });
+  const fetcher = vi.fn(async (url: string, _init: RequestInit) => {
+    if (url.endsWith("/photos/hidden/setup")) {
+      const result = await save();
+      if (result.ok) configured = true;
+      return result;
+    }
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured });
+    if (url.endsWith("/hide")) {
+      if (!configured) return Response.json({ code: "hidden_not_configured" }, { status: 409 });
+      const id = url.split("/").at(-2)!;
+      hidden.add(id);
+      return Response.json({ id, revision: 2 });
+    }
+    const items = [photo(1), photo(2)].filter((row) => !hidden.has(row.asset_id));
+    return Response.json({ items, total: items.length, nodes: [], tags: [], profiles: [] });
+  });
+  stubPhotoFetch(fetcher);
+  const hide = vi.spyOn(Photos.prototype, "setHidden");
+  render(App);
+  for (const id of [1, 2])
+    await fireEvent.click(
+      await screen.findByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }),
+    );
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  return {
+    photos: hide.mock.contexts[0] as Photos,
+    hidden,
+    fetcher,
+    setSave: (request: typeof save) => {
+      save = request;
+    },
+  };
+}
+
+async function hideSetupFlow() {
+  const flow = await startHideSetup();
+  const dialog = await screen.findByRole("dialog", { name: "Set a Hidden passcode" });
+  const input = within(dialog).getByLabelText("Passcode") as HTMLInputElement;
+  const submit = async () => {
+    await fireEvent.input(input, { target: { value: "synthetic-passcode" } });
+    await fireEvent.submit(input.closest("form")!);
+  };
+  return {
+    ...flow,
+    dialog,
+    input,
+    submit,
+  };
+}
+
+it("sets a Hidden passcode before hiding the selection and leaves Hidden locked", async () => {
+  const { photos, submit, hidden, fetcher } = await hideSetupFlow();
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/hide"))).toBe(false);
+  await submit();
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect([...hidden]).toEqual(["photo-1", "photo-2"]);
+  expect(photos.items).toEqual([]);
+  expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/hide"))).toHaveLength(2);
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/unlock"))).toBe(false);
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  expect(await screen.findByRole("button", { name: "Unlock" })).toBeTruthy();
+});
+
+it("keeps an invalid passcode open for retry after a 422 response", async () => {
+  const { photos, dialog, submit, hidden, setSave } = await hideSetupFlow();
+  setSave(async () =>
+    Response.json(
+      { code: "invalid_hidden_passcode", detail: "Use a different passcode." },
+      { status: 422 },
+    ),
+  );
+  await submit();
+  expect(await within(dialog).findByText("Use a different passcode.")).toBeTruthy();
+  expect(hidden.size).toBe(0);
+  setSave(async () => Response.json({ configured: true }));
+  await submit();
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect([...hidden]).toEqual(["photo-1", "photo-2"]);
+});
+
+it("reports another client's passcode with a dismissible notice", async () => {
+  const { photos, submit, hidden, setSave } = await hideSetupFlow();
+  setSave(async () => Response.json({ code: "hidden_configured" }, { status: 409 }));
+  await submit();
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect(hidden.size).toBe(0);
+  const message = "Hidden already has a passcode. Choose Hide again to use it.";
+  expect(await screen.findByText(message)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.queryByText(message)).toBeNull();
+});
+
+it("keeps the setup text across tab concealment while locking immediately", async () => {
+  const { dialog, input, fetcher } = await hideSetupFlow();
+  await fireEvent.input(input, { target: { value: "synthetic-passcode" } });
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.endsWith("/lock"))).toBe(true));
+  expect(screen.getByRole("dialog", { name: "Set a Hidden passcode" })).toBe(dialog);
+  expect(input.value).toBe("synthetic-passcode");
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(input.value).toBe("synthetic-passcode");
+});

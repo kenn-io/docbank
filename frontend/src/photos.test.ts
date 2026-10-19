@@ -1,5 +1,6 @@
 import { waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
 import {
@@ -777,7 +778,7 @@ it.each([
 );
 
 it.each([
-  ["hidden_not_configured", 409, "Set a passcode in the Hidden view first."],
+  ["hidden_not_configured", 409, "Hidden has no passcode. Choose Hide again to set one."],
   ["hidden_locked", 403, "This photo is already hidden."],
 ])("explains a rejected hide with %s", async (code, status, message) => {
   const fetcher = vi
@@ -3032,3 +3033,53 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
   expect(peak).toBe(4);
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
 });
+
+it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
+  "settles Hidden setup before the hide batch: %s",
+  async (outcome) => {
+    const access = new HiddenAccess("scoped", vi.fn());
+    const ensure = vi.spyOn(access, "ensureSetup");
+    const hides: [string, string | null][] = [];
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) {
+        if (outcome === "read failure") throw new Error("State unavailable");
+        return Response.json({ configured: false });
+      }
+      if (url.endsWith("/hide")) {
+        expect(ensure).toHaveBeenCalledOnce();
+        hides.push([url, new Headers(init.headers).get("If-Match")]);
+        return Response.json({ id: url.split("/").at(-2), revision: 8 });
+      }
+      return response([]);
+    });
+    const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
+    photos.items = [photo(1), { ...photo(2), revision: 7 }];
+    photos.started = true;
+    photos.selectLoaded();
+    const report = vi.fn();
+    const write = photos.setHidden("photo-1", undefined, undefined, report);
+    if (outcome !== "read failure") {
+      await waitFor(() => expect(access.setupPrompt).toBeDefined());
+      expect(photos.hiding).toBe(true);
+      expect(hides).toEqual([]);
+      if (outcome === "dispose") photos.dispose();
+      else access.setupPrompt!.done(outcome);
+    }
+    await write;
+    if (outcome === "saved" || outcome === "read failure") {
+      expect(hides).toEqual([
+        ["/api/v1/photos/assets/photo-1/hide", "1"],
+        ["/api/v1/photos/assets/photo-2/hide", "7"],
+      ]);
+    } else {
+      expect(hides).toEqual([]);
+      expect(photos.actionError).toBe(
+        outcome === "exists" ? "Hidden already has a passcode. Choose Hide again to use it." : "",
+      );
+      if (outcome === "exists") expect(report).toHaveBeenCalledWith(photos.actionError);
+      else expect(report).not.toHaveBeenCalled();
+    }
+    expect(photos.hiding).toBe(false);
+    photos.dispose();
+  },
+);

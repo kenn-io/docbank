@@ -387,6 +387,7 @@ export class Photos {
         pages: number;
       }
     | undefined;
+  private readonly lifetime = new AbortController();
   private controller = new AbortController();
   private facetsController = new AbortController();
   private needsFacets = false;
@@ -808,8 +809,21 @@ export class Photos {
       onactionerror?.(this.actionError);
       return;
     }
-    this.cancelPending();
     this.hiding = true;
+    if (!this.hidden && this.hiddenAccess) {
+      const result = await this.hiddenAccess.ensureSetup(this.lifetime.signal);
+      if (this.disposed || result === "cancelled" || result === "exists") {
+        this.hiding = false;
+        if (result === "exists") {
+          this.actionError = "Hidden already has a passcode. Choose Hide again to use it.";
+          onactionerror?.(this.actionError);
+        } else if (this.disposed && result === "saved") {
+          onactionerror?.("Hidden passcode saved. Choose Hide again.");
+        }
+        return;
+      }
+    }
+    this.cancelPending();
     this.actionError = "";
     let failure = "";
     let failures = 0;
@@ -829,7 +843,7 @@ export class Photos {
         failures++;
         failure =
           cause instanceof APIError && cause.code === "hidden_not_configured"
-            ? "Set a passcode in the Hidden view first."
+            ? "Hidden has no passcode. Choose Hide again to set one."
             : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden
               ? "This photo is already hidden."
               : cause instanceof Error
@@ -1524,6 +1538,7 @@ export class Photos {
     this.allResults = true;
   }
   dispose() {
+    this.lifetime.abort();
     this.clearFrozen();
     this.authored.dispose();
     this.cullEditor?.dispose();
