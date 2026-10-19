@@ -300,3 +300,24 @@ it("measures only quarter turns and releases the observer when rotation returns 
   expect(disconnect).toHaveBeenCalledOnce();
   expect(((await screen.findByRole("img")) as HTMLImageElement).style.width).toBe("100%");
 });
+
+it("expands a burst without selecting or opening a photo", async () => {
+  const onexpand = vi.fn(),
+    onclick = vi.fn(),
+    onopen = vi.fn();
+  render(PhotoCell, {
+    photo: {
+      ...photo(1),
+      stack: { asset_ids: ["a", "b", "c"], representative_id: "b" },
+    },
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    selected: false,
+    onclick,
+    onopen,
+    onexpand,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Expand stack of 3 photos" }));
+  expect(onexpand).toHaveBeenCalledOnce();
+  expect(onclick).not.toHaveBeenCalled();
+  expect(onopen).not.toHaveBeenCalled();
+});

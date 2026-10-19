@@ -90,7 +90,14 @@ export function validateUploadReceipt(
   }
 }
 
+export interface PhotoFolderContinuation {
+  selected_folder: string;
+  folder_key: string;
+  folder_name: string;
+}
+
 export interface PhotoImportPlan {
+  continuations?: PhotoFolderContinuation[];
   import_id: string;
   groups: number[][];
   unsupported: number[];
@@ -103,22 +110,59 @@ export interface PhotoGroupReceipt {
   reason?: string;
 }
 
+const declarationUUID = "00000000-0000-4000-8000-000000000000";
+
+export function photoImportDeclaration(
+  files: File[],
+  destination: string,
+  sourceID = declarationUUID,
+  requestID = declarationUUID,
+  hashes?: ReadonlyMap<File, string>,
+) {
+  const tooLarge = () =>
+    new Error(
+      "Choose fewer files or use `docbank photos import`. Photo selections allow 32,768 files and an 8 MiB declaration.",
+    );
+  if (files.length > 32768) throw tooLarge();
+  const message = {
+    type: "plan_photo_import",
+    source_id: sourceID,
+    request_id: requestID,
+    destination,
+    files: files.map((file) => ({
+      relative_path: photoRelativePath(file),
+      size: file.size,
+      modified_time: file.lastModified,
+      expected_hash: hashes ? (hashes.get(file) ?? "") : "0".repeat(64),
+    })),
+  };
+  if (utf8ToBytes(JSON.stringify(message)).byteLength > 8 * 1024 * 1024) throw tooLarge();
+  return message;
+}
+
 export interface PhotoImportTransport {
-  planPhotoImport(files: File[], destination: string): Promise<PhotoImportPlan>;
+  planPhotoImport(
+    files: File[],
+    destination: string,
+    sourceID: string,
+    hashes: ReadonlyMap<File, string>,
+  ): Promise<PhotoImportPlan>;
   uploadPhotoGroup(
     importID: string,
     groupIndex: number,
     group: File[],
     signal: AbortSignal,
-    onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
+    onprogress: (phase: "uploading", progress: TransferProgress) => void,
+    hashes: string[],
   ): Promise<PhotoGroupReceipt>;
 }
 
-function photoRelativePath(file: File): string {
+export function photoRelativePath(file: File): string {
   return (file.webkitRelativePath || file.name).normalize("NFC");
 }
 
 interface UploadMessage {
+  continuations?: PhotoFolderContinuation[];
   import_id?: string;
   files?: { relative_path: string; size: number; modified_time?: number }[];
   groups?: number[][];
@@ -287,25 +331,17 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     }
   }
 
-  async planPhotoImport(files: File[], destination: string): Promise<PhotoImportPlan> {
+  async planPhotoImport(
+    files: File[],
+    destination: string,
+    sourceID: string,
+    hashes: ReadonlyMap<File, string>,
+  ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     this.busy = true;
     const requestID = randomUUID();
     try {
-      const message = {
-        type: "plan_photo_import",
-        request_id: requestID,
-        destination,
-        files: files.map((file) => ({
-          relative_path: photoRelativePath(file),
-          size: file.size,
-          modified_time: file.lastModified,
-        })),
-      };
-      if (files.length > 32768 || utf8ToBytes(JSON.stringify(message)).byteLength > 8 * 1024 * 1024)
-        throw new Error(
-          "Choose fewer files or use `docbank photos import`. Photo selections allow 32,768 files and an 8 MiB declaration.",
-        );
+      const message = photoImportDeclaration(files, destination, sourceID, requestID, hashes);
       this.send(message);
       const plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
@@ -332,6 +368,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         groups: plan.groups,
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
+        continuations: plan.continuations,
       };
     } finally {
       this.busy = false;
@@ -343,7 +380,8 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     groupIndex: number,
     group: File[],
     signal: AbortSignal,
-    onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
+    onprogress: (phase: "uploading", progress: TransferProgress) => void,
+    hashes: string[],
   ): Promise<PhotoGroupReceipt> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
@@ -355,15 +393,6 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     let readyForBytes = false;
     try {
       const total = group.reduce((sum, file) => sum + file.size, 0);
-      const hashes = [];
-      let processed = 0;
-      for (const file of group) {
-        const hash = await hashFile(file, signal, (progress) =>
-          onprogress("hashing", { processed: processed + progress.processed, total }),
-        );
-        hashes.push(hash);
-        processed += file.size;
-      }
       this.send({
         type: "begin_photo_group",
         request_id: requestID,
@@ -371,7 +400,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         group: groupIndex,
         hashes,
       });
-      processed = 0;
+      let processed = 0;
       let terminal = await this.nextMessage(signal);
       for (const file of group) {
         const ready = terminal;

@@ -198,7 +198,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	rec.Metadata[metaProtocolVersion] = "83"
+	rec.Metadata[metaProtocolVersion] = "85"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,
@@ -208,7 +208,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
 	require.NoError(t, err)
-	require.True(t, started.Load(), "protocol 83 lacks native PDF preparation")
+	require.True(t, started.Load(), "protocol 85 lacks burst decisions")
 	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	outline, err := client.GetTextOutline(t.Context(), request)

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -189,4 +190,64 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	var report api.TrashEmptyReport
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	assert.Equal(t, api.TrashEmptyReport{HeldRoots: 1, Run: true}, report)
+}
+
+func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	// A full Cull run fits the request bound, and so does its flat response.
+	run250k := make([]string, 250_000)
+	for i := range run250k {
+		run250k[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": run250k})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Less(t, len(body), 16<<20)
+	var grouped api.GroupPhotoStacksResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+	require.Empty(t, grouped.Groups)
+	require.Len(t, grouped.UnavailableIDs, 250_000)
+	// Repeats are rejected without echoing the run back once per repeat.
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{run250k[0], run250k[0]}})
+	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+	require.Less(t, len(body), 64<<10)
+	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
+	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
+	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
+}
+
+func TestPhotoSettingsAuditedPreferenceConflictStatusMapping(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	headers := map[string]string{"If-Match": `"1"`}
+	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+	require.Equal(t, http.StatusConflict, res.StatusCode, body)
+	require.Equal(t, "audit_mutation_unsupported", decodeProblem(t, body).Code)
+}
+
+func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	_, err := s.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{Preference: new("image")})
+	require.NoError(t, err)
+	headers := map[string]string{"If-Match": `"2"`}
+	invalid, invalidBody := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": nil, "burst_gap_seconds": 5})
+	require.Equal(t, http.StatusUnprocessableEntity, invalid.StatusCode, invalidBody)
+	invalid, invalidBody = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": "raw", "reset_preference": true, "burst_gap_seconds": 5})
+	require.Equal(t, http.StatusUnprocessableEntity, invalid.StatusCode, invalidBody)
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"2"`}
+	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"reset_preference": true, "burst_gap_seconds": 5})
+	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+	stale, staleBody := do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"1"`}, map[string]any{"burst_gap_seconds": 5})
+	require.Equal(t, http.StatusPreconditionFailed, stale.StatusCode, staleBody)
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"burst_gap_seconds": 5})
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	require.Equal(t, `"3"`, res.Header.Get("ETag"))
 }

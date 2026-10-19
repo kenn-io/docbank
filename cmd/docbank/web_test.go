@@ -22,7 +22,7 @@ import (
 
 func webSessionClient(t *testing.T, token string) (*daemonconn.Connection, string) {
 	t.Helper()
-	const webOrigin = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43211"
+	const webOrigin = "http://docbank-0123456789abcdef0123456789abcdef.docbank.localhost:43211"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/daemon/web-session", r.URL.Path)

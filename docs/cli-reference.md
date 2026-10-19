@@ -194,7 +194,7 @@ docbank photos faces key <content-version-id> [--face ID] --person ID --revision
 docbank photos faces withdraw-rejection <content-version-id> --face ID --person ID --revision REV
 docbank photos faces undo <receipt-id>
 docbank photos settings show
-docbank photos settings set raw|image [--revision REV]
+docbank photos settings set [raw|image] [--burst-gap-seconds SECONDS] [--revision REV]
 docbank photos settings reset [--revision REV]
 docbank photos hidden setup|change|disable|lock|state|reset
 docbank photos assets hide <asset-id> [--revision REV]
@@ -266,7 +266,7 @@ prints the operation ID. It creates one photo per same-folder, same-name group
 discovered in the scan. `docbank jobs show <operation-id> --json` returns its
 progress and receipt, including every group the run left unpaired and the number
 of unsupported files it skipped. `docbank jobs cancel <operation-id>` stops it.
-Current duplicate owners preserve existing pairings. See
+Current duplicate owners preserve existing pairings. Burst grouping and stack decisions are available in the web app. The CLI sets the gap with `photos settings --burst-gap-seconds N`. See
 [Photos](usage/photos.md#import-a-camera-folder).
 
 ## docbank people

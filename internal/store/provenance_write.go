@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 // ProvenanceAppendInput describes one post-ingest origin assertion. A positive
@@ -159,7 +161,7 @@ func validateProvenancePredecessorTx(
 	}
 	// Operational facts anchor re-ingest idempotency. Corrections may retire
 	// caller-supplied evidence, but must leave those ingest observations active.
-	if !sourceKindIsEmbedded(sourceKind) {
+	if !query.IsEmbeddedSourceKind(sourceKind) {
 		return fmt.Errorf("operational ingest provenance cannot be superseded: %w", ErrProvenanceMismatch)
 	}
 	var successor int

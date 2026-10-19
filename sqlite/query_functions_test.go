@@ -1,10 +1,12 @@
 package sqlite_test
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/query"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -33,6 +35,17 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 		require.NoError(t, db.QueryRowContext(t.Context(),
 			`SELECT docbank_query_media_family_v1(?, ?)`, test.mime, test.name).Scan(&family))
 		require.Equal(t, test.family, family, "%q / %q", test.mime, test.name)
+	}
+
+	for _, tc := range []struct{ kind, desc, path string }{
+		{"push", "camera", "/shots/a.jpg"},
+		{"cli", "", ""},
+	} {
+		var key sql.NullString
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_photo_folder_v1(?, ?, ?)`, tc.kind, tc.desc, tc.path).Scan(&key))
+		want, valid := query.PhotoFolderKey(tc.kind, tc.desc, tc.path)
+		require.Equal(t, valid, key.Valid)
+		require.Equal(t, want, key.String)
 	}
 
 	// Force a second physical connection: the predicate must not depend on the

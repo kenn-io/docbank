@@ -1055,7 +1055,7 @@ func listenWebOriginWithIdentity(
 	}
 	origin := url.URL{
 		Scheme: "http",
-		Host:   net.JoinHostPort("docbank-"+identity+".localhost", port),
+		Host:   net.JoinHostPort("docbank-"+identity+".docbank.localhost", port),
 		Path:   "/",
 	}
 	return listener, origin.String(), nil

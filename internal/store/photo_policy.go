@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -71,6 +73,12 @@ var photoSourceExtensions = map[string]PhotoSource{
 	".xmp":  {Kind: PhotoSourceSidecar, MediaType: "application/rdf+xml", Role: PhotoRoleSidecar, AssetKind: PhotoKindPhoto},
 }
 
+// PhotoSourceExtensions returns the sorted extensions accepted by photo imports.
+// Browser policy generation reads this registry so both planners agree.
+func PhotoSourceExtensions() []string {
+	return slices.Sorted(maps.Keys(photoSourceExtensions))
+}
+
 // ClassifyPhotoSource classifies a source by its final extension. It returns
 // unsupported for names that the grouped photo importer must leave alone.
 func ClassifyPhotoSource(name string) PhotoSource {
@@ -94,6 +102,7 @@ type PhotoNodeFacts struct {
 
 // PhotoFile is one role-bearing reference to an ordinary Docbank file node.
 type PhotoFile struct {
+	flagOwner string
 	Confirmed PhotoAuthoredFields `json:"confirmed_fields"`
 	Revision  int64               `json:"revision"`
 	Rating    int                 `json:"rating"`
@@ -132,9 +141,10 @@ type PhotoAsset struct {
 // PhotoSettings is the vault preference fence. A missing row is the virtual
 // RAW preference at revision one; a stored nil preference is a reset value.
 type PhotoSettings struct {
-	Preference *string `json:"preference,omitzero"`
-	Revision   int64   `json:"revision"`
-	UpdatedAt  string  `json:"updated_at"`
+	BurstGapSeconds int     `json:"burst_gap_seconds"`
+	Preference      *string `json:"preference,omitzero"`
+	Revision        int64   `json:"revision"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 // PhotoDetachOptions controls the only destructive dependent-member action.
@@ -386,15 +396,25 @@ func validatePhotoGraphWhere(ctx context.Context, q metadataQuerier, where strin
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("reading photo graph: %w", err)
 	}
-	settings, err := photoSettingsTx(ctx, q)
-	if err != nil {
+	// Graph validation also reads released schemas. Only the display preference
+	// affects membership pointers; settings codecs validate the rest by version.
+	var stored sql.NullString
+	err = q.QueryRowContext(ctx, `SELECT preference FROM photo_library_settings WHERE singleton=1`).Scan(&stored)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	var preference *string
+	if stored.Valid {
+		preference = new(stored.String)
+	}
+	if !photoPreferenceValid(preference) {
+		return ErrInvalidPhotoAsset
 	}
 	for assetID, entry := range assets {
 		if validateUUIDv4(assetID) != nil || !photoKindValid(entry.asset.Kind) || entry.asset.Revision < 1 || len(entry.files) > PhotoMaxFiles {
 			return fmt.Errorf("%w: asset %s", ErrInvalidPhotoAsset, assetID)
 		}
-		choice := selectPhotoDisplay(entry.files, settings.Preference, entry.asset.DisplayOverrideFileID)
+		choice := selectPhotoDisplay(entry.files, preference, entry.asset.DisplayOverrideFileID)
 		if !equalPhotoString(entry.asset.DisplayFileID, choice.FileID) {
 			return fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, assetID)
 		}

@@ -19,6 +19,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 beforeEach(() => {
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+  vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
 });
@@ -291,8 +297,9 @@ it("keeps the previous durable run after cancellation, capture failure or failed
   await cull.start(query);
   await cull.flush();
   const original = structuredClone(cull.run);
+  const durable = { ids: original!.ids, checkpoint: original!.checkpoint };
   expect(await cull.start(query, () => false)).toBe(false);
-  expect(await store.load()).toEqual(original);
+  expect(await store.load()).toEqual(durable);
   const replacement = new Response(JSON.stringify(await snapshot([photo(2).asset_id])));
   let release!: () => void;
   capture.mockImplementationOnce(
@@ -308,7 +315,7 @@ it("keeps the previous durable run after cancellation, capture failure or failed
   expect(await replacing).toBe(false);
   await cull.flush();
   expect(cull.run).toEqual(original);
-  expect(await store.load()).toEqual(original);
+  expect(await store.load()).toEqual(durable);
   expect(cull.error).toBe("");
   capture.mockRejectedValueOnce(new Error("Snapshot expired"));
   expect(await cull.start(query, () => true)).toBe(false);
@@ -316,7 +323,7 @@ it("keeps the previous durable run after cancellation, capture failure or failed
   capture.mockResolvedValueOnce(new Response(JSON.stringify(await snapshot([row.asset_id]))));
   vi.mocked(store.replace).mockRejectedValueOnce(new Error("Storage full"));
   expect(await cull.start(query, () => true)).toBe(false);
-  expect(await store.load()).toEqual(original);
+  expect(await store.load()).toEqual(durable);
 });
 it("ignores auto-advance and unavailable updates while a scope change reads flags", async () => {
   const rows = [photo(1), photo(2)],
@@ -794,4 +801,62 @@ it.each(["success", "failure", "empty"])("refreshes bulk flags: %s", async (outc
   expect(cull.stale).toBe(false);
   expect((await store.load())?.checkpoint.unavailable).toEqual([ids[20_000]]);
   expect(cull.remainder).toBe(false);
+});
+
+it("regroups a new pass and ignores the previous pass's pending grouping", async () => {
+  const rows = [photo(1), photo(2), photo(3)];
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+    Response.json(await snapshot(rows.map((row) => row.asset_id))),
+  );
+  vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({
+    items: rows.map((row) => ({ asset_id: row.asset_id, flag: "pick" as const })),
+  });
+  const cull = new PhotoCull("session", storage());
+  expect(await cull.start(query)).toBe(true);
+  let finish!: (value: api.GroupPhotoStacksResponse) => void;
+  const group = vi.mocked(api.groupPhotoStacks);
+  group.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  const pending = cull.regroup();
+  const oldSignal = group.mock.calls.at(-1)![1]!.signal;
+  group.mockResolvedValue({
+    groups: [[rows[1]!.asset_id, rows[2]!.asset_id]],
+    unavailable_ids: [],
+    burst_gap_seconds: 3,
+  });
+  await cull.nextPass(false, () => true);
+  expect(oldSignal?.aborted).toBe(true);
+  finish({
+    groups: [[rows[0]!.asset_id, rows[1]!.asset_id]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await pending;
+  expect(cull.run?.groups).toEqual([[rows[1]!.asset_id, rows[2]!.asset_id]]);
+  expect(cull.run?.burstGapSeconds).toBe(3);
+  expect(cull.run?.checkpoint.pass).toEqual(rows.map((row) => row.asset_id));
+});
+
+it("retries incomplete grouping explicitly without resending the frozen run on focus", async () => {
+  const ids = [photo(1).asset_id, photo(2).asset_id];
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(Response.json(await snapshot(ids)));
+  const group = vi.mocked(api.groupPhotoStacks);
+  group.mockResolvedValueOnce({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+    grouping_incomplete: true,
+  });
+  const cull = new PhotoCull("session", storage());
+  expect(await cull.start(query)).toBe(true);
+  expect(cull.run?.groupingIncomplete).toBe(true);
+  group.mockResolvedValue({ groups: [ids], unavailable_ids: [], burst_gap_seconds: 2 });
+  await cull.checkSettings();
+  await cull.checkSettings();
+  expect(group).toHaveBeenCalledTimes(1);
+  expect(cull.run?.groupingIncomplete).toBe(true);
+  await cull.regroup();
+  expect(group).toHaveBeenCalledTimes(2);
+  expect(group.mock.calls[1]![0]).toEqual({ asset_ids: ids });
+  expect(cull.run?.groupingIncomplete).toBeFalsy();
+  expect(cull.run?.groups).toEqual([ids]);
 });

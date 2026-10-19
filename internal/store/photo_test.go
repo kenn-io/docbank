@@ -123,7 +123,7 @@ func TestPhotoDisplayPrecedenceAndDetachFallback(t *testing.T) {
 	assert.Equal(t, PhotoDisplayDefault, asset.DisplaySource)
 	assert.Equal(t, PhotoRoleRAW, fileByID(asset.Files, *asset.DisplayFileID).Role)
 	preference := "image"
-	settings, err := s.SetPhotoSettings(ctx, 1, &preference)
+	settings, err := s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), settings.Revision)
 	asset, err = s.PhotoAssetByID(ctx, asset.ID)
@@ -165,7 +165,7 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	group, err = s.AttachPhotoFile(ctx, group.ID, group.Revision, second.ID, PhotoRoleImage, nil)
 	require.NoError(t, err)
 	preference := "image"
-	settings, err := s.SetPhotoSettings(ctx, 1, &preference)
+	settings, err := s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), settings.Revision)
 	group, err = s.PhotoAssetByID(ctx, group.ID)
@@ -174,13 +174,13 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	rawFileID := fileByRole(group.Files, PhotoRoleRAW).ID
 	group, err = s.SetPhotoDisplay(ctx, group.ID, group.Revision, &rawFileID)
 	require.NoError(t, err)
-	settings, err = s.SetPhotoSettings(ctx, settings.Revision, nil)
+	settings, err = s.SetPhotoSettings(ctx, settings.Revision, PhotoSettingsUpdate{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), settings.Revision)
 	unchangedGroup, err := s.PhotoAssetByID(ctx, group.ID)
 	require.NoError(t, err)
 	assert.Equal(t, group.Revision, unchangedGroup.Revision)
-	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, &preference)
+	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, PhotoSettingsUpdate{Preference: &preference})
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, group.ID)), "settings_recompute")
 	assert.NoError(t, s.ValidateMetadata(ctx))
@@ -375,7 +375,7 @@ func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
 	require.ErrorContains(t, err, "reference missing assets")
 
 	preference := "image"
-	_, err = s.SetPhotoSettings(ctx, 1, &preference)
+	_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 	exported.Reset()
 	require.NoError(t, s.ExportMetadata(ctx, &exported))

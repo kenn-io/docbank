@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json/v2"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -795,6 +797,34 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	require.ElementsMatch(t, []any{"", "pick", "reject"}, schemas["SavedQueryFiltersSchema"].Properties["flags"].Items.Enum)
 	require.ElementsMatch(t, []any{"", "red", "yellow", "green", "blue", "purple"}, schemas["SavedQueryFiltersSchema"].Properties["labels"].Items.Enum)
 	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
+}
+
+func TestOpenAPIPhotoImportCheckpointAllowsEmptyTransitions(t *testing.T) {
+	t.Parallel()
+	encoded, err := json.Marshal(apiclient.ReplacePhotoImportCheckpointBody{})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"expected":null,"next":null}`, string(encoded))
+	doc := api.NewOfflineServer().API().OpenAPI()
+	operation := doc.Paths["/api/daemon/photo-import-checkpoint"].Put
+	require.NotNil(t, operation)
+	request := operation.RequestBody.Content["application/json"].Schema
+	require.Equal(t, "object", request.Type)
+	require.Contains(t, request.Required, "expected")
+	require.Contains(t, request.Required, "next")
+	for _, field := range []struct {
+		name      string
+		component string
+	}{
+		{name: "expected", component: "PhotoCheckpointIdentity"},
+		{name: "next", component: "PhotoImportCheckpoint"},
+	} {
+		property := request.Properties[field.name]
+		require.NotNil(t, property, field.name)
+		require.True(t, property.Nullable, field.name)
+		component := doc.Components.Schemas.Map()[field.component]
+		require.Equal(t, "object", component.Type, field.name)
+		require.False(t, component.Nullable, field.name)
+	}
 }
 
 func TestOpenAPIPushRequiresPortableIdentityAndVerifiedBytes(t *testing.T) {

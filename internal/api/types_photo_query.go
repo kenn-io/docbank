@@ -12,6 +12,7 @@ import (
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
+	Stacks     bool                   `json:"stacks,omitempty" doc:"Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows."`
 	Projection string                 `json:"projection,omitempty" enum:"map"`
 	Hidden     bool                   `json:"hidden,omitempty"`
 	Query      QueryPayload           `json:"query"`
@@ -98,7 +99,16 @@ type PhotoMapRow struct {
 	} `json:"previews"`
 }
 
+// PhotoStack is one burst among a page's items.
+type PhotoStack struct {
+	AssetIDs         []string `json:"asset_ids" minItems:"2" maxItems:"500" doc:"Members in ascending capture order."`
+	RepresentativeID string   `json:"representative_id" format:"uuid"`
+}
+
 type PhotoBrowsePage struct {
+	GroupingIncomplete bool             `json:"grouping_incomplete,omitempty" doc:"Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available."`
+	BurstGapSeconds    int              `json:"burst_gap_seconds,omitempty" minimum:"1" maximum:"30"`
+	Stacks             []PhotoStack     `json:"stacks,omitempty" doc:"Bursts among items when stacks were requested; other items are single photos."`
 	MapItems           []PhotoMapRow    `json:"map_items,omitempty"`
 	Items              []PhotoBrowseRow `json:"items"`
 	Total              int64            `json:"total" minimum:"0"`

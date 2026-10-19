@@ -14,6 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
+
 const targets = [
   preparedPhoto(1, {
     asset_id: "asset",

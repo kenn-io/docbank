@@ -381,7 +381,7 @@ trust_boundary = "local_process"
     const port = Number(browserURL.port);
     if (
       browserURL.protocol !== "http:" ||
-      !/^docbank-[0-9a-f]{32}\.localhost$/.test(browserURL.hostname) ||
+      !/^docbank-[0-9a-f]{32}\.docbank\.localhost$/.test(browserURL.hostname) ||
       !Number.isInteger(port) ||
       port < 1 ||
       port > 65_535 ||

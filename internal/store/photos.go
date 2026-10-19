@@ -12,7 +12,7 @@ import (
 const maxPhotoReceiptBytes = 16 << 10
 
 const photoAssetColumns = "asset_id, kind, revision, hidden_at, excluded_at, display_file_id, display_override_file_id, created_at, updated_at"
-const photoFileColumns = "file_id, asset_id, node_id, role, sidecar_of_file_id, created_at, revision, rating, flag, label, caption, creator, copyright, rotation, confirmed_fields"
+const photoFileColumns = "file_id, asset_id, node_id, role, sidecar_of_file_id, created_at, revision, rating, flag, label, caption, creator, copyright, rotation, confirmed_fields, flag_owner"
 
 func scanPhotoAsset(row scanner) (PhotoAsset, error) {
 	var asset PhotoAsset
@@ -77,12 +77,12 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 	var settings PhotoSettings
 	var preference sql.NullString
 	err := q.QueryRowContext(ctx, `
-		SELECT preference, revision, updated_at
+		SELECT preference, revision, updated_at, COALESCE(burst_gap_seconds,2)
 		FROM photo_library_settings WHERE singleton=1`).Scan(
-		&preference, &settings.Revision, &settings.UpdatedAt,
+		&preference, &settings.Revision, &settings.UpdatedAt, &settings.BurstGapSeconds,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return PhotoSettings{Revision: 1, UpdatedAt: ""}, nil
+		return PhotoSettings{Revision: 1, UpdatedAt: "", BurstGapSeconds: 2}, nil
 	}
 	if err != nil {
 		return PhotoSettings{}, fmt.Errorf("reading photo settings: %w", err)
@@ -90,7 +90,7 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 	if preference.Valid {
 		settings.Preference = new(preference.String)
 	}
-	if !photoPreferenceValid(settings.Preference) || settings.Revision < 1 {
+	if !photoPreferenceValid(settings.Preference) || settings.Revision < 1 || settings.BurstGapSeconds < 1 || settings.BurstGapSeconds > 30 {
 		return PhotoSettings{}, fmt.Errorf("%w: invalid settings row", ErrInvalidPhotoAsset)
 	}
 	return settings, nil
@@ -230,9 +230,10 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 
 func photoSettingsState(settings PhotoSettings) any {
 	return struct {
-		Preference *string `json:"preference"`
-		Revision   int64   `json:"revision"`
-	}{settings.Preference, settings.Revision}
+		BurstGapSeconds int     `json:"burst_gap_seconds"`
+		Preference      *string `json:"preference"`
+		Revision        int64   `json:"revision"`
+	}{settings.BurstGapSeconds, settings.Preference, settings.Revision}
 }
 
 func marshalPhotoState(value any) (string, error) {
@@ -325,7 +326,7 @@ func inferPhotoRole(facts PhotoNodeFacts) string {
 
 func scanPhotoFile(row scanner) (PhotoFile, error) {
 	var file PhotoFile
-	err := row.Scan(&file.ID, &file.AssetID, &file.NodeID, &file.Role, &file.SidecarOfID, &file.CreatedAt, &file.Revision, &file.Rating, &file.Flag, &file.Label, &file.Caption, &file.Creator, &file.Copyright, &file.Rotation, &file.Confirmed)
+	err := row.Scan(&file.ID, &file.AssetID, &file.NodeID, &file.Role, &file.SidecarOfID, &file.CreatedAt, &file.Revision, &file.Rating, &file.Flag, &file.Label, &file.Caption, &file.Creator, &file.Copyright, &file.Rotation, &file.Confirmed, &file.flagOwner)
 	return file, err
 }
 
@@ -841,17 +842,29 @@ func photoFileByID(files []PhotoFile, id string) (PhotoFile, bool) {
 	return PhotoFile{}, false
 }
 
-// SetPhotoSettings changes the vault display preference and atomically fans
-// the inherited choice across every asset. A nil preference resets to default.
-func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference *string) (PhotoSettings, error) {
+// PhotoSettingsUpdate changes the display preference, the burst gap, or both.
+// Gap-only updates keep the preference. ResetPreference clears it, including
+// with a gap update. An empty update resets the preference and keeps the gap.
+type PhotoSettingsUpdate struct {
+	Preference      *string
+	ResetPreference bool
+	BurstGapSeconds *int
+}
+
+// SetPhotoSettings applies one settings update with one revision and receipt.
+// A preference change atomically fans the inherited choice across every asset.
+func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update PhotoSettingsUpdate) (PhotoSettings, error) {
 	if revision < 1 {
 		return PhotoSettings{}, fmt.Errorf("%w: revision must be positive", ErrStaleRevision)
 	}
-	if !photoPreferenceValid(preference) {
+	if !photoPreferenceValid(update.Preference) || update.ResetPreference && update.Preference != nil {
 		return PhotoSettings{}, fmt.Errorf("%w: invalid preference", ErrInvalidPhotoAsset)
 	}
+	if gap := update.BurstGapSeconds; gap != nil && (*gap < 1 || *gap > 30) {
+		return PhotoSettings{}, fmt.Errorf("%w: burst gap must be 1 to 30 seconds", ErrInvalidPhotoAsset)
+	}
 	var result PhotoSettings
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		current, err := photoSettingsTx(ctx, tx)
 		if err != nil {
 			return err
@@ -859,16 +872,37 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 		if current.Revision != revision {
 			return fmt.Errorf("photo settings at revision %d, expected %d: %w", current.Revision, revision, ErrStaleRevision)
 		}
-		if equalPhotoString(current.Preference, preference) {
+		next := current
+		if update.Preference != nil || update.ResetPreference || update.BurstGapSeconds == nil {
+			next.Preference = update.Preference
+		}
+		if update.BurstGapSeconds != nil {
+			next.BurstGapSeconds = *update.BurstGapSeconds
+		}
+		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoString(current.Preference, next.Preference) {
 			result = current
 			return nil
 		}
-		assets, err := allPhotoAssetsTx(ctx, tx)
+		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
 		}
-		next := PhotoSettings{Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference, revision=excluded.revision, updated_at=excluded.updated_at`, nullablePhotoString(preference), next.Revision, next.UpdatedAt); err != nil {
+		if active && !equalPhotoString(current.Preference, next.Preference) {
+			return fmt.Errorf("%w: display preference cannot be changed in an audited vault; set the burst gap without a preference", ErrAuditMutationUnsupported)
+		}
+		priorBurst, err := photoBurstSettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		// Read assets before the new preference is visible; reads resolve the display choice.
+		var assets []PhotoAsset
+		if !equalPhotoString(current.Preference, next.Preference) {
+			if assets, err = allPhotoAssetsTx(ctx, tx); err != nil {
+				return err
+			}
+		}
+		next.Revision, next.UpdatedAt = current.Revision+1, nowRFC3339()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds); err != nil {
 			return err
 		}
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
@@ -878,8 +912,15 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 		}); err != nil {
 			return err
 		}
+		if err := s.auditPhotoBurstTx(ctx, tx, priorBurst, nil); err != nil {
+			return err
+		}
+		result = next
+		if assets == nil {
+			return nil
+		}
 		for _, asset := range assets {
-			choice := selectPhotoDisplay(asset.Files, preference, asset.DisplayOverrideFileID)
+			choice := selectPhotoDisplay(asset.Files, next.Preference, asset.DisplayOverrideFileID)
 			if equalPhotoString(asset.DisplayFileID, choice.FileID) {
 				continue
 			}
@@ -887,11 +928,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 				return err
 			}
 		}
-		if err := validatePhotoGraph(ctx, tx); err != nil {
-			return err
-		}
-		result = next
-		return nil
+		return validatePhotoGraph(ctx, tx)
 	})
 	if err != nil {
 		return PhotoSettings{}, err

@@ -135,12 +135,13 @@ func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticRichExifTIFF())
 	require.NoError(t, err)
 	for key, want := range map[string]string{
-		"media.container.format":  "tiff",
-		"media.container.kind":    "image",
-		"image.exif.camera_make":  "Fiction Camera Co.",
-		"image.exif.camera_model": "Model One",
-		"image.exif.lens_make":    "Fiction Lens Co.",
-		"image.exif.lens_model":   "Prime 50mm",
+		"media.container.format":        "tiff",
+		"media.container.kind":          "image",
+		"image.exif.camera_make":        "Fiction Camera Co.",
+		"image.exif.camera_model":       "Model One",
+		"image.exif.body_serial_number": "Body-001",
+		"image.exif.lens_make":          "Fiction Lens Co.",
+		"image.exif.lens_model":         "Prime 50mm",
 	} {
 		value, found := sourceMetadataString(metadata, key)
 		require.True(t, found, key)
@@ -167,6 +168,11 @@ func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
 		value, found := sourceMetadataNumber(metadata, key)
 		require.True(t, found, key)
 		assert.InDelta(t, want, value, 0.0000001, key)
+	}
+	for _, field := range metadata.Fields {
+		if field.Key == "image.exif.body_serial_number" {
+			assert.True(t, field.Sensitive)
+		}
 	}
 	created, found := sourceMetadataTimestamp(metadata, "created")
 	require.True(t, found)
@@ -1032,6 +1038,7 @@ func syntheticRichExifTIFF() []byte {
 			tiffRational(0x920a, 50, 1, false),
 			tiffLong(0xa002, 6000),
 			tiffLong(0xa003, 4000),
+			tiffASCII(0xa431, "Body-001"),
 			tiffASCII(0xa433, "Fiction Lens Co."),
 			tiffASCII(0xa434, "Prime 50mm"),
 		},
@@ -1421,6 +1428,37 @@ func TestBackfillSourceMetadataRetriesEmailSpoolFailure(t *testing.T) { //nolint
 	require.True(t, found)
 	assert.Equal(t, "Synthetic message", subject)
 	f.emptySpool(t)
+}
+
+func TestBackfillUnavailablePhotoKeepsMetadataIncomplete(t *testing.T) {
+	t.Parallel()
+	f := newEmailPipelineFixture(t)
+	ctx := t.Context()
+	payload := mediatest.JPEG(2, 2, color.RGBA{R: 255, A: 255})
+	hash := processingHash(string(payload))
+	// The live catalog entry has no readable original in the real blob store.
+	node, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "missing.jpg", hash, int64(len(payload)), "image/jpeg")
+	require.NoError(t, err)
+	asset, err := f.catalog.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	targets, err := f.catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Equal(t, []store.SourceMetadataTarget{{SourceSHA256: hash, Size: int64(len(payload))}}, targets)
+	for range 2 {
+		completed, err := BackfillSourceMetadataTargets(ctx, f.catalog, f.blobs, f.spool, targets)
+		require.True(t, IsSourceContentUnavailable(err), "%v", err)
+		require.Zero(t, completed)
+		_, _, err = f.catalog.ActiveSourceMetadata(ctx, hash)
+		require.ErrorIs(t, err, store.ErrNotFound)
+		retry, err := f.catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+		require.NoError(t, err)
+		require.Equal(t, targets, retry)
+		groups, unavailable, _, incomplete, err := f.catalog.PhotoStackGroups(ctx, []string{asset.ID}, false, SourceMetadataExtractorFingerprint)
+		require.NoError(t, err)
+		require.Empty(t, groups)
+		require.Empty(t, unavailable)
+		require.True(t, incomplete)
+	}
 }
 
 func TestBackfillSourceMetadataContinuesPastUnreadableTarget(t *testing.T) {

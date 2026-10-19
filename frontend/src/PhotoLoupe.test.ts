@@ -407,17 +407,18 @@ it.each(["failed", "retained"] as const)(
   },
 );
 
-it.each([false, true])(
-  "clears a grid failure when fit displays, delayed grid %s",
-  async (delayed) => {
+it.each(["visible", "delayed"] as const)(
+  "clears a grid failure when the fit preview displays after a %s grid failure",
+  async (timing) => {
     const { props, get } = setup();
     let reject!: (cause: Error) => void;
     get.mockImplementationOnce(() => new Promise((_, fail) => (reject = fail)));
     let finish!: (blob: Blob) => void;
-    if (!delayed) get.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    if (timing === "visible")
+      get.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
     render(PhotoLoupe, { ...props, items: [] });
     await waitFor(() => expect(reject).toBeTypeOf("function"));
-    if (!delayed) {
+    if (timing === "visible") {
       reject(new Error("Grid failed"));
       await screen.findByText("Grid failed");
       await waitFor(() => expect(finish).toBeTypeOf("function"));
@@ -425,7 +426,7 @@ it.each([false, true])(
       finish(new Blob(["synthetic-fit"]));
     }
     await screen.findByText("Fit preview");
-    if (delayed) {
+    if (timing === "delayed") {
       reject(new Error("Grid failed"));
       await new Promise((resolve) => setTimeout(resolve, 0));
       await tick();

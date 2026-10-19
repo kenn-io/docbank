@@ -36,7 +36,7 @@ The current extractor publishes these fields when the source contains them:
 | Namespace | Sources | Canonical keys |
 |-----------|---------|------|
 | `media.container` | JPEG, PNG, WebP, GIF, MP4, TIFF-family images, RAF, CR3 | `media.container.format`, `.kind`, `.width_px`, `.height_px`, `.frame_count`, `.animated`, `.duration_ms`; `created` for MP4 |
-| `image.exif` | JPEG APP1, TIFF-family images and RAW, RAF, CR3 | `image.exif.camera_make`, `.camera_model`, `.lens_make`, `.lens_model`, `.orientation`, `.iso`, `.exposure_time_seconds`, `.f_number`, `.exposure_bias_ev`, `.focal_length_mm`, `.pixel_width`, `.pixel_height`, `.gps_latitude`, `.gps_longitude`, `.gps_timestamp`; `created`, `modified`, `creators`, `description` |
+| `image.exif` | JPEG APP1, TIFF-family images and RAW, RAF, CR3 | `image.exif.camera_make`, `.camera_model`, `.body_serial_number`, `.lens_make`, `.lens_model`, `.orientation`, `.iso`, `.exposure_time_seconds`, `.f_number`, `.exposure_bias_ev`, `.focal_length_mm`, `.pixel_width`, `.pixel_height`, `.gps_latitude`, `.gps_longitude`, `.gps_timestamp`; `created`, `modified`, `creators`, `description` |
 | `xmp` | XMP packets in PDF | `title`, `creators`, `subject`, `description`, `keywords`, `language`, `created`, `modified` |
 | `pdf.info` | PDF Info dictionary and page tree | `title`, `creators`, `subject`, `keywords`, `created`, `modified`, `page_count` |
 | `office.core` | OOXML core and application properties | `title`, `creators`, `subject`, `description`, `keywords`, `language`, `created`, `modified`, `page_count`, `office.core.word_count` |
@@ -52,7 +52,7 @@ Latitude and longitude are published together only when both coordinates have
 valid hemisphere markers and degree, minute, and second ranges. An incomplete
 pair, invalid coordinate, or zero-zero placeholder is omitted with a warning.
 Complete EXIF GPS date and time fields become one UTC timestamp. GPS coordinate
-fields and `email.bcc` are marked sensitive. The embedded API returns them
+fields, `image.exif.body_serial_number`, and `email.bcc` are marked sensitive. The embedded API returns them
 because its caller is trusted application code. Browser-session reads remove
 sensitive fields. Other callers must enforce their own disclosure boundary.
 
@@ -123,7 +123,7 @@ A generation with at least one camera, lens, exposure, dimension,
 capture-time, orientation, or GPS claim also gets one indexed photo technical
 projection row that maps those claims into nullable typed columns. Generations
 without any of them, such as PDFs and email, get no row. The store records the
-`photo-technical/v2` recipe that built its rows in a one-row state table,
+`photo-technical/v3` recipe that built its rows in a one-row state table,
 separately from extractor fingerprints, because the mapping and embedded map
 can change without changing the source evidence. When the recipe changes, the
 next store open re-projects every generation from its retained canonical JSON,
@@ -171,8 +171,10 @@ separate attachment facts.
 ## Standalone photo sidecars
 
 The source extractor reads standalone XMP packets rooted at `x:xmpmeta` through
-the strict photo packet reader. Its v20 fingerprint causes one re-extraction of
-every retained original and rebuilds affected document-event generations.
+the strict photo packet reader. The v21 extractor also reads EXIF `BodySerialNumber`
+as `image.exif.body_serial_number` when the source supplies it. Its fingerprint
+causes one re-extraction of every retained original and rebuilds affected
+document-event generations.
 Other XML, including bare `rdf:RDF`, RSS, and SVG,
 falls through to the existing format checks. Valid packets publish `image.xmp.packet_valid` and supported
 rating, flag, label, caption, creator, copyright, rotation, and `photoshop:SidecarForExtension` claims.

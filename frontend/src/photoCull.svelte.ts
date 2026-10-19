@@ -10,8 +10,12 @@ import type {
   CullScope,
   CullStorage,
 } from "./photoCullStorage.js";
-import { lookupPhotoFlags } from "./generated/docbank.js";
-import type { PhotoBrowseRowFlag } from "./generated/docbank.js";
+import {
+  lookupPhotoFlags,
+  getPhotoSettings,
+  groupPhotoStacks,
+  type PhotoBrowseRowFlag,
+} from "./generated/docbank.js";
 
 // Keep in sync with lookupPhotoFlags asset_ids maxItems.
 const flagLookupLimit = 20_000;
@@ -19,7 +23,15 @@ const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 export class PhotoCull {
-  run = $state.raw<CullRun>();
+  run = $state.raw<
+    CullRun & { groups?: string[][]; burstGapSeconds?: number; groupingIncomplete?: boolean }
+  >();
+  private stackIndex = new WeakMap<string[][], ReadonlyMap<string, string[]>>();
+  private stackRead?: AbortController;
+  private settingsRead?: AbortController;
+  private passGroups?: { pass: string[]; source?: string[][]; groups: string[][] };
+  stackError = $state("");
+  stackLoading = $state(false);
   busy = $state(false);
   error = $state("");
   capturing = $state(false);
@@ -50,16 +62,140 @@ export class PhotoCull {
     private storage: CullStorage,
     private onauthfailure?: (cause: unknown) => void,
   ) {}
-  private apiFailure(cause: unknown) {
+  private sessionFailure(cause: unknown) {
     if (cause instanceof APIError && cause.status === 401) this.onauthfailure?.(cause);
-    this.error = failure(cause);
+    return failure(cause);
+  }
+  private apiFailure(cause: unknown) {
+    this.error = this.sessionFailure(cause);
   }
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
   }
+  /** Current grouping of the frozen IDs. */
+  get stacks(): ReadonlyMap<string, string[]> {
+    const groups = this.run?.groups;
+    if (!groups) return new Map();
+    let index = this.stackIndex.get(groups);
+    if (!index) {
+      index = new Map(groups.flatMap((group) => group.map((id) => [id, group])));
+      this.stackIndex.set(groups, index);
+    }
+    return index;
+  }
+  get currentStack() {
+    const group = this.currentID ? this.stacks.get(this.currentID) : undefined;
+    return group && group.length > 1 ? group : undefined;
+  }
+  private cancelStackReads() {
+    this.settingsRead?.abort();
+    this.stackRead?.abort();
+    this.settingsRead = undefined;
+    this.stackRead = undefined;
+    this.stackError = "";
+    this.stackLoading = false;
+  }
+  /** Check whether the active run needs to regroup under a new gap. */
+  async checkSettings() {
+    const run = this.run;
+    if (!run || this.stackLoading) return;
+    const controller = new AbortController();
+    this.settingsRead?.abort();
+    this.settingsRead = controller;
+    const current = () =>
+      !controller.signal.aborted &&
+      this.run?.checkpoint.runID === run.checkpoint.runID &&
+      this.run.ids === run.ids &&
+      this.run.checkpoint.pass === run.checkpoint.pass;
+    try {
+      const settings = await getPhotoSettings({ session: this.session, signal: controller.signal });
+      if (current() && settings.burst_gap_seconds !== this.run!.burstGapSeconds)
+        await this.regroup();
+    } catch (cause) {
+      if (current()) this.stackError = this.sessionFailure(cause);
+    } finally {
+      if (this.settingsRead === controller) this.settingsRead = undefined;
+    }
+  }
+  /** Recompute all frozen IDs and merge into the latest active checkpoint. */
+  async regroup() {
+    const run = this.run;
+    if (!run || this.stale) return;
+    const controller = new AbortController();
+    this.stackRead?.abort();
+    this.stackRead = controller;
+    this.stackLoading = true;
+    this.stackError = "";
+    const current = () =>
+      !controller.signal.aborted &&
+      this.run?.checkpoint.runID === run.checkpoint.runID &&
+      this.run.ids === run.ids &&
+      this.run.checkpoint.pass === run.checkpoint.pass;
+    try {
+      const regrouped = await groupPhotoStacks(
+        { asset_ids: run.ids },
+        { session: this.session, signal: controller.signal },
+      );
+      controller.signal.throwIfAborted();
+      if (current())
+        this.run = {
+          ...this.run!,
+          groups: regrouped.groups,
+          groupingIncomplete: regrouped.grouping_incomplete,
+          burstGapSeconds: regrouped.burst_gap_seconds,
+        };
+    } catch (cause) {
+      if (current()) this.stackError = this.sessionFailure(cause);
+    } finally {
+      if (this.stackRead === controller) this.stackLoading = false;
+    }
+  }
+  private passStacks() {
+    const pass = this.run?.checkpoint.pass ?? [],
+      source = this.run?.groups;
+    if (this.passGroups?.pass !== pass || this.passGroups.source !== source)
+      this.passGroups = { pass, source, groups: this.groupPass(pass) };
+    return this.passGroups.groups;
+  }
+  private groupPass(pass: string[]) {
+    const groups: string[][] = [];
+    const byKey = new Map<string, string[]>();
+    for (const id of pass) {
+      const key = this.stacks.get(id)?.[0] ?? id;
+      let group = byKey.get(key);
+      if (!group) {
+        group = [];
+        byKey.set(key, group);
+        groups.push(group);
+      }
+      group.push(id);
+    }
+    return groups;
+  }
+  /** A lone frame is its own group, so H/L visits each group's first frame in the pass. */
+  moveStack(direction: -1 | 1) {
+    if (!this.run || this.busy || this.stale) return;
+    const groups = this.passStacks();
+    const index = this.complete
+      ? groups.length
+      : groups.findIndex((group) => group.includes(this.currentID!));
+    const next = groups[index + direction];
+    if (next) this.choose(next[0]!);
+    else if (direction === 1) this.update({ position: this.run.checkpoint.pass.length });
+  }
+  moveFrame(direction: -1 | 1) {
+    if (!this.run || this.busy || this.stale) return;
+    if (!this.currentStack) {
+      this.move(direction);
+      return;
+    }
+    const group = this.passStacks().find((group) => group.includes(this.currentID!));
+    const next = group?.[group.indexOf(this.currentID!) + direction];
+    if (next) this.choose(next);
+  }
   // Runs in the write chain, so the saved revision matches every update queued before this check.
   async verifyDecision() {
-    if (!this.run || this.stale || this.busy) return false;
+    if (!this.run || this.stale || this.busy || this.stackLoading || this.stackError) return false;
     const expected = this.run.checkpoint;
     let verified = false;
     const check = this.writes.then(async () => {
@@ -113,6 +249,7 @@ export class PhotoCull {
         if (!checkpoint.pass.every((id) => captured.has(id)))
           throw new Error("Saved cull progress is invalid. Start a new cull.");
       }
+      this.cancelStackReads();
       this.run = run;
       this.saved = !!run;
       if (this.run)
@@ -121,6 +258,7 @@ export class PhotoCull {
           this.marked.set(list, new Set(list));
         }
       this.stale = false;
+      if (this.run) await this.regroup();
       return !!this.run;
     } catch (cause) {
       this.error = failure(cause);
@@ -128,6 +266,7 @@ export class PhotoCull {
     }
   }
   cancel() {
+    this.cancelStackReads();
     this.capture?.abort();
     if (this.flagRead) {
       this.flagRead.abort();
@@ -193,8 +332,11 @@ export class PhotoCull {
       await this.storage.replace(run, controller.signal, previous);
       this.error = "";
       this.stale = false;
+      this.cancelStackReads();
       this.run = run;
       this.saved = true;
+      await this.regroup();
+      controller.signal.throwIfAborted();
       this.visit();
       return true;
     } catch (cause) {
@@ -401,6 +543,7 @@ export class PhotoCull {
         this.stale = true;
         throw cause;
       }
+      this.cancelStackReads();
       this.run = { ...this.run, checkpoint };
       this.remainder = false;
       changed = true;
@@ -410,7 +553,10 @@ export class PhotoCull {
       this.changingPass = false;
       this.finishFlagRead(controller);
     }
-    if (changed) this.visit();
+    if (changed) {
+      this.visit();
+      await this.regroup();
+    }
   }
   flush() {
     return this.writes;

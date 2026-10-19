@@ -24,7 +24,7 @@ export GOLANGCI_LINT_CACHE
 # golangci-lint built with kit's kennlint plugin; rebuilt when its pins change.
 CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,$(OS)),.exe)
 
-.PHONY: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
@@ -47,9 +47,12 @@ test-v:
 openapi:
 	go run -tags "$(BUILD_TAGS)" ./cmd/docbank openapi > internal/api/openapi.yaml
 
-generate-api: openapi
+generate-api: openapi generate-photo-policy
 	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
 	cd frontend && npm run generate:api
+
+generate-photo-policy:
+	go run -tags "$(BUILD_TAGS)" ./scripts/generate-photo-policy
 
 frontend:
 	cd frontend && npm ci && npm run build
@@ -142,4 +145,4 @@ docs-deploy:
 	./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"

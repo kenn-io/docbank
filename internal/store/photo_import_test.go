@@ -469,6 +469,98 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)
 }
 
+func TestPhotoImportCreateOnlyPreservesGroupContent(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		changedRoles []string
+		wantRoles    map[string]int
+		sameAsset    bool
+		video        bool
+	}{
+		{
+			name:         "all members changed",
+			changedRoles: []string{PhotoRoleRAW, PhotoRoleImage, PhotoRoleSidecar},
+			wantRoles:    map[string]int{PhotoRoleRAW: 1, PhotoRoleImage: 1, PhotoRoleSidecar: 1},
+		},
+		{
+			name:         "sidecar changed",
+			changedRoles: []string{PhotoRoleSidecar},
+			wantRoles:    map[string]int{PhotoRoleRAW: 1, PhotoRoleImage: 1, PhotoRoleSidecar: 2},
+			sameAsset:    true,
+		},
+		{
+			name:         "video changed",
+			changedRoles: []string{PhotoRoleVideo},
+			wantRoles:    map[string]int{PhotoRoleVideo: 1},
+			video:        true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			root := filepath.Join(t.TempDir(), "camera")
+			run, err := s.BeginIngest(ctx, "photo-import", root)
+			require.NoError(t, err)
+			group := photoImportTestGroup(
+				photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw"),
+				photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("jpg-v1"), "image/jpeg"),
+				photoImportTestMember(filepath.Join(root, "IMG.XMP"), PhotoRoleSidecar, fakeHash("xmp-v1"), "application/rdf+xml"),
+			)
+			if test.video {
+				group = photoImportTestGroup(photoImportTestMember(filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, fakeHash("mov-v1"), "video/quicktime"))
+			}
+			group.CreateOnly = true
+			first, err := s.IngestPhotoGroup(ctx, run, group)
+			require.NoError(t, err)
+			require.Len(t, first.Nodes, len(group.Members))
+			originals := make([]Node, len(first.Nodes))
+			for i, node := range first.Nodes {
+				originals[i], err = s.NodeByID(ctx, node.ID)
+				require.NoError(t, err)
+			}
+			for i, member := range group.Members {
+				for _, role := range test.changedRoles {
+					if member.Role == role {
+						group.Members[i].BlobHash = fakeHash(role + "-v2")
+					}
+				}
+			}
+			edited, err := s.IngestPhotoGroup(ctx, run, group)
+			require.NoError(t, err)
+			require.Len(t, edited.Nodes, len(group.Members))
+			assert.True(t, edited.Added)
+			assert.Nil(t, edited.Ambiguity)
+			assert.Equal(t, test.sameAsset, first.Asset.ID == edited.Asset.ID)
+			for i, original := range originals {
+				current, err := s.NodeByID(ctx, original.ID)
+				require.NoError(t, err)
+				assert.Equal(t, original.BlobHash, current.BlobHash)
+				assert.Equal(t, original.Revision, current.Revision)
+				assert.Equal(t, original.CurrentVersionID, current.CurrentVersionID)
+				assert.Equal(t, group.Members[i].BlobHash, edited.Nodes[i].BlobHash)
+				if group.Members[i].BlobHash != original.BlobHash {
+					assert.NotEqual(t, original.ID, edited.Nodes[i].ID)
+				}
+			}
+			asset := mustPhotoAsset(t, s, edited.Nodes[0].ID)
+			if test.video {
+				assert.Equal(t, PhotoKindVideo, asset.Kind)
+			}
+			roles := make(map[string]int)
+			raw := fileByRole(asset.Files, PhotoRoleRAW)
+			for _, file := range asset.Files {
+				roles[file.Role]++
+				if file.Role == PhotoRoleSidecar {
+					require.NotNil(t, file.SidecarOfID)
+					assert.Equal(t, raw.ID, *file.SidecarOfID)
+				}
+			}
+			assert.Equal(t, test.wantRoles, roles)
+		})
+	}
+}
+
 func TestPhotoImportEditedSourceLeavesSharedNodeAlone(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -735,7 +827,7 @@ func TestPhotoImportMembershipStates(t *testing.T) {
 	groupAsset, err = s.SetPhotoDisplay(ctx, groupAsset.ID, groupAsset.Revision, &imageFile.ID)
 	require.NoError(t, err)
 	preference := "raw"
-	_, err = s.SetPhotoSettings(ctx, 1, &preference)
+	_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 	groupAsset, err = s.PhotoAssetByID(ctx, groupAsset.ID)
 	require.NoError(t, err)
@@ -933,4 +1025,62 @@ func TestPreparePhotoImportDestination(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotDir)
 	_, err = s.PreparePhotoImportDestination(ctx, "/missing/.")
 	require.ErrorIs(t, err, ErrInvalidName)
+}
+
+func TestBrowserPhotoDirectoryContinuation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	for _, source := range []string{"first", "second"} {
+		run, err := s.BeginIngest(ctx, "photo-import", "browser: selection")
+		require.NoError(t, err)
+		member := photoImportTestMember("browser:"+source+"/preview.JPG", PhotoRoleImage, fakeHash(source), "image/jpeg")
+		_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(member))
+		require.NoError(t, err)
+	}
+	members := []PhotoImportMember{
+		{OriginalPath: "browser:new/Card/renamed.JPG", BlobHash: fakeHash("first")},
+		{OriginalPath: "browser:new/Card/sibling.JPG", BlobHash: fakeHash("new")},
+		{OriginalPath: "browser:new/Other/independent.JPG", BlobHash: fakeHash("unmatched")},
+	}
+	resolved, _, err := s.ResolveBrowserPhotoPaths(ctx, members)
+	require.NoError(t, err)
+	require.Equal(t, []string{"browser:first/renamed.JPG", "browser:first/sibling.JPG", "browser:new/Other/independent.JPG"}, resolved)
+	members = append(members,
+		PhotoImportMember{OriginalPath: "browser:new/Card/another.JPG", BlobHash: fakeHash("second")},
+		PhotoImportMember{OriginalPath: "browser:new/Separate/preview.JPG", BlobHash: fakeHash("first")})
+	resolved, continuations, err := s.ResolveBrowserPhotoPaths(ctx, members)
+	require.NoError(t, err)
+	require.Equal(t, []string{"browser:new/Card/renamed.JPG", "browser:new/Card/sibling.JPG", "browser:new/Other/independent.JPG", "browser:new/Card/another.JPG", "browser:first/preview.JPG"}, resolved)
+	require.Equal(t, []PhotoFolderContinuation{{SelectedFolder: "Separate", FolderKey: "browser:first", FolderName: "selection"}}, continuations)
+}
+
+func TestBrowserPhotoContinuationSkipsHiddenAndExcluded(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"hidden", "excluded"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			run, err := s.BeginIngest(ctx, "photo-import", "browser: Prior")
+			require.NoError(t, err)
+			member := photoImportTestMember("browser:prior/Prior/preview.JPG", PhotoRoleImage, fakeHash(state), "image/jpeg")
+			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(member))
+			require.NoError(t, err)
+			if state == "hidden" {
+				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+				_, err = s.SetPhotoAssetHidden(ctx, result.Asset.ID, result.Asset.Revision, true)
+			} else {
+				_, err = s.SetPhotoAssetExcluded(ctx, result.Asset.ID, result.Asset.Revision, true)
+			}
+			require.NoError(t, err)
+			members := []PhotoImportMember{
+				{OriginalPath: "browser:new/Card/preview.JPG", BlobHash: fakeHash(state)},
+				{OriginalPath: "browser:new/Card/sibling.JPG", BlobHash: fakeHash("new")},
+			}
+			resolved, continuations, err := s.ResolveBrowserPhotoPaths(ctx, members)
+			require.NoError(t, err)
+			require.Equal(t, []string{"browser:new/Card/preview.JPG", "browser:new/Card/sibling.JPG"}, resolved)
+			require.Empty(t, continuations)
+		})
+	}
 }

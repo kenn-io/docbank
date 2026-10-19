@@ -136,7 +136,7 @@ var currentSchemaTables = [...]string{
 	"email_document_publications", "email_document_relations",
 	"photo_hidden_credentials", "photo_hidden_failures", "photo_hidden_lockout",
 	"photo_quality_signals", "photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
-	"photo_technical_metadata", "photo_technical_metadata_state", "photo_timeline", "photo_sidecar_considered",
+	"photo_technical_metadata", "photo_technical_metadata_state", "photo_timeline", "photo_source_claims", "photo_sidecar_considered",
 	"photo_checkouts", "photo_checkout_entries",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",

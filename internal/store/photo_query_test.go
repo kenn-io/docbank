@@ -738,7 +738,7 @@ func TestPhotoBrowseDisplayAuthorityAndRotation(t *testing.T) {
 	page := browsePhotoPage(t, s, `{}`)
 	require.Equal(t, raw.ID, page.Items[0].NodeID)
 	require.Equal(t, raw.CreatedAt, page.Items[0].ImportTime)
-	_, err = s.SetPhotoSettings(ctx, 1, new("image"))
+	_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: new("image")})
 	require.NoError(t, err)
 	page = browsePhotoPage(t, s, `{}`)
 	require.Equal(t, jpeg.ID, page.Items[0].NodeID)
@@ -1072,7 +1072,7 @@ func TestPhotoRankingRetainedContentEvidence(t *testing.T) {
 	t.Run("sibling authored evidence outranks retained content and technical metadata", func(t *testing.T) {
 		s, _ := newRenditionCatalogFixture(t)
 		asset := authoredPair(t, s)
-		_, err := s.SetPhotoSettings(t.Context(), 1, new("image"))
+		_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image")})
 		require.NoError(t, err)
 		display := fileByRole(asset.Files, PhotoRoleImage)
 		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: display.ID, Revision: display.Revision, Patch: PhotoAuthoredPatch{Caption: new("harbor")}}})
@@ -1362,6 +1362,40 @@ func TestPhotoTimelineKeysMatchCaptureTimeKey(t *testing.T) {
 	var rows int
 	require.NoError(t, s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM photo_timeline pl JOIN photo_files f ON f.file_id=pl.file_id WHERE f.node_id=?", zero.ID).Scan(&rows))
 	require.Zero(t, rows, "year 0000 has no sortable key")
+}
+
+func TestPhotoTimelineClaimsUseIndependentEligibility(t *testing.T) {
+	t.Parallel()
+	for _, folderFirst := range []bool{false, true} {
+		t.Run(strconv.FormatBool(folderFirst), func(t *testing.T) {
+			s := newTestStore(t)
+			first, err := s.BeginIngest(t.Context(), "cli", "synthetic source")
+			require.NoError(t, err)
+			mtime, path, laterPath := "2024-03-05T10:00:00Z", "photo.jpg", "/later/photo.jpg"
+			if folderFirst {
+				mtime, path, laterPath = "0000-01-01T00:00:00Z", "/shots/photo.jpg", "photo.jpg"
+			}
+			node, err := s.IngestFileExact(t.Context(), first, s.RootID(), "photo.jpg", browseHash("photo.jpg"), 20, "image/jpeg", path, mtime)
+			require.NoError(t, err)
+			later, err := s.BeginIngest(t.Context(), "cli", "later source")
+			require.NoError(t, err)
+			_, _, err = s.ReplaceContentForIngest(t.Context(), later, node.ID, node.Revision, node.BlobHash, node.Size, node.MimeType, laterPath, "2025-01-01T00:00:00Z")
+			require.NoError(t, err)
+			if folderFirst {
+				mtime = "2025-01-01T00:00:00Z"
+			}
+			require.Equal(t, new(mtime), photoModifiedTime(t, s, "photo.jpg"))
+			browsePhotoMetadata(t, s, node, "photo.jpg", exifCapture("2024-06-10T12:00:00Z"))
+			var folder string
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT folder_key FROM photo_timeline WHERE file_id=(SELECT file_id FROM photo_files WHERE node_id=?)`, node.ID).Scan(&folder))
+			if !folderFirst {
+				path = laterPath
+			}
+			expected, ok := query.PhotoFolderKey("cli", "", path)
+			require.True(t, ok)
+			require.Equal(t, "z"+expected, folder)
+		})
+	}
 }
 
 func TestPhotoTimelineFollowsTheDisplayedBytes(t *testing.T) {
@@ -1695,4 +1729,57 @@ func TestLookupPhotoFlags(t *testing.T) {
 	got, err := s.LookupPhotoFlags(ctx, ids)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
+}
+
+func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "first source")
+	require.NoError(t, err)
+	node, err := s.IngestFileExact(ctx, run, s.RootID(), "claims.jpg", browseHash("claims"), 20, "image/jpeg", "/first/claims.jpg", "")
+	require.NoError(t, err)
+	originalVersion := node.CurrentVersionID
+	type claim struct{ Path, Description, Mtime, Folder string }
+	read := func(s *Store) claim {
+		var c claim
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COALESCE(c.original_path,''), COALESCE(c.source_desc,''), COALESCE(c.original_mtime,''), COALESCE(c.folder_key,'') FROM photo_source_claims c JOIN photo_files f ON f.file_id=c.file_id WHERE f.node_id=?`, node.ID).Scan(&c.Path, &c.Description, &c.Mtime, &c.Folder))
+		return c
+	}
+	first := read(s)
+	require.Equal(t, "/first/claims.jpg", first.Path)
+	require.Equal(t, "first source", first.Description)
+	require.Empty(t, first.Mtime)
+	var timelines int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&timelines))
+	require.Zero(t, timelines, "undated files still retain their source claim")
+	current, err := s.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	mtime := "2024-03-05T10:00:00Z"
+	_, _, err = s.ReplaceContentForIngest(ctx, run, node.ID, current.Revision, node.BlobHash, node.Size, node.MimeType, "/later/claims.jpg", mtime)
+	require.NoError(t, err)
+	corrected := read(s)
+	require.Equal(t, first.Path, corrected.Path, "the earliest folder stays canonical")
+	require.Equal(t, first.Description, corrected.Description)
+	require.Equal(t, mtime, corrected.Mtime, "a later valid mtime dates initially undated bytes")
+	require.Equal(t, new(mtime), photoModifiedTime(t, s, "claims.jpg"))
+	browsePhotoMetadata(t, s, node, "claims-exif", exifCapture("2024-06-10T12:00:00Z"))
+	var folder string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT folder_key FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&folder))
+	require.Equal(t, "z"+corrected.Folder, folder)
+
+	current, err = s.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContentForIngest(ctx, run, node.ID, current.Revision, browseHash("edited-claims"), 20, "image/jpeg", "/edited/claims.jpg", "2025-01-01T00:00:00Z")
+	require.NoError(t, err)
+	edited := read(s)
+	require.Equal(t, "/edited/claims.jpg", edited.Path)
+	require.Equal(t, "2025-01-01T00:00:00Z", edited.Mtime)
+	revertTo(t, s, node.ID, originalVersion)
+	require.Equal(t, corrected, read(s))
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	require.Equal(t, corrected, read(restored))
 }

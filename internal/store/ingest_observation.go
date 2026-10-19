@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 // IngestFileWithMembership performs one logical operational import. When the
@@ -69,7 +71,7 @@ func (s *Store) IngestFileExactPlanned(
 
 func requireOperationalIngestRun(run IngestRun) error {
 	// Watch imports require the dedicated APIs that maintain source cursors.
-	if run.operationalWatch || sourceKindIsEmbedded(run.record.SourceKind) {
+	if run.operationalWatch || query.IsEmbeddedSourceKind(run.record.SourceKind) {
 		return fmt.Errorf("operational ingest observation rejects source kind %q", run.record.SourceKind)
 	}
 	return nil

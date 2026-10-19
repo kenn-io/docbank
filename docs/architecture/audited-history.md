@@ -414,6 +414,8 @@ distinct canonical sort keys. Omitting either half, retaining two active
 generations for the same node, or rotating when the post-state is byte-identical
 is invalid.
 
+Burst representatives and burst settings use the global allocation chain, including photos outside enrolled scopes. Representative records identify an asset and its chosen rank; the settings record identifies the vault singleton and records its gap and representative sequence. Enrollment includes non-default state. Absent records mean no representative, gap 2, and sequence 0, preserving earlier audit histories. A choice advances the sequence once and assigns that rank to one asset; Undo restores its earlier rank while retaining the sequence. Gap-only updates preserve the sequence. These changes add attached-metadata deltas without file events or scope fanout. Replay checks identities, exact prior state, counts, and transitions; verification compares the replay with current metadata. Settings requests that also change the display preference remain unsupported under audit.
+
 Authoritative attached metadata has the same replay boundary. Enabling the
 first scope records a vault-wide, canonically sorted genesis projection of every
 tag definition and assignment plus every ingest and provenance record. Its
@@ -866,7 +868,7 @@ Nested record schemas are:
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `node_kind:text`, `state:state`, `origin:?record`, `created_at:timestamp`, `modified_at:timestamp`, `trashed_at:?timestamp` |
 | `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:u64`, `introduced_operation_id:uuid`, `transition_kind:text`, `source_version_id:?uuid` |
-| `photo_authored` | `file_id:uuid`, `node_id:u64`, `revision:u64`, `rating:u64`, `flag:text`, `label:text`, `caption:text`, `creator:text`, `copyright:text`, `rotation:u64`, `confirmed_fields:u64` |
+| `photo_authored` | `file_id:uuid`, `node_id:u64`, `revision:u64`, `rating:u64`, `flag:text`, `label:text`, `caption:text`, `creator:text`, `copyright:text`, `rotation:u64`, `confirmed_fields:u64`, `flag_owner:text` |
 | `photo_authored_identity` | `file_id:uuid` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
@@ -889,6 +891,8 @@ Nested record schemas are:
 | `witness_change` | `node_id:u64`, `generation_operation_id:uuid`, `action:action`, `state_digest:?digest` |
 | `attached_metadata_change` | `record_kind:text`, `stable_identity:record`, `pre:?record`, `post:?record` |
 | `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `source_version_id:?uuid`, `event_ordinal:u64`, `recorded_at:timestamp`, `prior_node_revision:u64`, `resulting_node_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
+
+`photo_authored.flag_owner` is always present as text: `"return"` when Return owns the flag, or an empty string otherwise. Audit validation includes this ownership in the current-state projection.
 
 `photo_authored.confirmed_fields` supports masks from 0 through 127. See [photo decisions](../usage/photos.md#ratings-and-other-decisions) for the field bits.
 
@@ -1332,8 +1336,8 @@ out of ordinary agent guidance.
 ## JSONL, backup, and restore
 
 Deterministic JSONL is the portable metadata authority. Current exports use
-`docbank-metadata` format version 2 and backup manifest identifier
-`docbank-metadata-jsonl-v2`; restore also accepts version 1. A **zero-scope v1**
+`docbank-metadata` format version 3 and backup manifest identifier
+`docbank-metadata-jsonl-v3`; restore also accepts versions 1 and 2. A **zero-scope v1**
 stream is valid: it preserves the stable vault ID, content versions and
 current-version references, and stable tag, ingest, and provenance
 identities, but contains no audit genesis, allocation lineage, scope,

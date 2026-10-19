@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"go.kenn.io/docbank/internal/config"
@@ -44,6 +45,7 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 		{http.MethodPost, album + "/members/remove"},
 		{http.MethodPost, "/api/v1/photos/authored/prepare"},
 		{http.MethodPost, "/api/v1/photos/authored/edit"},
+		{http.MethodPost, "/api/v1/photos/authored/stack"},
 		{http.MethodPost, "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/undo"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
@@ -74,6 +76,26 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPatch, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/photos/assets", nil)))
+}
+
+func TestWebSessionPhotoGroupingAndCheckpointMethods(t *testing.T) {
+	t.Parallel()
+	for _, route := range []struct {
+		path    string
+		methods []string
+	}{
+		{photoCheckpointPath, []string{http.MethodGet, http.MethodPut}},
+		{photoCheckpointPath + "/header", []string{http.MethodGet}},
+		{"/api/v1/photos/settings", []string{http.MethodGet, http.MethodPut}},
+		{"/api/v1/photos/stacks/group", []string{http.MethodPost}},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodHead} {
+			allowed := slices.Contains(route.methods, method)
+			require.Equal(t, allowed, webSessionRequestAllowed(httptest.NewRequest(method, route.path, nil)), method+" "+route.path)
+			require.False(t, webSessionRequestAllowed(httptest.NewRequest(method, route.path+"?extra=1", nil)))
+			require.False(t, webSessionRequestAllowed(httptest.NewRequest(method, route.path+"/extra", nil)))
+		}
+	}
 }
 
 func TestPhotoAlbumPages(t *testing.T) {

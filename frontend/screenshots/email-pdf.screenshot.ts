@@ -48,7 +48,7 @@ test.describe("retained email PDF screenshot", () => {
     webURL = await docbank(vault, ["web", "--no-browser"]);
     const url = new URL(webURL);
     if (
-      !/^docbank-[0-9a-f]{32}\.localhost$/.test(url.hostname) ||
+      !/^docbank-[0-9a-f]{32}\.docbank\.localhost$/.test(url.hostname) ||
       url.protocol !== "http:" ||
       !url.hash
     )

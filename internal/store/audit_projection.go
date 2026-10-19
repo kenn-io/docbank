@@ -169,6 +169,9 @@ func currentAuditAttachmentsForLayout(
 	if layout.schemaVersion >= photoAuthoredStorageSchemaVersion {
 		appenders = append(appenders, appendAuditPhotoAuthored)
 	}
+	if layout.schemaVersion >= photoBurstStorageSchemaVersion {
+		appenders = append(appenders, appendAuditPhotoBurst)
+	}
 	for _, appendRecords := range appenders {
 		if err := appendRecords(ctx, tx, &records); err != nil {
 			return nil, err
@@ -391,6 +394,13 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 	case auditTagDefinitionKind:
 		value, err := auditField(record, "tag_id")
 		return audit.Record{Kind: "tag_definition_identity", Fields: []audit.Field{{Name: "tag_id", Value: value}}}, err
+	case auditPhotoRepresentativeKind, auditPhotoBurstSettingsKind:
+		name := "asset_id"
+		if record.Kind == auditPhotoBurstSettingsKind {
+			name = "singleton"
+		}
+		value, err := auditField(record, name)
+		return audit.Record{Kind: record.Kind + "_identity", Fields: []audit.Field{{Name: name, Value: value}}}, err
 	case auditDerivativePurgeSuppressionKind:
 		fields := make([]audit.Field, 0, 3)
 		for _, name := range []string{columnSourceSHA256, "profile_fingerprint", "build_id"} {

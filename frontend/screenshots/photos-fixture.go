@@ -30,12 +30,15 @@ func check(err error) {
 }
 
 func main() {
+	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
 	rejects := flag.Bool("rejects", false, "Include confirmed rejects")
 	rotateCover := flag.Bool("rotate-cover", false, "Rotate the album cover for comparison")
 	manyKeywords := flag.Bool("many-keywords", false, "Include an assigned keyword beyond the first 1,000")
 	pair := flag.Bool("pair", false, "Include a synthetic RAW/JPEG pair")
+	currentMetadata := flag.Bool("current-metadata", false, "Mark synthetic source metadata as produced by the current extractor")
+	staleBurstMember := flag.Bool("stale-burst-member", false, "Leave one synthetic burst member with stale source metadata")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) < 1 || len(args) > 2 {
@@ -102,14 +105,21 @@ func main() {
 		check(err)
 		samples[index] = sample{hash: hash, size: size, canonical: canonical, physical: store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize}}
 		date := fmt.Sprintf("2022-06-15T%02d:00:00", index%10)
-		if index >= 10 {
+		if *bursts {
+			date = fmt.Sprintf("2022-06-15T12:%02d:%02d", (index/3*10)/60, (index/3*10)%60+index%3*2)
+		}
+		if index >= 10 && !*bursts {
 			date = fmt.Sprintf("%04d-%02d-15T12:00:00", 2026-(index-10)/4, 12-(index-10)%4)
 		}
 		if index == 46 {
 			date = "2024-02-29T23:30:00"
 		}
 		camera, model, lens := "Canon", "Canon EOS R6", "RF 24-70mm F2.8"
-		if index%2 == 1 {
+		cameraIndex := index
+		if *bursts {
+			cameraIndex = index / 3
+		}
+		if cameraIndex%2 == 1 {
 			camera, model, lens = "Nikon", "Nikon Z6", "NIKKOR Z 35mm F1.8"
 		}
 		fields := []document.SourceMetadataFieldV1{
@@ -144,6 +154,11 @@ func main() {
 		}
 		samples[index].metadata = metadata
 	}
+	var run store.IngestRun
+	if *bursts {
+		run, err = s.BeginIngest(ctx, "cli", "synthetic photos")
+		check(err)
+	}
 	var firstAssetID string
 	for index := range count {
 		if *unavailable && index == count-1 {
@@ -154,6 +169,9 @@ func main() {
 			continue
 		}
 		sampleIndex := index % 10
+		if *bursts {
+			sampleIndex = index % 48
+		}
 		if *mapGPS {
 			sampleIndex = index % 15
 		}
@@ -161,7 +179,13 @@ func main() {
 			sampleIndex = 10 + index%38
 		}
 		item := samples[sampleIndex]
-		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("Synthetic-photo-%05d.jpg", index+1), item.hash, item.size, "image/jpeg")
+		name := fmt.Sprintf("Synthetic-photo-%05d.jpg", index+1)
+		var node store.Node
+		if *bursts {
+			node, err = s.IngestFileExact(ctx, run, s.RootID(), name, item.hash, item.size, "image/jpeg", "/synthetic/shots/"+name, "")
+		} else {
+			node, err = s.CreateFile(ctx, s.RootID(), name, item.hash, item.size, "image/jpeg")
+		}
 		check(err)
 		if (*rotateCover || *manyKeywords) && index == 0 {
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
@@ -169,10 +193,14 @@ func main() {
 			firstAssetID = asset.ID
 		}
 		if !samples[sampleIndex].published {
-			_, err = processing.BackfillSourceMetadataTargets(ctx, s, blobs, layout.Root, []store.SourceMetadataTarget{{SourceSHA256: item.hash, Size: item.size}})
-			check(err)
-			fingerprint := sha256.Sum256([]byte("synthetic photo fixture"))
-			_, err = s.PublishSourceMetadata(ctx, item.hash, hex.EncodeToString(fingerprint[:]), item.metadata)
+			if *currentMetadata && (!*staleBurstMember || sampleIndex != 1) {
+				_, err = s.PublishSourceMetadata(ctx, item.hash, processing.SourceMetadataExtractorFingerprint, item.metadata)
+			} else {
+				_, err = processing.BackfillSourceMetadataTargets(ctx, s, blobs, layout.Root, []store.SourceMetadataTarget{{SourceSHA256: item.hash, Size: item.size}})
+				check(err)
+				stale := sha256.Sum256([]byte("synthetic photo fixture"))
+				_, err = s.PublishSourceMetadata(ctx, item.hash, hex.EncodeToString(stale[:]), item.metadata)
+			}
 			check(err)
 			samples[sampleIndex].published = true
 		}

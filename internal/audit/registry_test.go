@@ -11,28 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAuditRegistryCoversFrozenMetadataV1Kinds(t *testing.T) {
-	expected := []string{
-		"allocation_entry", "allocation_genesis", "attached_metadata_change", "attached_metadata_delta",
-		"attached_metadata_genesis", "audit_event", "baseline_binding", "canonical_mutation",
-		"content_version", "derivative_purge_suppression", "derivative_purge_suppression_identity",
-		"enrollment_baseline", "event", "event_identity", "ingest", "ingest_identity",
-		"known_origin", "member_state", "member_state_change", "path_effect", "path_effect_list", "path_state",
-		"photo_authored", "photo_authored_identity",
-		"preview_token", "provenance", "provenance_identity", "provenance_identity_ref",
-		"provenance_version_binding", "provenance_version_binding_identity", "scope_chain_entry",
-		"tag_assignment", "tag_assignment_identity", "tag_definition", "tag_definition_identity",
-		"topology_change", "topology_delta", "topology_genesis", "topology_node", "unknown_origin",
-		"witness", "witness_change", "witness_change_list", "witnessed_state",
-	}
-	actual := make([]string, 0, len(recordSchemas))
-	for kind := range recordSchemas {
-		actual = append(actual, kind)
-	}
-	slices.Sort(actual)
-	assert.Equal(t, expected, actual)
-}
-
 func TestAuditRegistryAcceptsEveryRegisteredShape(t *testing.T) {
 	for kind := range recordSchemas {
 		t.Run(kind, func(t *testing.T) {
@@ -177,8 +155,12 @@ func TestAuditRegistryRegisteredGoldenHashes(t *testing.T) {
 		"path_effect":                           "e3a3edd499f4b82a44b52c1470172ae8b36ec452eebb8069b6f600bdc7b30997",
 		"path_effect_list":                      "d6a0e010be748988dffe32e19e031b3a56b0f216aae114b38d00350667b0c3b4",
 		"path_state":                            "bb358f2812f633c0139c639d0d9e1990a859bbb261f7825c30f00a42c5c10eda",
-		"photo_authored":                        "941cf357eb1f50c4e4305757fb10a742e43d1688c7a6af0969457b518ad28048",
+		"photo_authored":                        "69389ae63aa3ebd8048ba75f4ad1dd876a9ccc932c40a19c1fb50a2ef0ade88a",
 		"photo_authored_identity":               "f59e6cc106b96ac7a6ef89c1f69646ae03bdb832cee9331f844844924609f596",
+		"photo_burst_settings":                  "ceacd30302f22e19e60fb25e17454de6d104d8316619c23528a0332dcccdad40",
+		"photo_burst_settings_identity":         "e32bc26d823de7049af9d81857ed2a6ab6827eb1de2fd0c13950d3122429bead",
+		"photo_representative":                  "8f83a62aa994f30040ff7836cff78a879bfea6fecd50a141bc6776b38da8af23",
+		"photo_representative_identity":         "a61978878636949f9120f9bc587f99f2ced32bafbe31ecd250a891c02d5841a1",
 		"preview_token":                         "914b97b5a1f21c7c9336c35abd9e9ae4e3829b1e7c487e3fb2622bcd650c3372",
 		"provenance":                            "a6ce16f925767af1cb677963002b7403dd0a3ed419f68252c210cd3d68d00c54",
 		"provenance_identity":                   "90f92e5ea3e1b173414d4380f76114ff78431f3075e29cec20746465a2d48a72",
@@ -200,11 +182,14 @@ func TestAuditRegistryRegisteredGoldenHashes(t *testing.T) {
 		"witness_change_list":                   "9434b863354252dd98311ff0cfda38a57061d08fbad6eda3b10a70e029c1a951",
 		"witnessed_state":                       "f70fbacc0d76f39df805ca4d46b88aa2b05332b3cd86fe494042cb70e3de5487",
 	}
-	for kind := range recordSchemas {
+	require.Len(t, recordSchemas, len(expected))
+	for kind, expectedHash := range expected {
+		_, registered := recordSchemas[kind]
+		require.True(t, registered, kind)
 		digest, err := Hash(exampleRecord(t, kind))
 		require.NoError(t, err)
 		actual := hex.EncodeToString(digest[:])
-		assert.Equal(t, expected[kind], actual, kind)
+		assert.Equal(t, expectedHash, actual, kind)
 	}
 }
 

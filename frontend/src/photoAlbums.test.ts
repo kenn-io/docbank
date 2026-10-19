@@ -297,3 +297,34 @@ it.each([false, true])(
     expect(albums.loading).toBe(false);
   },
 );
+
+it("adds collapsed burst drag members to an album", async () => {
+  const rows = [photo(1), photo(2), photo(3), photo(4)],
+    ids = rows.map((row) => row.asset_id);
+  const photos = new Photos("session", vi.fn());
+  photos.items = rows.map((row, i) => ({
+    ...row,
+    stack: i < 3 ? { asset_ids: ids.slice(0, 3), representative_id: ids[1]! } : undefined,
+  }));
+  const requests: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/members/add")) {
+        requests.push(JSON.parse(String(init.body)));
+        return response({ ...album, revision: 2 });
+      }
+      return response([album]);
+    }),
+  );
+  const albums = new PhotoAlbums("session", vi.fn());
+  const event = {
+    dataTransfer: { setData: vi.fn(), types: [photoDragType], effectAllowed: "" },
+    preventDefault: vi.fn(),
+  } as unknown as DragEvent;
+  albums.startDrag(ids[1]!, event, photos);
+  await albums.drop(album, event);
+  expect(requests).toEqual([{ asset_ids: ids.slice(0, 3) }]);
+  photos.dispose();
+  albums.dispose();
+});

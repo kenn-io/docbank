@@ -140,6 +140,9 @@ func (replay *auditedHistoryReplay) applyUnscopedTagDefinitionChange(
 	); handled || err != nil {
 		return err
 	}
+	if handled, err := replay.applyUnscopedPhotoBurstChanges(operationID, digest, allocation, nextCount, deltaRecords, usedDeltas); handled || err != nil {
+		return err
+	}
 	deletion, err := attachedDeltaContainsTagDelete(digest, deltaRecords)
 	if err != nil {
 		return err

@@ -7451,6 +7451,70 @@ components:
       required:
         - run
       type: object
+    GroupPhotoStacksRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GroupPhotoStacksRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          description: Distinct photo asset IDs, such as a saved Cull run.
+          items:
+            type: string
+          maxItems: 250000
+          type: array
+        hidden:
+          type: boolean
+      required:
+        - asset_ids
+      type: object
+      x-go-type: api.GroupPhotoStacksRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    GroupPhotoStacksResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GroupPhotoStacksResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
+        grouping_incomplete:
+          description: Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available.
+          type: boolean
+        groups:
+          description: Bursts of two or more submitted photos, in request order; other available photos are single.
+          items:
+            items:
+              type: string
+            type: array
+          type: array
+        unavailable_ids:
+          description: Submitted photos that are no longer live in this library.
+          items:
+            type: string
+          type: array
+      required:
+        - burst_gap_seconds
+        - groups
+        - unavailable_ids
+      type: object
+      x-go-type: api.GroupPhotoStacksResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     HighlightSetTermV1Schema:
       additionalProperties: false
       properties:
@@ -12129,6 +12193,8 @@ components:
             - pick
             - reject
           type: string
+        flag_owner:
+          type: string
         label:
           enum:
             - ""
@@ -12153,6 +12219,7 @@ components:
           format: int64
           type: integer
       required:
+        - flag_owner
         - rating
         - flag
         - label
@@ -12347,6 +12414,9 @@ components:
           $ref: "#/components/schemas/SavedQueryV1Schema"
         skip_unavailable:
           type: boolean
+        stack:
+          description: Prepare up to 2,000 live files for a complete stack decision.
+          type: boolean
       type: object
       x-go-type: api.PhotoAuthoredPrepareRequest
       x-go-type-import:
@@ -12381,6 +12451,10 @@ components:
         receipt_id:
           description: Empty for a no-op, with empty before and after arrays; no receipt is created.
           type: string
+        representatives:
+          items:
+            $ref: "#/components/schemas/PhotoRepresentativeChange"
+          type: array
         sidecar:
           $ref: "#/components/schemas/PhotoSidecarProvenance"
         undo_of:
@@ -12427,6 +12501,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
         facets:
           items:
             additionalProperties: false
@@ -12463,6 +12542,9 @@ components:
               - values
             type: object
           type: array
+        grouping_incomplete:
+          description: Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available.
+          type: boolean
         items:
           items:
             $ref: "#/components/schemas/PhotoBrowseRow"
@@ -12475,6 +12557,11 @@ components:
           type: string
         relevance_available:
           type: boolean
+        stacks:
+          description: Bursts among items when stacks were requested; other items are single photos.
+          items:
+            $ref: "#/components/schemas/PhotoStack"
+          type: array
         total:
           format: int64
           minimum: 0
@@ -12534,6 +12621,9 @@ components:
           type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
+        stacks:
+          description: Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows.
+          type: boolean
       required:
         - query
       type: object
@@ -13088,6 +13178,30 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoCheckpointHeader:
+      additionalProperties: false
+      properties:
+        formatVersion:
+          format: int64
+          type: integer
+        revision:
+          type: string
+        sourceID:
+          type: string
+      required:
+        - formatVersion
+      type: object
+    PhotoCheckpointIdentity:
+      additionalProperties: false
+      properties:
+        revision:
+          type: string
+        sourceID:
+          type: string
+      required:
+        - sourceID
+        - revision
+      type: object
     PhotoExportSelection:
       additionalProperties: false
       properties:
@@ -13450,6 +13564,30 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoImportCheckpoint:
+      additionalProperties: false
+      properties:
+        destination:
+          type: string
+        manifestHash:
+          type: string
+        manifestVersion:
+          format: int64
+          type: integer
+        pickerKind:
+          type: string
+        revision:
+          type: string
+        sourceID:
+          type: string
+      required:
+        - sourceID
+        - revision
+        - destination
+        - manifestVersion
+        - manifestHash
+        - pickerKind
+      type: object
     PhotoImportStartRequest:
       additionalProperties: false
       properties:
@@ -13657,6 +13795,12 @@ components:
           format: int64
           minimum: 1
           type: integer
+        current_content_version_id:
+          format: uuid
+          type: string
+        display_file_id:
+          format: uuid
+          type: string
         file_id:
           format: uuid
           type: string
@@ -13680,6 +13824,7 @@ components:
         values:
           $ref: "#/components/schemas/PhotoAuthored"
       required:
+        - display_file_id
         - file_name
         - node_id
         - values
@@ -13993,6 +14138,41 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PhotoRepresentativeChange:
+      additionalProperties: false
+      properties:
+        after:
+          format: int64
+          minimum: 1
+          type:
+            - integer
+            - "null"
+        after_revision:
+          format: int64
+          minimum: 2
+          type: integer
+        asset_id:
+          format: uuid
+          type: string
+        before:
+          format: int64
+          minimum: 1
+          type:
+            - integer
+            - "null"
+        before_revision:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - asset_id
+        - before_revision
+        - after_revision
+      type: object
+      x-go-type: store.PhotoRepresentativeChange
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoSettings:
       additionalProperties: false
       properties:
@@ -14003,6 +14183,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
         preference:
           enum:
             - raw
@@ -14018,6 +14203,7 @@ components:
           format: date-time
           type: string
       required:
+        - burst_gap_seconds
         - revision
       type: object
       x-go-type: api.PhotoSettings
@@ -14043,6 +14229,85 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoStack:
+      additionalProperties: false
+      properties:
+        asset_ids:
+          description: Members in ascending capture order.
+          items:
+            type: string
+          maxItems: 500
+          minItems: 2
+          type: array
+        representative_id:
+          format: uuid
+          type: string
+      required:
+        - asset_ids
+        - representative_id
+      type: object
+      x-go-type: api.PhotoStack
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoStackDecisionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoStackDecisionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 500
+          minItems: 2
+          type: array
+          uniqueItems: true
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
+        current_id:
+          format: uuid
+          type: string
+        decision:
+          enum:
+            - current
+            - all
+            - selected
+            - representative
+          type: string
+        hidden:
+          type: boolean
+        selected_ids:
+          items:
+            type: string
+          maxItems: 500
+          type: array
+          uniqueItems: true
+        targets:
+          items:
+            $ref: "#/components/schemas/PhotoAuthoredEditTarget"
+          maxItems: 2000
+          minItems: 1
+          type: array
+      required:
+        - burst_gap_seconds
+        - asset_ids
+        - targets
+        - decision
+        - current_id
+      type: object
+      x-go-type: api.PhotoStackDecisionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoTimeline:
       additionalProperties: false
       properties:
@@ -17420,13 +17685,25 @@ components:
           format: uri
           readOnly: true
           type: string
+        burst_gap_seconds:
+          description: Omit to keep the burst gap.
+          format: int64
+          maximum: 30
+          minimum: 1
+          type:
+            - integer
+            - "null"
         preference:
+          description: Omit to keep the display preference when changing the burst gap, or reset it otherwise.
           enum:
             - raw
             - image
           type:
             - string
             - "null"
+        reset_preference:
+          description: Reset the display preference, including when changing the burst gap. Conflicts with preference.
+          type: boolean
       type: object
       x-go-type: api.SetPhotoSettingsRequest
       x-go-type-import:
@@ -20128,6 +20405,73 @@ paths:
                   - proof
                 type: object
           description: API key possession proof
+  /api/daemon/photo-import-checkpoint:
+    get:
+      operationId: getPhotoImportCheckpoint
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  checkpoint:
+                    $ref: "#/components/schemas/PhotoImportCheckpoint"
+                type: object
+          description: Saved selection
+      summary: Read the saved photo selection digest
+    put:
+      operationId: replacePhotoImportCheckpoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                expected:
+                  anyOf:
+                    - $ref: "#/components/schemas/PhotoCheckpointIdentity"
+                    - type: "null"
+                  type:
+                    - object
+                    - "null"
+                  x-omitempty: false
+                next:
+                  anyOf:
+                    - $ref: "#/components/schemas/PhotoImportCheckpoint"
+                    - type: "null"
+                  type:
+                    - object
+                    - "null"
+                  x-omitempty: false
+              required:
+                - next
+                - expected
+              type: object
+        required: true
+      responses:
+        "204":
+          description: Saved import replaced or cleared
+      summary: Replace or clear saved photo import progress if its identity still matches
+  /api/daemon/photo-import-checkpoint/header:
+    get:
+      operationId: getPhotoImportCheckpointHeader
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  checkpoint:
+                    $ref: "#/components/schemas/PhotoCheckpointHeader"
+                  ready:
+                    type: boolean
+                required:
+                  - ready
+                type: object
+          description: Profile and saved import identity
+      summary: Read saved photo import identity and confirm the profile cookie
   /api/daemon/shutdown:
     post:
       operationId: shutdownDaemon
@@ -26574,6 +26918,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve a revision-bound metadata editing session
+  /api/v1/photos/authored/stack:
+    post:
+      operationId: decidePhotoStack
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoStackDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAuthoredReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Decide one observed stack atomically
   /api/v1/photos/authored/{receipt_id}/undo:
     post:
       operationId: undoPhotoAuthored
@@ -27169,7 +27536,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Inspect the photo display preference
+      summary: Inspect photo settings
     put:
       operationId: setPhotoSettings
       parameters:
@@ -27201,7 +27568,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Set or reset the photo display preference
+      summary: Set photo settings
+  /api/v1/photos/stacks/group:
+    post:
+      operationId: groupPhotoStacks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupPhotoStacksRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupPhotoStacksResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Group explicit photos into bursts
   /api/v1/photos/versions/{content_version_id}/face-decisions:
     post:
       operationId: decidePhotoFace

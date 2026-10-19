@@ -21,9 +21,10 @@ import (
 )
 
 // MetadataFormat identifies the current deterministic logical metadata stream.
-const MetadataFormat = "docbank-metadata-jsonl-v2"
+const MetadataFormat = "docbank-metadata-jsonl-v3"
 
 const metadataFormatV1 = "docbank-metadata-jsonl-v1"
+const metadataFormatV2 = "docbank-metadata-jsonl-v2"
 
 const derivativeAuthorityVersion = 1
 
@@ -383,7 +384,7 @@ var _ backup.MetadataRestorer = metadataRestorer{}
 func (r metadataRestorer) RestoreMetadata(
 	ctx context.Context, format string, metadata io.Reader, targetPath string,
 ) (resultErr error) {
-	if format != MetadataFormat && format != metadataFormatV1 {
+	if format != MetadataFormat && format != metadataFormatV1 && format != metadataFormatV2 {
 		return fmt.Errorf("backupapp: unsupported metadata format %q", format)
 	}
 	target, err := store.Open(targetPath, r.driver)

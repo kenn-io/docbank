@@ -55,6 +55,7 @@ describe("audit presentation", () => {
 
   it("names the photo decisions an event changed", () => {
     const values: PhotoAuthored = {
+      flag_owner: "",
       rating: 0,
       flag: "",
       label: "",

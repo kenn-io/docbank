@@ -4,9 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -33,6 +37,8 @@ type PhotoImportGroup struct {
 	// Successful groups rebase the plan so later groups retain the directory identity.
 	DestinationPlan *IngestDirectoryPlan
 	Members         []PhotoImportMember
+	// CreateOnly preserves existing content when a source path has changed bytes.
+	CreateOnly bool
 }
 
 // Ambiguity reasons tell the operator why a group was left for manual pairing.
@@ -159,6 +165,90 @@ func photoImportRoleFilter(role string) (string, []any) {
 	default:
 		return "pf.role=?", []any{role}
 	}
+}
+
+type PhotoFolderContinuation struct {
+	SelectedFolder string `json:"selected_folder"`
+	FolderKey      string `json:"folder_key"`
+	FolderName     string `json:"folder_name"`
+}
+
+// ResolveBrowserPhotoPaths continues a selected directory only when its matching
+// current photo content identifies one canonical browser folder.
+func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImportMember) ([]string, []PhotoFolderContinuation, error) {
+	hashes := make([]string, len(members))
+	for i, member := range members {
+		hashes[i] = member.BlobHash
+	}
+	encoded, err := json.Marshal(hashes)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+ SELECT cv.blob_hash, c.original_path, c.source_desc
+ FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
+ JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL AND pf.role<>'sidecar'
+ JOIN photo_source_claims c ON c.file_id=pf.file_id
+ WHERE n.trashed_at IS NULL AND c.folder_key IS NOT NULL
+ AND `+photoBrowseEligibleMemberPredicate(false)+`
+ AND cv.blob_hash IN (SELECT value FROM json_each(?))`, string(encoded))
+	if err != nil {
+		return nil, nil, fmt.Errorf("finding browser photo provenance: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	folders := map[string]map[string]bool{}
+	names := map[string]string{}
+	for rows.Next() {
+		var hash, original, description string
+		if err := rows.Scan(&hash, &original, &description); err != nil {
+			return nil, nil, err
+		}
+		if !strings.HasPrefix(original, "browser:") {
+			continue
+		}
+		if folders[hash] == nil {
+			folders[hash] = map[string]bool{}
+		}
+		folders[hash][path.Dir(original)] = true
+		names[path.Dir(original)] = strings.TrimPrefix(description, "browser: ")
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	directories := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, member := range members {
+		directory := path.Dir(member.OriginalPath)
+		for folder := range folders[member.BlobHash] {
+			if previous := directories[directory]; previous != "" && previous != folder {
+				ambiguous[directory] = true
+			}
+			directories[directory] = folder
+		}
+	}
+	for directory := range ambiguous {
+		delete(directories, directory)
+	}
+	resolved := make([]string, len(members))
+	for i, member := range members {
+		resolved[i] = member.OriginalPath
+		if folder := directories[path.Dir(member.OriginalPath)]; folder != "" {
+			resolved[i] = folder + "/" + path.Base(member.OriginalPath)
+		}
+	}
+	continuations := []PhotoFolderContinuation{}
+	for _, directory := range slices.Sorted(maps.Keys(directories)) {
+		folder := directories[directory]
+		if folder == directory {
+			continue
+		}
+		_, selected, _ := strings.Cut(directory, "/")
+		if selected == "" {
+			selected = "Choose files"
+		}
+		continuations = append(continuations, PhotoFolderContinuation{SelectedFolder: selected, FolderKey: folder, FolderName: names[folder]})
+	}
+	return resolved, continuations, nil
 }
 
 func (s *Store) photoImportCurrentDuplicateTx(
@@ -454,14 +544,14 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			return err
 		}
 		// Every member first takes the node it was imported as, so no other member's content match can take it.
-		// An edited source becomes that node's new version. RAW and image files then settle by
+		// An edited source becomes that node's new version unless the group is create-only. RAW and image files then settle by
 		// content so sidecars can see which photo the group joins.
 		for i, member := range group.Members {
 			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", false, claimed)
 			if err != nil {
 				return err
 			}
-			if !duplicate {
+			if !duplicate && !group.CreateOnly {
 				node, duplicate, err = s.photoImportChangedSourceTx(ctx, tx, run, member, roles[i], mediaTypes[i], claimed)
 				if err != nil {
 					return err

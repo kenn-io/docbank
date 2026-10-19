@@ -278,7 +278,7 @@ reset removes the override. Output: JSON.`,
 var photoSettingsShowCmd = &cobra.Command{
 	Example: `  docbank photos settings show`,
 	Use:     "show",
-	Short:   "Show the display preference",
+	Short:   "Show photo settings",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
@@ -295,12 +295,18 @@ var photoSettingsShowCmd = &cobra.Command{
 
 var photoSettingsSetCmd = &cobra.Command{
 	Example: `  docbank photos settings set image`,
-	Use:     "set <raw|image>",
-	Short:   "Set the display preference",
-	Args:    cobra.ExactArgs(1),
+	Use:     "set [raw|image]",
+	Short:   "Set the display preference or burst gap",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
+		}
+		if len(args) == 0 {
+			if !cmd.Flags().Changed("burst-gap-seconds") {
+				return usageError(errors.New("provide a preference or --burst-gap-seconds"))
+			}
+			return writePhotoSettings(cmd, nil)
 		}
 		if args[0] != "raw" && args[0] != "image" {
 			return usageError(errors.New("preference must be raw or image"))
@@ -322,7 +328,16 @@ var photoSettingsResetCmd = &cobra.Command{
 	},
 }
 
+// writePhotoSettings uses the shared settings revision for gap and preference writes.
 func writePhotoSettings(cmd *cobra.Command, preference *string) error {
+	var gap *int
+	if cmd.Flags().Changed("burst-gap-seconds") {
+		value, _ := cmd.Flags().GetInt("burst-gap-seconds")
+		if value < 1 || value > 30 {
+			return usageError(errors.New("burst gap must be 1 to 30 seconds"))
+		}
+		gap = &value
+	}
 	c, err := daemonconn.Ensure(cmd.Context())
 	if err != nil {
 		return err
@@ -335,7 +350,7 @@ func writePhotoSettings(cmd *cobra.Command, preference *string) error {
 		return &settings.Revision, nil
 	}
 	settings, err := withPhotoRevision(cmd, current, func(revision *int64) (api.PhotoSettings, error) {
-		return c.SetPhotoSettings(cmd.Context(), *revision, preference)
+		return c.SetPhotoSettings(cmd.Context(), *revision, preference, gap)
 	})
 	if err != nil {
 		return err
@@ -408,6 +423,7 @@ func init() {
 		command.Flags().StringVar(&photoKind, "kind", "", "asset kind: photo or video")
 		command.Flags().StringVar(&photoRole, "role", "", "file role: raw, image, video, or sidecar")
 	}
+	photoSettingsSetCmd.Flags().Int("burst-gap-seconds", 0, "maximum gap between burst frames in seconds (1 to 30; unchanged when omitted)")
 	photoAttachCmd.Flags().StringVar(&photoRole, "role", "", "file role: raw, image, video, or sidecar")
 	photoAttachCmd.Flags().StringVar(&photoSidecarOf, "sidecar-of-file-id", "", "same-asset RAW file ID for a sidecar")
 	photoDetachCmd.Flags().BoolVar(&photoClearDependentSidecars, "clear-dependent-sidecars", false, "detach dependent sidecars with a RAW file")

@@ -1061,10 +1061,16 @@ daemon-lifetime browser session. The master key stays on that pinned connection
 and never enters browser storage, a URL, or a child-process argument.
 
 The daemon serves that session from a second listener with a cryptographically
-random `.localhost` hostname and a newly selected loopback port. This browser
+random `docbank-<random>.docbank.localhost` hostname and a newly selected loopback port. This browser
 origin is independent of the configured API port and unique to one daemon
 lifetime. A process that later captures either port therefore cannot leave a
 service worker or cached script waiting for a future browser session.
+
+Photo import recovery uses a persistent HttpOnly, SameSite=Strict cookie on
+`docbank.localhost` to locate the saved selection in the same vault after a
+restart. The cookie grants no API access. Each checkpoint request still needs
+the current browser session, matching Host and Origin. Other browser data stays
+with its per-run origin.
 
 The launch page carries the scoped session and its random upload-proof secret
 in a URL fragment. Browsers do not include fragments in the initial HTTP

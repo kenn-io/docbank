@@ -21,7 +21,7 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-const metadataFormatVersion = 2
+const metadataFormatVersion = 3
 
 const (
 	metadataCreatedAtField        = "created_at"
@@ -494,8 +494,12 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	backupScoped := layout.backupScoped
 	write := newMetadataJSONWriter(w)
+	version := metadataFormatVersion
+	if layout.schemaVersion < photoBurstStorageSchemaVersion {
+		version = 2
+	}
 	if err := write(metadataHeader{
-		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion,
+		Type: "meta", Format: "docbank-metadata", Version: version,
 		VaultID: vaultID, NodeSequence: nodeSequence,
 	}); err != nil {
 		return err
@@ -1133,15 +1137,32 @@ func (s *Store) importMetadataLines(
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
-		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
+		err = s.importMetadataRecord(ctx, tx, header.Version, kind.Type, raw)
+		if err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
 
 func (s *Store) importMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
+	ctx context.Context, tx *sql.Tx, version int, kind string, raw jsontext.Value,
 ) error {
+	if version < 3 && (kind == metadataPhotoAssetType || kind == metadataPhotoSettingsType) {
+		fields, err := decodeMetadataFields(raw)
+		if err != nil {
+			return err
+		}
+		field := "representative_rank"
+		if kind == metadataPhotoSettingsType {
+			field = "burst_gap_seconds"
+		}
+		if _, present := fields[field]; present {
+			return fmt.Errorf("%s requires metadata version 3", field)
+		}
+		if kind == metadataPhotoSettingsType {
+			return importPhotoSettingsBeforeV3(ctx, tx, raw)
+		}
+	}
 	if kind == metadataSavedQueryRunType {
 		var err error
 		raw, err = normalizeSavedQueryRunMetadata(raw)
@@ -1150,10 +1171,30 @@ func (s *Store) importMetadataRecord(
 		}
 	}
 	if kind == metadataPhotoFileType {
+		if version < 3 {
+			fields, err := decodeMetadataFields(raw)
+			if err != nil {
+				return err
+			}
+			if _, exists := fields["flag_owner"]; exists {
+				return errors.New("flag_owner requires metadata version 3")
+			}
+		}
 		var err error
 		raw, err = normalizePhotoFileMetadata(raw)
 		if err != nil {
 			return err
+		}
+		if version < 3 {
+			var fields map[string]jsontext.Value
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return err
+			}
+			fields["flag_owner"] = jsontext.Value(`""`)
+			raw, err = json.Marshal(fields, json.Deterministic(true))
+			if err != nil {
+				return err
+			}
 		}
 	}
 	required, ok := metadataRequiredFields[kind]

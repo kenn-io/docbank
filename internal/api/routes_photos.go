@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -205,7 +206,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "getPhotoSettings", Method: http.MethodGet,
-		Path: "/api/v1/photos/settings", Summary: "Inspect the photo display preference",
+		Path: "/api/v1/photos/settings", Summary: "Inspect photo settings",
 	}, func(ctx context.Context, _ *struct{}) (*photoSettingsOutput, error) {
 		settings, err := d.Store.PhotoSettings(ctx)
 		if err != nil {
@@ -216,18 +217,18 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "setPhotoSettings", Method: http.MethodPut,
-		Path: "/api/v1/photos/settings", Summary: "Set or reset the photo display preference",
+		Path: "/api/v1/photos/settings", Summary: "Set photo settings",
 	}, func(ctx context.Context, in *struct {
 		IfMatch string `header:"If-Match"`
 		Body    SetPhotoSettingsRequest
 	}) (*photoSettingsOutput, error) {
-		revision, err := parseIfMatch(in.IfMatch)
+		revision, update, err := in.Body.update(ctx, in.IfMatch)
 		if err != nil {
 			return nil, err
 		}
 		var out *photoSettingsOutput
 		err = g.mutate(func() error {
-			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, in.Body.Preference)
+			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, update)
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
@@ -236,4 +237,35 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
+	// A Cull run can hold 250,000 photos. The body limit applies before
+	// parsing; the response stays below it because each submitted ID appears once.
+	huma.Register(api, huma.Operation{
+		OperationID: "groupPhotoStacks", Method: http.MethodPost, Path: "/api/v1/photos/stacks/group",
+		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20,
+	}, func(ctx context.Context, in *struct{ Body GroupPhotoStacksRequest }) (*struct{ Body GroupPhotoStacksResponse }, error) {
+		groups, unavailable, gap, incomplete, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden, processing.SourceMetadataExtractorFingerprint)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{GroupingIncomplete: incomplete, Groups: groups, UnavailableIDs: unavailable, BurstGapSeconds: gap}}, nil
+	})
+}
+
+// update validates the settings intent before either field can change.
+func (in SetPhotoSettingsRequest) update(ctx context.Context, ifMatch string) (int64, store.PhotoSettingsUpdate, error) {
+	update := store.PhotoSettingsUpdate{Preference: in.Preference, ResetPreference: in.ResetPreference || in.Preference == nil && in.BurstGapSeconds == nil, BurstGapSeconds: in.BurstGapSeconds}
+	revision, err := parseIfMatch(ifMatch)
+	if err != nil {
+		return 0, update, err
+	}
+	if in.ResetPreference && in.Preference != nil {
+		return 0, update, huma.Error422UnprocessableEntity("Set preference or reset_preference, rather than both")
+	}
+	if in.preferenceNull && in.BurstGapSeconds != nil {
+		return 0, update, huma.Error422UnprocessableEntity("Omit preference to keep it, or use reset_preference to reset it with a burst gap")
+	}
+	if browserSessionRequest(ctx) && (update.Preference != nil || update.ResetPreference) {
+		return 0, update, huma.Error403Forbidden("Changing the display preference requires the API key")
+	}
+	return revision, update, nil
 }

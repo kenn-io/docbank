@@ -1,4 +1,5 @@
-import type { PhotoBrowseRow, PhotoPreviewSlot } from "./generated/docbank.js";
+import type { PhotoPreviewSlot } from "./generated/docbank.js";
+import type { PhotoBrowseRow } from "./photoRows.js";
 
 export type PhotoGridRow = Pick<
   PhotoBrowseRow,
@@ -9,7 +10,10 @@ export type PhotoGridRow = Pick<
   | "width_px"
   | "height_px"
   | "rotation"
-> & { previews: { grid: PhotoPreviewSlot } };
+> & {
+  stack?: PhotoBrowseRow["stack"];
+  previews: { grid: PhotoPreviewSlot };
+};
 import { rotatedDimensions } from "./photoRotation.js";
 
 export type LayoutItem = { aspect: number };

@@ -44,7 +44,7 @@ test("import collections, label conflicts and stable document navigation", async
     const webURL = new URL(await run("web", "--no-browser"));
     if (
       webURL.protocol !== "http:" ||
-      !/^docbank-[0-9a-f]{32}\.localhost$/.test(webURL.hostname) ||
+      !/^docbank-[0-9a-f]{32}\.docbank\.localhost$/.test(webURL.hostname) ||
       !webURL.port ||
       webURL.pathname !== "/" ||
       webURL.username ||

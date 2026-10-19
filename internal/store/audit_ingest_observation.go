@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/audit"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func persistAuditedIngestObservation(
@@ -16,7 +17,7 @@ func persistAuditedIngestObservation(
 	priorNode, resultingNode Node, ingest metadataIngest, provenance metadataProvenance,
 	binding *ProvenanceVersionBinding, ingestAdded bool,
 ) error {
-	if sourceKindIsEmbedded(ingest.SourceKind) {
+	if query.IsEmbeddedSourceKind(ingest.SourceKind) {
 		return errors.New("audited ingest observation requires an operational source kind")
 	}
 	if provenance.Supersedes != nil {
@@ -202,7 +203,7 @@ func validateReplayedOperationalIngest(record audit.Record) error {
 	if err != nil {
 		return err
 	}
-	if sourceKind == "" || sourceKindIsEmbedded(sourceKind) {
+	if sourceKind == "" || query.IsEmbeddedSourceKind(sourceKind) {
 		return errors.New("ingest observation requires an operational source kind")
 	}
 	description, err := auditField(record, "source_desc")

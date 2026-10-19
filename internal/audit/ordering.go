@@ -363,6 +363,16 @@ func attachedRecordIdentity(record *Record) ([]byte, error) {
 			return nil, err
 		}
 		identity = Record{Kind: "tag_definition_identity", Fields: []Field{{Name: "tag_id", Value: tagID}}}
+	case "photo_representative", "photo_burst_settings":
+		name := "asset_id"
+		if record.Kind == "photo_burst_settings" {
+			name = "singleton"
+		}
+		value, err := recordField(record, name)
+		if err != nil {
+			return nil, err
+		}
+		identity = Record{Kind: record.Kind + "_identity", Fields: []Field{{Name: name, Value: value}}}
 	case "derivative_purge_suppression":
 		source, err := recordField(record, "source_sha256")
 		if err != nil {

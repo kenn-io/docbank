@@ -175,7 +175,7 @@ func (a *App) Version() string           { return a.version }
 func (a *App) ExcludedPaths() []string {
 	return []string{
 		"config.toml", "lane-controls.json", "logs/", "vault.lock", "launch.lock", "daemon.*.json",
-		"web-launch/", "web-downloads/", "blobs/tmp/",
+		"web-launch/", "web-downloads/", "web-photo-imports/", "blobs/tmp/",
 	}
 }
 

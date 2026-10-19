@@ -97,11 +97,21 @@ export function moveInspection<T extends { id: number }>(
 }
 
 export function cullKey(event: KeyboardEvent): string | number | undefined {
-  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.isComposing) return;
+  if (
+    event.defaultPrevented ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.repeat ||
+    event.isComposing
+  )
+    return;
   const target = event.target;
   if (target instanceof Element && target.closest("input,textarea,select,[contenteditable=true]"))
     return;
   const key = event.key.toLowerCase();
+  if (key === "enter" && target instanceof Element && target.closest(NATIVE_KEYBOARD_TARGETS))
+    return;
   if (/^[0-5]$/.test(key)) return Number(key);
   return (
     {
@@ -109,6 +119,11 @@ export function cullKey(event: KeyboardEvent): string | number | undefined {
       arrowup: "previous",
       arrowright: "next",
       arrowdown: "next",
+      enter: "keep-current",
+      h: "previous-stack",
+      l: "next-stack",
+      j: "next-frame",
+      k: "previous-frame",
       p: "pick",
       x: "reject",
       u: "unflag",
