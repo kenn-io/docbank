@@ -61,9 +61,19 @@ func TestReportTUISessionEndedQueuesSend(t *testing.T) {
 		reportTUISessionEnded(2 * time.Minute)
 		close(returned)
 	}()
-	requestCtx := <-started
+	var requestCtx context.Context
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	select {
+	case requestCtx = <-started:
+	case <-ctx.Done():
+		t.Fatal("queued report did not reach the daemon")
+	}
 	<-returned
-	assert.NoError(t, requestCtx.Err(), "report caller waited for the stalled daemon")
+	require.NoError(t, requestCtx.Err(), "report caller waited for the stalled daemon")
+	resetFlags(rootCmd)
+	assert.Equal(t, exitSuccess, runProcess([]string{"version"}, io.Discard, io.Discard))
+	assert.NoError(t, requestCtx.Err(), "process exit waited for the stalled report")
 }
 
 func TestRunProcessDrainsTelemetryWithinExitBudget(t *testing.T) {

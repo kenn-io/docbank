@@ -679,14 +679,15 @@ func registerWebSession(
 		}{Token: token, UploadSecret: uploadSecret, URL: webURL})
 	})
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
-		if reporter != nil {
+		token := r.Header.Get(WebSessionHeader)
+		if _, _, live := sessions.authenticate(token); live && reporter != nil {
 			bucket := r.URL.Query().Get("duration_bucket")
-			switch bucket {
-			case "under_1m", "1_to_5m", "5_to_30m", "over_30m":
-				_ = reporter.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket})
+			properties, err := reporter.SanitizeProperties(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket})
+			if err == nil && properties["duration_bucket"] == bucket {
+				_ = reporter.Capture(telemetry.EventSessionEnded, properties)
 			}
 		}
-		sessions.revoke(r.Header.Get(WebSessionHeader))
+		sessions.revoke(token)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
