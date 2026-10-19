@@ -3481,7 +3481,11 @@ async function startHideSetup() {
   const fetcher = vi.fn(async (url: string, _init: RequestInit) => {
     if (url.endsWith("/photos/hidden/setup")) {
       const result = await save();
-      if (result.ok) configured = true;
+      if (
+        result.ok ||
+        (result.status === 409 && (await result.clone().json()).code === "hidden_configured")
+      )
+        configured = true;
       return result;
     }
     if (url.endsWith("/photos/hidden")) return Response.json({ configured });
@@ -3569,6 +3573,10 @@ it("reports another client's passcode with a dismissible notice", async () => {
   expect(await screen.findByText(message)).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(screen.queryByText(message)).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  await waitFor(() => expect([...hidden]).toEqual(["photo-1", "photo-2"]));
+  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
 });
 
 it("keeps the setup text across tab concealment while locking immediately", async () => {
@@ -3582,4 +3590,68 @@ it("keeps the setup text across tab concealment while locking immediately", asyn
   visibility.mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
   expect(input.value).toBe("synthetic-passcode");
+});
+
+it.each(["Cancel", "Escape", "route"])("cancels Hidden setup quietly with %s", async (action) => {
+  const { photos, dialog, hidden } = await hideSetupFlow();
+  if (action === "Cancel")
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  else if (action === "Escape") await fireEvent.keyDown(document, { key: "Escape" });
+  else {
+    history.pushState(null, "", "/photos/albums");
+    await fireEvent(window, new PopStateEvent("popstate"));
+  }
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
+  expect(hidden.size).toBe(0);
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+  expect(photos.actionError).toBe("");
+  expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+});
+
+it.each([
+  ["route", false],
+  ["dispose", false],
+  ["route", true],
+  ["dispose", true],
+] as const)("settles a Hidden setup save after %s, success %s", async (cancel, success) => {
+  const { photos, dialog, submit, hidden, setSave } = await hideSetupFlow();
+  let finish!: (response: Response) => void;
+  setSave(() => new Promise<Response>((resolve) => (finish = resolve)));
+  await submit();
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  if (cancel === "dispose") photos.dispose();
+  else {
+    history.pushState(null, "", "/photos/albums");
+    await fireEvent(window, new PopStateEvent("popstate"));
+  }
+  expect(screen.getByRole("dialog", { name: "Set a Hidden passcode" })).toBe(dialog);
+  finish(
+    success
+      ? Response.json({ configured: true })
+      : Response.json({ detail: "Save unavailable" }, { status: 503 }),
+  );
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
+  expect([...hidden]).toEqual(success && cancel === "route" ? ["photo-1", "photo-2"] : []);
+  if (success && cancel === "dispose")
+    expect(await screen.findByText("Hidden passcode saved. Choose Hide again.")).toBeTruthy();
+  else {
+    expect(photos.actionError).toBe("");
+    expect(screen.queryByText("Save unavailable")).toBeNull();
+  }
+});
+
+it("closes Hidden setup and reports an expired session after a 401 save", async () => {
+  const { photos, submit, hidden, setSave } = await hideSetupFlow();
+  setSave(async () => Response.json({ detail: "Session expired" }, { status: 401 }));
+  await submit();
+  expect(
+    await screen.findByText(
+      "The browser session expired or was rejected. Run `docbank web` again.",
+    ),
+  ).toBeTruthy();
+  await waitFor(() => expect(photos.hiding).toBe(false));
+  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
+  expect(hidden.size).toBe(0);
 });

@@ -803,12 +803,7 @@ export class Photos {
       onactionerror?.(this.actionError);
       return;
     }
-    const members = this.resolveTargets(this.selectedIDs.has(id) ? this.selectedIDs : [id]);
-    if (!members) {
-      this.actionError = "Load and select the photos again before changing their visibility.";
-      onactionerror?.(this.actionError);
-      return;
-    }
+    const ids = [...(this.selectedIDs.has(id) ? this.selectedIDs : [id])];
     this.hiding = true;
     if (!this.hidden && this.hiddenAccess) {
       const result = await this.hiddenAccess.ensureSetup(this.lifetime.signal);
@@ -822,6 +817,13 @@ export class Photos {
         }
         return;
       }
+    }
+    const members = this.resolveTargets(ids);
+    if (!members) {
+      this.hiding = false;
+      this.actionError = "Load and select the photos again before changing their visibility.";
+      onactionerror?.(this.actionError);
+      return;
     }
     this.cancelPending();
     this.actionError = "";

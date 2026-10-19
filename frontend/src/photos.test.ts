@@ -3040,6 +3040,7 @@ it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
     const access = new HiddenAccess("scoped", vi.fn());
     const ensure = vi.spyOn(access, "ensureSetup");
     const hides: [string, string | null][] = [];
+    let refreshed = false;
     stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden")) {
         if (outcome === "read failure") throw new Error("State unavailable");
@@ -3050,7 +3051,14 @@ it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
         hides.push([url, new Headers(init.headers).get("If-Match")]);
         return Response.json({ id: url.split("/").at(-2), revision: 8 });
       }
-      return response([]);
+      return response(
+        refreshed
+          ? [
+              { ...photo(1), revision: 9 },
+              { ...photo(2), revision: 7 },
+            ]
+          : [],
+      );
     });
     const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
     photos.items = [photo(1), { ...photo(2), revision: 7 }];
@@ -3063,12 +3071,18 @@ it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
       expect(photos.hiding).toBe(true);
       expect(hides).toEqual([]);
       if (outcome === "dispose") photos.dispose();
-      else access.setupPrompt!.done(outcome);
+      else {
+        if (outcome === "saved") {
+          refreshed = true;
+          await photos.refresh();
+        }
+        access.setupPrompt!.done(outcome);
+      }
     }
     await write;
     if (outcome === "saved" || outcome === "read failure") {
       expect(hides).toEqual([
-        ["/api/v1/photos/assets/photo-1/hide", "1"],
+        ["/api/v1/photos/assets/photo-1/hide", outcome === "saved" ? "9" : "1"],
         ["/api/v1/photos/assets/photo-2/hide", "7"],
       ]);
     } else {
@@ -3083,3 +3097,39 @@ it.each(["cancelled", "exists", "saved", "read failure", "dispose"] as const)(
     photos.dispose();
   },
 );
+
+it("continues hiding after the Hidden setup state read times out", async () => {
+  const timeout = new AbortController();
+  const nativeTimeout = AbortSignal.timeout;
+  const timeouts = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockImplementation((ms) => (ms === 30_000 ? timeout.signal : nativeTimeout(ms)));
+  let readSignal: AbortSignal | undefined;
+  const hides = vi.fn();
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) {
+      readSignal = init.signal!;
+      return new Promise<Response>((_resolve, reject) =>
+        readSignal!.addEventListener("abort", () => reject(readSignal!.reason), { once: true }),
+      );
+    }
+    if (url.endsWith("/hide")) {
+      hides();
+      return Response.json({ id: "photo-1", revision: 2 });
+    }
+    return response([]);
+  });
+  const access = new HiddenAccess("scoped", vi.fn());
+  const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
+  photos.items = [photo(1)];
+  const write = photos.setHidden("photo-1");
+  await waitFor(() => expect(readSignal).toBeDefined());
+  expect(photos.hiding).toBe(true);
+  expect(timeouts).toHaveBeenCalledWith(30_000);
+  timeout.abort(new DOMException("Timed out", "TimeoutError"));
+  await write;
+  expect(hides).toHaveBeenCalledOnce();
+  expect(photos.hiding).toBe(false);
+  expect(access.setupPrompt).toBeUndefined();
+  photos.dispose();
+});

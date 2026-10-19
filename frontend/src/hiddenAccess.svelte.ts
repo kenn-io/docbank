@@ -12,7 +12,7 @@ type SetupResult = "ready" | "saved" | "exists" | "cancelled";
 
 export class HiddenAccess {
   lockError = $state("");
-  setupPrompt = $state<{ done: (result: SetupResult) => void }>();
+  setupPrompt = $state<{ done: (result: SetupResult) => void; signal: AbortSignal }>();
   private setupAbort?: AbortController;
   private setupSaving = false;
   private queue = Promise.resolve();
@@ -28,7 +28,10 @@ export class HiddenAccess {
     const controller = (this.setupAbort = new AbortController());
     const signal = AbortSignal.any([lifetime, controller.signal]);
     try {
-      const state = await getPhotoHiddenState({ session: this.session, signal });
+      const state = await getPhotoHiddenState({
+        session: this.session,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+      });
       if (signal.aborted) return "cancelled";
       if (state.configured) return "ready";
       return await new Promise<SetupResult>((resolve) => {
@@ -40,7 +43,7 @@ export class HiddenAccess {
         const abort = () => {
           if (!this.setupSaving) done("cancelled");
         };
-        this.setupPrompt = { done };
+        this.setupPrompt = { done, signal };
         signal.addEventListener("abort", abort, { once: true });
       });
     } catch {
@@ -50,7 +53,7 @@ export class HiddenAccess {
     }
   }
   cancelSetup() {
-    if (!this.setupSaving) this.setupAbort?.abort();
+    this.setupAbort?.abort();
   }
   async createPasscode(passcode: string) {
     this.setupSaving = true;
@@ -62,6 +65,7 @@ export class HiddenAccess {
         ),
       );
     } catch (cause) {
+      if (this.setupPrompt?.signal.aborted) this.setupPrompt.done("cancelled");
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
       throw cause;
     } finally {
