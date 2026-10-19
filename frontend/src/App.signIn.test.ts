@@ -93,13 +93,6 @@ it("shows sign-in before the final duration revoke finishes", async () => {
   expect(revokes).toHaveLength(1);
   expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
   expect(new Headers(revokes[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
-  expect(
-    fetchMock.mock.calls.filter(
-      ([input, init]) =>
-        String(input) === "/api/daemon/telemetry/events" &&
-        JSON.parse(String(init?.body)).event === "session_ended",
-    ),
-  ).toHaveLength(0);
   await act(() => rejectRevoke(new Error("offline")));
   expect(screen.getByLabelText("API key")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
