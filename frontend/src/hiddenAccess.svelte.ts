@@ -60,7 +60,9 @@ export class HiddenAccess {
   async createPasscode(passcode: string) {
     this.setupSaving = true;
     try {
-      return await this.run(() => this.setupPasscode(passcode));
+      const result = await this.run(() => this.setupPasscode(passcode));
+      this.configured = true;
+      return result;
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
       throw cause;

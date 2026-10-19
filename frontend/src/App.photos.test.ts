@@ -3583,6 +3583,12 @@ it("reports another client's passcode with a dismissible notice", async () => {
   expect(photos.actionError).toBe("Hidden already has a passcode. Choose Hide again to use it.");
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  await waitFor(() => expect([...hidden]).toEqual(["photo-1", "photo-2"]));
+  expect(photos.items).toEqual([]);
+  expect(photos.actionError).toBe("");
+  expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
 });
 
 it.each(["Cancel", "Escape", "route"])("cancels Hidden setup quietly with %s", async (action) => {

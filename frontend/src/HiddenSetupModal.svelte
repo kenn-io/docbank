@@ -32,8 +32,10 @@
         prompt?.done("cancelled");
         return;
       }
-      if (cause instanceof APIError && cause.code === "hidden_configured") prompt?.done("exists");
-      else if (cause instanceof APIError && cause.code === "invalid_hidden_passcode")
+      if (cause instanceof APIError && cause.code === "hidden_configured") {
+        access.configured = true;
+        prompt?.done("exists");
+      } else if (cause instanceof APIError && cause.code === "invalid_hidden_passcode")
         passcodeError = cause.message;
       else error = cause instanceof Error ? cause.message : String(cause);
     } finally {

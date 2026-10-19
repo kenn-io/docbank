@@ -3038,18 +3038,21 @@ it("uses refreshed revisions after saving Hidden setup before the hide batch", a
   const access = new HiddenAccess("scoped", vi.fn());
   access.configured = false;
   const hides: [string, string | null][] = [];
+  const hidden = new Set<string>();
   let refreshed = false;
   stubPhotoFetch(async (url, init) => {
     if (url.endsWith("/hide")) {
       hides.push([url, new Headers(init.headers).get("If-Match")]);
-      return Response.json({ id: url.split("/").at(-2), revision: 8 });
+      const id = url.split("/").at(-2)!;
+      hidden.add(id);
+      return Response.json({ id, revision: Number(new Headers(init.headers).get("If-Match")) + 1 });
     }
     return response(
       refreshed
         ? [
             { ...photo(1), revision: 9 },
             { ...photo(2), revision: 7 },
-          ]
+          ].filter((row) => !hidden.has(row.asset_id))
         : [],
     );
   });
@@ -3070,6 +3073,8 @@ it("uses refreshed revisions after saving Hidden setup before the hide batch", a
     ["/api/v1/photos/assets/photo-2/hide", "7"],
   ]);
   expect(photos.hiding).toBe(false);
+  expect(photos.items).toEqual([]);
+  expect(photos.actionError).toBe("");
   photos.dispose();
 });
 
