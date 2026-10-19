@@ -74,7 +74,7 @@ func New(opts Options) *Reporter {
 			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui"))),
 		posthog.WithAllowedEvent(EventSessionEnded,
 			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui")),
-			posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m")),
+			posthog.RequireProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m")),
 		),
 	)
 	if err != nil {

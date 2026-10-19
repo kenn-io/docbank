@@ -62,9 +62,9 @@ func TestSessionEndedPropertiesAndBuckets(t *testing.T) {
 			assert.NotContains(t, props, "seconds")
 		}
 	}
-	for _, value := range []any{"invalid", 120} {
+	for _, value := range []any{nil, "invalid", 120} {
 		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "cli", "duration_bucket": value})
-		require.NoError(t, err)
+		require.ErrorIs(t, err, posthog.ErrInvalidProperty)
 		assert.NotContains(t, props, "surface")
 		assert.NotContains(t, props, "duration_bucket")
 	}

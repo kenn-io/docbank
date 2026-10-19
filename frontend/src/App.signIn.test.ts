@@ -93,6 +93,7 @@ it("shows sign-in before the final duration revoke finishes", async () => {
       init?.method === "DELETE",
   );
   expect(revokes).toHaveLength(1);
+  expect(revokes[0]?.[1]?.keepalive).toBe(true);
   expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
   expect(new Headers(revokes[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
   await act(() => rejectRevoke(new Error("offline")));

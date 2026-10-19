@@ -489,7 +489,11 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if method == http.MethodDelete && path == webSessionPath {
-		return true
+		if r.URL.RawQuery == "" {
+			return true
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		return err == nil && len(values) == 1 && len(values["duration_bucket"]) == 1
 	}
 	if method != http.MethodGet {
 		return false
@@ -675,7 +679,7 @@ func registerWebSession(
 	enabled bool,
 	webURL string,
 	sessions *webSessionRegistry,
-	reporter *telemetry.Reporter,
+	capture telemetry.CaptureEndpoint,
 ) {
 	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, _ *http.Request) {
 		if !enabled || webURL == "" {
@@ -699,13 +703,8 @@ func registerWebSession(
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get(WebSessionHeader)
 		sessions.reportAndRevoke(token, func() {
-			if reporter == nil {
-				return
-			}
-			bucket := r.URL.Query().Get("duration_bucket")
-			properties, err := reporter.SanitizeProperties(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket})
-			if err == nil && properties["duration_bucket"] == bucket {
-				_ = reporter.Capture(telemetry.EventSessionEnded, properties)
+			if capture != nil {
+				_ = capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": r.URL.Query().Get("duration_bucket")})
 			}
 		})
 		w.WriteHeader(http.StatusNoContent)

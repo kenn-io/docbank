@@ -108,16 +108,17 @@ func TestTelemetryEventRouteAbsentWithoutCapture(t *testing.T) {
 
 func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		bucket   string
-		master   bool
-		disabled bool
-		want     bool
+		name         string
+		invalidEvent string
+		bucket       string
+		master       bool
+		disabled     bool
+		want         bool
 	}{
 		{name: "one to five minutes", bucket: "1_to_5m", want: true},
 		{name: "master key without browser session", bucket: "1_to_5m", master: true},
-		{name: "missing bucket"},
-		{name: "invalid bucket", bucket: "bogus"},
+		{name: "missing bucket", invalidEvent: `{"event":"session_ended","properties":{"surface":"web"}}`},
+		{name: "invalid bucket", bucket: "bogus", invalidEvent: `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"bogus"}}`},
 		{name: "disabled telemetry", bucket: "1_to_5m", disabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -139,17 +140,21 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 					APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
 				}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
 					posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-					posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
+					posthog.RequireProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))))
 				require.NoError(t, err)
 			}
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 			ts, _ := newTestServer(t, func(d *api.Deps) {
-				d.TelemetryReporter = reporter
+				d.TelemetryCapture = telemetry.CaptureHandler(reporter, t.TempDir())
 			})
 			session := issueWebSession(t, ts)
 			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
 			if tc.master {
 				browser = nil
+			}
+			if tc.invalidEvent != "" {
+				status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events", tc.invalidEvent, browser)
+				require.Equal(t, http.StatusBadRequest, status, body)
 			}
 			url := ts.URL + "/api/daemon/web-session"
 			if tc.bucket != "" {
@@ -180,6 +185,23 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 	}
 }
 
+func TestWebSessionRevokeRejectsUnexpectedQueryShape(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	for _, query := range []string{"?other=1", "?duration_bucket=1_to_5m&other=1", "?duration_bucket=1_to_5m&duration_bucket=over_30m", "?duration_bucket=%ZZ"} {
+		t.Run(query, func(t *testing.T) {
+			t.Parallel()
+			session := issueWebSession(t, ts)
+			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
+			url := ts.URL + "/api/daemon/web-session"
+			status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url+query, "", browser)
+			require.Equal(t, http.StatusForbidden, status, body)
+			status, body = postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
+			assert.Equal(t, http.StatusNoContent, status, body)
+		})
+	}
+}
+
 func TestConcurrentWebSessionRevokesReportOnce(t *testing.T) {
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
@@ -194,7 +216,7 @@ func TestConcurrentWebSessionRevokesReportOnce(t *testing.T) {
 		APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
 	}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
 		posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-		posthog.AllowProperty("duration_bucket", func(value any) (any, bool) {
+		posthog.RequireProperty("duration_bucket", func(value any) (any, bool) {
 			if blocked.CompareAndSwap(false, true) {
 				close(started)
 				<-release
@@ -203,7 +225,7 @@ func TestConcurrentWebSessionRevokesReportOnce(t *testing.T) {
 		})))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryReporter = reporter })
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = telemetry.CaptureHandler(reporter, t.TempDir()) })
 	unblock := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(unblock)
 	session := issueWebSession(t, ts)
@@ -228,6 +250,9 @@ func TestConcurrentWebSessionRevokesReportOnce(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("first revoke did not reach the reporter")
 	}
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
+	status, body := postTelemetryEvent(t, ts.Client(), http.MethodGet, ts.URL+"/api/v1/jobs", "", browser)
+	require.Equal(t, http.StatusOK, status, body)
 	second, err := ts.Client().Do(req.Clone(ctx))
 	require.NoError(t, err)
 	require.NoError(t, second.Body.Close())
@@ -237,8 +262,7 @@ func TestConcurrentWebSessionRevokesReportOnce(t *testing.T) {
 	require.NoError(t, completed.err)
 	require.NoError(t, completed.response.Body.Close())
 	require.Equal(t, http.StatusNoContent, completed.response.StatusCode)
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
-	status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
+	status, body = postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
 	require.Equal(t, http.StatusUnauthorized, status, body)
 	require.NoError(t, reporter.Close())
 	events := collected()

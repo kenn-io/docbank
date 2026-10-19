@@ -3,6 +3,7 @@ package telemetry
 import (
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -48,6 +49,12 @@ type captureHandler struct {
 	claims   screenClaims
 }
 
+// CaptureEndpoint accepts interface events over HTTP and from daemon handlers.
+type CaptureEndpoint interface {
+	http.Handler
+	Capture(event string, properties map[string]any) error
+}
+
 // CaptureHandler serves interface usage events through r. It sends each
 // screen_viewed screen and surface pair once per UTC day, remembering the day's
 // claims in dir so daemon restarts don't resend them.
@@ -55,10 +62,18 @@ type captureHandler struct {
 // Responses: 202 {"status":"queued"} when the event is queued or was already
 // sent today; 202 {"status":"disabled"} when telemetry is off; 400 for a
 // malformed body, an event the allowlist omits, or a screen_viewed without an
-// allowed screen and surface; 413 for a body over 64 KiB; 415 for a content
+// allowed screen and surface, or a session_ended without an allowed duration;
+// 413 for a body over 64 KiB; 415 for a content
 // type other than application/json; 500 when Capture fails.
-func CaptureHandler(r *Reporter, dir string) http.Handler {
+func CaptureHandler(r *Reporter, dir string) CaptureEndpoint {
 	return &captureHandler{reporter: r, dir: dir, now: time.Now}
+}
+
+func (h *captureHandler) Capture(event string, properties map[string]any) error {
+	if err := h.reporter.Capture(event, properties); err != nil {
+		return fmt.Errorf("capture telemetry event: %w", err)
+	}
+	return nil
 }
 
 func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +95,10 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.reporter.Capture(event, request.Properties); err != nil {
+		if errors.Is(err, posthog.ErrInvalidProperty) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
 		return
 	}

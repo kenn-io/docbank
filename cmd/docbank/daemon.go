@@ -533,7 +533,6 @@ func runServe(ctx context.Context) (retErr error) {
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
 		TelemetryCapture:      telemetry.CaptureHandler(telemetryReporter, layout.Root),
-		TelemetryReporter:     telemetryReporter,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {

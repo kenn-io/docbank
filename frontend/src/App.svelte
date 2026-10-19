@@ -2754,7 +2754,8 @@
     const bucket = sessionReporting?.take();
     resetLocalSessionUI();
     try {
-      if (session) await generated.revokeWebSession({ duration_bucket: bucket }, { session });
+      if (session)
+        await generated.revokeWebSession({ duration_bucket: bucket }, { session, keepalive: true });
     } catch {
       // The local UI is locked even if the daemon disappeared first. Its
       // in-memory session disappears with it.
