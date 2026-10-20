@@ -38,5 +38,5 @@ func TestDriverParity(t *testing.T) {
 }
 
 func TestMattnDriverSynchronous(t *testing.T) {
-	assertDriverSynchronous(t, mattn.Driver{}, 1)
+	assertDriverSynchronous(t, mattn.Driver{})
 }

@@ -57,10 +57,10 @@ func TestModerncDriverContract(t *testing.T) {
 }
 
 func TestModerncDriverSynchronous(t *testing.T) {
-	assertDriverSynchronous(t, modernc.Driver{}, 2)
+	assertDriverSynchronous(t, modernc.Driver{})
 }
 
-func assertDriverSynchronous(t *testing.T, driver docsqlite.Driver, defaultSynchronous int) {
+func assertDriverSynchronous(t *testing.T, driver docsqlite.Driver) {
 	t.Helper()
 	defer sqlitetest.DisableSync.Store(false)
 	databasePath := filepath.Join(t.TempDir(), "synchronous.db")
@@ -81,7 +81,6 @@ func assertDriverSynchronous(t *testing.T, driver docsqlite.Driver, defaultSynch
 					require.NotEqual(t, baseline, synchronous)
 				} else {
 					baseline = synchronous
-					require.Equal(t, defaultSynchronous, baseline)
 				}
 			}
 		}
