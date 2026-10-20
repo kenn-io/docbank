@@ -92,6 +92,8 @@ func TestTUITelemetryStoredStates(t *testing.T) {
 		refused bool
 	}{
 		{"stale day", `{"version":1,"day":"2000-01-01","disabled":true}`, false},
+		{"missing version", `{}`, true},
+		{"null state", `null`, true},
 		{"unsupported version", `{"version":2,"disabled":true}`, true},
 		{"opaque screen", `{"version":1,"day":"` + day + `","screens":["future_screen"]}`, false},
 	} {

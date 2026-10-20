@@ -1047,9 +1047,10 @@ Session reports use the shared gate's in-memory queue while it checks permission
 TUI reports use a running daemon and lock `telemetry-tui-state.json` while checking.
 The private v1 JSON file stores the UTC day, disabled receipt, and accepted
 screen names. Restarts reuse today's state, including opaque screen names.
-Unsupported versions and unknown fields are refused without rewriting. Malformed
-v1 state and other dates, including future dates after clock correction, are
-empty until a new receipt replaces them.
+Missing or unsupported versions are refused without rewriting. Unknown fields
+in v1 are ignored and dropped only on a later rewrite. Malformed v1 state and
+other dates, including future dates after clock correction, are empty until a
+new receipt replaces them.
 Failures retry on input after 30 seconds, including after screen changes. Six
 failed attempts pause this process's reports until UTC rollover, covering file,
 lock, discovery, POST, and receipt errors. Data operations can start daemons.

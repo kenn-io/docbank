@@ -551,7 +551,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	now := time.Now()
 	screen, day := next.visibleScreen(), now.UTC().Format(time.DateOnly)
 	_, input := message.(tea.KeyPressMsg)
-	retry := input && next.reportedDay != day && !now.Before(next.screenRetryAt)
+	retry := input && next.reportedDay != day
 	if !next.quitting && !now.Before(next.screenRetryAt) && (screen != m.visibleScreen() || retry) {
 		next.reportedDay = day
 		cmd = tea.Batch(cmd, next.reportScreen(screen))
