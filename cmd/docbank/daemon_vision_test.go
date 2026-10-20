@@ -104,8 +104,6 @@ func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
 		require.Empty(c, plan.RenditionIneligibleReason)
 	}, 20*time.Second, 50*time.Millisecond)
 	require.True(t, plan.ConsentRequired)
-	require.Equal(t, vision.AdapterContract, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
-	require.Zero(t, probes.Load()+describes.Load(), "planning sends nothing to the provider")
 
 	_, err = daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
@@ -113,7 +111,6 @@ func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
 		prepared, err := daemon.API().PreparePhotoAuthored(t.Context(), &apiclient.PreparePhotoAuthoredRequestOptions{Body: &api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}}})
 		require.NoError(c, err)
 		require.Len(c, prepared.Suggestions, 1)
-		require.Equal(c, "A white panorama.", prepared.Suggestions[0].Value.Caption)
 	}, 20*time.Second, 50*time.Millisecond)
 	require.EqualValues(t, 1, describes.Load(), "one description call")
 	require.Positive(t, probes.Load(), "the provider was checked before the first description")

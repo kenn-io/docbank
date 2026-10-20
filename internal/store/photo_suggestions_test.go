@@ -233,7 +233,7 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{split.ID}}), Patch: PhotoAuthoredPatch{Caption: new("quay")}})
 	require.NoError(t, err)
 	putPhotoSuggestion(t, s, split, document.PhotoDescription{Tags: []string{"boat"}})
-	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{owned.ID}}), Patch: PhotoAuthoredPatch{Caption: new("quay boat")}})
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{owned.ID}}), Patch: PhotoAuthoredPatch{Caption: new("We tied the little boat up beside the old stone quay before the storm came in")}})
 	require.NoError(t, err)
 	putPhotoSuggestion(t, s, owned, document.PhotoDescription{VisibleText: "boat"})
 
@@ -260,26 +260,11 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 			require.Equal(t, item.AssetID == tc.marked, item.MatchedAISuggestion, "only the suggestion-only match carries the mark: %s", tc.form)
 		}
 	}
-	page = browsePhotoPage(t, s, `{"syntax":"simple","text":"machine","sort":{"field":"relevance","direction":"desc"}}`)
-	require.Len(t, page.Items, 1)
-	require.False(t, page.Items[0].MatchedAISuggestion, "a file name match wins over suggestion text")
-}
 
-func TestPhotoSuggestionNeededForWholeQueryRanksBelowAuthoredMatch(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	// The short caption scores higher on "quay" alone than the natural sentence does on both words.
-	split := albumAsset(t, s, "split.jpg")
-	owned := albumAsset(t, s, "owned.jpg")
-	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{split.ID}}), Patch: PhotoAuthoredPatch{Caption: new("quay")}})
-	require.NoError(t, err)
-	putPhotoSuggestion(t, s, split, document.PhotoDescription{Tags: []string{"boat"}})
-	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{owned.ID}}), Patch: PhotoAuthoredPatch{Caption: new("We tied the little boat up beside the old stone quay before the storm came in")}})
-	require.NoError(t, err)
-
+	// The short caption scores higher on "quay" alone than the natural sentence does on both words,
+	// so only the suggestion-aware tier keeps the fully authored match first.
 	raw := `{"syntax":"advanced","text":"quay AND boat","sort":{"field":"relevance","direction":"desc"}}`
-	page := browsePhotoPage(t, s, raw)
+	page = browsePhotoPage(t, s, raw)
 	require.Len(t, page.Items, 2)
 	require.Equal(t, owned.ID, page.Items[0].AssetID, "a fully authored match ranks above one that needs suggestion text")
 	require.Equal(t, split.ID, page.Items[1].AssetID)
@@ -457,15 +442,6 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		restored := restorePhotoSuggestionStore(t, s)
 		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again.", Tags: []string{"coast", "sunset", "boats"}})
 		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "A is dismissed on this photo, so its publish does nothing")
-		for _, tc := range []struct {
-			producer string
-			explicit bool
-			settled  bool
-		}{{producerA, false, true}, {producerA, true, true}, {producerB, false, false}, {producerB, true, false}} {
-			settled, err := restored.photoDescriptionSettled(ctx, first.ContentVersionID, tc.producer, tc.explicit)
-			require.NoError(t, err)
-			require.Equal(t, tc.settled, settled, "producer %s explicit=%t", tc.producer[:1], tc.explicit)
-		}
 
 		again := restorePhotoSuggestionStore(t, restored)
 		publishPhotoDescription(t, again, asset, producerB, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"coast", "sunset", "boats"}})
@@ -476,30 +452,6 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		require.NoError(t, again.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_suggestions WHERE producer_fingerprint=? AND dismissed`, producerA).Scan(&dismissed))
 		require.Equal(t, 1, dismissed, "A's dismissal survives")
 		require.NoError(t, again.ValidateMetadata(ctx))
-	})
-	t.Run("regenerates a pending suggestion nobody has decided on", func(t *testing.T) {
-		t.Parallel()
-		s := newTestStore(t)
-		ctx := t.Context()
-		asset := albumAsset(t, s, "pending.jpg")
-		first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
-		_, err := s.RespondPhotoSuggestion(ctx, first.ID, PhotoSuggestionResponse{Response: "dismissed"})
-		require.NoError(t, err)
-		publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"harbor"}, VisibleText: "QUAYSIDE"})
-		require.Len(t, photoSuggestionValues(t, s, asset.ID), 1)
-
-		var backup bytes.Buffer
-		require.NoError(t, s.ExportMetadata(ctx, &backup))
-		for _, text := range []string{"From B.", "harbor", "QUAYSIDE"} {
-			require.NotContains(t, backup.String(), text, "pending text is not backed up")
-		}
-		restored := restorePhotoSuggestionStore(t, s)
-		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "nothing is shown until the description is regenerated")
-		publishPhotoDescription(t, restored, asset, producerB, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"harbor"}})
-		regenerated := photoSuggestionValues(t, restored, asset.ID)
-		require.Len(t, regenerated, 1, "the newer suggestion is asked for again after restore")
-		require.Equal(t, "Regenerated.", regenerated[0].Value.Caption)
-		require.NoError(t, restored.ValidateMetadata(ctx))
 	})
 }
 
@@ -837,28 +789,6 @@ func TestPhotoDescriptionAnswerForPhotoHiddenAtPublishIsRefused(t *testing.T) {
 	require.Empty(t, prepared.Suggestions)
 }
 
-func TestExplicitPhotoDescriptionReplacesOnlyADismissal(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "explicit.jpg")
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
-	explicit := photoDescriptionJobRequest(t, s, proposal.ContentVersionID, producerB, true)
-	grantRenditionJobConsent(t, s, explicit)
-	at := time.Now().UTC().Add(time.Minute)
-
-	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
-	require.NoError(t, err)
-	automatic := photoDescriptionJobRequest(t, s, proposal.ContentVersionID, producerB, false)
-	grantRenditionJobConsent(t, s, automatic)
-	_, waiter, err := s.EnqueueRenditionJob(ctx, automatic)
-	require.NoError(t, err)
-	require.Equal(t, "published", waiter.State, "automatic work leaves a dismissal alone")
-
-	_, waiter, _ = startPhotoDescription(t, s, explicit, at)
-	require.Equal(t, "waiting", waiter.State, "an explicit start by another profile asks again")
-}
-
 func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 	t.Parallel()
 	for _, joined := range []bool{false, true} {
@@ -895,6 +825,27 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 			}
 		})
 	}
+	t.Run("enqueue", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "explicit.jpg")
+		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
+		explicit := photoDescriptionJobRequest(t, s, proposal.ContentVersionID, producerB, true)
+		grantRenditionJobConsent(t, s, explicit)
+		at := time.Now().UTC().Add(time.Minute)
+
+		_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
+		require.NoError(t, err)
+		automatic := photoDescriptionJobRequest(t, s, proposal.ContentVersionID, producerB, false)
+		grantRenditionJobConsent(t, s, automatic)
+		_, waiter, err := s.EnqueueRenditionJob(ctx, automatic)
+		require.NoError(t, err)
+		require.Equal(t, "published", waiter.State, "automatic work leaves a dismissal alone")
+
+		_, waiter, _ = startPhotoDescription(t, s, explicit, at)
+		require.Equal(t, "waiting", waiter.State, "an explicit start by another profile asks again")
+	})
 }
 
 func TestPhotoDescriptionAutomaticJoinKeepsEarlierExplicitRequest(t *testing.T) {

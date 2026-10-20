@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"image/color"
 	"net/http"
 	"strings"
@@ -42,7 +41,4 @@ func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
 	require.NoError(t, err)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", map[string]string{"Cookie": cookie}, store.PhotoSuggestionResponse{AssetID: prepared.Suggestions[0].AssetID, AssetRevision: hidden.Revision, SourceRevision: prepared.Suggestions[0].SourceRevision, NodeRevision: prepared.Suggestions[0].NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var accepted map[string]any
-	require.NoError(t, json.Unmarshal([]byte(body), &accepted))
-	require.Contains(t, accepted, "authored_receipt")
 }

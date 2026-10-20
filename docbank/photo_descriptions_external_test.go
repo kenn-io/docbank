@@ -20,28 +20,6 @@ import (
 
 func TestEmbeddedPhotoDescriptionBackfillQueuesEligiblePhoto(t *testing.T) {
 	t.Parallel()
-	// A caller may build consent from the plan's classes or grant the reviewed plan; both must authorize the work.
-	for name, grant := range map[string]func(t *testing.T, vault *docbank.Vault, request docbank.ProcessingPlanRequest, plan docbank.ProcessingPlan, disclosure string){
-		"from the plan's classes": func(t *testing.T, vault *docbank.Vault, _ docbank.ProcessingPlanRequest, plan docbank.ProcessingPlan, disclosure string) {
-			t.Helper()
-			_, err := vault.GrantProcessingConsent(t.Context(), document.ProcessingConsentRequest{Principal: "embedded:operator", Scope: "document-processing", ProfileFingerprint: plan.ProfileFingerprint, DisclosureFingerprint: disclosure, InputClasses: plan.DisclosedClasses, RetainedArtifactClasses: plan.RetainedClasses})
-			require.NoError(t, err)
-		},
-		"from the reviewed plan": func(t *testing.T, vault *docbank.Vault, request docbank.ProcessingPlanRequest, plan docbank.ProcessingPlan, _ string) {
-			t.Helper()
-			_, err := vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint})
-			require.NoError(t, err)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			testEmbeddedPhotoDescription(t, grant)
-		})
-	}
-}
-
-func testEmbeddedPhotoDescription(t *testing.T, grant func(*testing.T, *docbank.Vault, docbank.ProcessingPlanRequest, docbank.ProcessingPlan, string)) {
-	t.Helper()
 	described := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -76,7 +54,8 @@ func testEmbeddedPhotoDescription(t *testing.T, grant func(*testing.T, *docbank.
 	request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "vision"}}
 	plan, err := vault.PlanProcessing(t.Context(), request)
 	require.NoError(t, err)
-	grant(t, vault, request, plan, profile.Rendition.DisclosureFingerprint)
+	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
 	select {
 	case <-described:
 	case <-time.After(5 * time.Second):

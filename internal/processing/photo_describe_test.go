@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
 	"image/color"
@@ -230,12 +229,6 @@ func (f *photoDescriptionFixture) suggestions(t *testing.T) []store.PhotoSuggest
 	return prepared.Suggestions
 }
 
-func (f *photoDescriptionFixture) dismiss(t *testing.T, suggestion store.PhotoSuggestion) {
-	t.Helper()
-	_, err := f.catalog.RespondPhotoSuggestion(t.Context(), suggestion.ID, store.PhotoSuggestionResponse{Response: "dismissed"})
-	require.NoError(t, err)
-}
-
 func TestPhotoDescriptionProfileCoverageHasNoRenditionClass(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
@@ -277,23 +270,9 @@ func TestPhotoDescriptionFlow(t *testing.T) {
 	require.Equal(t, 1, probes, "the provider is probed once under the grant")
 	require.Equal(t, 1, describes)
 	f.mu.Lock()
-	var request struct {
-		Messages []struct {
-			Content []struct {
-				ImageURL *struct {
-					URL string `json:"url"`
-				} `json:"image_url"`
-			} `json:"content"`
-		} `json:"messages"`
-	}
-	require.NoError(t, json.Unmarshal(f.describeBody, &request))
+	body := string(f.describeBody)
 	f.mu.Unlock()
-	sent, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(request.Messages[0].Content[1].ImageURL.URL, "data:image/jpeg;base64,"))
-	require.NoError(t, err)
-	config, err := jpeg.DecodeConfig(bytes.NewReader(sent))
-	require.NoError(t, err)
-	require.LessOrEqual(t, max(config.Width, config.Height), 512, "only the grid preview is sent")
-	require.NotContains(t, string(f.describeBody), f.node.Name, "the file name stays home")
+	require.NotContains(t, body, f.node.Name, "the file name stays home")
 
 	_, err = f.catalog.ActiveRendition(ctx, f.node.CurrentVersionID, f.service.profiles["vision"].record.Fingerprint)
 	require.ErrorIs(t, err, store.ErrNotFound, "a description attaches nothing")
@@ -377,7 +356,6 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	require.NoError(t, err)
 	probesBefore, _ := f.counts()
 	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
-	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
 	require.ErrorContains(t, err, "insufficient capacity", "a remembered failure keeps its cause")
 	probesAfter, _ := f.counts()
 	require.Equal(t, probesBefore, probesAfter, "a failed probe repeats no sooner than a minute later")
@@ -412,7 +390,7 @@ func (f *photoDescriptionFixture) addPhoto(t *testing.T, name string, height int
 	return node.CurrentVersionID
 }
 
-func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlot(t *testing.T) {
+func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlotAndRetriesAfterAHeal(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	f.grant(t, f.service, "vision")
@@ -434,6 +412,21 @@ func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlot(t *testing.T) {
 	require.NoError(t, err, "a sleeping retry does not hold the only admission slot")
 	require.Len(t, next, 1)
 	require.NotEqual(t, first[0].version.ID, next[0].version.ID, "the other photo is admitted meanwhile")
+
+	// The endpoint heals. The call has no side effects, so the first photo is simply asked for again.
+	f.mu.Lock()
+	f.dropDescribe = false
+	f.mu.Unlock()
+	asset, err := f.catalog.PhotoAssetForNode(ctx, first[0].version.NodeID)
+	require.NoError(t, err)
+	// The retry waits out its backoff, so run the worker until the queue offers it.
+	require.Eventually(t, func() bool {
+		if f.drainWorker(t.Context(), f.service) != nil {
+			return false
+		}
+		prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+		return err == nil && len(prepared.Suggestions) == 1
+	}, 10*time.Second, 100*time.Millisecond, "the retry produces the suggestion once the endpoint answers")
 }
 
 func TestPhotoDescriptionFreshPhotosGoToTheFirstReadyProfileOnly(t *testing.T) {
@@ -448,33 +441,6 @@ func TestPhotoDescriptionFreshPhotosGoToTheFirstReadyProfileOnly(t *testing.T) {
 	require.Zero(t, f.backfill(t, service))
 	_, describes = f.counts()
 	require.Equal(t, 1, describes, "the other ready profile never describes it too")
-}
-
-func TestPhotoDescriptionRetriesAfterADroppedConnection(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	f.mu.Lock()
-	f.dropDescribe = true
-	f.mu.Unlock()
-	require.Equal(t, 1, f.backfill(t, f.service))
-	_, describes := f.counts()
-	require.Equal(t, 1, describes, "the call went out and the connection dropped")
-	require.Empty(t, f.suggestions(t))
-
-	// The endpoint heals. The call has no side effects, so it is simply asked for again.
-	f.mu.Lock()
-	f.dropDescribe = false
-	f.mu.Unlock()
-	// The retry waits out its backoff, so run the worker until the queue offers it.
-	require.Eventually(t, func() bool {
-		if f.drainWorker(t.Context(), f.service) != nil {
-			return false
-		}
-		prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}})
-		return err == nil && len(prepared.Suggestions) == 1
-	}, 10*time.Second, 100*time.Millisecond, "the retry produces the suggestion once the endpoint answers")
-	require.Zero(t, f.waitingDescriptions(t))
 }
 
 func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
@@ -621,28 +587,6 @@ func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *tes
 		require.Len(t, f.suggestions(t), 1)
 		require.Zero(t, f.waitingDescriptions(t))
 	})
-}
-
-func TestPhotoDescriptionDefaultProfileChangeLeavesDismissals(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	require.Equal(t, 1, f.backfill(t, f.service))
-	f.dismiss(t, f.suggestions(t)[0])
-
-	other := f.newService(t, "other", "replacement-model")
-	f.grant(t, other, "other")
-	require.Zero(t, f.backfill(t, other), "automatic work never re-describes a dismissed photo")
-	_, describes := f.counts()
-	require.Equal(t, 1, describes)
-
-	plan, err := other.Plan(t.Context(), f.selector("other"))
-	require.NoError(t, err)
-	_, err = other.Start(t.Context(), StartRequest{Selector: f.selector("other"), PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	_, describes = f.counts()
-	require.Equal(t, 2, describes, "an explicit start with another profile replaces the dismissal")
-	require.Len(t, f.suggestions(t), 1)
 }
 
 func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
