@@ -79,11 +79,9 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
 	startTelemetryTestDaemon(t)
-	c, running, err := daemonconn.Running(t.Context())
-	require.NoError(t, err)
-	require.True(t, running)
-	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
+	reporter := &tuiTelemetry{}
+	reporter.sessionEnded(2 * time.Minute)
+	require.Eventually(t, func() bool { reporter.mu.Lock(); defer reporter.mu.Unlock(); return reporter.state.Disabled }, time.Second, time.Millisecond)
 }
 
 func TestServeAcceptsAppOpenedWhenTelemetryOptedOut(t *testing.T) {

@@ -126,8 +126,7 @@
   } from "./receipts.js";
   import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
-  import { startScreenReporting } from "./screen-views.js";
-  import { startAppOpenedReporting } from "./app-opened.js";
+  import { startTelemetryReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
   import {
     type AuditStatus,
@@ -275,6 +274,7 @@
   let signInPending = $state(false);
   let disposeBrowserSession: (() => void) | undefined;
   let mounted = false;
+  let telemetryReporting = $state<ReturnType<typeof startTelemetryReporting>>();
   let sessionReporting: ReturnType<typeof startSessionReporting> | undefined;
   const tiles = mapTiles();
   const isMapPath = (path: string) => path === "/photos/map" || path.startsWith("/photos/map/");
@@ -875,7 +875,7 @@
                 : "browse")),
   );
   $effect(() => {
-    if (webSession) return startScreenReporting(webSession, visibleScreen);
+    telemetryReporting?.reportScreen(visibleScreen);
   });
   const snapshotPage = $derived(snapshot.state.page);
   const snapshotQuery = $derived(snapshot.state.query);
@@ -1156,8 +1156,9 @@
     void loadRoot();
     void loadTagCatalog();
     void loadNaturalProfiles(session.token);
-    const stopAppOpened = startAppOpenedReporting(session.token);
-    sessionReporting = startSessionReporting(session.token);
+    const reporter = startTelemetryReporting(session.token);
+    telemetryReporting = reporter;
+    sessionReporting = startSessionReporting(reporter);
     const channel = new VerifiedUploadChannel(session, undefined, () => {
       if (uploadChannel !== channel) return;
       uploadChannelError = keyLogin
@@ -1176,8 +1177,9 @@
     );
     const reporting = sessionReporting;
     disposeBrowserSession = () => {
-      stopAppOpened();
       reporting.stop();
+      reporter.stop();
+      telemetryReporting = undefined;
       channel.close();
     };
   }

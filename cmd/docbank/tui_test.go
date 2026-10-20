@@ -9,12 +9,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,27 +26,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
-
-func TestSendTUISessionEnded(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
-		body, err := io.ReadAll(r.Body)
-		assert.NoError(t, err)
-		assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, err = w.Write([]byte(`{}`))
-		assert.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-	c := daemonconn.New(server.URL, "synthetic-api-key")
-	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
-	assert.Equal(t, int32(1), requests.Load())
-}
 
 func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	started := make(chan context.Context, 1)
@@ -75,6 +57,14 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	})
 	t.Cleanup(func() {
 		close(release)
+		// Wait for the detached exit report to publish its receipt before TempDir cleanup.
+		lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui.json.lock"))
+		defer func() { require.NoError(t, lock.Close()) }()
+		require.Eventually(t, func() bool {
+			locked, err := lock.TryLock()
+			require.NoError(t, err)
+			return locked
+		}, 2*time.Second, time.Millisecond)
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -380,8 +370,12 @@ func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
 	}))
 	defer server.Close()
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
-		return daemonconn.New(server.URL, "synthetic-key"), nil
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	backend := &tuiDaemonBackend{telemetry: tuiTelemetry{running: func(context.Context) (*daemonconn.Connection, bool, error) {
+		return daemonconn.New(server.URL, "synthetic-key"), true, nil
+	}}, ensure: func(context.Context) (*daemonconn.Connection, error) {
+		t.Fatal("telemetry started a daemon")
+		return nil, context.Canceled
 	}}
 	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
 }

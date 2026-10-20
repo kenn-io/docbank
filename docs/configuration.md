@@ -55,6 +55,7 @@ The directory layout is created on first use:
 ├── web-downloads/       # private, temporary verified browser downloads
 ├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
 ├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
+├── telemetry-tui.json # current UTC day TUI receipt, screen claims, and retry state; with its .lock
 ├── config.toml          # optional; see below
 ├── lane-controls.json   # local job pause and concurrency settings
 ├── vault.lock           # advisory lock, held by a daemon or target restore
@@ -1008,12 +1009,7 @@ event to its own daemon, which sends it.
 
 Docbank sends these events:
 
-- `daemon_started` and `daemon_active` at each daemon start, then
-  `daemon_active` on the first hourly check of each later UTC day. Days when
-  the machine sleeps are not backfilled. A background daemon exits
-  after `idle_timeout` (30 minutes by default) and starts again on the next
-  command, so most of these go out at a daemon start, and `daemon_started`
-  counts starts rather than installs.
+- `daemon_active` at each daemon start, then on the first hourly check of each later UTC day. Days when the machine sleeps are not backfilled. A background daemon exits after `idle_timeout`, 30 minutes by default, and starts again on the next command.
 - `app_opened` when the web app loads, and again on the first window focus of
   a later UTC day. The browser remembers the day for the daemon's address, so
   it sends about one per UTC day until the daemon restarts on a new address.
@@ -1039,6 +1035,10 @@ The daemon remembers which screen events it has queued today in memory and in
 `telemetry-screen-views.json` beside the install ID. If it cannot queue an
 event, that screen remains eligible for another attempt. Remote delivery is
 best effort.
+
+Browser reports share one gate for app opens, screens, and session duration. After the daemon replies `disabled`, the browser stops duration listeners and reports for the UTC day. A later day's load or focus checks again. Failed browser requests back off from one second and stop after six failures.
+
+TUI screen and exit reports use only an already-running daemon. They never start one. The private `telemetry-tui.json` file at the canonical vault root stores the current UTC day's disabled receipt, accepted screens, and retry state. A disabled receipt stops further discovery and file reads in that TUI. Later TUI runs read the receipt once and stay quiet for that day. Screen changes can retry failures after increasing delays, up to six attempts per screen per day. Concurrent TUI runs share the file through a lock. Data operations can still start the daemon.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 

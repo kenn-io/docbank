@@ -2,7 +2,6 @@
 package telemetry
 
 import (
-	"context"
 	"log/slog"
 	"time"
 
@@ -11,13 +10,12 @@ import (
 
 const (
 	// EnabledEnv set to "0" turns off docbank's anonymous usage telemetry.
-	EnabledEnv         = "DOCBANK_TELEMETRY_ENABLED"
-	EventDaemonStarted = "daemon_started"
-	EventDaemonActive  = posthog.EventDaemonActive
-	EventAppOpened     = "app_opened"
-	EventScreenViewed  = "screen_viewed"
-	EventSessionEnded  = "session_ended"
-	// HeartbeatJobName is the supervised job that sends daemon_started and daemon_active.
+	EnabledEnv        = "DOCBANK_TELEMETRY_ENABLED"
+	EventDaemonActive = posthog.EventDaemonActive
+	EventAppOpened    = "app_opened"
+	EventScreenViewed = "screen_viewed"
+	EventSessionEnded = "session_ended"
+	// HeartbeatJobName is the supervised job that sends daemon_active.
 	HeartbeatJobName = "telemetry:heartbeat"
 
 	durationUnderMinute         = "under_1m"
@@ -71,7 +69,6 @@ func New(opts Options) *Reporter {
 		Commit:      opts.Commit,
 		Source:      "daemon",
 	},
-		posthog.WithAllowedEvent(EventDaemonStarted),
 		posthog.WithAllowedEvent(EventDaemonActive),
 		posthog.WithAllowedEvent(EventAppOpened),
 		posthog.WithAllowedEvent(EventScreenViewed,
@@ -106,12 +103,4 @@ func DurationBucket(elapsed time.Duration) string {
 	default:
 		return durationOverThirtyMinutes
 	}
-}
-
-// RunHeartbeat sends daemon_started, then kit's daemon_active heartbeat until ctx ends.
-func RunHeartbeat(ctx context.Context, r posthog.Client, logger *slog.Logger) {
-	if err := r.Capture(EventDaemonStarted, nil); err != nil {
-		logger.Warn("telemetry capture failed", "event", EventDaemonStarted, "error", err)
-	}
-	posthog.RunHeartbeat(ctx, r, logger)
 }

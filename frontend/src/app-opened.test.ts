@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vite-plus/test";
-import { startAppOpenedReporting } from "./app-opened.js";
+import { startTelemetryReporting } from "./app-opened.js";
 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -34,13 +34,15 @@ describe("app_opened reporting", () => {
   const focus = () => window.dispatchEvent(new Event("focus"));
 
   it("posts app_opened to the daemon with only the browser session", async () => {
-    stop = startAppOpenedReporting("secret");
+    stop = startTelemetryReporting("secret").stop;
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("/api/daemon/telemetry/events");
     expect(init?.method).toBe("POST");
-    expect(init?.body).toBe(JSON.stringify({ event: "app_opened" }));
+    expect(init?.body).toBe(
+      JSON.stringify({ event: "app_opened", properties: { surface: "web" } }),
+    );
     const headers = new Headers(init?.headers);
     expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
   });
@@ -49,7 +51,7 @@ describe("app_opened reporting", () => {
     const unhandled = vi.fn();
     window.addEventListener("unhandledrejection", unhandled);
     fetchMock.mockImplementationOnce(async () => respond(401));
-    stop = startAppOpenedReporting("secret");
+    stop = startTelemetryReporting("secret").stop;
     await settle();
     await settle();
     focus();
@@ -60,5 +62,59 @@ describe("app_opened reporting", () => {
     window.removeEventListener("unhandledrejection", unhandled);
     expect(unhandled).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("shared browser receipt gate", () => {
+  let reporter: ReturnType<typeof startTelemetryReporting>;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.clear();
+    vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  });
+  afterEach(() => {
+    reporter.stop();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+  it("retains disabled receipts across screen changes, visits, and reloads", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(respond(202));
+    reporter = startTelemetryReporting("secret");
+    await vi.advanceTimersByTimeAsync(0);
+    reporter.reportScreen("help");
+    reporter.reportVisit({ event: "session_ended", properties: { surface: "web" } });
+    reporter.stop();
+    reporter = startTelemetryReporting("secret");
+    reporter.reportScreen("browse");
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("bounds screen failures and forwards the deadline and keepalive through transport", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
+    reporter = startTelemetryReporting("secret");
+    await vi.advanceTimersByTimeAsync(0);
+    reporter.reportVisit(
+      { event: "session_ended", properties: { surface: "web" } },
+      { keepalive: true },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock.mock.calls[1]?.[1]?.keepalive).toBe(true);
+    expect(fetchMock.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    fetchMock.mockImplementation(async () => new Response(null, { status: 503 }));
+    reporter.reportScreen("help");
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    window.dispatchEvent(new Event("focus"));
+    reporter.reportScreen("browse");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 });

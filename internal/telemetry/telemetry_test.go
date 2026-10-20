@@ -83,7 +83,7 @@ func TestNewOptedOut(t *testing.T) {
 			dir := t.TempDir()
 			reporter := New(Options{Dir: dir, Logger: discardLogger()})
 			assert.False(t, reporter.Enabled())
-			for _, event := range []string{EventAppOpened, EventDaemonStarted, EventDaemonActive} {
+			for _, event := range []string{EventAppOpened, EventDaemonActive} {
 				assert.True(t, reporter.EventAllowed(event), event)
 			}
 			assert.False(t, reporter.EventAllowed("search_run"))
@@ -210,17 +210,17 @@ func (c *recordingClient) captured() []string {
 	return append([]string(nil), c.events...)
 }
 
-// Background daemons exit after idle_timeout, so each start must send both events at once.
-func TestHeartbeatSendsStartedAndActiveAtStart(t *testing.T) {
+// Each start reports activity immediately.
+func TestHeartbeatSendsActiveAtStart(t *testing.T) {
 	client := &recordingClient{}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		RunHeartbeat(ctx, client, discardLogger())
+		posthog.RunHeartbeat(ctx, client, discardLogger())
 	}()
-	require.Eventually(t, func() bool { return len(client.captured()) == 2 }, 5*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return len(client.captured()) == 1 }, 5*time.Second, 5*time.Millisecond)
 	cancel()
 	<-done
-	assert.Equal(t, []string{EventDaemonStarted, EventDaemonActive}, client.captured())
+	assert.Equal(t, []string{EventDaemonActive}, client.captured())
 }

@@ -48,6 +48,7 @@ import (
 	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/docbank/internal/version"
 	docweb "go.kenn.io/docbank/internal/web"
+	"go.kenn.io/kit/telemetry/posthog"
 )
 
 var daemonRunCmd = &cobra.Command{
@@ -515,7 +516,7 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	if telemetryReporter.Enabled() {
 		if err := jobSupervisor.Start(telemetry.HeartbeatJobName, func(ctx context.Context) error {
-			telemetry.RunHeartbeat(ctx, telemetryReporter, logger)
+			posthog.RunHeartbeat(ctx, telemetryReporter, logger)
 			return nil
 		}); err != nil {
 			logger.Warn("telemetry heartbeat not started", "error", err)

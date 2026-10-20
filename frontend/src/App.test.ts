@@ -1539,7 +1539,7 @@ it("clears the tag filter when All files opens and restores it on Back", async (
     if (String(input) === "/api/daemon/telemetry/events") {
       const payload = JSON.parse(String(init?.body));
       if (payload.event === "screen_viewed") reportedScreens.push(payload.properties.screen);
-      return new Response(null, { status: 202 });
+      return new Response(JSON.stringify({ status: "queued" }), { status: 202 });
     }
     return backend(input, init);
   });
@@ -1712,19 +1712,8 @@ const keyboardReviewedTagID = "44444444-4444-4444-8444-444444444444";
 
 function prepareKeyboardApp(): Storage {
   prepareSelectionApp();
-  const entries = new Map<string, string>();
-  const storage: Storage = {
-    get length() {
-      return entries.size;
-    },
-    clear: () => entries.clear(),
-    getItem: (key) => entries.get(key) ?? null,
-    key: (index) => [...entries.keys()][index] ?? null,
-    removeItem: (key) => entries.delete(key),
-    setItem: (key, value) => entries.set(key, value),
-  };
-  vi.stubGlobal("localStorage", storage);
-  return storage;
+  localStorage.clear();
+  return localStorage;
 }
 
 function installKeyboardBackend(
