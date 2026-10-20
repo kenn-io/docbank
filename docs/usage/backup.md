@@ -85,12 +85,11 @@ After a capture, the daemon keeps the newest `keep_last` scheduled snapshots,
 always including the one it just created. It forgets older scheduled snapshots
 and prunes unused storage. Manual snapshots stay available. Cleanup failures
 leave the new snapshot available and retry after the next scheduled capture.
-The first scheduled run records the newest existing snapshot as a permanent
-boundary. Existing history stays outside automatic retention, including manual
-snapshots that used the scheduled tag before upgrading. Restarting keeps that
-boundary.
-The tag `docbank:scheduled` is reserved for the daemon; manual capture through
-the CLI, HTTP API, or embedded API rejects it.
+Automatic points use the tag `docbank:scheduled:<vault-id>`. Retention selects
+only this vault's scheduled points, preserving legacy manual history and points
+tagged for another vault. The `docbank:scheduled:` prefix is reserved for the
+daemon; manual capture through the CLI, HTTP API, or embedded API rejects that
+prefix. The plain tag `docbank:scheduled` remains an ordinary manual tag.
 
 `docbank jobs` shows the `backup:scheduled` job and its latest error. The Jobs
 drawer shows its standard error indicator with details redacted for browser

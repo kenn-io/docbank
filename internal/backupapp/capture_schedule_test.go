@@ -15,22 +15,26 @@ func TestCaptureReservesScheduledTagAndChecksOwner(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "repo")
 	repo, err := backup.Init(path)
 	require.NoError(t, err)
-	_, err = backupapp.Create(t.Context(), repo, "test", fixture.metadata, fixture.blobs,
-		backup.CreateOptions{Tag: backupapp.ScheduledTag})
-	require.ErrorIs(t, err, backupapp.ErrReservedScheduledTag)
+	for _, tag := range []string{"docbank:scheduled:", "docbank:scheduled:" + fixture.metadata.VaultID(), "docbank:scheduled:another-vault"} {
+		_, err = backupapp.Create(t.Context(), repo, "test", fixture.metadata, fixture.blobs, backup.CreateOptions{Tag: tag})
+		require.ErrorIs(t, err, backupapp.ErrReservedScheduledTag)
+	}
 	_, err = os.Stat(filepath.Join(path, "docbank-owner"))
 	require.ErrorIs(t, err, os.ErrNotExist)
+	manual, err := backupapp.Create(t.Context(), repo, "test", fixture.metadata, fixture.blobs, backup.CreateOptions{Tag: "docbank:scheduled"})
+	require.NoError(t, err)
+	require.Equal(t, "docbank:scheduled", manual.Options.Tag)
 	point, err := backupapp.CreateScheduled(t.Context(), repo, "test", fixture.metadata, fixture.blobs,
 		backup.CreateOptions{Tag: "manual"})
 	require.NoError(t, err)
-	require.Equal(t, "docbank:scheduled", point.Options.Tag)
+	require.Equal(t, "docbank:scheduled:"+fixture.metadata.VaultID(), point.Options.Tag)
 	other := newArchiveFixture(t)
 	_, err = backupapp.CreateScheduled(t.Context(), repo, "test", other.metadata, other.blobs, backup.CreateOptions{})
 	require.ErrorIs(t, err, backupapp.ErrRepositoryOwnerConflict)
 	points, err := repo.ListSnapshots()
 	require.NoError(t, err)
-	require.Len(t, points, 1)
-	require.Equal(t, point.SnapshotID, points[0].SnapshotID)
+	require.Len(t, points, 2)
+	require.Equal(t, point.SnapshotID, points[1].SnapshotID)
 }
 
 func TestRepositoryOwnerCheckDuringSharedRead(t *testing.T) {

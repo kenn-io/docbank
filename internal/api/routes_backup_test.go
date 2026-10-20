@@ -125,7 +125,7 @@ func TestBackupManualReservedTag(t *testing.T) {
 	_, err := backup.Init(repoPath)
 	require.NoError(t, err)
 	for _, path := range []string{"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream"} {
-		resp, body := do(t, ts, http.MethodPost, path, nil, map[string]any{"tag": "docbank:scheduled"})
+		resp, body := do(t, ts, http.MethodPost, path, nil, map[string]any{"tag": "docbank:scheduled:reserved"})
 		if strings.HasSuffix(path, "/stream") {
 			require.Equal(t, http.StatusOK, resp.StatusCode, body)
 			events := decodeBackupEvents(t, body)

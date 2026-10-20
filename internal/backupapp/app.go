@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
@@ -148,7 +149,7 @@ func Create(
 	blobs BlobStreamer,
 	opts backup.CreateOptions,
 ) (*backup.Manifest, error) {
-	if opts.Tag == ScheduledTag {
+	if strings.HasPrefix(opts.Tag, scheduledTagPrefix) {
 		return nil, ErrReservedScheduledTag
 	}
 	return create(ctx, repo, version, metadata, blobs, opts)
@@ -163,7 +164,7 @@ func CreateScheduled(
 	blobs BlobStreamer,
 	opts backup.CreateOptions,
 ) (*backup.Manifest, error) {
-	opts.Tag = ScheduledTag
+	opts.Tag = ScheduledTag(metadata.VaultID())
 	return create(ctx, repo, version, metadata, blobs, opts)
 }
 
@@ -183,11 +184,6 @@ func create(
 	}
 	if err := EnsureRepositoryOwner(ctx, repo, metadata.VaultID(), opts.ForceUnlock); err != nil {
 		return nil, err
-	}
-	if opts.Tag == ScheduledTag {
-		if _, err := ScheduleBaseline(ctx, repo); err != nil {
-			return nil, err
-		}
 	}
 	opts.MetadataSource = NewMetadataSource(metadata)
 	opts.ContentSource = NewContentSource(blobs)

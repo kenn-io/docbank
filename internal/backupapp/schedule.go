@@ -8,17 +8,21 @@ import (
 	"go.kenn.io/kit/backup"
 )
 
-// ScheduledTag identifies recovery points owned by the daemon's retention policy.
-const ScheduledTag = "docbank:scheduled"
+const scheduledTagPrefix = "docbank:scheduled:"
+
+// ScheduledTag identifies recovery points managed by this vault's retention policy.
+func ScheduledTag(vaultID string) string {
+	return scheduledTagPrefix + vaultID
+}
 
 // ErrReservedScheduledTag prevents manual captures from entering scheduled retention.
-var ErrReservedScheduledTag = fmt.Errorf("backup tag %q is reserved for scheduled backups", ScheduledTag)
+var ErrReservedScheduledTag = fmt.Errorf("backup tag prefix %q is reserved for scheduled backups", scheduledTagPrefix)
 
 // Kit lists validated manifests oldest first; retention consumes newest first.
-func scheduledPoints(manifests []*backup.Manifest, baseline string) []*backup.Manifest {
+func scheduledPoints(manifests []*backup.Manifest, tag string) []*backup.Manifest {
 	var points []*backup.Manifest
 	for _, manifest := range slices.Backward(manifests) {
-		if manifest.SnapshotID <= baseline || manifest.Options.Tag != ScheduledTag {
+		if manifest.Options.Tag != tag {
 			continue
 		}
 		points = append(points, manifest)
@@ -28,8 +32,8 @@ func scheduledPoints(manifests []*backup.Manifest, baseline string) []*backup.Ma
 
 // ScheduleDelay derives the next capture and stale warning from durable manifests.
 // Future timestamps delay recovery by at most one interval per daemon run.
-func ScheduleDelay(manifests []*backup.Manifest, baseline string, now time.Time, interval time.Duration) (time.Duration, bool, error) {
-	points := scheduledPoints(manifests, baseline)
+func ScheduleDelay(manifests []*backup.Manifest, tag string, now time.Time, interval time.Duration) (time.Duration, bool, error) {
+	points := scheduledPoints(manifests, tag)
 	if len(points) == 0 {
 		return 0, false, nil
 	}
@@ -47,8 +51,8 @@ func ScheduleDelay(manifests []*backup.Manifest, baseline string, now time.Time,
 }
 
 // ScheduledRetention selects old scheduled points, always preserving the new capture.
-func ScheduledRetention(manifests []*backup.Manifest, baseline string, keep int, created string) []string {
-	points := scheduledPoints(manifests, baseline)
+func ScheduledRetention(manifests []*backup.Manifest, tag string, keep int, created string) []string {
+	points := scheduledPoints(manifests, tag)
 	found := false
 	for _, point := range points {
 		if point.SnapshotID == created {

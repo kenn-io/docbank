@@ -157,13 +157,60 @@ func TestBackupScheduleRetryAndCancellation(t *testing.T) {
 				points, err = repo.ListSnapshots()
 				require.NoError(t, err)
 				require.Len(t, points, 1)
-				require.Equal(t, "docbank:scheduled", points[0].Options.Tag)
+				require.Equal(t, "docbank:scheduled:"+d.Store.VaultID(), points[0].Options.Tag)
 				require.Empty(t, supervisor.Snapshot()[0].Error)
 				require.NoError(t, supervisor.Shutdown(t.Context()))
 				require.Equal(t, jobs.StatusCancelled, supervisor.Snapshot()[0].Status)
 			})
 		})
 	}
+}
+
+func TestBackupScheduleAfterForgettingFutureHistory(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t, time.Hour)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		manual, err := createBackupSnapshot(t.Context(), repo, d, d.Gate, backupCreateRequest{Tag: "manual"}, nil)
+		require.NoError(t, err)
+		future, err := repo.LoadManifest(manual.ID)
+		require.NoError(t, err)
+		future.CreatedAt = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+		_, err = repo.WriteManifest(future)
+		require.NoError(t, err)
+		// Initialize scheduling against future-dated history, then remove every point.
+		_, err = scheduledBackup(t.Context(), d, d.Logger, false)
+		require.NoError(t, err)
+		history, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		var ids []string
+		for _, point := range history {
+			ids = append(ids, point.SnapshotID)
+		}
+		_, err = backup.Forget(t.Context(), repo, backup.ForgetOptions{SnapshotIDs: ids, AllowEmpty: true})
+		require.NoError(t, err)
+		_, err = scheduledBackup(t.Context(), d, d.Logger, false)
+		require.NoError(t, err)
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		first := points[0].SnapshotID
+		// A restarted worker recognizes the new point and waits for its interval.
+		_, err = scheduledBackup(t.Context(), d, d.Logger, false)
+		require.NoError(t, err)
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		require.Equal(t, first, points[0].SnapshotID)
+		time.Sleep(time.Hour)
+		_, err = scheduledBackup(t.Context(), d, d.Logger, false)
+		require.NoError(t, err)
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		require.NotEqual(t, first, points[0].SnapshotID)
+	})
 }
 
 func TestBackupSchedulePreservesLegacyTaggedManualHistory(t *testing.T) {
@@ -177,8 +224,12 @@ func TestBackupSchedulePreservesLegacyTaggedManualHistory(t *testing.T) {
 		legacy, err := repo.LoadManifest(manual.ID)
 		require.NoError(t, err)
 		// Before scheduling existed, operators could use this tag for manual captures.
-		legacy.Options.Tag = backupapp.ScheduledTag
+		legacy.Options.Tag = "docbank:scheduled"
 		legacyID, err := repo.WriteManifest(legacy)
+		require.NoError(t, err)
+		legacy.Options.Tag = "docbank:scheduled:another-vault"
+		legacy.CreatedAt = time.Now().Add(time.Second).Format(time.RFC3339Nano)
+		foreignID, err := repo.WriteManifest(legacy)
 		require.NoError(t, err)
 		_, err = backup.Forget(t.Context(), repo, backup.ForgetOptions{SnapshotIDs: []string{manual.ID}})
 		require.NoError(t, err)
@@ -192,9 +243,10 @@ func TestBackupSchedulePreservesLegacyTaggedManualHistory(t *testing.T) {
 		synctest.Wait()
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
-		require.Len(t, points, 2)
+		require.Len(t, points, 3)
 		require.Equal(t, legacyID, points[0].SnapshotID)
-		previous := points[1].SnapshotID
+		require.Equal(t, foreignID, points[1].SnapshotID)
+		previous := points[2].SnapshotID
 		require.NoError(t, supervisor.Shutdown(t.Context()))
 		supervisor = jobs.New(t.Context(), d.Logger)
 		require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
@@ -204,15 +256,13 @@ func TestBackupSchedulePreservesLegacyTaggedManualHistory(t *testing.T) {
 			synctest.Wait()
 			points, err = repo.ListSnapshots()
 			require.NoError(t, err)
-			require.Len(t, points, 2)
+			require.Len(t, points, 3)
 			require.Equal(t, legacyID, points[0].SnapshotID)
-			require.NotEqual(t, previous, points[1].SnapshotID)
-			previous = points[1].SnapshotID
+			require.Equal(t, foreignID, points[1].SnapshotID)
+			require.NotEqual(t, previous, points[2].SnapshotID)
+			previous = points[2].SnapshotID
 		}
 		require.NoError(t, supervisor.Shutdown(t.Context()))
-		baseline, err := backupapp.ScheduleBaseline(t.Context(), repo)
-		require.NoError(t, err)
-		require.Equal(t, legacyID, baseline)
 	})
 }
 

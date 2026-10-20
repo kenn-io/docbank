@@ -98,16 +98,14 @@ the worker before closing the vault. An enabled schedule also prevents
 background idle shutdown.
 
 The worker opens an initialized repository and derives due and stale times
-from manifests tagged `docbank:scheduled`, after checking ownership. A different
-vault cannot use its timestamps or trigger scheduled cleanup. `backupapp.Create`
-rejects the reserved tag at the shared capture boundary; the scheduler uses
-`backupapp.CreateScheduled`. Before the first automatic capture, the repository
-persists `docbank-schedule-baseline` with the newest existing snapshot ID, or an
-empty boundary for an empty repository. Initialization holds Kit's exclusive
-lock and publishes the file atomically. Due checks and retention consider only
-scheduled-tag snapshots newer than that fixed boundary. This preserves legacy
-manual snapshots that used the tag before it was reserved. Restart keeps the
-same boundary and derives due times and staleness from the newer snapshots.
+from manifests tagged `docbank:scheduled:<vault-id>`, after checking ownership.
+A different vault cannot use its timestamps or trigger scheduled cleanup.
+`backupapp.Create` rejects the reserved `docbank:scheduled:` prefix at the shared
+capture boundary; the scheduler uses `backupapp.CreateScheduled` to assign its
+vault's tag. The plain tag `docbank:scheduled` remains available for manual
+captures. Exact tag matching preserves legacy manual snapshots and other vaults'
+points without a persistent history boundary. Forgetting every point lets the
+next capture establish a new interval, even after a clock correction.
 A future timestamp caps the initial wait at one interval. The worker consumes
 that deadline once, then captures at the configured interval even while Kit's
 timestamps remain ahead of wall time. A failed due capture keeps that state
