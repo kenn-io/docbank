@@ -185,21 +185,19 @@ func (p *Provider) describe(ctx context.Context, data []byte, text string, token
 
 // Parse cleans a reply field by field. A caption, tag, or visible text that is
 // invalid or of the wrong type is dropped alone, and over-long visible text is
-// clipped, so one bad field never discards the rest. A reply that is not a JSON
-// object with at least one of the three fields yields no result.
+// clipped, so one bad field never discards the rest. Text around the first JSON
+// object is ignored. The object must contain at least one description field.
 func Parse(raw []byte) (document.PhotoDescription, error) {
-	body := strings.TrimSpace(string(raw))
-	if rest, ok := strings.CutPrefix(body, "```"); ok {
-		body = rest
-		body = strings.TrimPrefix(body, "json")
-		body = strings.TrimSpace(strings.TrimSuffix(body, "```"))
+	start := bytes.IndexByte(raw, '{')
+	if start < 0 {
+		return document.PhotoDescription{}, errors.New("vision response has no JSON object")
 	}
 	var fields struct {
 		Caption     jsontext.Value `json:"caption"`
 		Tags        jsontext.Value `json:"tags"`
 		VisibleText jsontext.Value `json:"visible_text"`
 	}
-	if err := json.Unmarshal([]byte(body), &fields); err != nil {
+	if err := json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[start:])), &fields); err != nil {
 		return document.PhotoDescription{}, err
 	}
 	if len(fields.Caption)+len(fields.Tags)+len(fields.VisibleText) == 0 {
