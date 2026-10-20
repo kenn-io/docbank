@@ -84,7 +84,7 @@ func (service *Service) EnqueueAuthorized(
 	if err != nil {
 		return Job{}, err
 	}
-	plan, err := service.planForSource(selector, node, version, profile)
+	plan, err := service.planForSource(ctx, selector, node, version, profile)
 	if err != nil {
 		return Job{}, err
 	}

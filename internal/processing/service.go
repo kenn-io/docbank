@@ -683,7 +683,7 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	plan, err := service.planForSource(selector, node, version, profile)
+	plan, err := service.planForSource(ctx, selector, node, version, profile)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -721,7 +721,7 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	return plan, nil
 }
 
-func (service *Service) planForSource(selector Selector, node store.Node,
+func (service *Service) planForSource(ctx context.Context, selector Selector, node store.Node,
 	version store.ContentVersion, profile configuredProfile,
 ) (Plan, error) {
 	plan := Plan{VaultUID: service.catalog.VaultID(), Selector: selector,
@@ -743,12 +743,23 @@ func (service *Service) planForSource(selector Selector, node store.Node,
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 			plan.Estimate.Scope = "Granting consent automatically queues eligible photos throughout this vault."
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
+			// Only the grid preview leaves the vault, not the original file.
+			view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
+			if err != nil {
+				return Plan{}, err
+			}
+			plan.Estimate.SourceBytes = 0
+			if reason == "" {
+				plan.Estimate.SourceBytes = view.Generation.Preview.Output.Size
+			}
 		}
 		plan.Flow = append(plan.Flow, hop)
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(profileRenditionInput(profile)))
 		plan.Estimate.ProviderCalls++
 	}
-	if profile.portable.Rendition != nil {
+	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		plan.RetainedClasses = append(plan.RetainedClasses, "suggestion_text")
+	} else if profile.portable.Rendition != nil {
 		if profile.portable.RetentionDisclosure.RetainSanitizedMarkdown {
 			plan.RetainedClasses = append(plan.RetainedClasses, "sanitized_markdown")
 		}
@@ -815,7 +826,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		return Job{}, err
 	}
 	// Preview validation and execution must use the same source snapshot.
-	plan, err := service.planForSource(request.Selector, node, version, profile)
+	plan, err := service.planForSource(ctx, request.Selector, node, version, profile)
 	if err != nil {
 		return Job{}, err
 	}
@@ -938,7 +949,7 @@ func (service *Service) GrantConsent(ctx context.Context, request ConsentGrantRe
 	if err != nil {
 		return ConsentGrant{}, err
 	}
-	plan, err := service.planForSource(request.Selector, node, version, profile)
+	plan, err := service.planForSource(ctx, request.Selector, node, version, profile)
 	if err != nil {
 		return ConsentGrant{}, err
 	}
