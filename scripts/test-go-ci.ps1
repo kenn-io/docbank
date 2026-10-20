@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Seed measured hot packages; distribute the remainder round-robin as a best-effort balance.
+# Seed measured hot packages; distribute the remainder round-robin across all four shards.
 $groups = @{
     1 = @('./internal/store')
     2 = @('./docbank', './internal/api')
@@ -17,15 +17,13 @@ $groups = @{
 $packages = @('./...')
 if ($Shard -ne 'all') {
     $packages = @($groups[[int]$Shard])
-    if ($Shard -ne '1') {
-        $seeded = @($groups.Values | ForEach-Object { $_ })
-        $skip = @(go list -tags fts5 @seeded)
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        $remaining = @(go list -tags fts5 ./... | Where-Object { $_ -notin $skip })
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        for ($i = [int]$Shard - 2; $i -lt $remaining.Count; $i += 3) {
-            $packages += $remaining[$i]
-        }
+    $seeded = @($groups.Values | ForEach-Object { $_ })
+    $skip = @(go list -tags fts5 @seeded)
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $remaining = @(go list -tags fts5 ./... | Where-Object { $_ -notin $skip })
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    for ($i = [int]$Shard - 1; $i -lt $remaining.Count; $i += 4) {
+        $packages += $remaining[$i]
     }
 }
 
