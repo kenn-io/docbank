@@ -469,9 +469,11 @@ func TestCheckoutScanDetectsByteAndIdentityChanges(t *testing.T) {
 				require.NotEmpty(t, oldIdentity)
 				oldSince, err := time.Parse(time.RFC3339Nano, scan.Entries[0].ObservedSince)
 				require.NoError(t, err)
-				// Let the first observation settle before replacing the file.
+				// Let the first observation settle before replacing the file. A
+				// coarse Windows clock can still read the observation's instant.
 				s.settleTime = time.Nanosecond
-				require.GreaterOrEqual(t, time.Since(oldSince), s.settlement())
+				require.Eventually(t, func() bool { return time.Since(oldSince) >= s.settlement() },
+					time.Second, time.Millisecond)
 				before, err := os.Stat(name)
 				require.NoError(t, err)
 				replacement := filepath.Join(c.Destination, "replacement")

@@ -40,13 +40,16 @@ func TestMailboxWorkerCancellationFencesPendingAndClosesSpools(t *testing.T) {
 		}
 		return fn()
 	}
+	// Bound each wait generously: loaded Windows runners take seconds for the
+	// worker's first poll and spool cleanup. Passing runs never wait this long.
+	const stepTimeout = 30 * time.Second
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- f.RunWorker(workerCtx) }()
 	select {
 	case <-pending:
-	case <-time.After(5 * time.Second):
+	case <-time.After(stepTimeout):
 		t.Fatal("worker did not reach pending publication")
 	}
 	require.NoError(t, f.Store.CancelMailboxJob(ctx, c.Owner, request.ID))
@@ -62,12 +65,12 @@ func TestMailboxWorkerCancellationFencesPendingAndClosesSpools(t *testing.T) {
 			}
 		}
 		return true
-	}, 5*time.Second, 10*time.Millisecond)
+	}, stepTimeout, 10*time.Millisecond)
 	cancel()
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(5 * time.Second):
+	case <-time.After(stepTimeout):
 		t.Fatal("worker failed to stop")
 	}
 	j, err := f.Store.MailboxJob(ctx, c.Owner, request.ID)
