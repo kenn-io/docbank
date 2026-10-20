@@ -42,7 +42,24 @@ func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.I
 func TestTUITelemetryReceipts(t *testing.T) {
 	for _, receipt := range []string{"disabled", "queued"} {
 		t.Run(receipt, func(t *testing.T) {
-			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, receipt)
+			var requests atomic.Int32
+			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+				assert.Equal(t, "POST", r.Method)
+				assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
+				var event api.TelemetryEventRequest
+				assert.NoError(t, json.UnmarshalRead(r.Body, &event))
+				if requests.Add(1) == 1 {
+					assert.Equal(t, "screen_viewed", event.Event)
+					assert.Equal(t, &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}, event.Properties)
+				} else {
+					assert.Equal(t, "session_ended", event.Event)
+					assert.Equal(t, &api.TelemetryEventProperties{Surface: "tui", DurationBucket: "under_1m"}, event.Properties)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"status":"` + receipt + `"}`))
+			})
 			root := os.Getenv("DOCBANK_HOME")
 			var group sync.WaitGroup
 			for range 2 {
@@ -53,6 +70,12 @@ func TestTUITelemetryReceipts(t *testing.T) {
 			}
 			group.Wait()
 			assert.Equal(t, int32(1), requests.Load())
+			require.NoError(t, sendTUISessionEnded(t.Context(), &tuiTelemetry{}, time.Second))
+			if receipt == "queued" {
+				assert.Equal(t, int32(2), requests.Load())
+			} else {
+				assert.Equal(t, int32(1), requests.Load())
+			}
 			runtimePath, err := daemonconn.RuntimeStore(root).Path(os.Getpid())
 			require.NoError(t, err)
 			require.NoError(t, os.Remove(runtimePath))

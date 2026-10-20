@@ -36,7 +36,6 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 			var event api.TelemetryEventRequest
 			assert.NoError(t, json.UnmarshalRead(r.Body, &event))
 			if event.Event == "session_ended" {
-				assert.Equal(t, &api.TelemetryEventProperties{Surface: "tui", DurationBucket: "under_1m"}, event.Properties)
 				started <- r.Context()
 				<-release
 			}

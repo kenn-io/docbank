@@ -136,12 +136,11 @@ describe("session_ended reporting", () => {
     ]);
   });
 
-  it.each(["checking", "unavailable", "disabled", "blocked"])(
-    "handles pending visits across teardown when %s",
+  it.each(["enabled restart", "disabled restart", "blocked"])(
+    "handles pending visits across teardown with %s",
     (state) => {
       reporting = startSessionReporting(reporter);
       quietChange(true, "checking");
-      if (state === "unavailable") quietChange(true, "unavailable");
       if (state === "blocked")
         vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
           throw new Error("blocked");
@@ -157,10 +156,10 @@ describe("session_ended reporting", () => {
       } else {
         expect(reportVisit).not.toHaveBeenCalled();
         expect(Object.keys(localStorage)).toHaveLength(64);
-        if (state === "disabled") initialReason = "disabled";
+        if (state === "disabled restart") initialReason = "disabled";
         reporting = startSessionReporting(reporter);
-        expect(reportVisit).toHaveBeenCalledTimes(state === "disabled" ? 0 : 64);
-        if (state !== "disabled")
+        expect(reportVisit).toHaveBeenCalledTimes(state === "disabled restart" ? 0 : 64);
+        if (state !== "disabled restart")
           expect(sessionReports()[0]?.properties.duration_bucket).toBe("1_to_5m");
         expect(Object.keys(localStorage)).toHaveLength(0);
       }

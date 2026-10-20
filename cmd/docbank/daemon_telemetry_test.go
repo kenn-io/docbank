@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json/v2"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,24 +76,14 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(d.root, posthog.InstallFileName))
 }
 
-func TestReportTUISessionEndedPersistsDisabledReceipt(t *testing.T) {
-	t.Setenv(telemetry.EnabledEnv, "0")
-	d := startTelemetryTestDaemon(t)
-	day := time.Now().UTC().Format(time.DateOnly)
-	reportTUISessionEnded(&tuiTelemetry{}, 2*time.Minute)
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(filepath.Join(d.root, "telemetry-tui-state"))
-		var receipt tuiTelemetryReceipt
-		return err == nil && json.Unmarshal(data, &receipt) == nil && receipt.Disabled &&
-			(receipt.Day == day || receipt.Day == time.Now().UTC().Format(time.DateOnly))
-	}, time.Second, time.Millisecond)
-}
-
 func TestServeAcceptsAppOpenedWhenTelemetryOptedOut(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
 	t.Setenv(posthog.GenericEnabledEnv, "1")
 	d := startTelemetryTestDaemon(t)
 	status, body := d.do(t, http.MethodPost, "/api/daemon/telemetry/events", `{"event":"app_opened"}`)
+	require.Equal(t, http.StatusAccepted, status, body)
+	assert.JSONEq(t, `{"status":"disabled"}`, body)
+	status, body = d.do(t, http.MethodPost, "/api/daemon/telemetry/events", `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`)
 	require.Equal(t, http.StatusAccepted, status, body)
 	assert.JSONEq(t, `{"status":"disabled"}`, body)
 	status, body = d.do(t, http.MethodPost, "/api/daemon/telemetry/events", `{"event":"search_run"}`)

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
 afterEach(() => {
@@ -1529,27 +1530,20 @@ it("returns to search results after opening All files", async () => {
   expect(search.value).toBe("alpha");
 });
 
-it("restores tag navigation on Back and maps the tag and query screens to telemetry", async () => {
+it("restores tag navigation on Back and reports tag and query screens", async () => {
   prepareSelectionApp();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const { fetchMock } = installSelectionBackend();
-  const backend = fetchMock.getMockImplementation()!;
-  const reportedScreens: string[] = [];
-  fetchMock.mockImplementation(async (input, init) => {
-    if (String(input) === "/api/daemon/telemetry/events") {
-      const payload = JSON.parse(String(init?.body));
-      if (payload.event === "screen_viewed") reportedScreens.push(payload.properties.screen);
-      return new Response(JSON.stringify({ status: "queued" }), { status: 202 });
-    }
-    return backend(input, init);
-  });
+  installSelectionBackend();
+  const telemetry = vi.spyOn(appOpened, "startTelemetryReporting");
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
+  const reportScreen = vi.spyOn(telemetry.mock.results[0]!.value, "reportScreen");
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("tags"));
 
   const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
   await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
@@ -1559,10 +1553,9 @@ it("restores tag navigation on Back and maps the tag and query screens to teleme
   await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
   await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
   expect(screen.queryByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeNull();
-  await waitFor(() => expect(reportedScreens.at(-1)).toBe("tags"));
   await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
   await screen.findByRole("region", { name: "Query editor" });
-  await waitFor(() => expect(reportedScreens.at(-1)).toBe("search"));
+  await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("search"));
   await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
 });
 
