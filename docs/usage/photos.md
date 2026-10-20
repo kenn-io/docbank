@@ -785,7 +785,7 @@ With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating 
 | Arrow keys | Previous or next photo |
 | H / L | Previous or next stack |
 | J / K | Next or previous frame within the stack |
-| Return | Keep the viewed frame and reject the rest of the stack |
+| Return | Keep the viewed frame and reject the other frames, except those with a flag you set yourself |
 | P / X / U | Pick, reject, or clear the flag |
 | 0–5 | Clear or set the star rating |
 | A | Toggle auto-advance, initially on |

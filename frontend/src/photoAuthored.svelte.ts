@@ -2,6 +2,8 @@ import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
+type PreparedFile = api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget;
+
 export class PhotoUndoState {
   receiptID = $state("");
   summary = $state("");
@@ -9,9 +11,43 @@ export class PhotoUndoState {
 
 export class PhotoAuthoredEditor {
   asset = $state<api.PhotoAsset>();
-  targets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
-  /** Stack members outside targets, prepared so one stack decision checks every member. */
-  stackTargets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
+  /** Every prepared file once, by file_id. The edit selection and the stack each name the files they use. */
+  private held = $state<Record<string, PreparedFile>>({});
+  private editIDs = $state.raw(new Set<string>());
+  private stackIDs = $state.raw(new Set<string>());
+  private editFiles = $derived(this.members(this.editIDs));
+  private stackFiles = $derived(this.members(this.stackIDs));
+  /** The edit selection. */
+  get targets() {
+    return this.editFiles;
+  }
+  set targets(targets: PreparedFile[]) {
+    this.editIDs = this.hold(targets);
+    this.prune();
+  }
+  /** Every stack member, prepared so one stack decision checks every member. */
+  get stackTargets() {
+    return this.stackFiles;
+  }
+  private setStack(targets: PreparedFile[]) {
+    this.stackIDs = this.hold(targets);
+    this.prune();
+  }
+  /** Each held file once, whichever scopes use it. */
+  get prepared() {
+    return Object.values(this.held);
+  }
+  private members(ids: Set<string>) {
+    return [...ids].flatMap((id) => this.held[id] ?? []);
+  }
+  private hold(targets: PreparedFile[]) {
+    for (const target of targets) this.held[target.file_id] = target;
+    return new Set(targets.map((target) => target.file_id));
+  }
+  private prune() {
+    for (const id of Object.keys(this.held))
+      if (!this.editIDs.has(id) && !this.stackIDs.has(id)) delete this.held[id];
+  }
   stackLoading = $state(false);
   canChooseStackRepresentative(assetID: string) {
     const rejected = new Set(
@@ -157,8 +193,9 @@ export class PhotoAuthoredEditor {
   reset() {
     this.read.abort();
     this.stackRead.abort();
-    this.targets = [];
-    this.stackTargets = [];
+    this.held = {};
+    this.editIDs = new Set();
+    this.stackIDs = new Set();
     this.stackKey = "";
     this.stackError = "";
     this.stackLoading = false;
@@ -246,7 +283,7 @@ export class PhotoAuthoredEditor {
     if (this.busy || this.loading) return;
     // Stack members prepare again once the stack is actionable.
     this.stackRead.abort();
-    this.stackTargets = [];
+    this.setStack([]);
     this.stackKey = "";
     this.stackError = "";
     this.stackLoading = false;
@@ -337,10 +374,9 @@ export class PhotoAuthoredEditor {
   }
   private accept(receipt: api.PhotoAuthoredReceipt) {
     this.noticeTone = "success";
-    this.targets = this.accepted(this.targets, receipt);
-    this.stackTargets = this.accepted(this.stackTargets, receipt);
+    for (const target of this.accepted(this.prepared, receipt)) this.held[target.file_id] = target;
   }
-  private accepted(targets: typeof this.targets, receipt: api.PhotoAuthoredReceipt) {
+  private accepted(targets: PreparedFile[], receipt: api.PhotoAuthoredReceipt) {
     return targets.map((target) => {
       const representative = receipt.representatives?.find(
         (change) => change.asset_id === target.asset_id,
@@ -504,7 +540,7 @@ export class PhotoAuthoredEditor {
     this.stackRead.abort();
     const controller = (this.stackRead = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
-    this.stackTargets = [];
+    this.setStack([]);
     this.stackLoading = true;
     this.stackError = "";
     this.error = "";
@@ -515,7 +551,7 @@ export class PhotoAuthoredEditor {
           this.options(signal),
         ),
       );
-      if (!signal.aborted) this.stackTargets = prepared.targets;
+      if (!signal.aborted) this.setStack(prepared.targets);
     } catch (cause) {
       if (!signal.aborted) {
         this.stackError = this.error = this.failure(cause);

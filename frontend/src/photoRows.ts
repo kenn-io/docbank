@@ -44,12 +44,11 @@ export function patchPhotoRows(
 export function photoStacksChanged(
   rows: PhotoBrowseRow[],
   receipt: PhotoAuthoredReceipt,
-  ...editors: (Pick<PhotoAuthoredEditor, "targets" | "stackTargets"> | undefined)[]
+  ...editors: (Pick<PhotoAuthoredEditor, "prepared"> | undefined)[]
 ): boolean {
   const assets = new Map(rows.map((row) => [row.display_file_id, row.asset_id]));
   for (const editor of editors)
-    for (const file of [...(editor?.targets ?? []), ...(editor?.stackTargets ?? [])])
-      assets.set(file.file_id, file.asset_id);
+    for (const file of editor?.prepared ?? []) assets.set(file.file_id, file.asset_id);
   const before = new Map(receipt.before.map((file) => [file.file_id, file.values.flag]));
   const affected = new Set([
     ...(receipt.representatives ?? []).map((change) => change.asset_id),
