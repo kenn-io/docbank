@@ -579,12 +579,25 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 			return "", nil, err
 		}
 	}
-	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
- SELECT member.asset_id,COALESCE(MAX(candidates.tier),0) tier,
- COALESCE(MAX(CASE WHEN candidates.tier=5 THEN candidates.score END),MAX(CASE WHEN candidates.tier=4 THEN candidates.score END),MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
+	// A photo that matches the whole query only with suggestion text ranks no
+	// higher than the suggestion tier, below any fully authored match.
+	plain := compiledQueryFragment{sql: `SELECT 0 node_id WHERE 0`}
+	if content != "" {
+		withoutSuggestion := compiled
+		withoutSuggestion.withoutSuggestion = true
+		if plain, err = photoBrowsePopulation(withoutSuggestion, generation, coverage); err != nil {
+			return "", nil, err
+		}
+	}
+	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), plain AS MATERIALIZED (` + plain.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
+ SELECT member.asset_id,
+ CASE WHEN MAX(plain.node_id IS NOT NULL) THEN COALESCE(MAX(candidates.tier),0) ELSE MIN(COALESCE(MAX(candidates.tier),0),3) END tier,
+ COALESCE(CASE WHEN MAX(plain.node_id IS NOT NULL) THEN MAX(CASE WHEN candidates.tier=5 THEN candidates.score END) END,CASE WHEN MAX(plain.node_id IS NOT NULL) THEN MAX(CASE WHEN candidates.tier=4 THEN candidates.score END) END,MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
  FROM eligible JOIN photo_files member ON member.node_id=eligible.node_id
+	 LEFT JOIN plain ON plain.node_id=eligible.node_id
 	 LEFT JOIN candidates ON candidates.node_id=eligible.node_id GROUP BY member.asset_id)`
-	args := append(append([]any(nil), population.args...), candidates.Args...)
+	args := append(append(append([]any(nil), population.args...), plain.args...), candidates.Args...)
+	population.relations |= plain.relations
 	order := "DESC"
 	if compiled.Query.Sort.Direction == "asc" {
 		order = "ASC"

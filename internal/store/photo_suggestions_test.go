@@ -265,6 +265,33 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.False(t, page.Items[0].MatchedAISuggestion, "a file name match wins over suggestion text")
 }
 
+func TestPhotoSuggestionNeededForWholeQueryRanksBelowAuthoredMatch(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	// The short caption scores higher on "quay" alone than the natural sentence does on both words.
+	split := albumAsset(t, s, "split.jpg")
+	owned := albumAsset(t, s, "owned.jpg")
+	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{split.ID}}), Patch: PhotoAuthoredPatch{Caption: new("quay")}})
+	require.NoError(t, err)
+	putPhotoSuggestion(t, s, split, document.PhotoDescription{Tags: []string{"boat"}})
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{owned.ID}}), Patch: PhotoAuthoredPatch{Caption: new("We tied the little boat up beside the old stone quay before the storm came in")}})
+	require.NoError(t, err)
+
+	raw := `{"syntax":"advanced","text":"quay AND boat","sort":{"field":"relevance","direction":"desc"}}`
+	page := browsePhotoPage(t, s, raw)
+	require.Len(t, page.Items, 2)
+	require.Equal(t, owned.ID, page.Items[0].AssetID, "a fully authored match ranks above one that needs suggestion text")
+	require.Equal(t, split.ID, page.Items[1].AssetID)
+
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	snapshot, err := service.Create(ctx, "owner", SnapshotRequest{Photos: true, Query: snapshotTestQuery(t, raw)})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Rows, 2)
+	require.Equal(t, owned.ID, snapshot.Rows[0].AssetID, "a frozen snapshot keeps the same order")
+}
+
 func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

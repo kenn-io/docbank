@@ -678,7 +678,7 @@ and `lens:B` does not. A sidecar without camera metadata cannot make
 `NOT camera:A` match. Changing the display file changes these metadata matches.
 
 Photos text also searches camera and lens makes/models and location labels from
-active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text and tag names, pending suggestions, technical metadata, then retained content-only matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
+active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text and tag names, pending suggestions, technical metadata, then retained content-only matches. A photo that matches the whole query only with pending suggestion text ranks in the suggestions group, below fully authored matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
 The best matching member supplies an asset's score, after the complete
 expression restricts eligible members. Authored caption, creator, and copyright match any live non-sidecar member of the asset, so a JPEG caption can match an asset selected by `extension:cr2`. Filename, technical metadata, retained content, name, extension, tag, and collection predicates still match
 individual members. One member must satisfy the complete expression, using
