@@ -147,7 +147,9 @@ func (p *Provider) describe(ctx context.Context, data []byte, text string, token
 		RequestTimeout: p.profile.RequestTimeout, MaxResponseBytes: p.profile.MaxResponseBytes, Credential: p.credential}
 	var usage providerutil.Usage
 	res, err := executor.Do(operation, &usage, providerutil.Request{Stage: providerutil.StageResult,
-		Method: http.MethodPost, Path: "/v1/chat/completions", ContentType: providerutil.JSONMediaType, Body: body})
+		Method: http.MethodPost, Path: "/v1/chat/completions", ContentType: providerutil.JSONMediaType, Body: body,
+		// A transport retry would resend the photo after the operation's last check.
+		NoReplay: true})
 	if err != nil {
 		return nil, err
 	}

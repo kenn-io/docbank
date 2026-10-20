@@ -52,6 +52,9 @@ type Request struct {
 	// MaxResponseBytes tightens the executor bound when positive.
 	MaxResponseBytes  int64
 	ResponseMediaType string
+	// NoReplay keeps the transport from resending the body on its own, as HTTP/2
+	// does after a GOAWAY. A failed send then surfaces to the caller.
+	NoReplay bool
 }
 
 // Response is one fully read, bounded provider response.
@@ -148,9 +151,9 @@ func (executor *Executor) build(
 		return nil, nil, executor.Provider.Classified(document.RenditionErrorTransient,
 			"could not create "+string(executor.Provider)+" request", err)
 	}
-	// A transport retry would resend the bytes after the operation's last
-	// check, so a failed send surfaces instead of replaying.
-	httpRequest.GetBody = nil
+	if request.NoReplay {
+		httpRequest.GetBody = nil
+	}
 	httpRequest.Header.Set("Accept", executor.responseMediaType(request))
 	if contentType != "" {
 		httpRequest.Header.Set("Content-Type", contentType)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -382,28 +383,37 @@ func serveHTTP2GoAway(t *testing.T, listener net.Listener) *atomic.Int32 {
 	return &bodies
 }
 
-func TestExecutorDoesNotReplayBodyAfterTransportRetry(t *testing.T) {
-	certificate := httptest.NewUnstartedServer(nil)
-	certificate.EnableHTTP2 = true
-	certificate.StartTLS()
-	tlsConfig := &tls.Config{Certificates: certificate.TLS.Certificates, NextProtos: []string{"h2"}}
-	client := certificate.Client()
-	certificate.Close()
-	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
-	bodies := serveHTTP2GoAway(t, listener)
+func TestExecutorReplaysBodyAfterTransportRetryOnlyUnlessNoReplay(t *testing.T) {
+	for _, noReplay := range []bool{false, true} {
+		t.Run(fmt.Sprintf("no_replay_%t", noReplay), func(t *testing.T) {
+			certificate := httptest.NewUnstartedServer(nil)
+			certificate.EnableHTTP2 = true
+			certificate.StartTLS()
+			tlsConfig := &tls.Config{Certificates: certificate.TLS.Certificates, NextProtos: []string{"h2"}}
+			client := certificate.Client()
+			certificate.Close()
+			listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = listener.Close() })
+			bodies := serveHTTP2GoAway(t, listener)
 
-	executor := &Executor{
-		Provider: testProvider, HTTP: client, Origin: "https://" + listener.Addr().String(),
-		RequestTimeout: 5 * time.Second, MaxResponseBytes: 1 << 20,
+			executor := &Executor{
+				Provider: testProvider, HTTP: client, Origin: "https://" + listener.Addr().String(),
+				RequestTimeout: 5 * time.Second, MaxResponseBytes: 1 << 20,
+			}
+			operation := NewResumedOperation(t.Context(), testProvider, time.Minute)
+			defer operation.Cancel()
+			_, err = executor.Do(operation, &Usage{}, Request{
+				Stage: StageResult, Method: http.MethodPost, Path: "/submit", ContentType: JSONMediaType, Body: []byte(`{"photo":"bytes"}`), NoReplay: noReplay,
+			})
+
+			if noReplay {
+				require.Error(t, err)
+				assert.Equal(t, int32(1), bodies.Load(), "a transport retry resent the body without another check")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, int32(2), bodies.Load(), "other adapters keep the transport's own retry")
+		})
 	}
-	operation := NewResumedOperation(t.Context(), testProvider, time.Minute)
-	defer operation.Cancel()
-	_, err = executor.Do(operation, &Usage{}, Request{
-		Stage: StageResult, Method: http.MethodPost, Path: "/submit", ContentType: JSONMediaType, Body: []byte(`{"photo":"bytes"}`),
-	})
-
-	require.Error(t, err)
-	assert.Equal(t, int32(1), bodies.Load(), "a transport retry resent the body without another check")
 }
