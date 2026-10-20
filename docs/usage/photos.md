@@ -216,7 +216,7 @@ failed page again. Refresh and expired-cursor recovery keep the current grid vis
 
 ## Save and freeze a photo search
 
-Choose Plain words for ordinary words, or Query syntax for expressions such as `rating:5 pick label:red`. Changing the mode reruns typed text. In Query syntax, `pick` means `flag:pick`; quote `"pick"` to search for that word. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member. Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Select None to find an empty flag or label.
+Choose Text for ordinary words, or Filters for expressions such as `rating:5 pick label:red`. In Filters, `pick` means `flag:pick`; quote `"pick"` to search for that word. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member, plus every tag name assigned to the photo and any pending [photo suggestion](#suggested-metadata). Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Select None to find an empty flag or label.
 
 Choose Save search to save the applied search. Albums lists saved queries whose kind filter contains only photos or videos as Smart sets. A `kind:photo` expression alone does not put a Documents query in this list; saving from Photos adds the kind filter. Ordering stays in the current view; reopening uses capture date, or relevance for a text query. The saved definition also runs in Documents: bare `pick` searches for the word, while `rating:` and `flag:` test each document file's authored decisions rather than the asset's display file. Hidden photo files remain accessible there. Use its saved-query editor to change or delete the definition.
 
@@ -678,7 +678,7 @@ and `lens:B` does not. A sidecar without camera metadata cannot make
 `NOT camera:A` match. Changing the display file changes these metadata matches.
 
 Photos text also searches camera and lens makes/models and location labels from
-active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text, technical metadata, then retained content-only matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
+active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text and tag names, pending suggestions, technical metadata, then retained content-only matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
 The best matching member supplies an asset's score, after the complete
 expression restricts eligible members. Authored caption, creator, and copyright match any live non-sidecar member of the asset, so a JPEG caption can match an asset selected by `extension:cr2`. Filename, technical metadata, retained content, name, extension, tag, and collection predicates still match
 individual members. One member must satisfy the complete expression, using
