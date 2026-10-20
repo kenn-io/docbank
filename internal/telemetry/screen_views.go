@@ -41,11 +41,18 @@ type screenClaims struct {
 }
 
 type captureHandler struct {
-	reporter *Reporter
-	dir      string
-	mu       sync.Mutex
-	now      func() time.Time
-	claims   screenClaims
+	*Reporter
+
+	dir    string
+	mu     sync.Mutex
+	now    func() time.Time
+	claims screenClaims
+}
+
+// CaptureEndpoint accepts interface events over HTTP and from daemon handlers.
+type CaptureEndpoint interface {
+	http.Handler
+	Capture(event string, properties map[string]any) error
 }
 
 // CaptureHandler serves interface usage events through r. It sends each
@@ -55,10 +62,11 @@ type captureHandler struct {
 // Responses: 202 {"status":"queued"} when the event is queued or was already
 // sent today; 202 {"status":"disabled"} when telemetry is off; 400 for a
 // malformed body, an event the allowlist omits, or a screen_viewed without an
-// allowed screen and surface; 413 for a body over 64 KiB; 415 for a content
+// allowed screen and surface; session_ended properties are optional.
+// 413 for a body over 64 KiB; 415 for a content
 // type other than application/json; 500 when Capture fails.
-func CaptureHandler(r *Reporter, dir string) http.Handler {
-	return &captureHandler{reporter: r, dir: dir, now: time.Now}
+func CaptureHandler(r *Reporter, dir string) CaptureEndpoint {
+	return &captureHandler{Reporter: r, dir: dir, now: time.Now}
 }
 
 func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +75,7 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	event := strings.TrimSpace(request.Event)
-	if !h.reporter.EventAllowed(event) {
+	if !h.EventAllowed(event) {
 		http.Error(w, posthog.ErrUnsupportedEvent.Error(), http.StatusBadRequest)
 		return
 	}
@@ -75,11 +83,11 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveScreen(w, request.Properties)
 		return
 	}
-	if !h.reporter.Enabled() {
+	if !h.Enabled() {
 		writeCaptureStatus(w, "disabled")
 		return
 	}
-	if err := h.reporter.Capture(event, request.Properties); err != nil {
+	if err := h.Capture(event, request.Properties); err != nil {
 		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
 		return
 	}
@@ -106,14 +114,14 @@ func decodeCaptureRequest(w http.ResponseWriter, r *http.Request) (captureReques
 }
 
 func (h *captureHandler) serveScreen(w http.ResponseWriter, raw map[string]any) {
-	properties, err := h.reporter.SanitizeProperties(EventScreenViewed, raw)
+	properties, err := h.SanitizeProperties(EventScreenViewed, raw)
 	screen, validScreen := properties["screen"].(string)
 	surface, validSurface := properties["surface"].(string)
 	if err != nil || !validScreen || !validSurface {
 		http.Error(w, "screen_viewed requires an allowed screen and surface", http.StatusBadRequest)
 		return
 	}
-	if !h.reporter.Enabled() {
+	if !h.Enabled() {
 		writeCaptureStatus(w, "disabled")
 		return
 	}
@@ -127,11 +135,11 @@ func (h *captureHandler) serveScreen(w http.ResponseWriter, raw map[string]any) 
 		writeCaptureStatus(w, "queued")
 		return
 	}
-	if err := h.reporter.Capture(EventScreenViewed, properties); err != nil {
+	if err := h.Capture(EventScreenViewed, properties); err != nil {
 		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
 		return
 	}
-	if !h.reporter.Enabled() {
+	if !h.Enabled() {
 		writeCaptureStatus(w, "disabled")
 		return
 	}

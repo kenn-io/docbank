@@ -1023,6 +1023,13 @@ Docbank sends these events:
   terminal browser counts the time from opening to exit, including idle time.
   A terminal browser left idle past the daemon's idle timeout reports nothing
   on exit because it sends the report only to a running daemon.
+  TUI exit waits at most 50 ms for daemon discovery and reporting.
+  A report that hasn't finished within that wait may be lost.
+  Web Lock and sign-out send the final duration bucket in one revoke request,
+  which removes the token first. The request that removes a live token then
+  attempts to queue the event without waiting for delivery.
+  The daemon can't accept the final duration after the browser session has
+  expired or been revoked.
 - `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`.
   Each screen counts once per vault per UTC day for each interface, including
   across daemon restarts. `surface` records which interface was used. The

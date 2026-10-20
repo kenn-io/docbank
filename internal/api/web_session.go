@@ -10,8 +10,11 @@ import (
 	"fmt"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -183,11 +186,11 @@ func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
 	}
 }
 
-func (r *webSessionRegistry) revoke(token string) {
-	r.revokeDigest(sha256.Sum256([]byte(token)))
+func (r *webSessionRegistry) revoke(token string) bool {
+	return r.revokeDigest(sha256.Sum256([]byte(token)))
 }
 
-func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
+func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) bool {
 	r.mu.Lock()
 	state, ok := r.tokens[digest]
 	delete(r.tokens, digest)
@@ -198,7 +201,7 @@ func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
 	}
 	r.mu.Unlock()
 	if !ok {
-		return
+		return false
 	}
 	state.cancel()
 	if state.expires != nil {
@@ -211,6 +214,7 @@ func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
 		defer r.revokeGroup.Done()
 		r.onRevoke(hex.EncodeToString(digest[:]))
 	}
+	return true
 }
 
 func (r *webSessionRegistry) closeAll(ctx context.Context) error {
@@ -656,6 +660,8 @@ func registerWebSession(
 	enabled bool,
 	webURL string,
 	sessions *webSessionRegistry,
+	capture telemetry.CaptureEndpoint,
+	logger *slog.Logger,
 ) {
 	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, _ *http.Request) {
 		if !enabled || webURL == "" {
@@ -677,7 +683,15 @@ func registerWebSession(
 		}{Token: token, UploadSecret: uploadSecret, URL: webURL})
 	})
 	mux.HandleFunc("DELETE "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
-		sessions.revoke(r.Header.Get(WebSessionHeader))
+		token := r.Header.Get(WebSessionHeader)
+		live := sessions.revoke(token)
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		bucket := values.Get("duration_bucket")
+		if live && err == nil && len(values["duration_bucket"]) == 1 && slices.Contains(telemetry.DurationBuckets(), bucket) && capture != nil {
+			if err := capture.Capture(telemetry.EventSessionEnded, map[string]any{"surface": "web", "duration_bucket": bucket}); err != nil {
+				logger.DebugContext(r.Context(), "final session_ended capture failed", "error", err)
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

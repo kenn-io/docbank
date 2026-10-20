@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -21,6 +22,8 @@ import (
 	"go.kenn.io/docbank/internal/telemetry"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
+
+var tuiProgramOptions []tea.ProgramOption
 
 var tuiCmd = &cobra.Command{
 	Example: `  docbank tui`,
@@ -64,10 +67,12 @@ enrollment remain outside the TUI.`,
 		ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGHUP)
 		defer stop()
 		started := time.Now()
-		_, err = tea.NewProgram(model, tea.WithContext(ctx)).Run()
+		opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())}
+		opts = append(opts, tuiProgramOptions...)
+		_, err = tea.NewProgram(model, opts...).Run()
 		if tuiProgramRan(err) {
-			// Usage reporting is best effort and must not change how the TUI exits.
-			_ = reportTUISessionEnded(time.Since(started))
+			// Usage reporting is best effort.
+			reportTUISessionEnded(time.Since(started))
 		}
 		if err != nil {
 			return fmt.Errorf("running docbank TUI: %w", err)
@@ -81,15 +86,20 @@ func tuiProgramRan(err error) bool {
 }
 
 // reportTUISessionEnded sends session_ended only to an already-running daemon.
-func reportTUISessionEnded(elapsed time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	c, ok, err := daemonconn.Running(ctx)
-	if err != nil || !ok {
-		return err
-	}
-	defer func() { _ = c.Close() }()
-	return sendTUISessionEnded(ctx, c, elapsed)
+// A report that doesn't finish within 50 ms may be lost.
+func reportTUISessionEnded(elapsed time.Duration) {
+	var sends posthog.SendGroup
+	defer sends.Wait(50 * time.Millisecond)
+	sends.Go(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		c, ok, err := daemonconn.Running(ctx)
+		if err != nil || !ok {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_ = sendTUISessionEnded(ctx, c, elapsed)
+	})
 }
 
 func sendTUISessionEnded(ctx context.Context, c *daemonconn.Connection, elapsed time.Duration) error {

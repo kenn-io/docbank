@@ -1168,7 +1168,12 @@ its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
 that master authority for a random daemon-lifetime browser token, an
 independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime. `DELETE /api/daemon/web-session` revokes the calling
-browser session. A configured API key also enables browser key login:
+browser session. One `duration_bucket` query value of `under_1m`, `1_to_5m`, `5_to_30m`,
+or `over_30m` asks it to queue `session_ended` with `surface: web`. The request removes the
+token first, and only the request that removes a live token attempts to queue the event,
+without waiting for delivery. Unrelated query keys are ignored. A missing, invalid, or
+repeated bucket, or a malformed query, emits no event and still revokes the session.
+A configured API key also enables browser key login:
 
 | Route | Authentication and behavior |
 | --- | --- |
@@ -1199,6 +1204,7 @@ lifetime, deployment trust and session-management commands.
 `POST /api/daemon/telemetry/events` takes one anonymous interface event with optional allowlisted `properties`,
 such as `app_opened` or `session_ended`, from a browser session or the API key. The daemon answers
 400 for any event its allowlist omits and sends nothing when telemetry is off.
+`session_ended` accepts optional `surface` and `duration_bucket` properties; missing or invalid duration values are omitted from capture.
 `screen_viewed` requires a fixed `screen` name and `surface` of `web` or `tui`, and answers 400 for any other value. A daily duplicate returns the accepted receipt without capture. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
 See [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
 

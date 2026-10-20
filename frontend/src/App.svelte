@@ -273,7 +273,7 @@
   let signInPending = $state(false);
   let disposeBrowserSession: (() => void) | undefined;
   let mounted = false;
-  let stopSessionReporting: (() => Promise<void>) | undefined;
+  let sessionReporting: ReturnType<typeof startSessionReporting> | undefined;
   const tiles = mapTiles();
   const isMapPath = (path: string) => path === "/photos/map" || path.startsWith("/photos/map/");
   const isPhotoPath = (path: string) =>
@@ -1146,7 +1146,7 @@
     void loadTagCatalog();
     void loadNaturalProfiles(session.token);
     const stopAppOpened = startAppOpenedReporting(session.token);
-    stopSessionReporting = startSessionReporting(session.token);
+    sessionReporting = startSessionReporting(session.token);
     const channel = new VerifiedUploadChannel(session, undefined, () => {
       if (uploadChannel !== channel) return;
       uploadChannelError = keyLogin
@@ -1163,10 +1163,10 @@
           uploadChannelError = cause instanceof Error ? cause.message : String(cause);
       },
     );
-    const stopReporting = stopSessionReporting;
+    const reporting = sessionReporting;
     disposeBrowserSession = () => {
       stopAppOpened();
-      void stopReporting();
+      reporting.stop();
       channel.close();
     };
   }
@@ -1449,7 +1449,7 @@
     invalidateTagHotkeyMutation();
     disposeBrowserSession?.();
     disposeBrowserSession = undefined;
-    stopSessionReporting = undefined;
+    sessionReporting = undefined;
     uploadChannel?.close();
     uploadChannel = null;
     webSession = "";
@@ -2751,14 +2751,11 @@
 
   async function lock(): Promise<void> {
     const session = webSession;
-    const stopReporting = stopSessionReporting;
+    const bucket = sessionReporting?.take();
     resetLocalSessionUI();
-    await Promise.race([
-      stopReporting?.(),
-      new Promise<void>((resolve) => setTimeout(resolve, 1000)),
-    ]);
     try {
-      if (session) await generated.revokeWebSession({ session });
+      if (session)
+        await generated.revokeWebSession({ duration_bucket: bucket }, { session, keepalive: true });
     } catch {
       // The local UI is locked even if the daemon disappeared first. Its
       // in-memory session disappears with it.

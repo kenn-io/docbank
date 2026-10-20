@@ -8189,7 +8189,7 @@ export type ReportTelemetryEventBody = {
      * @minLength 1
      */
   event: string;
-  /** Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket. */
+  /** Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket. */
   properties?: TelemetryEventProperties;
 };
 
@@ -8252,6 +8252,23 @@ export type PrepareWebDownload200 = {
   url?: string;
   version_id?: string;
 };
+
+export type RevokeWebSessionParams = {
+/**
+ * Final visible session duration to report after revocation. Missing or invalid values emit no event.
+ */
+duration_bucket?: RevokeWebSessionDurationBucket;
+};
+
+export type RevokeWebSessionDurationBucket = typeof RevokeWebSessionDurationBucket[keyof typeof RevokeWebSessionDurationBucket];
+
+
+export const RevokeWebSessionDurationBucket = {
+  under_1m: 'under_1m',
+  '1_to_5m': '1_to_5m',
+  '5_to_30m': '5_to_30m',
+  over_30m: 'over_30m',
+} as const;
 
 export type CreateWebSession201 = {
   token: string;
@@ -9587,20 +9604,27 @@ return sessionResponse<Response>(getPrepareWebDownloadUrl(),
 
 
 
-export const getRevokeWebSessionUrl = () => {
+export const getRevokeWebSessionUrl = (params?: RevokeWebSessionParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/daemon/web-session`
+  return stringifiedParams.length > 0 ? `/api/daemon/web-session?${stringifiedParams}` : `/api/daemon/web-session`
 }
 
 /**
  * @summary Revoke the current browser session
  */
-export const revokeWebSession = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+export const revokeWebSession = async (params?: RevokeWebSessionParams, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
-  return sessionJSON<void>(getRevokeWebSessionUrl(),
+  return sessionJSON<void>(getRevokeWebSessionUrl(params),
   {
     ...options,
     method: 'DELETE'

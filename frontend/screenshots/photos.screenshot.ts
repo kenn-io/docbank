@@ -281,7 +281,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
         headers.set("Host", host);
         return fetcher(address, { ...init, headers });
       };
-      await revokeWebSession({ session: token });
+      await revokeWebSession(undefined, { session: token });
     } finally {
       globalThis.fetch = fetcher;
     }

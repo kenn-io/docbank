@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 
 const store = { getItem: vi.fn(() => null), setItem: vi.fn(), removeItem: vi.fn() };
@@ -38,7 +38,11 @@ it("offers the API key and clears it after rejected sign-in", async () => {
   ).toBe(false);
 });
 
-it("signs out with a DELETE request and the tab-token session header", async () => {
+it("shows sign-in before the final duration revoke finishes", async () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  let rejectRevoke!: (cause: Error) => void;
   history.replaceState(null, "", "/");
   vi.stubGlobal(
     "ResizeObserver",
@@ -48,47 +52,53 @@ it("signs out with a DELETE request and the tab-token session header", async () 
       disconnect() {}
     },
   );
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/daemon/web-auth") return new Response(JSON.stringify({ enabled: true }));
+    if (url === "/api/daemon/telemetry/events" && init?.method === "POST")
+      return Response.json({ status: "queued" }, { status: 202 });
+    if (url === "/api/daemon/web-auth") return Response.json({ enabled: true });
     if (url.endsWith("/login"))
-      return new Response(
-        JSON.stringify({ enabled: true, session: { token: "tab-token", upload_secret: "proof" } }),
-      );
+      return Response.json({
+        enabled: true,
+        session: { token: "tab-token", upload_secret: "proof" },
+      });
     if (url.startsWith("/api/v1/path"))
-      return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", path: "/", revision: 1 }));
+      return Response.json({ id: 1, kind: "dir", name: "", path: "/", revision: 1 });
     if (url.includes("/children"))
-      return new Response(
-        JSON.stringify({
-          directory: { id: 1, kind: "dir", path: "/", revision: 1 },
-          items: [],
-          total: 0,
-        }),
-      );
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
-    return new Response(JSON.stringify({ items: [], total: 0 }));
+      return Response.json({
+        directory: { id: 1, kind: "dir", path: "/", revision: 1 },
+        items: [],
+        total: 0,
+      });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Promise<Response>((_, reject) => {
+        rejectRevoke = reject;
+      });
+    return Response.json({ items: [], total: 0 });
   });
   render(App);
   const key = await screen.findByLabelText("API key");
   await fireEvent.input(key, { target: { value: "synthetic-master-key" } });
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   const signOut = await screen.findByRole("button", { name: "Sign out" });
+  now = 120_000;
   await fireEvent.click(signOut);
-  await waitFor(() => expect(screen.getByLabelText("API key")).toBeTruthy());
-  await waitFor(
-    () =>
-      expect(
-        fetchMock.mock.calls.some(
-          ([input, init]) =>
-            String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
-        ),
-      ).toBe(true),
-    { timeout: 10_000 },
+  expect(screen.getByLabelText("API key")).toBeTruthy();
+  const revokes = fetchMock.mock.calls.filter(
+    ([input, init]) =>
+      new URL(String(input), window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE",
   );
-  const call = fetchMock.mock.calls.find(
-    ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
-  );
-  expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
+  expect(revokes).toHaveLength(1);
+  expect(revokes[0]?.[1]?.keepalive).toBe(true);
+  expect(String(revokes[0]?.[0])).toBe("/api/daemon/web-session?duration_bucket=1_to_5m");
+  expect(new Headers(revokes[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
+  await act(() => rejectRevoke(new Error("offline")));
+  expect(screen.getByLabelText("API key")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("clears an open Manage tags dialog after session expiry before signing in again", async () => {
@@ -157,7 +167,11 @@ it("clears an open Manage tags dialog after session expiry before signing in aga
       return json({ items: [tax], total: 1, limit: 1000, offset: 0 });
     if (url === `/api/v1/nodes/3/tags/${tax.id}` && init?.method === "DELETE")
       return json({ detail: "session expired" }, 401);
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
@@ -271,7 +285,11 @@ it("keeps a new sign-in after an old tag request returns a delayed 401", async (
       markDeleteStarted();
       return delayedDelete;
     }
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
@@ -365,7 +383,7 @@ it("ignores a delayed trash success after signing in again", async () => {
     markTrashStarted = resolve;
   });
   let logins = 0;
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/daemon/web-auth") return json({ enabled: true });
     if (url.endsWith("/login")) {
@@ -387,7 +405,11 @@ it("ignores a delayed trash success after signing in again", async () => {
       markTrashStarted();
       return delayedTrash;
     }
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
@@ -519,7 +541,11 @@ function delayedReplyFixture(isDelayed: (url: string, init?: RequestInit) => boo
       return json({ items: [tax], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/trash?limit=1000&offset=0")
       return json({ items: [trashed], total: 1, limit: 1000, offset: 0 });
-    if (url === "/api/daemon/web-session") return new Response(null, { status: 204 });
+    if (
+      new URL(url, window.location.href).pathname === "/api/daemon/web-session" &&
+      init?.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
     if (url.includes("processing-profiles")) return json([]);
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
