@@ -239,9 +239,6 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 		}
 	}
 	out.Tags = out.Tags[:min(10, len(out.Tags))]
-	if err := document.ValidatePhotoDescription(out); err != nil {
-		return document.PhotoDescription{}, err
-	}
 	return out, nil
 }
 func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
