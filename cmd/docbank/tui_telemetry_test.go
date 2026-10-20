@@ -20,7 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.Int32 {
+func setupTUITelemetryDaemon(t *testing.T, status int, receipt string, visits ...api.TelemetryEventRequest) *atomic.Int32 {
 	t.Helper()
 	var requests atomic.Int32
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
@@ -29,9 +29,11 @@ func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.I
 		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
 		var request api.TelemetryEventRequest
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-		assert.Equal(t, "screen_viewed", request.Event)
-		assert.Equal(t, &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}, request.Properties)
-		requests.Add(1)
+		want := api.TelemetryEventRequest{Event: "screen_viewed", Properties: &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}}
+		if requests.Add(1) > 1 && len(visits) > 0 {
+			want = visits[0]
+		}
+		assert.Equal(t, want, request)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(`{"status":"` + receipt + `"}`))
@@ -42,23 +44,8 @@ func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.I
 func TestTUITelemetryReceipts(t *testing.T) {
 	for _, receipt := range []string{"disabled", "queued"} {
 		t.Run(receipt, func(t *testing.T) {
-			var requests atomic.Int32
-			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
-				assert.Equal(t, "POST", r.Method)
-				assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
-				var event api.TelemetryEventRequest
-				assert.NoError(t, json.UnmarshalRead(r.Body, &event))
-				if requests.Add(1) == 1 {
-					assert.Equal(t, "screen_viewed", event.Event)
-					assert.Equal(t, &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}, event.Properties)
-				} else {
-					assert.Equal(t, "session_ended", event.Event)
-					assert.Equal(t, &api.TelemetryEventProperties{Surface: "tui", DurationBucket: "under_1m"}, event.Properties)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusAccepted)
-				_, _ = w.Write([]byte(`{"status":"` + receipt + `"}`))
+			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, receipt, api.TelemetryEventRequest{
+				Event: "session_ended", Properties: &api.TelemetryEventProperties{Surface: "tui", DurationBucket: "under_1m"},
 			})
 			root := os.Getenv("DOCBANK_HOME")
 			var group sync.WaitGroup

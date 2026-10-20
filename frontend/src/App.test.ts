@@ -1485,7 +1485,7 @@ it("clears page selection across folder, Back, query, tag-filter, and session tr
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 });
 
-it("restores the tag view sort when returning from a tagged folder", async () => {
+it("restores tag navigation and sort after opening folders or All files", async () => {
   prepareSelectionApp();
   installSelectionBackend();
   render(App);
@@ -1508,6 +1508,14 @@ it("restores the tag view sort when returning from a tagged folder", async () =>
   expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe(
     "descending",
   );
+  const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
+  await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
+  await screen.findByRole("cell", { name: "Reports" });
+  await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  expect(screen.queryByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeNull();
 });
 
 it("returns to search results after opening All files", async () => {

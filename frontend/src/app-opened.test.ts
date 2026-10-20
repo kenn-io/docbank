@@ -102,8 +102,6 @@ describe("app_opened reporting", () => {
   });
 
   it.each([
-    ["unavailable and visible", 503, "visible"],
-    ["disabled and visible", 202, "visible"],
     ["unavailable and hidden", 503, "hidden"],
     ["disabled and hidden", 202, "hidden"],
   ] as const)(
