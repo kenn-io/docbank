@@ -48,8 +48,14 @@ func TestParseDescription(t *testing.T) {
 		{name: "numbered caption with emphasis", raw: `{"caption":"1. _Harbor_ at dusk","tags":[],"visible_text":""}`, want: document.PhotoDescription{Caption: "Harbor at dusk", Tags: []string{}}},
 		{name: "caption link drops only the caption", raw: `{"caption":"[Harbor](https://example.com)","tags":["coast"],"visible_text":"QUAY"}`, want: document.PhotoDescription{Tags: []string{"coast"}, VisibleText: "QUAY"}},
 		{name: "missing visible text keeps caption and tags", raw: `{"caption":"ok","tags":["coast"]}`, want: document.PhotoDescription{Caption: "ok", Tags: []string{"coast"}}},
-		{name: "null tags", raw: `{"caption":"ok","tags":null,"visible_text":""}`, invalid: true},
-		{name: "numeric tag", raw: `{"caption":"ok","tags":[1],"visible_text":""}`, invalid: true},
+		{name: "null tags drop alone", raw: `{"caption":"ok","tags":null,"visible_text":"QUAY"}`, want: document.PhotoDescription{Caption: "ok", Tags: []string{}, VisibleText: "QUAY"}},
+		{name: "tags that are not an array drop alone", raw: `{"caption":"ok","tags":"coast","visible_text":"QUAY"}`, want: document.PhotoDescription{Caption: "ok", Tags: []string{}, VisibleText: "QUAY"}},
+		{name: "numeric tag drops alone", raw: `{"caption":"ok","tags":[1,"coast",null],"visible_text":"QUAY"}`, want: document.PhotoDescription{Caption: "ok", Tags: []string{"coast"}, VisibleText: "QUAY"}},
+		{name: "numeric visible text drops alone", raw: `{"caption":"ok","tags":["coast"],"visible_text":42}`, want: document.PhotoDescription{Caption: "ok", Tags: []string{"coast"}}},
+		{name: "numeric caption drops alone", raw: `{"caption":7,"tags":["coast"],"visible_text":"QUAY"}`, want: document.PhotoDescription{Tags: []string{"coast"}, VisibleText: "QUAY"}},
+		{name: "missing caption and tags keep visible text", raw: `{"visible_text":"QUAY"}`, want: document.PhotoDescription{Tags: []string{}, VisibleText: "QUAY"}},
+		{name: "object with no description field", raw: `{"description":"A harbor."}`, invalid: true},
+		{name: "array reply", raw: `["coast"]`, invalid: true},
 		{name: "oversized tag is dropped alone", raw: `{"caption":"A coast.","tags":["coast","` + strings.Repeat("é", 128) + `"],"visible_text":"QUAYSIDE"}`, want: document.PhotoDescription{Caption: "A coast.", Tags: []string{"coast"}, VisibleText: "QUAYSIDE"}},
 		{name: "long visible text is clipped", raw: `{"caption":"A sign.","tags":["sign"],"visible_text":"` + strings.Repeat("é", document.MaxPhotoTextBytes/2+10) + `"}`, want: document.PhotoDescription{Caption: "A sign.", Tags: []string{"sign"}, VisibleText: strings.Repeat("é", document.MaxPhotoTextBytes/2)}},
 		{name: "reply that is not JSON", raw: `A harbor at dusk.`, invalid: true},
@@ -75,8 +81,12 @@ func TestParseDescription(t *testing.T) {
 
 func TestRenderSendsImageBytesOnce(t *testing.T) {
 	t.Parallel()
-	for _, malformed := range []int{0, 1} {
-		t.Run(fmt.Sprintf("malformed_%d", malformed), func(t *testing.T) {
+	for _, tc := range []struct{ name, reply, want string }{
+		{"valid reply", `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`, `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`},
+		{"invalid fields drop alone", `{"caption":"A dog.","tags":[1,"dog"],"visible_text":42}`, `{"caption":"A dog.","tags":["dog"],"visible_text":""}`},
+		{"reply that is not JSON", `A dog.`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
 			var imageData bytes.Buffer
 			require.NoError(t, jpeg.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 512, 1)), nil))
@@ -109,12 +119,8 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, data, actual)
 				w.Header().Set("Content-Type", "application/json")
-				content := `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`
-				if int(calls.Add(1)) <= malformed {
-					content = `{"caption":"incomplete"}`
-				}
-
-				_, _ = w.Write(visiontest.Completion(content))
+				calls.Add(1)
+				_, _ = w.Write(visiontest.Completion(tc.reply))
 			}))
 			defer server.Close()
 			p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
@@ -125,7 +131,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 			auth := document.RenditionAuthorization{ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: strings.Repeat("d", 64), SourceBytes: 8192, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: 1 << 20, MaxArtifacts: 1, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
 			result, err := document.RenderRendition(context.Background(), p, &documenttest.Upload{ReadCloser: io.NopCloser(bytes.NewReader(data)), Meta: metadata}, auth)
 			require.Equal(t, int32(1), calls.Load())
-			if malformed > 0 {
+			if tc.want == "" {
 				classified, ok := errors.AsType[*document.RenditionProviderError](err)
 				require.True(t, ok)
 				require.Equal(t, document.RenditionErrorMalformedEvidence, classified.Code())
@@ -134,7 +140,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Len(t, result.Artifacts, 1)
-			require.JSONEq(t, `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`, string(result.Artifacts[0].Payload))
+			require.JSONEq(t, tc.want, string(result.Artifacts[0].Payload))
 			require.Equal(t, auth.SourceSHA256, result.Receipt.SourceSHA256)
 			require.Equal(t, metadata.SHA256, result.Receipt.UploadSHA256)
 		})
