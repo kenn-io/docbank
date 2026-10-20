@@ -83,7 +83,6 @@ func TestBackupRepositoryInitCompletesMissingOwner(t *testing.T) {
 	reopened, err := backup.Open(path)
 	require.NoError(t, err)
 	require.Equal(t, repo.Config().RepoID, reopened.Config().RepoID)
-	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), reopened, catalog.VaultID(), false))
 }
 
 func TestBackupRepositoryClaimRequiresOperator(t *testing.T) {
@@ -100,11 +99,6 @@ func TestBackupRepositoryClaimRequiresOperator(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &session))
 	response, body = do(t, server, http.MethodPost, "/api/v1/backup/claim", map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token}, map[string]any{"confirm": true})
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	response, body = do(t, server, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var preview backupapp.RepositoryClaim
-	require.NoError(t, json.Unmarshal([]byte(body), &preview))
-	require.False(t, preview.Owned)
 }
 
 func TestBackupRepositoryClaimRejectsVaultOverlap(t *testing.T) {

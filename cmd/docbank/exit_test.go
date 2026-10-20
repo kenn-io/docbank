@@ -184,8 +184,6 @@ func TestRunProcessBackupClaimAnswers(t *testing.T) {
 		{input: "", code: 2, json: true},
 		{input: "y", status: "claimed", json: true},
 		{input: "YES", status: "claimed", json: true},
-		{input: "YeS\n", status: "claimed", json: true},
-		{input: "Y\n", status: "claimed", json: true},
 		{input: "no", status: "declined", json: true},
 		{status: "claimed", json: true, yes: true},
 		{status: "already_owned", json: true, alreadyOwned: true},

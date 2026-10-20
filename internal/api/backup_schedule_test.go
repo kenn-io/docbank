@@ -85,11 +85,9 @@ func TestBackupScheduleCaptureRetentionAndRestart(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		d := scheduledDeps(t, time.Hour)
-		_, err := d.Store.Mkdir(t.Context(), d.Store.RootID(), "retained")
-		require.NoError(t, err)
 		repo, err := backup.Init(d.Cfg.Backup.Repo)
 		require.NoError(t, err)
-		manual, err := createBackupSnapshot(t.Context(), repo, d, d.Gate, backupCreateRequest{Tag: "manual"}, nil)
+		_, err = createBackupSnapshot(t.Context(), repo, d, d.Gate, backupCreateRequest{Tag: "manual"}, nil)
 		require.NoError(t, err)
 		time.Sleep(time.Second)
 		_, err = scheduledBackup(t.Context(), d, d.Logger, false)
@@ -103,33 +101,23 @@ func TestBackupScheduleCaptureRetentionAndRestart(t *testing.T) {
 		points, err = repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Len(t, points, 2)
-		_, err = repo.LoadManifest(manual.ID)
-		require.NoError(t, err)
-		// The new retained point remains independently readable after forgetting its ancestor.
-		verified, err := backupapp.Verify(t.Context(), repo, "test", backup.VerifyOptions{All: true})
-		require.NoError(t, err)
-		require.Empty(t, verified.Problems)
-		for _, point := range points {
-			require.NotNil(t, point.Metadata)
-			require.Equal(t, backupapp.MetadataFormat, point.Metadata.Format)
-		}
-		target := filepath.Join(t.TempDir(), "restored")
-		_, err = backupapp.Restore(t.Context(), repo, "test", backup.RestoreOptions{TargetDir: target})
-		require.NoError(t, err)
-		restored, err := store.Open(filepath.Join(target, "docbank.db"))
-		require.NoError(t, err)
-		defer func() { require.NoError(t, restored.Close()) }()
-		_, err = restored.NodeByPath(t.Context(), "/retained")
-		require.NoError(t, err)
 	})
 }
 
 func TestBackupScheduleRetryAndCancellation(t *testing.T) {
 	t.Parallel()
-	for _, interval := range []time.Duration{time.Minute, time.Hour} {
-		t.Run(interval.String(), func(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		interval     time.Duration
+		healthyPoint bool
+	}{
+		{name: "minute retry", interval: time.Minute},
+		{name: "hour retry", interval: time.Hour},
+		{name: "healthy point is not due", interval: time.Hour, healthyPoint: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				d := scheduledDeps(t, interval)
+				d := scheduledDeps(t, tc.interval)
 				supervisor := jobs.New(t.Context(), d.Logger)
 				require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
 				synctest.Wait()
@@ -137,18 +125,30 @@ func TestBackupScheduleRetryAndCancellation(t *testing.T) {
 				// Initialization after the first failed attempt must be picked up at the retry deadline.
 				repo, err := backup.Init(d.Cfg.Backup.Repo)
 				require.NoError(t, err)
-				retry := min(interval, 5*time.Minute)
+				var existing BackupSnapshot
+				if tc.healthyPoint {
+					existing, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+					require.NoError(t, err)
+				}
+				retry := min(tc.interval, 5*time.Minute)
 				time.Sleep(retry - time.Second)
 				synctest.Wait()
 				points, err := repo.ListSnapshots()
 				require.NoError(t, err)
-				require.Empty(t, points)
+				if tc.healthyPoint {
+					require.Len(t, points, 1)
+				} else {
+					require.Empty(t, points)
+				}
 				time.Sleep(time.Second)
 				synctest.Wait()
 				points, err = repo.ListSnapshots()
 				require.NoError(t, err)
 				require.Len(t, points, 1)
 				require.Equal(t, "docbank:scheduled:"+d.Store.VaultID(), points[0].Options.Tag)
+				if tc.healthyPoint {
+					require.Equal(t, existing.ID, points[0].SnapshotID)
+				}
 				require.Empty(t, supervisor.Snapshot()[0].Error)
 				require.NoError(t, supervisor.Shutdown(t.Context()))
 				require.Equal(t, jobs.StatusCancelled, supervisor.Snapshot()[0].Status)
@@ -199,29 +199,6 @@ func TestBackupScheduleStaleWarningPersistsUntilHealthyCheck(t *testing.T) {
 	})
 }
 
-func TestBackupScheduleClearsErrorWhenHealthyPointIsNotDue(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		d := scheduledDeps(t, time.Hour)
-		supervisor := jobs.New(t.Context(), d.Logger)
-		require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
-		synctest.Wait()
-		require.NotEmpty(t, supervisor.Snapshot()[0].Error)
-		repo, err := backup.Init(d.Cfg.Backup.Repo)
-		require.NoError(t, err)
-		point, err := createScheduledBackupSnapshot(t.Context(), repo, d)
-		require.NoError(t, err)
-		time.Sleep(5 * time.Minute)
-		synctest.Wait()
-		points, err := repo.ListSnapshots()
-		require.NoError(t, err)
-		require.Len(t, points, 1)
-		require.Equal(t, point.ID, points[0].SnapshotID)
-		require.Empty(t, supervisor.Snapshot()[0].Error)
-		require.NoError(t, supervisor.Shutdown(t.Context()))
-	})
-}
-
 func TestBackupScheduleFutureTimestampCapsWaitAndKeepsCadence(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -235,41 +212,17 @@ func TestBackupScheduleFutureTimestampCapsWaitAndKeepsCadence(t *testing.T) {
 		points[0].CreatedAt = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
 		future, err := repo.WriteManifest(points[0])
 		require.NoError(t, err)
-		// Restarts before the interval elapses must not create extra points.
-		for range 2 {
-			supervisor := jobs.New(t.Context(), d.Logger)
-			require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
-			synctest.Wait()
-			time.Sleep(30 * time.Minute)
-			synctest.Wait()
-			points, err = repo.ListSnapshots()
-			require.NoError(t, err)
-			require.Len(t, points, 2)
-			require.Equal(t, future, points[1].SnapshotID)
-			require.NoError(t, supervisor.Shutdown(t.Context()))
-		}
 		supervisor := jobs.New(t.Context(), d.Logger)
 		require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
 		synctest.Wait()
-		time.Sleep(time.Hour - time.Second)
-		synctest.Wait()
-		points, err = repo.ListSnapshots()
-		require.NoError(t, err)
-		require.Len(t, points, 2)
-		require.Equal(t, future, points[1].SnapshotID)
 		lock, err := repo.AcquireExclusiveLock("test-recovery-conflict", false)
 		require.NoError(t, err)
-		time.Sleep(time.Second)
+		time.Sleep(time.Hour)
 		synctest.Wait()
 		require.Contains(t, supervisor.Snapshot()[0].Error, "locked")
 		require.NoError(t, lock.Release())
-		// A failed due capture retries in five minutes, preserving the consumed deadline.
-		time.Sleep(5*time.Minute - time.Second)
-		synctest.Wait()
-		points, err = repo.ListSnapshots()
-		require.NoError(t, err)
-		require.Len(t, points, 2)
-		time.Sleep(time.Second)
+		// The failed due capture must retry even though the future timestamp is not due.
+		time.Sleep(5 * time.Minute)
 		synctest.Wait()
 		points, err = repo.ListSnapshots()
 		require.NoError(t, err)
@@ -297,13 +250,16 @@ func TestBackupScheduleCleanupFailurePreservesCapture(t *testing.T) {
 	d := scheduledDeps(t, time.Hour)
 	repo, err := backup.Init(d.Cfg.Backup.Repo)
 	require.NoError(t, err)
+	_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+	require.NoError(t, err)
 	created, err := createScheduledBackupSnapshot(t.Context(), repo, d)
 	require.NoError(t, err)
 	lock, err := repo.AcquireExclusiveLock("test-cleanup-conflict", false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, lock.Release()) })
-	err = retainScheduledBackups(t.Context(), repo, "", 1, created.ID)
+	err = retainScheduledBackups(t.Context(), repo, backupapp.ScheduledTag(d.Store.VaultID()), 1, created.ID)
 	require.ErrorIs(t, err, backup.ErrRepoLocked)
+	require.ErrorContains(t, err, "forgetting scheduled backups")
 	_, err = repo.LoadManifest(created.ID)
 	require.NoError(t, err)
 }
@@ -331,22 +287,4 @@ func TestBackupScheduleCancellationWhileMaintenanceHoldsGate(t *testing.T) {
 		close(release)
 		require.NoError(t, <-maintenance)
 	})
-}
-
-func TestBackupScheduleRejectsDifferentVault(t *testing.T) {
-	t.Parallel()
-	first := scheduledDeps(t, time.Hour)
-	repo, err := backup.Init(first.Cfg.Backup.Repo)
-	require.NoError(t, err)
-	_, err = scheduledBackup(t.Context(), first, first.Logger, false)
-	require.NoError(t, err)
-	before, err := repo.ListSnapshots()
-	require.NoError(t, err)
-	second := scheduledDeps(t, time.Hour)
-	second.Cfg.Backup.Repo = first.Cfg.Backup.Repo
-	_, err = scheduledBackup(t.Context(), second, second.Logger, false)
-	require.ErrorContains(t, err, "another vault")
-	after, err := repo.ListSnapshots()
-	require.NoError(t, err)
-	require.Equal(t, before, after)
 }

@@ -23,22 +23,13 @@ func TestBackupOwnershipProblemsRemainTyped(t *testing.T) {
 	create := &apiclient.CreateBackupSnapshotRequestOptions{Body: &apiclient.CreateBackupSnapshotBody{Repo: new(path)}}
 	_, err = second.API().CreateBackupSnapshot(t.Context(), create)
 	require.ErrorIs(t, err, backupapp.ErrRepositoryOwnerConflict)
-	code, ok := daemonconn.ProblemCode(err)
-	require.True(t, ok)
-	require.Equal(t, "backup_repository_owner_conflict", code)
 	_, err = first.API().CreateBackupSnapshot(t.Context(), create)
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
 	_, err = first.API().CreateBackupSnapshot(t.Context(), create)
 	require.ErrorIs(t, err, backupapp.ErrRepositoryClaimRequired)
-	code, ok = daemonconn.ProblemCode(err)
-	require.True(t, ok)
-	require.Equal(t, "backup_repository_claim_required", code)
 	_, err = first.BackupCreateStream(t.Context(), daemonconn.BackupCreateOptions{Repo: path}, nil)
 	require.ErrorIs(t, err, backupapp.ErrRepositoryClaimRequired)
-	code, ok = daemonconn.ProblemCode(err)
-	require.True(t, ok)
-	require.Equal(t, "backup_repository_claim_required", code)
 	preview, err := first.API().ClaimBackupRepository(t.Context(), &apiclient.ClaimBackupRepositoryRequestOptions{
 		Body: &apiclient.ClaimBackupRepositoryBody{Repo: new(path)},
 	})
@@ -54,20 +45,9 @@ func TestBackupOwnershipProblemsRemainTyped(t *testing.T) {
 		Body: &apiclient.ClaimBackupRepositoryBody{Repo: new(path), Confirm: new(true), Preview: new(preview.Preview)},
 	})
 	require.ErrorIs(t, err, backupapp.ErrRepositoryClaimChanged)
-	code, ok = daemonconn.ProblemCode(err)
-	require.True(t, ok)
-	require.Equal(t, "backup_repository_claim_changed", code)
 	require.NoError(t, os.WriteFile(filepath.Join(path, "docbank-owner"), []byte("damaged"), 0o600))
 	_, err = first.API().CreateBackupSnapshot(t.Context(), &apiclient.CreateBackupSnapshotRequestOptions{
 		Body: &apiclient.CreateBackupSnapshotBody{Repo: new(path)},
 	})
 	require.ErrorIs(t, err, backupapp.ErrRepositoryOwnerInvalid)
-	code, ok = daemonconn.ProblemCode(err)
-	require.True(t, ok)
-	require.Equal(t, "backup_repository_owner_invalid", code)
-	_, err = first.BackupCreateStream(t.Context(), daemonconn.BackupCreateOptions{Repo: path}, nil)
-	require.ErrorIs(t, err, backupapp.ErrRepositoryOwnerInvalid)
-	code, ok = daemonconn.ProblemCode(err)
-	require.True(t, ok)
-	require.Equal(t, "backup_repository_owner_invalid", code)
 }

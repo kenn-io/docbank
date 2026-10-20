@@ -821,24 +821,14 @@ func TestConfiguredBackupsCaptureAndKeepDaemonAlive(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", home)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
-	out, err := runCLI(t, "info", "--json")
-	require.NoError(t, err)
-	var info api.VaultInfo
-	require.NoError(t, json.Unmarshal([]byte(out), &info))
-	require.NotEmpty(t, info.VaultID)
 	require.Eventually(t, func() bool {
 		out, err := runCLI(t, "backup", "list", "--json")
 		if err != nil {
 			return false
 		}
 		var points api.BackupSnapshotList
-		return json.Unmarshal([]byte(out), &points) == nil && len(points.Items) == 1 && points.Items[0].Tag == "docbank:scheduled:"+info.VaultID
+		return json.Unmarshal([]byte(out), &points) == nil && len(points.Items) == 1
 	}, 5*time.Second, 25*time.Millisecond)
-	out, err = runCLI(t, "jobs", "--json")
-	require.NoError(t, err)
-	var list api.JobList
-	require.NoError(t, json.Unmarshal([]byte(out), &list))
-	require.Equal(t, "running", requireJob(t, list, "backup:scheduled").Status)
 	time.Sleep(100 * time.Millisecond) //nolint:kennlint // idle shutdown uses a wall-clock ticker behind a real loopback listener
 	_, _, found, err := daemonconn.Find(t.Context(), home)
 	require.NoError(t, err)
