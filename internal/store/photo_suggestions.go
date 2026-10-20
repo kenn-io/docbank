@@ -55,6 +55,10 @@ func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 
 var photoDescriptionEligibility = liveIncludedPhotoDisplayPredicate("v") + ` AND a.hidden_at IS NULL`
 
+// photoDescriptionJoinedEligibility states the same rule for a query that has
+// already joined the version's node, display file, and asset.
+const photoDescriptionJoinedEligibility = `a.kind='photo' AND ` + liveIncludedDisplayPredicate + ` AND a.hidden_at IS NULL`
+
 func photoDescriptionEligibleTx(ctx context.Context, q metadataQuerier, versionID string) (bool, error) {
 	var eligible bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=? AND `+photoDescriptionEligibility+`)`, versionID).Scan(&eligible)
@@ -371,7 +375,7 @@ var photoDescriptionTargetsSQL = `SELECT ` + contentVersionCols + ` FROM content
  CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
  CROSS JOIN photo_files f ON f.node_id=n.id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
- WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionEligibility + ` AND g.state='ready' AND NOT ` + photoSuggestionSettledSQL("g.content_version_id", "?5", false) + `
+ WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionJoinedEligibility + ` AND g.state='ready' AND NOT ` + photoSuggestionSettledSQL("g.content_version_id", "?5", false) + `
  AND (NOT ?6 OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=g.content_version_id AND s.awaiting))
  AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id
   AND (w.profile_fingerprint=?3 AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
