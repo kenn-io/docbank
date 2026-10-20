@@ -736,6 +736,31 @@ func TestPhotoDescriptionTargetsOfferRestoredRowsToProducersNotDismissed(t *test
 	require.Equal(t, []string{restoredVersion}, targets(producerB, true), "B is offered its restored photo and no fresh one")
 }
 
+func TestPhotoDescriptionTargetsSkipPhotosWithActiveWorkForAnotherProfile(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "overlap.jpg")
+	publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"coast"}})
+	restored := restorePhotoSuggestionStore(t, s)
+	node, err := restored.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+
+	// Profile A takes the restored photo, and its provider call is still running.
+	requestA := photoDescriptionJobRequest(t, restored, node.CurrentVersionID, producerA, false)
+	grantRenditionJobConsent(t, restored, requestA)
+	at := time.Now().UTC().Add(time.Minute)
+	startPhotoDescription(t, restored, requestA, at)
+
+	requestB := photoDescriptionJobRequest(t, restored, node.CurrentVersionID, producerB, false)
+	targets, err := restored.PhotoDescriptionTargets(ctx, requestB.Profile.Fingerprint, producerB, "", 10, true)
+	require.NoError(t, err)
+	require.Empty(t, targets, "another profile does not describe a photo whose description is already running")
+	targets, err = restored.PhotoDescriptionTargets(ctx, requestA.Profile.Fingerprint, producerA, "", 10, false)
+	require.NoError(t, err)
+	require.Empty(t, targets, "the running profile does not list it again either")
+}
+
 func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

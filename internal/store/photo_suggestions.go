@@ -362,6 +362,7 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, as
 // in version order after the cursor. It walks the ready grid previews in index
 // order, so a page costs its own length rather than the library's. The CROSS
 // JOINs keep that order. Arguments: recipe, cursor, profile, limit, producer, restored only.
+// Active description work for any profile excludes a photo, so two providers never describe it at once.
 var photoDescriptionTargetsSQL = `SELECT ` + contentVersionCols + ` FROM content_versions WHERE version_id IN (
  SELECT v.version_id FROM visual_preview_generations g
  CROSS JOIN content_versions v ON v.version_id=g.content_version_id AND v.blob_hash=g.source_sha256
@@ -370,9 +371,10 @@ var photoDescriptionTargetsSQL = `SELECT ` + contentVersionCols + ` FROM content
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
  WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionEligibility + ` AND g.state='ready' AND NOT ` + photoSuggestionSettledSQL("g.content_version_id", "?5", false) + `
  AND (NOT ?6 OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=g.content_version_id AND s.awaiting))
- AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id AND w.profile_fingerprint=?3
-  AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
-   OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous')))
+ AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id
+  AND (w.profile_fingerprint=?3 AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
+    OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous'))
+   OR w.state='waiting' AND j.state IN ('queued','retry_wait','running') AND NOT ` + originalFileWaiterSQL + `))
  ORDER BY g.content_version_id LIMIT ?4) ORDER BY version_id`
 
 // PhotoDescriptionTargets lists displayed photos in version order after the
