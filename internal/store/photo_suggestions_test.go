@@ -185,6 +185,22 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Tags: []string{"other"}})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "a tag that was never suggested is not pending")
 
+	for _, revision := range []string{"asset", "source", "node", "zero source"} {
+		request := PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}}
+		switch revision {
+		case "asset":
+			request.AssetRevision++
+		case "source":
+			request.SourceRevision++
+		case "node":
+			request.NodeRevision++
+		case "zero source":
+			request.SourceRevision = 0
+		}
+		_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, request)
+		require.ErrorIs(t, err, ErrPhotoSuggestionConflict, revision)
+	}
+
 	accepted, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
 	require.NoError(t, err)
 	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}, VisibleText: "QUAYSIDE"}, accepted.Value)

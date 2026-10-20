@@ -237,9 +237,7 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 				return err
 			}
 		}
-		if row.dismissed || row.awaiting && accepted ||
-			request.AssetID != row.AssetID || request.AssetRevision != row.AssetRevision ||
-			request.SourceRevision != row.SourceRevision || request.NodeRevision != row.NodeRevision {
+		if row.dismissed || row.awaiting && accepted {
 			return ErrPhotoSuggestionConflict
 		}
 		if accepted {
@@ -249,6 +247,10 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 			}
 			row.AuthoredReceipt = receipt
 		} else {
+			if request.AssetID != row.AssetID || request.AssetRevision != row.AssetRevision ||
+				request.SourceRevision != row.SourceRevision || request.NodeRevision != row.NodeRevision {
+				return ErrPhotoSuggestionConflict
+			}
 			row.Value, row.dismissed, row.awaiting = document.PhotoDescription{Tags: []string{}}, true, false
 		}
 		tags, err := json.Marshal(row.Value.Tags)
@@ -304,6 +306,9 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 		}
 	}
 	receipt, err := s.applyPhotoAuthoredBatchTx(ctx, tx, edit, targets, loaded)
+	if errors.Is(err, ErrStaleRevision) || errors.Is(err, ErrInvalidPhotoAsset) {
+		return nil, ErrPhotoSuggestionConflict
+	}
 	if err != nil {
 		return nil, err
 	}
