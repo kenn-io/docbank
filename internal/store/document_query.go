@@ -345,10 +345,15 @@ live_nodes(id,path,depth) AS (
 )
 `
 
+// originalFileWaiterSQL keeps the waiters that upload the original file. A photo
+// description uploads a derived preview and attaches no rendition, so it says
+// nothing about whether the document was processed.
+const originalFileWaiterSQL = `NOT EXISTS(SELECT 1 FROM json_each(w.input_classes_json) WHERE value='derived_upload')`
+
 // Enrich only selected documents, not every row in the shared catalog.
 const documentCatalogProcessingState = `COALESCE((SELECT j.state
  FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
- WHERE w.content_version_id=d.content_version_id
+ WHERE w.content_version_id=d.content_version_id AND ` + originalFileWaiterSQL + `
  ORDER BY j.updated_at DESC,j.job_id DESC LIMIT 1),'')`
 
 func documentCatalogArgs(rootID int64, prefix string) []any {

@@ -532,6 +532,24 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoDescriptionResult)
 }
 
+func TestPhotoDescriptionJobIsNotDocumentProcessingState(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "described.jpg")
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	request := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+	grantRenditionJobConsent(t, s, request)
+	_, _, err = s.EnqueueRenditionJob(ctx, request)
+	require.NoError(t, err)
+
+	page, err := s.ListDocuments(ctx, DocumentCatalogQuery{}, nil, DocumentCatalogTraversalNext)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Empty(t, page.Items[0].LatestProcessingState, "a photo description attaches no rendition, so it is no processing state")
+}
+
 func TestPhotoDescriptionEmptyReplyIsNotAskedAgain(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
