@@ -252,6 +252,17 @@ func TestOpenAPIPeopleRoutesAreRevisionFenced(t *testing.T) {
 	assert.Contains(t, split.Responses["200"].Headers, "ETag")
 }
 
+func TestOpenAPIPhotoSuggestionResponseDeclaresWhatTheStoreEnforces(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	post := doc.Paths["/api/v1/photos/suggestions/{suggestion_id}/response"].Post
+	require.NotNil(t, post)
+	response := resolveOpenAPISchema(t, doc.Components.Schemas.Map(), post.RequestBody.Content["application/json"].Schema)
+	assert.ElementsMatch(t, []any{"accepted", "dismissed"}, response.Properties["response"].Enum)
+	require.NotNil(t, response.Properties["tags"].MaxItems)
+	assert.Equal(t, 64, *response.Properties["tags"].MaxItems)
+}
+
 func TestOpenAPIWorkspaceSnapshotsExposeStrictBoundedAuthority(t *testing.T) {
 	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()

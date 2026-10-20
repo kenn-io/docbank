@@ -190,9 +190,9 @@ type PhotoSuggestionResponse struct {
 	AssetRevision  int64    `json:"asset_revision"`
 	SourceRevision int64    `json:"source_revision"`
 	NodeRevision   int64    `json:"node_revision"`
-	Response       string   `json:"response"`
+	Response       string   `json:"response" enum:"accepted,dismissed"`
 	Caption        bool     `json:"caption"`
-	Tags           []string `json:"tags"`
+	Tags           []string `json:"tags" maxItems:"64"`
 }
 
 type photoSuggestionRow struct {

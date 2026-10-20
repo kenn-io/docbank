@@ -14631,6 +14631,9 @@ components:
           format: int64
           type: integer
         response:
+          enum:
+            - accepted
+            - dismissed
           type: string
         source_revision:
           format: int64
@@ -14638,6 +14641,7 @@ components:
         tags:
           items:
             type: string
+          maxItems: 64
           type: array
       required:
         - asset_id

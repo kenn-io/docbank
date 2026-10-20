@@ -6310,6 +6310,14 @@ export interface PhotoSettings {
   updated_at?: string;
 }
 
+export type PhotoSuggestionResponseResponse = typeof PhotoSuggestionResponseResponse[keyof typeof PhotoSuggestionResponseResponse];
+
+
+export const PhotoSuggestionResponseResponse = {
+  accepted: 'accepted',
+  dismissed: 'dismissed',
+} as const;
+
 export interface PhotoSuggestionResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6317,8 +6325,9 @@ export interface PhotoSuggestionResponse {
   asset_revision: number;
   caption: boolean;
   node_revision: number;
-  response: string;
+  response: PhotoSuggestionResponseResponse;
   source_revision: number;
+  /** @maxItems 64 */
   tags: string[];
 }
 
