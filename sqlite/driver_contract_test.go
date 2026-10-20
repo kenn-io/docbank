@@ -56,6 +56,35 @@ func TestModerncDriverContract(t *testing.T) {
 	assertDriverContract(t, observations)
 }
 
+func TestModerncDriverSynchronous(t *testing.T) {
+	assertDriverSynchronous(t, modernc.Driver{}, 2)
+}
+
+func assertDriverSynchronous(t *testing.T, driver docsqlite.Driver, defaultSynchronous int) {
+	t.Helper()
+	defer sqlitetest.DisableSync.Store(false)
+	databasePath := filepath.Join(t.TempDir(), "synchronous.db")
+	for _, disabled := range []bool{false, true} {
+		sqlitetest.DisableSync.Store(disabled)
+		for _, access := range []docsqlite.AccessMode{docsqlite.Create, docsqlite.ReadWriteExisting} {
+			db := openAndPing(t, driver, databasePath, docsqlite.OpenOptions{Access: access, TransactionMode: docsqlite.Deferred})
+			// Hold both connections so the second query must open a fresh one.
+			for range 2 {
+				conn, err := db.Conn(t.Context())
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, conn.Close()) })
+				var synchronous int
+				require.NoError(t, conn.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
+				if disabled {
+					require.Zero(t, synchronous)
+				} else {
+					require.Equal(t, defaultSynchronous, synchronous)
+				}
+			}
+		}
+	}
+}
+
 func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObservations {
 	t.Helper()
 	exerciseQueryFunctions(t, driver)
@@ -147,30 +176,6 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 		!driver.IsUniqueViolation(errors.New("UNIQUE constraint failed: contract.value"))
 	observations.notNullFalse, observations.checkFalse, observations.foreignKeyFalse,
 		observations.syntaxFalse, observations.primaryKeyFalse = observeFalsePositiveClassifications(t, driver, databasePath)
-
-	t.Run("synchronous", func(t *testing.T) {
-		defer sqlitetest.DisableSync.Store(false)
-		defaultSynchronous := map[string]int{"modernc.org/sqlite": 2, "mattn/go-sqlite3": 1}[driver.Name()]
-		for _, disabled := range []bool{false, true} {
-			sqlitetest.DisableSync.Store(disabled)
-			for _, access := range []docsqlite.AccessMode{docsqlite.Create, docsqlite.ReadWriteExisting} {
-				db := openAndPing(t, driver, databasePath, docsqlite.OpenOptions{Access: access, TransactionMode: docsqlite.Deferred})
-				// Hold both connections so the second query must open a fresh one.
-				for range 2 {
-					conn, err := db.Conn(t.Context())
-					require.NoError(t, err)
-					t.Cleanup(func() { require.NoError(t, conn.Close()) })
-					var synchronous int
-					require.NoError(t, conn.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
-					if disabled {
-						require.Zero(t, synchronous)
-					} else {
-						require.Equal(t, defaultSynchronous, synchronous)
-					}
-				}
-			}
-		}
-	})
 
 	return observations
 }
