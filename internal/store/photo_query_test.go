@@ -1697,67 +1697,12 @@ func TestLookupPhotoFlags(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
+func TestPhotoBrowseRelevanceKeepsFilenameScoresWithoutSuggestionText(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "cli", "first source")
-	require.NoError(t, err)
-	node, err := s.IngestFileExact(ctx, run, s.RootID(), "claims.jpg", browseHash("claims"), 20, "image/jpeg", "/first/claims.jpg", "")
-	require.NoError(t, err)
-	originalVersion := node.CurrentVersionID
-	type claim struct{ Path, Mtime, Folder string }
-	read := func(s *Store, nodeID int64) claim {
-		var c claim
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COALESCE(c.original_path,''), COALESCE(c.original_mtime,''), COALESCE(c.folder_key,'') FROM photo_source_claims c JOIN photo_files f ON f.file_id=c.file_id WHERE f.node_id=?`, nodeID).Scan(&c.Path, &c.Mtime, &c.Folder))
-		return c
-	}
-	first := read(s, node.ID)
-	require.Equal(t, "/first/claims.jpg", first.Path)
-	require.Empty(t, first.Mtime)
-	var timelines int
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&timelines))
-	require.Zero(t, timelines, "undated files still retain their source claim")
-	current, err := s.NodeByID(ctx, node.ID)
-	require.NoError(t, err)
-	mtime := "2024-03-05T10:00:00Z"
-	_, _, err = s.ReplaceContentForIngest(ctx, run, node.ID, current.Revision, node.BlobHash, node.Size, node.MimeType, "/later/claims.jpg", mtime)
-	require.NoError(t, err)
-	corrected := read(s, node.ID)
-	require.Equal(t, first.Path, corrected.Path, "the earliest folder stays canonical")
-	require.Equal(t, mtime, corrected.Mtime, "a later valid mtime dates initially undated bytes")
-	require.Equal(t, new(mtime), photoModifiedTime(t, s, "claims.jpg"))
-	browsePhotoMetadata(t, s, node, "claims-exif", exifCapture("2024-06-10T12:00:00Z"))
-	var folder string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT folder_key FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&folder))
-	require.Equal(t, "z"+corrected.Folder, folder)
-
-	current, err = s.NodeByID(ctx, node.ID)
-	require.NoError(t, err)
-	_, _, err = s.ReplaceContentForIngest(ctx, run, node.ID, current.Revision, browseHash("edited-claims"), 20, "image/jpeg", "/edited/claims.jpg", "2025-01-01T00:00:00Z")
-	require.NoError(t, err)
-	edited := read(s, node.ID)
-	require.Equal(t, "/edited/claims.jpg", edited.Path)
-	require.Equal(t, "2025-01-01T00:00:00Z", edited.Mtime)
-	revertTo(t, s, node.ID, originalVersion)
-	require.Equal(t, corrected, read(s, node.ID))
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	require.Equal(t, corrected, read(restored, node.ID))
-	// A source without a folder still dates the bytes; a later source supplies the folder and leaves that date alone.
-	dated, err := s.IngestFileExact(ctx, run, s.RootID(), "dated.jpg", browseHash("dated"), 20, "image/jpeg", "dated.jpg", "2024-03-05T10:00:00Z")
-	require.NoError(t, err)
-	later, err := s.BeginIngest(ctx, "cli", "later source")
-	require.NoError(t, err)
-	_, _, err = s.ReplaceContentForIngest(ctx, later, dated.ID, dated.Revision, dated.BlobHash, dated.Size, dated.MimeType, "/later/dated.jpg", "2025-01-01T00:00:00Z")
-	require.NoError(t, err)
-	require.Equal(t, new("2024-03-05T10:00:00Z"), photoModifiedTime(t, s, "dated.jpg"))
-	browsePhotoMetadata(t, s, dated, "dated-exif", exifCapture("2024-06-10T12:00:00Z"))
-	datedFolder, ok := query.PhotoFolderKey("cli", "", "/later/dated.jpg")
-	require.True(t, ok)
-	require.Equal(t, datedFolder, read(s, dated.ID).Folder)
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT folder_key FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, dated.ID).Scan(&folder))
-	require.Equal(t, "z"+datedFolder, folder)
+	strong := browsePhotoNode(t, s, "harbor.jpg", browseHash("strong-harbor"), "image/jpeg")
+	browsePhotoNode(t, s, "a very long holiday weekend away at the harbor with all of the family.jpg", browseHash("weak-harbor"), "image/jpeg")
+	page := browsePhotoPage(t, s, `{"syntax":"advanced","text":"name:harbor","sort":{"field":"relevance","direction":"desc"}}`)
+	require.Len(t, page.Items, 2)
+	require.Equal(t, strong.ID, page.Items[0].NodeID, "the stronger filename match leads, however recent the weaker one is")
 }

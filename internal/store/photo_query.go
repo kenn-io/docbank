@@ -581,7 +581,8 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 	}
 	// A photo that matches the whole query only with suggestion text ranks no
 	// higher than the suggestion tier, below any fully authored match.
-	plain := compiledQueryFragment{sql: `SELECT 0 node_id WHERE 0`}
+	// Without suggestion-searchable text every match is a plain one.
+	plain := compiledQueryFragment{sql: `SELECT node_id FROM eligible`}
 	if content != "" {
 		withoutSuggestion := compiled
 		withoutSuggestion.withoutSuggestion = true
