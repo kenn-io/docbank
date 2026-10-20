@@ -224,10 +224,17 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.Equal(t, machine.ID, page.Items[1].AssetID)
 	require.True(t, page.Items[1].MatchedAISuggestion)
 
-	page = browsePhotoPage(t, s, `{"syntax":"simple","text":"harbor","sort":{"field":"name","direction":"asc"}}`)
-	require.Len(t, page.Items, 2, "other sorts still find suggestion text")
-	for _, item := range page.Items {
-		require.False(t, item.MatchedAISuggestion, "only relevance order shows the mark")
+	for _, form := range []string{
+		`{"syntax":"simple","text":"harbor","sort":{"field":"name","direction":"asc"}}`,
+		`{"syntax":"simple","text":"harbor","sort":{"field":"capture_time","direction":"desc"}}`,
+		`{"syntax":"advanced","text":"\"harbor\" OR name:zzz","sort":{"field":"name","direction":"asc"}}`,
+		`{"syntax":"advanced","text":"\"harbor\" OR name:zzz","sort":{"field":"relevance","direction":"desc"}}`,
+	} {
+		page = browsePhotoPage(t, s, form)
+		require.Len(t, page.Items, 2, form)
+		for _, item := range page.Items {
+			require.Equal(t, item.AssetID == machine.ID, item.MatchedAISuggestion, "only the suggestion-only match carries the mark: %s", form)
+		}
 	}
 	page = browsePhotoPage(t, s, `{"syntax":"simple","text":"machine","sort":{"field":"relevance","direction":"desc"}}`)
 	require.Len(t, page.Items, 1)

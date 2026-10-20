@@ -80,7 +80,7 @@ type PhotoPreviewSlot struct {
 }
 
 type PhotoBrowseRow struct {
-	// MatchedAISuggestion marks a relevance-ordered row whose best evidence is
+	// MatchedAISuggestion marks a row whose best evidence is
 	// a pending suggestion.
 	MatchedAISuggestion bool
 	Quality             *document.PhotoQualitySignals
@@ -342,6 +342,9 @@ func (s *Store) ListPhotoAssets(
 		if err != nil {
 			return err
 		}
+		if err := markSuggestionOnlyMatches(ctx, q, compiled, page.Items); err != nil {
+			return err
+		}
 		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 	})
 	return page, err
@@ -500,28 +503,72 @@ func photoBrowseMatch(compiled CompiledQuery, generation string, coverage Covera
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member CROSS JOIN (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
 }
 
-func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot bool) (string, []any, error) {
-	var names, content []string
+// photoTextOperands joins the matches of the non-negated text operands, all
+// of them and those that also search retained content.
+func photoTextOperands(compiled CompiledQuery) (names, content string) {
+	var all, retained []string
 	for _, operand := range compiled.predicate.lexical {
 		if operand.negated {
 			continue
 		}
-		names = append(names, "("+operand.match+")")
+		all = append(all, "("+operand.match+")")
 		if operand.content {
-			content = append(content, "("+operand.match+")")
+			retained = append(retained, "("+operand.match+")")
 		}
 	}
+	return strings.Join(all, " OR "), strings.Join(retained, " OR ")
+}
+
+// markSuggestionOnlyMatches gives rows of a sorted page the mark relevance order
+// computes: the best text evidence for the photo is a pending suggestion.
+func markSuggestionOnlyMatches(ctx context.Context, q metadataQuerier, compiled CompiledQuery, items []PhotoBrowseRow) error {
+	names, content := photoTextOperands(compiled)
+	if content == "" || len(items) == 0 {
+		return nil
+	}
+	candidates, err := photoEvidenceCandidates(names, content)
+	if err != nil {
+		return err
+	}
+	args := candidates.Args
+	for _, item := range items {
+		args = append(args, item.NodeID)
+	}
+	rows, err := q.QueryContext(ctx, `SELECT node_id FROM (`+candidates.SQL+`) WHERE node_id IN (`+placeholders(len(items))+`) GROUP BY node_id HAVING MAX(tier)=3`, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	marked := map[int64]bool{}
+	for rows.Next() {
+		var nodeID int64
+		if err := rows.Scan(&nodeID); err != nil {
+			return err
+		}
+		marked[nodeID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range items {
+		items[i].MatchedAISuggestion = marked[items[i].NodeID]
+	}
+	return nil
+}
+
+func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot bool) (string, []any, error) {
+	names, content := photoTextOperands(compiled)
 	population, err := photoBrowsePopulation(compiled, generation, coverage)
 	if err != nil {
 		return "", nil, err
 	}
 	candidates := sqlquery.Query{SQL: `SELECT 0 node_id,0 tier,0.0 score WHERE 0`}
-	if len(names) > 0 {
+	if names != "" {
 		var profile *string
 		if coverage.Configuration == photoBrowseConfiguredCoverage {
 			profile = &coverage.ProfileFingerprint
 		}
-		candidates, err = photoSearchCandidates(strings.Join(names, " OR "), strings.Join(content, " OR "), generation, profile)
+		candidates, err = photoSearchCandidates(names, content, generation, profile)
 		if err != nil {
 			return "", nil, err
 		}

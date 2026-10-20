@@ -2501,9 +2501,9 @@ func photoAssetTextCandidates(tier int, index, evidenceJoin, extra string) strin
 		` AND ` + index + ` MATCH ?`
 }
 
-// Filename and tag names precede authored text, then suggestions, technical
-// metadata, and retained content evidence.
-func photoSearchCandidates(namesMatch, textMatch, generation string, profile *string) (sqlquery.Query, error) {
+// photoEvidenceCandidates ranks filename, tag-name, authored-text, and suggestion
+// matches, which precede technical metadata and retained content evidence.
+func photoEvidenceCandidates(namesMatch, textMatch string) (sqlquery.Query, error) {
 	names, err := nameSearchCandidates(namesMatch)
 	if err != nil {
 		return sqlquery.Query{}, err
@@ -2511,6 +2511,20 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 	result := sqlquery.Query{SQL: `SELECT doc_key node_id,5 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
 	if textMatch == "" {
 		return result, nil
+	}
+	result.SQL += photoAssetTextCandidates(4, "photo_authored_fts", `JOIN photo_files evidence ON evidence.node_id=photo_authored_fts.rowid`, ``) +
+		photoAssetTextCandidates(4, "tag_fts", `JOIN tags t ON t.rowid=tag_fts.rowid JOIN node_tags nt ON nt.tag_id=t.id JOIN photo_files evidence ON evidence.node_id=nt.node_id`, ``) +
+		photoAssetTextCandidates(3, "photo_suggestion_fts", `JOIN photo_suggestions s ON s.id=photo_suggestion_fts.rowid JOIN content_versions sv ON sv.version_id=s.content_version_id JOIN photo_files evidence ON evidence.node_id=sv.node_id`,
+			` AND s.content_version_id=sibling.current_version_id AND evidence.file_id=(SELECT display_file_id FROM photo_assets WHERE asset_id=evidence.asset_id)`)
+	result.Args = append(result.Args, textMatch, textMatch, textMatch)
+	return result, nil
+}
+
+// photoSearchCandidates adds technical metadata and retained content evidence.
+func photoSearchCandidates(namesMatch, textMatch, generation string, profile *string) (sqlquery.Query, error) {
+	result, err := photoEvidenceCandidates(namesMatch, textMatch)
+	if err != nil || textMatch == "" {
+		return result, err
 	}
 	helper, err := sqlitefts.New(sqlitefts.WithIndexTable("photo_metadata_fts"), sqlitefts.WithIndexKey("generation_id"), sqlitefts.WithSourceTable("photo_technical_metadata"), sqlitefts.WithSourceKey("generation_id"))
 	if err != nil {
@@ -2524,11 +2538,6 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
   JOIN source_metadata_heads h ON h.generation_id=matched.doc_key
   JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
 	result.Args = append(result.Args, metadata.Args...)
-	result.SQL += photoAssetTextCandidates(4, "photo_authored_fts", `JOIN photo_files evidence ON evidence.node_id=photo_authored_fts.rowid`, ``) +
-		photoAssetTextCandidates(4, "tag_fts", `JOIN tags t ON t.rowid=tag_fts.rowid JOIN node_tags nt ON nt.tag_id=t.id JOIN photo_files evidence ON evidence.node_id=nt.node_id`, ``) +
-		photoAssetTextCandidates(3, "photo_suggestion_fts", `JOIN photo_suggestions s ON s.id=photo_suggestion_fts.rowid JOIN content_versions sv ON sv.version_id=s.content_version_id JOIN photo_files evidence ON evidence.node_id=sv.node_id`,
-			` AND s.content_version_id=sibling.current_version_id AND evidence.file_id=(SELECT display_file_id FROM photo_assets WHERE asset_id=evidence.asset_id)`)
-	result.Args = append(result.Args, textMatch, textMatch, textMatch)
 	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)
 	from := `matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
 	if generation != "" {
