@@ -327,6 +327,9 @@ func openVaultWithRootOpener(
 	}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
+		if profile.Profile.Rendition != nil && profile.Profile.Rendition.AdapterContract == document.VisionAdapterContract {
+			return nil, fmt.Errorf("processing profile %q: photo description needs the daemon, which owns suggestion review", name)
+		}
 		classifiers := make(map[string]func(error) (internalprocessing.EmbeddingProviderFailure, time.Duration),
 			len(profile.EmbeddingClassifiers))
 		for binding, classifier := range profile.EmbeddingClassifiers {
@@ -427,9 +430,6 @@ func openVaultWithRootOpener(
 	}
 	vault.startProcessingWorker(workerContext, packageWorker.Run)
 	vault.startProcessingWorker(workerContext, worker.Run)
-	if processingService.HasPhotoDescriptionProfiles() {
-		vault.startProcessingWorker(workerContext, func(ctx context.Context) error { return processingService.PhotoDescriptionBackfill(ctx, nil, 1) })
-	}
 	vault.startProcessingWorker(workerContext, mediaContinuations.Run)
 	if embeddingWorker != nil {
 		vault.startProcessingWorker(workerContext, embeddingWorker.Run)

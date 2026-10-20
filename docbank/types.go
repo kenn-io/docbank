@@ -289,10 +289,9 @@ type ProcessingRuntimeDisclosure struct {
 }
 
 type ProcessingEstimate struct {
-	SourceBytes   int64  `json:"source_bytes"`
-	ProviderCalls int    `json:"provider_calls"`
-	VectorSpaces  int    `json:"vector_spaces"`
-	Scope         string `json:"scope,omitzero"`
+	SourceBytes   int64 `json:"source_bytes"`
+	ProviderCalls int   `json:"provider_calls"`
+	VectorSpaces  int   `json:"vector_spaces"`
 }
 
 // ProcessingPlan is the complete bounded disclosure reviewed before work is
