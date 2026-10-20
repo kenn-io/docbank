@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -33,6 +34,50 @@ func scheduledDeps(t *testing.T, interval time.Duration) Deps {
 	cfg := config.Default()
 	cfg.Backup = config.BackupConfig{Repo: filepath.Join(t.TempDir(), "repo"), Interval: config.Duration(interval), KeepLast: 1}
 	return Deps{Store: metadata, Blobs: blobs, VaultRoot: root, Cfg: cfg, Gate: NewOperationGate(), Logger: slog.New(slog.DiscardHandler)}
+}
+
+func TestBackupScheduleDeadlineAfterResume(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		deadline time.Duration
+		suspend  time.Duration
+		wait     time.Duration
+	}{
+		{name: "overdue capture", deadline: 24 * time.Hour, suspend: 25 * time.Hour, wait: time.Minute},
+		{name: "future retry", deadline: 5 * time.Minute, suspend: 2 * time.Minute, wait: 3 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				deadline := time.Now().Add(tc.deadline)
+				var suspended atomic.Int64
+				finished := make(chan error, 1)
+				go func() {
+					finished <- waitBackupDeadline(t.Context(), deadline, func() time.Time {
+						// Advance wall time independently of timer time, as system sleep can.
+						return time.Now().Add(time.Duration(suspended.Load()))
+					})
+				}()
+				synctest.Wait()
+				suspended.Store(int64(tc.suspend))
+				time.Sleep(tc.wait - time.Second)
+				synctest.Wait()
+				select {
+				case err := <-finished:
+					t.Fatalf("deadline returned early: %v", err)
+				default:
+				}
+				time.Sleep(time.Second)
+				synctest.Wait()
+				select {
+				case err := <-finished:
+					require.NoError(t, err)
+				default:
+					t.Fatal("deadline was not rechecked after resume")
+				}
+			})
+		})
+	}
 }
 
 func TestBackupScheduleCaptureRetentionAndRestart(t *testing.T) {

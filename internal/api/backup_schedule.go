@@ -41,7 +41,25 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			logger.Error("scheduled backup failed", "error", err, "retry_in", retry)
 			delay = retry
 		}
-		if err := jobs.Wait(ctx, delay); err != nil {
+		if err := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now); err != nil {
+			return err
+		}
+	}
+}
+
+func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time.Time) error {
+	// Wall time counts suspension, while timer clocks can stop during sleep.
+	// Poll only the deadline so retries keep their original delay.
+	deadline = deadline.Round(0)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		remaining := deadline.Sub(now().Round(0))
+		if remaining <= 0 {
+			return nil
+		}
+		if err := jobs.Wait(ctx, min(remaining, time.Minute)); err != nil {
 			return err
 		}
 	}

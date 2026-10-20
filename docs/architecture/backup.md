@@ -108,7 +108,10 @@ scheduled points up to `keep_last`, then uses Kit's forget and prune operations.
 Each logical metadata snapshot is self-contained, so retention can remove an
 ancestor while preserving the new recovery point. Manual points remain outside
 the selection. Capture and repository errors retry after the shorter of the
-interval and five minutes. Cleanup errors leave the new point intact and wait
+interval and five minutes. Capture and retry deadlines use wall time and are
+rechecked at least once a minute, so a deadline passed during sleep is noticed
+within one minute after resume. Polling preserves future retry deadlines.
+Cleanup errors leave the new point intact and wait
 until the next scheduled capture. The worker reports errors through the existing
 supervisor status and logs. The [backup guide](../usage/backup.md#schedule-backups)
 owns configuration and stale-warning thresholds.

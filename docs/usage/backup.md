@@ -75,7 +75,8 @@ keep_last = 14
 
 Restart the daemon to apply the schedule. It captures immediately when no
 scheduled snapshot exists or the newest one is due. Later captures run on the
-configured interval. An enabled schedule keeps a background daemon running
+configured interval. If a capture becomes due while the computer sleeps, it
+starts within one minute after resume. An enabled schedule keeps a background daemon running
 through idle periods. The daemon opens the repository but never initializes it.
 Repository and capture failures retry after the shorter of the interval and
 five minutes.
