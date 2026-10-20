@@ -251,8 +251,11 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 			row.Value.Caption, string(tags), row.Value.VisibleText, row.dismissed, row.awaiting, row.captionResolved, string(resolved), row.id); err != nil {
 			return err
 		}
-		result = row.PhotoSuggestion
-		return nil
+		// The response carries the revisions the accepted edit just produced.
+		current, err := scanPhotoSuggestion(tx.QueryRowContext(ctx, photoSuggestionRowSQL+` WHERE s.id=?`, row.id))
+		current.AuthoredReceipt = row.AuthoredReceipt
+		result = current.PhotoSuggestion
+		return err
 	})
 	return result, err
 }
