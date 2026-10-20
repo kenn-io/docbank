@@ -23,8 +23,6 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()
-	_, err = s.db.ExecContext(ctx, `PRAGMA synchronous=OFF`)
-	require.NoError(b, err)
 	for i := range assetCount {
 		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("capture-%05d.jpg", i), browseHash(fmt.Sprintf("benchmark-source-%d", i)), 20, "image/jpeg")
 		require.NoError(b, err)

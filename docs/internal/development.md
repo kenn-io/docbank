@@ -292,9 +292,10 @@ design-specific checks are:
 - cross-filesystem storage behavior is exercised through Kit rather than
   mocked into a second docbank implementation.
 
-Disposable `internal/store` test databases use `synchronous=OFF` through an
-internal setting shared by both SQLite adapters. Ordinary application opens
-keep the adapters' durability defaults.
+The `internal/store` test process applies `synchronous=OFF` to all writable
+connections opened through either SQLite adapter for its disposable databases.
+SQLite driver contract tests verify that ordinary opens retain the adapters'
+durability defaults.
 
 ## Review posture
 

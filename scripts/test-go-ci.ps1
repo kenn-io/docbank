@@ -15,9 +15,6 @@ $groups = @{
     4 = @('./internal/processing', './internal/daemonconn', './internal/backupapp')
 }
 $packages = @('./...')
-if ($Shard -ne 'all' -and [int]$Shard -gt $ShardCount) {
-    throw "Shard $Shard exceeds shard count $ShardCount"
-}
 if ($Shard -ne 'all') {
     $packages = @($groups[[int]$Shard])
     if ($Shard -ne '1') {
