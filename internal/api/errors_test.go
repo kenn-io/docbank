@@ -66,6 +66,15 @@ func TestFromStoreErrorMappings(t *testing.T) {
 	}
 }
 
+func TestRenditionRuntimeUnavailableNamesNoPhotoFeature(t *testing.T) {
+	t.Parallel()
+	// Original-file profiles reach this error as well as photo descriptions.
+	mapped := &Error{}
+	require.ErrorAs(t, fromProcessingError(processing.ErrRenditionRuntimeUnavailable), &mapped)
+	assert.Equal(t, http.StatusServiceUnavailable, mapped.Status)
+	assert.NotContains(t, mapped.Detail, "photo")
+}
+
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

@@ -773,7 +773,7 @@ func fromProcessingError(err error) error {
 	}{
 		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search",
 			"media search selectors or mode are invalid"},
-		{processing.ErrRenditionRuntimeUnavailable, http.StatusServiceUnavailable, "rendition_runtime_unavailable", "the photo description provider did not pass its readiness check"},
+		{processing.ErrRenditionRuntimeUnavailable, http.StatusServiceUnavailable, "rendition_runtime_unavailable", "the rendition provider is not ready"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrSourceIneligible, http.StatusUnprocessableEntity, "rendition_source_ineligible",
 			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
