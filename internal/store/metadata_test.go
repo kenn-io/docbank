@@ -281,7 +281,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &first))
 	require.NoError(t, source.ExportMetadata(ctx, &second))
 	assert.Equal(t, first.Bytes(), second.Bytes(), "unchanged metadata must export byte-identically")
-	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":3,"vault_id":"`+
+	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":2,"vault_id":"`+
 		sourceVaultID+`","node_sequence":100}`)
 	assert.Contains(t, first.String(), `"original_mtime":"2026-02-03T04:05:06.12Z"`)
 	assert.Contains(t, first.String(), `"type":"provenance","identity":"`)
@@ -1270,7 +1270,7 @@ func TestMetadataCodecCorruptWaiterFailsExport(t *testing.T) {
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	t.Parallel()
 	for input, want := range map[string]string{
-		`{"type":"meta","format":"docbank-metadata","version":4,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n":                                                   "unsupported metadata header",
+		`{"type":"meta","format":"docbank-metadata","version":3,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n":                                                   "unsupported metadata header",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"not-a-uuid","node_sequence":1}` + "\n":                                                                             "",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":null,"node_sequence":1}` + "\n":                                                                                     "",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","vault_id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","node_sequence":1}` + "\n": "",

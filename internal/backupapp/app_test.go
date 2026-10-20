@@ -65,15 +65,9 @@ type rawMetadataSnapshot struct{ metadata []byte }
 type overriddenMetadataSource struct {
 	source   backup.MetadataSource
 	metadata []byte
-	format   string
 }
 
-func (s overriddenMetadataSource) Format() string {
-	if s.format != "" {
-		return s.format
-	}
-	return s.source.Format()
-}
+func (s overriddenMetadataSource) Format() string { return s.source.Format() }
 
 func (s overriddenMetadataSource) OpenSnapshot(ctx context.Context) (backup.MetadataSnapshot, error) {
 	snapshot, err := s.source.OpenSnapshot(ctx)
@@ -375,25 +369,6 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	assert.True(t, foundMember, "restored album contains the asset")
 }
 
-func TestJSONLV2SnapshotRestore(t *testing.T) {
-	fixture := newArchiveFixture(t)
-	metadata := bytes.Replace(exportBackupMetadata(t, fixture.metadata), []byte(`"version":3`), []byte(`"version":2`), 1)
-	metadata = bytes.ReplaceAll(metadata, []byte(`,"representative_sequence":null`), nil)
-	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(t, err)
-	_, err = backup.Create(t.Context(), repo, backupapp.New("test-version"), backup.CreateOptions{
-		MetadataSource: overriddenMetadataSource{source: backupapp.NewMetadataSource(fixture.metadata), metadata: metadata, format: "docbank-metadata-jsonl-v2"},
-		ContentSource:  backupapp.NewContentSource(fixture.blobs),
-	})
-	require.NoError(t, err)
-	target := filepath.Join(t.TempDir(), "restored")
-	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target})
-	require.NoError(t, err)
-	restored, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-}
-
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	wantMetadata := exportMetadata(t, fixture.metadata)
@@ -417,7 +392,7 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	require.Len(t, manifest.Auxiliary, 1)
 	assert.Equal(t, "placement", manifest.Auxiliary[0].Name)
 	assert.Equal(t, backupapp.PlacementFormat, manifest.Auxiliary[0].Format)
-	assert.Equal(t, "docbank-metadata-jsonl-v3", manifest.Metadata.Format)
+	assert.Equal(t, backupapp.MetadataFormat, manifest.Metadata.Format)
 	assert.Empty(t, manifest.DB.Engine)
 	assert.Equal(t, int64(2), manifest.Attachments.Rows)
 	assert.Equal(t, int64(2), manifest.Attachments.Blobs)
@@ -2750,7 +2725,7 @@ func (s legacyMetadataSnapshot) OpenMetadata(
 	if err := s.pinned.Export(ctx, &buffer); err != nil {
 		return nil, 0, err
 	}
-	metadata := bytes.Replace(buffer.Bytes(), []byte(`"version":3`), []byte(`"version":1`), 1)
+	metadata := bytes.Replace(buffer.Bytes(), []byte(`"version":2`), []byte(`"version":1`), 1)
 	if bytes.Equal(metadata, buffer.Bytes()) {
 		return nil, 0, errors.New("legacy metadata header version was not found")
 	}

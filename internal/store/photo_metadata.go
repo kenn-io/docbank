@@ -184,9 +184,9 @@ var (
 		suffix: "WHERE singleton=1", validate: validatePhotoSettingsMetadataRecord, checkExport: true})
 )
 
-// importPhotoSettingsBeforeV3 defaults an absent sequence while preserving
+// importPhotoSettingsWithoutSequence defaults an absent sequence while preserving
 // explicit null and numeric values through the current typed codec.
-func importPhotoSettingsBeforeV3(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error {
+func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error {
 	required, nullable := photoSettingsMetadata.fields()
 	required = slices.DeleteFunc(slices.Clone(required), func(field string) bool { return field == "representative_sequence" })
 	if err := requireMetadataFields(raw, required, nullable); err != nil {

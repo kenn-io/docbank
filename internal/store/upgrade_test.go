@@ -275,6 +275,8 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
 			s, err := Open(path, test.driver)
 			require.NoError(t, err)
+			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
+			require.NoError(t, err)
 			unreleased := currentStorageSchemaVersion - 1
 			for slices.Contains(releasedStorageSchemaVersions, unreleased) {
 				unreleased--
@@ -605,8 +607,8 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 				require.NoError(t, err)
 				var upgraded bytes.Buffer
 				require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-				expected := metadataV3Bytes(t, fixture.metadata)
-				assert.Equal(t, expected, upgraded.Bytes())
+				assert.Equal(t, fixture.metadata, upgraded.Bytes(),
+					"released logical authority survives byte-for-byte")
 
 				primary, err := s.PrimaryBlobStore(t.Context())
 				require.NoError(t, err)
@@ -667,8 +669,7 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			expected := metadataV3Bytes(t, fixture.metadata)
-			assert.Equal(t, expected, upgraded.Bytes())
+			assert.Equal(t, fixture.metadata, upgraded.Bytes())
 			var stores, locations int
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blob_stores
 				WHERE store_id IN (?,?)`, fixture.primaryStoreID, fixture.secondaryStoreID).Scan(&stores))
@@ -1415,8 +1416,6 @@ func assertPhysicalContent(t *testing.T, s *Store, hash string, want PhysicalCon
 
 func assertReleasedMetadataWithEmptyLexicalHead(t *testing.T, released, current []byte) {
 	t.Helper()
-	// Current exports use v3; the released authority and node sequence stay exact.
-	released = metadataV3Bytes(t, released)
 	var retained [][]byte
 	var generations []metadataLexicalGeneration
 	for line := range bytes.SplitSeq(bytes.TrimSpace(current), []byte{'\n'}) {
@@ -1447,11 +1446,6 @@ func assertReleasedMetadataWithEmptyLexicalHead(t *testing.T, released, current 
 	retainedMetadata := append(bytes.Join(retained, []byte{'\n'}), '\n')
 	assert.Equal(t, released, retainedMetadata,
 		"the released logical authority must survive byte-for-byte")
-}
-
-func metadataV3Bytes(t *testing.T, v2 []byte) []byte {
-	t.Helper()
-	return bytes.Replace(v2, []byte(`"version":2`), []byte(`"version":3`), 1)
 }
 
 func v090UpgradeDrivers() []struct {

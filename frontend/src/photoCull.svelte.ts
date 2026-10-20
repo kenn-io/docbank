@@ -72,7 +72,7 @@ export class PhotoCull {
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
   }
-  /** Current grouping of the frozen IDs. */
+  /** Current grouping of the current pass's IDs. */
   get stacks(): ReadonlyMap<string, string[]> {
     const groups = this.run?.groups;
     if (!groups) return new Map();
@@ -117,7 +117,7 @@ export class PhotoCull {
       if (this.settingsRead === controller) this.settingsRead = undefined;
     }
   }
-  /** Recompute all frozen IDs and merge into the latest active checkpoint. */
+  /** Regroup the current pass's IDs, so a stack never holds a frame the pass doesn't show. */
   async regroup() {
     const run = this.run;
     if (!run || this.stale) return;
@@ -133,7 +133,7 @@ export class PhotoCull {
       this.run.checkpoint.pass === run.checkpoint.pass;
     try {
       const regrouped = await groupPhotoStacks(
-        { asset_ids: run.ids },
+        { asset_ids: run.checkpoint.pass },
         { session: this.session, signal: controller.signal },
       );
       controller.signal.throwIfAborted();
@@ -544,7 +544,7 @@ export class PhotoCull {
         throw cause;
       }
       this.cancelStackReads();
-      this.run = { ...this.run, checkpoint };
+      this.run = { ...this.run, checkpoint, groups: undefined };
       this.remainder = false;
       changed = true;
     } catch (cause) {

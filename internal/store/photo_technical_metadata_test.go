@@ -2,7 +2,12 @@ package store
 
 import (
 	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -624,6 +629,32 @@ func TestPhotoTechnicalMetadataCorruptSource(t *testing.T) {
 	current, err := photoTechnicalRecipeCurrent(ctx, tx)
 	require.NoError(t, err)
 	assert.True(t, current, "refresh must record its recipe after skipping corrupt evidence")
+}
+
+// Location labels come from the embedded map, so new map data needs a new recipe.
+func TestPhotoTechnicalProjectionRecipeIsPinnedToMapData(t *testing.T) {
+	t.Parallel()
+	sums := make(map[string]string)
+	for _, name := range []string{
+		"ne_10m_admin_0_countries.geojson",
+		"ne_10m_admin_1_states_provinces.geojson",
+		"ne_10m_populated_places.geojson",
+	} {
+		compressed, err := os.ReadFile(filepath.Join("..", "geo", "data", name+".gz"))
+		require.NoError(t, err)
+		reader, err := gzip.NewReader(bytes.NewReader(compressed))
+		require.NoError(t, err)
+		data, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		sum := sha256.Sum256(data)
+		sums[name] = hex.EncodeToString(sum[:])
+	}
+	assert.Equal(t, "photo-technical/v3", PhotoTechnicalProjectionRecipe)
+	assert.Equal(t, map[string]string{
+		"ne_10m_admin_0_countries.geojson":        "27db73de0818a97f9c7beda9590d39a0c39e9ff45e8f2f32fe6c9f284945d572",
+		"ne_10m_admin_1_states_provinces.geojson": "ae0d6d65975daead72e054f3715273eda770e89386df5fc299b4cc198f9f4f20",
+		"ne_10m_populated_places.geojson":         "91fdec1d0d1efae4d152f4ce08f11263a7e66fc7ee7a08553f7d1060e3234cc6",
+	}, sums, "the embedded map changed: bump PhotoTechnicalProjectionRecipe so stored location labels are re-derived, then update both pins here")
 }
 
 func TestPhotoTechnicalMetadataRestoreRebuildsFromSourceMetadata(t *testing.T) {

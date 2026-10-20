@@ -172,8 +172,6 @@ func TestUpgradeReleasedV0150PreservesAuthorityAndPendingWork(t *testing.T) {
 			assert.Equal(t, currentStorageSchemaVersion, version)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			requireUpgradeMetadataVersion(t, released.Bytes(), 2)
-			requireUpgradeMetadataVersion(t, upgraded.Bytes(), 3)
 			assert.Equal(t, normalizeReleasedUpgradeSnapshot(t, released.Bytes()), normalizeReleasedUpgradeSnapshot(t, upgraded.Bytes()))
 			assert.Equal(t, pending, dumpReleasedOperationalTables(t, s.db))
 
@@ -563,22 +561,12 @@ func createReleasedFixtureFile(t *testing.T, legacy *Store, name, hash string, s
 	return node
 }
 
-func requireUpgradeMetadataVersion(t *testing.T, data []byte, version int) {
-	t.Helper()
-	var header metadataHeader
-	require.NoError(t, json.Unmarshal(bytes.SplitN(data, []byte{'\n'}, 2)[0], &header))
-	require.Equal(t, version, header.Version)
-}
-
 func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]any {
 	t.Helper()
 	var records []map[string]any
 	for line := range bytes.SplitSeq(bytes.TrimSpace(data), []byte{'\n'}) {
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
-		if record["type"] == "meta" {
-			record["version"] = float64(3)
-		}
 		if record["type"] == "photo_file" {
 			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0), "confirmed_fields": float64(0), "flag_owner": ""}
 			for key, value := range defaults {

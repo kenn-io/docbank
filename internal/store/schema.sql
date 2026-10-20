@@ -2239,10 +2239,10 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- The mtime key pads the canonical UTC RFC3339Nano fraction to the fixed
 -- nine digits query.CaptureTimeKey produces, so EXIF and mtime keys sort together.
 -- folder_key bounds burst stacks. It is set only for an EXIF capture time with
--- second or fraction precision whose current unsuperseded provenance claims for
--- the same bytes name one import folder (docbank_photo_folder_v1). Its first
--- character separates zoned (UTC or offset) keys from floating local keys,
--- which never share a clock.
+-- second or fraction precision, and takes the import folder (docbank_photo_folder_v1)
+-- of the earliest observed unsuperseded provenance claim for the same bytes that
+-- has one. Its first character separates zoned (UTC or offset) keys from floating
+-- local keys, which never share a clock.
 -- Derived like photo_technical_metadata: absent from export, refilled by the
 -- triggers below when restore inserts the facts they watch. These triggers have
 -- no recipe marker, so changing them or the key format needs a schema bump.

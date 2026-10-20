@@ -21,7 +21,7 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-const metadataFormatVersion = 3
+const metadataFormatVersion = 2
 
 const (
 	metadataCreatedAtField        = "created_at"
@@ -494,12 +494,8 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	backupScoped := layout.backupScoped
 	write := newMetadataJSONWriter(w)
-	version := metadataFormatVersion
-	if layout.schemaVersion < photoBurstStorageSchemaVersion {
-		version = 2
-	}
 	if err := write(metadataHeader{
-		Type: "meta", Format: "docbank-metadata", Version: version,
+		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion,
 		VaultID: vaultID, NodeSequence: nodeSequence,
 	}); err != nil {
 		return err
@@ -1147,21 +1143,9 @@ func (s *Store) importMetadataLines(
 func (s *Store) importMetadataRecord(
 	ctx context.Context, tx *sql.Tx, version int, kind string, raw jsontext.Value,
 ) error {
-	if version < 3 && (kind == metadataPhotoAssetType || kind == metadataPhotoSettingsType) {
-		fields, err := decodeMetadataFields(raw)
-		if err != nil {
-			return err
-		}
-		field := "representative_rank"
-		if kind == metadataPhotoSettingsType {
-			field = "burst_gap_seconds"
-		}
-		if _, present := fields[field]; present {
-			return fmt.Errorf("%s requires metadata version 3", field)
-		}
-		if kind == metadataPhotoSettingsType {
-			return importPhotoSettingsBeforeV3(ctx, tx, raw)
-		}
+	// Version 1 predates the burst fields; they restore as their defaults.
+	if version < 2 && kind == metadataPhotoSettingsType {
+		return importPhotoSettingsWithoutSequence(ctx, tx, raw)
 	}
 	if kind == metadataSavedQueryRunType {
 		var err error
@@ -1171,21 +1155,12 @@ func (s *Store) importMetadataRecord(
 		}
 	}
 	if kind == metadataPhotoFileType {
-		if version < 3 {
-			fields, err := decodeMetadataFields(raw)
-			if err != nil {
-				return err
-			}
-			if _, exists := fields["flag_owner"]; exists {
-				return errors.New("flag_owner requires metadata version 3")
-			}
-		}
 		var err error
 		raw, err = normalizePhotoFileMetadata(raw)
 		if err != nil {
 			return err
 		}
-		if version < 3 {
+		if version < 2 {
 			var fields map[string]jsontext.Value
 			if err := json.Unmarshal(raw, &fields); err != nil {
 				return err

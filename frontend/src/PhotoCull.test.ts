@@ -1111,6 +1111,40 @@ it("navigates stacks and sends Return, keep all, selected, and representative th
   await screen.findByText("Selected frames kept");
 });
 
+it("keeps a frame the pass excludes out of the stack that Keep all decides", async () => {
+  const rows = [photo(1), photo(2), photo(3)];
+  const pass = rows.slice(1).map((row) => row.asset_id);
+  const picked = preparedPhoto(2);
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockResolvedValue({ receipt_id: "all", before: [picked], after: [picked] });
+  const group = vi.mocked(api.groupPhotoStacks);
+  group.mockImplementation(async (request) => ({
+    groups: [Object.values(request.asset_ids)],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  }));
+  const { cull, photos } = await reviewPhoto(rows[1]);
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: { ...cull.run!.checkpoint, pass },
+    };
+  });
+  await act(() => cull.regroup());
+  expect(group.mock.lastCall![0].asset_ids).toEqual(pass);
+  await fireEvent.click(await readyButton("Keep all"));
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  expect(decide.mock.calls[0]![0]).toMatchObject({ asset_ids: pass, decision: "all" });
+});
+
 it("keeps individual decisions available while camera details pause stacks", async () => {
   const { cull } = await reviewPhoto();
   await act(() => {

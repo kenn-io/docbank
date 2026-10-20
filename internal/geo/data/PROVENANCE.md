@@ -79,6 +79,8 @@ checksums pin the GeoJSON content, not a particular gzip encoding. Update
 these checksums when re-vendoring, and bump
 `store.PhotoTechnicalProjectionRecipe` so stored location labels are
 re-derived. Bump the recipe for resolver changes too.
+`TestPhotoTechnicalProjectionRecipeIsPinnedToMapData` fails when the data
+changes, as a reminder; it cannot verify that the recipe was bumped.
 
 | File | SHA256 |
 |---|---|

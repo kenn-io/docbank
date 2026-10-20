@@ -1232,11 +1232,11 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	require.NotContains(t, missingSequence, `"representative_sequence"`)
 	require.ErrorContains(t, newTestStore(t).ImportMetadata(t.Context(), strings.NewReader(missingSequence)), "representative_sequence")
 	legacySettings := strings.ReplaceAll(exported.String(), `,"burst_gap_seconds":4`, "")
-	v2 := strings.ReplaceAll(strings.ReplaceAll(legacySettings, `,"representative_sequence":null`, ""), `"version":3`, `"version":2`)
-	v2 = strings.ReplaceAll(v2, `"flag_owner":"",`, "")
-	require.Contains(t, strings.SplitN(v2, "\n", 2)[0], `"version":2`)
+	v1 := strings.ReplaceAll(strings.ReplaceAll(legacySettings, `,"representative_sequence":null`, ""), `"version":2`, `"version":1`)
+	v1 = strings.ReplaceAll(v1, `"flag_owner":"",`, "")
+	require.Contains(t, strings.SplitN(v1, "\n", 2)[0], `"version":1`)
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(v2)))
+	require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(v1)))
 	var sequence int64
 	require.NoError(t, restored.db.QueryRow(`SELECT representative_sequence FROM photo_library_settings`).Scan(&sequence))
 	require.Zero(t, sequence)
@@ -1252,7 +1252,7 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 		{name: "null", wire: "null"},
 		{name: "issued", wire: "7", want: new(int64(7))},
 	} {
-		t.Run("v3/"+sequence.name, func(t *testing.T) {
+		t.Run("v2/"+sequence.name, func(t *testing.T) {
 			stream := strings.ReplaceAll(legacySettings, `"representative_sequence":null`, `"representative_sequence":`+sequence.wire)
 			restored := newTestStore(t)
 			require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(stream)))
@@ -1264,38 +1264,6 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 			require.Equal(t, new("image"), settings.Preference)
 			require.Equal(t, 2, settings.BurstGapSeconds)
 		})
-	}
-	legacyWithSequence := strings.ReplaceAll(legacySettings, `"representative_sequence":null`, `"representative_sequence":1`)
-	for _, field := range []struct {
-		kind  string
-		name  string
-		value string
-	}{
-		{kind: "photo_asset", name: "representative_rank", value: "1"},
-		{kind: "photo_asset", name: "representative_rank", value: "null"},
-		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "4"},
-		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "null"},
-	} {
-		for _, version := range []int{1, 2, 3} {
-			t.Run(fmt.Sprintf("v%d/%s/%s", version, field.name, field.value), func(t *testing.T) {
-				stream := strings.ReplaceAll(legacyWithSequence, `"version":3`, fmt.Sprintf(`"version":%d`, version))
-				if version < 3 {
-					stream = strings.ReplaceAll(stream, `"flag_owner":"",`, "")
-				}
-				kind := fmt.Sprintf(`"type":%q,`, field.kind)
-				stream = strings.ReplaceAll(stream, kind, kind+fmt.Sprintf(`%q:%s,`, field.name, field.value))
-				restored := newTestStore(t)
-				err := restored.ImportMetadata(t.Context(), strings.NewReader(stream))
-				if version == 3 {
-					require.NoError(t, err)
-					return
-				}
-				require.ErrorContains(t, err, field.name+" requires metadata version 3")
-				var assets int
-				require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM photo_assets`).Scan(&assets))
-				require.Zero(t, assets)
-			})
-		}
 	}
 }
 
