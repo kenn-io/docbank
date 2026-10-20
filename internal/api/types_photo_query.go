@@ -106,7 +106,7 @@ type PhotoStack struct {
 }
 
 type PhotoBrowsePage struct {
-	GroupingIncomplete bool             `json:"grouping_incomplete,omitempty" doc:"Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available."`
+	GroupingIncomplete bool             `json:"grouping_incomplete,omitempty" doc:"Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change."`
 	BurstGapSeconds    int              `json:"burst_gap_seconds,omitempty" minimum:"1" maximum:"30"`
 	Stacks             []PhotoStack     `json:"stacks,omitempty" doc:"Bursts among items when stacks were requested; other items are single photos."`
 	MapItems           []PhotoMapRow    `json:"map_items,omitempty"`

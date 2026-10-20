@@ -1049,8 +1049,7 @@
                 onclick={() => void refreshView()}>Refresh previews</Button
               >
               {#if !mapMode && photos.groupingIncomplete}<p role="status">
-                  Some camera details are missing or outdated. Affected photos appear individually;
-                  other stacks remain available.
+                  Some camera details are missing or outdated. Stacks can change once they update.
                 </p>{/if}
               {#if !mapMode}<label class="burst-gap"
                   >Burst gap (seconds) <input

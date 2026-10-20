@@ -3266,7 +3266,7 @@ export interface GroupPhotoStacksResponse {
      * @maximum 30
      */
   burst_gap_seconds: number;
-  /** Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available. */
+  /** Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change. */
   grouping_incomplete?: boolean;
   /** Bursts of two or more submitted photos, in request order; other available photos are single. */
   groups: string[][];
@@ -5771,7 +5771,7 @@ export interface PhotoBrowsePage {
      */
   burst_gap_seconds?: number;
   facets: PhotoBrowsePageFacetsItem[];
-  /** Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available. */
+  /** Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change. */
   grouping_incomplete?: boolean;
   items: PhotoBrowseRow[];
   map_items?: PhotoMapRow[];

@@ -1338,11 +1338,11 @@ func TestPhotoStackIncompleteMetadataScope(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, page.GroupingIncomplete)
 	require.Len(t, page.Items, 3)
-	require.Empty(t, page.Stacks)
+	require.Len(t, page.Stacks, 1)
 	groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, fingerprint)
 	require.NoError(t, err)
 	require.True(t, incomplete)
-	require.Empty(t, groups)
+	require.Equal(t, [][]string{ids}, groups)
 	groups, _, _, incomplete, err = s.PhotoStackGroups(t.Context(), ids[:2], false, fingerprint)
 	require.NoError(t, err)
 	require.False(t, incomplete)
@@ -1353,19 +1353,52 @@ func TestPhotoStackIncompleteMetadataScope(t *testing.T) {
 	require.False(t, page.GroupingIncomplete)
 	require.Len(t, page.Stacks, 1)
 	request.assetIDs = nil
-	request.PageSize = 1
-	pending, err := s.ListPhotoAssets(t.Context(), request, nil)
-	require.NoError(t, err)
-	require.NotNil(t, pending.Next)
 	publish(ids[2])
-	_, err = s.ListPhotoAssets(t.Context(), request, pending.Next)
-	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
-	request.PageSize = 10
-	request.assetIDs = nil
 	page, err = s.ListPhotoAssets(t.Context(), request, nil)
 	require.NoError(t, err)
 	require.False(t, page.GroupingIncomplete)
 	require.Len(t, page.Stacks, 1)
+}
+
+// After an extractor upgrade every stored generation is stale. A burst from
+// one body still stacks, and browsing, Cull grouping, and decisions agree.
+func TestPhotoStackAfterExtractorUpgrade(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic upgraded library")
+	require.NoError(t, err)
+	var ids []string
+	for i := range 4 {
+		stamp := time.Date(2024, 6, 10, 12, 0, i, 0, time.UTC).Format(time.RFC3339)
+		ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shots/frame-%d.jpg", i), stamp, document.SourceMetadataPrecisionSecond,
+			photoMetadataField("image.exif.body_serial_number", "image.exif", "BodySerialNumber", photoString("body-a"))))
+	}
+	fingerprint := browseHash("upgraded-extractor")
+	groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, fingerprint)
+	require.NoError(t, err)
+	require.True(t, incomplete)
+	require.Equal(t, [][]string{ids}, groups)
+	for _, request := range []PhotoBrowseRequest{
+		captureRequest(t, "asc"),
+		{Stacks: true, PageSize: 10, Query: snapshotTestQuery(t, `{"text":"frame","sort":{"field":"relevance","direction":"asc"}}`)},
+	} {
+		request.SourceMetadataFingerprint = fingerprint
+		var found [][]string
+		var cursor *PhotoBrowsePosition
+		for {
+			page, err := s.ListPhotoAssets(t.Context(), request, cursor)
+			require.NoError(t, err)
+			for _, stack := range page.Stacks {
+				found = append(found, stack.AssetIDs)
+			}
+			if cursor = page.Next; cursor == nil {
+				break
+			}
+		}
+		require.Equal(t, [][]string{ids}, found)
+	}
+	_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[1], Decision: "representative", SourceMetadataFingerprint: fingerprint})
+	require.NoError(t, err)
 }
 
 func TestPhotoStackPartialMetadataCandidates(t *testing.T) {
@@ -1407,15 +1440,21 @@ func TestPhotoStackPartialMetadataCandidates(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			expected := [][]string{ids[2:4]}
-			if !test.candidate {
+			// A frame read by an outdated extractor groups as one without a
+			// serial, so it bridges only frames that have none.
+			expected, byRequest := [][]string{ids[2:4]}, [][]string{ids[2:4]}
+			if test.candidate {
+				expected = append([][]string{{ids[0], ids[4], ids[1]}}, expected...)
+				byRequest = append([][]string{{ids[0], ids[1], ids[4]}}, byRequest...)
+			} else {
 				expected = append([][]string{ids[:2]}, expected...)
+				byRequest = append([][]string{ids[:2]}, byRequest...)
 			}
 			groups, unavailable, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, fingerprint)
 			require.NoError(t, err)
 			require.Empty(t, unavailable)
 			require.True(t, incomplete)
-			require.Equal(t, expected, groups)
+			require.Equal(t, byRequest, groups)
 			for _, sort := range []string{"capture_time", "relevance"} {
 				request := PhotoBrowseRequest{Stacks: true, PageSize: 10, SourceMetadataFingerprint: fingerprint, Query: snapshotTestQuery(t, `{"text":"frame","sort":{"field":"`+sort+`","direction":"asc"}}`)}
 				page, err := s.ListPhotoAssets(t.Context(), request, nil)

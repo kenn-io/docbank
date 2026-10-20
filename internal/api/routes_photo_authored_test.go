@@ -156,14 +156,14 @@ func TestPhotoAuthoredReceiptsRetainFlagOwner(t *testing.T) {
 		var grouped api.GroupPhotoStacksResponse
 		require.NoError(t, json.Unmarshal([]byte(body), &grouped))
 		require.Equal(t, incomplete, grouped.GroupingIncomplete)
-		require.Len(t, grouped.Groups, map[bool]int{true: 0, false: 1}[incomplete])
+		require.Len(t, grouped.Groups, 1)
 		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, map[string]any{"query": map[string]any{"sort": map[string]string{"field": "capture_time", "direction": "asc"}}, "stacks": true})
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 		var page api.PhotoBrowsePage
 		require.NoError(t, json.Unmarshal([]byte(body), &page))
 		require.Equal(t, incomplete, page.GroupingIncomplete)
 		require.Len(t, page.Items, 2)
-		require.Len(t, page.Stacks, map[bool]int{true: 0, false: 1}[incomplete])
+		require.Len(t, page.Stacks, 1)
 	}
 	assertGrouping(true)
 	for _, id := range ids {

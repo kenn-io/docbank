@@ -50,7 +50,9 @@ type photoStackFrame struct {
 	Stale            bool
 }
 
-// applyMetadataFingerprint keeps outdated serials out of every grouping path.
+// applyMetadataFingerprint groups a frame read by an outdated extractor as one
+// with a missing serial: it keeps its folder, clock, make, and model, and
+// matches only other missing-serial frames. Every grouping path applies it.
 func (frame *photoStackFrame) applyMetadataFingerprint(actual, expected string) {
 	frame.Stale = expected != "" && actual != expected
 	if frame.Stale {
@@ -114,9 +116,6 @@ func groupPhotoStackFrames(frames []photoStackFrame, gap int) [][]photoStackFram
 func eligiblePhotoStack(frames []photoStackFrame) bool {
 	files := 0
 	for _, frame := range frames {
-		if frame.Stale {
-			return false
-		}
 		files += frame.Files
 	}
 	return len(frames) >= 2 && len(frames) <= MaxPhotoStackFrames && files <= MaxPhotoStackTargets
@@ -316,6 +315,9 @@ type PhotoStackDecision struct {
 	Decision        string
 	CurrentID       string
 	SelectedIDs     []string
+	// SourceMetadataFingerprint is the extractor identity browsing groups
+	// under, so a decision revalidates the stack that was shown.
+	SourceMetadataFingerprint string
 }
 
 // DecidePhotoStack applies one decision to an observed stack in one
@@ -349,7 +351,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		}
 		// Only the observed query or frozen run defines membership, so unseen
 		// neighboring imports stay untouched.
-		found, err := photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, "")
+		found, err := photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
 		if err != nil {
 			return err
 		}
@@ -764,7 +766,6 @@ func (p *photoStackPager) classify(ctx context.Context, row PhotoBrowseRow) ([]p
 		return nil, err
 	}
 	if component.ineligible || len(component.frames) == 1 {
-		frame.Stale = frame.Stale || slices.ContainsFunc(component.frames, func(member photoStackFrame) bool { return member.Stale })
 		return []photoStackFrame{frame}, nil
 	}
 	first := slices.MinFunc(component.frames, p.compare)
@@ -821,8 +822,8 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 	}
 	page.Items, page.Stacks = make([]PhotoBrowseRow, 0, len(ids)+len(groups)), []PhotoStack{}
 	for _, group := range groups {
+		page.GroupingIncomplete = page.GroupingIncomplete || slices.ContainsFunc(group, func(frame photoStackFrame) bool { return frame.Stale })
 		if len(group) == 1 {
-			page.GroupingIncomplete = page.GroupingIncomplete || group[0].Stale
 			page.Items = append(page.Items, scanned[group[0].AssetID])
 			continue
 		}

@@ -7492,7 +7492,7 @@ components:
           minimum: 1
           type: integer
         grouping_incomplete:
-          description: Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available.
+          description: Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change.
           type: boolean
         groups:
           description: Bursts of two or more submitted photos, in request order; other available photos are single.
@@ -12543,7 +12543,7 @@ components:
             type: object
           type: array
         grouping_incomplete:
-          description: Photos with stale source metadata and their candidate bursts appear individually; other stacks remain available.
+          description: Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change.
           type: boolean
         items:
           items:

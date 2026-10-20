@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -46,7 +47,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 	// Bound 500 observed frames and 2,000 file revisions.
 	huma.Register(api, huma.Operation{OperationID: "decidePhotoStack", Method: http.MethodPost, Path: "/api/v1/photos/authored/stack", Summary: "Decide one observed stack atomically", MaxBodyBytes: 576 << 10}, func(ctx context.Context, in *struct{ Body PhotoStackDecisionRequest }) (*struct{ Body store.PhotoAuthoredReceipt }, error) {
 		body := in.Body
-		request := store.PhotoStackDecision{BurstGapSeconds: body.BurstGapSeconds, Hidden: body.Hidden, AssetIDs: body.AssetIDs, Targets: body.Targets, Decision: body.Decision, CurrentID: body.CurrentID, SelectedIDs: body.SelectedIDs}
+		request := store.PhotoStackDecision{BurstGapSeconds: body.BurstGapSeconds, Hidden: body.Hidden, AssetIDs: body.AssetIDs, Targets: body.Targets, Decision: body.Decision, CurrentID: body.CurrentID, SelectedIDs: body.SelectedIDs, SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint}
 		var result store.PhotoAuthoredReceipt
 		err := g.mutate(func() error {
 			var callErr error

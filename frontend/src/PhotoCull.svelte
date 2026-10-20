@@ -461,8 +461,7 @@
         <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
       </header>
       {#if cull.run?.groupingIncomplete}<p role="status">
-          Some camera details are missing or outdated. Affected photos appear individually; other
-          stacks remain available.
+          Some camera details are missing or outdated. Stacks can change once they update.
           <Button
             size="sm"
             disabled={busy || cull.busy || cull.stale || cull.stackLoading}

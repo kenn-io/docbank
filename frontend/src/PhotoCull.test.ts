@@ -1141,7 +1141,7 @@ it("keeps a frame the pass excludes out of the stack that Keep all decides", asy
   expect(decide.mock.calls[0]![0]).toMatchObject({ asset_ids: pass, decision: "all" });
 });
 
-it("keeps individual decisions available while camera details pause stacks", async () => {
+it("keeps individual decisions available while camera details update", async () => {
   const { cull } = await reviewPhoto();
   await act(() => {
     cull.run = { ...cull.run!, groups: [], burstGapSeconds: 2, groupingIncomplete: true };

@@ -7,9 +7,7 @@ import { photoFixture, repository } from "./photo-fixture.js";
 const output = process.env.DOCBANK_STACKS_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_STACKS_SCREENSHOT_DIR enables synthetic burst proof");
 
-test("keeps healthy stacks usable while one candidate burst has stale camera details", async ({
-  page,
-}) => {
+test("stacks a burst whose camera details are stale beside current ones", async ({ page }) => {
   test.setTimeout(300_000);
   await mkdir(path.join(repository, ".superpowers"), { recursive: true });
   const workspace = await mkdtemp(path.join(repository, ".superpowers", "partial-stack-proof-"));
@@ -28,12 +26,12 @@ test("keeps healthy stacks usable while one candidate burst has stale camera det
     const result = await response.json();
     expect(result.grouping_incomplete).toBe(true);
     expect(result.items).toHaveLength(12);
-    expect(result.stacks).toHaveLength(3);
-    await expect(page.locator(".photo-cell")).toHaveCount(6);
-    await expect(page.getByRole("button", { name: "Expand stack of 3 photos" })).toHaveCount(3);
+    expect(result.stacks).toHaveLength(4);
+    await expect(page.locator(".photo-cell")).toHaveCount(4);
+    await expect(page.getByRole("button", { name: "Expand stack of 3 photos" })).toHaveCount(4);
     await expect(
       page.getByText(
-        "Some camera details are missing or outdated. Affected photos appear individually; other stacks remain available.",
+        "Some camera details are missing or outdated. Stacks can change once they update.",
       ),
     ).toBeVisible();
     await page.locator(".photo-image").first().click();
