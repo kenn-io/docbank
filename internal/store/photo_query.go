@@ -252,10 +252,8 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
-			if request.Stacks {
-				if err := groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds, request.SourceMetadataFingerprint); err != nil {
-					return err
-				}
+			if err := markSuggestionOnlyMatches(ctx, q, compiled, generation.ID, coverage, request.Hidden, page.Items); err != nil {
+				return err
 			}
 			return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 		}
@@ -328,7 +326,7 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
-			items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing}, false)
+			items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing})
 			if err != nil {
 				return err
 			}
@@ -342,7 +340,7 @@ func (s *Store) ListPhotoAssets(
 		if err != nil {
 			return err
 		}
-		if err := markSuggestionOnlyMatches(ctx, q, compiled, page.Items); err != nil {
+		if err := markSuggestionOnlyMatches(ctx, q, compiled, generation.ID, coverage, request.Hidden, page.Items); err != nil {
 			return err
 		}
 		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
@@ -519,39 +517,47 @@ func photoTextOperands(compiled CompiledQuery) (names, content string) {
 	return strings.Join(all, " OR "), strings.Join(retained, " OR ")
 }
 
-// markSuggestionOnlyMatches gives rows of a sorted page the mark relevance order
-// computes: the best text evidence for the photo is a pending suggestion.
-func markSuggestionOnlyMatches(ctx context.Context, q metadataQuerier, compiled CompiledQuery, items []PhotoBrowseRow) error {
-	names, content := photoTextOperands(compiled)
-	if content == "" || len(items) == 0 {
+// markSuggestionOnlyMatches marks the rows of a page that match the whole
+// query only because of a pending suggestion: they drop out when the query
+// is evaluated without suggestion text.
+func markSuggestionOnlyMatches(
+	ctx context.Context, q metadataQuerier, compiled CompiledQuery,
+	generation string, coverage CoverageSelection, hidden bool, items []PhotoBrowseRow,
+) error {
+	if _, content := photoTextOperands(compiled); content == "" || len(items) == 0 {
 		return nil
 	}
-	candidates, err := photoEvidenceCandidates(names, content)
+	compiled.withoutSuggestion = true
+	scope, err := newPhotoBrowseScope(ctx, q, compiled, generation, coverage, hidden)
 	if err != nil {
 		return err
 	}
-	args := candidates.Args
-	for _, item := range items {
-		args = append(args, item.NodeID)
+	args := make([]any, len(items))
+	for i, item := range items {
+		args[i] = item.AssetID
 	}
-	rows, err := q.QueryContext(ctx, `SELECT node_id FROM (`+candidates.SQL+`) WHERE node_id IN (`+placeholders(len(items))+`) GROUP BY node_id HAVING MAX(tier)=3`, args...)
+	statement, args, err := scope.bind(`SELECT a.asset_id FROM photo_assets a WHERE `+scope.match.sql+` AND a.asset_id IN (`+placeholders(len(items))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	rows, err := q.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	marked := map[int64]bool{}
+	plain := map[string]bool{}
 	for rows.Next() {
-		var nodeID int64
-		if err := rows.Scan(&nodeID); err != nil {
+		var assetID string
+		if err := rows.Scan(&assetID); err != nil {
 			return err
 		}
-		marked[nodeID] = true
+		plain[assetID] = true
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	for i := range items {
-		items[i].MatchedAISuggestion = marked[items[i].NodeID]
+		items[i].MatchedAISuggestion = !plain[items[i].AssetID]
 	}
 	return nil
 }
@@ -584,7 +590,7 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 		order = "ASC"
 	}
 	orderBy := `member.tier ` + order + `,member.score ` + order + `,COALESCE(pl.sort_key,'') DESC,member.asset_id ASC`
-	projection := photoBrowseSelect + `,'',member.tier=3`
+	projection := photoBrowseSelect + `,''`
 	if snapshot {
 		projection = `n.id node_id,v.version_id content_version_id,a.asset_id,row_number() OVER (ORDER BY ` + orderBy + `) photo_position`
 	}
@@ -613,15 +619,14 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	if err != nil {
 		return nil, err
 	}
-	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{}, true)
+	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
 }
 
 var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,f.rating,f.flag,` +
 	// Set only when the file's mtime, not a capture date, placed the photo.
 	`pl.modified_time,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,` + photoStackCameraColumns + `,COALESCE(mg.extractor_fingerprint,''),` + photoTechnicalSelect
 
-// scanPhotoBrowseRows reads relevance rows, which end with the suggestion mark, when ranked.
-func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition, ranked bool) ([]PhotoBrowseRow, error) {
+func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoBrowseRow, error) {
 	defer func() { _ = rows.Close() }()
 	result := make([]PhotoBrowseRow, 0)
 	for rows.Next() {
@@ -629,9 +634,6 @@ func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition, ranked bo
 		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.Rating, &row.Flag, &row.FileModifiedTime, &row.folderKey, &row.cameraMake, &row.cameraModel, &row.bodySerialNumber, &row.metadataFingerprint}
 		dest = append(dest, row.Fields.columnPointers()...)
 		dest = append(dest, &row.position.Key)
-		if ranked {
-			dest = append(dest, &row.MatchedAISuggestion)
-		}
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}

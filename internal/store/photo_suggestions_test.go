@@ -238,6 +238,28 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.False(t, page.Items[0].MatchedAISuggestion, "a file name match wins over suggestion text")
 }
 
+func TestPhotoSuggestionMarkFollowsWholeQuery(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	split := albumAsset(t, s, "split.jpg")
+	owned := albumAsset(t, s, "owned-both.jpg")
+	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{split.ID}}), Patch: PhotoAuthoredPatch{Caption: new("harbor")}})
+	require.NoError(t, err)
+	putPhotoSuggestion(t, s, split, document.PhotoDescription{Tags: []string{"boat"}})
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{owned.ID}}), Patch: PhotoAuthoredPatch{Caption: new("harbor boat")}})
+	require.NoError(t, err)
+	putPhotoSuggestion(t, s, owned, document.PhotoDescription{VisibleText: "boat"})
+
+	for _, field := range []string{"relevance", "name", "capture_time"} {
+		page := browsePhotoPage(t, s, fmt.Sprintf(`{"syntax":"advanced","text":"harbor AND boat","sort":{"field":%q,"direction":"desc"}}`, field))
+		require.Len(t, page.Items, 2, field)
+		for _, item := range page.Items {
+			require.Equal(t, item.AssetID == split.ID, item.MatchedAISuggestion, "only the photo that needs its suggestion to match the whole query carries the mark: %s", field)
+		}
+	}
+}
+
 func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
