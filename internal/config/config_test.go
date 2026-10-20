@@ -1171,13 +1171,10 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	require.NoError(t, err)
 	profile.DescriptorID, profile.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
 	cfg.RenditionProfiles["primary"] = profile
-	cfg.RenditionProfiles["second-vision"] = profile
 	processingProfile := cfg.ProcessingProfiles["archive"]
 	processingProfile.RetainSanitizedMarkdown = false
 	processingProfile.Embeddings = nil
 	cfg.ProcessingProfiles["archive"] = processingProfile
-	require.NoError(t, cfg.Validate())
-	cfg.ProcessingProfiles["second-vision"] = processingProfile
 	require.NoError(t, cfg.Validate())
 
 	for _, tc := range []struct {

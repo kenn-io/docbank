@@ -49,35 +49,3 @@ func TestPhotoSuggestionRoutesValidateResponseAndPassHiddenCookie(t *testing.T) 
 	require.NoError(t, json.Unmarshal([]byte(body), &accepted))
 	require.Contains(t, accepted, "authored_receipt")
 }
-
-func TestPhotoSuggestionResponsesCarryRevisionsForTheNextAcceptance(t *testing.T) {
-	t.Parallel()
-	ctx := t.Context()
-	ts, s := newTestServer(t, nil)
-	hash, size, err := s.Blobs.Write(bytes.NewReader(mediatest.JPEG(8, 8, color.White)))
-	require.NoError(t, err)
-	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,created_at) VALUES(?,?,?,?,?,?,'2026-01-01T00:00:00Z')`, uuid.New().String(), node.CurrentVersionID, strings.Repeat("a", 64), "A harbor.", `["coast","sunset"]`, "")
-	require.NoError(t, err)
-	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
-	require.NoError(t, err)
-	current := prepared.Suggestions[0]
-
-	// Each request uses only the revisions the previous response returned.
-	for _, request := range []store.PhotoSuggestionResponse{
-		{Response: "accepted", Caption: true},
-		{Response: "accepted", Tags: []string{"coast"}},
-		{Response: "accepted", Tags: []string{"sunset"}},
-	} {
-		request.SourceRevision, request.NodeRevision = current.SourceRevision, current.NodeRevision
-		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+current.ID+"/response", nil, request)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		require.NoError(t, json.Unmarshal([]byte(body), &current))
-	}
-}

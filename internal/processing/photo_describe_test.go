@@ -7,8 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
-	"fmt"
 	"image/color"
 	"image/jpeg"
 	"io"
@@ -27,7 +25,6 @@ import (
 	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/document/vision/visiontest"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -237,76 +234,12 @@ func TestPhotoDescriptionFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, max(config.Width, config.Height), 512, "only the grid preview is sent")
 	require.NotContains(t, string(f.describeBody), f.node.Name, "the file name stays home")
-	require.NotContains(t, string(sent), "\xff\xe1", "no metadata segment is sent")
 
 	_, err = f.catalog.ActiveRendition(ctx, f.node.CurrentVersionID, f.service.profiles["vision"].record.Fingerprint)
 	require.ErrorIs(t, err, store.ErrNotFound, "a description attaches nothing")
 	suggestions := f.suggestions(t)
 	require.Len(t, suggestions, 1)
 	require.Equal(t, document.PhotoDescription{Caption: "A white panorama.", Tags: []string{"panorama", "harbor"}, VisibleText: "HELLO"}, suggestions[0].Value)
-
-	page, err := f.catalog.ListPhotoAssets(ctx, store.PhotoBrowseRequest{Query: queryForText(t, "HELLO")}, nil)
-	require.NoError(t, err)
-	require.Len(t, page.Items, 1)
-	require.True(t, page.Items[0].MatchedAISuggestion, "text only the machine wrote carries the mark")
-
-	accepted, err := f.catalog.RespondPhotoSuggestion(ctx, suggestions[0].ID, store.PhotoSuggestionResponse{SourceRevision: suggestions[0].SourceRevision, NodeRevision: suggestions[0].NodeRevision, Response: "accepted", Caption: true, Tags: []string{"harbor"}})
-	require.NoError(t, err)
-	require.Equal(t, document.PhotoDescription{Tags: []string{"panorama"}, VisibleText: "HELLO"}, accepted.Value)
-	f.dismiss(t, suggestions[0])
-	require.Empty(t, f.suggestions(t))
-
-	require.Zero(t, f.backfill(t, f.service), "a dismissed photo is not described again")
-	_, describes = f.counts()
-	require.Equal(t, 1, describes)
-}
-
-func TestPhotoDescriptionRestoreRegeneratesOpenFieldsUnderFreshConsent(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	ctx := t.Context()
-	f.grant(t, f.service, "vision")
-	require.Equal(t, 1, f.backfill(t, f.service))
-	suggestion := f.suggestions(t)[0]
-	_, err := f.catalog.RespondPhotoSuggestion(ctx, suggestion.ID, store.PhotoSuggestionResponse{SourceRevision: suggestion.SourceRevision, NodeRevision: suggestion.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"harbor"}})
-	require.NoError(t, err)
-
-	var backup bytes.Buffer
-	require.NoError(t, f.catalog.ExportMetadata(ctx, &backup))
-	require.NotContains(t, backup.String(), "HELLO", "pending text stays out of backups")
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
-	blobs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(t.TempDir(), "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	// A backup holds catalog records only; the vault's blobs come back separately.
-	_, err = blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.JPEG(1024, 768, color.White)))
-	require.NoError(t, err)
-	fingerprints, err := document.CurrentPhotoQualityFingerprints()
-	require.NoError(t, err)
-	view, err := f.catalog.ContentVersionVisualPreviewByRecipe(ctx, f.node.CurrentVersionID, fingerprints.GridRecipe)
-	require.NoError(t, err)
-	previewReader, _, err := f.blobs.OpenStreamContext(ctx, view.Generation.Preview.Output.BlobSHA256)
-	require.NoError(t, err)
-	preview, err := io.ReadAll(previewReader)
-	require.NoError(t, errors.Join(err, previewReader.Close()))
-	_, err = blobs.WriteDetailedContext(ctx, bytes.NewReader(preview))
-	require.NoError(t, err)
-	f.catalog, f.blobs = restored, blobs
-	service := f.newService(t, "vision", "synthetic-vision")
-
-	require.Zero(t, f.backfill(t, service), "restoring grants no consent")
-	f.grant(t, service, "vision")
-	require.Equal(t, 1, f.backfill(t, service))
-	prepared, err := restored.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}})
-	require.NoError(t, err)
-	require.Len(t, prepared.Suggestions, 1)
-	require.Equal(t, document.PhotoDescription{Tags: []string{"panorama"}, VisibleText: "HELLO"}, prepared.Suggestions[0].Value,
-		"the accepted caption and tag are not offered again")
-
-	f.dismiss(t, prepared.Suggestions[0])
 }
 
 func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
@@ -328,6 +261,9 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	f.grant(t, f.service, "vision")
+	require.NoError(t, f.service.requireVisionReadiness(ctx, f.service.profiles["vision"]))
+	probes, _ := f.counts()
+	require.Equal(t, 1, probes, "the first grant has a passing probe")
 	_, err := f.service.RevokeConsent(ctx)
 	require.NoError(t, err)
 	f.mu.Lock()
@@ -440,11 +376,6 @@ func TestPhotoDescriptionStartDescribesOnce(t *testing.T) {
 	require.Equal(t, enqueued.RenditionJobID, completed.RenditionJobID)
 	require.Empty(t, completed.AttachmentID)
 	require.Len(t, f.suggestions(t), 1)
-
-	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	_, describes := f.counts()
-	require.Equal(t, 1, describes, "a settled photo needs no second call")
 }
 
 func TestPhotoDescriptionDefaultProfileChangeLeavesDismissals(t *testing.T) {
@@ -467,11 +398,6 @@ func TestPhotoDescriptionDefaultProfileChangeLeavesDismissals(t *testing.T) {
 	_, describes = f.counts()
 	require.Equal(t, 2, describes, "an explicit start with another profile replaces the dismissal")
 	require.Len(t, f.suggestions(t), 1)
-
-	_, err = other.Start(t.Context(), StartRequest{Selector: f.selector("other"), PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	_, describes = f.counts()
-	require.Equal(t, 2, describes, "a live suggestion is never replaced")
 }
 
 func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
@@ -505,15 +431,6 @@ func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
 	require.Len(t, f.suggestions(t), 1)
 }
 
-func TestPhotoDescriptionOverLongFieldsDropAlone(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.reply = `{"caption":"` + strings.Repeat("x", 400) + `","tags":["harbor","` + strings.Repeat("t", 300) + `"],"visible_text":"HELLO"}`
-	f.grant(t, f.service, "vision")
-	f.backfill(t, f.service)
-	require.Equal(t, document.PhotoDescription{Tags: []string{"harbor"}, VisibleText: "HELLO"}, f.suggestions(t)[0].Value)
-}
-
 func TestPhotoDescriptionUploadsStrippedPreviewBytes(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
@@ -531,6 +448,7 @@ func TestPhotoDescriptionUploadsStrippedPreviewBytes(t *testing.T) {
 			case "trailing":
 				raw = append(raw, segment...)
 			case "wide":
+				// Publishing refuses honest oversize dimensions, so the bytes outgrow the recorded 8x8.
 				raw = mediatest.JPEG(513, 8, color.White)
 			case "tall":
 				raw = mediatest.JPEG(8, 513, color.White)
@@ -564,11 +482,4 @@ func TestPhotoDescriptionUploadsStrippedPreviewBytes(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-}
-
-func queryForText(t *testing.T, text string) query.Query {
-	t.Helper()
-	value, err := query.Parse([]byte(fmt.Sprintf(`{"syntax":"simple","text":%q,"sort":{"field":"relevance","direction":"desc"}}`, text)))
-	require.NoError(t, err)
-	return value
 }

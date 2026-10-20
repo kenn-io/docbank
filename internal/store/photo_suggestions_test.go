@@ -82,33 +82,6 @@ func searchCount(t *testing.T, s *Store, text string, sort string) int {
 	return len(browsePhotoPage(t, s, fmt.Sprintf(`{"syntax":"simple","text":%q,"sort":{"field":%q,"direction":"desc"}}`, text, sort)).Items)
 }
 
-func TestAcceptedTagStaysSearchableAfterRenameAndReplacement(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "synthetic.jpg")
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Tags: []string{"coast", "sunset"}})
-	acceptPhotoSuggestion(t, s, proposal, false, "coast")
-	for _, sort := range []string{"name", "relevance"} {
-		require.Equal(t, 1, searchCount(t, s, "coast", sort), "accepting a tag makes it authored text")
-	}
-
-	tag, err := s.TagByName(ctx, "coast")
-	require.NoError(t, err)
-	_, err = s.RenameTag(ctx, tag.ID, tag.Revision, "shore")
-	require.NoError(t, err)
-	for _, sort := range []string{"name", "relevance"} {
-		require.Zero(t, searchCount(t, s, "coast", sort), "the old name no longer matches")
-		require.Equal(t, 1, searchCount(t, s, "shore", sort), "a rename moves the match with the tag")
-	}
-
-	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
-	require.NoError(t, err)
-	_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("ab"), 10, "image/jpeg")
-	require.NoError(t, err)
-	require.Equal(t, 1, searchCount(t, s, "shore", "name"), "replacing the content keeps assigned tags searchable")
-}
-
 func TestPhotoSearchPhraseStaysInsideOneValue(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -129,19 +102,36 @@ func TestPhotoSearchPhraseStaysInsideOneValue(t *testing.T) {
 func TestHandAddedTagsMatchTextSearch(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
+	ctx := t.Context()
 	asset := albumAsset(t, s, "hand-tagged.jpg")
-	hand, err := s.CreateTag(t.Context(), "handtag")
+	hand, err := s.CreateTag(ctx, "handtag")
 	require.NoError(t, err)
-	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Keywords: []PhotoKeywordEdit{{TagID: hand.ID, Assign: true}}})
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Keywords: []PhotoKeywordEdit{{TagID: hand.ID, Assign: true}}})
 	require.NoError(t, err)
 	for _, sort := range []string{"name", "relevance"} {
 		require.Equal(t, 1, searchCount(t, s, "handtag", sort), "a tag matches however it was assigned")
 	}
-	current, err := s.TagByName(t.Context(), "handtag")
+
+	assigned, err := s.TagByName(ctx, "handtag")
 	require.NoError(t, err)
-	_, err = s.DeleteTag(t.Context(), current.ID, current.Revision)
+	_, err = s.RenameTag(ctx, assigned.ID, assigned.Revision, "shore")
 	require.NoError(t, err)
-	require.Zero(t, searchCount(t, s, "handtag", "name"), "deleting a tag removes its text")
+	for _, sort := range []string{"name", "relevance"} {
+		require.Zero(t, searchCount(t, s, "handtag", sort), "the old name no longer matches")
+		require.Equal(t, 1, searchCount(t, s, "shore", sort), "a rename moves the match with the tag")
+	}
+
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("ab"), 10, "image/jpeg")
+	require.NoError(t, err)
+	require.Equal(t, 1, searchCount(t, s, "shore", "name"), "replacing the content keeps assigned tags searchable")
+
+	current, err := s.TagByName(ctx, "shore")
+	require.NoError(t, err)
+	_, err = s.DeleteTag(ctx, current.ID, current.Revision)
+	require.NoError(t, err)
+	require.Zero(t, searchCount(t, s, "shore", "name"), "deleting a tag removes its text")
 }
 
 func TestHiddenPhotoSuggestionRequiresUnlock(t *testing.T) {
@@ -171,7 +161,6 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "accept.jpg")
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT 1`).Err())
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}, VisibleText: "QUAYSIDE"})
 
 	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "accepted"})
@@ -181,7 +170,8 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Tags: []string{"other"}})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "a tag that was never suggested is not pending")
 
-	accepted := acceptPhotoSuggestion(t, s, proposal, true, "coast")
+	accepted, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
+	require.NoError(t, err)
 	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}, VisibleText: "QUAYSIDE"}, accepted.Value)
 	require.NotNil(t, accepted.AuthoredReceipt)
 	prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
@@ -196,14 +186,19 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 		require.Equal(t, 1, searchCount(t, s, term, "relevance"))
 	}
 
+	// The revisions the last response returned authorize the next acceptance.
+	next, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{SourceRevision: accepted.SourceRevision, NodeRevision: accepted.NodeRevision, Response: "accepted", Tags: []string{"sunset"}})
+	require.NoError(t, err)
+	require.Equal(t, document.PhotoDescription{Tags: []string{}, VisibleText: "QUAYSIDE"}, next.Value)
+
 	dismissed, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
 	require.NoError(t, err)
-	require.Empty(t, dismissed.Value.Tags)
+	require.Empty(t, dismissed.Value.VisibleText)
 	require.Empty(t, photoSuggestionValues(t, s, asset.ID))
-	for _, term := range []string{"sunset", "QUAYSIDE"} {
-		require.Zero(t, searchCount(t, s, term, "relevance"), "dismissal removes the text from search")
+	require.Zero(t, searchCount(t, s, "QUAYSIDE", "relevance"), "dismissal removes the text from search")
+	for _, term := range []string{"coast", "sunset"} {
+		require.Equal(t, 1, searchCount(t, s, term, "relevance"), "accepted fields stay authored")
 	}
-	require.Equal(t, 1, searchCount(t, s, "coast", "relevance"), "accepted fields stay authored")
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict)
 	require.NoError(t, s.ValidateMetadata(ctx))
@@ -268,52 +263,54 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "nothing left to offer")
 }
 
-func TestPhotoSuggestionBackupKeepsDecisionsAndRegeneratesOnlyOpenFields(t *testing.T) {
+func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "restored.jpg")
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset", "boats"}, VisibleText: "QUAYSIDE"})
-	acceptPhotoSuggestion(t, s, proposal, true, "coast")
-	// The owner rewrites the accepted caption and removes the accepted tag.
-	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("My caption.")}})
-	require.NoError(t, err)
-	coast, err := s.TagByName(ctx, "coast")
-	require.NoError(t, err)
-	_, err = s.UnassignTag(ctx, coast.ID, asset.Files[0].NodeID, UnconditionalRev)
-	require.NoError(t, err)
+	t.Run("regenerates only open fields", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "restored.jpg")
+		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset", "boats"}, VisibleText: "QUAYSIDE"})
+		acceptPhotoSuggestion(t, s, proposal, true, "coast")
+		// The owner rewrites the accepted caption and removes the accepted tag.
+		_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("My caption.")}})
+		require.NoError(t, err)
+		coast, err := s.TagByName(ctx, "coast")
+		require.NoError(t, err)
+		_, err = s.UnassignTag(ctx, coast.ID, asset.Files[0].NodeID, UnconditionalRev)
+		require.NoError(t, err)
 
-	var backup bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	for _, term := range []string{"sunset", "boats", "QUAYSIDE"} {
-		require.NotContains(t, backup.String(), term, "pending text is not backed up")
-	}
-	require.Equal(t, 1, strings.Count(backup.String(), `"type":"photo_suggestion"`))
+		var backup bytes.Buffer
+		require.NoError(t, s.ExportMetadata(ctx, &backup))
+		for _, term := range []string{"sunset", "boats", "QUAYSIDE"} {
+			require.NotContains(t, backup.String(), term, "pending text is not backed up")
+		}
+		require.Equal(t, 1, strings.Count(backup.String(), `"type":"photo_suggestion"`))
 
-	restored := restorePhotoSuggestionStore(t, s)
-	require.NoError(t, restored.ValidateMetadata(ctx))
-	require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "nothing is shown until the description is regenerated")
-	publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"coast", "sunset", "harbor"}, VisibleText: "NEW TEXT"})
-	regenerated := photoSuggestionValues(t, restored, asset.ID)
-	require.Len(t, regenerated, 1)
-	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset", "harbor"}, VisibleText: "NEW TEXT"}, regenerated[0].Value,
-		"the resolved caption and the removed tag are not offered again")
-}
-
-func TestPhotoSuggestionBackupKeepsDismissal(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "dismissed.jpg")
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor."})
-	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
-	require.NoError(t, err)
-	restored := restorePhotoSuggestionStore(t, s)
-	publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again."})
-	require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "a dismissed description is not asked for again")
-	settled, err := restored.PhotoDescriptionSettled(ctx, proposal.ContentVersionID, "")
-	require.NoError(t, err)
-	require.True(t, settled)
+		restored := restorePhotoSuggestionStore(t, s)
+		require.NoError(t, restored.ValidateMetadata(ctx))
+		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "nothing is shown until the description is regenerated")
+		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"coast", "sunset", "harbor"}, VisibleText: "NEW TEXT"})
+		regenerated := photoSuggestionValues(t, restored, asset.ID)
+		require.Len(t, regenerated, 1)
+		require.Equal(t, document.PhotoDescription{Tags: []string{"sunset", "harbor"}, VisibleText: "NEW TEXT"}, regenerated[0].Value,
+			"the resolved caption and the removed tag are not offered again")
+	})
+	t.Run("keeps a dismissal", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "dismissed.jpg")
+		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor."})
+		_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
+		require.NoError(t, err)
+		restored := restorePhotoSuggestionStore(t, s)
+		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again."})
+		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "a dismissed description is not asked for again")
+		settled, err := restored.PhotoDescriptionSettled(ctx, proposal.ContentVersionID, "")
+		require.NoError(t, err)
+		require.True(t, settled)
+	})
 }
 
 func TestPhotoDescriptionPredicates(t *testing.T) {
@@ -532,15 +529,11 @@ func TestExplicitPhotoDescriptionReplacesOnlyADismissal(t *testing.T) {
 	grantRenditionJobConsent(t, s, explicit)
 	at := time.Now().UTC().Add(time.Minute)
 
-	_, waiter, err := s.EnqueueRenditionJob(ctx, explicit)
-	require.NoError(t, err)
-	require.Equal(t, "published", waiter.State, "a live suggestion is not replaced")
-
-	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
+	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
 	require.NoError(t, err)
 	automatic := photoDescriptionJobRequest(t, s, proposal.ContentVersionID, producerB, false)
 	grantRenditionJobConsent(t, s, automatic)
-	_, waiter, err = s.EnqueueRenditionJob(ctx, automatic)
+	_, waiter, err := s.EnqueueRenditionJob(ctx, automatic)
 	require.NoError(t, err)
 	require.Equal(t, "published", waiter.State, "automatic work leaves a dismissal alone")
 

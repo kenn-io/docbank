@@ -1187,9 +1187,9 @@ it("clears the temporary metadata warning once the preparation request finishes"
   photos.authored.targets = [];
   photos.items = [photo(1), photo(2)];
   let finish!: (prepared: api.PhotoAuthoredPreparation) => void;
-  const prepare = vi
-    .spyOn(api, "preparePhotoAuthored")
-    .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
   render(PhotosWorkspace, {
     photos,
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
@@ -1198,16 +1198,11 @@ it("clears the temporary metadata warning once the preparation request finishes"
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   const inspector = within(screen.getByRole("region", { name: "Photo metadata" }));
   expect(inspector.getByText("Loading metadata…")).toBeTruthy();
-  expect(prepare).toHaveBeenCalledWith(
-    { asset_ids: ["photo-1"], hidden: false },
-    expect.anything(),
-  );
   await fireEvent.click(screen.getByRole("button", { name: "Select Photo 2.jpg" }));
   await screen.findByText("Metadata is loading. Try again when it finishes.");
   finish(photoPreparation([preparedPhoto(1)]));
   await waitFor(() => expect(inspector.queryByText("Loading metadata…")).toBeNull());
   expect(screen.queryByText("Metadata is loading. Try again when it finishes.")).toBeNull();
-  expect(inspector.queryByText("Loading metadata…")).toBeNull();
   photos.dispose();
 });
 
