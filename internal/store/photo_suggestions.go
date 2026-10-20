@@ -9,6 +9,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -105,8 +106,14 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 	if description.Caption == authored {
 		description.Caption = ""
 	}
-	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return slices.Contains(assigned, tag) })
+	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return containsFold(assigned, tag) })
 	return true, nil
+}
+
+// containsFold reports whether names has tag, ignoring case. Tags differing only
+// in case are distinct stored values, but the owner reads them as one keyword.
+func containsFold(names []string, tag string) bool {
+	return slices.ContainsFunc(names, func(name string) bool { return strings.EqualFold(name, tag) })
 }
 
 // publishPhotoSuggestionTx stores a provider's description for a version
@@ -139,7 +146,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	if captionResolved {
 		description.Caption = ""
 	}
-	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return slices.Contains(resolved, tag) })
+	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return containsFold(resolved, tag) })
 	tags, err := json.Marshal(description.Tags)
 	if err != nil {
 		return err

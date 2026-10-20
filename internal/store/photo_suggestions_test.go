@@ -288,7 +288,7 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "owned.jpg")
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}})
+	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
 
 	tag, err := s.CreateTag(ctx, "coast")
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	require.NoError(t, err)
 	offered := photoSuggestionValues(t, s, asset.ID)
 	require.Len(t, offered, 1)
-	require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"sunset"}}, offered[0].Value, "a tag assigned by hand is no longer offered")
+	require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"sunset"}}, offered[0].Value, "a tag assigned by hand is no longer offered, whatever its case")
 
 	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}})
 	require.NoError(t, err)
@@ -405,11 +405,11 @@ func TestPhotoDescriptionSkipsFieldsAlreadyAuthored(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}, Keywords: []PhotoKeywordEdit{{TagID: tag.ID, Assign: true}}})
 	require.NoError(t, err)
-	publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}})
+	publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
 	var caption, tags string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions`).Scan(&caption, &tags))
 	require.Empty(t, caption, "the stored suggestion leaves out the authored caption")
-	require.JSONEq(t, `["sunset"]`, tags, "the stored suggestion leaves out the assigned tag")
+	require.JSONEq(t, `["sunset"]`, tags, "the stored suggestion leaves out the assigned tag, whatever its case")
 }
 
 // photoDescriptionJobRequest builds the queue request a description job
