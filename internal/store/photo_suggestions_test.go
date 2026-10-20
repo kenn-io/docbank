@@ -404,7 +404,7 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		require.Len(t, regenerated, 1)
 		require.Equal(t, document.PhotoDescription{Tags: []string{"coast", "sunset"}}, regenerated[0].Value, "the resolved caption stays resolved")
 	})
-	t.Run("keeps a dismissal when another producer's restored row regenerates", func(t *testing.T) {
+	t.Run("keeps another producer's unresolved fields awaiting past a dismissed producer", func(t *testing.T) {
 		t.Parallel()
 		s := newTestStore(t)
 		ctx := t.Context()
@@ -419,16 +419,26 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 
 		restored := restorePhotoSuggestionStore(t, s)
 		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again.", Tags: []string{"coast", "sunset", "boats"}})
-		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "A's dismissal stands, so A's fresh text is not offered")
-		var dismissed int
-		require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_suggestions WHERE producer_fingerprint=? AND dismissed`, producerA).Scan(&dismissed))
-		require.Equal(t, 1, dismissed, "A's dismissal survives the regeneration")
-		require.NoError(t, restored.ValidateMetadata(ctx))
-		for _, producer := range []string{"", producerA, producerB} {
-			settled, err := restored.photoDescriptionSettled(ctx, first.ContentVersionID, producer)
+		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "A is dismissed on this photo, so its publish does nothing")
+		for _, tc := range []struct {
+			producer string
+			explicit bool
+			settled  bool
+		}{{producerA, false, true}, {producerA, true, true}, {producerB, false, false}, {producerB, true, false}} {
+			settled, err := restored.photoDescriptionSettled(ctx, first.ContentVersionID, tc.producer, tc.explicit)
 			require.NoError(t, err)
-			require.True(t, settled, "nothing is owed after the restored row settles: %q", producer)
+			require.Equal(t, tc.settled, settled, "producer %s explicit=%t", tc.producer[:1], tc.explicit)
 		}
+
+		again := restorePhotoSuggestionStore(t, restored)
+		publishPhotoDescription(t, again, asset, producerB, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"coast", "sunset", "boats"}})
+		regenerated := photoSuggestionValues(t, again, asset.ID)
+		require.Len(t, regenerated, 1)
+		require.Equal(t, document.PhotoDescription{Tags: []string{"sunset", "boats"}}, regenerated[0].Value, "only B's unresolved fields come back")
+		var dismissed int
+		require.NoError(t, again.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_suggestions WHERE producer_fingerprint=? AND dismissed`, producerA).Scan(&dismissed))
+		require.Equal(t, 1, dismissed, "A's dismissal survives")
+		require.NoError(t, again.ValidateMetadata(ctx))
 	})
 	t.Run("regenerates a pending suggestion nobody has decided on", func(t *testing.T) {
 		t.Parallel()
@@ -506,7 +516,7 @@ func TestPhotoSuggestionBackupKeepsCompletion(t *testing.T) {
 			for restore := 1; restore <= 2; restore++ {
 				current = restorePhotoSuggestionStore(t, current)
 				require.NoError(t, current.ValidateMetadata(ctx))
-				settled, err := current.photoDescriptionSettled(ctx, node.CurrentVersionID, "")
+				settled, err := current.photoDescriptionSettled(ctx, node.CurrentVersionID, producerA, false)
 				require.NoError(t, err)
 				require.Equal(t, tc.settled, settled, "after restore %d, fresh consent backfills only a description still owed", restore)
 			}
@@ -534,7 +544,7 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 		return node.CurrentVersionID
 	}()
 	settled := func(explicitProducer string) bool {
-		value, err := s.photoDescriptionSettled(ctx, version, explicitProducer)
+		value, err := s.photoDescriptionSettled(ctx, version, explicitProducer, explicitProducer != "")
 		require.NoError(t, err)
 		return value
 	}
@@ -642,7 +652,7 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(""), at)
 	require.NoError(t, err)
 	require.Empty(t, photoSuggestionValues(t, s, empty.ID))
-	settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, "")
+	settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, producerB, false)
 	require.NoError(t, err)
 	require.True(t, settled, "an empty answer still settles the version")
 }
@@ -693,10 +703,10 @@ func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
 		return out
 	}
 
-	first, err := s.PhotoDescriptionTargets(ctx, producerB, "", 2)
+	first, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, "", 2)
 	require.NoError(t, err)
 	require.Equal(t, versions[:2], ids(first), "a small page holds the first targets in version order")
-	rest, err := s.PhotoDescriptionTargets(ctx, producerB, versions[1], 2)
+	rest, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, versions[1], 2)
 	require.NoError(t, err)
 	require.Equal(t, versions[2:], ids(rest), "the cursor resumes after the last version read")
 }

@@ -263,7 +263,7 @@ func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slo
 			return nil, err
 		}
 	}
-	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, after, min(limit, workers-waiting))
+	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, min(limit, workers-waiting))
 	if err != nil {
 		return nil, err
 	}

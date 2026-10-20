@@ -756,7 +756,7 @@ With a [configured vision profile](../configuration.md#photo-descriptions) and p
 
 Photo search matches suggested text below authored caption, creator, and copyright and above technical metadata. **Matched AI suggestion** appears on a result that needs suggested text to match. Accepted tags are ordinary tags, so every tag name assigned to a photo matches text search, including after a rename or a content replacement.
 
-Changing the profile keeps existing suggestions and dismissals. An explicit processing run with another profile replaces a dismissed suggestion only. Backups keep dismissals and accepted-field decisions but not suggestion text; after restore and fresh consent, only undecided fields are described again, and a description with nothing left to decide is not described again.
+Changing the profile keeps existing suggestions and dismissals. An explicit processing run with another profile replaces a dismissed suggestion only. Backups keep dismissals and accepted-field decisions but not suggestion text; after restore and fresh consent, only undecided fields are described again, and a description with nothing left to decide is not described again. A profile you dismissed on a photo never regenerates another profile's undecided fields there; those wait for a profile you have not dismissed.
 
 ## Export photos
 

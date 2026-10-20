@@ -38,17 +38,19 @@ type PhotoSuggestion struct {
 	Value            document.PhotoDescription `json:"value"`
 }
 
-// photoSuggestionSettledSQL is true when no description is wanted for version.
-// Automatic work wants one only for a version without rows. An explicit start
-// by producer also wants one when every row is another producer's dismissal.
-// A row awaiting regeneration after restore always wants one.
-func photoSuggestionSettledSQL(version, explicitProducer string) string {
+// photoSuggestionSettledSQL is true when no description is wanted for version
+// from producer. Automatic work wants one only for a version without rows. An
+// explicit start also wants one when every row is another producer's
+// dismissal. A row awaiting regeneration after restore wants one from a
+// producer not dismissed on it.
+func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	filter := ""
-	if explicitProducer != "" {
-		filter = ` AND (NOT s.dismissed OR s.producer_fingerprint=` + explicitProducer + `)`
+	if explicit {
+		filter = ` AND (NOT s.dismissed OR s.producer_fingerprint=` + producer + `)`
 	}
 	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
- AND NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting))`
+ AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting)
+  OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed AND s.producer_fingerprint=` + producer + `)))`
 }
 
 var photoDescriptionEligibility = liveIncludedPhotoDisplayPredicate("v") + ` AND a.hidden_at IS NULL`
@@ -65,18 +67,14 @@ func (s *Store) PhotoDescriptionEligible(ctx context.Context, versionID string) 
 }
 
 // photoDescriptionSettled reports whether no description is wanted for the
-// version. A non-empty explicitProducer applies the explicit-start predicate.
-func (s *Store) photoDescriptionSettled(ctx context.Context, versionID, explicitProducer string) (bool, error) {
-	return photoDescriptionSettledTx(ctx, s.db, versionID, explicitProducer)
+// version from producer. Explicit applies the explicit-start predicate.
+func (s *Store) photoDescriptionSettled(ctx context.Context, versionID, producer string, explicit bool) (bool, error) {
+	return photoDescriptionSettledTx(ctx, s.db, versionID, producer, explicit)
 }
 
-func photoDescriptionSettledTx(ctx context.Context, q metadataQuerier, versionID, explicitProducer string) (bool, error) {
-	statement, args := `SELECT `+photoSuggestionSettledSQL("?1", ""), []any{versionID}
-	if explicitProducer != "" {
-		statement, args = `SELECT `+photoSuggestionSettledSQL("?1", "?2"), append(args, explicitProducer)
-	}
+func photoDescriptionSettledTx(ctx context.Context, q metadataQuerier, versionID, producer string, explicit bool) (bool, error) {
 	var settled bool
-	err := q.QueryRowContext(ctx, statement, args...).Scan(&settled)
+	err := q.QueryRowContext(ctx, `SELECT `+photoSuggestionSettledSQL("?1", "?2", explicit), versionID, producer).Scan(&settled)
 	return settled, err
 }
 
@@ -112,11 +110,7 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 // unless the version is settled. The description is already normalized. Fields
 // the owner already has or resolved before a restore are left out.
 func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
-	explicitProducer := ""
-	if explicit {
-		explicitProducer = producer
-	}
-	if settled, err := photoDescriptionSettledTx(ctx, tx, version, explicitProducer); err != nil || settled {
+	if settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, explicit); err != nil || settled {
 		return err
 	}
 	if ok, err := dropOwnedPhotoFieldsTx(ctx, tx, version, &description); err != nil || !ok {
@@ -144,15 +138,6 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		return err
 	}
 	if awaiting != 0 {
-		// The producer's own dismissal stands. The restored row settles without text.
-		var dismissed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND dismissed AND id<>?)`, version, producer, awaiting).Scan(&dismissed); err != nil {
-			return err
-		}
-		if dismissed {
-			_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET awaiting=0 WHERE id=?`, awaiting)
-			return err
-		}
 		// The restored row now belongs to the producer that regenerated it. An
 		// older row of that producer is superseded by the owner's decisions it holds.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
@@ -376,29 +361,30 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, as
 // photoDescriptionTargetsSQL lists one page of versions wanting a description,
 // in version order after the cursor. It walks the ready grid previews in index
 // order, so a page costs its own length rather than the library's. The CROSS
-// JOINs keep that order. Arguments: recipe, cursor, profile, limit.
+// JOINs keep that order. Arguments: recipe, cursor, profile, limit, producer.
 var photoDescriptionTargetsSQL = `SELECT ` + contentVersionCols + ` FROM content_versions WHERE version_id IN (
  SELECT v.version_id FROM visual_preview_generations g
  CROSS JOIN content_versions v ON v.version_id=g.content_version_id AND v.blob_hash=g.source_sha256
  CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
  CROSS JOIN photo_files f ON f.node_id=n.id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
- WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionEligibility + ` AND g.state='ready' AND NOT ` + photoSuggestionSettledSQL("g.content_version_id", "") + `
+ WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionEligibility + ` AND g.state='ready' AND NOT ` + photoSuggestionSettledSQL("g.content_version_id", "?5", false) + `
  AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id AND w.profile_fingerprint=?3
   AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
    OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous')))
  ORDER BY g.content_version_id LIMIT ?4) ORDER BY version_id`
 
 // PhotoDescriptionTargets lists displayed photos in version order after the
-// cursor that want a description from profile: eligible, with a ready grid
-// preview, no suggestion row, and no waiting request or terminal failure.
-func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, after string, limit int) ([]ContentVersion, error) {
+// cursor that want a description from profile, whose descriptions carry the
+// producer fingerprint: eligible, with a ready grid preview, no suggestion row,
+// and no waiting request or terminal failure.
+func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, producer, after string, limit int) ([]ContentVersion, error) {
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return nil, err
 	}
 	result := []ContentVersion{}
-	err = queryRows(ctx, s.db, photoDescriptionTargetsSQL, []any{fingerprints.GridRecipe, after, profile, limit}, func(rows *sql.Rows) error {
+	err = queryRows(ctx, s.db, photoDescriptionTargetsSQL, []any{fingerprints.GridRecipe, after, profile, limit, producer}, func(rows *sql.Rows) error {
 		version, err := scanContentVersion(rows)
 		if err != nil {
 			return err
@@ -454,11 +440,7 @@ func photoDescriptionInputTx(ctx context.Context, tx *sql.Tx, execution document
 // version publishes its waiter with no job and no provider call; otherwise the
 // job runs, reopening if an earlier run completed without a stored result.
 func joinPhotoDescriptionTx(ctx context.Context, tx *sql.Tx, jobID, waiterID, version, producer string, explicit bool, now string) (RenditionJob, RenditionJobWaiter, error) {
-	explicitProducer := ""
-	if explicit {
-		explicitProducer = producer
-	}
-	settled, err := photoDescriptionSettledTx(ctx, tx, version, explicitProducer)
+	settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, explicit)
 	if err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, err
 	}
