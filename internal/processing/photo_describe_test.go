@@ -137,18 +137,28 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 // newService builds a service with one description profile named name.
 func (f *photoDescriptionFixture) newService(t *testing.T, name, model string) *Service {
 	t.Helper()
-	provider, err := vision.New(vision.Profile{Origin: f.server.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, f.server.Client())
-	require.NoError(t, err)
-	var profile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(workerProcessingProfile(t, provider.Descriptor()).CanonicalProfile, &profile))
-	profile.Rendition.AdapterContract = vision.AdapterContract
-	profile.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-	profile.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-	f.profile = profile
+	return f.newServiceWith(t, map[string]string{name: model})
+}
+
+// newServiceWith builds a service with a description profile for each name and model.
+func (f *photoDescriptionFixture) newServiceWith(t *testing.T, models map[string]string) *Service {
+	t.Helper()
+	profiles := map[string]ProfileConfig{}
+	for name, model := range models {
+		provider, err := vision.New(vision.Profile{Origin: f.server.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, f.server.Client())
+		require.NoError(t, err)
+		var profile document.ProcessingProfileV1
+		require.NoError(t, json.Unmarshal(workerProcessingProfile(t, provider.Descriptor()).CanonicalProfile, &profile))
+		profile.Rendition.AdapterContract = vision.AdapterContract
+		profile.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+		profile.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+		profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+		f.profile = profile
+		profiles[name] = ProfileConfig{Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}
+	}
 	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing",
 		Clock:    func() time.Time { return time.Now().UTC().Add(time.Duration(f.skew.Load())) },
-		Profiles: map[string]ProfileConfig{name: {Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}}})
+		Profiles: profiles})
 	require.NoError(t, err)
 	return service
 }
@@ -424,6 +434,20 @@ func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlot(t *testing.T) {
 	require.NoError(t, err, "a sleeping retry does not hold the only admission slot")
 	require.Len(t, next, 1)
 	require.NotEqual(t, first[0].version.ID, next[0].version.ID, "the other photo is admitted meanwhile")
+}
+
+func TestPhotoDescriptionFreshPhotosGoToTheFirstReadyProfileOnly(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	service := f.newServiceWith(t, map[string]string{"alpha": "model-a", "beta": "model-b"})
+	f.grant(t, service, "alpha")
+	f.grant(t, service, "beta")
+	require.Equal(t, 1, f.backfill(t, service), "one target for a fresh photo")
+	_, describes := f.counts()
+	require.Equal(t, 1, describes, "one provider describes it")
+	require.Zero(t, f.backfill(t, service))
+	_, describes = f.counts()
+	require.Equal(t, 1, describes, "the other ready profile never describes it too")
 }
 
 func TestPhotoDescriptionRetriesAfterADroppedConnection(t *testing.T) {

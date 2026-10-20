@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -243,15 +244,40 @@ type photoDescriptionTarget struct {
 }
 
 // photoDescriptionTargets lists photos once fewer than workers requests wait,
-// so a large library cannot flood the queue.
+// so a large library cannot flood the queue. Fresh photos go to the first ready
+// profile only. Photos with restored unresolved fields also go to the other
+// ready profiles, each at most once, so no photo is described by two providers.
 func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slog.Logger, after string, limit, workers int) ([]photoDescriptionTarget, error) {
-	name, err := service.photoDescriptionProfile(ctx, logger)
-	if name == "" || err != nil {
+	names, err := service.photoDescriptionProfiles(ctx, logger)
+	if err != nil {
 		return nil, err
 	}
+	var out []photoDescriptionTarget
+	seen := map[string]bool{}
+	for i, name := range names {
+		listed, err := service.photoDescriptionProfileTargets(ctx, name, i > 0, after, limit, workers)
+		if err != nil {
+			return nil, err
+		}
+		for _, target := range listed {
+			if !seen[target.version.ID] {
+				seen[target.version.ID] = true
+				out = append(out, target)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b photoDescriptionTarget) int { return strings.Compare(a.version.ID, b.version.ID) })
+	return out[:min(len(out), limit)], nil
+}
+
+// photoDescriptionProfileTargets lists the photos one profile wants described,
+// leaving room for work already waiting. Only restored photos are listed
+// when restoredOnly is set.
+func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name string, restoredOnly bool, after string, limit, workers int) ([]photoDescriptionTarget, error) {
 	profile := service.profiles[name]
 	var waiting int
 	for {
+		var err error
 		waiting, err = service.catalog.UnclaimedPhotoDescriptionWaiters(ctx, profile.record.Fingerprint, service.clock())
 		if err != nil {
 			return nil, err
@@ -259,11 +285,14 @@ func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slo
 		if waiting < workers {
 			break
 		}
+		if restoredOnly {
+			return nil, nil
+		}
 		if err := jobs.Wait(ctx, time.Second); err != nil {
 			return nil, err
 		}
 	}
-	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, min(limit, workers-waiting))
+	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, min(limit, workers-waiting), restoredOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -274,16 +303,17 @@ func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slo
 	return out, nil
 }
 
-// photoDescriptionProfile selects the first description profile, by name, that
-// has consent and a provider that answers its probe. A consented profile whose
+// photoDescriptionProfiles lists, by name, the description profiles that have
+// consent and a provider that answers its probe. A consented profile whose
 // provider does not answer is logged once, until it answers again.
-func (service *Service) photoDescriptionProfile(ctx context.Context, logger *slog.Logger) (string, error) {
+func (service *Service) photoDescriptionProfiles(ctx context.Context, logger *slog.Logger) ([]string, error) {
+	var ready []string
 	for _, name := range service.visionProfileNames() {
 		err := service.requireVisionReadiness(ctx, service.profiles[name])
 		switch {
 		case err == nil:
 			service.visionNotReady.Delete(name)
-			return name, nil
+			ready = append(ready, name)
 		case errors.Is(err, ErrRenditionRuntimeUnavailable):
 			if _, logged := service.visionNotReady.LoadOrStore(name, true); !logged && logger != nil {
 				logger.Warn("photo descriptions are paused: the vision provider did not pass its probe", "profile", name, "error", err)
@@ -291,8 +321,8 @@ func (service *Service) photoDescriptionProfile(ctx context.Context, logger *slo
 		case errors.Is(err, store.ErrProcessingConsentRequired), errors.Is(err, store.ErrProcessingConsentExpired),
 			errors.Is(err, store.ErrProcessingConsentRevoked):
 		default:
-			return "", err
+			return nil, err
 		}
 	}
-	return "", nil
+	return ready, nil
 }

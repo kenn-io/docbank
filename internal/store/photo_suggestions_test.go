@@ -703,12 +703,48 @@ func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
 		return out
 	}
 
-	first, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, "", 2)
+	first, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, "", 2, false)
 	require.NoError(t, err)
 	require.Equal(t, versions[:2], ids(first), "a small page holds the first targets in version order")
-	rest, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, versions[1], 2)
+	rest, err := s.PhotoDescriptionTargets(ctx, producerB, producerB, versions[1], 2, false)
 	require.NoError(t, err)
 	require.Equal(t, versions[2:], ids(rest), "the cursor resumes after the last version read")
+}
+
+func TestPhotoDescriptionTargetsOfferRestoredRowsToProducersNotDismissed(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	restoredAsset := albumAsset(t, s, "restored.jpg")
+	freshAsset := albumAsset(t, s, "fresh.jpg")
+	first := putPhotoSuggestion(t, s, restoredAsset, document.PhotoDescription{Caption: "From A."})
+	_, err := s.RespondPhotoSuggestion(ctx, first.ID, PhotoSuggestionResponse{Response: "dismissed"})
+	require.NoError(t, err)
+	publishPhotoDescription(t, s, restoredAsset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"coast", "sunset"}})
+
+	restored := restorePhotoSuggestionStore(t, s)
+	version := func(asset PhotoAsset) string {
+		node, err := restored.NodeByID(ctx, asset.Files[0].NodeID)
+		require.NoError(t, err)
+		// Building the request publishes the ready grid preview that makes the photo a target.
+		photoDescriptionJobRequest(t, restored, node.CurrentVersionID, producerA, false)
+		return node.CurrentVersionID
+	}
+	restoredVersion, freshVersion := version(restoredAsset), version(freshAsset)
+	targets := func(producer string, restoredOnly bool) []string {
+		page, err := restored.PhotoDescriptionTargets(ctx, producer, producer, "", 10, restoredOnly)
+		require.NoError(t, err)
+		ids := []string{}
+		for _, version := range page {
+			ids = append(ids, version.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	require.Equal(t, []string{freshVersion}, targets(producerA, false), "A dismissed the restored photo, so only the fresh one wants A")
+	require.Empty(t, targets(producerA, true), "nothing is re-run for the producer that was dismissed")
+	require.ElementsMatch(t, []string{restoredVersion, freshVersion}, targets(producerB, false))
+	require.Equal(t, []string{restoredVersion}, targets(producerB, true), "B is offered its restored photo and no fresh one")
 }
 
 func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {
