@@ -356,19 +356,21 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       let plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
       this.throwProblem(plan);
-      if (plan.type === "photo_import_hashes_needed") {
+      // The daemon rechecks live sizes on every declaration, so a concurrent import can ask again.
+      while (plan.type === "photo_import_hashes_needed") {
         // Only files the size of an earlier photo can continue its folder, so only they hash before the plan.
         const indexes = plan.indexes;
         if (
           !Array.isArray(indexes) ||
-          !indexes.length ||
           new Set(indexes).size !== indexes.length ||
           indexes.some((index) => !Number.isInteger(index) || index < 0 || index >= files.length)
         )
           throw this.protocolError();
-        const total = indexes.reduce((sum, index) => sum + files[index].size, 0);
+        const pending = indexes.filter((index) => !hashes.has(files[index]));
+        if (!pending.length) throw this.protocolError();
+        const total = pending.reduce((sum, index) => sum + files[index].size, 0);
         let processed = 0;
-        for (const index of indexes) {
+        for (const index of pending) {
           hashes.set(
             files[index],
             await hashFile(files[index], signal, (progress) =>

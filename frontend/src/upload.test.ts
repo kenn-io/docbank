@@ -54,6 +54,8 @@ class DaemonSocket extends EventTarget {
   photoMembers = 0;
   // Indexes the daemon asks to have hashed before it plans, once per socket.
   needHashes: number[] = [];
+  // Further requests the daemon makes after those hashes arrive, one per declaration.
+  followUps: number[][] = [];
   frames: (string | ArrayBuffer)[] = [];
 
   constructor() {
@@ -83,6 +85,15 @@ class DaemonSocket extends EventTarget {
           type: "photo_import_hashes_needed",
           request_id: message.request_id,
           indexes: this.needHashes,
+        });
+        return;
+      }
+      const followUp = this.followUps.shift();
+      if (followUp) {
+        this.emit({
+          type: "photo_import_hashes_needed",
+          request_id: message.request_id,
+          indexes: followUp,
         });
         return;
       }
@@ -578,6 +589,34 @@ it("hashes only the files the daemon asks for before it plans", async () => {
   channel.close();
 });
 
+it("answers a second hash request when another import adds a matching size", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [1];
+  socket.followUps = [[1, 2]];
+  const files = photoSelectionFiles();
+  const reads = files.map((file) => vi.spyOn(file, "slice"));
+  const plan = await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000001",
+    new AbortController().signal,
+    vi.fn(),
+  );
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([0, 1, 1, 0]);
+  expect([...plan.hashes!.keys()]).toEqual([files[1], files[2]]);
+  expect(plan.import_id).toBe("import-1");
+  socket.needHashes = [];
+  await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000002",
+    new AbortController().signal,
+    vi.fn(),
+  );
+  expect(socket.closed).toBe(false);
+  channel.close();
+});
+
 it.each([
   { name: "an index outside the selection", indexes: [4] },
   { name: "a repeated index", indexes: [1, 1] },
@@ -588,6 +627,22 @@ it.each([
   await expect(
     channel.planPhotoImport(
       files,
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/invalid response/);
+  expect(socket.closed).toBe(true);
+});
+
+it("rejects a second hash request that names only hashed files", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [1];
+  socket.followUps = [[1]];
+  await expect(
+    channel.planPhotoImport(
+      photoSelectionFiles(),
       "/photos",
       "20000000-0000-4000-8000-000000000001",
       new AbortController().signal,
