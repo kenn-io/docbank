@@ -1529,7 +1529,7 @@ it("returns to search results after opening All files", async () => {
   expect(search.value).toBe("alpha");
 });
 
-it("clears the tag filter when All files opens and restores it on Back", async () => {
+it("restores tag navigation on Back and maps the tag and query screens to telemetry", async () => {
   prepareSelectionApp();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   const { fetchMock } = installSelectionBackend();

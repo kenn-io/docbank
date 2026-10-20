@@ -137,7 +137,7 @@ describe("session_ended reporting", () => {
   });
 
   it.each(["checking", "unavailable", "disabled", "blocked"])(
-    "retains pending visits through %s teardown",
+    "handles pending visits across teardown when %s",
     (state) => {
       reporting = startSessionReporting(reporter);
       quietChange(true, "checking");

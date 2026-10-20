@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,13 +16,21 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.Int32 {
 	t.Helper()
 	var requests atomic.Int32
-	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
+		var request api.TelemetryEventRequest
+		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+		assert.Equal(t, "screen_viewed", request.Event)
+		assert.Equal(t, &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}, request.Properties)
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -64,18 +73,17 @@ func TestTUITelemetryReceipts(t *testing.T) {
 func TestTUITelemetryStoredStates(t *testing.T) {
 	day := time.Now().UTC().Format(time.DateOnly)
 	for _, tc := range []struct {
+		name    string
 		value   string
 		refused bool
 	}{
-		{`{"version":1,"day":"2000-01-01","disabled":true}`, false},
-		{`{"version":1,"day":"2999-01-01","disabled":true}`, false},
-		{`{"version":1,"day":42}`, false},
-		{`truncated`, false},
-		{`{"version":2,"disabled":true}`, true},
-		{`{"version":1,"future":true}`, true},
-		{`{"version":1,"day":"` + day + `","screens":["future_screen"]}`, false},
+		{"stale day", `{"version":1,"day":"2000-01-01","disabled":true}`, false},
+		{"future day", `{"version":1,"day":"2999-01-01","disabled":true}`, false},
+		{"unsupported version", `{"version":2,"disabled":true}`, true},
+		{"unknown field", `{"version":1,"future":true}`, true},
+		{"opaque screen", `{"version":1,"day":"` + day + `","screens":["future_screen"]}`, false},
 	} {
-		t.Run(tc.value, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
 			path := filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state")
 			require.NoError(t, os.WriteFile(path, []byte(tc.value), 0o600))

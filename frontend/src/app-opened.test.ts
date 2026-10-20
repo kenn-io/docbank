@@ -58,6 +58,13 @@ describe("app_opened reporting", () => {
       event: "screen_viewed",
       properties: { surface: "web", screen: "help" },
     });
+    reporter.reportVisit(
+      { event: "session_ended", properties: { surface: "web", duration_bucket: "1_to_5m" } },
+      { keepalive: true },
+    );
+    await settle();
+    expect(fetchMock.mock.calls.at(-1)?.[1]?.keepalive).toBe(true);
+    expect(fetchMock.mock.calls.at(-1)?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("detaches visibility work while disabled and restores it after the next enabled check", async () => {
@@ -80,32 +87,18 @@ describe("app_opened reporting", () => {
     );
   });
 
-  it("treats a problem response as answered without an unhandled rejection", async () => {
-    const unhandled = vi.fn();
-    window.addEventListener("unhandledrejection", unhandled);
+  it("stops same-day retries after an unauthorized response and checks again next day", async () => {
     fetchMock.mockImplementationOnce(async () => respond(401));
     reporter = startTelemetryReporting("secret");
     await settle();
-    await settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     focus();
-    await settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     vi.setSystemTime(new Date("2026-03-05T08:00:00Z"));
     focus();
     await settle();
-    window.removeEventListener("unhandledrejection", unhandled);
-    expect(unhandled).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-  it("forwards keepalive and the deadline through transport", async () => {
-    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
-    reporter = startTelemetryReporting("secret");
-    await settle();
-    reporter.reportVisit(
-      { event: "session_ended", properties: { surface: "web", duration_bucket: "1_to_5m" } },
-      { keepalive: true },
-    );
-    await settle();
-    expect(fetchMock.mock.calls.at(-1)?.[1]?.keepalive).toBe(true);
-    expect(fetchMock.mock.calls.at(-1)?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

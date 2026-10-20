@@ -78,7 +78,7 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(d.root, posthog.InstallFileName))
 }
 
-func TestReportTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
+func TestReportTUISessionEndedPersistsDisabledReceipt(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
 	d := startTelemetryTestDaemon(t)
 	day := time.Now().UTC().Format(time.DateOnly)
