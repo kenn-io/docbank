@@ -5,7 +5,25 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/sv
 import { photoSelectionFiles as files } from "./photo-test-fixtures.js";
 import PhotoImportDrawer from "./PhotoImportDrawer.svelte";
 import { APIError } from "./api-transport.js";
-import { UploadChannelError, type PhotoImportTransport, type PhotoGroupReceipt } from "./upload.js";
+import {
+  UploadChannelError,
+  hashFile,
+  type PhotoImportTransport,
+  type PhotoGroupReceipt,
+  type TransferProgress,
+} from "./upload.js";
+
+const declarations = vi.hoisted(() => vi.fn());
+vi.mock("./upload.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./upload.js")>();
+  return {
+    ...actual,
+    photoImportDeclaration: (...args: Parameters<typeof actual.photoImportDeclaration>) => {
+      declarations();
+      return actual.photoImportDeclaration(...args);
+    },
+  };
+});
 
 const savedImports = vi.hoisted(
   () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
@@ -215,7 +233,8 @@ it("uses the plan, uploads groups in order, reports totals, and refreshes once",
     selected,
     "/",
     expect.any(String),
-    expect.any(Map),
+    expect.any(AbortSignal),
+    expect.any(Function),
   );
   expect(channel.uploadPhotoGroup).toHaveBeenNthCalledWith(
     1,
@@ -224,7 +243,7 @@ it("uses the plan, uploads groups in order, reports totals, and refreshes once",
     selected.slice(0, 2),
     expect.any(AbortSignal),
     expect.any(Function),
-    expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/)]),
+    ["", ""],
   );
   expect(channel.uploadPhotoGroup).toHaveBeenNthCalledWith(
     2,
@@ -233,7 +252,7 @@ it("uses the plan, uploads groups in order, reports totals, and refreshes once",
     [selected[2]],
     expect.any(AbortSignal),
     expect.any(Function),
-    expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/)]),
+    [""],
   );
   expect(screen.getByText("Added: 1")).toBeTruthy();
   expect(screen.getByText("Already in vault: 1")).toBeTruthy();
@@ -242,21 +261,67 @@ it("uses the plan, uploads groups in order, reports totals, and refreshes once",
   expect(screen.getByText("notes.txt")).toBeTruthy();
 });
 
-it("plans supported photos without reading the bytes of skipped files", async () => {
-  const photo = new File(["jpeg"], "capture.JPG");
-  const skipped = new File(["backup"], "capture.bak");
-  const plan = vi.fn<PhotoImportTransport["planPhotoImport"]>().mockResolvedValue({
-    import_id: "mixed-selection",
-    groups: [[0]],
-    unsupported: [1],
-    skip_reasons: { 1: "Unsupported type" },
-  });
+it("starts a new shoot's first group after reading only that group's files", async () => {
+  const selected = files();
+  const reads = selected.map((file) => vi.spyOn(file, "slice"));
+  const readCounts = () => reads.map((read) => read.mock.calls.length);
+  let readsAtUpload: number[] | undefined;
+  let hashesAtUpload: string[] | undefined;
   const channel: PhotoImportTransport = {
-    planPhotoImport: plan,
-    uploadPhotoGroup: vi.fn(),
+    planPhotoImport: vi.fn().mockResolvedValue({
+      import_id: "new-shoot",
+      groups: [[0, 1], [2]],
+      unsupported: [3],
+      skip_reasons: { 3: "Unsupported type" },
+    }),
+    // Like the real transport, hash the group's missing members, then upload.
+    uploadPhotoGroup: vi.fn().mockImplementation(async (_id, _group, group, signal, _p, hashes) => {
+      readsAtUpload ??= readCounts();
+      hashesAtUpload ??= [...hashes];
+      for (const [i, file] of (group as File[]).entries())
+        hashes[i] ||= await hashFile(file, signal, () => {});
+      return { status: "added", asset_id: "photo-1" };
+    }),
   };
   render(PhotoImportDrawer, {
-    vaultID: "vault-mixed-selection",
+    vaultID: "vault-new-shoot",
+    session: "session",
+    channel,
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
+      false,
+    ),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledTimes(2));
+  expect(readsAtUpload).toEqual([0, 0, 0, 0]);
+  expect(hashesAtUpload).toEqual(["", ""]);
+  expect(readCounts()).toEqual([1, 1, 1, 0]);
+});
+
+it("shows Hashing only while the files the server asked for are read", async () => {
+  const selected = [files()[0]];
+  let report!: (progress: TransferProgress) => void;
+  let finish!: (plan: Awaited<ReturnType<PhotoImportTransport["planPhotoImport"]>>) => void;
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn().mockImplementation(
+      (_files, _destination, _source, _signal, onprogress) =>
+        new Promise((resolve) => {
+          report = onprogress;
+          finish = resolve;
+        }),
+    ),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "photo-1" }),
+  };
+  render(PhotoImportDrawer, {
+    vaultID: "vault-hashing",
     session: "session",
     channel,
     onclose: vi.fn(),
@@ -269,13 +334,51 @@ it("plans supported photos without reading the bytes of skipped files", async ()
     ),
   );
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: [photo, skipped] },
+    target: { files: selected },
   });
-  await screen.findByText("Unsupported type");
+  await screen.findByText("Planning");
+  report({ processed: 1, total: 3 });
+  await screen.findByText("Hashing");
+  expect(screen.getByRole("progressbar", { name: "Hashing" })).toHaveProperty("value", 1);
+  finish({
+    import_id: "continued",
+    groups: [[0]],
+    unsupported: [],
+    hashes: new Map([[selected[0], "a".repeat(64)]]),
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  expect(screen.queryByText("Hashing")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(vi.mocked(channel.uploadPhotoGroup).mock.calls[0]![5]).toEqual(["a".repeat(64)]);
+});
 
-  const hashes = plan.mock.calls[0]![3];
-  expect(hashes.has(photo)).toBe(true);
-  expect(hashes.has(skipped)).toBe(false);
+it("checks the declaration limits once per selection", async () => {
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "once", groups: [[0]], unsupported: [] }),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    vaultID: "vault-once",
+    session: "session",
+    channel,
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
+      false,
+    ),
+  );
+  declarations.mockClear();
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  expect(declarations).toHaveBeenCalledOnce();
 });
 
 it("stops after the current group when cancelled", async () => {
@@ -370,7 +473,8 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
     expect.any(Array),
     "/photos",
     expect.any(String),
-    expect.any(Map),
+    expect.any(AbortSignal),
+    expect.any(Function),
   );
   vi.mocked(channel.uploadPhotoGroup).mockResolvedValueOnce({
     status: "added",
@@ -389,7 +493,7 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
     expect.any(Array),
     expect.any(AbortSignal),
     expect.any(Function),
-    expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/)]),
+    ["", ""],
   );
 });
 
@@ -570,7 +674,8 @@ it.each([false, true])(
       selected,
       "/photos",
       expect.any(String),
-      expect.any(Map),
+      expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
     let finishPlan!: (plan: Awaited<ReturnType<PhotoImportTransport["planPhotoImport"]>>) => void;
@@ -592,7 +697,8 @@ it.each([false, true])(
         selected,
         "/trips",
         expect.any(String),
-        expect.any(Map),
+        expect.any(AbortSignal),
+        expect.any(Function),
       ),
     );
     expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
@@ -611,7 +717,7 @@ it.each([false, true])(
       selected,
       expect.any(AbortSignal),
       expect.any(Function),
-      expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/)]),
+      [""],
     );
   },
 );
@@ -778,7 +884,7 @@ it.each(["content", "destination"])(
       revision: "first",
       destination: "/photos",
       manifestVersion: 2,
-      manifestHash: (await photoImportManifest(selected, new AbortController().signal)).digest,
+      manifestHash: photoImportManifest(selected).digest,
       pickerKind: "folder" as const,
     };
     const storage = photoImportStorage("vault-mismatch", "session");
@@ -797,7 +903,7 @@ it.each(["content", "destination"])(
       await fireEvent.input(screen.getByLabelText("Destination"), { target: { value: "/other" } });
     const changed =
       change === "content"
-        ? new File(["bad"], selected[0].name, { lastModified: selected[0].lastModified })
+        ? new File(["bad!"], selected[0].name, { lastModified: selected[0].lastModified })
         : selected[0];
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
@@ -912,7 +1018,8 @@ it.each([
       selected,
       "/",
       expect.any(String),
-      expect.any(Map),
+      expect.any(AbortSignal),
+      expect.any(Function),
     ),
   );
   await screen.findByText(/Resume is unavailable/);
@@ -1023,7 +1130,8 @@ it("keeps the selection for retry when saving conflicts after planning", async (
     selected,
     "/retry",
     expect.any(String),
-    expect.any(Map),
+    expect.any(AbortSignal),
+    expect.any(Function),
   );
 });
 
@@ -1035,7 +1143,7 @@ it("loads a checkpoint when the vault identity arrives and routes Resume to file
     revision: "saved",
     destination: "/photos",
     manifestVersion: 2,
-    manifestHash: (await photoImportManifest(selected, new AbortController().signal)).digest,
+    manifestHash: photoImportManifest(selected).digest,
     pickerKind: "files" as const,
   };
   await photoImportStorage("vault-late", "session").replace(checkpoint);
@@ -1086,8 +1194,7 @@ it.each([
       revision: "current",
       destination: "/photos",
       manifestVersion: 2,
-      manifestHash: (await module.photoImportManifest(selected, new AbortController().signal))
-        .digest,
+      manifestHash: module.photoImportManifest(selected).digest,
       pickerKind: "files" as const,
     };
     await createStorage("current", "session").replace(saved);
@@ -1141,7 +1248,8 @@ it.each([
       selected,
       "/photos",
       "current-source",
-      expect.any(Map),
+      expect.any(AbortSignal),
+      expect.any(Function),
     );
   },
 );
@@ -1248,7 +1356,8 @@ it.each(["cancel", "confirm", "stale"])(
         selected,
         "/",
         replacement?.sourceID,
-        expect.any(Map),
+        expect.any(AbortSignal),
+        expect.any(Function),
       );
     } else if (action === "stale") {
       await screen.findByText(

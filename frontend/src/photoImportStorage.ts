@@ -8,51 +8,24 @@ import {
   type PhotoImportCheckpoint,
   type PhotoCheckpointHeader,
 } from "./generated/docbank.js";
-import {
-  hashFile,
-  photoRelativePath,
-  photoImportNeedsContentHash,
-  type TransferProgress,
-} from "./upload.js";
+import { photoRelativePath } from "./upload.js";
 
 export type { PhotoImportCheckpoint } from "./generated/docbank.js";
 
-export async function photoImportManifest(
-  files: File[],
-  signal: AbortSignal,
-  onprogress: (progress: TransferProgress) => void = () => {},
-) {
-  const manifest: { path: string; size: number; modified: number; hash: string | null }[] = [];
-  const hashes = new Map<File, string>();
-  const total = files.reduce(
-    (sum, file) => sum + (photoImportNeedsContentHash(file) ? file.size : 0),
-    0,
-  );
-  let processed = 0;
-  for (const file of files) {
-    let hash: string | null = null;
-    if (photoImportNeedsContentHash(file)) {
-      hash = await hashFile(file, signal, (progress) =>
-        onprogress({ processed: processed + progress.processed, total }),
-      );
-      hashes.set(file, hash);
-      processed += file.size;
-      onprogress({ processed, total });
-    }
-    manifest.push({
+export function photoImportManifest(files: File[]) {
+  const manifest = files
+    .map((file) => ({
       path: photoRelativePath(file),
       size: file.size,
       modified: file.lastModified,
-      hash,
-    });
-  }
-  manifest.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  // Version 2 is JSON [version, [[path, size, mtime, lowercase SHA-256 or null], ...]].
+    }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  // Version 2 is JSON [version, [[path, size, mtime], ...]]. Resume compares it before any file is read.
   const canonical = JSON.stringify([
     2,
-    manifest.map(({ path, size, modified, hash }) => [path, size, modified, hash]),
+    manifest.map(({ path, size, modified }) => [path, size, modified]),
   ]);
-  return { manifest, digest: bytesToHex(sha256(utf8ToBytes(canonical))), hashes };
+  return { manifest, digest: bytesToHex(sha256(utf8ToBytes(canonical))) };
 }
 
 export function photoImportStorageUnavailable(cause: unknown): boolean {

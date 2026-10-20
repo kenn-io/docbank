@@ -42,7 +42,13 @@
     group: number;
     files: File[];
     hashes: string[];
-    state: "ready" | "uploading" | "unconfirmed" | "failed" | PhotoGroupReceipt["status"];
+    state:
+      | "ready"
+      | "hashing"
+      | "uploading"
+      | "unconfirmed"
+      | "failed"
+      | PhotoGroupReceipt["status"];
     progress: TransferProgress;
     error?: string;
   };
@@ -108,6 +114,7 @@
   let destroyed = false;
   let counts = $state<Record<Item["state"], number>>({
     ready: 0,
+    hashing: 0,
     uploading: 0,
     added: 0,
     skipped: 0,
@@ -125,6 +132,7 @@
   }
   const labels = {
     ready: "Ready",
+    hashing: "Hashing",
     uploading: "Uploading",
     added: "Added",
     skipped: "Already in vault",
@@ -161,16 +169,18 @@
     }
     pickerKind = input === folderInput ? "folder" : "files";
     selectedFiles = files;
-    await plan();
+    await plan(true);
   }
 
-  async function plan(): Promise<void> {
+  async function plan(validated = false): Promise<void> {
     if (!selectedFiles.length || running || planning || !checkpointReady) return;
-    try {
-      photoImportDeclaration(selectedFiles, destination);
-    } catch (cause) {
-      showError(cause);
-      return;
+    if (!validated) {
+      try {
+        photoImportDeclaration(selectedFiles, destination);
+      } catch (cause) {
+        showError(cause);
+        return;
+      }
     }
     const files = selectedFiles;
     const target = destination;
@@ -185,12 +195,7 @@
     unsupported = [];
     error = "";
     try {
-      hashProgress = undefined;
-      const { digest, hashes } = await photoImportManifest(files, active.signal, (progress) => {
-        hashProgress = progress;
-      });
-      if (active.signal.aborted || destroyed) return;
-      hashProgress = undefined;
+      const { digest } = photoImportManifest(files);
       if (
         resuming &&
         (!checkpoint ||
@@ -210,7 +215,16 @@
         manifestHash: digest,
         pickerKind,
       };
-      const plan = await channel.planPhotoImport(files, target, next.sourceID, hashes);
+      const plan = await channel.planPhotoImport(
+        files,
+        target,
+        next.sourceID,
+        active.signal,
+        (progress) => {
+          hashProgress = progress;
+        },
+      );
+      hashProgress = undefined;
       if (!sessionOnly) {
         try {
           await currentStorage.replace(plan.groups.length ? next : undefined, expected);
@@ -225,7 +239,7 @@
       items = plan.groups.map((group, index) => ({
         group: index,
         files: group.map((index) => files[index]),
-        hashes: group.map((index) => hashes.get(files[index])!),
+        hashes: group.map((index) => plan.hashes?.get(files[index]) ?? ""),
         state: "ready",
         progress: { processed: 0, total: group.reduce((sum, index) => sum + files[index].size, 0) },
       }));
@@ -290,7 +304,7 @@
           }
         }
         item.error = undefined;
-        setState(item, "uploading");
+        setState(item, item.hashes.includes("") ? "hashing" : "uploading");
         let transmissionStarted = false;
         try {
           const receipt = await channel.uploadPhotoGroup(
@@ -460,7 +474,7 @@
             <strong
               >{item.files.map((file) => file.webkitRelativePath || file.name).join(", ")}</strong
             ><span>{labels[item.state]}</span>
-            {#if item.state === "uploading"}<progress
+            {#if item.state === "hashing" || item.state === "uploading"}<progress
                 max={item.progress.total || 1}
                 value={item.progress.processed}
                 aria-label={labels[item.state]}

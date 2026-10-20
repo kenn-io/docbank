@@ -96,6 +96,8 @@ export interface PhotoImportPlan {
   groups: number[][];
   unsupported: number[];
   skip_reasons?: Record<number, string>;
+  // Hashes the server asked for before planning; every other file hashes with its group.
+  hashes?: ReadonlyMap<File, string>;
 }
 
 export interface PhotoGroupReceipt {
@@ -143,14 +145,17 @@ export interface PhotoImportTransport {
     files: File[],
     destination: string,
     sourceID: string,
-    hashes: ReadonlyMap<File, string>,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
   ): Promise<PhotoImportPlan>;
+  // An empty entry in hashes is a file not hashed yet. The upload hashes it
+  // first and fills in its entry, so a retry reuses the hash.
   uploadPhotoGroup(
     importID: string,
     groupIndex: number,
     group: File[],
     signal: AbortSignal,
-    onprogress: (phase: "uploading", progress: TransferProgress) => void,
+    onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
     hashes: string[],
   ): Promise<PhotoGroupReceipt>;
 }
@@ -173,6 +178,7 @@ interface UploadMessage {
   destination?: string;
   group?: number;
   hashes?: string[];
+  indexes?: number[];
   photo_group_receipt?: PhotoGroupReceipt;
   container_id?: string;
   chunk_index?: number;
@@ -337,17 +343,45 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     files: File[],
     destination: string,
     sourceID: string,
-    hashes: ReadonlyMap<File, string>,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
   ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
+    throwIfAborted(signal);
     this.busy = true;
     const requestID = randomUUID();
+    const hashes = new Map<File, string>();
     try {
-      const message = photoImportDeclaration(files, destination, sourceID, requestID, hashes);
-      this.send(message);
-      const plan = await this.nextMessage();
+      this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+      let plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
       this.throwProblem(plan);
+      if (plan.type === "photo_import_hashes_needed") {
+        // Only files the size of an earlier photo can continue its folder, so only they hash before the plan.
+        const indexes = plan.indexes;
+        if (
+          !Array.isArray(indexes) ||
+          !indexes.length ||
+          new Set(indexes).size !== indexes.length ||
+          indexes.some((index) => !Number.isInteger(index) || index < 0 || index >= files.length)
+        )
+          throw this.protocolError();
+        const total = indexes.reduce((sum, index) => sum + files[index].size, 0);
+        let processed = 0;
+        for (const index of indexes) {
+          hashes.set(
+            files[index],
+            await hashFile(files[index], signal, (progress) =>
+              onprogress({ processed: processed + progress.processed, total }),
+            ),
+          );
+          processed += files[index].size;
+        }
+        this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+        plan = await this.nextMessage();
+        this.requireMessage(plan, requestID);
+        this.throwProblem(plan);
+      }
       if (
         plan.type !== "photo_import_plan" ||
         typeof plan.import_id !== "string" ||
@@ -370,6 +404,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         groups: plan.groups,
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
+        hashes,
       };
     } finally {
       this.busy = false;
@@ -381,7 +416,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     groupIndex: number,
     group: File[],
     signal: AbortSignal,
-    onprogress: (phase: "uploading", progress: TransferProgress) => void,
+    onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
     hashes: string[],
   ): Promise<PhotoGroupReceipt> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
@@ -394,6 +429,16 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     let readyForBytes = false;
     try {
       const total = group.reduce((sum, file) => sum + file.size, 0);
+      const unhashed = group.reduce((sum, file, i) => sum + (hashes[i] ? 0 : file.size), 0);
+      let processed = 0;
+      for (const [i, file] of group.entries()) {
+        if (hashes[i]) continue;
+        const done = processed;
+        hashes[i] = await hashFile(file, signal, (progress) =>
+          onprogress("hashing", { processed: done + progress.processed, total: unhashed }),
+        );
+        processed += file.size;
+      }
       this.send({
         type: "begin_photo_group",
         request_id: requestID,
@@ -401,7 +446,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         group: groupIndex,
         hashes,
       });
-      let processed = 0;
+      processed = 0;
       let terminal = await this.nextMessage(signal);
       for (const file of group) {
         const ready = terminal;

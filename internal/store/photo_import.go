@@ -165,24 +165,59 @@ func photoImportRoleFilter(role string) (string, []any) {
 	}
 }
 
+// browserPhotoSourceSQL selects the eligible earlier browser photos: live,
+// visible, included, non-sidecar, and claimed by a canonical browser folder.
+func browserPhotoSourceSQL() string {
+	return `
+ FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
+ JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL AND pf.role<>'sidecar'
+ JOIN photo_source_claims c ON c.file_id=pf.file_id
+ WHERE n.trashed_at IS NULL AND c.folder_key IS NOT NULL
+ AND ` + photoBrowseEligibleMemberPredicate(false)
+}
+
+// BrowserPhotoSizeCandidates returns which of sizes belong to an eligible
+// earlier browser photo. Only files of those sizes can continue a folder, so
+// only they need a content hash before planning.
+func (s *Store) BrowserPhotoSizeCandidates(ctx context.Context, sizes []int64) (map[int64]bool, error) {
+	encoded, err := json.Marshal(sizes)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT cv.size`+browserPhotoSourceSQL()+`
+ AND substr(c.original_path, 1, 8)='browser:'
+ AND printf('%020d',cv.size) IN (SELECT printf('%020d',value) FROM json_each(?))`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("finding browser photo sizes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	candidates := map[int64]bool{}
+	for rows.Next() {
+		var size int64
+		if err := rows.Scan(&size); err != nil {
+			return nil, err
+		}
+		candidates[size] = true
+	}
+	return candidates, rows.Err()
+}
+
 // ResolveBrowserPhotoPaths continues a selected directory only when its matching
-// current photo content identifies one canonical browser folder.
+// current photo content identifies one canonical browser folder. Members without
+// a hash never match.
 func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImportMember) ([]string, error) {
-	hashes := make([]string, len(members))
-	for i, member := range members {
-		hashes[i] = member.BlobHash
+	hashes := make([]string, 0, len(members))
+	for _, member := range members {
+		if member.BlobHash != "" {
+			hashes = append(hashes, member.BlobHash)
+		}
 	}
 	encoded, err := json.Marshal(hashes)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
- SELECT cv.blob_hash, c.original_path
- FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
- JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL AND pf.role<>'sidecar'
- JOIN photo_source_claims c ON c.file_id=pf.file_id
- WHERE n.trashed_at IS NULL AND c.folder_key IS NOT NULL
- AND `+photoBrowseEligibleMemberPredicate(false)+`
+ SELECT cv.blob_hash, c.original_path`+browserPhotoSourceSQL()+`
  AND cv.blob_hash IN (SELECT value FROM json_each(?))`, string(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("finding browser photo provenance: %w", err)

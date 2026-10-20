@@ -1042,16 +1042,59 @@ func TestBrowserPhotoDirectoryContinuation(t *testing.T) {
 		{OriginalPath: "browser:new/Card/renamed.JPG", BlobHash: fakeHash("first")},
 		{OriginalPath: "browser:new/Card/sibling.JPG", BlobHash: fakeHash("new")},
 		{OriginalPath: "browser:new/Other/independent.JPG", BlobHash: fakeHash("unmatched")},
+		{OriginalPath: "browser:new/Card/unhashed.JPG"},
 	}
 	resolved, err := s.ResolveBrowserPhotoPaths(ctx, members)
 	require.NoError(t, err)
-	require.Equal(t, []string{"browser:first/renamed.JPG", "browser:first/sibling.JPG", "browser:new/Other/independent.JPG"}, resolved)
+	require.Equal(t, []string{"browser:first/renamed.JPG", "browser:first/sibling.JPG", "browser:new/Other/independent.JPG", "browser:first/unhashed.JPG"}, resolved)
 	members = append(members,
 		PhotoImportMember{OriginalPath: "browser:new/Card/another.JPG", BlobHash: fakeHash("second")},
 		PhotoImportMember{OriginalPath: "browser:new/Separate/preview.JPG", BlobHash: fakeHash("first")})
 	resolved, err = s.ResolveBrowserPhotoPaths(ctx, members)
 	require.NoError(t, err)
-	require.Equal(t, []string{"browser:new/Card/renamed.JPG", "browser:new/Card/sibling.JPG", "browser:new/Other/independent.JPG", "browser:new/Card/another.JPG", "browser:first/preview.JPG"}, resolved)
+	require.Equal(t, []string{"browser:new/Card/renamed.JPG", "browser:new/Card/sibling.JPG", "browser:new/Other/independent.JPG", "browser:new/Card/unhashed.JPG", "browser:new/Card/another.JPG", "browser:first/preview.JPG"}, resolved)
+}
+
+func TestBrowserPhotoSizeCandidates(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	ingest := func(source, name string, size int64, kind string) PhotoImportResult {
+		run, err := s.BeginIngest(ctx, kind, "browser: selection")
+		require.NoError(t, err)
+		member := photoImportTestMember(source+"/"+name, PhotoRoleImage, fakeHash(name), "image/jpeg")
+		member.Size = size
+		result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(member))
+		require.NoError(t, err)
+		return result
+	}
+	ingest("browser:prior", "eligible.JPG", 11, "photo-import")
+	hidden := ingest("browser:prior", "hidden.JPG", 12, "photo-import")
+	_, err := s.SetPhotoAssetHidden(ctx, hidden.Asset.ID, hidden.Asset.Revision, true)
+	require.NoError(t, err)
+	excluded := ingest("browser:prior", "excluded.JPG", 13, "photo-import")
+	_, err = s.SetPhotoAssetExcluded(ctx, excluded.Asset.ID, excluded.Asset.Revision, true)
+	require.NoError(t, err)
+	ingest("/card", "local.JPG", 14, "photo-import")
+	trashed := ingest("browser:prior", "trashed.JPG", 15, "photo-import")
+	_, _, err = s.Trash(ctx, trashed.Nodes[0].ID, trashed.Nodes[0].Revision)
+	require.NoError(t, err)
+	run, err := s.BeginIngest(ctx, "photo-import", "browser: selection")
+	require.NoError(t, err)
+	image := photoImportTestMember("browser:prior/paired.JPG", PhotoRoleImage, fakeHash("paired"), "image/jpeg")
+	image.Size = 16
+	sidecar := photoImportTestMember("browser:prior/paired.JPG.xmp", PhotoRoleSidecar, fakeHash("paired-xmp"), "application/rdf+xml")
+	sidecar.Size = 17
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(image, sidecar))
+	require.NoError(t, err)
+
+	candidates, err := s.BrowserPhotoSizeCandidates(ctx, []int64{11, 12, 13, 14, 15, 16, 17, 18})
+	require.NoError(t, err)
+	require.Equal(t, map[int64]bool{11: true, 16: true}, candidates)
+	candidates, err = s.BrowserPhotoSizeCandidates(ctx, []int64{18})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
 }
 
 func TestBrowserPhotoContinuationSkipsHiddenAndExcluded(t *testing.T) {

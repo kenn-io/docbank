@@ -67,6 +67,7 @@ test("resumes the complete selection and source after a daemon and browser resta
     }
     await canvasPage.close();
     const plans: string[] = [];
+    const requests = new Set<string>();
     const open = async () => {
       const url = new URL(await fixture.run("web", "--no-browser"));
       url.pathname = "/photos";
@@ -79,8 +80,13 @@ test("resumes the complete selection and source after a daemon and browser resta
       page.setDefaultTimeout(15_000);
       page.on("websocket", (socket) =>
         socket.on("framesent", ({ payload }) => {
-          if (typeof payload === "string" && payload.includes('"plan_photo_import"'))
-            plans.push(JSON.parse(payload).source_id);
+          if (typeof payload !== "string" || !payload.includes('"plan_photo_import"')) return;
+          // A plan resent with the hashes the daemon asked for keeps its request.
+          const plan = JSON.parse(payload);
+          if (!requests.has(plan.request_id)) {
+            requests.add(plan.request_id);
+            plans.push(plan.source_id);
+          }
         }),
       );
       await page.goto(url.href);
@@ -130,10 +136,9 @@ test("resumes the complete selection and source after a daemon and browser resta
       path: path.join(repository, ".superpowers", "photo-import-resume.png"),
       animations: "disabled",
     });
-    // Equal size and timestamp still require the original bytes before any upload.
+    // A changed size is refused before any upload, even with the original timestamp.
     const original = await readFile(files[2]!);
-    const modified = Buffer.from(original);
-    modified[modified.length - 1] ^= 1;
+    const modified = Buffer.concat([original, Buffer.from([0])]);
     const times = await stat(files[2]!);
     await writeFile(files[2]!, modified);
     await utimes(files[2]!, times.atime, times.mtime);

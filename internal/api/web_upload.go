@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -87,6 +88,7 @@ type webUploadMessage struct {
 	Destination  string              `json:"destination,omitzero"`
 	Group        int                 `json:"group,omitzero"`
 	Hashes       []string            `json:"hashes,omitzero"`
+	Indexes      []int               `json:"indexes,omitzero"`
 	PhotoReceipt *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
 	ContainerID  string              `json:"container_id,omitzero"`
 	ChunkIndex   int                 `json:"chunk_index,omitzero"`
@@ -635,7 +637,7 @@ func planWebPhotos(
 			skipReasons[index] = "Unsupported type"
 			continue
 		}
-		if !isCanonicalHash(file.ExpectedHash) {
+		if file.ExpectedHash != "" && !isCanonicalHash(file.ExpectedHash) {
 			return invalid()
 		}
 		indexes[name] = index
@@ -674,6 +676,40 @@ func (p *webPhotoImport) sourceDescription() string {
 	return "browser: Choose files"
 }
 
+// unhashedBrowserPhotos lists the planned files that declared no hash but
+// match the size of an eligible earlier browser photo. Only exact bytes can
+// continue a folder, so these are the only files the browser must hash before
+// the plan; the rest hash with their group at upload.
+func unhashedBrowserPhotos(
+	ctx context.Context, s *store.Store, files []webPhotoFile, groups [][]int,
+) ([]int, *Error) {
+	var sizes []int64
+	for _, group := range groups {
+		for _, index := range group {
+			if files[index].ExpectedHash == "" {
+				sizes = append(sizes, files[index].Size)
+			}
+		}
+	}
+	if len(sizes) == 0 {
+		return nil, nil
+	}
+	candidates, err := s.BrowserPhotoSizeCandidates(ctx, sizes)
+	if err != nil {
+		return nil, uploadError(err)
+	}
+	var needed []int
+	for _, group := range groups {
+		for _, index := range group {
+			if files[index].ExpectedHash == "" && candidates[files[index].Size] {
+				needed = append(needed, index)
+			}
+		}
+	}
+	slices.Sort(needed)
+	return needed, nil
+}
+
 // handleWebPhotoPlan answers one plan_photo_import message. It returns the
 // new import, or nil when the plan was rejected, and false when the socket
 // must close.
@@ -698,8 +734,17 @@ func handleWebPhotoPlan(
 	if problem == nil {
 		groups, unsupported, skipReasons, problem = planWebPhotos(begin.RequestID, begin.Files)
 	}
+	var needed []int
+	if problem == nil {
+		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
+	}
 	if problem != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
+	}
+	if len(needed) > 0 {
+		return nil, wsjson.Write(ctx, conn, webUploadMessage{
+			Type: "photo_import_hashes_needed", RequestID: begin.RequestID, Indexes: needed,
+		}) == nil
 	}
 	sourceID := uuid.New()
 	if begin.SourceID != nil {
@@ -736,8 +781,9 @@ func handleWebPhotoPlan(
 }
 
 // groupFiles checks that begin names a group of this import plan, with one
-// canonical hash per member that matches its planned content, and
-// returns the group's declared files.
+// canonical hash per member that matches any hash declared in the plan, and
+// returns the group's files. A member declared without a hash is pinned to the
+// hash of its first attempt, so a retry must upload the same bytes.
 func (p *webPhotoImport) groupFiles(begin webUploadMessage) ([]webPhotoFile, *Error) {
 	invalid := func(detail string) ([]webPhotoFile, *Error) {
 		return nil, NewError(http.StatusUnprocessableEntity, "validation", detail)
@@ -752,10 +798,14 @@ func (p *webPhotoImport) groupFiles(begin webUploadMessage) ([]webPhotoFile, *Er
 	}
 	files := make([]webPhotoFile, len(group))
 	for i, index := range group {
-		if begin.Hashes[i] != p.files[index].ExpectedHash {
+		declared := p.files[index].ExpectedHash
+		if !isCanonicalHash(begin.Hashes[i]) || declared != "" && begin.Hashes[i] != declared {
 			return invalid("expected_hash must be canonical lowercase SHA-256 and match the planned content. Choose the folder again.")
 		}
 		files[i] = p.files[index]
+	}
+	for i, index := range group {
+		p.files[index].ExpectedHash = begin.Hashes[i]
 	}
 	return files, nil
 }

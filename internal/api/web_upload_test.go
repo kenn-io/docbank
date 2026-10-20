@@ -194,6 +194,7 @@ type photoSocketResponse struct {
 	Status      int            `json:"status"`
 	Groups      [][]int        `json:"groups"`
 	Unsupported []int          `json:"unsupported"`
+	Indexes     []int          `json:"indexes"`
 	SkipReasons map[int]string `json:"skip_reasons"`
 	Code        string         `json:"code"`
 	Detail      string         `json:"detail"`
@@ -254,7 +255,7 @@ func TestBrowserPhotoPlan(t *testing.T) {
 	message = readPhotoResponse(t, conn)
 	assert.Equal(t, []int{1}, message.Unsupported)
 	assert.Equal(t, "Duplicate path", message.SkipReasons[1])
-	for _, hash := range []string{"", strings.Repeat("A", 64), "invalid"} {
+	for _, hash := range []string{strings.Repeat("A", 64), "invalid"} {
 		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "request_id": "invalid-hash", "destination": "/photos", "files": []map[string]any{{"relative_path": "photo.JPG", "size": 3, "expected_hash": hash}}}))
 		assert.Equal(t, http.StatusUnprocessableEntity, readPhotoResponse(t, conn).Status)
 	}
@@ -799,6 +800,74 @@ func TestBrowserPhotoFolderContinuationKeepsImportedSource(t *testing.T) {
 			assert.Equal(t, expectedPath, provenance.Items[0].OriginalPath)
 		}
 	}
+}
+
+func TestBrowserPhotoPlanAsksForHashesOnlyOfSizeMatches(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	data := [][]byte{mediatest.JPEG(2, 2, color.RGBA{R: 255, A: 255}), mediatest.JPEG(64, 48, color.RGBA{G: 255, A: 255})}
+	require.NotEqual(t, len(data[0]), len(data[1]))
+	hash := func(data []byte) string {
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:])
+	}
+	plan := func(source, request string, files ...map[string]any) photoSocketResponse {
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "destination": "/photos", "request_id": request, "source_id": source, "files": files}))
+		return readPhotoResponse(t, conn)
+	}
+	file := func(name string, data []byte, declared string) map[string]any {
+		return map[string]any{"relative_path": name, "size": len(data), "expected_hash": declared}
+	}
+	const first, second = "20000000-0000-4000-8000-000000000001", "20000000-0000-4000-8000-000000000002"
+
+	// A new shoot matches no earlier photo, so it plans in one round trip without any hash.
+	reply := plan(first, "new-shoot", file("Preview/preview.JPG", data[0], ""))
+	require.Equal(t, "photo_import_plan", reply.Type, "%s: %s", reply.Code, reply.Detail)
+	received := uploadBrowserPhoto(t, conn, reply.ImportID, 0, map[string]any{"relative_path": "Preview/preview.JPG", "expected_hash": hash(data[0])}, data[0])
+	require.Equal(t, "added", received.Receipt.Status)
+
+	// Reselecting the folder lists only the file whose size matches the earlier photo.
+	selected := []map[string]any{
+		file("Card/IMG_001.JPG", data[0], ""),
+		file("Card/IMG_002.JPG", data[1], ""),
+		file("Card/notes.txt", []byte("notes"), ""),
+	}
+	reply = plan(second, "card", selected...)
+	require.Equal(t, "photo_import_hashes_needed", reply.Type)
+	require.Equal(t, []int{0}, reply.Indexes)
+	selected[0]["expected_hash"] = hash(data[0])
+	reply = plan(second, "card", selected...)
+	require.Equal(t, "photo_import_plan", reply.Type, "%s: %s", reply.Code, reply.Detail)
+	require.Equal(t, [][]int{{0}, {1}}, reply.Groups)
+
+	// A declared hash must match exactly.
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "wrong", "import_id": reply.ImportID, "group": 0, "hashes": []string{hash(data[1])}}))
+	require.Equal(t, http.StatusUnprocessableEntity, readPhotoResponse(t, conn).Status)
+	continued := uploadBrowserPhoto(t, conn, reply.ImportID, 0, selected[0], data[0])
+	require.Equal(t, "skipped", continued.Receipt.Status)
+
+	// An undeclared hash must be well formed, then stays pinned to its first attempt.
+	for _, malformed := range []string{"", "ABC", strings.ToUpper(hash(data[1]))} {
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "malformed", "import_id": reply.ImportID, "group": 1, "hashes": []string{malformed}}))
+		require.Equal(t, http.StatusUnprocessableEntity, readPhotoResponse(t, conn).Status, malformed)
+	}
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "pin", "import_id": reply.ImportID, "group": 1, "hashes": []string{hash(data[1])}}))
+	require.Equal(t, "ready", readPhotoResponse(t, conn).Type)
+	require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, data[1]))
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "end", "request_id": "pin"}))
+	require.Equal(t, "added", readPhotoResponse(t, conn).Receipt.Status)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "retry", "import_id": reply.ImportID, "group": 1, "hashes": []string{hash(data[0])}}))
+	require.Equal(t, http.StatusUnprocessableEntity, readPhotoResponse(t, conn).Status)
+
+	// The unhashed sibling still joins the folder its hashed neighbor continued.
+	node, err := catalog.NodeByPath(t.Context(), "/photos/IMG_002.JPG")
+	require.NoError(t, err)
+	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/provenance?limit=1&offset=0", node.ID), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var provenance api.ProvenancePage
+	require.NoError(t, json.Unmarshal([]byte(body), &provenance))
+	require.Equal(t, "browser:"+first+"/Preview/IMG_002.JPG", provenance.Items[0].OriginalPath)
 }
 
 func TestBrowserPhotoPlanSkipsLeadingUnsupportedFilesWithoutHashes(t *testing.T) {

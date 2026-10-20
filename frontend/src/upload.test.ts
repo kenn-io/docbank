@@ -19,7 +19,7 @@ const testUploadSecret = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 
 function oversizedPhotoFiles(): File[] {
   const folder = ["旅".repeat(70), "旅".repeat(70), "旅".repeat(70)].join("/");
-  return Array.from({ length: 11000 }, (_, index) => {
+  return Array.from({ length: 12000 }, (_, index) => {
     const file = new File([], `photo-${index}.JPG`, { lastModified: 0 });
     Object.defineProperty(file, "webkitRelativePath", { value: `${folder}/${file.name}` });
     return file;
@@ -52,6 +52,8 @@ class DaemonSocket extends EventTarget {
   packageContainerID = "";
   requestID = "";
   photoMembers = 0;
+  // Indexes the daemon asks to have hashed before it plans, once per socket.
+  needHashes: number[] = [];
   frames: (string | ArrayBuffer)[] = [];
 
   constructor() {
@@ -71,10 +73,19 @@ class DaemonSocket extends EventTarget {
       request_id?: string;
       container_id?: string;
       hashes?: unknown[];
+      files?: { expected_hash: string }[];
     };
     if (message.type === "authenticate" && this.authenticate) {
       this.emit({ type: "authenticated", proof: daemonProof(message.nonce ?? "") });
     } else if (message.type === "plan_photo_import") {
+      if (this.needHashes.length && !message.files?.[this.needHashes[0]!]?.expected_hash) {
+        this.emit({
+          type: "photo_import_hashes_needed",
+          request_id: message.request_id,
+          indexes: this.needHashes,
+        });
+        return;
+      }
       this.emit({
         type: "photo_import_plan",
         request_id: message.request_id,
@@ -450,15 +461,25 @@ it("plans on the server and streams each photo member between ready and end", as
     [files[1], "41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61"],
     [files[2], "0cab1c9617404faf2b24e221e189ca5945813e14d3f766345b09ca13bbe28ffc"],
   ]);
+  const reads = files.map((file) => vi.spyOn(file, "slice"));
   expect(
-    await channel.planPhotoImport(files, "/photos", "20000000-0000-4000-8000-000000000001", hashes),
+    await channel.planPhotoImport(
+      files,
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
   ).toEqual({
     import_id: "import-1",
     groups: [[0, 1], [2]],
     unsupported: [3],
     skip_reasons: { 3: "Unsupported type" },
+    hashes: new Map(),
   });
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([0, 0, 0, 0]);
   const progress = vi.fn();
+  const groupHashes = ["", ""];
   expect(
     await channel.uploadPhotoGroup(
       "import-1",
@@ -466,9 +487,11 @@ it("plans on the server and streams each photo member between ready and end", as
       files.slice(0, 2),
       new AbortController().signal,
       progress,
-      files.slice(0, 2).map((file) => hashes.get(file)!),
+      groupHashes,
     ),
   ).toEqual({ status: "added", asset_id: "photo-1" });
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([2, 2, 0, 0]);
+  expect(groupHashes).toEqual(files.slice(0, 2).map((file) => hashes.get(file)));
   const frames = socket.frames.map((frame) =>
     typeof frame === "string" ? JSON.parse(frame) : "bytes",
   );
@@ -483,7 +506,7 @@ it("plans on the server and streams each photo member between ready and end", as
   ]);
   expect(frames[1].files[0]).toEqual({
     relative_path: "Trip/capture.ARW",
-    expected_hash: hashes.get(files[0]),
+    expected_hash: "",
     size: 3,
     modified_time: 1700000000000,
   });
@@ -495,7 +518,8 @@ it("plans on the server and streams each photo member between ready and end", as
     "d7439bee24773bcbfa2d0a97947ee36227b10d1022b1a55847e928965bb6bfde",
     "41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61",
   ]);
-  expect(progress.mock.calls.every(([phase]) => phase === "uploading")).toBe(true);
+  expect(progress.mock.calls[0]![0]).toBe("hashing");
+  expect(progress).toHaveBeenCalledWith("hashing", { processed: 7, total: 7 });
   expect(progress).toHaveBeenLastCalledWith("uploading", {
     processed: 7,
     total: 7,
@@ -517,10 +541,86 @@ it("rejects a photo plan that doesn't account for every selected file", async ()
       [file],
       "/",
       "20000000-0000-4000-8000-000000000001",
-      new Map([[file, await hashFile(file, new AbortController().signal, () => {})]]),
+      new AbortController().signal,
+      vi.fn(),
     ),
   ).rejects.toThrow(/invalid response/);
   expect(socket.closed).toBe(true);
+});
+
+it("hashes only the files the daemon asks for before it plans", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [1];
+  const files = photoSelectionFiles();
+  const reads = files.map((file) => vi.spyOn(file, "slice"));
+  const progress = vi.fn();
+  const plan = await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000001",
+    new AbortController().signal,
+    progress,
+  );
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([0, 1, 0, 0]);
+  expect(plan.hashes).toEqual(
+    new Map([[files[1], "41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61"]]),
+  );
+  expect(progress).toHaveBeenLastCalledWith({ processed: 4, total: 4 });
+  const declarations = socket.frames
+    .filter((frame): frame is string => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .filter((frame) => frame.type === "plan_photo_import");
+  expect(declarations.map((frame) => frame.files.map((file: any) => file.expected_hash))).toEqual([
+    ["", "", "", ""],
+    ["", plan.hashes!.get(files[1]), "", ""],
+  ]);
+  expect(declarations[1].request_id).toBe(declarations[0].request_id);
+  channel.close();
+});
+
+it.each([
+  { name: "an index outside the selection", indexes: [4] },
+  { name: "a repeated index", indexes: [1, 1] },
+])("rejects a hash request with $name", async ({ indexes }) => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = indexes;
+  const files = photoSelectionFiles();
+  await expect(
+    channel.planPhotoImport(
+      files,
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/invalid response/);
+  expect(socket.closed).toBe(true);
+});
+
+it("keeps the channel usable when hashing for the plan is cancelled", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [0];
+  const files = photoSelectionFiles();
+  const controller = new AbortController();
+  await expect(
+    channel.planPhotoImport(
+      files,
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      controller.signal,
+      () => controller.abort(),
+    ),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(socket.closed).toBe(false);
+  socket.needHashes = [];
+  await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000002",
+    new AbortController().signal,
+    vi.fn(),
+  );
+  channel.close();
 });
 
 it("rejects an oversized folder plan before sending and keeps the channel usable", async () => {
@@ -531,24 +631,24 @@ it("rejects an oversized folder plan before sending and keeps the channel usable
   );
   await channel.connect();
   const files = oversizedPhotoFiles();
-  const hashes = new Map(
-    files.map((file) => [file, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]),
-  );
   await expect(
-    channel.planPhotoImport(files, "/", "20000000-0000-4000-8000-000000000001", hashes),
+    channel.planPhotoImport(
+      files,
+      "/",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
   ).rejects.toThrow(/Choose fewer files/);
   expect(socket.frames).toHaveLength(1);
   expect(socket.closed).toBe(false);
-  const next = photoSelectionFiles();
-  const nextHashes = new Map(
-    await Promise.all(
-      next.map(
-        async (file) =>
-          [file, await hashFile(file, new AbortController().signal, () => {})] as const,
-      ),
-    ),
+  await channel.planPhotoImport(
+    photoSelectionFiles(),
+    "/",
+    "20000000-0000-4000-8000-000000000002",
+    new AbortController().signal,
+    vi.fn(),
   );
-  await channel.planPhotoImport(next, "/", "20000000-0000-4000-8000-000000000002", nextHashes);
   expect(socket.frames).toHaveLength(2);
   channel.close();
 });
