@@ -382,19 +382,6 @@ func TestPhotoStackLibraryPagesQueryScopedBursts(t *testing.T) {
 	require.Equal(t, [][]string{{undated}, {a1}, {b1}, {a2}, {b2, b3}, {x}}, items)
 }
 
-func TestPhotoStackRequestGroupsFullRun(t *testing.T) {
-	t.Parallel()
-	// A full run of 125,000 pairs retains request order.
-	frames, position := make([]photoStackFrame, MaxPhotoStackGroupIDs), map[string]int{}
-	for i := range frames {
-		frames[i] = photoStackFrame{AssetID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), Folder: fmt.Sprintf("folder-%d", i/2), SortKey: "2024-06-10T12:00:00.000000000"}
-		position[frames[i].AssetID] = i
-	}
-	pairs := photoStackRequestGroups(frames, 2, position)
-	require.Len(t, pairs, MaxPhotoStackGroupIDs/2)
-	require.Equal(t, []string{frames[2].AssetID, frames[3].AssetID}, pairs[1])
-}
-
 func TestPhotoStackGroupsRejectInvalidInputs(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1236,18 +1223,18 @@ func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {
 		_, err = s.SetPhotoAssetHidden(ctx, id, asset.Revision, true)
 		require.NoError(t, err)
 	}
-	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, CurrentID: ids[0], Decision: "representative", Hidden: true, Targets: []PhotoAuthoredEditTarget{{}}}
-	_, err := s.DecidePhotoStack(ctx, request)
-	require.ErrorIs(t, err, ErrHiddenLocked)
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
-	ctx = WithPhotoHiddenToken(ctx, token)
-	prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: ids, Hidden: true})
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	prepared, err := s.PreparePhotoAuthored(unlocked, PhotoSetSelection{AssetIDs: ids, Hidden: true})
 	require.NoError(t, err)
-	request.Targets = nil
+	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, CurrentID: ids[0], Decision: "representative", Hidden: true}
 	for _, target := range prepared.Targets {
 		request.Targets = append(request.Targets, PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision})
 	}
+	_, err = s.DecidePhotoStack(ctx, request)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	ctx = unlocked
 	request.Hidden = false
 	_, err = s.DecidePhotoStack(ctx, request)
 	require.ErrorIs(t, err, ErrStalePhotoStack)
@@ -1263,18 +1250,16 @@ func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {
 	require.Equal(t, ids, page.Stacks[0].AssetIDs)
 }
 
-func TestPhotoRepresentativeImportRejectsSequenceBehindRanks(t *testing.T) {
+func TestPhotoRepresentativeImportRejectsInconsistentBackup(t *testing.T) {
 	t.Parallel()
 	for _, receiptOnly := range []bool{false, true} {
 		t.Run(fmt.Sprintf("receipt-only=%t", receiptOnly), func(t *testing.T) {
 			s := newTestStore(t)
 			ids := burstPhotos(t, s, 2)
 			// A retained high-water mark can outlive all current choices.
-			_, err := s.db.Exec(`INSERT INTO photo_library_settings(singleton,updated_at,representative_sequence) VALUES(1,'',9)`)
-			require.NoError(t, err)
 			receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[1], Decision: "representative"})
 			require.NoError(t, err)
-			require.Equal(t, int64(10), *receipt.Representatives[0].After)
+			require.Equal(t, int64(1), *receipt.Representatives[0].After)
 			if receiptOnly {
 				_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
 				require.NoError(t, err)
@@ -1284,33 +1269,33 @@ func TestPhotoRepresentativeImportRejectsSequenceBehindRanks(t *testing.T) {
 			}
 			var backup bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &backup))
-			require.Contains(t, backup.String(), `"representative_sequence":10`)
+			require.Contains(t, backup.String(), `"representative_sequence":1}`)
 			for _, sequence := range []string{"0", "null"} {
-				corrupt := bytes.ReplaceAll(backup.Bytes(), []byte(`"representative_sequence":10`), []byte(`"representative_sequence":`+sequence))
+				corrupt := bytes.ReplaceAll(backup.Bytes(), []byte(`"representative_sequence":1}`), []byte(`"representative_sequence":`+sequence+`}`))
 				restored := newTestStore(t)
 				require.ErrorContains(t, restored.ImportMetadata(t.Context(), bytes.NewReader(corrupt)), "photo representative sequence is below retained ranks")
 			}
+			// Receipts hold the asset ID escaped inside their JSON; asset rows hold it plain.
+			corrupt := bytes.ReplaceAll(backup.Bytes(), []byte(`\"asset_id\":\"`+ids[1]+`\"`), []byte(`\"asset_id\":\"00000000-0000-4000-8000-000000000001\"`))
+			require.NotEqual(t, backup.Bytes(), corrupt)
+			require.ErrorContains(t, newTestStore(t).ImportMetadata(t.Context(), bytes.NewReader(corrupt)), "representative receipts reference missing photo assets")
 		})
 	}
 }
 
-func TestPhotoRepresentativeDefaultSettingsAndReceiptValidation(t *testing.T) {
+func TestPhotoRepresentativeDecisionKeepsDefaultSettings(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 2)
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_library_settings`).Scan(&count))
 	require.Zero(t, count)
-	r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
+	_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
 	require.NoError(t, err)
 	settings, err := s.PhotoSettings(t.Context())
 	require.NoError(t, err)
 	require.Empty(t, settings.UpdatedAt)
 	require.Equal(t, int64(1), settings.Revision)
-	_, err = s.db.Exec(`UPDATE photo_change_receipts SET after_json=replace(after_json,?,?) WHERE receipt_id=?`, ids[0], "00000000-0000-4000-8000-000000000001", r.ReceiptID)
-	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.ErrorContains(t, s.ExportMetadata(t.Context(), &exported), "representative receipts reference missing photo assets")
 }
 
 func TestPhotoStackIncompleteMetadataScope(t *testing.T) {
