@@ -39,6 +39,8 @@ func TestBackupScheduleCaptureRetentionAndRestart(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		d := scheduledDeps(t, time.Hour)
+		_, err := d.Store.Mkdir(t.Context(), d.Store.RootID(), "retained")
+		require.NoError(t, err)
 		repo, err := backup.Init(d.Cfg.Backup.Repo)
 		require.NoError(t, err)
 		manual, err := createBackupSnapshot(t.Context(), repo, d, d.Gate, backupCreateRequest{Tag: "manual"}, nil)
@@ -70,6 +72,18 @@ func TestBackupScheduleCaptureRetentionAndRestart(t *testing.T) {
 		verified, err := backupapp.Verify(t.Context(), repo, "test", backup.VerifyOptions{All: true})
 		require.NoError(t, err)
 		require.Empty(t, verified.Problems)
+		for _, point := range points {
+			require.NotNil(t, point.Metadata)
+			require.Equal(t, backupapp.MetadataFormat, point.Metadata.Format)
+		}
+		target := filepath.Join(t.TempDir(), "restored")
+		_, err = backupapp.Restore(t.Context(), repo, "test", backup.RestoreOptions{TargetDir: target})
+		require.NoError(t, err)
+		restored, err := store.Open(filepath.Join(target, "docbank.db"))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, restored.Close()) }()
+		_, err = restored.NodeByPath(t.Context(), "/retained")
+		require.NoError(t, err)
 	})
 }
 
@@ -205,4 +219,22 @@ func TestBackupScheduleCancellationWhileMaintenanceHoldsGate(t *testing.T) {
 		close(release)
 		require.NoError(t, <-maintenance)
 	})
+}
+
+func TestBackupScheduleRejectsDifferentVault(t *testing.T) {
+	t.Parallel()
+	first := scheduledDeps(t, time.Hour)
+	repo, err := backup.Init(first.Cfg.Backup.Repo)
+	require.NoError(t, err)
+	_, err = scheduledBackup(t.Context(), first, first.Logger)
+	require.NoError(t, err)
+	before, err := repo.ListSnapshots()
+	require.NoError(t, err)
+	second := scheduledDeps(t, time.Hour)
+	second.Cfg.Backup.Repo = first.Cfg.Backup.Repo
+	_, err = scheduledBackup(t.Context(), second, second.Logger)
+	require.ErrorContains(t, err, "another vault")
+	after, err := repo.ListSnapshots()
+	require.NoError(t, err)
+	require.Equal(t, before, after)
 }

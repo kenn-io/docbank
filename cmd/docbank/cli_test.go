@@ -1841,6 +1841,36 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	assert.Equal(t, manifest.SnapshotID, verification.Problems[0].SnapshotID)
 }
 
+func TestBackupClaimCLIConfirmation(t *testing.T) {
+	_ = setupVaultHome(t)
+	path := filepath.Join(t.TempDir(), "repo")
+	_, err := runCLI(t, "backup", "init", "--repo", path)
+	require.NoError(t, err)
+	_, err = runCLI(t, "backup", "create", "--repo", path, "--json")
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+	t.Cleanup(func() { rootCmd.SetIn(nil) })
+	rootCmd.SetIn(strings.NewReader("n\n"))
+	out, err := runCLI(t, "backup", "claim", "--repo", path)
+	require.NoError(t, err)
+	require.Contains(t, out, "snapshots: 1")
+	require.Contains(t, out, "newest snapshot:")
+	require.Contains(t, out, "claim declined")
+	_, err = runCLI(t, "backup", "create", "--repo", path, "--json")
+	require.ErrorContains(t, err, "unclaimed history")
+	rootCmd.SetIn(strings.NewReader("y\n"))
+	out, err = runCLI(t, "backup", "claim", "--repo", path)
+	require.NoError(t, err)
+	require.Contains(t, out, "claimed backup repository")
+	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+	out, err = runCLI(t, "backup", "claim", "--repo", path, "--yes")
+	require.NoError(t, err)
+	require.Contains(t, out, "claimed backup repository")
+	out, err = runCLI(t, "backup", "claim", "--repo", path, "--yes")
+	require.NoError(t, err)
+	require.Contains(t, out, "already belongs")
+}
+
 func TestStoragePackBudgetAndJSON(t *testing.T) {
 	_ = setupVaultHome(t)
 	for name, content := range map[string]string{"a.txt": "alpha", "b.txt": "bravo"} {

@@ -1214,6 +1214,13 @@ export interface CatalogEntry {
   primary: boolean;
 }
 
+export interface ClaimBackupRepositoryRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  confirm?: boolean;
+  repo?: string;
+}
+
 export interface Collection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6997,6 +7004,16 @@ export interface RenditionWindowRequest {
   vault_id: string;
 }
 
+export interface RepositoryClaim {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  id: string;
+  newest_at?: string;
+  owned: boolean;
+  path: string;
+  snapshot_count: number;
+}
+
 export interface SelectedDocuments {
   documents?: Identity[];
 }
@@ -9867,6 +9884,44 @@ return sessionJSON<AuditVerifyReport>(getVerifyAuditUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(auditVerifyRequest)
+  }
+);}
+
+
+
+export const getClaimBackupRepositoryUrl = () => {
+
+
+
+
+  return `/api/v1/backup/claim`
+}
+
+/**
+ * @summary Preview or confirm adoption of a backup repository for this vault
+ */
+export const claimBackupRepository = async (claimBackupRepositoryRequest: NonReadonly<ClaimBackupRepositoryRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RepositoryClaim> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RepositoryClaim>(getClaimBackupRepositoryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(claimBackupRepositoryRequest)
   }
 );}
 

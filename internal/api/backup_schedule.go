@@ -56,6 +56,9 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger) (time.Dur
 	if err != nil {
 		return 0, fmt.Errorf("opening scheduled backup repository: %w", err)
 	}
+	if err := backupapp.EnsureRepositoryOwner(ctx, repo, d.Store.VaultID(), false); err != nil {
+		return 0, err
+	}
 	manifests, err := repo.ListSnapshots()
 	if err != nil {
 		return 0, fmt.Errorf("listing scheduled backups: %w", err)

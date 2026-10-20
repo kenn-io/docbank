@@ -154,6 +154,9 @@ func Create(
 	if opts.SQLiteOpener != nil {
 		return nil, errors.New("backupapp: create options must not supply a SQLite opener")
 	}
+	if err := EnsureRepositoryOwner(ctx, repo, metadata.VaultID(), opts.ForceUnlock); err != nil {
+		return nil, err
+	}
 	opts.MetadataSource = NewMetadataSource(metadata)
 	opts.ContentSource = NewContentSource(blobs)
 	opts.SQLiteOpener = SQLiteOpener(metadata.SQLiteDriver())

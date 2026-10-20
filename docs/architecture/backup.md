@@ -17,7 +17,7 @@ for Go integration.
 
 ## Which entry point owns the operation?
 
-Standalone `docbank backup init`, `backup create`, `backup list`, `backup
+Standalone `docbank backup init`, `backup claim`, `backup create`, `backup list`, `backup
 verify`, `backup restore`, `backup forget`, and `backup prune` use the authenticated daemon API. See the
 [Backup user guide](../usage/backup.md). Applications that own an embedded
 vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
@@ -75,6 +75,20 @@ describe different authority handoffs.
 
 ## Who schedules captures and retention?
 
+Each repository has one source vault. Its root-level `docbank-owner` marker
+holds the stable vault identity. Daemon initialization assigns ownership;
+the embedded initializer creates an unassigned empty repository. The shared
+`backupapp.Create` path checks ownership for every daemon and embedded capture.
+Under Kit's exclusive repository lock, it rechecks the marker and history,
+assigns an empty unmarked repository, and rejects a different owner. Existing
+unmarked history requires an explicit claim. Marker publication is atomic;
+claims preserve snapshots and cannot replace an existing owner.
+
+The operator-only claim route previews repository identity, history count,
+and newest time. The CLI requests that preview before confirmation; embedded
+vaults expose the same preview and confirmed claim. See
+[Adopt an existing repository](../usage/backup.md#adopt-an-existing-repository).
+
 The daemon supervisor owns one serial `backup:scheduled` job when
 `[backup] interval` is positive. It shares the HTTP capture helper and operation
 gate, so scheduled captures preserve the same metadata freeze and physical
@@ -83,7 +97,8 @@ the worker before closing the vault. An enabled schedule also prevents
 background idle shutdown.
 
 The worker opens an initialized repository and derives due and stale times
-from manifests tagged `docbank:scheduled`. Manual HTTP and embedded capture
+from manifests tagged `docbank:scheduled`, after checking ownership. A different
+vault cannot use its timestamps or trigger scheduled cleanup. Manual HTTP and embedded capture
 reject that reserved tag. Scheduling stores no separate checkpoint, so restart
 uses the same timestamps and checks staleness before attempting capture.
 A future timestamp triggers a capture followed by an interval wait.

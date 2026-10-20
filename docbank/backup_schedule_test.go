@@ -1,6 +1,7 @@
 package docbank_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -19,4 +20,37 @@ func TestEmbeddedBackupReservedTag(t *testing.T) {
 	points, err := repo.Snapshots()
 	require.NoError(t, err)
 	require.Empty(t, points)
+}
+
+func TestEmbeddedBackupOwnershipAndClaim(t *testing.T) {
+	first, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, first.Close()) })
+	second, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, second.Close()) })
+	path := filepath.Join(t.TempDir(), "repo")
+	repo, err := docbank.InitBackupRepository(path)
+	require.NoError(t, err)
+	_, err = first.CreateBackup(t.Context(), repo, docbank.BackupOptions{})
+	require.NoError(t, err)
+	_, err = second.CreateBackup(t.Context(), repo, docbank.BackupOptions{})
+	require.ErrorIs(t, err, docbank.ErrBackupRepositoryOwnerConflict)
+	_, err = second.ClaimBackupRepository(t.Context(), repo, true)
+	require.ErrorIs(t, err, docbank.ErrBackupRepositoryOwnerConflict)
+	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+	_, err = first.CreateBackup(t.Context(), repo, docbank.BackupOptions{})
+	require.ErrorIs(t, err, docbank.ErrBackupRepositoryClaimRequired)
+	preview, err := first.ClaimBackupRepository(t.Context(), repo, false)
+	require.NoError(t, err)
+	require.False(t, preview.Owned)
+	require.Equal(t, 1, preview.SnapshotCount)
+	preview, err = first.ClaimBackupRepository(t.Context(), repo, true)
+	require.NoError(t, err)
+	require.True(t, preview.Owned)
+	_, err = first.CreateBackup(t.Context(), repo, docbank.BackupOptions{})
+	require.NoError(t, err)
+	points, err := repo.Snapshots()
+	require.NoError(t, err)
+	require.Len(t, points, 2)
 }

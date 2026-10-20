@@ -15,6 +15,10 @@ import (
 )
 
 var (
+	// ErrBackupRepositoryOwnerConflict means this repository belongs to another vault.
+	ErrBackupRepositoryOwnerConflict = backupapp.ErrRepositoryOwnerConflict
+	// ErrBackupRepositoryClaimRequired means existing history needs explicit adoption.
+	ErrBackupRepositoryClaimRequired = backupapp.ErrRepositoryClaimRequired
 	// ErrBackupRepositoryLocked means another writer owns the snapshot repository.
 	ErrBackupRepositoryLocked = backup.ErrRepoLocked
 	// ErrBackupRestoreTargetActive means another vault or restore owns an overlapping root.
@@ -30,6 +34,25 @@ var (
 // BackupRepository is one initialized immutable snapshot repository.
 type BackupRepository struct {
 	repo *backup.Repo
+}
+
+// BackupRepositoryClaim describes the history assigned by an explicit claim.
+type BackupRepositoryClaim = backupapp.RepositoryClaim
+
+// ClaimBackupRepository previews adoption of repository history for this vault.
+// Confirm permits adoption; a repository already owned by another vault is refused.
+func (v *Vault) ClaimBackupRepository(ctx context.Context, repository *BackupRepository, confirm bool) (BackupRepositoryClaim, error) {
+	if err := v.begin(); err != nil {
+		return BackupRepositoryClaim{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if repository == nil || repository.repo == nil {
+		return BackupRepositoryClaim{}, errors.New("docbank backup repository is required")
+	}
+	if err := backupapp.ValidateDisjointRoots(v.root.Name(), repository.repo.Root()); err != nil {
+		return BackupRepositoryClaim{}, err
+	}
+	return backupapp.ClaimRepository(ctx, repository.repo, v.metadata.VaultID(), confirm)
 }
 
 // BackupExtraFile is one host-owned file captured in the snapshot and

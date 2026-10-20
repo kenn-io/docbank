@@ -71,7 +71,31 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, NewError(http.StatusConflict, "backup_repository", err.Error())
 		}
+		if err := backupapp.EnsureRepositoryOwner(ctx, repo, d.Store.VaultID(), false); err != nil {
+			return nil, fromBackupError(err)
+		}
 		return &initOutput{Body: BackupRepository{ID: repo.Config().RepoID, Path: repo.Root()}}, nil
+	})
+
+	type claimOutput struct{ Body backupapp.RepositoryClaim }
+	huma.Register(api, huma.Operation{
+		OperationID: "claimBackupRepository", Method: http.MethodPost, Path: "/api/v1/backup/claim",
+		Summary: "Preview or confirm adoption of a backup repository for this vault",
+	}, func(ctx context.Context, in *struct {
+		Body struct {
+			Repo    string `json:"repo,omitzero"`
+			Confirm bool   `json:"confirm,omitzero"`
+		}
+	}) (*claimOutput, error) {
+		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
+		if err != nil {
+			return nil, err
+		}
+		preview, err := backupapp.ClaimRepository(ctx, repo, d.Store.VaultID(), in.Body.Confirm)
+		if err != nil {
+			return nil, fromBackupError(err)
+		}
+		return &claimOutput{Body: preview}, nil
 	})
 
 	type createOutput struct{ Body BackupSnapshot }
@@ -797,6 +821,9 @@ func backupProblem(err error) *Error {
 	}
 	if errors.Is(err, backup.ErrRepoLocked) {
 		return NewError(http.StatusConflict, "backup_locked", err.Error())
+	}
+	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) || errors.Is(err, backupapp.ErrRepositoryClaimRequired) {
+		return NewError(http.StatusConflict, "backup_repository_owner", err.Error())
 	}
 	return NewError(http.StatusInternalServerError, "backup_failed", err.Error())
 }

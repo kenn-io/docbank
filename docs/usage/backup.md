@@ -104,11 +104,37 @@ and a positive `keep_last`; there is no default retained count.
 docbank backup init [--repo DIR] [--json]
 ```
 
-Initialization creates the repository layout and its random identity. It
-refuses an existing non-empty or already initialized destination instead of
+Initialization creates the repository layout and its random identity, then
+assigns it to the current vault. Each repository belongs to one vault; captures
+from another vault are refused. The vault's identity survives moving or
+restoring it. The source-independent embedded initializer leaves an empty
+repository unassigned until its first vault capture.
+
+Initialization refuses an existing non-empty or already initialized destination instead of
 adopting unrelated files. The repository must be configured or supplied
 explicitly. A relative CLI `--repo` is resolved from the invoking shell's
 working directory before it is sent to the daemon.
+
+## Adopt an existing repository
+
+An existing repository without a `docbank-owner` marker requires an explicit
+claim before Docbank can add snapshots or use its history for scheduling:
+
+```bash
+docbank backup claim --repo ~/Backups/docbank
+```
+
+The command shows the repository identity, snapshot count, and newest snapshot
+time before asking for confirmation. Inspect the history and confirm that it
+belongs to the selected vault. Answer `y` to assign it, or decline to leave it
+unchanged. Use `--yes` to confirm without a prompt. A repository already
+assigned to this vault reports that outcome; a claim cannot replace another
+vault's ownership.
+
+This operation requires the operator's API credential. Embedded callers use
+`vault.ClaimBackupRepository(ctx, repository, false)` to preview and `true` to
+confirm. Existing snapshots remain readable, verifiable, and restorable
+before and after a claim.
 
 ## Create a snapshot
 
