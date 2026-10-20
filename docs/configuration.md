@@ -415,7 +415,7 @@ retain_sanitized_markdown = false
 retain_typed_artifacts = false
 ```
 
-Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos). Explicit builds can name another profile.
+Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. Explicit builds can name another profile.
 
 ### Document conversion with Docling
 
