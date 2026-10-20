@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strconv"
@@ -243,6 +244,8 @@ type RenditionWorkerConfig struct {
 	LeaseDuration time.Duration
 	IdleDelay     time.Duration
 	Clock         func() time.Time
+	// Logger receives one warning for each photo description that fails for good.
+	Logger *slog.Logger
 }
 
 // RenditionWorker claims, resumes, validates, stages, and publishes shared
@@ -256,6 +259,7 @@ type RenditionWorker struct {
 	leaseDuration time.Duration
 	idleDelay     time.Duration
 	clock         func() time.Time
+	logger        *slog.Logger
 }
 
 type renditionWorkerFatalError struct{ cause error }
@@ -310,7 +314,7 @@ func NewRenditionWorker(config RenditionWorkerConfig) (*RenditionWorker, error) 
 		catalog: config.Catalog, blobs: config.Blobs, runtime: config.Runtime,
 		gate:  config.Gate,
 		owner: config.Owner, leaseDuration: config.LeaseDuration,
-		idleDelay: config.IdleDelay, clock: config.Clock,
+		idleDelay: config.IdleDelay, clock: config.Clock, logger: config.Logger,
 	}, nil
 }
 
@@ -601,7 +605,7 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 	}
 	if err != nil {
 		return true, worker.classifyProviderError(
-			ctx, claim, err, durableResume.Load(), providerAttempt)
+			ctx, claim, work, err, durableResume.Load(), providerAttempt)
 	}
 	if execution.Authorization.InputKind == document.RenditionInputDerivedUpload {
 		// A description is a suggestion, so nothing is staged or attached.
@@ -844,8 +848,8 @@ func renditionExecutionSnapshotForWork(
 }
 
 func (worker *RenditionWorker) classifyProviderError(
-	ctx context.Context, claim store.RenditionJobClaim, err error, durableResume bool,
-	providerAttempt int,
+	ctx context.Context, claim store.RenditionJobClaim, work store.RenditionJobWork, err error,
+	durableResume bool, providerAttempt int,
 ) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -854,16 +858,14 @@ func (worker *RenditionWorker) classifyProviderError(
 		return err
 	}
 	if document.IsRenditionAuthorizationPolicyMismatch(err) {
-		return worker.markOperatorRequired(
-			ctx, claim, worker.clock().UTC())
+		return worker.endProvider(ctx, claim, work, err, true)
 	}
 	providerError, classified := err.(*document.RenditionProviderError) //nolint:errorlint
 	if !classified {
 		if durableResume {
 			return worker.markSafeTransient(ctx, claim)
 		}
-		return worker.markOperatorRequired(
-			ctx, claim, worker.clock().UTC())
+		return worker.endProvider(ctx, claim, work, err, true)
 	}
 	if providerError.Code() == document.RenditionErrorAmbiguousSubmission {
 		if durableResume {
@@ -875,8 +877,7 @@ func (worker *RenditionWorker) classifyProviderError(
 			return worker.markRetry(
 				ctx, claim, store.RenditionFailureTransient, now, now.Add(delay))
 		}
-		return worker.markOperatorRequired(
-			ctx, claim, worker.clock().UTC())
+		return worker.endProvider(ctx, claim, work, err, true)
 	}
 	if document.IsRenditionProviderErrorRetryable(err) {
 		now := worker.clock().UTC()
@@ -887,8 +888,27 @@ func (worker *RenditionWorker) classifyProviderError(
 		return worker.markRetry(
 			ctx, claim, store.RenditionFailureTransient, now, now.Add(delay))
 	}
-	return worker.markFailed(
-		ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
+	return worker.endProvider(ctx, claim, work, err, false)
+}
+
+// endProvider ends a job whose provider call cannot be retried. A photo
+// description has no other place to say why, so it is logged.
+func (worker *RenditionWorker) endProvider(
+	ctx context.Context, claim store.RenditionJobClaim, work store.RenditionJobWork,
+	cause error, operatorRequired bool,
+) error {
+	class := string(store.RenditionJobFailed)
+	if operatorRequired {
+		class = string(store.RenditionJobOperatorRequired)
+	}
+	if worker.logger != nil && work.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
+		worker.logger.Warn("photo description ended without a result",
+			"job", claim.JobID, "version", work.Waiter.ContentVersionID, "class", class, "error", cause)
+	}
+	if operatorRequired {
+		return worker.markOperatorRequired(ctx, claim, worker.clock().UTC())
+	}
+	return worker.markFailed(ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
 }
 
 func renditionProviderRetryDelay(attempt int) time.Duration {

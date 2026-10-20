@@ -681,7 +681,7 @@ func startProcessingJobs(
 			worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
 				Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
 				Owner: fmt.Sprintf("daemon-rendition-worker-%d", index), LeaseDuration: 5 * time.Minute,
-				IdleDelay: time.Second,
+				IdleDelay: time.Second, Logger: logger,
 			})
 			if err != nil {
 				return fmt.Errorf("configuring rendition worker: %w", err)

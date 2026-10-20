@@ -537,7 +537,7 @@ func TestRenditionWorkerRetriesUnclassifiedResumeFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, worker.classifyProviderError(
-		t.Context(), claim, errors.New("synthetic resume adapter failure"), true, 1))
+		t.Context(), claim, store.RenditionJobWork{}, errors.New("synthetic resume adapter failure"), true, 1))
 	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, store.RenditionJobRetryWait, current.State)

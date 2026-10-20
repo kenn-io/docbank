@@ -260,6 +260,36 @@ func TestPhotoDescriptionFlow(t *testing.T) {
 	require.Equal(t, document.PhotoDescription{Caption: "A white panorama.", Tags: []string{"panorama", "harbor"}, VisibleText: "HELLO"}, suggestions[0].Value)
 }
 
+func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	f.mu.Lock()
+	f.reply = "A harbor at dusk."
+	f.mu.Unlock()
+	var logs bytes.Buffer
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: f.service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: f.service.clock,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	require.NoError(t, err)
+	targets, err := f.service.photoDescriptionTargets(t.Context(), nil, "", 50, 4)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.NoError(t, f.service.admitPhotoDescription(t.Context(), targets[0]))
+	for {
+		processed, err := worker.RunOne(t.Context())
+		require.NoError(t, err)
+		if !processed {
+			break
+		}
+	}
+
+	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), logs.String())
+	for _, want := range []string{"job=", "version=" + f.node.CurrentVersionID, "class=failed", "malformed evidence"} {
+		require.Contains(t, logs.String(), want)
+	}
+	require.Empty(t, f.suggestions(t))
+}
+
 func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
