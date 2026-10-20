@@ -59,6 +59,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
+	originalContentTool,
 	textCitationTool, textOutlineTool, textSectionTool,
 	exportPlanTool, exportProblemsTool,
 	reportSummaryTool, reportDatesTool,

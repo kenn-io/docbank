@@ -57,6 +57,8 @@ func executeReadTool(
 	var links []*sdkmcp.ResourceLink
 	var err error
 	switch name {
+	case originalContentTool.name:
+		output, err = readDocumentContent(ctx, lease, raw)
 	case textOutlineTool.name:
 		output, err = getTextOutline(ctx, lease, raw)
 	case textSectionTool.name:
