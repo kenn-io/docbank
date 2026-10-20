@@ -138,11 +138,14 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		{name: "capture failure", bucket: "over_30m", fails: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CI", "")
+			require.NoError(t, os.Unsetenv("CI"))
+			t.Setenv("DO_NOT_TRACK", "0")
 			t.Setenv(telemetry.EnabledEnv, "1")
 			t.Setenv(posthog.GenericEnabledEnv, "1")
 			endpoint, collected := newTelemetryCollector(t)
 			reporter, err := posthog.NewReporter(posthog.Options{
-				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install",
+				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", Version: "v1.2.3", DistinctID: "synthetic-install",
 			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
 				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
 				posthog.AllowProperty("duration_bucket", func(value any) (any, bool) {
@@ -201,6 +204,9 @@ func TestScreenViewedTelemetryEventRoute(t *testing.T) {
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
 	}
+	t.Setenv("CI", "")
+	require.NoError(t, os.Unsetenv("CI"))
+	t.Setenv("DO_NOT_TRACK", "0")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "1")
 	endpoint, collected := newTelemetryCollector(t)
@@ -208,7 +214,7 @@ func TestScreenViewedTelemetryEventRoute(t *testing.T) {
 	inst, err := posthog.LoadOrCreateInstall(dir)
 	require.NoError(t, err)
 	reporter, err := posthog.NewReporter(posthog.Options{
-		APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK",
+		APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", Version: "v1.2.3",
 		DistinctID: inst.ID, InstalledAt: inst.InstalledAt, Source: "daemon",
 	}, posthog.WithAllowedEvent(telemetry.EventScreenViewed,
 		posthog.AllowProperty("screen", posthog.AllowStringValues("browse")),

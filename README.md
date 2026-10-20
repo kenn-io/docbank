@@ -139,11 +139,7 @@ Docbank sends anonymous usage events by default:
   visible time adds up across tab switches. Hidden time is excluded. The
   terminal browser counts the time from opening to exit, including idle time.
 
-Each event carries a random per-vault install ID, the version and commit, and
-the operating system and architecture. Events never include document content,
-names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` to turn
-telemetry off. See
-[anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).
+See [anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry) for the full field inventory. Events never include document content, names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` or `DO_NOT_TRACK=1` to turn telemetry off, then run `docbank daemon restart`.
 
 ## Documentation
 
