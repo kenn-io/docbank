@@ -1200,9 +1200,6 @@ func validateProviderEndpoint(endpoint, prefix string) (*url.URL, error) {
 }
 
 func validateRenditionOrigin(parsed *url.URL, boundary document.RenditionTrustBoundary) error {
-	if boundary != document.RenditionTrustOperatorNetwork && boundary != document.RenditionTrustHostedProvider {
-		return errors.New("runtime trust_boundary must be operator_network or hosted_provider")
-	}
 	if parsed.Path != "" && parsed.Path != "/" {
 		return errors.New("runtime endpoint must be an absolute root origin")
 	}
