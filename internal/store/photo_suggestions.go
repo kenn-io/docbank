@@ -333,16 +333,28 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 }
 
 // suggestedTagTx returns the ID of the tag named name, creating it when
-// missing. A tag that differs only in ASCII case is the same keyword to the
-// owner, and an exact match wins.
+// missing. A tag that differs only in case is the same keyword to the owner, as
+// in containsFold, and an exact match wins.
 func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=?1 COLLATE NOCASE ORDER BY name=?1 DESC,name LIMIT 1`, name).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		created, err := s.createTagTx(ctx, tx, name)
-		return created.ID, err
+	err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=?`, name).Scan(&id)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return id, err
 	}
-	return id, err
+	if err := queryRows(ctx, tx, `SELECT id,name FROM tags ORDER BY name`, nil, func(rows *sql.Rows) error {
+		var candidate, candidateName string
+		if err := rows.Scan(&candidate, &candidateName); err != nil {
+			return err
+		}
+		if id == "" && strings.EqualFold(candidateName, name) {
+			id = candidate
+		}
+		return nil
+	}); err != nil || id != "" {
+		return id, err
+	}
+	created, err := s.createTagTx(ctx, tx, name)
+	return created.ID, err
 }
 
 // photoSuggestionsQuery lists the pending description of an asset's displayed photo.
