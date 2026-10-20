@@ -208,7 +208,6 @@ test("resumes the complete selection and source after a daemon and browser resta
       completed.page.getByRole("button", { name: "Resume import", exact: true }),
     ).toHaveCount(0);
     await completed.page.getByLabel("Choose photo files").setInputFiles(files);
-    await completed.page.getByRole("button", { name: "Continue folder", exact: true }).click();
     await expect(
       completed.page.getByRole("button", { name: "Add 3 groups", exact: true }),
     ).toBeVisible();

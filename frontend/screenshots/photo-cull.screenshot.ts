@@ -35,7 +35,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
   const workspace = await mkdtemp(path.join(repository, ".superpowers", "cull-proof-"));
   const fixture = photoFixture(workspace);
   try {
-    await fixture.seed(12, "-pair");
+    await fixture.seed(12, "-pair", "-current-metadata");
     await mkdir(output!, { recursive: true });
     const url = new URL(await fixture.run("web", "--no-browser"));
     url.pathname = "/photos";
