@@ -292,6 +292,43 @@ func TestPhotoSuggestionNeededForWholeQueryRanksBelowAuthoredMatch(t *testing.T)
 	require.Equal(t, owned.ID, snapshot.Rows[0].AssetID, "a frozen snapshot keeps the same order")
 }
 
+func TestPhotoSnapshotSearchKeepsItsRowsWhenASuggestionIsDecidedBetweenPages(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	// A full first page of authored matches, then the one photo that matches through its suggestion.
+	authored := make(map[string]bool)
+	for i := range 50 {
+		asset := albumAsset(t, s, fmt.Sprintf("authored-%02d.jpg", i))
+		_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("harbor")}})
+		require.NoError(t, err)
+		authored[asset.ID] = true
+	}
+	machine := albumAsset(t, s, "machine.jpg")
+	proposal := putPhotoSuggestion(t, s, machine, document.PhotoDescription{Caption: "harbor"})
+
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	first, err := service.Create(ctx, "owner", SnapshotRequest{Photos: true, PageSize: 50, Query: snapshotTestQuery(t, `{"syntax":"simple","text":"harbor","sort":{"field":"relevance","direction":"desc"}}`)})
+	require.NoError(t, err)
+	require.Len(t, first.Rows, 50)
+	for _, row := range first.Rows {
+		require.True(t, authored[row.AssetID], "authored text ranks first")
+	}
+	require.NotEmpty(t, first.NextCursor)
+
+	// The owner dismisses the suggestion after the first page.
+	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
+	require.NoError(t, err)
+	next, err := service.Page(ctx, "owner", first.SnapshotID, first.NextCursor)
+	require.NoError(t, err)
+	require.Len(t, next.Rows, 1, "the frozen second page still lists the photo that matched through its suggestion")
+	require.Equal(t, machine.ID, next.Rows[0].AssetID)
+	back, err := service.Page(ctx, "owner", first.SnapshotID, next.PrevCursor)
+	require.NoError(t, err)
+	require.Equal(t, first.Rows, back.Rows)
+}
+
 func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
