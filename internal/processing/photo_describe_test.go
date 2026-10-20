@@ -6,10 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
+	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -606,6 +610,77 @@ func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, f.backfill(t, f.service), "the photo is described again once it is visible")
 	require.Len(t, f.suggestions(t), 1)
+}
+
+func TestPhotoDescriptionLimitUsesFinalUpload(t *testing.T) {
+	t.Parallel()
+	for _, automatic := range []bool{false, true} {
+		for _, oversized := range []bool{false, true} {
+			t.Run(fmt.Sprintf("automatic=%t/oversized=%t", automatic, oversized), func(t *testing.T) {
+				f := newPhotoDescriptionFixture(t)
+				ctx := t.Context()
+				img := image.NewRGBA(image.Rect(0, 0, 511, 353))
+				rng := rand.New(rand.NewPCG(5, 2))
+				for y := range 353 {
+					for x := range 511 {
+						pixel := rng.Uint32()
+						img.SetRGBA(x, y, color.RGBA{R: byte(pixel), G: byte(pixel >> 8), B: byte(pixel >> 16), A: 255})
+					}
+				}
+				var source bytes.Buffer
+				require.NoError(t, png.Encode(&source, img))
+				written, err := f.blobs.WriteDetailedContext(ctx, &source)
+				require.NoError(t, err)
+				f.node, err = f.catalog.CreateFile(ctx, f.catalog.RootID(), "noise.png", written.Hash, written.Size, "image/png", processingBlobPhysical(t, written))
+				require.NoError(t, err)
+				_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, f.node.CurrentVersionID, f.recipe)
+				require.NoError(t, err)
+				version, err := f.catalog.ContentVersionByID(ctx, f.node.CurrentVersionID)
+				require.NoError(t, err)
+				data, _, err := photoDescriptionInput(ctx, f.catalog, f.blobs, version, f.service.profiles["vision"])
+				require.NoError(t, err)
+				preview, _, err := photoDescriptionPreview(ctx, f.catalog, version.ID)
+				require.NoError(t, err)
+				require.Greater(t, preview.Generation.Preview.Output.Size, int64(len(data)), "a normally generated preview shrinks on upload")
+				profile := f.service.profiles["vision"]
+				profile.portable.Rendition.MaxDocumentBytes = int64(len(data))
+				if oversized {
+					profile.portable.Rendition.MaxDocumentBytes--
+				}
+				f.service, err = NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing",
+					Profiles: map[string]ProfileConfig{"vision": {Profile: profile.portable, RenditionProvider: profile.provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}}})
+				require.NoError(t, err)
+				plan, err := f.service.Plan(ctx, f.selector("vision"))
+				require.NoError(t, err)
+				if oversized {
+					require.Equal(t, "source_bytes_exceeded", plan.RenditionIneligibleReason)
+				} else {
+					require.Empty(t, plan.RenditionIneligibleReason)
+				}
+				f.grant(t, f.service, "vision")
+				if automatic {
+					err = f.service.admitPhotoDescription(ctx, photoDescriptionTarget{profile: "vision", version: version})
+				} else {
+					_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
+				}
+				if oversized {
+					require.ErrorIs(t, err, ErrSourceIneligible)
+					_, describes := f.counts()
+					require.Zero(t, describes)
+				} else {
+					require.NoError(t, err)
+					if automatic {
+						waiting, err := f.catalog.UnclaimedPhotoDescriptionWaiters(ctx, f.service.profiles["vision"].record.Fingerprint, time.Now())
+						require.NoError(t, err)
+						require.Equal(t, 1, waiting)
+					} else {
+						_, describes := f.counts()
+						require.Equal(t, 1, describes)
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestPhotoDescriptionUploadsStrippedPreviewBytes(t *testing.T) {

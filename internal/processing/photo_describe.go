@@ -40,27 +40,13 @@ func (service *Service) inspectPlannedRendition(ctx context.Context, node store.
 	return inspectRenditionSource(ctx, service.blobs, node, version, profile)
 }
 
-// planPhotoDescription reports whether a start could describe the version's
-// photo, without reading its preview.
+// planPhotoDescription checks the preview bytes a start would upload.
 func (service *Service) planPhotoDescription(ctx context.Context, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {
-	eligible, err := service.catalog.PhotoDescriptionEligible(ctx, version.ID)
-	if err != nil {
-		return media.CapabilityRecord{}, err
+	_, capability, err := photoDescriptionInput(ctx, service.catalog, service.blobs, version, profile)
+	if errors.Is(err, ErrSourceIneligible) {
+		return capability, nil
 	}
-	if !eligible {
-		return media.CapabilityRecord{Reason: "photo_not_eligible"}, nil
-	}
-	view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
-	if err != nil {
-		return media.CapabilityRecord{}, err
-	}
-	switch {
-	case reason != "":
-		return media.CapabilityRecord{Reason: reason}, nil
-	case view.Generation.Preview.Output.Size > profile.portable.Rendition.MaxDocumentBytes:
-		return media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, nil
-	}
-	return media.CapabilityRecord{Eligible: true}, nil
+	return capability, err
 }
 
 // photoDescriptionPreview distinguishes preview readiness from missing source authority.
@@ -103,19 +89,16 @@ func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blo
 		return nil, media.CapabilityRecord{}, err
 	}
 	if !eligible {
-		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: photo_not_eligible", ErrSourceIneligible)
+		return nil, media.CapabilityRecord{Reason: "photo_not_eligible"}, fmt.Errorf("%w: photo_not_eligible", ErrSourceIneligible)
 	}
 	view, reason, err := photoDescriptionPreview(ctx, catalog, version.ID)
 	if err != nil {
 		return nil, media.CapabilityRecord{}, err
 	}
 	if reason != "" {
-		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
+		return nil, media.CapabilityRecord{Reason: reason}, fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
 	}
 	output := view.Generation.Preview.Output
-	if output.Size > profile.portable.Rendition.MaxDocumentBytes {
-		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
-	}
 	source, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)
 	if err != nil {
 		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
@@ -129,14 +112,14 @@ func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blo
 	}
 	stripped, err := stripPhotoPreview(ctx, raw)
 	if err != nil {
-		return nil, media.CapabilityRecord{}, err
+		return nil, media.CapabilityRecord{Reason: "preview_unavailable"}, err
 	}
 	policy := inspectionPolicy("preview.jpg", store.ContentVersion{BlobHash: output.BlobSHA256, Size: output.Size, MimeType: "image/jpeg"}, profile)
 	digest := sha256.Sum256(stripped)
 	policy.InputKind, policy.MaxPixels = document.RenditionInputDerivedUpload, 1024*1024
 	policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(stripped)), hex.EncodeToString(digest[:])
 	if int64(len(stripped)) > policy.MaxSourceBytes {
-		return nil, media.CapabilityRecord{}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
+		return nil, media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
 	}
 	capability, err := media.InspectCapability(bytes.NewReader(stripped), policy)
 	return stripped, capability, err
