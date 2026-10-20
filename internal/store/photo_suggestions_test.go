@@ -348,6 +348,34 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.Equal(t, owned.ID, snapshot.Rows[0].AssetID, "a frozen snapshot keeps the same order")
 }
 
+func TestPhotoSearchSkipsSuggestionEvaluationAfterDismissal(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "harbor.jpg")
+	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "harbor"})
+	pending, err := photoSuggestionsExist(ctx, s.db)
+	require.NoError(t, err)
+	require.True(t, pending)
+	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
+	require.NoError(t, err)
+
+	pending, err = photoSuggestionsExist(ctx, s.db)
+	require.NoError(t, err)
+	compiled := mustPhotoCompiled(t, s, snapshotTestQuery(t, `{"text":"harbor","sort":{"field":"relevance","direction":"desc"}}`))
+	statement, _, err := rankedPhotoStatement(compiled, "", CoverageSelection{}, 100, false, pending)
+	require.NoError(t, err)
+	require.NotContains(t, statement, "plain AS MATERIALIZED", "settled suggestions need no second population evaluation")
+	require.False(t, pending, "dismissal leaves completion authority but no searchable suggestion text")
+
+	for _, sort := range []string{"relevance", "name"} {
+		page := browsePhotoPage(t, s, fmt.Sprintf(`{"text":"harbor","sort":{"field":%q,"direction":"desc"}}`, sort))
+		require.Len(t, page.Items, 1)
+		require.Equal(t, asset.ID, page.Items[0].AssetID)
+		require.False(t, page.Items[0].MatchedAISuggestion)
+	}
+}
+
 func TestPhotoSnapshotSearchKeepsItsRowsWhenASuggestionIsDecidedBetweenPages(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

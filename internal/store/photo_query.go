@@ -582,20 +582,24 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 	// A photo that matches the whole query only with suggestion text ranks no
 	// higher than the suggestion tier, below any fully authored match.
 	// Without suggestion-searchable text every match is a plain one.
-	plain := compiledQueryFragment{sql: `SELECT node_id FROM eligible`}
+	var plain compiledQueryFragment
+	plainCTE, plainJoin, plainMatch := "", "", "1"
 	if content != "" && suggestions {
 		withoutSuggestion := compiled
 		withoutSuggestion.withoutSuggestion = true
 		if plain, err = photoBrowsePopulation(withoutSuggestion, generation, coverage); err != nil {
 			return "", nil, err
 		}
+		plainCTE = `plain AS MATERIALIZED (` + plain.sql + `), `
+		plainJoin = `LEFT JOIN plain ON plain.node_id=eligible.node_id`
+		plainMatch = `MAX(plain.node_id IS NOT NULL)`
 	}
-	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), plain AS MATERIALIZED (` + plain.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
- SELECT member.asset_id,NOT MAX(plain.node_id IS NOT NULL) suggestion_only,
- CASE WHEN MAX(plain.node_id IS NOT NULL) THEN COALESCE(MAX(candidates.tier),0) ELSE MIN(COALESCE(MAX(candidates.tier),0),3) END tier,
- COALESCE(CASE WHEN MAX(plain.node_id IS NOT NULL) THEN MAX(CASE WHEN candidates.tier=5 THEN candidates.score END) END,CASE WHEN MAX(plain.node_id IS NOT NULL) THEN MAX(CASE WHEN candidates.tier=4 THEN candidates.score END) END,MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
+	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), ` + plainCTE + `candidates AS (` + candidates.SQL + `), ranked AS (
+ SELECT member.asset_id,NOT ` + plainMatch + ` suggestion_only,
+ CASE WHEN ` + plainMatch + ` THEN COALESCE(MAX(candidates.tier),0) ELSE MIN(COALESCE(MAX(candidates.tier),0),3) END tier,
+ COALESCE(CASE WHEN ` + plainMatch + ` THEN MAX(CASE WHEN candidates.tier=5 THEN candidates.score END) END,CASE WHEN ` + plainMatch + ` THEN MAX(CASE WHEN candidates.tier=4 THEN candidates.score END) END,MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
  FROM eligible JOIN photo_files member ON member.node_id=eligible.node_id
-	 LEFT JOIN plain ON plain.node_id=eligible.node_id
+	 ` + plainJoin + `
 	 LEFT JOIN candidates ON candidates.node_id=eligible.node_id GROUP BY member.asset_id)`
 	args := append(append(append([]any(nil), population.args...), plain.args...), candidates.Args...)
 	population.relations |= plain.relations
@@ -624,11 +628,11 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 	return statement, args, nil
 }
 
-// photoSuggestionsExist reports whether any suggestion row exists, so a library
-// without descriptions skips the suggestion-aware ranking pass.
+// photoSuggestionsExist reports whether any pending suggestion text exists, so
+// a library with all suggestions decided skips the suggestion-aware passes.
 func photoSuggestionsExist(ctx context.Context, q metadataQuerier) (bool, error) {
 	var exists bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_suggestions)`).Scan(&exists)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_suggestion_fts)`).Scan(&exists)
 	return exists, err
 }
 
