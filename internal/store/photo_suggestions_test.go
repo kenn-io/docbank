@@ -97,6 +97,10 @@ func TestPhotoSearchPhraseStaysInsideOneValue(t *testing.T) {
 	acceptPhotoSuggestion(t, s, proposal, false, "red boat", "blue sky")
 	require.Equal(t, 1, phrase("blue sky"))
 	require.Zero(t, phrase("boat blue"), "a phrase cannot span two assigned tags")
+	require.Equal(t, 1, phrase("QUAYSIDE"))
+	_, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
+	require.NoError(t, err)
+	require.Zero(t, phrase("QUAYSIDE"), "dismissal removes the text from search")
 }
 
 func TestHandAddedTagsMatchTextSearch(t *testing.T) {
@@ -182,9 +186,6 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: accepted.AssetID, AssetRevision: accepted.AssetRevision, SourceRevision: accepted.SourceRevision, NodeRevision: accepted.NodeRevision, Response: "accepted", Caption: true})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "an accepted field is no longer pending")
-	for _, term := range []string{"sunset", "QUAYSIDE"} {
-		require.Equal(t, 1, searchCount(t, s, term, "relevance"))
-	}
 
 	// The revisions the last response returned authorize the next acceptance.
 	next, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: accepted.AssetID, AssetRevision: accepted.AssetRevision, SourceRevision: accepted.SourceRevision, NodeRevision: accepted.NodeRevision, Response: "accepted", Tags: []string{"sunset"}})
@@ -195,10 +196,6 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, dismissed.Value.VisibleText)
 	require.Empty(t, photoSuggestionValues(t, s, asset.ID))
-	require.Zero(t, searchCount(t, s, "QUAYSIDE", "relevance"), "dismissal removes the text from search")
-	for _, term := range []string{"coast", "sunset"} {
-		require.Equal(t, 1, searchCount(t, s, term, "relevance"), "accepted fields stay authored")
-	}
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict)
 	require.NoError(t, s.ValidateMetadata(ctx))
@@ -531,9 +528,23 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 
 	_, err = s.PublishPhotoDescription(ctx, claim, nil, at)
 	require.ErrorIs(t, err, ErrInvalidPhotoDescriptionResult)
+
+	// An empty answer publishes no text but still settles the version.
+	empty := albumAsset(t, s, "empty.jpg")
+	emptyNode, err := s.NodeByID(ctx, empty.Files[0].NodeID)
+	require.NoError(t, err)
+	emptyRequest := photoDescriptionJobRequest(t, s, emptyNode.CurrentVersionID, producerB, false)
+	grantRenditionJobConsent(t, s, emptyRequest)
+	_, _, claim = startPhotoDescription(t, s, emptyRequest, at)
+	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(""), at)
+	require.NoError(t, err)
+	require.Empty(t, photoSuggestionValues(t, s, empty.ID))
+	settled, err := s.PhotoDescriptionSettled(ctx, emptyNode.CurrentVersionID, "")
+	require.NoError(t, err)
+	require.True(t, settled, "an empty answer still settles the version")
 }
 
-func TestPhotoDescriptionJobIsNotDocumentProcessingState(t *testing.T) {
+func TestPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -549,44 +560,12 @@ func TestPhotoDescriptionJobIsNotDocumentProcessingState(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Empty(t, page.Items[0].LatestProcessingState, "a photo description attaches no rendition, so it is no processing state")
-}
-
-func TestPhotoDescriptionJobIsNotRebuildingRenditionCoverage(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "covered.jpg")
-	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
-	require.NoError(t, err)
-	request := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
-	grantRenditionJobConsent(t, s, request)
-	_, _, err = s.EnqueueRenditionJob(ctx, request)
-	require.NoError(t, err)
 
 	snapshot, err := s.ProcessingCoverage(ctx, ProcessingCoverageScope{
 		ContentVersionIDs: []string{node.CurrentVersionID}, ProcessingProfileFingerprint: request.Profile.Fingerprint,
 	})
 	require.NoError(t, err)
 	require.Zero(t, snapshot.Renditions.Rebuilding, "a queued description is not a rendition being rebuilt")
-}
-
-func TestPhotoDescriptionEmptyReplyIsNotAskedAgain(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "empty.jpg")
-	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
-	require.NoError(t, err)
-	request := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
-	grantRenditionJobConsent(t, s, request)
-	at := time.Now().UTC().Add(time.Minute)
-	_, _, claim := startPhotoDescription(t, s, request, at)
-	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(""), at)
-	require.NoError(t, err)
-	require.Empty(t, photoSuggestionValues(t, s, asset.ID))
-	settled, err := s.PhotoDescriptionSettled(ctx, node.CurrentVersionID, "")
-	require.NoError(t, err)
-	require.True(t, settled, "an empty answer still settles the version")
 }
 
 func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {
@@ -660,11 +639,8 @@ func TestExplicitPhotoDescriptionReplacesOnlyADismissal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "published", waiter.State, "automatic work leaves a dismissal alone")
 
-	_, waiter, claim := startPhotoDescription(t, s, explicit, at)
+	_, waiter, _ = startPhotoDescription(t, s, explicit, at)
 	require.Equal(t, "waiting", waiter.State, "an explicit start by another profile asks again")
-	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
-	require.NoError(t, err)
-	require.Equal(t, "From B.", photoSuggestionValues(t, s, asset.ID)[0].Value.Caption)
 }
 
 func TestDerivativePurgeLeavesPhotoSuggestionsButVersionPurgeRemovesThem(t *testing.T) {

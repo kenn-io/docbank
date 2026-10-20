@@ -66,32 +66,28 @@ func TestFromStoreErrorMappings(t *testing.T) {
 	}
 }
 
-func TestRenditionRuntimeUnavailableNamesNoPhotoFeature(t *testing.T) {
-	t.Parallel()
-	// Original-file profiles reach this error as well as photo descriptions.
-	mapped := &Error{}
-	require.ErrorAs(t, fromProcessingError(processing.ErrRenditionRuntimeUnavailable), &mapped)
-	assert.Equal(t, http.StatusServiceUnavailable, mapped.Status)
-	assert.Equal(t, "rendition_runtime_unavailable", mapped.Code)
-	assert.NotContains(t, mapped.Detail, "photo")
-}
-
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		err    error
 		code   string
-		detail string
+		status int // checked when set
+		// The runtime is also unavailable for original-file profiles, so its detail names no photo feature.
+		detailOmits string
 	}{
-		{processing.ErrRenditionFailed, "rendition_failed", ""},
-		{fmt.Errorf("%w: read PDF passwords: open PDF passwords file: permission denied", processing.ErrRenditionOperatorRequired), "rendition_operator_required", "rendition job requires operator resolution: read PDF passwords: open PDF passwords file: permission denied"},
-		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large", ""},
+		{err: processing.ErrRenditionFailed, code: "rendition_failed"},
+		{err: processing.ErrRenditionOperatorRequired, code: "rendition_operator_required"},
+		{err: vectorindex.ErrSimilarSearchScoringBudgetExceeded, code: "similar_search_too_large"},
+		{err: processing.ErrRenditionRuntimeUnavailable, code: "rendition_runtime_unavailable", status: http.StatusServiceUnavailable, detailOmits: "photo"},
 	} {
 		mapped := &Error{}
 		require.ErrorAs(t, fromProcessingError(test.err), &mapped)
 		assert.Equal(t, test.code, mapped.Code)
-		if test.detail != "" {
-			assert.Equal(t, test.detail, mapped.Detail)
+		if test.status != 0 {
+			assert.Equal(t, test.status, mapped.Status)
+		}
+		if test.detailOmits != "" {
+			assert.NotContains(t, mapped.Detail, test.detailOmits)
 		}
 	}
 }

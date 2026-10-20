@@ -511,14 +511,21 @@ it.each(["write", "draft", "loading"])(
   "refuses edits and target changes while a %s is pending",
   async (kind) => {
     const editor = new PhotoAuthoredEditor("scoped", vi.fn());
+    let finish!: (response: Response) => void;
+    let preparing: Promise<void> | undefined;
     if (kind === "write") {
       editor.busy = true;
       await editor.edit({}, { rating: 5 }, false, vi.fn());
       expect(editor.notice).toBe(
         "An edit is in progress. Try the shortcut again when it finishes.",
       );
-    } else if (kind === "loading") editor.loading = true;
-    else {
+    } else if (kind === "loading") {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))),
+      );
+      preparing = editor.prepare({ asset_ids: ["asset"] });
+    } else {
       editor.targets = targets;
       editor.stage({ caption: "Draft" });
     }
@@ -532,8 +539,12 @@ it.each(["write", "draft", "loading"])(
     );
     expect(editor.noticeTone).toBe("warning");
     editor.busy = false;
-    editor.loading = false;
     if (kind === "draft") editor.clearDraft();
+    if (preparing) {
+      finish(response({ assets: [asset], targets }));
+      await preparing;
+      expect(editor.notice, "the loading warning clears once preparation settles").toBe("");
+    }
     expect(editor.canChangeTarget()).toBe(true);
     editor.dispose();
   },

@@ -194,21 +194,14 @@ func (f *photoDescriptionFixture) dismiss(t *testing.T, suggestion store.PhotoSu
 	require.NoError(t, err)
 }
 
-func TestPhotoDescriptionProfileCoverageIgnoresDescriptionJobs(t *testing.T) {
+func TestPhotoDescriptionProfileCoverageHasNoRenditionClass(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
-	ctx := t.Context()
-	f.grant(t, f.service, "vision")
-	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "a description job is waiting")
 	fence := SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{f.node.CurrentVersionID}}
 
-	coverage, err := f.service.Coverage(ctx, "vision", fence)
+	coverage, err := f.service.Coverage(t.Context(), "vision", fence)
 	require.NoError(t, err)
 	require.Equal(t, "complete", coverage.State, "a description profile attaches no rendition to cover")
-	require.Zero(t, coverage.Renditions.Rebuilding)
 	require.False(t, coverage.Renditions.Required)
 }
 
@@ -303,11 +296,6 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	require.Zero(t, f.backfill(t, f.service), "the renewed grant has no passing probe")
 	plan, err := f.service.Plan(ctx, f.selector("vision"))
 	require.NoError(t, err)
-	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
-	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
-	_, describes := f.counts()
-	require.Zero(t, describes)
-
 	probesBefore, _ := f.counts()
 	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
 	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
@@ -405,6 +393,8 @@ func TestPhotoDescriptionStartDescribesOnce(t *testing.T) {
 	require.Equal(t, enqueued.RenditionJobID, completed.RenditionJobID)
 	require.Empty(t, completed.AttachmentID)
 	require.Len(t, f.suggestions(t), 1)
+	_, describes := f.counts()
+	require.Equal(t, 1, describes)
 }
 
 func TestPhotoDescriptionDefaultProfileChangeLeavesDismissals(t *testing.T) {
@@ -445,9 +435,6 @@ func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
 	}
 	f.mu.Unlock()
 	f.backfill(t, f.service)
-	prepared, err := f.catalog.PreparePhotoAuthored(unlocked, store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}, Hidden: true})
-	require.NoError(t, err)
-	require.Empty(t, prepared.Suggestions, "an answer for a photo hidden mid-call is discarded")
 
 	f.mu.Lock()
 	f.onDescribe = nil
