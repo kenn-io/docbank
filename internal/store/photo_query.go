@@ -252,9 +252,6 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
-			if err := markSuggestionOnlyMatches(ctx, q, compiled, generation.ID, coverage, request.Hidden, page.Items); err != nil {
-				return err
-			}
 			return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 		}
 		primary, comparison := "ASC", ">"
@@ -317,7 +314,7 @@ func (s *Store) ListPhotoAssets(
 				}
 			}
 			args = append(args, request.PageSize+1-len(page.Items))
-			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
+			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+`,0 FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
 				` ORDER BY `+order+` LIMIT ?`, args...)
 			if err != nil {
 				return err
@@ -594,7 +591,7 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 		}
 	}
 	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), plain AS MATERIALIZED (` + plain.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
- SELECT member.asset_id,
+ SELECT member.asset_id,NOT MAX(plain.node_id IS NOT NULL) suggestion_only,
  CASE WHEN MAX(plain.node_id IS NOT NULL) THEN COALESCE(MAX(candidates.tier),0) ELSE MIN(COALESCE(MAX(candidates.tier),0),3) END tier,
  COALESCE(CASE WHEN MAX(plain.node_id IS NOT NULL) THEN MAX(CASE WHEN candidates.tier=5 THEN candidates.score END) END,CASE WHEN MAX(plain.node_id IS NOT NULL) THEN MAX(CASE WHEN candidates.tier=4 THEN candidates.score END) END,MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
  FROM eligible JOIN photo_files member ON member.node_id=eligible.node_id
@@ -607,7 +604,7 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 		order = "ASC"
 	}
 	orderBy := `member.tier ` + order + `,member.score ` + order + `,COALESCE(pl.sort_key,'') DESC,member.asset_id ASC`
-	projection := photoBrowseSelect + `,''`
+	projection := photoBrowseSelect + `,'',member.suggestion_only`
 	if snapshot {
 		projection = `n.id node_id,v.version_id content_version_id,a.asset_id,row_number() OVER (ORDER BY ` + orderBy + `) photo_position`
 	}
@@ -662,7 +659,7 @@ func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoB
 		row := PhotoBrowseRow{position: position}
 		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.Rating, &row.Flag, &row.FileModifiedTime, &row.folderKey, &row.cameraMake, &row.cameraModel, &row.bodySerialNumber, &row.metadataFingerprint}
 		dest = append(dest, row.Fields.columnPointers()...)
-		dest = append(dest, &row.position.Key)
+		dest = append(dest, &row.position.Key, &row.MatchedAISuggestion)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
