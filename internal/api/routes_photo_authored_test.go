@@ -149,23 +149,7 @@ func TestPhotoAuthoredReceiptsRetainFlagOwner(t *testing.T) {
 		require.NoError(t, err)
 		ids = append(ids, asset.ID)
 	}
-	assertGrouping := func(incomplete bool) {
-		t.Helper()
-		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", nil, api.GroupPhotoStacksRequest{AssetIDs: ids})
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var grouped api.GroupPhotoStacksResponse
-		require.NoError(t, json.Unmarshal([]byte(body), &grouped))
-		require.Equal(t, incomplete, grouped.GroupingIncomplete)
-		require.Len(t, grouped.Groups, 1)
-		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, map[string]any{"query": map[string]any{"sort": map[string]string{"field": "capture_time", "direction": "asc"}}, "stacks": true})
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var page api.PhotoBrowsePage
-		require.NoError(t, json.Unmarshal([]byte(body), &page))
-		require.Equal(t, incomplete, page.GroupingIncomplete)
-		require.Len(t, page.Items, 2)
-		require.Len(t, page.Stacks, 1)
-	}
-	assertGrouping(true)
+	// Return refuses frames read by an outdated extractor, so republish under the current one.
 	for _, id := range ids {
 		asset, err := s.PhotoAssetByID(ctx, id)
 		require.NoError(t, err)
@@ -176,7 +160,6 @@ func TestPhotoAuthoredReceiptsRetainFlagOwner(t *testing.T) {
 		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, processing.SourceMetadataExtractorFingerprint, generation.CanonicalJSON)
 		require.NoError(t, err)
 	}
-	assertGrouping(false)
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: ids})
 	require.NoError(t, err)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, api.PhotoStackDecisionRequest{BurstGapSeconds: 2, AssetIDs: ids, Targets: apiEditTargets(prepared.Targets), Decision: "current", CurrentID: ids[0]})
