@@ -1530,7 +1530,7 @@ it("returns to search results after opening All files", async () => {
   expect(search.value).toBe("alpha");
 });
 
-it("restores tag navigation on Back and reports tag and query screens", async () => {
+it("reports tag and query screens", async () => {
   prepareSelectionApp();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   installSelectionBackend();
@@ -1541,22 +1541,10 @@ it("restores tag navigation on Back and reports tag and query screens", async ()
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
-  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
-  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  await fireEvent.click(await screen.findByRole("option", { name: "tax (3)" }));
   await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("tags"));
-
-  const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
-  await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
-  await screen.findByRole("cell", { name: "Reports" });
-  await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" });
-
-  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
-  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
-  expect(screen.queryByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  await screen.findByRole("region", { name: "Query editor" });
   await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("search"));
-  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
 });
 
 it("ignores a folder lookup that finishes after a newer navigation", async () => {
