@@ -1964,6 +1964,9 @@ type preparedRendition struct {
 func (service *Service) prepareExecutableRendition(ctx context.Context, node store.Node, version store.ContentVersion,
 	profile configuredProfile, inputBinding string,
 ) (preparedRendition, error) {
+	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		return service.prepareExecutablePhotoDescription(ctx, version, profile, inputBinding)
+	}
 	prepared, err := service.prepareRendition(ctx, node, version, profile, false)
 	if err != nil {
 		return preparedRendition{}, err
@@ -2002,6 +2005,41 @@ func (service *Service) prepareExecutableRendition(ctx context.Context, node sto
 		return preparedRendition{}, errors.New("planned rendition execution differs from executable runtime")
 	}
 	return prepared, nil
+}
+
+// prepareExecutablePhotoDescription prepares a photo description once: the
+// preview is read, verified and re-encoded a single time, and that one
+// execution gives both the identity and the preflight check. The worker
+// prepares its own execution later under its own authority checks.
+func (service *Service) prepareExecutablePhotoDescription(ctx context.Context, version store.ContentVersion,
+	profile configuredProfile, inputBinding string,
+) (preparedRendition, error) {
+	if err := service.requireVisionReadiness(ctx, profile); err != nil {
+		return preparedRendition{}, fmt.Errorf("preparing rendition execution: %w", err)
+	}
+	execution, err := preparePhotoDescription(ctx, service.catalog, service.blobs, version, profile,
+		service.spoolDirectory, service.clock, true)
+	if err != nil {
+		return preparedRendition{}, fmt.Errorf("preparing rendition execution: %w", err)
+	}
+	defer func() { _ = execution.Upload.Close() }()
+	execution.Provider = profile.provider
+	metadata := execution.metadata
+	metadata.InputBinding = inputBinding
+	identity, err := document.NewRenditionExecutionIdentityV1(metadata, execution.Authorization,
+		execution.EvidencePolicy, execution.RenditionPolicy)
+	if err != nil {
+		return preparedRendition{}, err
+	}
+	work := store.RenditionJobWork{VaultID: service.catalog.VaultID(),
+		Job:     store.RenditionJob{SourceSHA256: version.BlobHash},
+		Waiter:  store.RenditionJobWaiter{ContentVersionID: version.ID},
+		Profile: profile.record, ExecutionIdentity: identity}
+	if err := validateRenditionExecution(work, execution.RenditionExecution); err != nil {
+		return preparedRendition{}, fmt.Errorf("validating rendition execution: %w", err)
+	}
+	policy, err := capturedPolicy(profile.portable)
+	return preparedRendition{identity: identity, capturedPolicy: policy}, err
 }
 
 func (service *Service) prepareRendition(ctx context.Context, node store.Node, version store.ContentVersion,
