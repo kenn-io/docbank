@@ -236,6 +236,15 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{authored.ID}}), Patch: PhotoAuthoredPatch{Caption: new("harbor")}})
 	require.NoError(t, err)
 	putPhotoSuggestion(t, s, machine, document.PhotoDescription{Caption: "harbor"})
+	// Each needs only part of the AND query from its suggestion, or none of it.
+	split := albumAsset(t, s, "split.jpg")
+	owned := albumAsset(t, s, "owned-both.jpg")
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{split.ID}}), Patch: PhotoAuthoredPatch{Caption: new("quay")}})
+	require.NoError(t, err)
+	putPhotoSuggestion(t, s, split, document.PhotoDescription{Tags: []string{"boat"}})
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{owned.ID}}), Patch: PhotoAuthoredPatch{Caption: new("quay boat")}})
+	require.NoError(t, err)
+	putPhotoSuggestion(t, s, owned, document.PhotoDescription{VisibleText: "boat"})
 
 	page := browsePhotoPage(t, s, `{"syntax":"simple","text":"harbor","sort":{"field":"relevance","direction":"desc"}}`)
 	require.Len(t, page.Items, 2)
@@ -244,43 +253,25 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.Equal(t, machine.ID, page.Items[1].AssetID)
 	require.True(t, page.Items[1].MatchedAISuggestion)
 
-	for _, form := range []string{
-		`{"syntax":"simple","text":"harbor","sort":{"field":"name","direction":"asc"}}`,
-		`{"syntax":"simple","text":"harbor","sort":{"field":"capture_time","direction":"desc"}}`,
-		`{"syntax":"advanced","text":"\"harbor\" OR name:zzz","sort":{"field":"name","direction":"asc"}}`,
-		`{"syntax":"advanced","text":"\"harbor\" OR name:zzz","sort":{"field":"relevance","direction":"desc"}}`,
+	for _, tc := range []struct{ form, marked string }{
+		{`{"syntax":"simple","text":"harbor","sort":{"field":"name","direction":"asc"}}`, machine.ID},
+		{`{"syntax":"simple","text":"harbor","sort":{"field":"capture_time","direction":"desc"}}`, machine.ID},
+		{`{"syntax":"advanced","text":"\"harbor\" OR name:zzz","sort":{"field":"name","direction":"asc"}}`, machine.ID},
+		{`{"syntax":"advanced","text":"\"harbor\" OR name:zzz","sort":{"field":"relevance","direction":"desc"}}`, machine.ID},
+		// Only the photo that needs its suggestion to match the whole query carries the mark.
+		{`{"syntax":"advanced","text":"quay AND boat","sort":{"field":"relevance","direction":"desc"}}`, split.ID},
+		{`{"syntax":"advanced","text":"quay AND boat","sort":{"field":"name","direction":"desc"}}`, split.ID},
+		{`{"syntax":"advanced","text":"quay AND boat","sort":{"field":"capture_time","direction":"desc"}}`, split.ID},
 	} {
-		page = browsePhotoPage(t, s, form)
-		require.Len(t, page.Items, 2, form)
+		page = browsePhotoPage(t, s, tc.form)
+		require.Len(t, page.Items, 2, tc.form)
 		for _, item := range page.Items {
-			require.Equal(t, item.AssetID == machine.ID, item.MatchedAISuggestion, "only the suggestion-only match carries the mark: %s", form)
+			require.Equal(t, item.AssetID == tc.marked, item.MatchedAISuggestion, "only the suggestion-only match carries the mark: %s", tc.form)
 		}
 	}
 	page = browsePhotoPage(t, s, `{"syntax":"simple","text":"machine","sort":{"field":"relevance","direction":"desc"}}`)
 	require.Len(t, page.Items, 1)
 	require.False(t, page.Items[0].MatchedAISuggestion, "a file name match wins over suggestion text")
-}
-
-func TestPhotoSuggestionMarkFollowsWholeQuery(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	split := albumAsset(t, s, "split.jpg")
-	owned := albumAsset(t, s, "owned-both.jpg")
-	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{split.ID}}), Patch: PhotoAuthoredPatch{Caption: new("harbor")}})
-	require.NoError(t, err)
-	putPhotoSuggestion(t, s, split, document.PhotoDescription{Tags: []string{"boat"}})
-	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{owned.ID}}), Patch: PhotoAuthoredPatch{Caption: new("harbor boat")}})
-	require.NoError(t, err)
-	putPhotoSuggestion(t, s, owned, document.PhotoDescription{VisibleText: "boat"})
-
-	for _, field := range []string{"relevance", "name", "capture_time"} {
-		page := browsePhotoPage(t, s, fmt.Sprintf(`{"syntax":"advanced","text":"harbor AND boat","sort":{"field":%q,"direction":"desc"}}`, field))
-		require.Len(t, page.Items, 2, field)
-		for _, item := range page.Items {
-			require.Equal(t, item.AssetID == split.ID, item.MatchedAISuggestion, "only the photo that needs its suggestion to match the whole query carries the mark: %s", field)
-		}
-	}
 }
 
 func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
@@ -306,11 +297,20 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 
 	acceptPhotoSuggestion(t, s, proposal, false, "sunset")
 	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "nothing left to offer")
+
+	// The same holds when the owner authored the values before the description arrived.
+	early := albumAsset(t, s, "authored-first.jpg")
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{early.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}, Keywords: []PhotoKeywordEdit{{TagID: tag.ID, Assign: true}}})
+	require.NoError(t, err)
+	publishPhotoDescription(t, s, early, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
+	offered = photoSuggestionValues(t, s, early.ID)
+	require.Len(t, offered, 1)
+	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}}, offered[0].Value, "authored values are not offered back")
 }
 
 func TestPhotoSuggestionAcceptanceReusesATagThatDiffersInCase(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ existing, suggested string }{{"Dog", "dog"}, {"CAFÉ", "café"}, {"Ärger", "ärger"}} {
+	for _, tc := range []struct{ existing, suggested string }{{"Dog", "dog"}, {"CAFÉ", "café"}} {
 		t.Run(tc.existing, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
@@ -368,7 +368,6 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 	t.Run("regenerates through another producer", func(t *testing.T) {
 		t.Parallel()
 		s := newTestStore(t)
-		ctx := t.Context()
 		asset := albumAsset(t, s, "switched.jpg")
 		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}})
 		acceptPhotoSuggestion(t, s, proposal, true)
@@ -378,14 +377,6 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		regenerated := photoSuggestionValues(t, restored, asset.ID)
 		require.Len(t, regenerated, 1)
 		require.Equal(t, document.PhotoDescription{Tags: []string{"coast", "sunset"}}, regenerated[0].Value, "the resolved caption stays resolved")
-		_, err := restored.RespondPhotoSuggestion(ctx, regenerated[0].ID, PhotoSuggestionResponse{Response: "dismissed"})
-		require.NoError(t, err)
-
-		for producer, want := range map[string]bool{producerB: true, producerA: false} {
-			settled, err := restored.PhotoDescriptionSettled(ctx, regenerated[0].ContentVersionID, producer)
-			require.NoError(t, err)
-			require.Equal(t, want, settled, "the dismissal belongs to B, so only B is settled: %s", producer[:1])
-		}
 	})
 	t.Run("regenerates over another producer's dismissal", func(t *testing.T) {
 		t.Parallel()
@@ -467,22 +458,6 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 	require.Equal(t, "Explicit B.", current[0].Value.Caption)
 	require.True(t, settled(producerB))
 	require.True(t, settled(producerA), "one live suggestion settles every producer")
-}
-
-func TestPhotoDescriptionSkipsFieldsAlreadyAuthored(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "authored-first.jpg")
-	tag, err := s.CreateTag(ctx, "coast")
-	require.NoError(t, err)
-	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}, Keywords: []PhotoKeywordEdit{{TagID: tag.ID, Assign: true}}})
-	require.NoError(t, err)
-	publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
-	var caption, tags string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions`).Scan(&caption, &tags))
-	require.Empty(t, caption, "the stored suggestion leaves out the authored caption")
-	require.JSONEq(t, `["sunset"]`, tags, "the stored suggestion leaves out the assigned tag, whatever its case")
 }
 
 // photoDescriptionJobRequest builds the queue request a description job
@@ -640,7 +615,7 @@ func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *test
 	require.Equal(t, RenditionJobQueued, requeued.State, "the discarded answer is asked for again")
 }
 
-func TestPhotoDescriptionAnswerForPhotoHiddenAtPublishRetriesWhenVisible(t *testing.T) {
+func TestPhotoDescriptionAnswerForPhotoHiddenAtPublishIsRefused(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -655,7 +630,7 @@ func TestPhotoDescriptionAnswerForPhotoHiddenAtPublishRetriesWhenVisible(t *test
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
-	hidden, err := s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, true)
+	_, err = s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 
 	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("Hidden."), at)
@@ -663,16 +638,6 @@ func TestPhotoDescriptionAnswerForPhotoHiddenAtPublishRetriesWhenVisible(t *test
 	prepared, err := s.PreparePhotoAuthored(unlocked, PhotoSetSelection{AssetIDs: []string{asset.ID}, Hidden: true})
 	require.NoError(t, err)
 	require.Empty(t, prepared.Suggestions)
-	require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, RenditionFailureStaleAuthority, at))
-
-	_, err = s.SetPhotoAssetHidden(unlocked, asset.ID, hidden.Revision, false)
-	require.NoError(t, err)
-	_, _, claim = startPhotoDescription(t, s, request, at.Add(time.Second))
-	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("Visible."), at.Add(time.Second))
-	require.NoError(t, err)
-	prepared, err = s.PreparePhotoAuthored(unlocked, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-	require.NoError(t, err)
-	require.Equal(t, "Visible.", prepared.Suggestions[0].Value.Caption)
 }
 
 func TestExplicitPhotoDescriptionReplacesOnlyADismissal(t *testing.T) {

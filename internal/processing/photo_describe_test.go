@@ -290,6 +290,16 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	f.mu.Unlock()
 	f.grant(t, f.service, "vision")
 
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	for range 3 {
+		targets, err := f.service.photoDescriptionTargets(ctx, logger, "", 50, 4)
+		require.NoError(t, err)
+		require.Empty(t, targets)
+	}
+	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), "the stalled provider is logged once, not on every pass: %s", logs.String())
+	require.Contains(t, logs.String(), "profile=vision")
+
 	require.Zero(t, f.backfill(t, f.service), "the renewed grant has no passing probe")
 	plan, err := f.service.Plan(ctx, f.selector("vision"))
 	require.NoError(t, err)
@@ -351,24 +361,6 @@ func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
 	require.NoError(t, <-second, "the success stands")
 	probes, _ := f.counts()
 	require.Equal(t, 1, probes)
-}
-
-func TestPhotoDescriptionBackfillLogsOnceWhenTheProviderFailsItsProbe(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	f.mu.Lock()
-	f.probeFails = true
-	f.mu.Unlock()
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	for range 3 {
-		targets, err := f.service.photoDescriptionTargets(t.Context(), logger, "", 50, 4)
-		require.NoError(t, err)
-		require.Empty(t, targets)
-	}
-	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), logs.String())
-	require.Contains(t, logs.String(), "profile=vision")
 }
 
 func TestPhotoDescriptionStartSavesConsentBeforeReportingProbeFailure(t *testing.T) {

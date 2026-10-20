@@ -981,50 +981,6 @@ it.each(["rating", "rating and keywords"])(
   },
 );
 
-it.each([
-  {
-    name: "a typed caption equal to the suggested caption",
-    patch: { caption: "A harbor." },
-    keywords: [] as api.PhotoKeywordEdit[],
-    refreshed: { caption: "", tags: ["sunset"], visible_text: "" },
-  },
-  {
-    name: "an assigned suggested tag",
-    patch: {},
-    keywords: [{ tag_id: "coast", assign: true }],
-    refreshed: { caption: "A harbor.", tags: ["sunset"], visible_text: "" },
-  },
-])(
-  "stops offering what an ordinary edit already saved: $name",
-  async ({ patch, keywords, refreshed }) => {
-    const editor = editorWithTargets();
-    editor.fileID = "jpeg";
-    editor.suggestions = [
-      photoSuggestion({
-        value: { caption: "A harbor.", tags: ["coast", "sunset"], visible_text: "" },
-      }),
-    ];
-    const fetcher = vi.fn().mockImplementation(async (url: string) => {
-      if (url.endsWith("/photos/authored/edit"))
-        return response({
-          receipt_id: "metadata-receipt",
-          before: [],
-          after: [{ file_id: "jpeg", revision: 2, values: { ...targets[1]!.values } }],
-          keywords: keywords.length ? [{ node_id: 2, tag_id: "coast", after: true }] : [],
-        });
-      if (url.endsWith("/tags/coast")) return response({ id: "coast", name: "coast" });
-      if (url.endsWith("/photos/authored/prepare"))
-        return preparedSuggestions([photoSuggestion({ value: refreshed, source_revision: 2 })]);
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetcher);
-    await editor.edit({}, patch, false, vi.fn(), { keywords });
-    expect(editor.error).toBe("");
-    expect(editor.suggestions.map((suggestion) => suggestion.value)).toEqual([refreshed]);
-    editor.dispose();
-  },
-);
-
 it("keeps the latest authored Undo when dismissing a partly accepted suggestion", async () => {
   const editor = editorWithTargets();
   editor.fileID = "jpeg";

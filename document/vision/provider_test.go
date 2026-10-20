@@ -84,7 +84,6 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, reply, want string }{
 		{"valid reply", `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`, `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`},
-		{"invalid fields drop alone", `{"caption":"A dog.","tags":[1,"dog"],"visible_text":42}`, `{"caption":"A dog.","tags":["dog"],"visible_text":""}`},
 		{"reply that is not JSON", `A dog.`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

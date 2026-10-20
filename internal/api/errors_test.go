@@ -72,6 +72,7 @@ func TestRenditionRuntimeUnavailableNamesNoPhotoFeature(t *testing.T) {
 	mapped := &Error{}
 	require.ErrorAs(t, fromProcessingError(processing.ErrRenditionRuntimeUnavailable), &mapped)
 	assert.Equal(t, http.StatusServiceUnavailable, mapped.Status)
+	assert.Equal(t, "rendition_runtime_unavailable", mapped.Code)
 	assert.NotContains(t, mapped.Detail, "photo")
 }
 
