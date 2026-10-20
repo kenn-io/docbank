@@ -20,6 +20,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
 )
@@ -231,7 +233,8 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 		tag = strings.TrimFunc(tag, func(r rune) bool {
 			return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && r != '+' && r != '#'
 		})
-		if len(tag) <= document.MaxPhotoTagBytes && strings.ContainsFunc(tag, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+		// The store keeps the NFC form, which can be longer than what the provider sent.
+		if len(norm.NFC.String(tag)) <= document.MaxPhotoTagBytes && strings.ContainsFunc(tag, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
 			out.Tags = append(out.Tags, tag)
 		}
 	}

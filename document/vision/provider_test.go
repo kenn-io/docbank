@@ -57,6 +57,7 @@ func TestParseDescription(t *testing.T) {
 		{name: "object with no description field", raw: `{"description":"A harbor."}`, invalid: true},
 		{name: "array reply", raw: `["coast"]`, invalid: true},
 		{name: "oversized tag is dropped alone", raw: `{"caption":"A coast.","tags":["coast","` + strings.Repeat("é", 128) + `"],"visible_text":"QUAYSIDE"}`, want: document.PhotoDescription{Caption: "A coast.", Tags: []string{"coast"}, VisibleText: "QUAYSIDE"}},
+		{name: "tag that normalizes past the byte limit is dropped alone", raw: `{"caption":"A coast.","tags":["coast","x` + strings.Repeat("\u0344", 127) + `"],"visible_text":"QUAYSIDE"}`, want: document.PhotoDescription{Caption: "A coast.", Tags: []string{"coast"}, VisibleText: "QUAYSIDE"}},
 		{name: "long visible text is clipped", raw: `{"caption":"A sign.","tags":["sign"],"visible_text":"` + strings.Repeat("é", document.MaxPhotoTextBytes/2+10) + `"}`, want: document.PhotoDescription{Caption: "A sign.", Tags: []string{"sign"}, VisibleText: strings.Repeat("é", document.MaxPhotoTextBytes/2)}},
 		{name: "reply that is not JSON", raw: `A harbor at dusk.`, invalid: true},
 		{name: "long caption drops only the caption", raw: `{"caption":"` + strings.Repeat("x", 301) + `","tags":["coast"],"visible_text":"QUAY"}`, want: document.PhotoDescription{Tags: []string{"coast"}, VisibleText: "QUAY"}},
