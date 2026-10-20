@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -90,11 +91,7 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDu
 	if err != nil {
 		return 0, err
 	}
-	if stale {
-		warning := errors.New("newest scheduled backup is stale")
-		jobs.ReportError(ctx, warning)
-		logger.Warn(warning.Error())
-	}
+	warning := reportStaleBackup(ctx, logger, stale)
 	if delay > 0 && !captureDue {
 		jobs.ReportError(ctx, nil)
 		return delay, nil
@@ -106,11 +103,23 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDu
 	logger.Info("scheduled backup captured", "snapshot", snapshot.ID)
 	// Cleanup errors leave the new point intact and retry after the next capture.
 	err = retainScheduledBackups(ctx, repo, tag, d.Cfg.Backup.KeepLast, snapshot.ID)
-	jobs.ReportError(ctx, err)
+	// A successful recovery keeps the stale warning until a healthy check clears it.
+	jobs.ReportError(ctx, cmp.Or(err, warning))
 	if err != nil {
 		logger.Warn("scheduled backup cleanup failed", "error", err)
 	}
 	return interval, nil
+}
+
+// reportStaleBackup surfaces a stale schedule in Jobs and the daemon log.
+func reportStaleBackup(ctx context.Context, logger *slog.Logger, stale bool) error {
+	if !stale {
+		return nil
+	}
+	warning := errors.New("newest scheduled backup is stale")
+	jobs.ReportError(ctx, warning)
+	logger.Warn(warning.Error())
+	return warning
 }
 
 func createScheduledBackupSnapshot(ctx context.Context, repo *backup.Repo, d Deps) (BackupSnapshot, error) {
