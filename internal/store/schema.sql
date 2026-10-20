@@ -2812,6 +2812,9 @@ CREATE TABLE IF NOT EXISTS photo_checkout_entries (
     PRIMARY KEY (checkout_id,file_id)
 );
 CREATE INDEX IF NOT EXISTS photo_checkout_entries_version ON photo_checkout_entries(version_id);
+CREATE INDEX IF NOT EXISTS photo_change_receipts_checkout_commit ON photo_change_receipts(
+    json_extract(after_json,'$.operation_id'), json_extract(after_json,'$.file_id')
+) WHERE operation='checkout_commit';
 
 -- Machine-written photo descriptions awaiting an owner decision, one row per
 -- source version and producer. Accepting a field moves it to the authored
@@ -2864,6 +2867,3 @@ END;
 CREATE TRIGGER IF NOT EXISTS tag_fts_delete AFTER DELETE ON tags BEGIN
     DELETE FROM tag_fts WHERE rowid=old.rowid;
 END;
-CREATE INDEX IF NOT EXISTS photo_change_receipts_checkout_commit ON photo_change_receipts(
-    json_extract(after_json,'$.operation_id'), json_extract(after_json,'$.file_id')
-) WHERE operation='checkout_commit';
