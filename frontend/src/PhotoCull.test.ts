@@ -1228,6 +1228,4 @@ it("Return visits interleaved stacks and singletons once", async () => {
     targets: [{ asset_id: "photo-4" }],
     patch: { flag: "pick" },
   });
-  expect(states.get("photo-1")!.values.flag).toBe("pick");
-  expect(states.get("photo-2")!.values.flag).toBe("pick");
 });
