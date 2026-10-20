@@ -1,21 +1,26 @@
 param(
     [ValidateSet('all', '1', '2', '3', '4')]
     [string]$Shard = 'all',
-    [ValidateSet(4)]
-    [int]$ShardCount = 4
+    [ValidateSet(2, 4)]
+    [int]$ShardCount = 2
 )
 
 $ErrorActionPreference = 'Stop'
 
+# Two-shard callers keep the original package grouping.
+$legacy = @('./docbank', './internal/store', './cmd/docbank')
 # Seed measured hot packages; distribute the remainder round-robin across all four shards.
 $groups = @{
-    1 = @('./internal/store')
-    2 = @('./docbank', './internal/api')
-    3 = @('./cmd/docbank')
-    4 = @('./internal/processing', './internal/daemonconn', './internal/backupapp')
+    1 = @($legacy[1])
+    2 = @($legacy[0], './internal/api')
+    3 = @($legacy[2], './internal/daemonconn')
+    4 = @('./internal/processing')
 }
 $packages = @('./...')
-if ($Shard -ne 'all') {
+if ($Shard -ne 'all' -and [int]$Shard -gt $ShardCount) {
+    throw "Shard $Shard exceeds shard count $ShardCount"
+}
+if ($ShardCount -eq 4 -and $Shard -ne 'all') {
     $packages = @($groups[[int]$Shard])
     $seeded = @($groups.Values | ForEach-Object { $_ })
     $skip = @(go list -tags fts5 @seeded)
@@ -25,10 +30,17 @@ if ($Shard -ne 'all') {
     for ($i = [int]$Shard - 1; $i -lt $remaining.Count; $i += 4) {
         $packages += $remaining[$i]
     }
+} elseif ($Shard -eq '1') {
+    $packages = $legacy
+} elseif ($Shard -ne 'all') {
+    $skip = @(go list -tags fts5 @legacy)
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $packages = @(go list -tags fts5 ./... | Where-Object { $_ -notin $skip })
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 # Git Bash enables backup privileges for its children, which lets reads bypass exclusive file locks.
-if ($Shard -eq '3') {
+if ($ShardCount -eq 4 -and $Shard -eq '3') {
     # Lifecycle tests spawn daemons with readiness deadlines; give them the runner first.
     go test -timeout 30m -tags fts5 @args ./cmd/docbank
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -150,6 +150,7 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 
 	t.Run("synchronous", func(t *testing.T) {
 		defer sqlitetest.DisableSync.Store(false)
+		defaultSynchronous := map[string]int{"modernc.org/sqlite": 2, "mattn/go-sqlite3": 1}[driver.Name()]
 		for _, disabled := range []bool{false, true} {
 			sqlitetest.DisableSync.Store(disabled)
 			for _, access := range []docsqlite.AccessMode{docsqlite.Create, docsqlite.ReadWriteExisting} {
@@ -164,7 +165,7 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 					if disabled {
 						require.Zero(t, synchronous)
 					} else {
-						require.Positive(t, synchronous)
+						require.Equal(t, defaultSynchronous, synchronous)
 					}
 				}
 			}
