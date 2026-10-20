@@ -1074,6 +1074,8 @@ it("reloads reviewed photo revisions after a stale suggestion response", async (
   await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
   await vi.waitFor(() => expect(editor.suggestions[0]?.value.caption).toBe(""));
   expect(JSON.parse(fetch.mock.calls[2]![1].body)).toMatchObject({
+    asset_id: "asset",
+    asset_revision: 1,
     source_revision: 9,
     node_revision: 10,
   });
@@ -1100,6 +1102,8 @@ function photoSuggestion(overrides: Partial<api.PhotoSuggestion>): api.PhotoSugg
     suggestion_id: "suggestion",
     content_version_id: "version",
     target: "jpeg",
+    asset_id: "asset",
+    asset_revision: 1,
     source_revision: 1,
     node_revision: 1,
     value: { caption: "", tags: [], visible_text: "" },

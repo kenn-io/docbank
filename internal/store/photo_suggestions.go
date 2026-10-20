@@ -28,6 +28,8 @@ var (
 // PhotoSuggestion is the pending part of one photo's description. Fields the
 // owner accepted or dismissed are no longer in it.
 type PhotoSuggestion struct {
+	AssetID          string                    `json:"asset_id"`
+	AssetRevision    int64                     `json:"asset_revision"`
 	SourceRevision   int64                     `json:"source_revision"`
 	NodeRevision     int64                     `json:"node_revision"`
 	AuthoredReceipt  *PhotoAuthoredReceipt     `json:"authored_receipt,omitempty"`
@@ -172,6 +174,8 @@ func normalizePhotoDescription(description document.PhotoDescription) (document.
 
 // PhotoSuggestionResponse accepts selected pending fields or dismisses the rest.
 type PhotoSuggestionResponse struct {
+	AssetID        string   `json:"asset_id"`
+	AssetRevision  int64    `json:"asset_revision"`
 	SourceRevision int64    `json:"source_revision"`
 	NodeRevision   int64    `json:"node_revision"`
 	Response       string   `json:"response"`
@@ -188,8 +192,6 @@ type photoSuggestionRow struct {
 	awaiting        bool
 	captionResolved bool
 	resolved        []string
-	assetID         string
-	assetRevision   int64
 	hidden          bool
 }
 
@@ -204,7 +206,7 @@ func scanPhotoSuggestion(row interface{ Scan(dest ...any) error }) (photoSuggest
 	var tags, resolved string
 	err := row.Scan(&value.id, &value.ID, &value.ContentVersionID, &value.producer, &value.Value.Caption, &tags, &value.Value.VisibleText,
 		&value.dismissed, &value.awaiting, &value.captionResolved, &resolved,
-		&value.Target, &value.SourceRevision, &value.NodeRevision, &value.assetID, &value.assetRevision, &value.hidden)
+		&value.Target, &value.SourceRevision, &value.NodeRevision, &value.AssetID, &value.AssetRevision, &value.hidden)
 	if err != nil {
 		return value, err
 	}
@@ -279,7 +281,7 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 			return nil, ErrPhotoSuggestionConflict
 		}
 	}
-	edit := PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{AssetID: row.assetID, AssetRevision: row.assetRevision, FileID: row.Target, Revision: request.SourceRevision, NodeRevision: request.NodeRevision}}}
+	edit := PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{AssetID: request.AssetID, AssetRevision: request.AssetRevision, FileID: row.Target, Revision: request.SourceRevision, NodeRevision: request.NodeRevision}}}
 	if request.Caption {
 		edit.Patch.Caption = &row.Value.Caption
 	}

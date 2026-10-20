@@ -56,7 +56,7 @@ func acceptPhotoSuggestion(t *testing.T, s *Store, proposal PhotoSuggestion, cap
 			proposal = current
 		}
 	}
-	result, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, PhotoSuggestionResponse{SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: caption, Tags: tags})
+	result, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: caption, Tags: tags})
 	require.NoError(t, err)
 	return result
 }
@@ -167,10 +167,10 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoSuggestionResponse, "an acceptance names its fields")
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed", Caption: true})
 	require.ErrorIs(t, err, ErrInvalidPhotoSuggestionResponse, "a dismissal names none")
-	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Tags: []string{"other"}})
+	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Tags: []string{"other"}})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "a tag that was never suggested is not pending")
 
-	accepted, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
+	accepted, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
 	require.NoError(t, err)
 	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}, VisibleText: "QUAYSIDE"}, accepted.Value)
 	require.NotNil(t, accepted.AuthoredReceipt)
@@ -180,14 +180,14 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	require.Len(t, prepared.Targets[0].Tags, 1)
 	require.Equal(t, accepted.Value, prepared.Suggestions[0].Value, "what remains stays pending")
 
-	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{SourceRevision: accepted.SourceRevision, NodeRevision: accepted.NodeRevision, Response: "accepted", Caption: true})
+	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: accepted.AssetID, AssetRevision: accepted.AssetRevision, SourceRevision: accepted.SourceRevision, NodeRevision: accepted.NodeRevision, Response: "accepted", Caption: true})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "an accepted field is no longer pending")
 	for _, term := range []string{"sunset", "QUAYSIDE"} {
 		require.Equal(t, 1, searchCount(t, s, term, "relevance"))
 	}
 
 	// The revisions the last response returned authorize the next acceptance.
-	next, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{SourceRevision: accepted.SourceRevision, NodeRevision: accepted.NodeRevision, Response: "accepted", Tags: []string{"sunset"}})
+	next, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: accepted.AssetID, AssetRevision: accepted.AssetRevision, SourceRevision: accepted.SourceRevision, NodeRevision: accepted.NodeRevision, Response: "accepted", Tags: []string{"sunset"}})
 	require.NoError(t, err)
 	require.Equal(t, document.PhotoDescription{Tags: []string{}, VisibleText: "QUAYSIDE"}, next.Value)
 
@@ -202,6 +202,29 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict)
 	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+func TestPhotoSuggestionAcceptanceRejectsAFileMovedToAnotherPhoto(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	source := albumAsset(t, s, "moved-from.jpg")
+	target := albumAsset(t, s, "moved-to.jpg")
+	proposal := putPhotoSuggestion(t, s, source, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
+	file := source.Files[0]
+	_, err := s.DetachPhotoFile(ctx, source.ID, source.Revision, file.ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, file.NodeID, "", nil)
+	require.NoError(t, err)
+
+	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
+	require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "the owner reviewed the file under another photo")
+	prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{target.ID}})
+	require.NoError(t, err)
+	for _, moved := range prepared.Targets {
+		require.Empty(t, moved.Values.Caption)
+		require.Empty(t, moved.Tags)
+	}
 }
 
 func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {

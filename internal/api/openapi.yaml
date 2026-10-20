@@ -14575,6 +14575,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        asset_id:
+          type: string
+        asset_revision:
+          format: int64
+          type: integer
         authored_receipt:
           $ref: "#/components/schemas/PhotoAuthoredReceipt"
         content_version_id:
@@ -14592,6 +14597,8 @@ components:
         value:
           $ref: "#/components/schemas/PhotoDescription"
       required:
+        - asset_id
+        - asset_revision
         - source_revision
         - node_revision
         - suggestion_id
@@ -14613,6 +14620,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        asset_id:
+          type: string
+        asset_revision:
+          format: int64
+          type: integer
         caption:
           type: boolean
         node_revision:
@@ -14628,6 +14640,8 @@ components:
             type: string
           type: array
       required:
+        - asset_id
+        - asset_revision
         - source_revision
         - node_revision
         - response

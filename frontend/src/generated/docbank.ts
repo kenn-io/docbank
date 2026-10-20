@@ -5571,6 +5571,8 @@ export interface PhotoDescription {
 export interface PhotoSuggestion {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  asset_id: string;
+  asset_revision: number;
   authored_receipt?: PhotoAuthoredReceipt;
   content_version_id: string;
   node_revision: number;
@@ -6311,6 +6313,8 @@ export interface PhotoSettings {
 export interface PhotoSuggestionResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  asset_id: string;
+  asset_revision: number;
   caption: boolean;
   node_revision: number;
   response: string;

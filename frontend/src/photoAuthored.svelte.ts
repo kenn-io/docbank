@@ -322,6 +322,8 @@ export class PhotoAuthoredEditor {
             response: dismiss ? "dismissed" : "accepted",
             caption,
             tags,
+            asset_id: suggestion.asset_id,
+            asset_revision: suggestion.asset_revision,
             source_revision: suggestion.source_revision,
             node_revision: suggestion.node_revision,
           },
@@ -472,6 +474,8 @@ export class PhotoAuthoredEditor {
       if (!target) return suggestion;
       return {
         ...suggestion,
+        asset_id: target.asset_id,
+        asset_revision: target.asset_revision,
         source_revision: target.revision,
         node_revision: target.node_revision,
       };
