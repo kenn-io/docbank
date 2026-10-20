@@ -36,6 +36,9 @@ type RepositoryClaim struct {
 // EnsureRepositoryOwner binds empty repositories and refuses unclaimed history.
 // Every capture must check this before asking Kit to write a snapshot.
 func EnsureRepositoryOwner(ctx context.Context, repo *backup.Repo, vaultID string, forceUnlock bool) error {
+	if owned, err := repositoryOwned(repo, vaultID); owned || err != nil {
+		return err
+	}
 	_, err := repositoryOwnership(ctx, repo, vaultID, true, false, forceUnlock, "")
 	return err
 }
@@ -46,22 +49,32 @@ func ClaimRepository(ctx context.Context, repo *backup.Repo, vaultID string, con
 	return repositoryOwnership(ctx, repo, vaultID, false, confirm, false, preview)
 }
 
-func repositoryOwnership(ctx context.Context, repo *backup.Repo, vaultID string, capture, confirm, forceUnlock bool, expected string) (preview RepositoryClaim, err error) {
+func repositoryOwned(repo *backup.Repo, vaultID string) (bool, error) {
 	if vaultID == "" {
-		return preview, errors.New("backup repository requires a vault identity")
+		return false, errors.New("backup repository requires a vault identity")
 	}
+	owner, err := os.ReadFile(repo.Path(repositoryOwnerFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading backup repository owner: %w", err)
+	}
+	if strings.TrimSpace(string(owner)) != vaultID {
+		return false, ErrRepositoryOwnerConflict
+	}
+	return true, nil
+}
+
+func repositoryOwnership(ctx context.Context, repo *backup.Repo, vaultID string, capture, confirm, forceUnlock bool, expected string) (preview RepositoryClaim, err error) {
 	lock, err := repo.AcquireExclusiveLockContext(ctx, "docbank-owner", forceUnlock)
 	if err != nil {
 		return preview, fmt.Errorf("locking backup repository ownership: %w", err)
 	}
 	defer func() { err = errors.Join(err, lock.Release()) }()
-	owner, err := os.ReadFile(repo.Path(repositoryOwnerFile))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return preview, fmt.Errorf("reading backup repository owner: %w", err)
-	}
-	owned := err == nil
-	if owned && strings.TrimSpace(string(owner)) != vaultID {
-		return preview, ErrRepositoryOwnerConflict
+	owned, err := repositoryOwned(repo, vaultID)
+	if err != nil {
+		return preview, err
 	}
 	if owned && capture {
 		return preview, nil

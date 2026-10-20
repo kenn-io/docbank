@@ -22,14 +22,14 @@ func TestScheduleDelay(t *testing.T) {
 		{"future clock", -24 * time.Hour, time.Hour, time.Hour, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			points := []*backup.Manifest{{CreatedAt: now.Add(-tc.age).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag}}}
-			delay, stale, err := ScheduleDelay(points, now, tc.interval)
+			points := []*backup.Manifest{{SnapshotID: "scheduled", CreatedAt: now.Add(-tc.age).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag}}}
+			delay, stale, err := ScheduleDelay(points, "", now, tc.interval)
 			require.NoError(t, err)
 			require.Equal(t, tc.delay, delay)
 			require.Equal(t, tc.stale, stale)
 		})
 	}
-	delay, stale, err := ScheduleDelay(nil, now, time.Hour)
+	delay, stale, err := ScheduleDelay(nil, "", now, time.Hour)
 	require.NoError(t, err)
 	require.Zero(t, delay)
 	require.False(t, stale)
@@ -43,11 +43,9 @@ func TestScheduledRetentionPreservesManualAndNewCapture(t *testing.T) {
 		{SnapshotID: "created", CreatedAt: "2026-02-01T00:00:00Z", Options: backup.ManifestOptions{Tag: ScheduledTag}},
 		{SnapshotID: "future", CreatedAt: "2027-01-01T00:00:00Z", Options: backup.ManifestOptions{Tag: ScheduledTag}},
 	}
-	remove, err := ScheduledRetention(points, 2, "created")
-	require.NoError(t, err)
+	remove := ScheduledRetention(points, "", 2, "created")
 	require.Equal(t, []string{"old"}, remove)
-	remove, err = ScheduledRetention(points, 1, "created")
-	require.NoError(t, err)
+	remove = ScheduledRetention(points, "", 1, "created")
 	require.Equal(t, []string{"future", "old"}, remove)
 }
 
@@ -57,7 +55,6 @@ func TestScheduledRetentionWithoutNewCapturePreservesHistory(t *testing.T) {
 		{SnapshotID: "manual"},
 		{SnapshotID: "old", Options: backup.ManifestOptions{Tag: ScheduledTag}},
 	}
-	remove, err := ScheduledRetention(points, 1, "removed-new-capture")
-	require.NoError(t, err)
+	remove := ScheduledRetention(points, "", 1, "removed-new-capture")
 	require.Empty(t, remove)
 }

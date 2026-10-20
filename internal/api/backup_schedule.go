@@ -53,12 +53,13 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time.Time) error {
 	// Wall time counts suspension, while timer clocks can stop during sleep.
 	// Poll only the deadline so retries keep their original delay.
-	deadline = deadline.Round(0)
+	wallDeadline := deadline.Round(0)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		remaining := deadline.Sub(now().Round(0))
+		// The original monotonic deadline also bounds waits when wall time moves back.
+		remaining := min(time.Until(deadline), wallDeadline.Sub(now().Round(0)))
 		if remaining <= 0 {
 			return nil
 		}
@@ -80,11 +81,15 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDu
 	if err := backupapp.EnsureRepositoryOwner(ctx, repo, d.Store.VaultID(), false); err != nil {
 		return 0, err
 	}
+	baseline, err := backupapp.ScheduleBaseline(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
 	manifests, err := repo.ListSnapshots()
 	if err != nil {
 		return 0, fmt.Errorf("listing scheduled backups: %w", err)
 	}
-	delay, stale, err := backupapp.ScheduleDelay(manifests, time.Now(), interval)
+	delay, stale, err := backupapp.ScheduleDelay(manifests, baseline, time.Now(), interval)
 	if err != nil {
 		return 0, err
 	}
@@ -102,7 +107,7 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDu
 	}
 	logger.Info("scheduled backup captured", "snapshot", snapshot.ID)
 	// Cleanup errors leave the new point intact and retry after the next capture.
-	err = retainScheduledBackups(ctx, repo, d.Cfg.Backup.KeepLast, snapshot.ID)
+	err = retainScheduledBackups(ctx, repo, baseline, d.Cfg.Backup.KeepLast, snapshot.ID)
 	jobs.ReportError(ctx, err)
 	if err != nil {
 		logger.Warn("scheduled backup cleanup failed", "error", err)
@@ -117,15 +122,12 @@ func createScheduledBackupSnapshot(ctx context.Context, repo *backup.Repo, d Dep
 	})
 }
 
-func retainScheduledBackups(ctx context.Context, repo *backup.Repo, keep int, created string) error {
+func retainScheduledBackups(ctx context.Context, repo *backup.Repo, baseline string, keep int, created string) error {
 	manifests, err := repo.ListSnapshots()
 	if err != nil {
 		return fmt.Errorf("listing backups for retention: %w", err)
 	}
-	remove, err := backupapp.ScheduledRetention(manifests, keep, created)
-	if err != nil {
-		return err
-	}
+	remove := backupapp.ScheduledRetention(manifests, baseline, keep, created)
 	if len(remove) > 0 {
 		if _, err := backup.Forget(ctx, repo, backup.ForgetOptions{SnapshotIDs: remove}); err != nil {
 			return fmt.Errorf("forgetting scheduled backups: %w", err)

@@ -85,6 +85,10 @@ After a capture, the daemon keeps the newest `keep_last` scheduled snapshots,
 always including the one it just created. It forgets older scheduled snapshots
 and prunes unused storage. Manual snapshots stay available. Cleanup failures
 leave the new snapshot available and retry after the next scheduled capture.
+The first scheduled run records the newest existing snapshot as a permanent
+boundary. Existing history stays outside automatic retention, including manual
+snapshots that used the scheduled tag before upgrading. Restarting keeps that
+boundary.
 The tag `docbank:scheduled` is reserved for the daemon; manual capture through
 the CLI, HTTP API, or embedded API rejects it.
 
@@ -97,6 +101,8 @@ backup detection. After a clock correction leaves a snapshot timestamp in the
 future, the daemon waits at most one interval before capturing and then keeps
 the configured cadence. Restarting during that wait starts a new bounded wait,
 so frequent restarts can defer recovery.
+Moving the clock backward during an active capture or retry wait cannot extend
+that wait.
 
 Set `interval = "0"` to disable the schedule. Enabling it requires both `repo`
 and a positive `keep_last`; there is no default retained count.

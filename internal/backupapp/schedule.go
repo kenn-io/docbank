@@ -15,10 +15,10 @@ const ScheduledTag = "docbank:scheduled"
 var ErrReservedScheduledTag = fmt.Errorf("backup tag %q is reserved for scheduled backups", ScheduledTag)
 
 // Kit lists validated manifests oldest first; retention consumes newest first.
-func scheduledPoints(manifests []*backup.Manifest) []*backup.Manifest {
+func scheduledPoints(manifests []*backup.Manifest, baseline string) []*backup.Manifest {
 	var points []*backup.Manifest
 	for _, manifest := range slices.Backward(manifests) {
-		if manifest.Options.Tag != ScheduledTag {
+		if manifest.SnapshotID <= baseline || manifest.Options.Tag != ScheduledTag {
 			continue
 		}
 		points = append(points, manifest)
@@ -28,8 +28,8 @@ func scheduledPoints(manifests []*backup.Manifest) []*backup.Manifest {
 
 // ScheduleDelay derives the next capture and stale warning from durable manifests.
 // Future timestamps delay recovery by at most one interval per daemon run.
-func ScheduleDelay(manifests []*backup.Manifest, now time.Time, interval time.Duration) (time.Duration, bool, error) {
-	points := scheduledPoints(manifests)
+func ScheduleDelay(manifests []*backup.Manifest, baseline string, now time.Time, interval time.Duration) (time.Duration, bool, error) {
+	points := scheduledPoints(manifests, baseline)
 	if len(points) == 0 {
 		return 0, false, nil
 	}
@@ -47,8 +47,8 @@ func ScheduleDelay(manifests []*backup.Manifest, now time.Time, interval time.Du
 }
 
 // ScheduledRetention selects old scheduled points, always preserving the new capture.
-func ScheduledRetention(manifests []*backup.Manifest, keep int, created string) ([]string, error) {
-	points := scheduledPoints(manifests)
+func ScheduledRetention(manifests []*backup.Manifest, baseline string, keep int, created string) []string {
+	points := scheduledPoints(manifests, baseline)
 	found := false
 	for _, point := range points {
 		if point.SnapshotID == created {
@@ -57,7 +57,7 @@ func ScheduledRetention(manifests []*backup.Manifest, keep int, created string) 
 		}
 	}
 	if !found {
-		return nil, nil
+		return nil
 	}
 	remaining := keep - 1
 	var remove []string
@@ -71,5 +71,5 @@ func ScheduledRetention(manifests []*backup.Manifest, keep int, created string) 
 			remove = append(remove, point.SnapshotID)
 		}
 	}
-	return remove, nil
+	return remove
 }

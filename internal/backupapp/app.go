@@ -184,6 +184,11 @@ func create(
 	if err := EnsureRepositoryOwner(ctx, repo, metadata.VaultID(), opts.ForceUnlock); err != nil {
 		return nil, err
 	}
+	if opts.Tag == ScheduledTag {
+		if _, err := ScheduleBaseline(ctx, repo); err != nil {
+			return nil, err
+		}
+	}
 	opts.MetadataSource = NewMetadataSource(metadata)
 	opts.ContentSource = NewContentSource(blobs)
 	opts.SQLiteOpener = SQLiteOpener(metadata.SQLiteDriver())

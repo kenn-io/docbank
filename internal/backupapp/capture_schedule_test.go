@@ -32,3 +32,15 @@ func TestCaptureReservesScheduledTagAndChecksOwner(t *testing.T) {
 	require.Len(t, points, 1)
 	require.Equal(t, point.SnapshotID, points[0].SnapshotID)
 }
+
+func TestRepositoryOwnerCheckDuringSharedRead(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, fixture.metadata.VaultID(), false))
+	reader, err := repo.AcquireSharedLock("test-verify-reader", false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Release()) })
+	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, fixture.metadata.VaultID(), false))
+	require.ErrorIs(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, "another-vault", false), backupapp.ErrRepositoryOwnerConflict)
+}

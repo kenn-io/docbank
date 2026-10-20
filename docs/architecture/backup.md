@@ -79,7 +79,8 @@ Each repository has one source vault. Its root-level `docbank-owner` marker
 holds the stable vault identity. Daemon initialization assigns ownership;
 the embedded initializer creates an unassigned empty repository. The shared
 capture path checks ownership for every daemon and embedded capture.
-Under Kit's exclusive repository lock, it rechecks the marker and history,
+An existing marker is immutable and can be checked while shared readers run.
+Under Kit's exclusive repository lock, binding rechecks the marker and history,
 assigns an empty unmarked repository, and rejects a different owner. Existing
 unmarked history requires an explicit claim. Marker publication is atomic;
 claims preserve snapshots and cannot replace an existing owner.
@@ -100,8 +101,13 @@ The worker opens an initialized repository and derives due and stale times
 from manifests tagged `docbank:scheduled`, after checking ownership. A different
 vault cannot use its timestamps or trigger scheduled cleanup. `backupapp.Create`
 rejects the reserved tag at the shared capture boundary; the scheduler uses
-`backupapp.CreateScheduled`. Scheduling stores no separate checkpoint, so restart
-uses the same timestamps and checks staleness before attempting capture.
+`backupapp.CreateScheduled`. Before the first automatic capture, the repository
+persists `docbank-schedule-baseline` with the newest existing snapshot ID, or an
+empty boundary for an empty repository. Initialization holds Kit's exclusive
+lock and publishes the file atomically. Due checks and retention consider only
+scheduled-tag snapshots newer than that fixed boundary. This preserves legacy
+manual snapshots that used the tag before it was reserved. Restart keeps the
+same boundary and derives due times and staleness from the newer snapshots.
 A future timestamp caps the initial wait at one interval. The worker consumes
 that deadline once, then captures at the configured interval even while Kit's
 timestamps remain ahead of wall time. A failed due capture keeps that state
@@ -121,6 +127,8 @@ the selection. Capture and repository errors retry after the shorter of the
 interval and five minutes. Capture and retry deadlines use wall time and are
 rechecked at least once a minute, so a deadline passed during sleep is noticed
 within one minute after resume. Polling preserves future retry deadlines.
+The original monotonic deadline also bounds each wait, so a backward wall-clock
+correction cannot extend it.
 Cleanup errors leave the new point intact and wait
 until the next scheduled capture. The worker reports errors through the existing
 supervisor status and logs. The [backup guide](../usage/backup.md#schedule-backups)
