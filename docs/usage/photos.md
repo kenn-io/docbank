@@ -750,6 +750,14 @@ Over HTTP, send the same `query` and optional `coverage` to
 
 Apply or clear staged metadata edits before changing the selection, search, sort, date, or viewed photo, or hiding or trashing photos. Hide uses the prepared selection, including unloaded photos, and keeps failed targets selected with their captured revisions.
 
+## Suggested metadata
+
+With a [configured vision profile](../configuration.md#photo-descriptions) and processing consent, the inspector shows a suggested caption, tags, and read-only visible text for the displayed file. Choose **Accept selected** to write the checked caption or tags as authored metadata; accepted fields leave the suggestion, and **Dismiss** closes the rest without changing authored metadata. Unchecked fields and visible text stay searchable until you dismiss them.
+
+Photo search matches suggested text below authored caption, creator, and copyright and above technical metadata. **Matched AI suggestion** appears on a result that needs suggested text to match. Accepted tags are ordinary tags, so every tag name assigned to a photo matches text search, including after a rename or a content replacement.
+
+Changing the profile keeps existing suggestions and dismissals. An explicit processing run with another profile replaces a dismissed suggestion only. Backups keep dismissals and accepted-field decisions but not suggestion text; after restore and fresh consent, only undecided fields are described again.
+
 ## Export photos
 
 Choose **Export all N photos** in the **⋯** menu for the whole current scope, or **Export selection** for selected photos. In Map, use **Export selection**; it includes selected photos outside the current map area. The [export drawer](export-bundles.md#export-photos) prepares JPEG or PNG copies with your size, metadata, and GPS choices, then delivers a verified ZIP. RAW display members export embedded previews and carry that label. GPS removal leaves descriptive location names intact. With metadata enabled, current catalog tags on the display file replace embedded keywords only when that file has at least one tag; companion-file tags are excluded. Conflicting XMP orientation stops preparation with metadata enabled; turn metadata off to export the viewed pixels. A changed or unavailable photo stops preparation with an error naming it; the linked guide lists preparation and metadata limits.

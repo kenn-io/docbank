@@ -92,6 +92,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /photos/assets/flags` | read current display flags for up to 20,000 visible assets | Implemented |
 | `POST /photos/assets/query` | list matching assets once each with a first-page total and keyset cursor | Implemented |
 | `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences and optional `content_version_id` fencing the asset's displayed version, and undo if revisions match | Implemented |
+| `POST /photos/suggestions/{suggestion_id}/response` | accept selected caption or tags of a photo suggestion with source and node revision fences, or dismiss the rest | Implemented |
 | `POST /photos/assets/{asset_id}/preview` | prepare a fit or large preview for the current content version | Implemented |
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |

@@ -1166,12 +1166,15 @@ version 1 request format, date choices, counts, and retention limits.
 ## docbank processing
 
 ```
+docbank processing vision-fingerprints --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing profiles [--json]
 docbank processing coverage <version-uuid> --profile <name> [--json]
 docbank processing plan <path-or-id> --profile <name> [--json]
 docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha256> --consent [--json | --ndjson]
 docbank processing status <job-id> [--json]
 ```
+
+`vision-fingerprints` prints the descriptor and disclosure fingerprints for a photo description profile. It runs locally without a daemon or provider credential. See [Photo descriptions](configuration.md#photo-descriptions).
 
 `profiles` lists names the daemon can execute, their rendition and embedding
 bindings, and profile fingerprints. The default configuration lists none.

@@ -184,6 +184,8 @@ calling processing providers. See
 [Backup architecture](../architecture/backup.md#which-retained-records-must-round-trip)
 for retained records and rebuildable indexes.
 
+Snapshots keep photo suggestion dismissals and accepted-field decisions but omit suggestion text. After restore and fresh processing consent, only undecided fields are described again.
+
 ## Restore and prove a snapshot
 
 ```bash

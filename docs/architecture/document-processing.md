@@ -457,3 +457,9 @@ the profile refuses by size, keeps the 60-second deadline.
 
 A source may need both its stage and durable loose copy on disk during
 publication. Provider execution may also hold a sealed spool copy.
+
+## Photo description suggestions
+
+A vision profile runs through the shared rendition queue as a `derived_upload` job on one content version. The input binding hashes the version with the verified grid-preview checksum, and automatic and explicit runs bind separately. Planning reads no bytes; enqueue and the worker each decode the verified preview and re-encode it once, so the provider receives a JPEG that carries no metadata. Egress and publication recheck consent, display membership, hidden state, and the preview checksum.
+
+Publication writes one `photo_suggestions` row per content version instead of a rendition artifact. Parsing drops an invalid caption or an oversized tag alone and clips visible text at 16 KB. Automatic backfill treats any row as settled, and an explicit run replaces only a dismissal. Accepting fields goes through the authored edit transaction and clears them from the row in the same transaction. Suggested text lives in `photo_suggestion_fts` and tag names in `tag_fts`, so search needs no provenance state. Metadata JSONL keeps dismissals and per-field resolution without text, and derived-upload jobs rebuild after restore. See [suggested metadata](../usage/photos.md#suggested-metadata).

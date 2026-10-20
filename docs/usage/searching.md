@@ -173,6 +173,8 @@ The CLI resolves tag names to stable UUIDs before searching. JSON echoes the
 selected UUID as `tag_id`. A later tag rename cannot change the tag selected by
 that request, and filtering does not change name-before-content ranking.
 
+In photo queries, free-text searches match authored captions, every tag name assigned to the photo, and pending suggested text. A phrase matches inside one caption, tag, or suggested field and never across two.
+
 Media-type matching ignores case and stored parameters. For example,
 `text/plain` also matches `text/plain; charset=utf-8`. The filter itself must
 contain no parameters. Directories and historical versions never match it.
