@@ -206,11 +206,8 @@ func (service *Service) visionProfileNames() []string {
 }
 
 // PhotoDescriptionBackfill admits bounded work for eligible photos once a
-// ready profile has consent. The ordinary rendition worker runs the jobs.
+// ready profile has consent. Callers start it only when HasPhotoDescriptionProfiles. The ordinary rendition worker runs the jobs.
 func (service *Service) PhotoDescriptionBackfill(ctx context.Context, logger *slog.Logger, workers int) error {
-	if !service.HasPhotoDescriptionProfiles() {
-		return nil
-	}
 	workers = max(workers, 1)
 	backfill := Backfill[photoDescriptionTarget]{Name: "photo-descriptions", Page: 50, IdleDelay: time.Second, Logger: logger,
 		Key: func(value photoDescriptionTarget) string { return value.version.ID },
