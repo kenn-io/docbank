@@ -293,12 +293,14 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), "the stalled provider is logged once, not on every pass: %s", logs.String())
 	require.Contains(t, logs.String(), "profile=vision")
 
+	require.Contains(t, logs.String(), "insufficient capacity", "the warning carries why the probe failed")
 	require.Zero(t, f.backfill(t, f.service), "the renewed grant has no passing probe")
 	plan, err := f.service.Plan(ctx, f.selector("vision"))
 	require.NoError(t, err)
 	probesBefore, _ := f.counts()
 	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
 	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
+	require.ErrorContains(t, err, "insufficient capacity", "a remembered failure keeps its cause")
 	probesAfter, _ := f.counts()
 	require.Equal(t, probesBefore, probesAfter, "a failed probe repeats no sooner than a minute later")
 

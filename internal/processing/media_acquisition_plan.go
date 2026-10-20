@@ -424,7 +424,7 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 			return nil
 		}
 		if service.clock().Sub(observation.ProbedAt) < visionRetryInterval {
-			return ErrRenditionRuntimeUnavailable
+			return runtimeUnavailable(observation.Cause)
 		}
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, service.visionProbeTimeout)
@@ -437,12 +437,33 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 		return err
 	}
 	service.mediaOriginMu.Lock()
-	service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, ProbedAt: service.clock().UTC()}
+	service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, ProbedAt: service.clock().UTC(), Cause: err}
 	service.mediaOriginMu.Unlock()
 	if evidence.ProbeState != "ready" {
-		return ErrRenditionRuntimeUnavailable
+		return runtimeUnavailable(err)
 	}
 	return nil
+}
+
+// RuntimeUnavailableError is ErrRenditionRuntimeUnavailable with the reason the
+// provider's probe failed.
+type RuntimeUnavailableError struct{ Cause error }
+
+func (err *RuntimeUnavailableError) Error() string {
+	return ErrRenditionRuntimeUnavailable.Error() + ": " + err.Cause.Error()
+}
+
+func (err *RuntimeUnavailableError) Is(target error) bool {
+	return target == ErrRenditionRuntimeUnavailable
+}
+
+func (err *RuntimeUnavailableError) Unwrap() error { return err.Cause }
+
+func runtimeUnavailable(cause error) error {
+	if cause == nil {
+		return ErrRenditionRuntimeUnavailable
+	}
+	return &RuntimeUnavailableError{Cause: cause}
 }
 
 func (service *Service) requireVisionFingerprint(ctx context.Context, fingerprint string) error {

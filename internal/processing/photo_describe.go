@@ -286,7 +286,7 @@ func (service *Service) photoDescriptionProfile(ctx context.Context, logger *slo
 			return name, nil
 		case errors.Is(err, ErrRenditionRuntimeUnavailable):
 			if _, logged := service.visionNotReady.LoadOrStore(name, true); !logged && logger != nil {
-				logger.Warn("photo descriptions are paused: the vision provider did not pass its probe", "profile", name)
+				logger.Warn("photo descriptions are paused: the vision provider did not pass its probe", "profile", name, "error", err)
 			}
 		case errors.Is(err, store.ErrProcessingConsentRequired), errors.Is(err, store.ErrProcessingConsentExpired),
 			errors.Is(err, store.ErrProcessingConsentRevoked):

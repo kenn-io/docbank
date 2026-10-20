@@ -155,6 +155,8 @@ type Service struct {
 type mediaOriginObservation struct {
 	Evidence MediaOriginEvidence
 	ProbedAt time.Time
+	// Cause is why the probe failed, kept for callers that retry within the back-off.
+	Cause error
 }
 
 func (service *Service) mediaMutation(ctx context.Context, fn func() error) error {

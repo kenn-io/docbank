@@ -66,6 +66,15 @@ func TestFromStoreErrorMappings(t *testing.T) {
 	}
 }
 
+func TestRuntimeUnavailableDetailCarriesTheProbeFailure(t *testing.T) {
+	t.Parallel()
+	mapped := &Error{}
+	require.ErrorAs(t, fromProcessingError(&processing.RuntimeUnavailableError{Cause: errors.New("provider returned HTTP 503")}), &mapped)
+	assert.Equal(t, "rendition_runtime_unavailable", mapped.Code)
+	assert.Contains(t, mapped.Detail, "HTTP 503")
+	assert.NotContains(t, mapped.Detail, "photo")
+}
+
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
