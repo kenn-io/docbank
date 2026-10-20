@@ -55,7 +55,7 @@ The directory layout is created on first use:
 ├── web-downloads/       # private, temporary verified browser downloads
 ├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
 ├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
-├── telemetry-tui-state  # daily TUI receipt and accepted screens; with its .lock
+├── telemetry-tui-state.json # daily TUI receipt and accepted screens; with its .lock
 ├── config.toml          # optional; see below
 ├── lane-controls.json   # local job pause and concurrency settings
 ├── vault.lock           # advisory lock, held by a daemon or target restore
@@ -1044,7 +1044,7 @@ six attempts. Hidden tabs report their latest screen when visible. Screen visibi
 listeners stop while disabled or unavailable; focus can check on a later day.
 Session reports use the shared gate's in-memory queue while it checks permission.
 
-TUI reports use a running daemon and lock `telemetry-tui-state` while checking.
+TUI reports use a running daemon and lock `telemetry-tui-state.json` while checking.
 The private v1 JSON file stores the UTC day, disabled receipt, and accepted
 screen names. Restarts reuse today's state, including opaque screen names.
 Unsupported versions and unknown fields are refused without rewriting. Malformed

@@ -57,7 +57,7 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 	if err != nil {
 		return fmt.Errorf("resolving telemetry state: %w", err)
 	}
-	path := filepath.Join(layout.Root, "telemetry-tui-state")
+	path := filepath.Join(layout.Root, "telemetry-tui-state.json")
 	lock := flock.New(path + ".lock")
 	_, err = lock.TryLockContext(ctx, 10*time.Millisecond)
 	if err != nil {

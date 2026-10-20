@@ -68,7 +68,7 @@ func TestTUITelemetryReceipts(t *testing.T) {
 			require.NoError(t, os.Remove(runtimePath))
 			restarted := &tuiDaemonBackend{}
 			require.NoError(t, restarted.ReportScreen(t.Context(), "help"))
-			path := filepath.Join(root, "telemetry-tui-state")
+			path := filepath.Join(root, "telemetry-tui-state.json")
 			require.NoError(t, os.Remove(path))
 			require.NoError(t, restarted.ReportScreen(t.Context(), "help"))
 			if receipt == "disabled" {
@@ -95,7 +95,7 @@ func TestTUITelemetryStoredStates(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
-			path := filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state")
+			path := filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json")
 			require.NoError(t, os.WriteFile(path, []byte(tc.value), 0o600))
 			backend := &tuiDaemonBackend{}
 			err := backend.ReportScreen(t.Context(), "help")
@@ -129,7 +129,7 @@ func TestTUITelemetryBoundsEveryFailure(t *testing.T) {
 				t.Setenv("DOCBANK_HOME", t.TempDir())
 			}
 			if failure == "file" {
-				require.NoError(t, os.Mkdir(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state"), 0o700))
+				require.NoError(t, os.Mkdir(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json"), 0o700))
 			}
 			backend := &tuiDaemonBackend{}
 			for range 6 {
@@ -148,7 +148,7 @@ func TestTUITelemetryBoundsEveryFailure(t *testing.T) {
 
 func TestTUITelemetryBusyLockReturnsRetryError(t *testing.T) {
 	requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
-	lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.lock"))
+	lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json.lock"))
 	require.NoError(t, lock.Lock())
 	defer func() { require.NoError(t, lock.Close()) }()
 	backend := &tuiDaemonBackend{}
