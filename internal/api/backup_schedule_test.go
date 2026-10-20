@@ -183,7 +183,8 @@ func TestBackupScheduleFailedDueCaptureRemainsDueAfterClockCorrection(t *testing
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Len(t, points, 1)
-		// A backward clock correction would make the previous point appear recent.
+		// Write a recent manifest for the same backup content to model the state
+		// ScheduleDelay sees after a backward clock correction; fake time stays fixed.
 		points[0].CreatedAt = time.Now().Format(time.RFC3339)
 		recent, err := repo.WriteManifest(points[0])
 		require.NoError(t, err)
