@@ -193,6 +193,24 @@ func (f *photoDescriptionFixture) dismiss(t *testing.T, suggestion store.PhotoSu
 	require.NoError(t, err)
 }
 
+func TestPhotoDescriptionProfileCoverageIgnoresDescriptionJobs(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	f.grant(t, f.service, "vision")
+	targets, err := f.service.photoDescriptionTargets(ctx, "", 50, 4)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "a description job is waiting")
+	fence := SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{f.node.CurrentVersionID}}
+
+	coverage, err := f.service.Coverage(ctx, "vision", fence)
+	require.NoError(t, err)
+	require.Equal(t, "complete", coverage.State, "a description profile attaches no rendition to cover")
+	require.Zero(t, coverage.Renditions.Rebuilding)
+	require.False(t, coverage.Renditions.Required)
+}
+
 func TestPhotoDescriptionFlow(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)

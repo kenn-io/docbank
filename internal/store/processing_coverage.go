@@ -80,7 +80,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
 			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND w.state='waiting'
-			AND j.state IN ('queued','running','retry_wait'))
+			AND `+originalFileWaiterSQL+` AND j.state IN ('queued','running','retry_wait'))
 		FROM `+nodeFrom+`
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=?
 		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id

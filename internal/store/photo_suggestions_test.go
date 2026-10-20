@@ -574,6 +574,25 @@ func TestPhotoDescriptionJobIsNotDocumentProcessingState(t *testing.T) {
 	require.Empty(t, page.Items[0].LatestProcessingState, "a photo description attaches no rendition, so it is no processing state")
 }
 
+func TestPhotoDescriptionJobIsNotRebuildingRenditionCoverage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "covered.jpg")
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	request := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+	grantRenditionJobConsent(t, s, request)
+	_, _, err = s.EnqueueRenditionJob(ctx, request)
+	require.NoError(t, err)
+
+	snapshot, err := s.ProcessingCoverage(ctx, ProcessingCoverageScope{
+		ContentVersionIDs: []string{node.CurrentVersionID}, ProcessingProfileFingerprint: request.Profile.Fingerprint,
+	})
+	require.NoError(t, err)
+	require.Zero(t, snapshot.Renditions.Rebuilding, "a queued description is not a rendition being rebuilt")
+}
+
 func TestPhotoDescriptionEmptyReplyIsNotAskedAgain(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

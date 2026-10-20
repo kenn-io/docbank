@@ -1436,7 +1436,8 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
 		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
-	if profile.portable.Rendition != nil {
+	// A description profile attaches no rendition, so there is none to cover.
+	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
 		report.Renditions = toClass(snapshot.Renditions)
 		report.Renditions.Name, report.Renditions.Required = "rendition", true
 		if report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total {
