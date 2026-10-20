@@ -1,12 +1,6 @@
 import * as actions from "./action-events.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
 import * as processingAPI from "./receipts.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
@@ -27,68 +21,48 @@ describe("document processing drawer", () => {
         finish = resolve;
         fail = reject;
       });
-      const similar = vi
-        .spyOn(processingAPI, "documentSimilar")
-        .mockReturnValueOnce(pending);
-      const view = renderProcessingResponse(
-        Promise.resolve(completedProcessingResponse()),
-        ["private", "other"],
-      );
+      const similar = vi.spyOn(processingAPI, "documentSimilar").mockReturnValueOnce(pending);
+      const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()), [
+        "private",
+        "other",
+      ]);
       await screen.findByRole("button", { name: "Run processing" });
-      await view.rerender({
-        scopeVersionIDs: [processingJob.content_version_id],
-      });
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Find similar" }),
-      );
+      await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
+      await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
       expect(similar).toHaveBeenCalledTimes(1);
-      await fireEvent.change(screen.getByLabelText("Profile"), {
-        target: { value: "other" },
-      });
+      await fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "other" } });
       await screen.findByRole("button", { name: "Run processing" });
-      if (outcome === "report")
-        similar.mockRejectedValueOnce(new Error("Latest request failed"));
+      if (outcome === "report") similar.mockRejectedValueOnce(new Error("Latest request failed"));
       else
         similar.mockResolvedValueOnce({
           ...contract.similar_report,
           results: [],
         } as DocumentSimilarReport);
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Find similar" }),
-      );
+      await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
       const latest =
-        outcome === "report"
-          ? "Latest request failed"
-          : "No similar documents inside this view.";
+        outcome === "report" ? "Latest request failed" : "No similar documents inside this view.";
       expect(await screen.findByText(latest)).toBeTruthy();
       expect(similar.mock.calls[1]?.[1].selector.profile).toBe("other");
       await act(async () => {
-        if (outcome === "report")
-          finish(contract.similar_report as DocumentSimilarReport);
+        if (outcome === "report") finish(contract.similar_report as DocumentSimilarReport);
         else fail(new Error("Stale request failed"));
         await pending.catch(() => {});
       });
       expect(screen.getByText(latest)).toBeTruthy();
       expect(screen.queryByText("Stale request failed")).toBeNull();
-      expect(
-        screen.queryByText(contract.similar_report.results[0]!.path),
-      ).toBeNull();
+      expect(screen.queryByText(contract.similar_report.results[0]!.path)).toBeNull();
     },
   );
 
   it("captures the loaded scope and ignores completion after close", async () => {
     let finish!: (report: DocumentSimilarReport) => void;
-    const similar = vi
-      .spyOn(processingAPI, "documentSimilar")
-      .mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
-      );
-    const view = renderProcessingResponse(
-      Promise.resolve(completedProcessingResponse()),
+    const similar = vi.spyOn(processingAPI, "documentSimilar").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
     );
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
     await screen.findByRole("button", { name: "Run processing" });
     await view.rerender({
       scopeVersionIDs: [
@@ -111,21 +85,13 @@ describe("document processing drawer", () => {
   });
 
   it("renders similar groups and unavailable coverage", async () => {
-    const similar = vi
-      .spyOn(processingAPI, "documentSimilar")
-      .mockResolvedValue({
-        ...contract.similar_report,
-        results: [
-          { ...contract.similar_report.results[0]!, duplicate_count: 1 },
-        ],
-      } as DocumentSimilarReport);
-    const view = renderProcessingResponse(
-      Promise.resolve(completedProcessingResponse()),
-    );
+    const similar = vi.spyOn(processingAPI, "documentSimilar").mockResolvedValue({
+      ...contract.similar_report,
+      results: [{ ...contract.similar_report.results[0]!, duplicate_count: 1 }],
+    } as DocumentSimilarReport);
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
     await screen.findByRole("button", { name: "Run processing" });
-    await view.rerender({
-      scopeVersionIDs: [processingJob.content_version_id],
-    });
+    await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
     await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
     expect(await screen.findByText("+1 identical")).toBeTruthy();
     similar.mockResolvedValue({
@@ -134,26 +100,17 @@ describe("document processing drawer", () => {
       results: [],
     } as DocumentSimilarReport);
     await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
-    expect(
-      await screen.findByText(/Unavailable: no current embedding/),
-    ).toBeTruthy();
-    similar.mockResolvedValue({
-      ...contract.similar_report,
-      results: [],
-    } as DocumentSimilarReport);
+    expect(await screen.findByText(/Unavailable: no current embedding/)).toBeTruthy();
+    similar.mockResolvedValue({ ...contract.similar_report, results: [] } as DocumentSimilarReport);
     await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
-    expect(
-      await screen.findByText("No similar documents inside this view."),
-    ).toBeTruthy();
+    expect(await screen.findByText("No similar documents inside this view.")).toBeTruthy();
     await view.rerender({
       scopeVersionIDs: Array.from(
         { length: 4097 },
         (_, i) => `00000000-0000-4000-8000-${i.toString().padStart(12, "0")}`,
       ),
     });
-    expect(
-      screen.getByText("Narrow this view to at most 4,096 file versions."),
-    ).toBeTruthy();
+    expect(screen.getByText("Narrow this view to at most 4,096 file versions.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Find similar" })).toBeNull();
   });
   it("reports completed version and similar searches and keeps unavailable results silent", async () => {
@@ -202,9 +159,7 @@ describe("document processing drawer", () => {
 
   it("uses the success tone for a completed job", async () => {
     renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Run processing" }),
-    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
     expect(await screen.findByText("completed")).toBeTruthy();
     expect(
       screen
@@ -222,15 +177,9 @@ describe("document processing drawer", () => {
       },
     });
     renderProcessingResponse(
-      Promise.resolve(
-        new Response(body, {
-          headers: { "Content-Type": "application/x-ndjson" },
-        }),
-      ),
+      Promise.resolve(new Response(body, { headers: { "Content-Type": "application/x-ndjson" } })),
     );
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Run processing" }),
-    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
     stream.enqueue(
       new TextEncoder().encode(
         `${JSON.stringify({ sequence: 1, type: "job", job: processingJob })}\n`,
@@ -258,9 +207,7 @@ describe("document processing drawer", () => {
         finish = resolve;
       });
       const view = renderProcessingResponse(response);
-      await fireEvent.click(
-        await screen.findByRole("button", { name: "Run processing" }),
-      );
+      await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
       view.unmount();
       await act(async () => {
         finish(
@@ -271,9 +218,8 @@ describe("document processing drawer", () => {
         await start.mock.results[0]!.value.catch(() => {});
       });
       expect(
-        view.fetchMock.mock.calls.filter(([input]) =>
-          String(input).startsWith("/api/v1/coverage?"),
-        ).length,
+        view.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/coverage?"))
+          .length,
       ).toBe(1);
       expect(view.onauthfailure).not.toHaveBeenCalled();
       expect(view.onclose).not.toHaveBeenCalled();
@@ -283,14 +229,10 @@ describe("document processing drawer", () => {
   it("revokes consent from the browser and refreshes the plan", async () => {
     renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
     await fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Revoke all processing consent",
-      }),
+      await screen.findByRole("button", { name: "Revoke all processing consent" }),
     );
     expect(await screen.findByText("Consent revoked")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Consent and run" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Consent and run" })).toBeTruthy();
   });
 
   it("discards the previous profile plan and coverage when a new preview fails", async () => {
@@ -393,17 +335,10 @@ describe("document processing drawer", () => {
       target: { value: "hosted" },
     });
     expect.soft(screen.queryByText("private-provider")).toBeNull();
-    expect
-      .soft(
-        screen.queryByRole("region", { name: "Document processing coverage" }),
-      )
-      .toBeNull();
+    expect.soft(screen.queryByRole("region", { name: "Document processing coverage" })).toBeNull();
 
     resolvePreview(
-      Response.json(
-        { detail: "The selected profile is unavailable." },
-        { status: 503 },
-      ),
+      Response.json({ detail: "The selected profile is unavailable." }, { status: 503 }),
     );
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
@@ -425,23 +360,14 @@ describe("document processing drawer", () => {
       const path = String(input);
       if (path === "/api/v1/processing/profiles") {
         return Response.json([
-          {
-            name: "private",
-            fingerprint,
-            rendition: true,
-            embedding_bindings: ["semantic"],
-          },
+          { name: "private", fingerprint, rendition: true, embedding_bindings: ["semantic"] },
         ]);
       }
       if (path === "/api/v1/processing/plans") {
         return Response.json({
           fingerprint,
           vault_uid: vaultID,
-          selector: {
-            node_id: 42,
-            content_version_id: versionID,
-            profile: "private",
-          },
+          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
           profile_fingerprint: fingerprint,
           flow: [
             {
@@ -596,50 +522,31 @@ describe("document processing drawer", () => {
     expect(screen.getByText("Disclosed filename: report.pdf")).toBeTruthy();
     expect(screen.getByText("Local process")).toBeTruthy();
     expect(
-      screen.getByText(
-        /processing profile and operator scope until revoked or expired/i,
-      ),
+      screen.getByText(/processing profile and operator scope until revoked or expired/i),
     ).toBeTruthy();
     expect(
-      screen.getByText(
-        "Extracted text is saved in the vault and included in backups.",
-      ),
+      screen.getByText("Extracted text is saved in the vault and included in backups."),
     ).toBeTruthy();
     expect(screen.getByText(/2 provider calls/i)).toBeTruthy();
-    expect(
-      screen.getByText(/Consent also queues photos in this vault/),
-    ).toBeTruthy();
+    expect(screen.getByText(/Consent also queues photos in this vault/)).toBeTruthy();
     expect(screen.getByText(/1 vector space/i)).toBeTruthy();
-    expect(
-      screen.getByText(/retained derivatives enter future backups/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/retained derivatives enter future backups/i)).toBeTruthy();
     expect(screen.getByText(/original_file.*rendition_chunk/i)).toBeTruthy();
-    expect(
-      screen.getByText(/sanitized_markdown.*embedding_vector_set/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/sanitized_markdown.*embedding_vector_set/i)).toBeTruthy();
     expect(await screen.findByText(/rendition.*missing/i)).toBeTruthy();
 
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Consent and run" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Consent and run" }));
     expect(await screen.findByText(/provider_unavailable/i)).toBeTruthy();
     expect(await screen.findByText(/rendition.*complete/i)).toBeTruthy();
     expect(screen.getByText(/semantic.*unavailable/i)).toBeTruthy();
 
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Read sanitized Markdown" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Read sanitized Markdown" }));
     expect(openRendition).toHaveBeenCalledWith(attachmentID);
 
-    await fireEvent.input(
-      screen.getByRole("searchbox", { name: "Search this document version" }),
-      {
-        target: { value: "synthetic" },
-      },
-    );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Search this version" }),
-    );
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search this document version" }), {
+      target: { value: "synthetic" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
     expect(await screen.findByText("Synthetic match")).toBeTruthy();
     expect(screen.getByText(/rendition_segment/i)).toBeTruthy();
     expect(screen.getByText(/semantic_unavailable/i)).toBeTruthy();
@@ -650,29 +557,19 @@ describe("document processing drawer", () => {
     const fingerprint = "a".repeat(64);
     const jobID = "b".repeat(64);
     const encoder = new TextEncoder();
-    let streamController:
-      ReadableStreamDefaultController<Uint8Array> | undefined;
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/v1/processing/profiles") {
         return Response.json([
-          {
-            name: "private",
-            fingerprint,
-            rendition: true,
-            embedding_bindings: [],
-          },
+          { name: "private", fingerprint, rendition: true, embedding_bindings: [] },
         ]);
       }
       if (path === "/api/v1/processing/plans") {
         return Response.json({
           fingerprint,
           vault_uid: versionID,
-          selector: {
-            node_id: 42,
-            content_version_id: versionID,
-            profile: "private",
-          },
+          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
           profile_fingerprint: fingerprint,
           flow: [],
           disclosed_classes: [],
@@ -748,13 +645,9 @@ describe("document processing drawer", () => {
       onrendition: vi.fn(),
     });
 
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Run processing" }),
-    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
     try {
-      expect(
-        await screen.findByText("Durable job", {}, { timeout: 500 }),
-      ).toBeTruthy();
+      expect(await screen.findByText("Durable job", {}, { timeout: 500 })).toBeTruthy();
       expect(screen.getByText(jobID)).toBeTruthy();
       expect(screen.getByText("Accepted")).toBeTruthy();
     } finally {
@@ -778,11 +671,9 @@ describe("document processing drawer", () => {
     }
     expect(await screen.findByText("completed")).toBeTruthy();
     const completedPhase = await screen.findByText("published");
-    expect(
-      completedPhase
-        .closest(".kit-chip")
-        ?.classList.contains("kit-chip--tone-success"),
-    ).toBe(true);
+    expect(completedPhase.closest(".kit-chip")?.classList.contains("kit-chip--tone-success")).toBe(
+      true,
+    );
   });
 
   it("keeps hosted disclosure, required failure, rebuild fallback, and direct-file evidence explicit", async () => {
@@ -793,23 +684,14 @@ describe("document processing drawer", () => {
       const path = String(input);
       if (path === "/api/v1/processing/profiles") {
         return Response.json([
-          {
-            name: "hosted",
-            fingerprint,
-            rendition: false,
-            embedding_bindings: ["direct-file"],
-          },
+          { name: "hosted", fingerprint, rendition: false, embedding_bindings: ["direct-file"] },
         ]);
       }
       if (path === "/api/v1/processing/plans") {
         return Response.json({
           fingerprint,
           vault_uid: vaultID,
-          selector: {
-            node_id: 42,
-            content_version_id: versionID,
-            profile: "hosted",
-          },
+          selector: { node_id: 42, content_version_id: versionID, profile: "hosted" },
           profile_fingerprint: fingerprint,
           flow: [
             {
@@ -932,32 +814,19 @@ describe("document processing drawer", () => {
     expect(await screen.findByText("Hosted provider")).toBeTruthy();
     expect(screen.getByText("Consent revoked")).toBeTruthy();
     expect(screen.getByText(/document data leaves this machine/i)).toBeTruthy();
-    expect(
-      screen.getByText(/Docbank Gemini adapter.*Google Gemini/i),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("https://generativelanguage.googleapis.com"),
-    ).toBeTruthy();
+    expect(screen.getByText(/Docbank Gemini adapter.*Google Gemini/i)).toBeTruthy();
+    expect(screen.getByText("https://generativelanguage.googleapis.com")).toBeTruthy();
     expect(screen.getByText(/gemini-embedding@2026-08/i)).toBeTruthy();
     expect(screen.getByText(/content_hash.*synthetic_filename/i)).toBeTruthy();
     expect(await screen.findByText(/direct-file.*rebuilding/i)).toBeTruthy();
     expect(screen.getByText(/^Required/)).toBeTruthy();
-    expect(
-      screen.getByText(/previous complete generation remains available/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/previous complete generation remains available/i)).toBeTruthy();
 
-    await fireEvent.input(
-      screen.getByRole("searchbox", { name: "Search this document version" }),
-      {
-        target: { value: "synthetic" },
-      },
-    );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Search this version" }),
-    );
-    expect(
-      await screen.findByText(/direct-file result; no text excerpt/i),
-    ).toBeTruthy();
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search this document version" }), {
+      target: { value: "synthetic" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
+    expect(await screen.findByText(/direct-file result; no text excerpt/i)).toBeTruthy();
     expect(screen.getByText(/degraded_provenance/i)).toBeTruthy();
     expect(screen.getAllByText(/^embedding$/i).length).toBeGreaterThan(1);
   });
@@ -969,22 +838,13 @@ describe("document processing drawer", () => {
       const path = String(input);
       if (path === "/api/v1/processing/profiles")
         return Response.json([
-          {
-            name: "private",
-            fingerprint,
-            rendition: true,
-            embedding_bindings: [],
-          },
+          { name: "private", fingerprint, rendition: true, embedding_bindings: [] },
         ]);
       if (path === "/api/v1/processing/plans")
         return Response.json({
           fingerprint,
           vault_uid: versionID,
-          selector: {
-            node_id: 42,
-            content_version_id: versionID,
-            profile: "private",
-          },
+          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
           profile_fingerprint: fingerprint,
           flow: [],
           disclosed_classes: [],
@@ -1043,72 +903,57 @@ describe("document processing drawer", () => {
       onrendition: vi.fn(),
     });
 
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Consent and run" }),
-    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Consent and run" }));
     expect(screen.getByText("Consent expired")).toBeTruthy();
-    expect(
-      await screen.findByText(/consent expired before provider access/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/consent expired before provider access/i)).toBeTruthy();
     expect(screen.queryByText("Durable job")).toBeNull();
   });
 
   it("blocks a run when local inspection refuses the source", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
-    const fetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (input) => {
-        const path = String(input);
-        if (path === "/api/v1/processing/profiles")
-          return Response.json([
-            {
-              name: "private",
-              fingerprint,
-              rendition: true,
-              embedding_bindings: [],
-            },
-          ]);
-        if (path === "/api/v1/processing/plans")
-          return Response.json({
-            fingerprint,
-            vault_uid: versionID,
-            selector: {
-              node_id: 42,
-              content_version_id: versionID,
-              profile: "private",
-            },
-            profile_fingerprint: fingerprint,
-            flow: [],
-            disclosed_classes: [],
-            retained_classes: [],
-            estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 0 },
-            consent_required: true,
-            consent_state: "required",
-            backup_consequence: "none",
-            rendition_ineligible_reason: "unbounded_media_family",
-          });
-        if (path.startsWith("/api/v1/coverage?"))
-          return Response.json({
-            vault_uid: versionID,
-            profile_fingerprint: fingerprint,
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/v1/processing/profiles")
+        return Response.json([
+          { name: "private", fingerprint, rendition: true, embedding_bindings: [] },
+        ]);
+      if (path === "/api/v1/processing/plans")
+        return Response.json({
+          fingerprint,
+          vault_uid: versionID,
+          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
+          profile_fingerprint: fingerprint,
+          flow: [],
+          disclosed_classes: [],
+          retained_classes: [],
+          estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 0 },
+          consent_required: true,
+          consent_state: "required",
+          backup_consequence: "none",
+          rendition_ineligible_reason: "unbounded_media_family",
+        });
+      if (path.startsWith("/api/v1/coverage?"))
+        return Response.json({
+          vault_uid: versionID,
+          profile_fingerprint: fingerprint,
+          state: "missing",
+          renditions: {
+            name: "rendition",
+            required: true,
             state: "missing",
-            renditions: {
-              name: "rendition",
-              required: true,
-              state: "missing",
-              complete: 0,
-              unavailable: 0,
-              stale: 0,
-              ineligible: 0,
-              rebuilding: 0,
-              previous_generation_serving: 0,
-              total: 1,
-            },
-            embeddings: [],
-          });
-        throw new Error(`unexpected request: ${path}`);
-      });
+            complete: 0,
+            unavailable: 0,
+            stale: 0,
+            ineligible: 0,
+            rebuilding: 0,
+            previous_generation_serving: 0,
+            total: 1,
+          },
+          embeddings: [],
+        });
+      throw new Error(`unexpected request: ${path}`);
+    });
 
     render(ProcessingDrawer, {
       session: "short-lived",
@@ -1130,9 +975,7 @@ describe("document processing drawer", () => {
 
     const run = await screen.findByRole("button", { name: "Consent and run" });
     expect(
-      screen.getByText(
-        "This profile can't process this file: unbounded media family.",
-      ),
+      screen.getByText("This profile can't process this file: unbounded media family."),
     ).toBeTruthy();
     expect((run as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.click(run);
@@ -1150,23 +993,14 @@ describe("document processing drawer", () => {
       const path = String(input);
       if (path === "/api/v1/processing/profiles") {
         return Response.json([
-          {
-            name: "private",
-            fingerprint,
-            rendition: true,
-            embedding_bindings: [],
-          },
+          { name: "private", fingerprint, rendition: true, embedding_bindings: [] },
         ]);
       }
       if (path === "/api/v1/processing/plans") {
         return Response.json({
           fingerprint,
           vault_uid: vaultID,
-          selector: {
-            node_id: 42,
-            content_version_id: versionID,
-            profile: "private",
-          },
+          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
           profile_fingerprint: fingerprint,
           flow: [],
           disclosed_classes: [],
@@ -1247,14 +1081,10 @@ describe("document processing drawer", () => {
     });
 
     await fireEvent.input(
-      await screen.findByRole("searchbox", {
-        name: "Search this document version",
-      }),
+      await screen.findByRole("searchbox", { name: "Search this document version" }),
       { target: { value: "revoked" } },
     );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Search this version" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
     expect(await screen.findByText(/search response/i)).toBeTruthy();
     expect(screen.queryByText("Revoked retained evidence")).toBeNull();
   });
@@ -1269,72 +1099,62 @@ const processingJob = {
 
 function completedProcessingResponse(): Response {
   return new Response(
-    `${JSON.stringify({ sequence: 1, type: "job", job: processingJob })}\n${JSON.stringify(
-      {
-        sequence: 2,
-        type: "status",
-        status: {
-          job_id: processingJob.id,
-          state: "completed",
-          phase: "embedding",
-          embedding_job_ids: processingJob.embedding_job_ids,
-          completed_bindings: 1,
-        },
-        terminal: true,
+    `${JSON.stringify({ sequence: 1, type: "job", job: processingJob })}\n${JSON.stringify({
+      sequence: 2,
+      type: "status",
+      status: {
+        job_id: processingJob.id,
+        state: "completed",
+        phase: "embedding",
+        embedding_job_ids: processingJob.embedding_job_ids,
+        completed_bindings: 1,
       },
-    )}\n`,
+      terminal: true,
+    })}\n`,
     { headers: { "Content-Type": "application/x-ndjson" } },
   );
 }
 
-function renderProcessingResponse(
-  response: Promise<Response>,
-  profiles = ["private"],
-) {
+function renderProcessingResponse(response: Promise<Response>, profiles = ["private"]) {
   let revoked = false;
-  const fetchMock = vi
-    .spyOn(globalThis, "fetch")
-    .mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/v1/processing/profiles")
-        return Response.json(
-          profiles.map((name) => ({
-            name,
-            fingerprint: processingJob.profile_fingerprint,
-            rendition: false,
-            embedding_bindings: ["semantic"],
-          })),
-        );
-      if (path === "/api/v1/processing/plans")
-        return Response.json({
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/v1/processing/profiles")
+      return Response.json(
+        profiles.map((name) => ({
+          name,
           fingerprint: processingJob.profile_fingerprint,
-          vault_uid: processingJob.content_version_id,
-          selector: JSON.parse(String(init?.body)).selector,
-          profile_fingerprint: processingJob.profile_fingerprint,
-          flow: [],
-          disclosed_classes: [],
-          retained_classes: [],
-          estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 1 },
-          consent_required: revoked,
-          consent_state: revoked ? "revoked" : "active",
-          backup_consequence: "none",
-        });
-      if (path.startsWith("/api/v1/coverage?"))
-        return Response.json({
-          state: "missing",
-          renditions: { state: "ineligible", complete: 0, total: 1 },
-          embeddings: [],
-        });
-      if (path === "/api/v1/processing/jobs") return response;
-      if (
-        path === "/api/v1/processing/consent/revocations" &&
-        init?.method === "POST"
-      ) {
-        revoked = true;
-        return Response.json({ revoked_at: "2026-01-01T00:00:00Z" });
-      }
-      throw new Error(`unexpected request: ${path}`);
-    });
+          rendition: false,
+          embedding_bindings: ["semantic"],
+        })),
+      );
+    if (path === "/api/v1/processing/plans")
+      return Response.json({
+        fingerprint: processingJob.profile_fingerprint,
+        vault_uid: processingJob.content_version_id,
+        selector: JSON.parse(String(init?.body)).selector,
+        profile_fingerprint: processingJob.profile_fingerprint,
+        flow: [],
+        disclosed_classes: [],
+        retained_classes: [],
+        estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 1 },
+        consent_required: revoked,
+        consent_state: revoked ? "revoked" : "active",
+        backup_consequence: "none",
+      });
+    if (path.startsWith("/api/v1/coverage?"))
+      return Response.json({
+        state: "missing",
+        renditions: { state: "ineligible", complete: 0, total: 1 },
+        embeddings: [],
+      });
+    if (path === "/api/v1/processing/jobs") return response;
+    if (path === "/api/v1/processing/consent/revocations" && init?.method === "POST") {
+      revoked = true;
+      return Response.json({ revoked_at: "2026-01-01T00:00:00Z" });
+    }
+    throw new Error(`unexpected request: ${path}`);
+  });
   const onclose = vi.fn(),
     onauthfailure = vi.fn();
   return {
