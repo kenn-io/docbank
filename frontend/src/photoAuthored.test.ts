@@ -956,6 +956,7 @@ it.each(["rating", "rating and keywords"])(
       photoSuggestion({ value: { caption: "A harbor.", tags: [], visible_text: "" } }),
     ];
     const nodeRevision = field === "rating and keywords" ? 3 : 2;
+    let accepted = false;
     const fetcher = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/photos/authored/edit"))
         return response({
@@ -971,6 +972,7 @@ it.each(["rating", "rating and keywords"])(
         const request = JSON.parse(String(init?.body));
         if (request.source_revision !== 2 || request.node_revision !== nodeRevision)
           return response({ detail: "Photo changed" }, 409);
+        accepted = true;
         return response({
           ...editor.suggestions[0],
           value: { caption: "", tags: [], visible_text: "" },
@@ -978,13 +980,17 @@ it.each(["rating", "rating and keywords"])(
         });
       }
       if (url.endsWith("/photos/authored/prepare"))
-        return preparedSuggestions([
-          photoSuggestion({
-            value: { caption: "A harbor.", tags: [], visible_text: "" },
-            source_revision: 2,
-            node_revision: nodeRevision,
-          }),
-        ]);
+        return preparedSuggestions(
+          accepted
+            ? []
+            : [
+                photoSuggestion({
+                  value: { caption: "A harbor.", tags: [], visible_text: "" },
+                  source_revision: 2,
+                  node_revision: nodeRevision,
+                }),
+              ],
+        );
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetcher);
@@ -994,8 +1000,22 @@ it.each(["rating", "rating and keywords"])(
     expect(editor.error).toBe("");
     await editor.respondSuggestion(editor.suggestions[0]!, true);
     expect(editor.suggestionsError).toBe("");
-    expect(editor.receiptID, "an accept offers no Undo, and drops the older edit's").toBe("");
-    expect(editor.undoState.summary).toBe("");
+    expect(editor.receiptID).toBe("caption-receipt");
+    expect(editor.undoState.summary).toBe("Accepted caption");
+    fetcher.mockImplementationOnce(async (url: string) => {
+      expect(url).toContain("/caption-receipt/undo");
+      return response({
+        receipt_id: "inverse",
+        after: [{ file_id: "jpeg", revision: 4, values: { ...targets[1]!.values, rating: 5 } }],
+      });
+    });
+    const refresh = vi.fn();
+    await editor.undo(refresh);
+    expect(editor.error).toBe("");
+    expect(editor.receiptID).toBe("");
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(editor.targets.find((target) => target.file_id === "jpeg")!.values.rating).toBe(5);
+    expect(editor.suggestions).toEqual([]);
     editor.dispose();
   },
 );

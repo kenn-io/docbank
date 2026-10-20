@@ -321,9 +321,8 @@ export class PhotoAuthoredEditor {
         ),
       );
       if (result.authored_receipt?.receipt_id) {
-        // Accepting settles the field like dismissing; an older Undo must not revert it.
-        this.receiptID = "";
-        this.undoState.summary = "";
+        this.receiptID = result.authored_receipt.receipt_id;
+        this.undoState.summary = `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
       }
       this.endWrite(write);
       await this.reload();
