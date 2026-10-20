@@ -31,7 +31,7 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		delay, err := scheduledBackup(ctx, d, logger, captureDue)
+		delay, attempted, err := scheduledBackup(ctx, d, logger, captureDue)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -43,9 +43,9 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 		if err := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now); err != nil {
 			return err
 		}
-		if err == nil {
-			// Consume the elapsed capture deadline even if Kit timestamps remain
-			// ahead of wall time after a clock correction. Retries keep this due state.
+		if attempted || err == nil {
+			// Keep failed due captures eligible after clock corrections, and consume
+			// successful wait deadlines even if Kit timestamps remain ahead of wall time.
 			captureDue = true
 		}
 	}
@@ -70,35 +70,35 @@ func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time
 	}
 }
 
-func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDue bool) (time.Duration, error) {
+func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDue bool) (time.Duration, bool, error) {
 	interval := d.Cfg.Backup.Interval.Std()
 	if err := backupapp.ValidateDisjointRoots(d.VaultRoot, d.Cfg.Backup.Repo); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	repo, err := backup.Open(d.Cfg.Backup.Repo)
 	if err != nil {
-		return 0, fmt.Errorf("opening scheduled backup repository: %w", err)
+		return 0, false, fmt.Errorf("opening scheduled backup repository: %w", err)
 	}
 	if err := backupapp.EnsureRepositoryOwner(ctx, repo, d.Store.VaultID(), false); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	tag := backupapp.ScheduledTag(d.Store.VaultID())
 	manifests, err := repo.ListSnapshots()
 	if err != nil {
-		return 0, fmt.Errorf("listing scheduled backups: %w", err)
+		return 0, false, fmt.Errorf("listing scheduled backups: %w", err)
 	}
 	delay, stale, err := backupapp.ScheduleDelay(manifests, tag, time.Now(), interval)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	warning := reportStaleBackup(ctx, logger, stale)
 	if delay > 0 && !captureDue {
 		jobs.ReportError(ctx, nil)
-		return delay, nil
+		return delay, false, nil
 	}
 	snapshot, err := createScheduledBackupSnapshot(ctx, repo, d)
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 	logger.Info("scheduled backup captured", "snapshot", snapshot.ID)
 	// Cleanup errors leave the new point intact and retry after the next capture.
@@ -108,7 +108,7 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDu
 	if err != nil {
 		logger.Warn("scheduled backup cleanup failed", "error", err)
 	}
-	return interval, nil
+	return interval, true, nil
 }
 
 // reportStaleBackup surfaces a stale schedule in Jobs and the daemon log.

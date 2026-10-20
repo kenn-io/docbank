@@ -90,13 +90,13 @@ func TestBackupScheduleCaptureRetentionAndRestart(t *testing.T) {
 		_, err = createBackupSnapshot(t.Context(), repo, d, d.Gate, backupCreateRequest{Tag: "manual"}, nil)
 		require.NoError(t, err)
 		time.Sleep(time.Second)
-		_, err = scheduledBackup(t.Context(), d, d.Logger, false)
+		_, _, err = scheduledBackup(t.Context(), d, d.Logger, false)
 		require.NoError(t, err)
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Len(t, points, 2)
 		time.Sleep(time.Hour)
-		_, err = scheduledBackup(t.Context(), d, d.Logger, false)
+		_, _, err = scheduledBackup(t.Context(), d, d.Logger, false)
 		require.NoError(t, err)
 		points, err = repo.ListSnapshots()
 		require.NoError(t, err)
@@ -157,6 +157,50 @@ func TestBackupScheduleRetryAndCancellation(t *testing.T) {
 	}
 }
 
+func TestBackupScheduleFailedDueCaptureRemainsDueAfterClockCorrection(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t, time.Hour)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+		require.NoError(t, err)
+		time.Sleep(2 * time.Hour)
+		lock, err := repo.AcquireExclusiveLock("test-first-due-capture", false)
+		require.NoError(t, err)
+		defer func() {
+			if lock != nil {
+				require.NoError(t, lock.Release())
+			}
+		}()
+		supervisor := jobs.New(t.Context(), d.Logger)
+		require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
+		defer func() { require.NoError(t, supervisor.Shutdown(t.Context())) }()
+		synctest.Wait()
+		require.Contains(t, supervisor.Snapshot()[0].Error, "locked")
+		require.NoError(t, lock.Release())
+		lock = nil
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		// A backward clock correction would make the previous point appear recent.
+		points[0].CreatedAt = time.Now().Format(time.RFC3339)
+		recent, err := repo.WriteManifest(points[0])
+		require.NoError(t, err)
+		time.Sleep(5*time.Minute - time.Second)
+		synctest.Wait()
+		require.Contains(t, supervisor.Snapshot()[0].Error, "locked")
+		time.Sleep(time.Second)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		assert.Len(t, points, 1, "retry captures and applies scheduled retention")
+		require.NotEmpty(t, points)
+		assert.NotEqual(t, recent, points[len(points)-1].SnapshotID, "retry must capture despite the recent timestamp")
+		assert.Empty(t, supervisor.Snapshot()[0].Error)
+	})
+}
+
 func TestBackupScheduleStaleWarningPersistsUntilHealthyCheck(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -175,7 +219,7 @@ func TestBackupScheduleStaleWarningPersistsUntilHealthyCheck(t *testing.T) {
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-checks:
-					_, err := scheduledBackup(ctx, d, d.Logger, false)
+					_, _, err := scheduledBackup(ctx, d, d.Logger, false)
 					checked <- err
 				}
 			}
