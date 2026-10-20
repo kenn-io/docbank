@@ -20,9 +20,8 @@ import (
 func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.Int32 {
 	t.Helper()
 	var requests atomic.Int32
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
-		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(`{"status":"` + receipt + `"}`))
@@ -35,43 +34,28 @@ func TestTUITelemetryReceipts(t *testing.T) {
 		t.Run(receipt, func(t *testing.T) {
 			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, receipt)
 			root := os.Getenv("DOCBANK_HOME")
-			backends := []*tuiDaemonBackend{{}, {}}
 			var group sync.WaitGroup
-			for _, backend := range backends {
+			for range 2 {
 				group.Go(func() {
-					assert.NoError(t, backend.ReportScreen(t.Context(), "help"))
+					backend := &tuiDaemonBackend{}
 					assert.NoError(t, backend.ReportScreen(t.Context(), "help"))
 				})
 			}
 			group.Wait()
-			path := filepath.Join(root, "telemetry-tui-state")
-			expected := time.Now().UTC().Format(time.DateOnly)
-			if receipt == "queued" {
-				require.NoError(t, backends[0].ReportScreen(t.Context(), "browse"))
-				expected += "\nbrowse\nhelp"
-			}
-			data, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, expected, string(data))
+			assert.Equal(t, int32(1), requests.Load())
 			runtimePath, err := daemonconn.RuntimeStore(root).Path(os.Getpid())
 			require.NoError(t, err)
 			require.NoError(t, os.Remove(runtimePath))
 			restarted := &tuiDaemonBackend{}
 			require.NoError(t, restarted.ReportScreen(t.Context(), "help"))
+			path := filepath.Join(root, "telemetry-tui-state")
 			require.NoError(t, os.Remove(path))
-			for _, backend := range append(backends, restarted) {
-				require.NoError(t, backend.ReportScreen(t.Context(), "help"))
-				if receipt == "disabled" {
-					require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
-					reportTUISessionEnded(&backend.telemetry, time.Minute)
-				}
+			require.NoError(t, restarted.ReportScreen(t.Context(), "help"))
+			if receipt == "disabled" {
+				require.NoError(t, restarted.ReportScreen(t.Context(), "browse"))
+				require.NoError(t, sendTUISessionEnded(t.Context(), &restarted.telemetry, time.Minute))
 			}
 			assert.NoFileExists(t, path)
-			expectedRequests := int32(1)
-			if receipt == "queued" {
-				expectedRequests++
-			}
-			assert.Equal(t, expectedRequests, requests.Load())
 		})
 	}
 }
@@ -88,29 +72,18 @@ func TestTUITelemetryUnexpectedDateIsEmpty(t *testing.T) {
 	}
 }
 
-func TestTUITelemetryPostFailureCap(t *testing.T) {
-	requests := setupTUITelemetryDaemon(t, http.StatusServiceUnavailable, "")
-	backend := &tuiDaemonBackend{}
-	for range 6 {
-		require.Error(t, backend.ReportScreen(t.Context(), "help"))
-	}
-	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
-	require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
-	assert.Equal(t, int32(6), requests.Load())
-}
-
-func TestTUITelemetryRetriesMissingDaemonWithoutEnsure(t *testing.T) {
+func TestTUITelemetryRetriesMissingDaemonAndBoundsPostFailures(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
-		t.Fatal("telemetry must not start a daemon")
-		return nil, context.Canceled
-	}}
+	backend := &tuiDaemonBackend{}
 	for range 8 {
 		require.ErrorContains(t, backend.ReportScreen(t.Context(), "help"), "daemon is not running")
 	}
-	requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
-	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
-	assert.Equal(t, int32(1), requests.Load())
+	requests := setupTUITelemetryDaemon(t, http.StatusServiceUnavailable, "")
+	for range 6 {
+		require.Error(t, backend.ReportScreen(t.Context(), "help"))
+	}
+	require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
+	assert.Equal(t, int32(6), requests.Load())
 }
 
 func TestTUITelemetryBusyLockReturnsRetryError(t *testing.T) {

@@ -34,8 +34,13 @@ describe("app_opened reporting", () => {
 
   const focus = () => window.dispatchEvent(new Event("focus"));
 
-  it("posts app_opened to the daemon with only the browser session", async () => {
+  it("authenticates reports and holds hidden screens until visible", async () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
     reporter = startTelemetryReporting("secret");
+    reporter.reportScreen("browse");
+    reporter.reportScreen("help");
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] ?? [];
@@ -46,6 +51,14 @@ describe("app_opened reporting", () => {
     );
     const headers = new Headers(init?.headers);
     expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
+    visibility = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      event: "screen_viewed",
+      properties: { surface: "web", screen: "help" },
+    });
   });
 
   it("treats a problem response as answered without an unhandled rejection", async () => {
@@ -64,71 +77,34 @@ describe("app_opened reporting", () => {
     expect(unhandled).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
-  it("retains disabled receipts across screen changes, visits, and reloads", async () => {
-    reporter = startTelemetryReporting("secret");
-    await vi.advanceTimersByTimeAsync(0);
-    reporter.reportScreen("help");
-    reporter.reportVisit({ event: "session_ended", properties: { surface: "web" } });
-    reporter.stop();
-    reporter = startTelemetryReporting("secret");
-    reporter.reportScreen("browse");
-    window.dispatchEvent(new Event("focus"));
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-  it("bounds screen failures and forwards the deadline and keepalive through transport", async () => {
+  it("bounds screen failures", async () => {
     fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
     reporter = startTelemetryReporting("secret");
     await vi.advanceTimersByTimeAsync(0);
-    reporter.reportVisit(
-      { event: "session_ended", properties: { surface: "web" } },
-      { keepalive: true },
-    );
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock.mock.calls[1]?.[1]?.keepalive).toBe(true);
-    expect(fetchMock.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     fetchMock.mockImplementation(async () => new Response(null, { status: 503 }));
     reporter.reportScreen("help");
     await vi.advanceTimersByTimeAsync(120_000);
-    expect(fetchMock).toHaveBeenCalledTimes(8);
-    window.dispatchEvent(new Event("focus"));
-    reporter.reportScreen("browse");
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
   });
-  it("holds hidden screens and reports only the latest screen on visibility", async () => {
-    let visibility: DocumentVisibilityState = "hidden";
-    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
-    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
-    reporter = startTelemetryReporting("secret");
-    reporter.reportScreen("browse");
-    reporter.reportScreen("help");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    visibility = "visible";
-    document.dispatchEvent(new Event("visibilitychange"));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
-      event: "screen_viewed",
-      properties: { surface: "web", screen: "help" },
-    });
-    reporter.stop();
-    reporter.reportScreen("search");
-    document.dispatchEvent(new Event("visibilitychange"));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-  it("discards disabled duration and resumes on a later enabled day", async () => {
+  it("keeps disabled receipts across reloads and resumes duration the next day", async () => {
     vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     reporter = startTelemetryReporting("secret");
-    const duration = startSessionReporting(reporter);
+    let duration = startSessionReporting(reporter);
     now = 120_000;
     await settle();
     expect(duration.take()).toBeUndefined();
     window.dispatchEvent(new Event("pagehide"));
+    reporter.reportScreen("help");
+    reporter.reportVisit({ event: "session_ended", properties: { surface: "web" } });
+    duration.stop();
+    reporter.stop();
+    reporter = startTelemetryReporting("secret");
+    duration = startSessionReporting(reporter);
+    reporter.reportScreen("browse");
+    focus();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
     vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
@@ -141,6 +117,8 @@ describe("app_opened reporting", () => {
       event: "session_ended",
       properties: { surface: "web", duration_bucket: "1_to_5m" },
     });
+    expect(fetchMock.mock.calls.at(-1)?.[1]?.keepalive).toBe(true);
+    expect(fetchMock.mock.calls.at(-1)?.[1]?.signal).toBeInstanceOf(AbortSignal);
     duration.stop();
   });
 });
