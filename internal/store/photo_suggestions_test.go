@@ -308,6 +308,25 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "nothing left to offer")
 }
 
+func TestPhotoSuggestionAcceptanceReusesATagThatDiffersInCase(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "cased.jpg")
+	existing, err := s.CreateTag(ctx, "Dog")
+	require.NoError(t, err)
+	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Tags: []string{"dog"}})
+
+	accepted := acceptPhotoSuggestion(t, s, proposal, false, "dog")
+	require.NotNil(t, accepted.AuthoredReceipt)
+	_, total, err := s.Tags(ctx, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total, "no second tag for the same keyword")
+	assigned, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	require.Equal(t, []string{existing.ID}, assigned.Targets[0].Tags)
+}
+
 func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 	t.Parallel()
 	t.Run("regenerates only open fields", func(t *testing.T) {

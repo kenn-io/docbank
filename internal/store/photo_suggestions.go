@@ -332,10 +332,12 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 	return &receipt, nil
 }
 
-// suggestedTagTx returns the ID of the tag named name, creating it when missing.
+// suggestedTagTx returns the ID of the tag named name, creating it when
+// missing. A tag that differs only in ASCII case is the same keyword to the
+// owner, and an exact match wins.
 func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=?`, name).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=?1 COLLATE NOCASE ORDER BY name=?1 DESC,name LIMIT 1`, name).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		created, err := s.createTagTx(ctx, tx, name)
 		return created.ID, err
