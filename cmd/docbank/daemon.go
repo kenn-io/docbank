@@ -159,6 +159,12 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 
+	if cfg.Backup.Interval.Std() > 0 {
+		if err := backupapp.ValidateDisjointRoots(layout.Root, cfg.Backup.Repo); err != nil {
+			return fmt.Errorf("scheduled backup repository: %w", err)
+		}
+	}
+
 	background := os.Getenv(daemonconn.EnvBackgroundDaemon) == "1"
 	logger, loggingResult, err := buildServeLogger(layout, background)
 	if err != nil {

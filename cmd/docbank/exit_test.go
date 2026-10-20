@@ -193,25 +193,50 @@ func TestRunProcessBackupOwnershipExitCodes(t *testing.T) {
 	require.Empty(t, stdout.String())
 }
 
-func TestRunProcessBackupClaimEOFRequiresConfirmation(t *testing.T) {
+func TestRunProcessBackupClaimAnswers(t *testing.T) {
 	_ = setupVaultHome(t)
 	path := filepath.Join(t.TempDir(), "repo")
 	_, err := runCLI(t, "backup", "init", "--repo", path)
 	require.NoError(t, err)
 	_, err = runCLI(t, "backup", "create", "--repo", path, "--json")
 	require.NoError(t, err)
-	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
 	t.Cleanup(func() { rootCmd.SetIn(nil) })
-	for _, input := range []string{"", "y"} {
+	for _, tc := range []struct {
+		input  string
+		code   int
+		status string
+	}{
+		{"", 2, ""},
+		{"y", 0, "claimed"},
+		{"YES", 0, "claimed"},
+		{"YeS\n", 0, "claimed"},
+		{"Y\n", 0, "claimed"},
+		{"no", 0, "declined"},
+	} {
+		if _, err := os.Stat(filepath.Join(path, "docbank-owner")); err == nil {
+			require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+		}
 		resetFlags(rootCmd)
-		rootCmd.SetIn(strings.NewReader(input))
+		rootCmd.SetIn(strings.NewReader(tc.input))
 		var stdout, stderr bytes.Buffer
-		require.Equal(t, 2, runProcess([]string{"backup", "claim", "--repo", path, "--json"}, &stdout, &stderr))
-		require.Empty(t, stdout.String())
-		require.Contains(t, stderr.String(), "requires confirmation")
-		require.Contains(t, stderr.String(), "use --yes")
+		require.Equal(t, tc.code, runProcess([]string{"backup", "claim", "--repo", path, "--json"}, &stdout, &stderr), tc.input)
+		if tc.code == 2 {
+			require.Empty(t, stdout.String())
+			require.Contains(t, stderr.String(), "requires confirmation")
+			require.Contains(t, stderr.String(), "use --yes")
+		} else {
+			var result struct {
+				Status string `json:"status"`
+			}
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+			require.Equal(t, tc.status, result.Status)
+		}
 		_, err := os.Stat(filepath.Join(path, "docbank-owner"))
-		require.ErrorIs(t, err, os.ErrNotExist)
+		if tc.status == "claimed" {
+			require.NoError(t, err)
+		} else {
+			require.ErrorIs(t, err, os.ErrNotExist)
+		}
 	}
 }
 

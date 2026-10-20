@@ -870,7 +870,9 @@ return err
 Use `errors.Is` with `ErrBackupRepositoryClaimRequired` when existing history
 needs adoption, `ErrBackupRepositoryClaimChanged` when history changed after
 the preview, and `ErrBackupRepositoryOwnerConflict` when another vault owns the
-repository. A changed preview requires another review before confirmation;
+repository. `ErrBackupRepositoryOwnerInvalid` means its owner marker is malformed
+or uses an unsupported format; inspect the repository metadata before retrying.
+A changed preview requires another review before confirmation;
 claiming cannot replace another vault's ownership. See
 [Adopt an existing repository](usage/backup.md#adopt-an-existing-repository).
 

@@ -22,6 +22,20 @@ func TestEmbeddedBackupReservedTag(t *testing.T) {
 	require.Empty(t, points)
 }
 
+func TestEmbeddedBackupMalformedOwner(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	path := filepath.Join(t.TempDir(), "repo")
+	repo, err := docbank.InitBackupRepository(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(path, "docbank-owner"), []byte("damaged"), 0o600))
+	_, err = vault.CreateBackup(t.Context(), repo, docbank.BackupOptions{})
+	require.ErrorIs(t, err, docbank.ErrBackupRepositoryOwnerInvalid)
+	_, err = vault.ClaimBackupRepository(t.Context(), repo, false, "")
+	require.ErrorIs(t, err, docbank.ErrBackupRepositoryOwnerInvalid)
+}
+
 func TestEmbeddedBackupOwnershipAndClaim(t *testing.T) {
 	first, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)

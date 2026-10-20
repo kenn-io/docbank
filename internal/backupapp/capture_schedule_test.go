@@ -48,3 +48,22 @@ func TestRepositoryOwnerCheckDuringSharedRead(t *testing.T) {
 	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, fixture.metadata.VaultID(), false))
 	require.ErrorIs(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, "another-vault", false), backupapp.ErrRepositoryOwnerConflict)
 }
+
+func TestRepositoryOwnerRejectsMalformedMarkers(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	for _, owner := range []string{"", "\n", "damaged", "version=2\n", "00000000-0000-7000-8000-000000000001\n"} {
+		repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(repo.Path("docbank-owner"), []byte(owner), 0o600))
+		require.ErrorIs(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, fixture.metadata.VaultID(), false), backupapp.ErrRepositoryOwnerInvalid)
+		_, err = backupapp.ClaimRepository(t.Context(), repo, fixture.metadata.VaultID(), true, "")
+		require.ErrorIs(t, err, backupapp.ErrRepositoryOwnerInvalid)
+		data, err := os.ReadFile(repo.Path("docbank-owner"))
+		require.NoError(t, err)
+		require.Equal(t, owner, string(data))
+	}
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "valid-foreign"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(repo.Path("docbank-owner"), []byte("00000000-0000-4000-8000-000000000001\n"), 0o600))
+	require.ErrorIs(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, fixture.metadata.VaultID(), false), backupapp.ErrRepositoryOwnerConflict)
+}

@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -126,6 +127,25 @@ func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, disabled)
 	assert.Empty(t, disabledURL)
+}
+
+func TestServeRejectsOverlappingScheduledBackupRepository(t *testing.T) {
+	for _, repository := range []string{"snapshots", ".", ".."} {
+		t.Run(repository, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "vault")
+			require.NoError(t, os.Mkdir(dir, 0o700))
+			t.Setenv("DOCBANK_HOME", dir)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+				fmt.Sprintf("[backup]\nrepo = %q\ninterval = \"24h\"\nkeep_last = 14\n", repository),
+			), 0o600))
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			require.ErrorIs(t, runServe(ctx), backupapp.ErrRestoreTargetOverlap)
+			info, err := os.Stat(filepath.Join(dir, "docbank.db"))
+			require.NoError(t, err)
+			require.Zero(t, info.Size(), "reject overlap before initializing the schema and jobs")
+		})
+	}
 }
 
 func TestServeLocksBeforeInitializingVault(t *testing.T) {

@@ -12,11 +12,14 @@ import (
 
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/backup"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const repositoryOwnerFile = "docbank-owner"
 
 var (
+	ErrRepositoryOwnerInvalid  = errors.New("backup repository owner marker is malformed or unsupported")
 	ErrRepositoryOwnerConflict = errors.New("backup repository belongs to another vault")
 	ErrRepositoryClaimRequired = errors.New("backup repository has unclaimed history; run docbank backup claim before capturing")
 	ErrRepositoryClaimChanged  = errors.New("backup repository history changed; preview it again before confirming")
@@ -60,7 +63,11 @@ func repositoryOwned(repo *backup.Repo, vaultID string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("reading backup repository owner: %w", err)
 	}
-	if strings.TrimSpace(string(owner)) != vaultID {
+	identity := strings.TrimSpace(string(owner))
+	if err := canonical.ValidateUUIDv4(identity); err != nil {
+		return false, ErrRepositoryOwnerInvalid
+	}
+	if identity != vaultID {
 		return false, ErrRepositoryOwnerConflict
 	}
 	return true, nil

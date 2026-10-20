@@ -119,13 +119,14 @@ var backupClaimCmd = &cobra.Command{
 				return fmt.Errorf("writing backup claim confirmation: %w", err)
 			}
 			line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-			if errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) && len(line) == 0 {
 				return withHint(usageError(errors.New("backup claim requires confirmation")), "review the repository history, then use --yes to confirm without stdin")
 			}
-			if err != nil {
+			if err != nil && !errors.Is(err, io.EOF) {
 				return fmt.Errorf("reading backup claim confirmation: %w", err)
 			}
-			if !strings.EqualFold(strings.TrimSpace(line), "y") {
+			answer := strings.TrimSpace(line)
+			if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 				if backupClaimJSON {
 					return result("declined", preview)
 				}

@@ -15,6 +15,8 @@ import (
 )
 
 var (
+	// ErrBackupRepositoryOwnerInvalid means the owner marker is malformed or unsupported.
+	ErrBackupRepositoryOwnerInvalid = backupapp.ErrRepositoryOwnerInvalid
 	// ErrBackupRepositoryOwnerConflict means this repository belongs to another vault.
 	ErrBackupRepositoryOwnerConflict = backupapp.ErrRepositoryOwnerConflict
 	// ErrBackupRepositoryClaimRequired means existing history needs explicit adoption.
