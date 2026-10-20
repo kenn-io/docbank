@@ -391,7 +391,7 @@ func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe 
 }
 
 // requireVisionReadiness proves the profile's provider answers under the
-// current consent grant. A probe that already passed under this grant stands;
+// current consent grant. A passing probe stands until a provider call fails;
 // otherwise the probe runs here, one at a time per profile, and a failure
 // repeats no sooner than a minute later. A caller waiting for the probe in
 // flight gives up with its own context.
@@ -432,6 +432,12 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 		return runtimeUnavailable(err)
 	}
 	return nil
+}
+
+func (service *Service) invalidateVisionReadiness(fingerprint string) {
+	service.mediaOriginMu.Lock()
+	delete(service.mediaOriginEvidence, visionReadinessKey(fingerprint))
+	service.mediaOriginMu.Unlock()
 }
 
 // RuntimeUnavailableError is ErrRenditionRuntimeUnavailable with the reason the

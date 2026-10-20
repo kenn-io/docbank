@@ -188,6 +188,7 @@ type RenditionExecution struct {
 	Authorization   document.RenditionAuthorization
 	EvidencePolicy  document.EvidencePolicy
 	RenditionPolicy document.RenditionPolicy
+	providerFailed  func()
 }
 
 // RenditionMutationGate is the daemon-wide admission boundary shared by HTTP
@@ -607,6 +608,9 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 			ctx, execution.Provider, execution.Upload, execution.Authorization, nil, checkpoint)
 	}
 	if err != nil {
+		if execution.providerFailed != nil {
+			execution.providerFailed()
+		}
 		return true, worker.classifyProviderError(
 			ctx, claim, work, err, durableResume.Load(), providerAttempt)
 	}

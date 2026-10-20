@@ -513,7 +513,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
 				catalog: config.Catalog, blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock,
-				mediaMaxBytes: service.mediaMaxBytes, visionReadiness: service.requireVisionFingerprint}
+				mediaMaxBytes: service.mediaMaxBytes, visionReadiness: service.requireVisionFingerprint,
+				visionProviderFailed: service.invalidateVisionReadiness}
 			if existing, exists := registeredRenditions[descriptor.Fingerprint]; !exists {
 				if err := service.renditions.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q: %w", name, err)
@@ -2064,13 +2065,14 @@ func (service *Service) prepareRendition(ctx context.Context, node store.Node, v
 }
 
 type providerRenditionRuntime struct {
-	catalog         *store.Store
-	mediaMaxBytes   int64
-	provider        document.RenditionProvider
-	blobs           *blob.Store
-	spoolDirectory  string
-	clock           func() time.Time
-	visionReadiness func(ctx context.Context, fingerprint string) error
+	catalog              *store.Store
+	mediaMaxBytes        int64
+	provider             document.RenditionProvider
+	blobs                *blob.Store
+	spoolDirectory       string
+	clock                func() time.Time
+	visionReadiness      func(ctx context.Context, fingerprint string) error
+	visionProviderFailed func(fingerprint string)
 }
 
 type boundAuthorizedUpload struct {
@@ -2127,9 +2129,13 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 		metadata.InputBinding = work.ExecutionIdentity.Upload.InputBinding
 		prepared.Upload = &boundAuthorizedUpload{AuthorizedUpload: prepared.Upload, metadata: metadata}
 	}
-	return RenditionExecution{Provider: runtime.provider, Upload: prepared.Upload,
+	execution := RenditionExecution{Provider: runtime.provider, Upload: prepared.Upload,
 		Authorization: prepared.Authorization, EvidencePolicy: prepared.EvidencePolicy,
-		RenditionPolicy: prepared.RenditionPolicy}, nil
+		RenditionPolicy: prepared.RenditionPolicy}
+	if work.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
+		execution.providerFailed = func() { runtime.visionProviderFailed(work.Profile.Fingerprint) }
+	}
+	return execution, nil
 }
 
 func (runtime *providerRenditionRuntime) ResumeProvider(_ context.Context, _ store.RenditionJobWork,

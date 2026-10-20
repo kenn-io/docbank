@@ -53,6 +53,7 @@ type photoDescriptionFixture struct {
 	describeBody []byte
 	describes    int
 	probeFails   bool
+	failModel    string
 	dropDescribe bool
 	reply        string
 	onDescribe   func()
@@ -95,6 +96,13 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		var request struct {
+			Model string `json:"model"`
+		}
+		if !assert.NoError(t, json.Unmarshal(body, &request)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		f.mu.Lock()
 		probe := visiontest.IsProbe(body)
 		reply, hook, onProbe := f.reply, f.onDescribe, f.onProbe
@@ -127,6 +135,11 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 				}
 				return
 			}
+		}
+		if request.Model == f.failModel {
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusUnauthorized)
+			return
 		}
 		f.mu.Unlock()
 		if !probe && hook != nil {
@@ -439,6 +452,62 @@ func TestPhotoDescriptionFreshPhotosGoToTheFirstReadyProfileOnly(t *testing.T) {
 	require.Zero(t, f.backfill(t, service))
 	_, describes = f.counts()
 	require.Equal(t, 1, describes, "the other ready profile never describes it too")
+}
+
+func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	service := f.newServiceWith(t, map[string]string{"alpha": "model-a", "beta": "model-b"})
+	f.grant(t, service, "alpha")
+	f.grant(t, service, "beta")
+	ready, err := service.photoDescriptionProfiles(ctx, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"alpha", "beta"}, ready)
+	probes, _ := f.counts()
+	require.Equal(t, 2, probes)
+
+	f.mu.Lock()
+	f.failModel = "model-a"
+	f.mu.Unlock()
+	require.Equal(t, 1, f.backfill(t, service))
+	require.Empty(t, f.suggestions(t), "the first provider's authentication failure produces no suggestion")
+	fresh := f.addPhoto(t, "fresh.jpg", 700)
+	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	require.NoError(t, err)
+	require.NotEmpty(t, targets)
+	var versions []string
+	for _, target := range targets {
+		require.Equal(t, "beta", target.profile)
+		versions = append(versions, target.version.ID)
+		require.NoError(t, service.admitPhotoDescription(ctx, target))
+	}
+	require.Contains(t, versions, fresh, "the healthy second provider receives the next fresh photo")
+	f.runWorker(t, service)
+	freshVersion, err := f.catalog.ContentVersionByID(ctx, fresh)
+	require.NoError(t, err)
+	asset, err := f.catalog.PhotoAssetForNode(ctx, freshVersion.NodeID)
+	require.NoError(t, err)
+	prepared, err := f.catalog.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	require.Len(t, prepared.Suggestions, 1)
+	probes, _ = f.counts()
+	require.Equal(t, 3, probes, "the failed description invalidates the first provider's passing probe")
+
+	f.mu.Lock()
+	f.failModel = ""
+	f.mu.Unlock()
+	ready, err = service.photoDescriptionProfiles(ctx, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"beta"}, ready, "the first provider waits for its probe retry even after recovery")
+	probes, _ = f.counts()
+	require.Equal(t, 3, probes)
+	f.skew.Add(int64(61 * time.Second))
+	ready, err = service.photoDescriptionProfiles(ctx, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"alpha", "beta"}, ready, "a passing retry restores the first provider")
+	probes, _ = f.counts()
+	require.Equal(t, 4, probes)
 }
 
 func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
