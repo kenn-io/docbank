@@ -30,9 +30,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/documenttest"
 	"go.kenn.io/docbank/document/internal/providerutil"
 )
+
+type testUpload struct {
+	io.ReadCloser
+
+	metadata document.AuthorizedUploadMetadata
+}
+
+func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
 
 type testSecrets map[string]string
 
@@ -881,7 +888,7 @@ func TestBridgeContractInterruptsBlockedUploadAfterRequestTimeout(t *testing.T) 
 		sourceReader, sourceWriter := io.Pipe()
 		t.Cleanup(func() { _ = sourceWriter.Close() })
 		t.Cleanup(func() { _ = sourceReader.CloseWithError(errors.New("release blocked test upload")) })
-		upload := &documenttest.Upload{ReadCloser: sourceReader, Meta: fixture.metadata}
+		upload := &testUpload{ReadCloser: sourceReader, metadata: fixture.metadata}
 		drainDone := make(chan struct{})
 		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
 			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -1258,7 +1265,7 @@ func (fixture bridgeFixture) withStructuredArtifact(t *testing.T) bridgeFixture 
 }
 
 func (fixture bridgeFixture) upload() document.AuthorizedUpload {
-	return &documenttest.Upload{ReadCloser: io.NopCloser(bytes.NewReader(fixture.source)), Meta: fixture.metadata}
+	return &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(fixture.source)), metadata: fixture.metadata}
 }
 
 func newTestBridgeClient(

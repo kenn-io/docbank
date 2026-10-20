@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/documenttest"
 	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/vision/visiontest"
 )
@@ -153,8 +152,15 @@ func renderJPEG(t *testing.T, p *Provider, data []byte) (document.RenditionResul
 	now := time.Now().UTC()
 	metadata := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, ByteLength: int64(len(data)), SHA256: providerutil.SHA256Hex(data), CapabilityRecordChecksum: strings.Repeat("a", 64), ProviderMetadataChecksum: strings.Repeat("b", 64)}
 	auth := document.RenditionAuthorization{ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: strings.Repeat("d", 64), SourceBytes: 8192, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: 1 << 20, MaxArtifacts: 1, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
-	return document.RenderRendition(context.Background(), p, &documenttest.Upload{ReadCloser: io.NopCloser(bytes.NewReader(data)), Meta: metadata}, auth)
+	return document.RenderRendition(context.Background(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: metadata}, auth)
 }
+
+type testUpload struct {
+	io.ReadCloser
+	metadata document.AuthorizedUploadMetadata
+}
+
+func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
 
 type testSecrets map[string]string
 
