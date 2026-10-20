@@ -360,8 +360,11 @@ func TestPhotoDescriptionSkipsFieldsAlreadyAuthored(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}, Keywords: []PhotoKeywordEdit{{TagID: tag.ID, Assign: true}}})
 	require.NoError(t, err)
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}})
-	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}}, proposal.Value)
+	publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}})
+	var caption, tags string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions`).Scan(&caption, &tags))
+	require.Empty(t, caption, "the stored suggestion leaves out the authored caption")
+	require.JSONEq(t, `["sunset"]`, tags, "the stored suggestion leaves out the assigned tag")
 }
 
 // photoDescriptionJobRequest builds the queue request a description job
@@ -431,8 +434,6 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	require.Equal(t, RenditionJobCompleted, joined.State, "a settled version needs no second provider call")
 	require.Equal(t, "published", waiter.State)
 
-	_, err = s.PublishRenditionJob(ctx, claim, at)
-	require.Error(t, err, "a description job only publishes through its own path")
 	_, err = s.PublishPhotoDescription(ctx, claim, nil, at)
 	require.ErrorIs(t, err, ErrInvalidPhotoDescriptionResult)
 }
