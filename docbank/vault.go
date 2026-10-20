@@ -427,6 +427,9 @@ func openVaultWithRootOpener(
 	}
 	vault.startProcessingWorker(workerContext, packageWorker.Run)
 	vault.startProcessingWorker(workerContext, worker.Run)
+	if processingService.HasPhotoDescriptionProfiles() {
+		vault.startProcessingWorker(workerContext, func(ctx context.Context) error { return processingService.PhotoDescriptionBackfill(ctx, nil, 1) })
+	}
 	vault.startProcessingWorker(workerContext, mediaContinuations.Run)
 	if embeddingWorker != nil {
 		vault.startProcessingWorker(workerContext, embeddingWorker.Run)

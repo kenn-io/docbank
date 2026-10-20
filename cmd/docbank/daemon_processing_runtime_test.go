@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/plaintext"
+	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
@@ -649,4 +650,44 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 		}
 	}
 	t.Fatal("configured rendition worker did not start")
+}
+
+func TestExecutableProcessingProfilesRegistersConfiguredVision(t *testing.T) {
+	const endpoint = "http://127.0.0.1:5001"
+	descriptor, err := vision.Descriptor("synthetic-vision", document.RenditionTrustOperatorNetwork)
+	require.NoError(t, err)
+	cfg := config.Default()
+	cfg.CredentialBindings["vision"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_VISION_KEY"}
+	binding := config.RenditionProfileConfig{
+		AdapterContract: vision.AdapterContract, Model: "synthetic-vision",
+		AuthorizationFingerprint: strings.Repeat("1", 64), CredentialBinding: "credential:vision",
+		DeploymentFingerprint: strings.Repeat("2", 64), DescriptorID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
+		DisclosureFingerprint: vision.DisclosureFingerprint(descriptor, endpoint, strings.Repeat("2", 64)),
+		MaxDocumentBytes:      1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 100, MaxTranscriptChars: 100_000,
+		RequestedArtifacts: []string{string(document.EvidenceArtifactStructured)},
+		TrustBoundary:      string(document.RenditionTrustOperatorNetwork), UploadOptionsFingerprint: strings.Repeat("4", 64),
+		Runtime: &config.RenditionRuntimeConfig{
+			Endpoint: endpoint, RequestTimeout: config.Duration(10 * time.Minute),
+			AllowedCIDRs: []string{"127.0.0.0/8"}, ProxyMode: "disabled",
+			ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second), TLSHandshakeTimeout: config.Duration(time.Second),
+		},
+	}
+	cfg.RenditionProfiles["vision"] = binding
+	cfg.RetrievalProfiles["lexical"] = config.RetrievalProfileConfig{LexicalLimit: 20, VectorLimit: 20}
+	cfg.ProcessingProfiles["vision"] = config.ProcessingProfileConfig{
+		Rendition: "vision", Retrieval: "lexical", AttachmentPolicyFingerprint: strings.Repeat("5", 64),
+		CompletenessFingerprint: strings.Repeat("6", 64), ConsentFingerprint: strings.Repeat("7", 64),
+		LexicalSegmenterFingerprint: strings.Repeat("8", 64), MaxDocumentChars: 100_000, MaxSegmentRunes: 2000, MaxUnitRunes: 100_000,
+		NormalizerFingerprint: strings.Repeat("9", 64), SanitizerFingerprint: strings.Repeat("a", 64), TrustBoundary: "vault-primary",
+	}
+	require.NoError(t, cfg.Validate())
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	require.Equal(t, descriptor, profiles["vision"].RenditionProvider.Descriptor())
+	require.Equal(t, vision.AdapterContract, profiles["vision"].RenditionDisclosure.ImmediateProcessor)
+
+	binding.DisclosureFingerprint = strings.Repeat("a", 64)
+	cfg.RenditionProfiles["vision"] = binding
+	_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.ErrorContains(t, err, "vision disclosure fingerprint does not bind runtime endpoint")
 }

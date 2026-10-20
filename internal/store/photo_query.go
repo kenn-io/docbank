@@ -80,7 +80,10 @@ type PhotoPreviewSlot struct {
 }
 
 type PhotoBrowseRow struct {
-	Quality *document.PhotoQualitySignals
+	// MatchedAISuggestion marks a relevance-ordered row whose best evidence is
+	// a pending suggestion.
+	MatchedAISuggestion bool
+	Quality             *document.PhotoQualitySignals
 	// QualityUnavailable marks a terminal evaluator result with no signals.
 	QualityUnavailable bool
 	AssetID            string
@@ -315,12 +318,21 @@ func (s *Store) ListPhotoAssets(
 					break
 				}
 			}
-			return result, nil
-		}
-		if stackSort {
-			err = s.listPhotoStackPage(ctx, q, scope, settings.BurstGapSeconds, primary == "DESC", request.PageSize, boundary, identity, readRaw, &page, request.SourceMetadataFingerprint)
-		} else {
-			page.Items, err = readRaw(boundary, request.PageSize+1)
+			args = append(args, request.PageSize+1-len(page.Items))
+			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
+				` ORDER BY `+order+` LIMIT ?`, args...)
+			if err != nil {
+				return err
+			}
+			rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
+			if err != nil {
+				return err
+			}
+			items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing}, false)
+			if err != nil {
+				return err
+			}
+			page.Items = append(page.Items, items...)
 			if len(page.Items) > request.PageSize {
 				page.Items = page.Items[:request.PageSize]
 				position := page.Items[len(page.Items)-1].position
@@ -516,7 +528,7 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 	}
 	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
  SELECT member.asset_id,COALESCE(MAX(candidates.tier),0) tier,
- COALESCE(MAX(CASE WHEN candidates.tier=4 THEN candidates.score END),MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
+ COALESCE(MAX(CASE WHEN candidates.tier=5 THEN candidates.score END),MAX(CASE WHEN candidates.tier=4 THEN candidates.score END),MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
  FROM eligible JOIN photo_files member ON member.node_id=eligible.node_id
 	 LEFT JOIN candidates ON candidates.node_id=eligible.node_id GROUP BY member.asset_id)`
 	args := append(append([]any(nil), population.args...), candidates.Args...)
@@ -525,7 +537,7 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 		order = "ASC"
 	}
 	orderBy := `member.tier ` + order + `,member.score ` + order + `,COALESCE(pl.sort_key,'') DESC,member.asset_id ASC`
-	projection := photoBrowseSelect + `,''`
+	projection := photoBrowseSelect + `,'',member.tier=3`
 	if snapshot {
 		projection = `n.id node_id,v.version_id content_version_id,a.asset_id,row_number() OVER (ORDER BY ` + orderBy + `) photo_position`
 	}
@@ -554,14 +566,15 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	if err != nil {
 		return nil, err
 	}
-	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
+	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{}, true)
 }
 
 var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,f.rating,f.flag,` +
 	// Set only when the file's mtime, not a capture date, placed the photo.
 	`pl.modified_time,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,` + photoStackCameraColumns + `,COALESCE(mg.extractor_fingerprint,''),` + photoTechnicalSelect
 
-func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoBrowseRow, error) {
+// scanPhotoBrowseRows reads relevance rows, which end with the suggestion mark, when ranked.
+func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition, ranked bool) ([]PhotoBrowseRow, error) {
 	defer func() { _ = rows.Close() }()
 	result := make([]PhotoBrowseRow, 0)
 	for rows.Next() {
@@ -569,6 +582,9 @@ func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoB
 		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.Rating, &row.Flag, &row.FileModifiedTime, &row.folderKey, &row.cameraMake, &row.cameraModel, &row.bodySerialNumber, &row.metadataFingerprint}
 		dest = append(dest, row.Fields.columnPointers()...)
 		dest = append(dest, &row.position.Key)
+		if ranked {
+			dest = append(dest, &row.MatchedAISuggestion)
+		}
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}

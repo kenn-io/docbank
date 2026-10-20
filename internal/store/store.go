@@ -44,8 +44,7 @@ type Store struct {
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
 const currentStorageSchemaVersion = 41
-
-const photoBurstStorageSchemaVersion = 41
+const photoSuggestionsStorageSchemaVersion = 41
 
 const peopleStorageSchemaVersion = 15
 const photoFacesStorageSchemaVersion = 35

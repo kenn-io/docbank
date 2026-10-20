@@ -11121,11 +11121,11 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	return responseParser(ctx, resp)
 }
 
-// GroupPhotoStacks Group explicit photos into bursts
-func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GroupPhotoStacksResponseJSON, error) {
+// RespondPhotoSuggestion Accept selected fields or dismiss a photo proposal
+func (c *Client) RespondPhotoSuggestion(ctx context.Context, options *RespondPhotoSuggestionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RespondPhotoSuggestionResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/stacks/group",
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/suggestions/{suggestion_id}/response",
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",
@@ -11136,16 +11136,16 @@ func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacks
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*GroupPhotoStacksResponseJSON, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RespondPhotoSuggestionResponse, error) {
 		switch resp.StatusCode {
 
 		case 200:
 
-			target := new(GroupPhotoStacksResponseJSON)
+			target := new(RespondPhotoSuggestionResponse)
 			if err := json.Unmarshal(resp.Content, target); err != nil {
 				return nil, &runtime.ResponseDecodeError{
 					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "GroupPhotoStacksResponseJSON", Body: resp.Content, Err: err,
+					ContentLength: len(resp.Content), TargetType: "RespondPhotoSuggestionResponse", Body: resp.Content, Err: err,
 				}
 			}
 
@@ -11153,12 +11153,12 @@ func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacks
 
 		default:
 
-			return nil, decodeAPIError[GroupPhotoStacksErrorResponse](resp, "GroupPhotoStacksErrorResponse")
+			return nil, decodeAPIError[RespondPhotoSuggestionErrorResponse](resp, "RespondPhotoSuggestionErrorResponse")
 
 		}
 	}
 
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/stacks/group")
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/suggestions/{suggestion_id}/response")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -22481,23 +22481,30 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
-// GroupPhotoStacksRequestOptions is the options needed to make a request to GroupPhotoStacks.
-type GroupPhotoStacksRequestOptions struct {
-	Body *GroupPhotoStacksBody
+// RespondPhotoSuggestionRequestOptions is the options needed to make a request to RespondPhotoSuggestion.
+type RespondPhotoSuggestionRequestOptions struct {
+	PathParams *RespondPhotoSuggestionPath
+	Body       *RespondPhotoSuggestionBody
 }
 
 // GetPathParams returns the path params as a map.
-func (o *GroupPhotoStacksRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
+func (o *RespondPhotoSuggestionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
 }
 
 // GetQuery returns the query params as a map.
-func (o *GroupPhotoStacksRequestOptions) GetQuery() (map[string]any, error) {
+func (o *RespondPhotoSuggestionRequestOptions) GetQuery() (map[string]any, error) {
 	return nil, nil
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *GroupPhotoStacksRequestOptions) GetBody() any {
+func (o *RespondPhotoSuggestionRequestOptions) GetBody() any {
 	if o.Body == nil {
 		return nil
 	}
@@ -22505,7 +22512,7 @@ func (o *GroupPhotoStacksRequestOptions) GetBody() any {
 }
 
 // GetHeader returns the headers as a map.
-func (o *GroupPhotoStacksRequestOptions) GetHeader() (map[string]string, error) {
+func (o *RespondPhotoSuggestionRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -25902,6 +25909,10 @@ type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
+type RespondPhotoSuggestionPath struct {
+	SuggestionID uuid.UUID `json:"suggestion_id"`
+}
+
 type DecidePhotoFacePath struct {
 	ContentVersionID uuid.UUID `json:"content_version_id"`
 }
@@ -26285,7 +26296,7 @@ type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
-type GroupPhotoStacksBody = GroupPhotoStacksRequest
+type RespondPhotoSuggestionBody = PhotoSuggestionResponse
 
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
 
@@ -27759,9 +27770,9 @@ type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
 
-type GroupPhotoStacksResponseJSON = api.GroupPhotoStacksResponse
+type RespondPhotoSuggestionResponse = store.PhotoSuggestion
 
-type GroupPhotoStacksErrorResponse = Error
+type RespondPhotoSuggestionErrorResponse = Error
 
 type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
 
@@ -29102,16 +29113,7 @@ type PhotoCheckoutStatus = store.PhotoCheckoutStatus
 
 type PhotoCheckoutYears = store.PhotoCheckoutYears
 
-type PhotoCheckpointHeader struct {
-	FormatVersion int64   `json:"formatVersion"`
-	Revision      *string `json:"revision,omitempty"`
-	SourceID      *string `json:"sourceID,omitempty"`
-}
-
-type PhotoCheckpointIdentity struct {
-	Revision string `json:"revision"`
-	SourceID string `json:"sourceID"`
-}
+type PhotoDescription = document.PhotoDescription
 
 type PhotoExportSelection = bundle.PhotoExportSelection
 
@@ -29188,9 +29190,9 @@ type PhotoSettings = api.PhotoSettings
 
 type PhotoSidecarProvenance = store.PhotoSidecarProvenance
 
-type PhotoStack = api.PhotoStack
+type PhotoSuggestion = store.PhotoSuggestion
 
-type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
+type PhotoSuggestionResponse = store.PhotoSuggestionResponse
 
 type PhotoTimeline = api.PhotoTimeline
 

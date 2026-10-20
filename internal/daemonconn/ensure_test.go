@@ -265,8 +265,10 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	rec.Metadata[metaProtocolVersion] = "88"
-	_, err := RuntimeStore(root).Write(rec)
+	protocolVersion, err := strconv.Atoi(daemonProtocolVersion)
+	require.NoError(t, err)
+	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocolVersion - 1)
+	_, err = RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
@@ -275,7 +277,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
 	require.NoError(t, err)
-	require.True(t, started.Load(), "older protocol must be replaced")
+	require.True(t, started.Load(), "older daemon lacks the photo-suggestions route")
 	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	outline, err := client.GetTextOutline(t.Context(), request)

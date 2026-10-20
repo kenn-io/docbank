@@ -5512,43 +5512,6 @@ export interface PhotoAuthoredEditRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
-export interface PhotoPreparedTarget {
-  asset_id: string;
-  /** @minimum 1 */
-  asset_revision: number;
-  current_content_version_id?: string;
-  display_file_id: string;
-  file_id: string;
-  file_name: string;
-  node_id: number;
-  /** @minimum 1 */
-  node_revision: number;
-  /** @minimum 1 */
-  revision: number;
-  tags: string[];
-  values: PhotoAuthored;
-}
-
-export interface PhotoAuthoredPreparation {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  assets: PhotoAsset[];
-  targets: PhotoPreparedTarget[];
-}
-
-export interface PhotoAuthoredPrepareRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @maxItems 1000 */
-  asset_ids?: string[];
-  coverage?: WorkspaceQueryCoverage;
-  hidden?: boolean;
-  query?: SavedQueryV1Schema;
-  skip_unavailable?: boolean;
-  /** Prepare up to 2,000 live files for a complete stack decision. */
-  stack?: boolean;
-}
-
 export interface PhotoKeywordNode {
   after_revision: number;
   node_id: number;
@@ -5597,6 +5560,58 @@ export interface PhotoAuthoredReceipt {
   representatives?: PhotoRepresentativeChange[];
   sidecar?: PhotoSidecarProvenance;
   undo_of?: string;
+}
+
+export interface PhotoDescription {
+  caption: string;
+  tags: string[];
+  visible_text: string;
+}
+
+export interface PhotoSuggestion {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  authored_receipt?: PhotoAuthoredReceipt;
+  content_version_id: string;
+  node_revision: number;
+  source_revision: number;
+  suggestion_id: string;
+  target: string;
+  value: PhotoDescription;
+}
+
+export interface PhotoPreparedTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  file_id: string;
+  file_name: string;
+  node_id: number;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+  tags: string[];
+  values: PhotoAuthored;
+}
+
+export interface PhotoAuthoredPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assets: PhotoAsset[];
+  suggestions?: PhotoSuggestion[];
+  targets: PhotoPreparedTarget[];
+}
+
+export interface PhotoAuthoredPrepareRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query?: SavedQueryV1Schema;
+  skip_unavailable?: boolean;
 }
 
 export interface WorkspaceFacetValue {
@@ -5783,6 +5798,7 @@ export interface PhotoBrowseRow {
   lens_make: string | null;
   /** @nullable */
   lens_model: string | null;
+  matched_ai_suggestion?: boolean;
   media_type: string;
   name: string;
   /** @minimum 1 */
@@ -5832,6 +5848,7 @@ export interface PhotoMapRow {
   latitude: number | null;
   /** @nullable */
   longitude: number | null;
+  matched_ai_suggestion?: boolean;
   name: string;
   previews: PhotoMapRowPreviewsStruct;
   /** @minimum 1 */
@@ -6291,39 +6308,14 @@ export interface PhotoSettings {
   updated_at?: string;
 }
 
-export type PhotoStackDecisionRequestDecision = typeof PhotoStackDecisionRequestDecision[keyof typeof PhotoStackDecisionRequestDecision];
-
-
-export const PhotoStackDecisionRequestDecision = {
-  current: 'current',
-  all: 'all',
-  selected: 'selected',
-  representative: 'representative',
-} as const;
-
-export interface PhotoStackDecisionRequest {
+export interface PhotoSuggestionResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /**
-     * @minItems 2
-     * @maxItems 500
-     */
-  asset_ids: string[];
-  /**
-     * @minimum 1
-     * @maximum 30
-     */
-  burst_gap_seconds: number;
-  current_id: string;
-  decision: PhotoStackDecisionRequestDecision;
-  hidden?: boolean;
-  /** @maxItems 500 */
-  selected_ids?: string[];
-  /**
-     * @minItems 1
-     * @maxItems 2000
-     */
-  targets: PhotoAuthoredEditTarget[];
+  caption: boolean;
+  node_revision: number;
+  response: string;
+  source_revision: number;
+  tags: string[];
 }
 
 export type PhotoTimelineFacetsItemDimension = typeof PhotoTimelineFacetsItemDimension[keyof typeof PhotoTimelineFacetsItemDimension];
@@ -17861,18 +17853,19 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
 
 
 
-export const getGroupPhotoStacksUrl = () => {
+export const getRespondPhotoSuggestionUrl = (suggestionId: string,) => {
 
 
 
 
-  return `/api/v1/photos/stacks/group`
+  return `/api/v1/photos/suggestions/${encodeURIComponent(String(suggestionId))}/response`
 }
 
 /**
- * @summary Group explicit photos into bursts
+ * @summary Accept selected fields or dismiss a photo proposal
  */
-export const groupPhotoStacks = async (groupPhotoStacksRequest: NonReadonly<GroupPhotoStacksRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<GroupPhotoStacksResponse> => {
+export const respondPhotoSuggestion = async (suggestionId: string,
+    photoSuggestionResponse: NonReadonly<PhotoSuggestionResponse>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSuggestion> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -17888,12 +17881,12 @@ export const groupPhotoStacks = async (groupPhotoStacksRequest: NonReadonly<Grou
     }
     return headers;
   };
-return sessionJSON<GroupPhotoStacksResponse>(getGroupPhotoStacksUrl(),
+return sessionJSON<PhotoSuggestion>(getRespondPhotoSuggestionUrl(suggestionId),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(groupPhotoStacksRequest)
+    body: JSON.stringify(photoSuggestionResponse)
   }
 );}
 

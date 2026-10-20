@@ -46,6 +46,8 @@ type MediaOrigin struct {
 
 type MediaOriginEvidence struct {
 	AdapterContract, DeploymentRevision, ProbeState string
+	// GrantID is the consent grant a description provider's probe ran under.
+	GrantID string
 }
 
 type MediaOriginProbe func(context.Context) (MediaOriginEvidence, error)
@@ -358,4 +360,84 @@ func verifyMediaToken(key [32]byte, token string) ([]byte, error) {
 		return nil, fail
 	}
 	return body, nil
+}
+
+// visionRetryInterval is the soonest a failed provider probe repeats.
+const visionRetryInterval = time.Minute
+
+// visionReadinessKey names a description profile's probe and evidence.
+func visionReadinessKey(fingerprint string) string { return "vision:" + fingerprint }
+
+// visionProbe sends the synthetic image only under active consent and records
+// the grant it ran under.
+func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe {
+	return func(ctx context.Context) (MediaOriginEvidence, error) {
+		evidence := MediaOriginEvidence{AdapterContract: profile.portable.Rendition.AdapterContract,
+			DeploymentRevision: profile.portable.Rendition.DeploymentFingerprint, ProbeState: "consent_required"}
+		authorization, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
+		if err != nil {
+			return evidence, err
+		}
+		evidence.GrantID, evidence.ProbeState = authorization.GrantID, "provider_unavailable"
+		probe, ok := profile.provider.(interface {
+			Probe(ctx context.Context) error
+		})
+		if !ok {
+			return evidence, ErrRenditionRuntimeUnavailable
+		}
+		if err := probe.Probe(ctx); err != nil {
+			return evidence, err
+		}
+		evidence.ProbeState = "ready"
+		return evidence, nil
+	}
+}
+
+// requireVisionReadiness proves the profile's provider answers under the
+// current consent grant. A probe that already passed under this grant stands;
+// otherwise the probe runs here, one at a time per profile, and a failure
+// repeats no sooner than a minute later.
+func (service *Service) requireVisionReadiness(ctx context.Context, profile configuredProfile) error {
+	id := visionReadinessKey(profile.record.Fingerprint)
+	lock := service.visionLocks[id]
+	lock.Lock()
+	defer lock.Unlock()
+	authorization, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
+	if err != nil {
+		return err
+	}
+	service.mediaOriginMu.Lock()
+	observation := service.mediaOriginEvidence[id]
+	service.mediaOriginMu.Unlock()
+	if observation.Evidence.GrantID == authorization.GrantID {
+		if observation.Evidence.ProbeState == "ready" {
+			return nil
+		}
+		if service.clock().Sub(observation.ProbedAt) < visionRetryInterval {
+			return ErrRenditionRuntimeUnavailable
+		}
+	}
+	evidence, err := service.mediaOriginProbes[id](ctx)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if evidence.GrantID == "" {
+		return err
+	}
+	service.mediaOriginMu.Lock()
+	service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, ProbedAt: service.clock().UTC()}
+	service.mediaOriginMu.Unlock()
+	if evidence.ProbeState != "ready" {
+		return ErrRenditionRuntimeUnavailable
+	}
+	return nil
+}
+
+func (service *Service) requireVisionFingerprint(ctx context.Context, fingerprint string) error {
+	for _, profile := range service.profiles {
+		if profile.record.Fingerprint == fingerprint {
+			return service.requireVisionReadiness(ctx, profile)
+		}
+	}
+	return ErrRenditionRuntimeStale
 }

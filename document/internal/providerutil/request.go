@@ -148,6 +148,9 @@ func (executor *Executor) build(
 		return nil, nil, executor.Provider.Classified(document.RenditionErrorTransient,
 			"could not create "+string(executor.Provider)+" request", err)
 	}
+	// A transport retry would resend the bytes after the operation's last
+	// check, so a failed send surfaces instead of replaying.
+	httpRequest.GetBody = nil
 	httpRequest.Header.Set("Accept", executor.responseMediaType(request))
 	if contentType != "" {
 		httpRequest.Header.Set("Content-Type", contentType)

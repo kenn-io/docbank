@@ -3,10 +3,12 @@ package providerutil
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 
 	"go.kenn.io/docbank/document"
 )
@@ -327,4 +331,79 @@ func assertCode(t *testing.T, err error, want document.RenditionErrorCode) {
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 	require.True(t, ok, "%T: %v", err, err)
 	assert.Equal(t, want, providerErr.Code())
+}
+
+// serveHTTP2GoAway accepts HTTP/2 connections, counts the request bodies it
+// receives, and tells the client to retry each one on a new connection.
+func serveHTTP2GoAway(t *testing.T, listener net.Listener) *atomic.Int32 {
+	t.Helper()
+	var bodies atomic.Int32
+	serve := func(conn net.Conn) {
+		defer func() { _ = conn.Close() }()
+		preface := make([]byte, len(http2.ClientPreface))
+		if _, err := io.ReadFull(conn, preface); err != nil {
+			return
+		}
+		framer := http2.NewFramer(conn, conn)
+		if framer.WriteSettings() != nil {
+			return
+		}
+		for {
+			frame, err := framer.ReadFrame()
+			if err != nil {
+				return
+			}
+			data, ok := frame.(*http2.DataFrame)
+			if !ok || !data.StreamEnded() {
+				continue
+			}
+			if bodies.Add(1) == 1 {
+				_ = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
+				return
+			}
+			var block bytes.Buffer
+			encoder := hpack.NewEncoder(&block)
+			_ = encoder.WriteField(hpack.HeaderField{Name: ":status", Value: "200"})
+			_ = encoder.WriteField(hpack.HeaderField{Name: "content-type", Value: JSONMediaType})
+			_ = framer.WriteHeaders(http2.HeadersFrameParam{StreamID: data.StreamID, BlockFragment: block.Bytes(), EndHeaders: true})
+			_ = framer.WriteData(data.StreamID, true, []byte("{}"))
+			return
+		}
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go serve(conn)
+		}
+	}()
+	return &bodies
+}
+
+func TestExecutorDoesNotReplayBodyAfterTransportRetry(t *testing.T) {
+	certificate := httptest.NewUnstartedServer(nil)
+	certificate.EnableHTTP2 = true
+	certificate.StartTLS()
+	tlsConfig := &tls.Config{Certificates: certificate.TLS.Certificates, NextProtos: []string{"h2"}}
+	client := certificate.Client()
+	certificate.Close()
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	bodies := serveHTTP2GoAway(t, listener)
+
+	executor := &Executor{
+		Provider: testProvider, HTTP: client, Origin: "https://" + listener.Addr().String(),
+		RequestTimeout: 5 * time.Second, MaxResponseBytes: 1 << 20,
+	}
+	operation := NewResumedOperation(t.Context(), testProvider, time.Minute)
+	defer operation.Cancel()
+	_, err = executor.Do(operation, &Usage{}, Request{
+		Stage: StageResult, Method: http.MethodPost, Path: "/submit", ContentType: JSONMediaType, Body: []byte(`{"photo":"bytes"}`),
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, int32(1), bodies.Load(), "a transport retry resent the body without another check")
 }

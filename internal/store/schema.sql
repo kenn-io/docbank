@@ -2812,6 +2812,58 @@ CREATE TABLE IF NOT EXISTS photo_checkout_entries (
     PRIMARY KEY (checkout_id,file_id)
 );
 CREATE INDEX IF NOT EXISTS photo_checkout_entries_version ON photo_checkout_entries(version_id);
+
+-- Machine-written photo descriptions awaiting an owner decision, one row per
+-- source version and producer. Accepting a field moves it to the authored
+-- fields and clears it here. The resolved columns remember what the owner has
+-- already decided, so a description regenerated after restore (awaiting=1)
+-- offers only what is still open.
+CREATE TABLE IF NOT EXISTS photo_suggestions (
+    id                   INTEGER PRIMARY KEY,
+    suggestion_id        TEXT NOT NULL UNIQUE,
+    content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    producer_fingerprint TEXT NOT NULL,
+    caption              TEXT NOT NULL DEFAULT '',
+    tags_json            TEXT NOT NULL DEFAULT '[]',
+    visible_text         TEXT NOT NULL DEFAULT '',
+    dismissed            INTEGER NOT NULL DEFAULT 0 CHECK (dismissed IN (0,1)),
+    caption_resolved     INTEGER NOT NULL DEFAULT 0 CHECK (caption_resolved IN (0,1)),
+    resolved_tags_json   TEXT NOT NULL DEFAULT '[]',
+    awaiting             INTEGER NOT NULL DEFAULT 0 CHECK (awaiting IN (0,1)),
+    created_at           TEXT NOT NULL,
+    UNIQUE (content_version_id, producer_fingerprint)
+);
+
+-- Pending text only. Tags join with a private-use token (char(57344)) so a
+-- phrase cannot span two tags.
+CREATE VIRTUAL TABLE IF NOT EXISTS photo_suggestion_fts USING fts5(caption, tags, visible_text, tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_insert AFTER INSERT ON photo_suggestions
+WHEN new.caption<>'' OR new.tags_json<>'[]' OR new.visible_text<>'' BEGIN
+    INSERT INTO photo_suggestion_fts(rowid,caption,tags,visible_text)
+    VALUES(new.id,new.caption,(SELECT group_concat(value,' '||char(57344)||' ') FROM json_each(new.tags_json)),new.visible_text);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_update AFTER UPDATE OF caption,tags_json,visible_text ON photo_suggestions BEGIN
+    DELETE FROM photo_suggestion_fts WHERE rowid=old.id;
+    INSERT INTO photo_suggestion_fts(rowid,caption,tags,visible_text)
+    SELECT new.id,new.caption,(SELECT group_concat(value,' '||char(57344)||' ') FROM json_each(new.tags_json)),new.visible_text
+    WHERE new.caption<>'' OR new.tags_json<>'[]' OR new.visible_text<>'';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_delete AFTER DELETE ON photo_suggestions BEGIN
+    DELETE FROM photo_suggestion_fts WHERE rowid=old.id;
+END;
+
+-- Tag names, so a photo matches text search by any tag assigned to it.
+CREATE VIRTUAL TABLE IF NOT EXISTS tag_fts USING fts5(name, tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS tag_fts_insert AFTER INSERT ON tags BEGIN
+    INSERT INTO tag_fts(rowid,name) VALUES(new.rowid,new.name);
+END;
+CREATE TRIGGER IF NOT EXISTS tag_fts_update AFTER UPDATE OF name ON tags BEGIN
+    DELETE FROM tag_fts WHERE rowid=old.rowid;
+    INSERT INTO tag_fts(rowid,name) VALUES(new.rowid,new.name);
+END;
+CREATE TRIGGER IF NOT EXISTS tag_fts_delete AFTER DELETE ON tags BEGIN
+    DELETE FROM tag_fts WHERE rowid=old.rowid;
+END;
 CREATE INDEX IF NOT EXISTS photo_change_receipts_checkout_commit ON photo_change_receipts(
     json_extract(after_json,'$.operation_id'), json_extract(after_json,'$.file_id')
 ) WHERE operation='checkout_commit';

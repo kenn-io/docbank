@@ -223,6 +223,8 @@ type renditionWorkerCatalog interface {
 		store.LexicalGeneration, error)
 	PublishRenditionJob(ctx context.Context, claim store.RenditionJobClaim, at time.Time) (
 		store.RenditionJobPublication, error)
+	PublishPhotoDescription(ctx context.Context, claim store.RenditionJobClaim,
+		result *document.RenditionResult, at time.Time) (store.RenditionJobPublication, error)
 	RenditionJobErrorRetryable(err error) bool
 }
 
@@ -601,6 +603,16 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		return true, worker.classifyProviderError(
 			ctx, claim, err, durableResume.Load(), providerAttempt)
 	}
+	if execution.Authorization.InputKind == document.RenditionInputDerivedUpload {
+		// A description is a suggestion, so nothing is staged or attached.
+		err := worker.mutate(ctx, func() error {
+			return worker.retryCatalog(ctx, func() error {
+				_, err := worker.catalog.PublishPhotoDescription(ctx, claim, &result, worker.clock().UTC())
+				return err
+			})
+		})
+		return true, worker.classifyPublicationError(ctx, claim, err)
+	}
 	staged, err := buildRenditionJobCandidate(
 		work, execution, result, claim.Epoch, worker.clock().UTC())
 	if err != nil {
@@ -900,6 +912,9 @@ func (worker *RenditionWorker) classifyPublicationError(
 	if errors.Is(err, store.ErrLexicalGenerationStale) {
 		return worker.markSafeTransient(ctx, claim)
 	}
+	if errors.Is(err, store.ErrInvalidPhotoDescriptionResult) {
+		return worker.markFailed(ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
+	}
 	if errors.Is(err, store.ErrProcessingConsentRequired) ||
 		errors.Is(err, store.ErrProcessingConsentExpired) ||
 		errors.Is(err, store.ErrProcessingConsentRevoked) {
@@ -940,6 +955,10 @@ func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim s
 	}
 	if errors.Is(err, ErrRenditionRuntimeStale) || errors.Is(err, ErrSourceIneligible) {
 		return worker.markFailed(ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
+	}
+	if errors.Is(err, store.ErrProcessingConsentRequired) || errors.Is(err, store.ErrProcessingConsentExpired) ||
+		errors.Is(err, store.ErrProcessingConsentRevoked) {
+		return worker.classifyAuthorityError(ctx, claim, err)
 	}
 	return worker.markSafeTransient(ctx, claim)
 }

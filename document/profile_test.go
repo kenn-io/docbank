@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/vision"
 )
 
 func TestCanonicalProfileMatchesGoldenAndCanonicalizesInput(t *testing.T) {
@@ -204,6 +205,32 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 		{"unknown embedding metric", func(p *document.ProcessingProfileV1) { p.Embeddings[0].Metric = "provider_default" }, "metric"},
 		{"duplicate binding name", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Name = "direct" }, "duplicated"},
 		{"unknown input kind", func(p *document.ProcessingProfileV1) { p.Embeddings[0].InputKind = "summary" }, "input kind"},
+		{"retained sanitized markdown with photo description", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = vision.AdapterContract
+			p.Embeddings = nil
+			p.RetentionDisclosure.RetainSanitizedMarkdown = true
+			p.RetentionDisclosure.RetainProviderMarkdown = false
+			p.RetentionDisclosure.RetainTypedArtifacts = false
+		}, "photo descriptions do not retain Markdown or typed artifacts"},
+		{"retained provider markdown with photo description", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = vision.AdapterContract
+			p.Embeddings = nil
+			p.RetentionDisclosure.RetainSanitizedMarkdown = false
+			p.RetentionDisclosure.RetainProviderMarkdown = true
+			p.RetentionDisclosure.RetainTypedArtifacts = false
+		}, "photo descriptions do not retain Markdown or typed artifacts"},
+		{"retained typed artifacts with photo description", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = vision.AdapterContract
+			p.Embeddings = nil
+			p.RetentionDisclosure.RetainSanitizedMarkdown = false
+			p.RetentionDisclosure.RetainProviderMarkdown = false
+			p.RetentionDisclosure.RetainTypedArtifacts = true
+		}, "photo descriptions do not retain Markdown or typed artifacts"},
+		{"chunk embedding with photo description", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = vision.AdapterContract
+			p.RetentionDisclosure.RetainSanitizedMarkdown = false
+			p.RetentionDisclosure.RetainTypedArtifacts = false
+		}, "rendition_chunk"},
 		{"chunk embedding without rendition", func(p *document.ProcessingProfileV1) {
 			p.Rendition = nil
 			p.RetentionDisclosure.RetainSanitizedMarkdown = false

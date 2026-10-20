@@ -50,6 +50,7 @@ type PhotoQuality struct {
 }
 
 type PhotoBrowseRow struct {
+	MatchedAISuggestion  bool              `json:"matched_ai_suggestion,omitempty"`
 	Rating               int               `json:"rating" minimum:"0" maximum:"5"`
 	Flag                 string            `json:"flag" enum:",pick,reject"`
 	Quality              *PhotoQuality     `json:"quality,omitempty"`
@@ -97,6 +98,7 @@ type PhotoMapRow struct {
 	Previews         struct {
 		Grid PhotoPreviewSlot `json:"grid"`
 	} `json:"previews"`
+	MatchedAISuggestion bool `json:"matched_ai_suggestion,omitempty"`
 }
 
 // PhotoStack is one burst among a page's items.

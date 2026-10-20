@@ -102,7 +102,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		}
 		for i, row := range page.Items {
 			if in.Body.Projection == "map" {
-				mapped := PhotoMapRow{Rotation: row.Rotation, AssetID: row.AssetID, Revision: row.Revision, Name: row.Name, CaptureTime: row.Fields.CaptureTime, FileModifiedTime: row.FileModifiedTime, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Latitude: row.Fields.Latitude, Longitude: row.Fields.Longitude}
+				mapped := PhotoMapRow{MatchedAISuggestion: row.MatchedAISuggestion, Rotation: row.Rotation, AssetID: row.AssetID, Revision: row.Revision, Name: row.Name, CaptureTime: row.Fields.CaptureTime, FileModifiedTime: row.FileModifiedTime, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Latitude: row.Fields.Latitude, Longitude: row.Fields.Longitude}
 				if slot, ok := row.Previews["grid"]; ok {
 					mapped.Previews.Grid = photoPreviewSlot(row.AssetID, slot.State, slot.Generation)
 				}
@@ -118,7 +118,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				slots[size] = out
 			}
 			wire.Items[i] = PhotoBrowseRow{
-				AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
+				MatchedAISuggestion: row.MatchedAISuggestion, AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
 				Rotation: row.Rotation,
 				Rating:   row.Rating, Flag: row.Flag,
 				DisplayFileID: row.DisplayFileID, NodeID: row.NodeID,

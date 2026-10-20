@@ -44,7 +44,7 @@ function editorWithTargets() {
   editor.asset = structuredClone(asset);
   return editor;
 }
-function ui(editor: PhotoAuthoredEditor, onedit = vi.fn()) {
+function setupPhotoUI() {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -53,7 +53,10 @@ function ui(editor: PhotoAuthoredEditor, onedit = vi.fn()) {
     },
   );
   Element.prototype.scrollIntoView = vi.fn();
-  return render(PhotoInspector, { editor, onedit });
+}
+function ui(editor: PhotoAuthoredEditor, onedit = vi.fn(), onresponse = vi.fn()) {
+  setupPhotoUI();
+  return render(PhotoInspector, { editor, onedit, onresponse });
 }
 
 it.each([
@@ -840,3 +843,270 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   expect(editor.busy).toBe(false);
   editor.dispose();
 });
+
+it.each([
+  "selection",
+  "busy",
+  "loading",
+  "conflict",
+  "dirty",
+  "action disabled",
+  "multiple photos",
+])("renders suggestion choices and availability for %s", async (state) => {
+  const editor = editorWithTargets();
+  editor.suggestions = [
+    photoSuggestion({ value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" } }),
+  ];
+  const view = ui(editor);
+  const accept = screen.getByRole("button", { name: "Accept selected" }) as HTMLButtonElement;
+  if (state === "selection") {
+    expect(accept.disabled).toBe(true);
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    expect(accept.disabled).toBe(false);
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    expect(accept.disabled).toBe(true);
+    await fireEvent.click(screen.getByRole("checkbox", { name: "coast" }));
+    expect(accept.disabled).toBe(false);
+  } else {
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    if (state === "busy") editor.busy = true;
+    if (state === "loading") editor.loading = true;
+    if (state === "conflict") editor.conflict = true;
+    if (state === "dirty") editor.stage({ rating: 5 });
+    await view.rerender({
+      actionDisabled: state === "action disabled",
+      count: state === "multiple photos" ? 2 : 1,
+    });
+    if (state === "multiple photos") {
+      expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+    } else {
+      const section = within(screen.getByRole("region", { name: "Suggested photo metadata" }));
+      expect(accept.disabled).toBe(true);
+      expect((section.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(
+        true,
+      );
+      for (const checkbox of section.getAllByRole("checkbox"))
+        expect((checkbox as HTMLInputElement).disabled).toBe(true);
+    }
+  }
+  editor.dispose();
+});
+
+it.each(["raw", "jpeg"])("identifies the suggested %s member beside a long filename", (member) => {
+  const editor = editorWithTargets();
+  editor.asset!.display_file_id = member;
+  const target = editor.targets.find((target) => target.file_id === member)!;
+  target.file_name = `Synthetic-coastal-harbor-summer-collection-evening-light-study.${member === "raw" ? "cr2" : "jpg"}`;
+  editor.suggestions = [
+    photoSuggestion({
+      target: member,
+      value: { caption: "A harbor.", tags: [], visible_text: "" },
+    }),
+  ];
+  ui(editor);
+  const suggestions = within(screen.getByRole("region", { name: "Suggested photo metadata" }));
+  expect(suggestions.getByText(member === "raw" ? "RAW ·" : "IMAGE ·")).toBeTruthy();
+  expect(suggestions.getByText(target.file_name).parentElement?.title).toBe(target.file_name);
+  editor.dispose();
+});
+
+it.each(["", "Saved caption"])(
+  "shows caption replacement for the suggested member with %j",
+  (caption) => {
+    const editor = editorWithTargets();
+    editor.targets[0]!.values.caption = "Other member caption";
+    editor.targets[1]!.values.caption = caption;
+    editor.suggestions = [
+      photoSuggestion({ value: { caption: "A harbor.", tags: [], visible_text: "" } }),
+    ];
+    ui(editor);
+    const checkbox = screen.getByRole("checkbox", { name: "A harbor." });
+    const note = screen.queryByText("Replaces current caption");
+    expect(!!note).toBe(!!caption);
+    expect(checkbox.getAttribute("aria-describedby")).toBe(note?.id ?? null);
+    editor.dispose();
+  },
+);
+
+it.each(["rating", "rating and keywords"])(
+  "accepts a suggestion after an authored %s edit",
+  async (field) => {
+    const editor = editorWithTargets();
+    editor.fileID = "jpeg";
+    editor.suggestions = [
+      photoSuggestion({ value: { caption: "A harbor.", tags: [], visible_text: "" } }),
+    ];
+    const nodeRevision = field === "rating and keywords" ? 3 : 2;
+    const fetcher = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/photos/authored/edit"))
+        return response({
+          receipt_id: "metadata-receipt",
+          before: [],
+          after: [{ file_id: "jpeg", revision: 2, values: { ...targets[1]!.values, rating: 5 } }],
+          keywords:
+            field === "rating and keywords" ? [{ node_id: 2, tag_id: "coast", after: true }] : [],
+          keyword_nodes: field === "rating and keywords" ? [{ node_id: 2, after_revision: 3 }] : [],
+        });
+      if (url.endsWith("/tags/coast")) return response({ id: "coast", name: "Coast" });
+      if (url.endsWith("/photos/suggestions/suggestion/response")) {
+        const request = JSON.parse(String(init?.body));
+        if (request.source_revision !== 2 || request.node_revision !== nodeRevision)
+          return response({ detail: "Photo changed" }, 409);
+        return response({
+          ...editor.suggestions[0],
+          value: { caption: "", tags: [], visible_text: "" },
+          authored_receipt: { receipt_id: "caption-receipt", before: [], after: [], keywords: [] },
+        });
+      }
+      if (url.endsWith("/photos/authored/prepare")) return preparedSuggestions([]);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await editor.edit({}, { rating: 5 }, false, vi.fn(), {
+      keywords: field === "rating and keywords" ? [{ tag_id: "coast", assign: true }] : [],
+    });
+    expect(editor.error).toBe("");
+    await editor.respondSuggestion(editor.suggestions[0]!, true);
+    expect(editor.suggestionsError).toBe("");
+    expect(editor.receiptID).toBe("caption-receipt");
+    editor.dispose();
+  },
+);
+
+it("keeps the latest authored Undo when dismissing an older partial suggestion", async () => {
+  const editor = editorWithTargets();
+  editor.fileID = "jpeg";
+  const suggestion = photoSuggestion({
+    value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" },
+  });
+  const accepted = {
+    ...suggestion,
+    value: { caption: "", tags: [], visible_text: "QUAYSIDE" },
+    authored_receipt: { receipt_id: "older-caption-receipt", before: [], after: [], keywords: [] },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(response(accepted))
+      .mockResolvedValueOnce(preparedSuggestions([accepted])),
+  );
+  await editor.respondSuggestion(suggestion, true, ["coast"]);
+  expect(editor.undoState.summary).toBe("1 file updated: caption, keywords");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValueOnce(
+      response({
+        receipt_id: "latest-rating-receipt",
+        before: [],
+        after: [{ file_id: "jpeg", revision: 2, values: { ...targets[1]!.values, rating: 5 } }],
+      }),
+    ),
+  );
+  await editor.edit({}, { rating: 5 }, false, vi.fn());
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ ...suggestion, value: { caption: "", tags: [], visible_text: "" } }),
+      )
+      .mockResolvedValueOnce(preparedSuggestions([])),
+  );
+  await editor.respondSuggestion(suggestion, false, [], true);
+  expect(editor.receiptID).toBe("latest-rating-receipt");
+  expect(editor.undoState.summary).toBe("1 file updated: rating");
+  editor.dispose();
+});
+
+it.each([
+  { name: "empty", value: { caption: "", tags: [], visible_text: "" }, shown: false },
+  { name: "caption", value: { caption: "A harbor.", tags: [], visible_text: "" }, shown: true },
+  { name: "tags", value: { caption: "", tags: ["coast"], visible_text: "" }, shown: true },
+  { name: "visible text", value: { caption: "", tags: [], visible_text: "QUAYSIDE" }, shown: true },
+])("shows a pending row when it has content: $name", ({ value, shown }) => {
+  const editor = editorWithTargets();
+  editor.suggestions = [photoSuggestion({ value })];
+  ui(editor);
+  expect(!!screen.queryByRole("region", { name: "Suggested photo metadata" })).toBe(shown);
+  editor.dispose();
+});
+
+it("reloads reviewed photo revisions after a stale suggestion response", async () => {
+  const editor = editorWithTargets();
+  editor.fileID = "jpeg";
+  const suggestion = photoSuggestion({
+    value: { caption: "A harbor.", tags: [], visible_text: "" },
+  });
+  editor.suggestions = [suggestion];
+  const refreshed = targets.map((target) => ({ ...target, revision: 9, node_revision: 10 }));
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(response({ detail: "photo revision changed" }, 409))
+    .mockResolvedValueOnce(
+      preparedSuggestions([{ ...suggestion, source_revision: 9, node_revision: 10 }], refreshed),
+    )
+    .mockResolvedValueOnce(
+      response({
+        ...suggestion,
+        value: { caption: "", tags: [], visible_text: "" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      preparedSuggestions(
+        [
+          {
+            ...suggestion,
+            value: { caption: "", tags: [], visible_text: "" },
+          },
+        ],
+        refreshed,
+      ),
+    );
+  vi.stubGlobal("fetch", fetch);
+  ui(editor);
+  await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+  await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+  await screen.findByRole("button", { name: "Reload metadata" });
+  expect(editor.conflict).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+  await vi.waitFor(() => expect(editor.conflict).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+  await vi.waitFor(() => expect(editor.suggestions[0]?.value.caption).toBe(""));
+  expect(JSON.parse(fetch.mock.calls[2]![1].body)).toMatchObject({
+    source_revision: 9,
+    node_revision: 10,
+  });
+  editor.dispose();
+});
+
+it("conceals suggestion text when refresh removes a hidden target", async () => {
+  const editor = editorWithTargets();
+  editor.suggestions = [
+    photoSuggestion({
+      value: { caption: "A harbor.", tags: ["coast"], visible_text: "PRIVATE SIGN" },
+    }),
+  ];
+  ui(editor);
+  expect(screen.getByText("PRIVATE SIGN")).toBeTruthy();
+  editor.conceal();
+  editor.revalidate(new Set());
+  await vi.waitFor(() => expect(screen.queryByText("PRIVATE SIGN")).toBeNull());
+  expect(editor.suggestions).toEqual([]);
+  editor.dispose();
+});
+function photoSuggestion(overrides: Partial<api.PhotoSuggestion>): api.PhotoSuggestion {
+  return {
+    suggestion_id: "suggestion",
+    content_version_id: "version",
+    target: "jpeg",
+    source_revision: 1,
+    node_revision: 1,
+    value: { caption: "", tags: [], visible_text: "" },
+    ...overrides,
+  };
+}
+
+function preparedSuggestions(suggestions: api.PhotoSuggestion[], prepared = targets) {
+  return response({ assets: [asset], targets: prepared, suggestions });
+}
