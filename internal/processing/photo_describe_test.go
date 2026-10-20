@@ -620,7 +620,7 @@ func TestPhotoDescriptionLimitUsesFinalUpload(t *testing.T) {
 				f := newPhotoDescriptionFixture(t)
 				ctx := t.Context()
 				img := image.NewRGBA(image.Rect(0, 0, 511, 353))
-				rng := rand.New(rand.NewPCG(5, 2))
+				rng := rand.New(rand.NewPCG(5, 2)) //nolint:gosec // Repeatable synthetic pixels exercise JPEG size changes.
 				for y := range 353 {
 					for x := range 511 {
 						pixel := rng.Uint32()

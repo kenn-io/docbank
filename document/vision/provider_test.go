@@ -157,6 +157,7 @@ func renderJPEG(t *testing.T, p *Provider, data []byte) (document.RenditionResul
 
 type testUpload struct {
 	io.ReadCloser
+
 	metadata document.AuthorizedUploadMetadata
 }
 
