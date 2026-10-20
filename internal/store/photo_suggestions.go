@@ -383,6 +383,22 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, as
 	}), nil
 }
 
+// photoDescriptionTargetsSQL lists one page of versions wanting a description,
+// in version order after the cursor. It walks the ready grid previews in index
+// order, so a page costs its own length rather than the library's. The CROSS
+// JOINs keep that order. Arguments: recipe, cursor, profile, limit.
+var photoDescriptionTargetsSQL = `SELECT ` + contentVersionCols + ` FROM content_versions WHERE version_id IN (
+ SELECT v.version_id FROM visual_preview_generations g
+ CROSS JOIN content_versions v ON v.version_id=g.content_version_id AND v.blob_hash=g.source_sha256
+ CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
+ CROSS JOIN photo_files f ON f.node_id=n.id
+ CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
+ WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionEligibility + ` AND g.state='ready' AND NOT ` + photoSuggestionSettledSQL("v.version_id", "") + `
+ AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id AND w.profile_fingerprint=?3
+  AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
+   OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous')))
+ ORDER BY g.content_version_id LIMIT ?4) ORDER BY version_id`
+
 // PhotoDescriptionTargets lists displayed photos in version order after the
 // cursor that want a description from profile: eligible, with a ready grid
 // preview, no suggestion row, and no waiting request or terminal failure.
@@ -392,15 +408,7 @@ func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, after stri
 		return nil, err
 	}
 	result := []ContentVersion{}
-	err = queryRows(ctx, s.db, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id IN (
- SELECT v.version_id FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id
- JOIN content_versions v ON v.version_id=n.current_version_id
- JOIN visual_preview_generations g ON g.content_version_id=v.version_id AND g.recipe_fingerprint=?1 AND g.source_sha256=v.blob_hash
- WHERE v.version_id>?2 AND `+photoDescriptionEligibility+` AND g.state='ready' AND NOT `+photoSuggestionSettledSQL("v.version_id", "")+`
- AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id AND w.profile_fingerprint=?3
-  AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
-   OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous')))
- ORDER BY v.version_id LIMIT ?4) ORDER BY version_id`, []any{fingerprints.GridRecipe, after, profile, limit}, func(rows *sql.Rows) error {
+	err = queryRows(ctx, s.db, photoDescriptionTargetsSQL, []any{fingerprints.GridRecipe, after, profile, limit}, func(rows *sql.Rows) error {
 		version, err := scanContentVersion(rows)
 		if err != nil {
 			return err

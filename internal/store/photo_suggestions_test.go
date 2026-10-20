@@ -593,6 +593,27 @@ func TestPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *
 	require.Zero(t, snapshot.Renditions.Rebuilding, "a queued description is not a rendition being rebuilt")
 }
 
+func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	rows, err := s.db.QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+photoDescriptionTargetsSQL, fingerprints.GridRecipe, "", producerA, 50)
+	require.NoError(t, err)
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Close())
+	for _, step := range plan {
+		require.NotContains(t, step, "TEMP B-TREE", "a page is read in index order, not sorted")
+		require.NotRegexp(t, `^SCAN (a|f|n)\b`, step, "a page does not scan the whole library")
+	}
+}
+
 func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
