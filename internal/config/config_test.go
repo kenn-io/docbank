@@ -37,15 +37,17 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 func TestBackupScheduleConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, problem string
+		interval            time.Duration
+		keepLast            int
 	}{
-		{"disabled", "", ""},
-		{"enabled", "repo = 'snapshots'\ninterval = '24h'\nkeep_last = 14", ""},
-		{"minimum interval", "repo = 'snapshots'\ninterval = '1m'\nkeep_last = 1", ""},
-		{"short interval", "repo = 'snapshots'\ninterval = '59s'\nkeep_last = 1", "at least one minute"},
-		{"missing repo", "interval = '24h'\nkeep_last = 14", "repo and positive keep_last"},
-		{"missing count", "repo = 'snapshots'\ninterval = '24h'", "positive keep_last"},
-		{"negative count", "keep_last = -1", "must not be negative"},
-		{"negative interval", "interval = '-1h'", "must not be negative"},
+		{"disabled", "", "", 0, 0},
+		{"enabled", "repo = 'snapshots'\ninterval = '24h'\nkeep_last = 14", "", 24 * time.Hour, 14},
+		{"minimum interval", "repo = 'snapshots'\ninterval = '1m'\nkeep_last = 1", "", time.Minute, 1},
+		{"short interval", "repo = 'snapshots'\ninterval = '59s'\nkeep_last = 1", "at least one minute", 0, 0},
+		{"missing repo", "interval = '24h'\nkeep_last = 14", "repo and positive keep_last", 0, 0},
+		{"missing count", "repo = 'snapshots'\ninterval = '24h'", "positive keep_last", 0, 0},
+		{"negative count", "keep_last = -1", "must not be negative", 0, 0},
+		{"negative interval", "interval = '-1h'", "must not be negative", 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := privateTestConfigDir(t)
@@ -59,15 +61,8 @@ func TestBackupScheduleConfig(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			switch tc.name {
-			case "enabled":
-				require.Equal(t, 24*time.Hour, cfg.Backup.Interval.Std())
-				require.Equal(t, 14, cfg.Backup.KeepLast)
-			case "minimum interval":
-				require.Equal(t, time.Minute, cfg.Backup.Interval.Std())
-			default:
-				require.Zero(t, cfg.Backup.Interval.Std())
-			}
+			require.Equal(t, tc.interval, cfg.Backup.Interval.Std())
+			require.Equal(t, tc.keepLast, cfg.Backup.KeepLast)
 		})
 	}
 }

@@ -67,3 +67,24 @@ func TestRepositoryOwnerRejectsMalformedMarkers(t *testing.T) {
 	require.NoError(t, os.WriteFile(repo.Path("docbank-owner"), []byte("00000000-0000-4000-8000-000000000001\n"), 0o600))
 	require.ErrorIs(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, fixture.metadata.VaultID(), false), backupapp.ErrRepositoryOwnerConflict)
 }
+
+func TestRepositoryFirstBindingRespectsLock(t *testing.T) {
+	const first = "00000000-0000-4000-8000-000000000001"
+	const second = "00000000-0000-4000-8000-000000000002"
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	ownerLock, err := repo.AcquireExclusiveLock("test-before-first-binding", false)
+	require.NoError(t, err)
+	defer func() { _ = ownerLock.Release() }()
+	// Another repository operation holds the lock before the first owner check.
+	require.ErrorIs(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, first, false), backup.ErrRepoLocked)
+	_, err = os.Stat(repo.Path("docbank-owner"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, ownerLock.Release())
+	// A competing vault binds before the original caller retries.
+	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, second, false))
+	require.ErrorIs(t, backupapp.EnsureRepositoryOwner(t.Context(), repo, first, false), backupapp.ErrRepositoryOwnerConflict)
+	owner, err := os.ReadFile(repo.Path("docbank-owner"))
+	require.NoError(t, err)
+	require.Equal(t, second+"\n", string(owner))
+}

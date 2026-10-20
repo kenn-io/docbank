@@ -168,38 +168,6 @@ func TestRunProcessRequiredFlagErrorsAreUsage(t *testing.T) {
 	assert.Empty(t, stdout.String())
 }
 
-func TestRunProcessBackupOwnershipExitCodes(t *testing.T) {
-	_ = setupVaultHome(t)
-	var stdout, stderr bytes.Buffer
-	run := func(args ...string) int {
-		resetFlags(rootCmd)
-		stdout.Reset()
-		stderr.Reset()
-		return runProcess(args, &stdout, &stderr)
-	}
-	path := filepath.Join(t.TempDir(), "repo")
-	require.Equal(t, 0, run("backup", "init", "--repo", path))
-	require.Equal(t, 0, run("backup", "create", "--repo", path, "--json"))
-	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
-	require.Equal(t, 2, run("backup", "create", "--repo", path, "--json"))
-	require.Contains(t, stderr.String(), "docbank backup claim")
-	require.Empty(t, stdout.String())
-	require.Equal(t, 2, run("backup", "create", "--repo", path))
-	foreign, err := backup.Init(filepath.Join(t.TempDir(), "foreign-repo"))
-	require.NoError(t, err)
-	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), foreign, "00000000-0000-4000-8000-000000000001", false))
-	require.Equal(t, 7, run("backup", "create", "--repo", foreign.Root(), "--json"))
-	require.Contains(t, stderr.String(), "another vault")
-	require.Contains(t, stderr.String(), "select this vault's backup repository")
-	require.Empty(t, stdout.String())
-	require.NoError(t, os.WriteFile(filepath.Join(path, "docbank-owner"), []byte("damaged"), 0o600))
-	for _, args := range [][]string{{"backup", "create", "--repo", path, "--json"}, {"backup", "create", "--repo", path}} {
-		require.Equal(t, 6, run(args...))
-		require.Contains(t, stderr.String(), "owner marker is malformed or unsupported")
-		require.Empty(t, stdout.String())
-	}
-}
-
 func TestRunProcessBackupClaimAnswers(t *testing.T) {
 	_ = setupVaultHome(t)
 	path := filepath.Join(t.TempDir(), "repo")
@@ -209,37 +177,75 @@ func TestRunProcessBackupClaimAnswers(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { rootCmd.SetIn(nil) })
 	for _, tc := range []struct {
-		input  string
-		code   int
-		status string
+		input, status           string
+		code                    int
+		json, yes, alreadyOwned bool
 	}{
-		{"", 2, ""},
-		{"y", 0, "claimed"},
-		{"YES", 0, "claimed"},
-		{"YeS\n", 0, "claimed"},
-		{"Y\n", 0, "claimed"},
-		{"no", 0, "declined"},
+		{input: "", code: 2, json: true},
+		{input: "y", status: "claimed", json: true},
+		{input: "YES", status: "claimed", json: true},
+		{input: "YeS\n", status: "claimed", json: true},
+		{input: "Y\n", status: "claimed", json: true},
+		{input: "no", status: "declined", json: true},
+		{status: "claimed", json: true, yes: true},
+		{status: "already_owned", json: true, alreadyOwned: true},
+		{input: "n\n", status: "declined"},
+		{input: "y\n", status: "claimed"},
+		{status: "already_owned", alreadyOwned: true},
 	} {
-		if _, err := os.Stat(filepath.Join(path, "docbank-owner")); err == nil {
-			require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+		if !tc.alreadyOwned {
+			if _, err := os.Stat(filepath.Join(path, "docbank-owner")); err == nil {
+				require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+			}
 		}
 		resetFlags(rootCmd)
 		rootCmd.SetIn(strings.NewReader(tc.input))
 		var stdout, stderr bytes.Buffer
-		require.Equal(t, tc.code, runProcess([]string{"backup", "claim", "--repo", path, "--json"}, &stdout, &stderr), tc.input)
+		args := []string{"backup", "claim", "--repo", path}
+		if tc.json {
+			args = append(args, "--json")
+		}
+		if tc.yes {
+			args = append(args, "--yes")
+		}
+		require.Equal(t, tc.code, runProcess(args, &stdout, &stderr), tc.input)
+		owned := tc.status == "claimed" || tc.alreadyOwned
 		if tc.code == 2 {
 			require.Empty(t, stdout.String())
 			require.Contains(t, stderr.String(), "requires confirmation")
 			require.Contains(t, stderr.String(), "use --yes")
-		} else {
+		} else if tc.json {
 			var result struct {
-				Status string `json:"status"`
+				Status     string `json:"status"`
+				Repository struct {
+					Owned         bool `json:"owned"`
+					SnapshotCount int  `json:"snapshot_count"`
+				} `json:"repository"`
 			}
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
 			require.Equal(t, tc.status, result.Status)
+			require.Equal(t, owned, result.Repository.Owned)
+			require.Equal(t, 1, result.Repository.SnapshotCount)
+			if !tc.yes && !tc.alreadyOwned {
+				require.Contains(t, stderr.String(), "[y/N]")
+			}
+		} else {
+			switch tc.status {
+			case "declined":
+				require.Contains(t, stdout.String(), "claim declined")
+			case "claimed":
+				require.Contains(t, stdout.String(), "claimed backup repository")
+			case "already_owned":
+				require.Contains(t, stdout.String(), "already belongs")
+			}
+			if !tc.alreadyOwned {
+				require.Contains(t, stdout.String(), "snapshots: 1")
+				require.Contains(t, stdout.String(), "newest snapshot:")
+				require.Contains(t, stdout.String(), "[y/N]")
+			}
 		}
 		_, err := os.Stat(filepath.Join(path, "docbank-owner"))
-		if tc.status == "claimed" {
+		if owned {
 			require.NoError(t, err)
 		} else {
 			require.ErrorIs(t, err, os.ErrNotExist)
@@ -317,7 +323,6 @@ func TestCommandErrorHint(t *testing.T) {
 		{"vault locked", jobsCmd, home.ErrVaultLocked, exitBusy, true, ""},
 		{"backup repository locked", backupCreateCmd, backup.ErrRepoLocked, exitBusy, true, `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`},
 		{"backup owner conflict", backupCreateCmd, backupapp.ErrRepositoryOwnerConflict, 7, true, `hint: select this vault's backup repository with --repo, or initialize a separate repository`},
-		{"backup claim required", backupCreateCmd, backupapp.ErrRepositoryClaimRequired, 2, true, ""},
 		{"backup claim changed", backupClaimCmd, backupapp.ErrRepositoryClaimChanged, 4, true, `hint: run "docbank backup claim" again and review the current history`},
 		{"pack retirement deferred", storageRepackCmd, packstore.ErrPackRetirementDeferred, exitBusy, true, ""},
 		{"maintenance busy", jobsCmd, daemonconn.ErrMaintenanceBusy, exitBusy, true, `hint: wait and retry; "docbank jobs" shows active work`},

@@ -14,25 +14,33 @@ func TestScheduleDelay(t *testing.T) {
 		name                 string
 		age, interval, delay time.Duration
 		stale                bool
+		empty, otherTags     bool
 	}{
-		{"recent", time.Hour, 24 * time.Hour, 23 * time.Hour, false},
-		{"due", 24 * time.Hour, 24 * time.Hour, 0, false},
-		{"stale after restart", 49 * time.Hour, 24 * time.Hour, 0, true},
-		{"long interval", 49 * time.Hour, 48 * time.Hour, 0, false},
-		{"future clock", -24 * time.Hour, time.Hour, time.Hour, false},
+		{"recent", time.Hour, 24 * time.Hour, 23 * time.Hour, false, false, false},
+		{"due", 24 * time.Hour, 24 * time.Hour, 0, false, false, false},
+		{"stale after restart", 49 * time.Hour, 24 * time.Hour, 0, true, false, false},
+		{"long interval", 49 * time.Hour, 48 * time.Hour, 0, false, false, false},
+		{"future clock", -24 * time.Hour, time.Hour, time.Hour, false, false, false},
+		{"empty", 0, time.Hour, 0, false, true, false},
+		{"manual and foreign tags", time.Hour, time.Hour, 0, false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			points := []*backup.Manifest{{SnapshotID: "scheduled", CreatedAt: now.Add(-tc.age).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag("vault-a")}}}
+			if tc.empty {
+				points = nil
+			}
+			if tc.otherTags {
+				points = append(points,
+					&backup.Manifest{SnapshotID: "manual", CreatedAt: now.Format(time.RFC3339), Options: backup.ManifestOptions{Tag: "docbank:scheduled"}},
+					&backup.Manifest{SnapshotID: "foreign", CreatedAt: now.Add(time.Hour).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag("vault-b")}},
+				)
+			}
 			delay, stale, err := ScheduleDelay(points, ScheduledTag("vault-a"), now, tc.interval)
 			require.NoError(t, err)
 			require.Equal(t, tc.delay, delay)
 			require.Equal(t, tc.stale, stale)
 		})
 	}
-	delay, stale, err := ScheduleDelay(nil, ScheduledTag("vault-a"), now, time.Hour)
-	require.NoError(t, err)
-	require.Zero(t, delay)
-	require.False(t, stale)
 }
 
 func TestScheduledRetentionPreservesManualAndNewCapture(t *testing.T) {
@@ -48,27 +56,6 @@ func TestScheduledRetentionPreservesManualAndNewCapture(t *testing.T) {
 	require.Equal(t, []string{"old"}, remove)
 	remove = ScheduledRetention(points, ScheduledTag("vault-a"), 1, "created")
 	require.Equal(t, []string{"future", "old"}, remove)
-}
-
-func TestScheduledRetentionWithoutNewCapturePreservesHistory(t *testing.T) {
-	points := []*backup.Manifest{
-		{SnapshotID: "older", Options: backup.ManifestOptions{Tag: ScheduledTag("vault-a")}},
-		{SnapshotID: "manual"},
-		{SnapshotID: "old", Options: backup.ManifestOptions{Tag: ScheduledTag("vault-a")}},
-	}
-	remove := ScheduledRetention(points, ScheduledTag("vault-a"), 1, "removed-new-capture")
+	remove = ScheduledRetention(points, ScheduledTag("vault-a"), 1, "removed-new-capture")
 	require.Empty(t, remove)
-}
-
-func TestScheduleDelayIgnoresManualAndForeignTags(t *testing.T) {
-	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
-	points := []*backup.Manifest{
-		{SnapshotID: "own", CreatedAt: now.Add(-time.Hour).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag("vault-a")}},
-		{SnapshotID: "manual", CreatedAt: now.Format(time.RFC3339), Options: backup.ManifestOptions{Tag: "docbank:scheduled"}},
-		{SnapshotID: "foreign", CreatedAt: now.Add(time.Hour).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag("vault-b")}},
-	}
-	delay, stale, err := ScheduleDelay(points, ScheduledTag("vault-a"), now, time.Hour)
-	require.NoError(t, err)
-	require.Zero(t, delay)
-	require.False(t, stale)
 }
