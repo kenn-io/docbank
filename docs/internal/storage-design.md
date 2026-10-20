@@ -566,6 +566,16 @@ Burst grouping partitions photos by the timeline `folder_key` and the displayed 
 
 Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
 
+### Photo suggestions
+
+Schema 41 adds `photo_suggestions`, one row per content version and producer fingerprint. A row holds the pending caption, tags, and visible text, the dismissed flag, the accepted-caption flag and accepted tags, and an `awaiting` flag for a restored row that regenerates. Pending text lives only in the database. Metadata JSONL carries the `photo_suggestion` record with the decisions and `awaiting`, never the text.
+
+`photo_suggestion_fts` indexes pending text by the row's `id`, with tags joined by a private-use token so a phrase cannot span two tags. `tag_fts` indexes tag names by the tag's rowid, so a photo matches text search through any tag assigned to it. Triggers keep both current, including during restore, and both stay out of metadata backup.
+
+`photo_description_explicit_waiters` marks the waiters an explicit start created. Publication reads it to decide whether a shared description job may replace another producer's dismissal. It is in-flight intent only and is not backed up: a restored waiter counts as automatic.
+
+`visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
+
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical
 boundary is deterministic JSONL headed by `docbank-metadata` and an integer

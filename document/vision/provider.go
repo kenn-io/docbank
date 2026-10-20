@@ -29,6 +29,9 @@ import (
 const AdapterContract = document.VisionAdapterContract
 const ProviderID = "compatible-vision.describe-v1"
 const MaxRequestTimeout = 10 * time.Minute
+
+// MaxResponseBytes bounds a provider reply, so a configured limit cannot exceed it.
+const MaxResponseBytes = 1 << 20
 const InputProfile = "grid-jpeg-512-metadata-stripped-v1"
 
 var captionListMarker = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
@@ -86,7 +89,7 @@ func New(profile Profile, secrets providerutil.SecretResolver, client *http.Clie
 		return nil, err
 	}
 	profile.Origin = origin
-	if profile.RequestTimeout <= 0 || profile.RequestTimeout > MaxRequestTimeout || profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<20 {
+	if profile.RequestTimeout <= 0 || profile.RequestTimeout > MaxRequestTimeout || profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > MaxResponseBytes {
 		return nil, errors.New("vision request bounds are invalid")
 	}
 	credential := providerutil.BearerCredential(profile.SecretBinding, secrets)

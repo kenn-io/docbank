@@ -1076,7 +1076,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if _, err := vision.Descriptor(profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
 			return fmt.Errorf("%s: %w", prefix, err)
 		}
-		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > 1<<20 {
+		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {
 			return fmt.Errorf("%s vision requires a withheld filename, structured evidence, and at most 1 MiB response", prefix)
 		}
 	case DoclingASRAdapterContract:
