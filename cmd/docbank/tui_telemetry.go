@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
 
@@ -20,23 +19,14 @@ import (
 	"go.kenn.io/docbank/internal/telemetry"
 )
 
-type tuiTelemetryClaim struct {
-	Accepted bool      `json:"accepted,omitempty"`
-	Attempts int       `json:"attempts,omitempty"`
-	Next     time.Time `json:"next,omitzero"`
-}
-
-type tuiTelemetryState struct {
-	Day      string                       `json:"day"`
-	Disabled bool                         `json:"disabled,omitempty"`
-	Screens  map[string]tuiTelemetryClaim `json:"screens"`
-}
-
-// tuiTelemetry keeps daemon receipts authoritative across TUI runs.
+// tuiTelemetry remembers daemon opt-out receipts and bounds reports within a TUI run.
 type tuiTelemetry struct {
-	mu      sync.Mutex
-	state   tuiTelemetryState
-	running func(context.Context) (*daemonconn.Connection, bool, error)
+	mu       sync.Mutex
+	day      string
+	disabled bool
+	screens  map[string]bool
+	failures int
+	running  func(context.Context) (*daemonconn.Connection, bool, error)
 }
 
 func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemetryEventBody) error {
@@ -44,78 +34,69 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 	defer cancel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if body.Properties.Screen != "" && !slices.Contains(telemetry.ScreenNames(), body.Properties.Screen) {
-		return nil
-	}
 	day := time.Now().UTC().Format(time.DateOnly)
-	if r.state.Day == day && r.state.Disabled {
+	if r.day != day {
+		r.day, r.disabled, r.failures = day, false, 0
+		r.screens = make(map[string]bool)
+	}
+	screen := body.Properties.Screen
+	if r.disabled || r.screens[screen] || r.failures >= 6 {
 		return nil
 	}
 	layout, err := home.Resolve()
 	if err != nil {
 		return fmt.Errorf("resolving telemetry state: %w", err)
 	}
-	path := filepath.Join(layout.Root, "telemetry-tui.json")
+	path := filepath.Join(layout.Root, "telemetry-tui-disabled")
 	lock := flock.New(path + ".lock")
 	locked, err := lock.TryLockContext(ctx, 10*time.Millisecond)
 	if err != nil {
 		return fmt.Errorf("locking TUI telemetry: %w", err)
 	}
 	if !locked {
-		return nil
+		return errors.New("locking TUI telemetry: lock unavailable")
 	}
 	defer func() { _ = lock.Close() }()
-	state := tuiTelemetryState{Day: day, Screens: make(map[string]tuiTelemetryClaim)}
 	data, err := os.ReadFile(path)
-	if err == nil {
-		if json.Unmarshal(data, &state) != nil {
-			return nil
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("reading TUI telemetry: %w", err)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading TUI telemetry receipt: %w", err)
 	}
-	if state.Day != day {
-		state = tuiTelemetryState{Day: day, Screens: make(map[string]tuiTelemetryClaim)}
-	}
-	r.state = state
-	if state.Disabled {
-		return nil
-	}
-	screen := body.Properties.Screen
-	claim := state.Screens[screen]
-	if claim.Accepted || claim.Attempts >= 6 || time.Now().Before(claim.Next) {
+	if string(data) == day {
+		r.disabled = true
 		return nil
 	}
 	running := r.running
 	if running == nil {
 		running = daemonconn.Running
 	}
-	c, ok, reportErr := running(ctx)
-	var receipt *apiclient.ReportTelemetryEventResponse
-	if reportErr == nil && ok {
-		receipt, reportErr = c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{Body: body})
-		_ = c.Close()
-	}
-	claim.Attempts++
-	claim.Next = time.Now().Add(time.Second * time.Duration(1<<(claim.Attempts-1)))
-	if receipt != nil && reportErr == nil {
-		state.Disabled = receipt.Status == "disabled"
-		if receipt.Status == "queued" {
-			claim = tuiTelemetryClaim{Accepted: screen != ""}
-		}
-	}
-	if state.Screens == nil {
-		state.Screens = make(map[string]tuiTelemetryClaim)
-	}
-	state.Screens[screen] = claim
-	r.state = state
-	data, err = json.Marshal(state)
+	c, ok, err := running(ctx)
 	if err != nil {
-		return fmt.Errorf("encoding TUI telemetry: %w", err)
+		return fmt.Errorf("finding daemon for telemetry: %w", err)
 	}
-	if err := atomicfile.WriteFile(path, data); err != nil {
-		return fmt.Errorf("saving TUI telemetry: %w", err)
+	if !ok {
+		return errors.New("reporting TUI telemetry: daemon is not running")
 	}
+	defer func() { _ = c.Close() }()
+	receipt, err := c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{Body: body})
+	if err != nil {
+		r.failures++
+		return fmt.Errorf("reporting TUI telemetry: %w", err)
+	}
+	switch receipt.Status {
+	case "disabled":
+		r.disabled = true
+		if err := atomicfile.WriteFile(path, []byte(day), atomicfile.WithPrivate()); err != nil {
+			return fmt.Errorf("saving TUI telemetry receipt: %w", err)
+		}
+	case "queued":
+		if screen != "" {
+			r.screens[screen] = true
+		}
+	default:
+		r.failures++
+		return fmt.Errorf("reporting TUI telemetry: unexpected receipt %q", receipt.Status)
+	}
+
 	return nil
 }
 

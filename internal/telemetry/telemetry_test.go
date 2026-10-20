@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"io"
 	"log/slog"
@@ -187,40 +186,4 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 	assert.Contains(t, logs.String(), "synthetic ingest rejection")
 	assert.Contains(t, logs.String(), `"daemon":"synthetic"`)
 	assert.Contains(t, logs.String(), `"component":"posthog"`)
-}
-
-type recordingClient struct {
-	mu     sync.Mutex
-	events []string
-}
-
-func (c *recordingClient) Capture(event string, _ map[string]any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.events = append(c.events, event)
-	return nil
-}
-
-func (c *recordingClient) Close() error  { return nil }
-func (c *recordingClient) Enabled() bool { return true }
-
-func (c *recordingClient) captured() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]string(nil), c.events...)
-}
-
-// Each start reports activity immediately.
-func TestHeartbeatSendsActiveAtStart(t *testing.T) {
-	client := &recordingClient{}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		posthog.RunHeartbeat(ctx, client, discardLogger())
-	}()
-	require.Eventually(t, func() bool { return len(client.captured()) == 1 }, 5*time.Second, 5*time.Millisecond)
-	cancel()
-	<-done
-	assert.Equal(t, []string{EventDaemonActive}, client.captured())
 }

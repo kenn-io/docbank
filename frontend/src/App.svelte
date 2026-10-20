@@ -274,7 +274,7 @@
   let signInPending = $state(false);
   let disposeBrowserSession: (() => void) | undefined;
   let mounted = false;
-  let telemetryReporting = $state<ReturnType<typeof startTelemetryReporting>>();
+  let telemetryReporting = $state.raw<ReturnType<typeof startTelemetryReporting>>();
   let sessionReporting: ReturnType<typeof startSessionReporting> | undefined;
   const tiles = mapTiles();
   const isMapPath = (path: string) => path === "/photos/map" || path.startsWith("/photos/map/");

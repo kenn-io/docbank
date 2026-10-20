@@ -3,7 +3,7 @@ import { APIError, sessionResponse } from "./api-transport.js";
 import { getReportTelemetryEventUrl } from "./generated/docbank.js";
 
 export function startTelemetryReporting(session: string) {
-  return startBrowserTelemetry({
+  const reporter = startBrowserTelemetry({
     route: getReportTelemetryEventUrl(),
     surface: "web",
     storageKey: "docbank.web.telemetry.v1",
@@ -20,4 +20,21 @@ export function startTelemetryReporting(session: string) {
         throw cause;
       }),
   });
+  let latestScreen: string | undefined;
+  const reportVisibleScreen = () => {
+    if (latestScreen !== undefined && document.visibilityState === "visible")
+      reporter.reportScreen(latestScreen);
+  };
+  document.addEventListener("visibilitychange", reportVisibleScreen);
+  return {
+    ...reporter,
+    reportScreen(screen: string) {
+      latestScreen = screen;
+      reportVisibleScreen();
+    },
+    stop() {
+      document.removeEventListener("visibilitychange", reportVisibleScreen);
+      reporter.stop();
+    },
+  };
 }

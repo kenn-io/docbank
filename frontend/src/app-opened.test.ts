@@ -117,4 +117,30 @@ describe("shared browser receipt gate", () => {
     await vi.advanceTimersByTimeAsync(120_000);
     expect(fetchMock).toHaveBeenCalledTimes(8);
   });
+  it("holds hidden screens and reports only the latest screen on visibility", async () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
+    reporter = startTelemetryReporting("secret");
+    reporter.reportScreen("browse");
+    reporter.reportScreen("help");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).event)).toEqual([
+      "app_opened",
+    ]);
+    visibility = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { event: "app_opened", properties: { surface: "web" } },
+      { event: "screen_viewed", properties: { surface: "web", screen: "help" } },
+    ]);
+    reporter.stop();
+    reporter.reportScreen("search");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

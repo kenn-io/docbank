@@ -81,7 +81,7 @@ func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	startTelemetryTestDaemon(t)
 	reporter := &tuiTelemetry{}
 	reporter.sessionEnded(2 * time.Minute)
-	require.Eventually(t, func() bool { reporter.mu.Lock(); defer reporter.mu.Unlock(); return reporter.state.Disabled }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { reporter.mu.Lock(); defer reporter.mu.Unlock(); return reporter.disabled }, time.Second, time.Millisecond)
 }
 
 func TestServeAcceptsAppOpenedWhenTelemetryOptedOut(t *testing.T) {
