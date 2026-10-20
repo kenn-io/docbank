@@ -79,9 +79,37 @@ func photoDescriptionSettledTx(ctx context.Context, q metadataQuerier, versionID
 	return settled, err
 }
 
+// dropOwnedPhotoFieldsTx clears the caption equal to the authored caption and
+// the tags already assigned to the version's photo. It reports false when the
+// version has no photo file.
+func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version string, description *document.PhotoDescription) (bool, error) {
+	var authored string
+	if err := q.QueryRowContext(ctx, `SELECT f.caption FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, version).Scan(&authored); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	var assigned []string
+	if err := queryRows(ctx, q, `SELECT t.name FROM content_versions v JOIN node_tags nt ON nt.node_id=v.node_id JOIN tags t ON t.id=nt.tag_id WHERE v.version_id=?`, []any{version}, func(rows *sql.Rows) error {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		assigned = append(assigned, name)
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	if description.Caption == authored {
+		description.Caption = ""
+	}
+	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return slices.Contains(assigned, tag) })
+	return true, nil
+}
+
 // publishPhotoSuggestionTx stores a provider's description for a version
-// unless the version is settled. The description is already normalized. Fields already equal to the authored caption
-// or an assigned tag, and fields the owner resolved before a restore, are left out.
+// unless the version is settled. The description is already normalized. Fields
+// the owner already has or resolved before a restore are left out.
 func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
 	explicitProducer := ""
 	if explicit {
@@ -90,21 +118,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	if settled, err := photoDescriptionSettledTx(ctx, tx, version, explicitProducer); err != nil || settled {
 		return err
 	}
-	var authored string
-	var assigned []string
-	if err := tx.QueryRowContext(ctx, `SELECT f.caption FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, version).Scan(&authored); errors.Is(err, sql.ErrNoRows) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if err := queryRows(ctx, tx, `SELECT t.name FROM content_versions v JOIN node_tags nt ON nt.node_id=v.node_id JOIN tags t ON t.id=nt.tag_id WHERE v.version_id=?`, []any{version}, func(rows *sql.Rows) error {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return err
-		}
-		assigned = append(assigned, name)
-		return nil
-	}); err != nil {
+	if ok, err := dropOwnedPhotoFieldsTx(ctx, tx, version, &description); err != nil || !ok {
 		return err
 	}
 	var awaiting int64
@@ -120,12 +134,10 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 			return err
 		}
 	}
-	if captionResolved || description.Caption == authored {
+	if captionResolved {
 		description.Caption = ""
 	}
-	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool {
-		return slices.Contains(assigned, tag) || slices.Contains(resolved, tag)
-	})
+	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return slices.Contains(resolved, tag) })
 	tags, err := json.Marshal(description.Tags)
 	if err != nil {
 		return err
@@ -329,7 +341,19 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, as
 		out = append(out, row.PhotoSuggestion)
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	// The owner may have typed or assigned a suggested value since it was stored.
+	for i := range out {
+		if _, err := dropOwnedPhotoFieldsTx(ctx, q, out[i].ContentVersionID, &out[i].Value); err != nil {
+			return nil, err
+		}
+	}
+	return slices.DeleteFunc(out, func(suggestion PhotoSuggestion) bool {
+		value := suggestion.Value
+		return value.Caption == "" && len(value.Tags) == 0 && value.VisibleText == ""
+	}), nil
 }
 
 // PhotoDescriptionTargets lists displayed photos in version order after the

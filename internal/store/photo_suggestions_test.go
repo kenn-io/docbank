@@ -243,6 +243,31 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.False(t, page.Items[0].MatchedAISuggestion, "a file name match wins over suggestion text")
 }
 
+func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "owned.jpg")
+	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}})
+
+	tag, err := s.CreateTag(ctx, "coast")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, asset.Files[0].NodeID, UnconditionalRev)
+	require.NoError(t, err)
+	offered := photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, offered, 1)
+	require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"sunset"}}, offered[0].Value, "a tag assigned by hand is no longer offered")
+
+	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}})
+	require.NoError(t, err)
+	offered = photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, offered, 1)
+	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}}, offered[0].Value, "a caption typed identically is no longer offered")
+
+	acceptPhotoSuggestion(t, s, proposal, false, "sunset")
+	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "nothing left to offer")
+}
+
 func TestPhotoSuggestionBackupKeepsDecisionsAndRegeneratesOnlyOpenFields(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
