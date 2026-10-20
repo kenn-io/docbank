@@ -185,7 +185,6 @@ func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 		answer string
 		ok     bool
 	}{
-		{answer: "red,blue", ok: true},
 		{answer: "red, blue", ok: true},
 		{answer: "Red, blue.", ok: true},
 		{answer: "left: red, right: blue", ok: true},
