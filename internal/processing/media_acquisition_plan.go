@@ -371,8 +371,13 @@ func verifyMediaToken(key [32]byte, token string) ([]byte, error) {
 	return body, nil
 }
 
-// visionRetryInterval is the soonest a failed provider probe repeats.
-const visionRetryInterval = time.Minute
+const (
+	// visionRetryInterval is the soonest a failed provider probe repeats.
+	visionRetryInterval = time.Minute
+	// visionProbeTimeout bounds one probe, so an endpoint that never answers
+	// holds a profile's probe slot for this long rather than the request timeout.
+	visionProbeTimeout = 30 * time.Second
+)
 
 // visionReadinessKey names a description profile's probe and evidence.
 func visionReadinessKey(fingerprint string) string { return "vision:" + fingerprint }
@@ -405,12 +410,17 @@ func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe 
 // requireVisionReadiness proves the profile's provider answers under the
 // current consent grant. A probe that already passed under this grant stands;
 // otherwise the probe runs here, one at a time per profile, and a failure
-// repeats no sooner than a minute later.
+// repeats no sooner than a minute later. A caller waiting for the probe in
+// flight gives up with its own context.
 func (service *Service) requireVisionReadiness(ctx context.Context, profile configuredProfile) error {
 	id := visionReadinessKey(profile.record.Fingerprint)
-	lock := service.visionLocks[id]
-	lock.Lock()
-	defer lock.Unlock()
+	slot := service.visionLocks[id]
+	select {
+	case slot <- struct{}{}:
+		defer func() { <-slot }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	authorization, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
 	if err != nil {
 		return err
@@ -426,7 +436,9 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 			return ErrRenditionRuntimeUnavailable
 		}
 	}
-	evidence, err := service.mediaOriginProbes[id](ctx)
+	probeCtx, cancel := context.WithTimeout(ctx, service.visionProbeTimeout)
+	evidence, err := service.mediaOriginProbes[id](probeCtx)
+	cancel()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
