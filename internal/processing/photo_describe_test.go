@@ -114,7 +114,11 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 			f.describeBody = bytes.Clone(body)
 			if f.dropDescribe {
 				f.mu.Unlock()
-				connection, _, err := w.(http.Hijacker).Hijack()
+				hijacker, ok := w.(http.Hijacker)
+				if !assert.True(t, ok) {
+					return
+				}
+				connection, _, err := hijacker.Hijack()
 				if assert.NoError(t, err) {
 					_ = connection.Close()
 				}
@@ -399,11 +403,14 @@ func TestPhotoDescriptionRetriesAfterADroppedConnection(t *testing.T) {
 	f.mu.Lock()
 	f.dropDescribe = false
 	f.mu.Unlock()
-	// The retry waits out its backoff, so pass until the queue offers it.
-	for deadline := time.Now().Add(10 * time.Second); len(f.suggestions(t)) == 0 && time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		f.backfill(t, f.service)
-	}
-	require.Len(t, f.suggestions(t), 1, "the retry produces the suggestion once the endpoint answers")
+	// The retry waits out its backoff, so run the worker until the queue offers it.
+	require.Eventually(t, func() bool {
+		if f.drainWorker(t.Context(), f.service) != nil {
+			return false
+		}
+		prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}})
+		return err == nil && len(prepared.Suggestions) == 1
+	}, 10*time.Second, 100*time.Millisecond, "the retry produces the suggestion once the endpoint answers")
 	require.Zero(t, f.waitingDescriptions(t))
 }
 
