@@ -303,9 +303,11 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{early.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}, Keywords: []PhotoKeywordEdit{{TagID: tag.ID, Assign: true}}})
 	require.NoError(t, err)
 	publishPhotoDescription(t, s, early, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
-	offered = photoSuggestionValues(t, s, early.ID)
-	require.Len(t, offered, 1)
-	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}}, offered[0].Value, "authored values are not offered back")
+	// Reading filters owned values again, so check what publication stored.
+	var caption, tags string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions WHERE content_version_id=(SELECT current_version_id FROM nodes WHERE id=?)`, early.Files[0].NodeID).Scan(&caption, &tags))
+	require.Empty(t, caption, "publication leaves out the authored caption")
+	require.JSONEq(t, `["sunset"]`, tags, "publication leaves out the assigned tag, whatever its case")
 }
 
 func TestPhotoSuggestionAcceptanceReusesATagThatDiffersInCase(t *testing.T) {
