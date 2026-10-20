@@ -1042,10 +1042,7 @@ Browser reports share a daily gate. Disabled receipts stop reports and duration
 listeners until a later day's load or focus. Failures back off and stop after
 six attempts. Hidden tabs report their latest screen when visible. Screen visibility
 listeners stop while disabled or unavailable; focus can check on a later day.
-Up to 64 duration-only `session_ended` events waiting for permission survive page
-teardown under separate versioned browser storage keys. An enabled receipt
-replays them through the shared gate with keepalive; a disabled receipt deletes
-them. Blocked storage falls back to the shared gate's page-memory queue.
+Session reports use the shared gate's in-memory queue while it checks permission.
 
 TUI reports use a running daemon and lock `telemetry-tui-state` while checking.
 The private v1 JSON file stores the UTC day, disabled receipt, and accepted

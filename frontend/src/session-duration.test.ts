@@ -4,13 +4,12 @@ import { startSessionReporting } from "./session-duration.js";
 
 describe("session_ended reporting", () => {
   const reportVisit = vi.fn<BrowserTelemetryReporter["reportVisit"]>();
-  let initialReason: "enabled" | "disabled" = "enabled";
   let quietChange: Parameters<BrowserTelemetryReporter["onQuietChange"]>[0];
   const reporter: Pick<BrowserTelemetryReporter, "reportVisit" | "onQuietChange"> = {
     reportVisit,
     onQuietChange: (listener) => {
       quietChange = listener;
-      listener(initialReason !== "enabled", initialReason);
+      listener(false, "enabled");
       return () => {
         quietChange = () => undefined;
       };
@@ -21,8 +20,6 @@ describe("session_ended reporting", () => {
   let hidden: boolean;
 
   beforeEach(() => {
-    localStorage.clear();
-    initialReason = "enabled";
     reportVisit.mockClear();
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     now = 0;
@@ -135,36 +132,6 @@ describe("session_ended reporting", () => {
       bucket,
     ]);
   });
-
-  it.each(["enabled restart", "disabled restart", "blocked"])(
-    "handles pending visits across teardown with %s",
-    (state) => {
-      reporting = startSessionReporting(reporter);
-      quietChange(true, "checking");
-      if (state === "blocked")
-        vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-          throw new Error("blocked");
-        });
-      for (let index = 0; index < 65; index++) {
-        now += 120_000;
-        window.dispatchEvent(new Event("pagehide"));
-        window.dispatchEvent(new Event("pageshow"));
-      }
-      reporting.stop();
-      if (state === "blocked") {
-        expect(reportVisit).toHaveBeenCalledTimes(65);
-      } else {
-        expect(reportVisit).not.toHaveBeenCalled();
-        expect(Object.keys(localStorage)).toHaveLength(64);
-        if (state === "disabled restart") initialReason = "disabled";
-        reporting = startSessionReporting(reporter);
-        expect(reportVisit).toHaveBeenCalledTimes(state === "disabled restart" ? 0 : 64);
-        if (state !== "disabled restart")
-          expect(sessionReports()[0]?.properties.duration_bucket).toBe("1_to_5m");
-        expect(Object.keys(localStorage)).toHaveLength(0);
-      }
-    },
-  );
 
   it("takes the final bucket once without sending it", () => {
     reporting = startSessionReporting(reporter);

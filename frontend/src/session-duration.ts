@@ -1,9 +1,6 @@
 import type { BrowserTelemetryReporter } from "@kenn-io/kit-ui/utils/browser-telemetry";
 import type { TelemetryEventPropertiesDurationBucket } from "./generated/docbank.js";
 
-const PENDING_PREFIX = "docbank.web.telemetry.session-ended.v1:";
-const pendingKeys = () => Object.keys(localStorage).filter((key) => key.startsWith(PENDING_PREFIX));
-
 const MINUTE = 60_000;
 const HIDDEN_SESSION_END = 30 * MINUTE;
 
@@ -21,13 +18,7 @@ function durationBucket(elapsed: number): TelemetryEventPropertiesDurationBucket
 export function startSessionReporting(
   reporter: Pick<BrowserTelemetryReporter, "reportVisit" | "onQuietChange">,
 ) {
-  let enabled = false;
   let disabled = false;
-  const send = (bucket: TelemetryEventPropertiesDurationBucket) =>
-    reporter.reportVisit(
-      { event: "session_ended", properties: { surface: "web", duration_bucket: bucket } },
-      { keepalive: true },
-    );
   let started = document.hidden ? undefined : performance.now();
   let visible = 0;
   let hiddenSince: number | undefined;
@@ -52,16 +43,10 @@ export function startSessionReporting(
   const end = () => {
     const bucket = take();
     if (!bucket) return;
-    if (!enabled) {
-      try {
-        if (pendingKeys().length < 64)
-          localStorage.setItem(PENDING_PREFIX + crypto.randomUUID(), bucket);
-        return;
-      } catch {
-        // The shared gate holds visits in page memory when storage is blocked.
-      }
-    }
-    send(bucket);
+    reporter.reportVisit(
+      { event: "session_ended", properties: { surface: "web", duration_bucket: bucket } },
+      { keepalive: true },
+    );
   };
   const resume = () => {
     if (hiddenSince !== undefined && Date.now() - hiddenSince >= HIDDEN_SESSION_END) end();
@@ -90,19 +75,6 @@ export function startSessionReporting(
   };
   listen();
   const unsubscribe = reporter.onQuietChange((_quiet, reason) => {
-    enabled = reason === "enabled";
-    if (enabled || reason === "disabled") {
-      try {
-        for (const key of pendingKeys()) {
-          const bucket = localStorage.getItem(key);
-          localStorage.removeItem(key);
-          if (enabled && bucket && ["under_1m", "1_to_5m", "5_to_30m", "over_30m"].includes(bucket))
-            send(bucket as TelemetryEventPropertiesDurationBucket);
-        }
-      } catch {
-        // Blocked storage leaves persisted visits for a later page.
-      }
-    }
     if (reason === "disabled" || reason === "stopped") {
       disabled = true;
       take();
