@@ -102,6 +102,7 @@ func (s *Store) ResolveRenditionText(
 		err = tx.QueryRowContext(ctx, `SELECT w.state='rejected' OR j.state IN ('failed','operator_required')
 			FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
 			WHERE w.content_version_id=? AND w.profile_fingerprint=?
+			  AND NOT EXISTS(SELECT 1 FROM json_each(w.input_classes_json) WHERE value='derived_upload')
 			ORDER BY MAX(w.updated_at,j.updated_at) DESC,w.updated_at DESC,j.updated_at DESC,
 			 w.waiter_id DESC,j.job_id DESC LIMIT 1`,
 			binding.ContentVersionID, binding.ProfileFingerprint).Scan(&failed)
