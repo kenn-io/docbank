@@ -325,8 +325,9 @@ export class PhotoAuthoredEditor {
         ),
       );
       if (result.authored_receipt?.receipt_id) {
-        this.receiptID = result.authored_receipt.receipt_id;
-        this.undoState.summary = `1 file updated: ${[...(caption ? ["caption"] : []), ...(tags.length ? ["keywords"] : [])].join(", ")}`;
+        // Accepting settles the field like dismissing; an older Undo must not revert it.
+        this.receiptID = "";
+        this.undoState.summary = "";
       }
       this.endWrite(write);
       await this.reload();

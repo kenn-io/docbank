@@ -975,7 +975,8 @@ it.each(["rating", "rating and keywords"])(
     expect(editor.error).toBe("");
     await editor.respondSuggestion(editor.suggestions[0]!, true);
     expect(editor.suggestionsError).toBe("");
-    expect(editor.receiptID).toBe("caption-receipt");
+    expect(editor.receiptID, "an accept offers no Undo, and drops the older edit's").toBe("");
+    expect(editor.undoState.summary).toBe("");
     editor.dispose();
   },
 );
@@ -1024,7 +1025,7 @@ it.each([
   },
 );
 
-it("keeps the latest authored Undo when dismissing an older partial suggestion", async () => {
+it("keeps the latest authored Undo when dismissing a partly accepted suggestion", async () => {
   const editor = editorWithTargets();
   editor.fileID = "jpeg";
   const suggestion = photoSuggestion({
@@ -1043,16 +1044,20 @@ it("keeps the latest authored Undo when dismissing an older partial suggestion",
       .mockResolvedValueOnce(preparedSuggestions([accepted])),
   );
   await editor.respondSuggestion(suggestion, true, ["coast"]);
-  expect(editor.undoState.summary).toBe("1 file updated: caption, keywords");
+  expect(editor.receiptID).toBe("");
+  expect(editor.undoState.summary).toBe("");
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValueOnce(
-      response({
-        receipt_id: "latest-rating-receipt",
-        before: [],
-        after: [{ file_id: "jpeg", revision: 2, values: { ...targets[1]!.values, rating: 5 } }],
-      }),
-    ),
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({
+          receipt_id: "latest-rating-receipt",
+          before: [],
+          after: [{ file_id: "jpeg", revision: 2, values: { ...targets[1]!.values, rating: 5 } }],
+        }),
+      )
+      .mockResolvedValueOnce(preparedSuggestions([accepted])),
   );
   await editor.edit({}, { rating: 5 }, false, vi.fn());
   vi.stubGlobal(
