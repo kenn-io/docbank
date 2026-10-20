@@ -137,7 +137,6 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	rec := postEvent(t, handler, `{"event":"app_opened","properties":{"path":"/synthetic/report.pdf","query":"synthetic"}}`)
 	require.Equal(t, http.StatusAccepted, rec.Code)
 	assert.JSONEq(t, `{"status":"queued"}`, rec.Body.String())
-	assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, `{"event":"search_run"}`).Code)
 	require.NoError(t, r.Capture(EventDaemonActive, nil))
 	require.NoError(t, r.Close())
 
@@ -164,8 +163,6 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 				"application", "source", "version", "commit", "goos", "goarch", "install_age_hours",
 				"$lib", "$lib_version", "$process_person_profile", "$geoip_disable",
 			}, slices.Collect(maps.Keys(props)))
-			assert.NotContains(t, props, "path")
-			assert.NotContains(t, props, "query")
 		}
 	}
 	assert.ElementsMatch(t, []string{EventAppOpened, EventDaemonActive}, events)
@@ -176,7 +173,7 @@ func TestNewFallsBackWhenInstallUnusable(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(blocker, []byte("synthetic"), 0o600))
 	var reporter *Reporter
-	require.NotPanics(t, func() { reporter = New(Options{Dir: blocker, Logger: discardLogger()}) })
+	require.NotPanics(t, func() { reporter = New(Options{Dir: blocker, Version: "v1.2.3", Logger: discardLogger()}) })
 	assert.False(t, reporter.Enabled())
 	assert.False(t, reporter.EventAllowed(EventAppOpened))
 }

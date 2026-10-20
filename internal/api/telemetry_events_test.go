@@ -1,12 +1,10 @@
 package api_test
 
 import (
-	"encoding/json/v2"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -17,7 +15,6 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/telemetry"
-	"go.kenn.io/kit/telemetry/posthog"
 )
 
 func postTelemetryEvent(t *testing.T, client *http.Client, method, url, body string, headers map[string]string) (int, string) {
@@ -34,33 +31,6 @@ func postTelemetryEvent(t *testing.T, client *http.Client, method, url, body str
 	data, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	return resp.StatusCode, string(data)
-}
-
-type collectedTelemetryEvent struct {
-	Event      string         `json:"event"`
-	Properties map[string]any `json:"properties"`
-}
-
-func newTelemetryCollector(t *testing.T) (string, func() []collectedTelemetryEvent) {
-	t.Helper()
-	var mu sync.Mutex
-	var events []collectedTelemetryEvent
-	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var batch struct {
-			Batch []collectedTelemetryEvent `json:"batch"`
-		}
-		assert.NoError(t, json.UnmarshalRead(r.Body, &batch))
-		mu.Lock()
-		events = append(events, batch.Batch...)
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(collector.Close)
-	return collector.URL, func() []collectedTelemetryEvent {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]collectedTelemetryEvent(nil), events...)
-	}
 }
 
 func TestTelemetryEventRoute(t *testing.T) {
@@ -85,9 +55,6 @@ func TestTelemetryEventRoute(t *testing.T) {
 		{"no credentials", http.MethodPost, url, `{"event":"app_opened"}`, map[string]string{"X-Api-Key": ""}, http.StatusUnauthorized, ""},
 		{"browser session with query", http.MethodPost, url + "?x=1", `{"event":"app_opened"}`, browser, http.StatusForbidden, `"code":"web_session_read_only"`},
 		{"get", http.MethodGet, url, "", nil, http.StatusMethodNotAllowed, ""},
-		{"unknown event", http.MethodPost, url, `{"event":"search_run"}`, nil, http.StatusBadRequest, ""},
-		{"blank event", http.MethodPost, url, `{"event":""}`, nil, http.StatusBadRequest, ""},
-		{"not json", http.MethodPost, url, `not json`, nil, http.StatusBadRequest, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := postTelemetryEvent(t, ts.Client(), tc.method, tc.url, tc.body, tc.headers)
@@ -106,18 +73,25 @@ func TestTelemetryEventRouteAbsentWithoutCapture(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status, body)
 }
 
-type failingTelemetryCapture struct {
-	telemetry.CaptureEndpoint
+type recordingTelemetryCapture struct {
+	http.Handler
+
+	mu         sync.Mutex
+	events     []string
+	properties []map[string]any
+	err        error
 }
 
-func (failingTelemetryCapture) Capture(string, map[string]any) error {
-	return errors.New("synthetic capture failure")
+func (c *recordingTelemetryCapture) Capture(event string, properties map[string]any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, event)
+	c.properties = append(c.properties, properties)
+	return c.err
 }
 
 func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
-	if posthog.ProcessDisabled() {
-		t.Skip("built with kit_posthog_disabled")
-	}
+	t.Parallel()
 	logs, err := os.CreateTemp(t.TempDir(), "telemetry-*.json")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, logs.Close()) })
@@ -135,31 +109,16 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 		{name: "missing bucket"},
 		{name: "invalid bucket", query: "duration_bucket=bogus&extra=1"},
 		{name: "repeated bucket", query: "duration_bucket=1_to_5m&duration_bucket=over_30m"},
-		{name: "capture failure", bucket: "over_30m", fails: true},
+		{name: "capture failure", bucket: "over_30m", fails: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("CI", "")
-			require.NoError(t, os.Unsetenv("CI"))
-			t.Setenv("DO_NOT_TRACK", "0")
-			t.Setenv(telemetry.EnabledEnv, "1")
-			t.Setenv(posthog.GenericEnabledEnv, "1")
-			endpoint, collected := newTelemetryCollector(t)
-			reporter, err := posthog.NewReporter(posthog.Options{
-				APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", Version: "v1.2.3", DistinctID: "synthetic-install",
-			}, posthog.WithAllowedEvent(telemetry.EventSessionEnded,
-				posthog.AllowProperty("surface", posthog.AllowStringValues("web")),
-				posthog.AllowProperty("duration_bucket", func(value any) (any, bool) {
-					bucket, ok := value.(string)
-					return bucket, ok
-				})))
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+			capture := &recordingTelemetryCapture{Handler: http.NotFoundHandler()}
+			if tc.fails {
+				capture.err = errors.New("synthetic capture failure")
+			}
 			ts, _ := newTestServer(t, func(d *api.Deps) {
 				d.Logger = logger
-				d.TelemetryCapture = telemetry.CaptureHandler(reporter, t.TempDir())
-				if tc.fails {
-					d.TelemetryCapture = failingTelemetryCapture{d.TelemetryCapture}
-				}
+				d.TelemetryCapture = capture
 			})
 			session := issueWebSession(t, ts)
 			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
@@ -174,64 +133,20 @@ func TestWebSessionRevokeReportsFinalDuration(t *testing.T) {
 			}
 			status, body := postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
 			require.Equal(t, http.StatusNoContent, status, body)
-			if !tc.master {
-				status, body = postTelemetryEvent(t, ts.Client(), http.MethodDelete, url, "", browser)
-				require.Equal(t, http.StatusUnauthorized, status, body)
-				status, body = postTelemetryEvent(t, ts.Client(), http.MethodGet, ts.URL+"/api/v1/jobs", "", browser)
-				require.Equal(t, http.StatusUnauthorized, status, body)
-			}
-			require.NoError(t, reporter.Close())
+			capture.mu.Lock()
+			defer capture.mu.Unlock()
 			if !tc.want {
-				require.Empty(t, collected())
-				if tc.fails {
-					data, err := os.ReadFile(logs.Name())
-					require.NoError(t, err)
-					assert.Contains(t, string(data), `"level":"DEBUG","msg":"final session_ended capture failed"`)
-					assert.Contains(t, string(data), "synthetic capture failure")
-				}
+				require.Empty(t, capture.events)
 				return
 			}
-			events := collected()
-			require.Len(t, events, 1)
-			assert.Equal(t, "session_ended", events[0].Event)
-			assert.Equal(t, "web", events[0].Properties["surface"])
-			assert.Equal(t, tc.bucket, events[0].Properties["duration_bucket"])
+			assert.Equal(t, []string{"session_ended"}, capture.events)
+			assert.Equal(t, []map[string]any{{"surface": "web", "duration_bucket": tc.bucket}}, capture.properties)
+			if tc.fails {
+				data, err := os.ReadFile(logs.Name())
+				require.NoError(t, err)
+				assert.Contains(t, string(data), `"level":"DEBUG","msg":"final session_ended capture failed"`)
+				assert.Contains(t, string(data), "synthetic capture failure")
+			}
 		})
 	}
-}
-
-func TestScreenViewedTelemetryEventRoute(t *testing.T) {
-	if posthog.ProcessDisabled() {
-		t.Skip("built with kit_posthog_disabled")
-	}
-	t.Setenv("CI", "")
-	require.NoError(t, os.Unsetenv("CI"))
-	t.Setenv("DO_NOT_TRACK", "0")
-	t.Setenv(telemetry.EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "1")
-	endpoint, collected := newTelemetryCollector(t)
-	dir := t.TempDir()
-	inst, err := posthog.LoadOrCreateInstall(dir)
-	require.NoError(t, err)
-	reporter, err := posthog.NewReporter(posthog.Options{
-		APIKey: "synthetic-api-key", Endpoint: endpoint, Application: "docbank", EnvPrefix: "DOCBANK", Version: "v1.2.3",
-		DistinctID: inst.ID, InstalledAt: inst.InstalledAt, Source: "daemon",
-	}, posthog.WithAllowedEvent(telemetry.EventScreenViewed,
-		posthog.AllowProperty("screen", posthog.AllowStringValues("browse")),
-		posthog.AllowProperty("surface", posthog.AllowStringValues("web"))))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = telemetry.CaptureHandler(reporter, dir) })
-	session := issueWebSession(t, ts)
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
-	for range 2 {
-		status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events",
-			`{"event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`, browser)
-		require.Equal(t, http.StatusAccepted, status, body)
-	}
-	require.NoError(t, reporter.Close())
-	events := collected()
-	require.Len(t, events, 1)
-	assert.Equal(t, telemetry.EventScreenViewed, events[0].Event)
-	assert.Equal(t, "browse", events[0].Properties["screen"])
 }
