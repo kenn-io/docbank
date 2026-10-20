@@ -49,7 +49,7 @@ func photoSuggestionValues(t *testing.T, s *Store, assetID string) []PhotoSugges
 func acceptPhotoSuggestion(t *testing.T, s *Store, proposal PhotoSuggestion, caption bool, tags ...string) PhotoSuggestion {
 	t.Helper()
 	// Refresh the revisions the accepted edit is checked against.
-	prepared, err := s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: []string{assetIDOfSuggestion(t, s, proposal)}})
+	prepared, err := s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: []string{proposal.AssetID}})
 	require.NoError(t, err)
 	for _, current := range prepared.Suggestions {
 		if current.ID == proposal.ID {
@@ -59,13 +59,6 @@ func acceptPhotoSuggestion(t *testing.T, s *Store, proposal PhotoSuggestion, cap
 	result, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: caption, Tags: tags})
 	require.NoError(t, err)
 	return result
-}
-
-func assetIDOfSuggestion(t *testing.T, s *Store, proposal PhotoSuggestion) string {
-	t.Helper()
-	var assetID string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT asset_id FROM photo_files WHERE file_id=?`, proposal.Target).Scan(&assetID))
-	return assetID
 }
 
 func restorePhotoSuggestionStore(t *testing.T, s *Store) *Store {
