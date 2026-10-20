@@ -946,9 +946,17 @@ func TestPushWatchPushesADocumentRestoredFromTrash(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, node.ID, restored.ID)
 	require.NoError(t, os.WriteFile(file, []byte("third"), 0600))
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "updated", <-events)
-	assert.Equal(t, "third", readNode(t, f, node.ID))
+	// A scan can settle on a partial write before "third" lands and push that
+	// state first, so drain events until the node holds the final content.
+	timeout := time.After(30 * time.Second)
+	for readNode(t, f, node.ID) != "third" {
+		select {
+		case outcome := <-events:
+			assert.Equal(t, "updated", outcome)
+		case <-timeout:
+			require.FailNow(t, "the restored document never received the third version")
+		}
+	}
 	cancel()
 	<-done
 }
