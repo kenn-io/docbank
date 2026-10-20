@@ -44,8 +44,8 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			return err
 		}
 		if attempted || err == nil {
-			// Keep failed due captures eligible after clock corrections, and consume
-			// successful wait deadlines even if Kit timestamps remain ahead of wall time.
+			// Preserve due captures across failures and consume successful wait deadlines.
+			// Preflight failures leave captureDue unchanged: they haven't established a capture is due.
 			captureDue = true
 		}
 	}
