@@ -125,11 +125,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 			defer server.Close()
 			p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 			require.NoError(t, err)
-			descriptor := p.Descriptor()
-			now := time.Now().UTC()
-			metadata := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, ByteLength: int64(len(data)), SHA256: providerutil.SHA256Hex(data), CapabilityRecordChecksum: strings.Repeat("a", 64), ProviderMetadataChecksum: strings.Repeat("b", 64)}
-			auth := document.RenditionAuthorization{ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: strings.Repeat("d", 64), SourceBytes: 8192, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: 1 << 20, MaxArtifacts: 1, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
-			result, err := document.RenderRendition(context.Background(), p, &documenttest.Upload{ReadCloser: io.NopCloser(bytes.NewReader(data)), Meta: metadata}, auth)
+			result, err := renderJPEG(t, p, data)
 			require.Equal(t, int32(1), calls.Load())
 			if tc.want == "" {
 				classified, ok := errors.AsType[*document.RenditionProviderError](err)
@@ -141,10 +137,75 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Artifacts, 1)
 			require.JSONEq(t, tc.want, string(result.Artifacts[0].Payload))
-			require.Equal(t, auth.SourceSHA256, result.Receipt.SourceSHA256)
-			require.Equal(t, metadata.SHA256, result.Receipt.UploadSHA256)
+			require.Equal(t, strings.Repeat("d", 64), result.Receipt.SourceSHA256)
+			require.Equal(t, providerutil.SHA256Hex(data), result.Receipt.UploadSHA256)
 		})
 	}
+}
+
+// renderJPEG runs one authorized description of data through the provider.
+func renderJPEG(t *testing.T, p *Provider, data []byte) (document.RenditionResult, error) {
+	t.Helper()
+	descriptor := p.Descriptor()
+	now := time.Now().UTC()
+	metadata := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, ByteLength: int64(len(data)), SHA256: providerutil.SHA256Hex(data), CapabilityRecordChecksum: strings.Repeat("a", 64), ProviderMetadataChecksum: strings.Repeat("b", 64)}
+	auth := document.RenditionAuthorization{ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: strings.Repeat("d", 64), SourceBytes: 8192, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: 1 << 20, MaxArtifacts: 1, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
+	return document.RenderRendition(context.Background(), p, &documenttest.Upload{ReadCloser: io.NopCloser(bytes.NewReader(data)), Meta: metadata}, auth)
+}
+
+type testSecrets map[string]string
+
+func (secrets testSecrets) ResolveSecret(_ context.Context, name string) (string, error) {
+	value, ok := secrets[name]
+	if !ok {
+		return "", errors.New("secret is not available")
+	}
+	return value, nil
+}
+
+func TestProviderSendsItsBearerCredential(t *testing.T) {
+	t.Parallel()
+	var data bytes.Buffer
+	require.NoError(t, jpeg.Encode(&data, image.NewRGBA(image.Rect(0, 0, 512, 1)), nil))
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		assert.Equal(t, "Bearer synthetic-secret", r.Header.Get("Authorization"))
+		body, err := io.ReadAll(r.Body)
+		if !assert.NoError(t, err) {
+			return
+		}
+		reply := `{"caption":"A dog.","tags":["dog"],"visible_text":""}`
+		if visiontest.IsProbe(body) {
+			reply = "red,blue"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(visiontest.Completion(reply))
+	}))
+	defer server.Close()
+	profile := Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20, SecretBinding: "vision-key"}
+
+	t.Run("sent on the probe and the description", func(t *testing.T) {
+		p, err := New(profile, testSecrets{"vision-key": "synthetic-secret"}, server.Client())
+		require.NoError(t, err)
+		require.NoError(t, p.Probe(t.Context()))
+		_, err = renderJPEG(t, p, data.Bytes())
+		require.NoError(t, err)
+		require.Equal(t, int32(2), calls.Load())
+	})
+	t.Run("a binding needs a resolver", func(t *testing.T) {
+		_, err := New(profile, nil, server.Client())
+		require.ErrorContains(t, err, "named secret binding requires a resolver")
+	})
+	t.Run("an unavailable secret sends nothing", func(t *testing.T) {
+		before := calls.Load()
+		p, err := New(profile, testSecrets{}, server.Client())
+		require.NoError(t, err)
+		require.ErrorContains(t, p.Probe(t.Context()), "authentication failed")
+		_, err = renderJPEG(t, p, data.Bytes())
+		require.Error(t, err)
+		require.Equal(t, before, calls.Load(), "no request leaves without its credential")
+	})
 }
 
 func TestProbeSendsSyntheticImageWithoutNamingColors(t *testing.T) {
