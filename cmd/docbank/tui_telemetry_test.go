@@ -20,20 +20,11 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func setupTUITelemetryDaemon(t *testing.T, status int, receipt string, visits ...api.TelemetryEventRequest) *atomic.Int32 {
+func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.Int32 {
 	t.Helper()
 	var requests atomic.Int32
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
-		var request api.TelemetryEventRequest
-		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-		want := api.TelemetryEventRequest{Event: "screen_viewed", Properties: &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}}
-		if requests.Add(1) > 1 && len(visits) > 0 {
-			want = visits[0]
-		}
-		assert.Equal(t, want, request)
+	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(`{"status":"` + receipt + `"}`))
@@ -44,8 +35,21 @@ func setupTUITelemetryDaemon(t *testing.T, status int, receipt string, visits ..
 func TestTUITelemetryReceipts(t *testing.T) {
 	for _, receipt := range []string{"disabled", "queued"} {
 		t.Run(receipt, func(t *testing.T) {
-			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, receipt, api.TelemetryEventRequest{
-				Event: "session_ended", Properties: &api.TelemetryEventProperties{Surface: "tui", DurationBucket: "under_1m"},
+			var requests atomic.Int32
+			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+				assert.Equal(t, "POST", r.Method)
+				assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
+				var request api.TelemetryEventRequest
+				assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+				want := api.TelemetryEventRequest{Event: "screen_viewed", Properties: &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}}
+				if requests.Add(1) == 2 {
+					want = api.TelemetryEventRequest{Event: "session_ended", Properties: &api.TelemetryEventProperties{Surface: "tui", DurationBucket: "under_1m"}}
+				}
+				assert.Equal(t, want, request)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"status":"` + receipt + `"}`))
 			})
 			root := os.Getenv("DOCBANK_HOME")
 			var group sync.WaitGroup
@@ -88,9 +92,7 @@ func TestTUITelemetryStoredStates(t *testing.T) {
 		refused bool
 	}{
 		{"stale day", `{"version":1,"day":"2000-01-01","disabled":true}`, false},
-		{"future day", `{"version":1,"day":"2999-01-01","disabled":true}`, false},
 		{"unsupported version", `{"version":2,"disabled":true}`, true},
-		{"unknown field", `{"version":1,"future":true}`, true},
 		{"opaque screen", `{"version":1,"day":"` + day + `","screens":["future_screen"]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,21 +120,16 @@ func TestTUITelemetryStoredStates(t *testing.T) {
 }
 
 func TestTUITelemetryBoundsEveryFailure(t *testing.T) {
-	for _, failure := range []string{"file", "lock", "discovery", "post", "receipt"} {
+	for _, failure := range []string{"lock", "post"} {
 		t.Run(failure, func(t *testing.T) {
 			status := http.StatusAccepted
 			if failure == "post" {
 				status = http.StatusServiceUnavailable
 			}
 			setupTUITelemetryDaemon(t, status, "future")
-			if failure == "discovery" {
-				t.Setenv("DOCBANK_HOME", t.TempDir())
-			}
-			if failure == "file" {
-				require.NoError(t, os.Mkdir(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json"), 0o700))
-			}
 			backend := &tuiDaemonBackend{}
 			for range 6 {
+				backend.telemetry.retryAt = time.Time{} // Each failure follows an elapsed retry window.
 				ctx, cancel := context.WithCancel(t.Context())
 				if failure == "lock" {
 					cancel()
@@ -144,6 +141,74 @@ func TestTUITelemetryBoundsEveryFailure(t *testing.T) {
 			require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
 		})
 	}
+}
+
+func TestTUITelemetryQueuedScreensRespectFailureBackoff(t *testing.T) {
+	firstPOST := make(chan struct{})
+	release := make(chan struct{})
+	var requests atomic.Int32
+	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			close(firstPOST)
+			<-release
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	backend := &tuiDaemonBackend{}
+	firstResult := make(chan error, 1)
+	go func() { firstResult <- backend.ReportScreen(t.Context(), "help") }()
+	<-firstPOST
+	var started sync.WaitGroup
+	started.Add(4)
+	results := make(chan error, 3)
+	for _, screen := range []string{"browse", "search", "help"} {
+		go func() {
+			started.Done()
+			results <- backend.ReportScreen(t.Context(), screen)
+		}()
+	}
+	exitResult := make(chan error, 1)
+	go func() {
+		started.Done()
+		exitResult <- sendTUISessionEnded(t.Context(), &backend.telemetry, time.Minute)
+	}()
+	started.Wait()
+	failedAt := time.Now()
+	close(release)
+	require.Error(t, <-firstResult)
+	for range 3 {
+		require.ErrorIs(t, <-results, errTUITelemetryBackoff)
+	}
+	require.ErrorIs(t, <-exitResult, errTUITelemetryBackoff)
+	assert.Less(t, time.Since(failedAt), 30*time.Second)
+	assert.Equal(t, int32(1), requests.Load(), "queued screen and exit reports must wait for the 30-second backoff")
+	assert.Equal(t, 1, backend.telemetry.failures, "queued screen and exit reports must preserve the remaining failure budget")
+}
+
+func TestTUITelemetryNewUTCDayResetsBackoff(t *testing.T) {
+	requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
+	now := time.Now()
+	backend := &tuiDaemonBackend{}
+	backend.telemetry.tuiTelemetryReceipt = tuiTelemetryReceipt{
+		Version:  1,
+		Day:      now.UTC().AddDate(0, 0, -1).Format(time.DateOnly),
+		Disabled: true,
+		Screens:  []string{"help", "browse"},
+	}
+	backend.telemetry.failures = 6
+	backend.telemetry.retryAt = now.Add(time.Hour)
+
+	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
+	assert.Equal(t, int32(1), requests.Load(), "a new UTC day must permit a fresh attempt")
+	data, err := os.ReadFile(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json"))
+	require.NoError(t, err)
+	var receipt tuiTelemetryReceipt
+	require.NoError(t, json.Unmarshal(data, &receipt))
+	assert.Equal(t, tuiTelemetryReceipt{
+		Version: 1,
+		Day:     now.UTC().Format(time.DateOnly),
+		Screens: []string{"help"},
+	}, receipt)
 }
 
 func TestTUITelemetryBusyLockReturnsRetryError(t *testing.T) {

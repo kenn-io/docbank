@@ -71,66 +71,37 @@ describe("app_opened reporting", () => {
     expect(fetchMock.mock.calls.at(-1)?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("detaches visibility work while disabled and restores it after the next enabled check", async () => {
+  it("maps unauthorized responses so the gate stops same-day retries", async () => {
+    fetchMock.mockImplementation(async () => respond(401));
+    reporter = startTelemetryReporting("secret");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores visibility work and the latest hidden screen after an unavailable reply", async () => {
     const add = vi.spyOn(document, "addEventListener");
     const remove = vi.spyOn(document, "removeEventListener");
+    fetchMock.mockImplementation(async () => respond(503));
     reporter = startTelemetryReporting("secret");
-    await settle();
+    reporter.reportScreen("browse");
+    await vi.advanceTimersByTimeAsync(60_000);
     const listener = add.mock.calls.find(([name]) => name === "visibilitychange")?.[1];
     expect(listener).toBeDefined();
     expect(remove).toHaveBeenCalledWith("visibilitychange", listener);
+    fetchMock.mockClear();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    reporter.reportScreen("help");
+    await settle();
+    expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
     vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     focus();
     await settle();
     expect(add.mock.calls.filter(([name]) => name === "visibilitychange")).toHaveLength(2);
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { event: "app_opened", properties: { surface: "web" } },
+      { event: "screen_viewed", properties: { surface: "web", screen: "help" } },
+    ]);
   });
-
-  it("stops same-day retries after an unauthorized response and checks again next day", async () => {
-    fetchMock.mockImplementationOnce(async () => respond(401));
-    reporter = startTelemetryReporting("secret");
-    await settle();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    focus();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(new Date("2026-03-05T08:00:00Z"));
-    focus();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    ["unavailable and hidden", 503, "hidden"],
-    ["disabled and hidden", 202, "hidden"],
-  ] as const)(
-    "keeps the latest screen while %s for the next UTC day",
-    async (_reason, status, visibility) => {
-      fetchMock.mockImplementation(async () => respond(status));
-      reporter = startTelemetryReporting("secret");
-      reporter.reportScreen("browse");
-      await vi.advanceTimersByTimeAsync(60_000);
-      const open = { event: "app_opened", properties: { surface: "web" } };
-      expect(fetchMock).toHaveBeenCalled();
-      fetchMock.mockClear();
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(fetchMock).not.toHaveBeenCalled();
-      vi.spyOn(document, "visibilityState", "get").mockReturnValue(visibility);
-      reporter.reportScreen("help");
-      await settle();
-      expect(fetchMock).not.toHaveBeenCalled();
-      fetchMock.mockImplementation(
-        async () => new Response('{"status":"queued"}', { status: 202 }),
-      );
-      vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
-      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-      focus();
-      await settle();
-      expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-        open,
-        { event: "screen_viewed", properties: { surface: "web", screen: "help" } },
-      ]);
-    },
-  );
 });

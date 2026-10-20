@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
+	doctui "go.kenn.io/docbank/internal/tui"
 )
 
 // tuiTelemetry remembers daemon opt-out receipts and bounds reports within a TUI run.
@@ -26,6 +27,7 @@ type tuiTelemetry struct {
 
 	mu       sync.Mutex
 	failures int
+	retryAt  time.Time
 }
 
 type tuiTelemetryReceipt struct {
@@ -35,24 +37,25 @@ type tuiTelemetryReceipt struct {
 	Screens  []string `json:"screens"`
 }
 
+var errTUITelemetryBackoff = errors.New("reporting TUI telemetry: waiting after a failed report")
+
 func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemetryEventBody) (err error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	day := time.Now().UTC().Format(time.DateOnly)
-	if r.Day != day {
-		r.tuiTelemetryReceipt, r.failures = tuiTelemetryReceipt{Version: 1, Day: day}, 0
-	}
+	now := time.Now()
+	day := now.UTC().Format(time.DateOnly)
+	r.resetDay(day)
 	screen := body.Properties.Screen
 	if r.Disabled || slices.Contains(r.Screens, screen) || r.failures >= 6 {
 		return nil
 	}
-	defer func() {
-		if err != nil {
-			r.failures++
-		}
-	}()
+	if now.Before(r.retryAt) {
+		return &doctui.ScreenRetryError{Err: errTUITelemetryBackoff, At: r.retryAt}
+	}
+	// The attempt timeout starts after the gate, so queued reports keep their full second.
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	defer func() { err = r.failed(err) }()
 	layout, err := home.Resolve()
 	if err != nil {
 		return fmt.Errorf("resolving telemetry state: %w", err)
@@ -72,11 +75,6 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 	if json.Unmarshal(data, &fields) == nil {
 		if string(fields["version"]) != "1" {
 			return errors.New("unsupported TUI telemetry receipt version")
-		}
-		for key := range fields {
-			if !slices.Contains([]string{"version", "day", "disabled", "screens"}, key) {
-				return fmt.Errorf("unknown TUI telemetry receipt field %q", key)
-			}
 		}
 		var state tuiTelemetryReceipt
 		if json.Unmarshal(data, &state) == nil && state.Day == day {
@@ -117,4 +115,22 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 		return atomicfile.WriteFile(path, data, atomicfile.WithPrivate())
 	}
 	return nil
+}
+
+func (r *tuiTelemetry) resetDay(day string) {
+	if r.Day != day {
+		r.tuiTelemetryReceipt = tuiTelemetryReceipt{Version: 1, Day: day}
+		r.failures = 0
+		r.retryAt = time.Time{}
+	}
+}
+
+// failed counts a failed attempt and starts the window before the next attempt may begin.
+func (r *tuiTelemetry) failed(err error) error {
+	if err == nil {
+		return nil
+	}
+	r.failures++
+	r.retryAt = time.Now().Add(doctui.ScreenRetryDelay)
+	return &doctui.ScreenRetryError{Err: err, At: r.retryAt}
 }

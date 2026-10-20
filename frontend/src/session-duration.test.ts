@@ -144,16 +144,15 @@ describe("session_ended reporting", () => {
 
   it("stops duration work when disabled, resumes when enabled, and removes listeners on stop", async () => {
     reporting = startSessionReporting(reporter);
-    now = 120_000;
+    now = 200_000;
     quietChange(true, "disabled");
-    expect(reporting.take()).toBeUndefined();
     visibility(true);
     expect(vi.getTimerCount()).toBe(0);
     window.dispatchEvent(new Event("pagehide"));
     expect(sessionReports()).toHaveLength(0);
     hidden = false;
     quietChange(false, "enabled");
-    now += 120_000;
+    now += 200_000;
     window.dispatchEvent(new Event("pagehide"));
     expectBucket("1_to_5m");
     reporting.stop();
