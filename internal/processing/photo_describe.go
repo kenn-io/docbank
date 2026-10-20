@@ -81,9 +81,9 @@ func photoDescriptionPreview(ctx context.Context, catalog *store.Store, versionI
 	return view, "", nil
 }
 
-// photoDescriptionBinding names the job a request admits: this version, this
-// verified preview, and the kind of request.
-func (service *Service) photoDescriptionBinding(ctx context.Context, version store.ContentVersion, explicit bool) (string, error) {
+// photoDescriptionBinding names the job a request admits: this version and this
+// verified preview, whether the request is automatic or explicit.
+func (service *Service) photoDescriptionBinding(ctx context.Context, version store.ContentVersion) (string, error) {
 	view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
 	if err != nil {
 		return "", err
@@ -91,7 +91,7 @@ func (service *Service) photoDescriptionBinding(ctx context.Context, version sto
 	if reason != "" {
 		return "", fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
 	}
-	return store.PhotoDescriptionInputBinding(version.ID, view.Generation.Checksum, explicit), nil
+	return store.PhotoDescriptionInputBinding(version.ID, view.Generation.Checksum), nil
 }
 
 // photoDescriptionInput returns the copy of the verified grid preview that a
@@ -228,11 +228,11 @@ func (service *Service) admitPhotoDescription(ctx context.Context, value photoDe
 	if err != nil {
 		return err
 	}
-	binding, err := service.photoDescriptionBinding(ctx, value.version, false)
+	binding, err := service.photoDescriptionBinding(ctx, value.version)
 	if err != nil {
 		return err
 	}
-	_, _, err = service.enqueueRendition(ctx, node, value.version, profile, service.renditionConsentRequest(profile), binding)
+	_, _, err = service.enqueueRendition(ctx, node, value.version, profile, service.renditionConsentRequest(profile), binding, false)
 	return err
 }
 

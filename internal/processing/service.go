@@ -1161,7 +1161,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	inputBinding, err := service.resolveMediaInputBinding(
 		ctx, profileName, version.BlobHash, source, "")
 	if err == nil && profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-		inputBinding, err = service.photoDescriptionBinding(ctx, version, true)
+		inputBinding, err = service.photoDescriptionBinding(ctx, version)
 	}
 	if err != nil {
 		return renditionRun{}, err
@@ -1171,7 +1171,8 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 			ProfileFingerprint:      profile.record.Fingerprint,
 			DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
 			InputClasses:            []string{string(profileRenditionInput(profile))},
-			RetainedArtifactClasses: retainedRenditionClasses(profile.portable)}, inputBinding)
+			RetainedArtifactClasses: retainedRenditionClasses(profile.portable)}, inputBinding,
+		profileRenditionInput(profile) == document.RenditionInputDerivedUpload)
 	if err != nil {
 		return renditionRun{}, err
 	}

@@ -1786,6 +1786,14 @@ CREATE TABLE IF NOT EXISTS rendition_job_waiters (
 
 CREATE INDEX IF NOT EXISTS rendition_job_waiters_job
     ON rendition_job_waiters(job_id, state, waiter_id);
+
+-- Photo description waiters that an explicit start asked for. A description job
+-- is shared by automatic and explicit requests, and an explicit one may replace
+-- another profile's dismissed suggestion. This records in-flight intent only, so
+-- it is not backed up: a restored waiter counts as automatic.
+CREATE TABLE IF NOT EXISTS photo_description_explicit_waiters (
+    waiter_id TEXT PRIMARY KEY REFERENCES rendition_job_waiters(waiter_id) ON DELETE CASCADE
+);
 CREATE INDEX IF NOT EXISTS rendition_job_waiters_content_version
     ON rendition_job_waiters(content_version_id, job_id);
 

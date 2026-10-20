@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -419,42 +418,38 @@ func (s *Store) UnclaimedPhotoDescriptionWaiters(ctx context.Context, profile st
 	return count, err
 }
 
-// PhotoDescriptionInputBinding scopes a description job to one content version,
-// the verified preview it uploads, and whether an explicit start admitted it.
-// Identical bytes in another version never share a result, and automatic and
-// explicit requests never share a job, so publication can tell which predicate
-// admitted its request.
-func PhotoDescriptionInputBinding(versionID, previewChecksum string, explicit bool) string {
-	digest := sha256.Sum256([]byte("docbank:photo-description-input:v1\x00" + versionID + "\x00" + previewChecksum + "\x00" + strconv.FormatBool(explicit)))
+// PhotoDescriptionInputBinding scopes a description job to one content version
+// and the verified preview it uploads. Identical bytes in another version never
+// share a result. Automatic and explicit requests for the same version share one
+// job; each waiter records which kind it is.
+func PhotoDescriptionInputBinding(versionID, previewChecksum string) string {
+	digest := sha256.Sum256([]byte("docbank:photo-description-input:v1\x00" + versionID + "\x00" + previewChecksum))
 	return hex.EncodeToString(digest[:])
 }
 
 // photoDescriptionInputTx confirms the version is still eligible and its ready
-// grid preview is the one the job's binding names. It reports whether an
-// explicit start admitted the job.
-func photoDescriptionInputTx(ctx context.Context, tx *sql.Tx, execution document.RenditionExecutionIdentityV1, versionID, sourceSHA256 string) (bool, error) {
+// grid preview is the one the job's binding names.
+func photoDescriptionInputTx(ctx context.Context, tx *sql.Tx, execution document.RenditionExecutionIdentityV1, versionID, sourceSHA256 string) error {
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
-		return false, err
+		return err
 	}
 	var checksum string
 	err = tx.QueryRowContext(ctx, `SELECT g.checksum FROM visual_preview_generations g WHERE g.content_version_id=? AND g.recipe_fingerprint=? AND g.source_sha256=? AND g.state='ready'`, versionID, fingerprints.GridRecipe, sourceSHA256).Scan(&checksum)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, ErrRenditionJobStaleAuthority
+		return ErrRenditionJobStaleAuthority
 	}
 	if err != nil {
-		return false, err
+		return err
 	}
 	eligible, err := photoDescriptionEligibleTx(ctx, tx, versionID)
 	if err != nil {
-		return false, err
+		return err
 	}
-	for _, explicit := range []bool{false, true} {
-		if eligible && PhotoDescriptionInputBinding(versionID, checksum, explicit) == execution.Upload.InputBinding {
-			return explicit, nil
-		}
+	if !eligible || PhotoDescriptionInputBinding(versionID, checksum) != execution.Upload.InputBinding {
+		return ErrRenditionJobStaleAuthority
 	}
-	return false, ErrRenditionJobStaleAuthority
+	return nil
 }
 
 // joinPhotoDescriptionTx finishes a description request's admission. A settled

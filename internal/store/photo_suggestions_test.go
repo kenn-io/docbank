@@ -507,8 +507,9 @@ func photoDescriptionJobRequest(t *testing.T, s *Store, versionID, producer stri
 	request.Authorization.InputClasses = []string{"derived_upload"}
 	request.Authorization.RetainedArtifactClasses = []string{"normalized_evidence"}
 	request.ExecutionIdentity.Upload.InputKind = document.RenditionInputDerivedUpload
-	request.ExecutionIdentity.Upload.InputBinding = PhotoDescriptionInputBinding(version.ID, preview.Checksum, explicit)
+	request.ExecutionIdentity.Upload.InputBinding = PhotoDescriptionInputBinding(version.ID, preview.Checksum)
 	request.ExecutionIdentity.Authorization.InputKind = document.RenditionInputDerivedUpload
+	request.ExplicitStart = explicit
 	return request
 }
 
@@ -665,6 +666,44 @@ func TestExplicitPhotoDescriptionReplacesOnlyADismissal(t *testing.T) {
 
 	_, waiter, _ = startPhotoDescription(t, s, explicit, at)
 	require.Equal(t, "waiting", waiter.State, "an explicit start by another profile asks again")
+}
+
+func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
+	t.Parallel()
+	for _, joined := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit_waiter_%t", joined), func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "shared.jpg")
+			node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			automatic := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+			grantRenditionJobConsent(t, s, automatic)
+			at := time.Now().UTC().Add(time.Minute)
+			job, _, claim := startPhotoDescription(t, s, automatic, at)
+			// Another profile answers and is dismissed while this job runs.
+			first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
+			_, err = s.RespondPhotoSuggestion(ctx, first.ID, PhotoSuggestionResponse{Response: "dismissed"})
+			require.NoError(t, err)
+			if joined {
+				explicit := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, true)
+				sharedJob, _, err := s.EnqueueRenditionJob(ctx, explicit)
+				require.NoError(t, err)
+				require.Equal(t, job.ID, sharedJob.ID, "an explicit request joins the automatic job")
+			}
+
+			_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
+			require.NoError(t, err)
+			published := photoSuggestionValues(t, s, asset.ID)
+			if joined {
+				require.Len(t, published, 1, "the explicit waiter replaces the dismissal")
+				require.Equal(t, "From B.", published[0].Value.Caption)
+			} else {
+				require.Empty(t, published, "an automatic waiter leaves the dismissal alone")
+			}
+		})
+	}
 }
 
 func TestDerivativePurgeLeavesPhotoSuggestionsButVersionPurgeRemovesThem(t *testing.T) {

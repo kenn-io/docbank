@@ -181,6 +181,14 @@ func (f *photoDescriptionFixture) runWorker(t *testing.T, service *Service) {
 	}
 }
 
+// waitingDescriptions counts description requests that have not completed.
+func (f *photoDescriptionFixture) waitingDescriptions(t *testing.T) int {
+	t.Helper()
+	count, err := f.catalog.UnclaimedPhotoDescriptionWaiters(t.Context(), f.service.profiles["vision"].record.Fingerprint, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	return count
+}
+
 func (f *photoDescriptionFixture) suggestions(t *testing.T) []store.PhotoSuggestion {
 	t.Helper()
 	prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}})
@@ -436,6 +444,67 @@ func TestPhotoDescriptionStartDescribesOnce(t *testing.T) {
 	require.Len(t, f.suggestions(t), 1)
 	_, describes := f.counts()
 	require.Equal(t, 1, describes)
+}
+
+func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *testing.T) {
+	t.Parallel()
+	t.Run("queued", func(t *testing.T) {
+		t.Parallel()
+		f := newPhotoDescriptionFixture(t)
+		ctx := t.Context()
+		f.grant(t, f.service, "vision")
+		targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "an automatic request is waiting")
+
+		plan, err := f.service.Plan(ctx, f.selector("vision"))
+		require.NoError(t, err)
+		_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
+		require.NoError(t, err)
+		f.runWorker(t, f.service)
+		_, describes := f.counts()
+		require.Equal(t, 1, describes, "one provider call serves both requests")
+		require.Len(t, f.suggestions(t), 1)
+		require.Zero(t, f.waitingDescriptions(t), "no request is left waiting")
+	})
+	t.Run("running", func(t *testing.T) {
+		t.Parallel()
+		f := newPhotoDescriptionFixture(t)
+		ctx := t.Context()
+		f.grant(t, f.service, "vision")
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		unblock := func() { releaseOnce.Do(func() { close(release) }) }
+		t.Cleanup(unblock)
+		f.mu.Lock()
+		f.onDescribe = func() { <-release }
+		f.mu.Unlock()
+		targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]))
+		working := make(chan struct{})
+		go func() { defer close(working); f.runWorker(t, f.service) }()
+		require.Eventually(t, func() bool { _, describes := f.counts(); return describes == 1 }, 5*time.Second, time.Millisecond)
+
+		plan, err := f.service.Plan(ctx, f.selector("vision"))
+		require.NoError(t, err)
+		started := make(chan error, 1)
+		go func() {
+			_, err := f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
+			started <- err
+		}()
+		require.Never(t, func() bool { _, describes := f.counts(); return describes > 1 }, 300*time.Millisecond, time.Millisecond,
+			"the explicit request joins the call in flight")
+		unblock()
+		require.NoError(t, <-started)
+		<-working
+		_, describes := f.counts()
+		require.Equal(t, 1, describes)
+		require.Len(t, f.suggestions(t), 1)
+		require.Zero(t, f.waitingDescriptions(t))
+	})
 }
 
 func TestPhotoDescriptionDefaultProfileChangeLeavesDismissals(t *testing.T) {

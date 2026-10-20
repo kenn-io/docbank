@@ -105,7 +105,7 @@ func (service *Service) EnqueueAuthorized(
 	if err != nil {
 		return Job{}, err
 	}
-	job, waiter, err := service.enqueueRendition(ctx, node, version, profile, authorization, inputBinding)
+	job, waiter, err := service.enqueueRendition(ctx, node, version, profile, authorization, inputBinding, false)
 	if err != nil {
 		return Job{}, processingConsentBoundaryError(err)
 	}
@@ -121,6 +121,7 @@ func (service *Service) enqueueRendition(
 	profile configuredProfile,
 	authorization store.ProviderOperationAuthorizationRequest,
 	inputBinding string,
+	explicitStart bool,
 ) (store.RenditionJob, store.RenditionJobWaiter, error) {
 	prepared, err := service.prepareExecutableRendition(ctx, node, version, profile, inputBinding)
 	if err != nil {
@@ -133,7 +134,7 @@ func (service *Service) enqueueRendition(
 		job, waiter, enqueueErr = service.catalog.EnqueueRenditionJob(ctx, store.RenditionJobRequest{
 			ContentVersionID: version.ID, Profile: profile.record,
 			CapturedArtifactPolicy: prepared.capturedPolicy, ExecutionIdentity: prepared.identity,
-			Authorization: authorization,
+			Authorization: authorization, ExplicitStart: explicitStart,
 		})
 		return enqueueErr
 	})

@@ -82,6 +82,9 @@ type RenditionJobRequest struct {
 	CapturedArtifactPolicy jsontext.Value
 	ExecutionIdentity      document.RenditionExecutionIdentityV1
 	Authorization          ProviderOperationAuthorizationRequest
+	// ExplicitStart marks a photo description requested by an explicit start,
+	// which may replace another profile's dismissed suggestion.
+	ExplicitStart bool
 }
 
 // RenditionJob is sanitized durable status for one shared immutable build.
@@ -216,10 +219,8 @@ func (s *Store) EnqueueRenditionJob(
 			return ErrRenditionJobStaleAuthority
 		}
 		derived := request.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload
-		var explicit bool
 		if derived {
-			var inputErr error
-			if explicit, inputErr = photoDescriptionInputTx(ctx, tx, request.ExecutionIdentity, request.ContentVersionID, sourceSHA256); inputErr != nil {
+			if inputErr := photoDescriptionInputTx(ctx, tx, request.ExecutionIdentity, request.ContentVersionID, sourceSHA256); inputErr != nil {
 				return inputErr
 			}
 		} else if binding := request.ExecutionIdentity.Upload.InputBinding; binding != "" {
@@ -353,12 +354,17 @@ func (s *Store) EnqueueRenditionJob(
 		if err != nil {
 			return fmt.Errorf("joining rendition job: %w", err)
 		}
+		if request.ExplicitStart {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO photo_description_explicit_waiters(waiter_id) VALUES(?)`, waiterID); err != nil {
+				return fmt.Errorf("recording explicit start: %w", err)
+			}
+		}
 		if _, err := waiterResult.RowsAffected(); err != nil {
 			return fmt.Errorf("checking rendition job waiter: %w", err)
 		}
 		if derived {
 			var joinErr error
-			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now)
+			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, request.ExplicitStart, now)
 			return joinErr
 		}
 		var alreadyActive bool
@@ -1338,9 +1344,8 @@ func (s *Store) StageRenditionJobGeneration(
 }
 
 type renditionJobWaiterAuthority struct {
-	waiter        RenditionJobWaiter
-	profile       ProcessingProfileRecord
-	explicitPhoto bool
+	waiter  RenditionJobWaiter
+	profile ProcessingProfileRecord
 }
 
 // PublishRenditionJob rechecks the egress grant and every waiter inside the
@@ -1489,9 +1494,7 @@ func (s *Store) publishRenditionJob(
 			if err != nil {
 				return err
 			}
-			authorized = append(authorized, renditionJobWaiterAuthority{
-				waiter: waiter, profile: profile, explicitPhoto: request.explicitPhoto,
-			})
+			authorized = append(authorized, renditionJobWaiterAuthority{waiter: waiter, profile: profile})
 		}
 		publishedAt := at.UTC().Format(timestampLayout)
 		for _, waiter := range rejected {
@@ -1510,10 +1513,14 @@ func (s *Store) publishRenditionJob(
 			return nil
 		}
 		if derived {
-			for _, authority := range authorized {
-				if err := publishPhotoSuggestionTx(ctx, tx, authority.waiter.ContentVersionID, job.RenditionRequestFingerprint, authority.explicitPhoto, description, at); err != nil {
-					return err
-				}
+			// One answer serves every waiter; an explicit one may replace a dismissal.
+			var explicit bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters e JOIN rendition_job_waiters w ON w.waiter_id=e.waiter_id
+ WHERE w.job_id=? AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
+				return err
+			}
+			if err := publishPhotoSuggestionTx(ctx, tx, authorized[0].waiter.ContentVersionID, job.RenditionRequestFingerprint, explicit, description, at); err != nil {
+				return err
 			}
 		} else {
 			pairs := make([]renditionPublicationPair, 0, len(authorized))
@@ -1860,11 +1867,9 @@ func renditionWaiterAuthorizationTx(
 			ErrRenditionJobStaleAuthority)
 	}
 	if execution.Upload.InputKind == document.RenditionInputDerivedUpload {
-		explicit, err := photoDescriptionInputTx(ctx, tx, execution, versionID, job.SourceSHA256)
-		if err != nil {
+		if err := photoDescriptionInputTx(ctx, tx, execution, versionID, job.SourceSHA256); err != nil {
 			return ProviderOperationAuthorizationRequest{}, err
 		}
-		request.explicitPhoto = explicit
 	}
 	return request, nil
 }
