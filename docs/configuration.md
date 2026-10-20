@@ -351,7 +351,7 @@ automatically. GC and repack still run only on request.
 
 ### Photo descriptions
 
-Photo descriptions send the cached stripped 512px grid JPEG to an OpenAI-compatible `POST /v1/chat/completions` endpoint. The endpoint must support image input and `max_completion_tokens`. The preview has normalized orientation and color and fits the 512px input profile. `max_document_bytes` limits the preview upload, capped at 4 MiB; `max_response_bytes` is at most 1 MiB. The original can be larger. Vision profiles require every `retain_*` flag to be false.
+Photo descriptions send the cached stripped 512px grid JPEG to an OpenAI-compatible `POST /v1/chat/completions` endpoint. The endpoint must support image input and `max_completion_tokens`. The preview has normalized orientation and color and fits the 512px input profile. `max_document_bytes` limits the preview upload, and the provider rejects any preview over 4 MiB however high you set it; `max_response_bytes` is at most 1 MiB. The original can be larger. Vision profiles require every `retain_*` flag to be false.
 
 The example below uses a named environment credential and the [shared transport settings](#supplied-audio-transcription). Use a root origin, a positive request timeout of at most ten minutes, and HTTPS for `hosted_provider`. Profiles sharing a descriptor must share endpoint, credential, and runtime settings.
 
