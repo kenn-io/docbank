@@ -217,19 +217,6 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
 }
 
-func TestPhotoSettingsAuditedPreferenceConflictStatusMapping(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "api", nil)
-	require.NoError(t, err)
-	_, err = s.EnableInitialAudit(t.Context(), plan)
-	require.NoError(t, err)
-	headers := map[string]string{"If-Match": `"1"`}
-	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
-	require.Equal(t, http.StatusConflict, res.StatusCode, body)
-	require.Equal(t, "audit_mutation_unsupported", decodeProblem(t, body).Code)
-}
-
 func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -250,4 +237,12 @@ func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.Equal(t, `"3"`, res.Header.Get("ETag"))
+	// A preference change inside an audited tree reports the audit conflict.
+	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"3"`}, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+	require.Equal(t, http.StatusConflict, res.StatusCode, body)
+	require.Equal(t, "audit_mutation_unsupported", decodeProblem(t, body).Code)
 }
