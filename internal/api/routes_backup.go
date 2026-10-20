@@ -62,7 +62,7 @@ func initOrOpenBackupRepo(path string) (*backup.Repo, error) {
 	if existing, openErr := backup.Open(path); openErr == nil {
 		return existing, nil
 	}
-	return nil, err
+	return nil, fmt.Errorf("initializing backup repository: %w", err)
 }
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
