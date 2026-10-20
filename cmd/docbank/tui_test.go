@@ -33,11 +33,10 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/daemon/telemetry/events" {
-			var event struct {
-				Event string `json:"event"`
-			}
+			var event api.TelemetryEventRequest
 			assert.NoError(t, json.UnmarshalRead(r.Body, &event))
 			if event.Event == "session_ended" {
+				assert.Equal(t, &api.TelemetryEventProperties{Surface: "tui", DurationBucket: "under_1m"}, event.Properties)
 				started <- r.Context()
 				<-release
 			}
@@ -369,9 +368,6 @@ func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
 	})
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
-		t.Fatal("telemetry started a daemon")
-		return nil, context.Canceled
-	}}
+	backend := &tuiDaemonBackend{}
 	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
 }

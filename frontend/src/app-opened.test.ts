@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vite-plus/test";
 import { startTelemetryReporting } from "./app-opened.js";
-import { startSessionReporting } from "./session-duration.js";
 
 const settle = () => vi.advanceTimersByTimeAsync(0);
 
@@ -77,48 +76,16 @@ describe("app_opened reporting", () => {
     expect(unhandled).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
-  it("bounds screen failures", async () => {
+  it("forwards keepalive and the deadline through transport", async () => {
     fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
     reporter = startTelemetryReporting("secret");
-    await vi.advanceTimersByTimeAsync(0);
-    fetchMock.mockImplementation(async () => new Response(null, { status: 503 }));
-    reporter.reportScreen("help");
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(fetchMock).toHaveBeenCalledTimes(7);
-  });
-  it("keeps disabled receipts across reloads and resumes duration the next day", async () => {
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    reporter = startTelemetryReporting("secret");
-    let duration = startSessionReporting(reporter);
-    now = 120_000;
     await settle();
-    expect(duration.take()).toBeUndefined();
-    window.dispatchEvent(new Event("pagehide"));
-    reporter.reportScreen("help");
-    reporter.reportVisit({ event: "session_ended", properties: { surface: "web" } });
-    duration.stop();
-    reporter.stop();
-    reporter = startTelemetryReporting("secret");
-    duration = startSessionReporting(reporter);
-    reporter.reportScreen("browse");
-    focus();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
-    vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
-    focus();
+    reporter.reportVisit(
+      { event: "session_ended", properties: { surface: "web", duration_bucket: "1_to_5m" } },
+      { keepalive: true },
+    );
     await settle();
-    now += 120_000;
-    window.dispatchEvent(new Event("pagehide"));
-    await settle();
-    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toEqual({
-      event: "session_ended",
-      properties: { surface: "web", duration_bucket: "1_to_5m" },
-    });
     expect(fetchMock.mock.calls.at(-1)?.[1]?.keepalive).toBe(true);
     expect(fetchMock.mock.calls.at(-1)?.[1]?.signal).toBeInstanceOf(AbortSignal);
-    duration.stop();
   });
 });

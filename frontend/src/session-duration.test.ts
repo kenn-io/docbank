@@ -4,9 +4,11 @@ import { startSessionReporting } from "./session-duration.js";
 
 describe("session_ended reporting", () => {
   const reportVisit = vi.fn<BrowserTelemetryReporter["reportVisit"]>();
+  let quietChange: Parameters<BrowserTelemetryReporter["onQuietChange"]>[0];
   const reporter: Pick<BrowserTelemetryReporter, "reportVisit" | "onQuietChange"> = {
     reportVisit,
     onQuietChange: (listener) => {
+      quietChange = listener;
       listener(true, "checking");
       return () => undefined;
     },
@@ -138,11 +140,21 @@ describe("session_ended reporting", () => {
     expect(sessionReports()).toHaveLength(0);
   });
 
-  it("removes listeners when stopping", async () => {
+  it("stops duration work when disabled, resumes when enabled, and removes listeners on stop", async () => {
     reporting = startSessionReporting(reporter);
     now = 120_000;
-    reporting.stop();
+    quietChange(true, "disabled");
+    expect(reporting.take()).toBeUndefined();
+    visibility(true);
+    expect(vi.getTimerCount()).toBe(0);
+    window.dispatchEvent(new Event("pagehide"));
+    expect(sessionReports()).toHaveLength(0);
+    hidden = false;
+    quietChange(false, "enabled");
+    now += 120_000;
+    window.dispatchEvent(new Event("pagehide"));
     expectBucket("1_to_5m");
+    reporting.stop();
     visibility(false);
     window.dispatchEvent(new Event("pageshow"));
     now += 120_000;

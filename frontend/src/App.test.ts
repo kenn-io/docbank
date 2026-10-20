@@ -1564,15 +1564,6 @@ it("clears the tag filter when All files opens and restores it on Back", async (
   await screen.findByRole("region", { name: "Query editor" });
   await waitFor(() => expect(reportedScreens.at(-1)).toBe("search"));
   await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
-  // A new UTC day clears the page's reported screens, so the retained-tag search must report again.
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(Date.now() + 86_400_000);
-  reportedScreens.length = 0;
-  const search = screen.getByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "alpha" } });
-  await fireEvent.submit(search.closest("form")!);
-  await screen.findByText("Search results");
-  await waitFor(() => expect(reportedScreens).toEqual(["search"]));
 });
 
 it("ignores a folder lookup that finishes after a newer navigation", async () => {

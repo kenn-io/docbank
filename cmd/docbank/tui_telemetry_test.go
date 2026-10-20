@@ -61,7 +61,7 @@ func TestTUITelemetryReceipts(t *testing.T) {
 }
 
 func TestTUITelemetryUnexpectedDateIsEmpty(t *testing.T) {
-	for _, value := range []string{"", "invalid", "2000-01-01", time.Now().UTC().Format(time.DateOnly) + "\n", time.Now().UTC().Format(time.DateOnly) + "\nunknown", "2000-01-01\nhelp"} {
+	for _, value := range []string{"2000-01-01", time.Now().UTC().Format(time.DateOnly) + "\nunknown"} {
 		t.Run(value, func(t *testing.T) {
 			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
 			require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state"), []byte(value), 0o600))

@@ -77,13 +77,14 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(d.root, posthog.InstallFileName))
 }
 
-func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
+func TestReportTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
 	d := startTelemetryTestDaemon(t)
+	day := time.Now().UTC().Format(time.DateOnly)
 	reportTUISessionEnded(&tuiTelemetry{}, 2*time.Minute)
 	require.Eventually(t, func() bool {
 		data, err := os.ReadFile(filepath.Join(d.root, "telemetry-tui-state"))
-		return err == nil && string(data) == time.Now().UTC().Format(time.DateOnly)
+		return err == nil && (string(data) == day || string(data) == time.Now().UTC().Format(time.DateOnly))
 	}, time.Second, time.Millisecond)
 }
 
