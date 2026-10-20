@@ -2262,7 +2262,6 @@ CREATE INDEX IF NOT EXISTS photo_timeline_folder ON photo_timeline(folder_key, s
 CREATE TABLE IF NOT EXISTS photo_source_claims (
     file_id TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     original_path TEXT,
-    source_desc TEXT,
     original_mtime TEXT,
     folder_key TEXT
 );
@@ -2274,7 +2273,7 @@ CREATE TABLE IF NOT EXISTS photo_timeline_pending (node_id INTEGER PRIMARY KEY);
 CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeline_pending BEGIN
     DELETE FROM photo_timeline WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
     DELETE FROM photo_source_claims WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
-    INSERT INTO photo_source_claims(file_id, original_path, source_desc, original_mtime, folder_key)
+    INSERT INTO photo_source_claims(file_id, original_path, original_mtime, folder_key)
     WITH RECURSIVE displayed AS (
         SELECT f.file_id, f.node_id, v.blob_hash
         FROM photo_files f JOIN nodes n ON n.id = f.node_id
@@ -2287,7 +2286,7 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
         JOIN provenance_version_bindings b ON b.content_version_id = cv.version_id
         UNION SELECT chain.file_id, chain.observed_at, p.identity FROM chain JOIN provenance p ON p.supersedes = chain.identity
     ), claims AS MATERIALIZED (
-        SELECT chain.file_id, chain.observed_at, c.identity, c.original_mtime, c.original_path, i.source_desc,
+        SELECT chain.file_id, chain.observed_at, c.identity, c.original_mtime, c.original_path,
             docbank_photo_folder_v1(i.source_kind, i.source_desc, c.original_path) AS folder
         FROM chain JOIN provenance c ON c.identity = chain.identity JOIN ingests i ON i.id = c.ingest_id
         WHERE NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = c.identity)
@@ -2295,7 +2294,7 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
         SELECT *, ROW_NUMBER() OVER (PARTITION BY file_id ORDER BY observed_at, identity) AS position
         FROM claims WHERE folder IS NOT NULL
     )
-    SELECT x.file_id, f.original_path, f.source_desc,
+    SELECT x.file_id, f.original_path,
         (SELECT original_mtime FROM claims WHERE claims.file_id = x.file_id
             AND original_mtime IS NOT NULL AND substr(original_mtime, 1, 4) <> '0000'
          ORDER BY observed_at, identity LIMIT 1), f.folder

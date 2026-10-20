@@ -1740,15 +1740,14 @@ func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
 	node, err := s.IngestFileExact(ctx, run, s.RootID(), "claims.jpg", browseHash("claims"), 20, "image/jpeg", "/first/claims.jpg", "")
 	require.NoError(t, err)
 	originalVersion := node.CurrentVersionID
-	type claim struct{ Path, Description, Mtime, Folder string }
+	type claim struct{ Path, Mtime, Folder string }
 	read := func(s *Store) claim {
 		var c claim
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COALESCE(c.original_path,''), COALESCE(c.source_desc,''), COALESCE(c.original_mtime,''), COALESCE(c.folder_key,'') FROM photo_source_claims c JOIN photo_files f ON f.file_id=c.file_id WHERE f.node_id=?`, node.ID).Scan(&c.Path, &c.Description, &c.Mtime, &c.Folder))
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COALESCE(c.original_path,''), COALESCE(c.original_mtime,''), COALESCE(c.folder_key,'') FROM photo_source_claims c JOIN photo_files f ON f.file_id=c.file_id WHERE f.node_id=?`, node.ID).Scan(&c.Path, &c.Mtime, &c.Folder))
 		return c
 	}
 	first := read(s)
 	require.Equal(t, "/first/claims.jpg", first.Path)
-	require.Equal(t, "first source", first.Description)
 	require.Empty(t, first.Mtime)
 	var timelines int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&timelines))
@@ -1760,7 +1759,6 @@ func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	corrected := read(s)
 	require.Equal(t, first.Path, corrected.Path, "the earliest folder stays canonical")
-	require.Equal(t, first.Description, corrected.Description)
 	require.Equal(t, mtime, corrected.Mtime, "a later valid mtime dates initially undated bytes")
 	require.Equal(t, new(mtime), photoModifiedTime(t, s, "claims.jpg"))
 	browsePhotoMetadata(t, s, node, "claims-exif", exifCapture("2024-06-10T12:00:00Z"))

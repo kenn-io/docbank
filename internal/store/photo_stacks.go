@@ -286,7 +286,6 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool,
 				unavailable = append(unavailable, id)
 			}
 		}
-		groups = [][]string{}
 		incomplete = slices.ContainsFunc(slices.Collect(maps.Values(frames)), func(frame photoStackFrame) bool { return frame.Stale })
 		groups = photoStackRequestGroups(slices.Collect(maps.Values(frames)), settings.BurstGapSeconds, position)
 		return nil
