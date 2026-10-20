@@ -78,6 +78,8 @@
   import { mapTiles } from "./photoMap.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
+  import HiddenSetupModal from "./HiddenSetupModal.svelte";
+  import PhotoActionError from "./PhotoActionError.svelte";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
   import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
@@ -317,6 +319,12 @@
     };
   });
   let photoPath = $state(location.pathname);
+  $effect(() => {
+    void photoPath;
+    void photoMode;
+    const access = hiddenAccess;
+    return () => access?.cancelSetup();
+  });
   const mapMode = $derived(photoMode && isMapPath(photoPath));
   const mapAlbumID = $derived(
     photoPath.startsWith("/photos/map/") ? photoPath.slice("/photos/map/".length) : "",
@@ -478,7 +486,8 @@
     state.cache = view.cache;
     return revalidated;
   }
-  async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
+  async function acceptPhotoAccess(result: generated.PhotoHiddenState, configuredVersion: number) {
+    hiddenAccess?.recordConfigured(result.configured, configuredVersion);
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && changed) await invalidateLibrary(false);
@@ -635,12 +644,14 @@
       pending = true;
       controller = new AbortController();
       try {
+        const configuredVersion = hiddenAccess!.configuredVersion;
         const result = await generated.getPhotoHiddenState({
           session,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
+        if (current && !controller.signal.aborted)
+          await acceptPhotoAccess(result, configuredVersion);
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -3225,8 +3236,8 @@
             {photoID}
             onphotochange={changePhoto}
             onconceal={clearPhoto}
-            onstate={(result) => {
-              void acceptPhotoAccess(result).catch((cause) => {
+            onstate={(result, configuredVersion) => {
+              void acceptPhotoAccess(result, configuredVersion).catch((cause) => {
                 void invalidateLibrary();
                 photoAccessError = cause instanceof Error ? cause.message : String(cause);
               });
@@ -3243,7 +3254,10 @@
             onactionerror={(error) => (hiddenPhotoActionError = error)}
             photoActionError={hiddenPhotoActionError}
           />{:else if photoValidated && photoState}
-          {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
+          <PhotoActionError
+            message={hiddenPhotoActionError}
+            ondismiss={() => (hiddenPhotoActionError = "")}
+          />
           {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex
                 albums={photoAlbums}
                 cache={photoState.cache}
@@ -4733,6 +4747,8 @@
     {/if}
   </div>
 {/if}
+
+{#if hiddenAccess?.setupPrompt}<HiddenSetupModal access={hiddenAccess} />{/if}
 
 <style>
   .photo-access-error {

@@ -387,6 +387,7 @@ export class Photos {
         pages: number;
       }
     | undefined;
+  private readonly lifetime = new AbortController();
   private controller = new AbortController();
   private facetsController = new AbortController();
   private needsFacets = false;
@@ -802,14 +803,29 @@ export class Photos {
       onactionerror?.(this.actionError);
       return;
     }
-    const members = this.resolveTargets(this.selectedIDs.has(id) ? this.selectedIDs : [id]);
+    const ids = [...(this.selectedIDs.has(id) ? this.selectedIDs : [id])];
+    this.hiding = true;
+    if (!this.hidden && this.hiddenAccess) {
+      const result = await this.hiddenAccess.ensureSetup(this.lifetime.signal);
+      if (this.disposed || result === "cancelled" || result === "exists") {
+        this.hiding = false;
+        if (result === "exists") {
+          this.actionError = "Hidden already has a passcode. Choose Hide again to use it.";
+          onactionerror?.(this.actionError);
+        } else if (this.disposed && result === "saved") {
+          onactionerror?.("Hidden passcode saved. Choose Hide again.");
+        }
+        return;
+      }
+    }
+    const members = this.resolveTargets(ids);
     if (!members) {
+      this.hiding = false;
       this.actionError = "Load and select the photos again before changing their visibility.";
       onactionerror?.(this.actionError);
       return;
     }
     this.cancelPending();
-    this.hiding = true;
     this.actionError = "";
     let failure = "";
     let failures = 0;
@@ -827,9 +843,17 @@ export class Photos {
       },
       (cause) => {
         failures++;
+        if (
+          cause instanceof APIError &&
+          cause.code === "hidden_not_configured" &&
+          this.hiddenAccess &&
+          !this.hidden
+        ) {
+          this.hiddenAccess.configured = false;
+        }
         failure =
           cause instanceof APIError && cause.code === "hidden_not_configured"
-            ? "Set a passcode in the Hidden view first."
+            ? "Hidden has no passcode. Choose Hide again to set one."
             : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden
               ? "This photo is already hidden."
               : cause instanceof Error
@@ -1524,6 +1548,7 @@ export class Photos {
     this.allResults = true;
   }
   dispose() {
+    this.lifetime.abort();
     this.clearFrozen();
     this.authored.dispose();
     this.cullEditor?.dispose();

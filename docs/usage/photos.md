@@ -206,7 +206,7 @@ A frozen result can contain at most 250,000 assets. Larger freeze requests fail 
 
 ## Hidden photos
 
-Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions menu or right-click it and choose Hide. If the photo belongs to the selection, the action applies to each selected photo. A stale photo reports an error while successful changes remain saved.
+Open a photo's actions menu or right-click it and choose Hide. If Hidden has no passcode, Hide asks you to enter a new one twice, then hides the photos. Setting a passcode from Hide leaves Hidden locked. If the photo belongs to the selection, the action applies to each selected photo. A stale photo reports an error while successful changes remain saved.
 
 Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership; their included count covers only visible photos. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
 

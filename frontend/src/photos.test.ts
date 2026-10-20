@@ -1,5 +1,6 @@
 import { waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
 import {
@@ -777,7 +778,7 @@ it.each([
 );
 
 it.each([
-  ["hidden_not_configured", 409, "Set a passcode in the Hidden view first."],
+  ["hidden_not_configured", 409, "Hidden has no passcode. Choose Hide again to set one."],
   ["hidden_locked", 403, "This photo is already hidden."],
 ])("explains a rejected hide with %s", async (code, status, message) => {
   const fetcher = vi
@@ -3032,3 +3033,70 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
   expect(peak).toBe(4);
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
 });
+
+it("uses refreshed revisions after saving Hidden setup before the hide batch", async () => {
+  const access = new HiddenAccess("scoped", vi.fn());
+  access.configured = false;
+  const hides: [string, string | null][] = [];
+  const hidden = new Set<string>();
+  let refreshed = false;
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/hide")) {
+      hides.push([url, new Headers(init.headers).get("If-Match")]);
+      const id = url.split("/").at(-2)!;
+      hidden.add(id);
+      return Response.json({ id, revision: Number(new Headers(init.headers).get("If-Match")) + 1 });
+    }
+    return response(
+      refreshed
+        ? [
+            { ...photo(1), revision: 9 },
+            { ...photo(2), revision: 7 },
+          ].filter((row) => !hidden.has(row.asset_id))
+        : [],
+    );
+  });
+  const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
+  photos.items = [photo(1), { ...photo(2), revision: 7 }];
+  photos.started = true;
+  photos.selectLoaded();
+  const write = photos.setHidden("photo-1");
+  await waitFor(() => expect(access.setupPrompt).toBeDefined());
+  expect(photos.hiding).toBe(true);
+  expect(hides).toEqual([]);
+  refreshed = true;
+  await photos.refresh();
+  access.setupPrompt!.done("saved");
+  await write;
+  expect(hides).toEqual([
+    ["/api/v1/photos/assets/photo-1/hide", "9"],
+    ["/api/v1/photos/assets/photo-2/hide", "7"],
+  ]);
+  expect(photos.hiding).toBe(false);
+  expect(photos.items).toEqual([]);
+  expect(photos.actionError).toBe("");
+  photos.dispose();
+});
+
+it.each([true, undefined])(
+  "hides without a setup prompt when configured=%s",
+  async (configured) => {
+    const hides: [string, string | null][] = [];
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/assets/query")) return response([]);
+      if (!url.endsWith("/hide")) throw new Error(`Unexpected request: ${url}`);
+      hides.push([url, new Headers(init.headers).get("If-Match")]);
+      return Response.json({ id: "photo-1", revision: 2 });
+    });
+    const access = new HiddenAccess("scoped", vi.fn());
+    access.configured = configured;
+    const photos = new Photos("scoped", vi.fn(), false, undefined, { hiddenAccess: access });
+    photos.items = [photo(1)];
+    await photos.setHidden("photo-1");
+    expect(hides).toEqual([["/api/v1/photos/assets/photo-1/hide", "1"]]);
+    expect(photos.actionError).toBe("");
+    expect(photos.hiding).toBe(false);
+    expect(access.setupPrompt).toBeUndefined();
+    photos.dispose();
+  },
+);
