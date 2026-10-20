@@ -28,7 +28,14 @@ func newProcessingVisionFingerprintsCommand() *cobra.Command {
 		}
 		descriptor, err := vision.Descriptor(model, document.RenditionTrustBoundary(trust))
 		if err != nil {
-			return usageError(err)
+			flag := "--model"
+			if errors.Is(err, vision.ErrInvalidTrustBoundary) {
+				flag = "--trust-boundary"
+			}
+			return usageError(fmt.Errorf("%s: %w", flag, err))
+		}
+		if _, err := vision.ValidateOrigin(endpoint, descriptor.TrustBoundary); err != nil {
+			return usageError(fmt.Errorf("--endpoint: %w", err))
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "descriptor_fingerprint = %q\ndisclosure_fingerprint = %q\n", descriptor.Fingerprint, vision.DisclosureFingerprint(descriptor, endpoint, deployment))
 		if err != nil {

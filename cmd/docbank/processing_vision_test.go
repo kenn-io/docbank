@@ -28,13 +28,23 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 	require.Equal(t, descriptor.Fingerprint, fingerprints.Descriptor)
 	require.Equal(t, vision.DisclosureFingerprint(descriptor, "https://vision.example.com", deployment), fingerprints.Disclosure)
 	require.NoDirExists(t, home)
-	for _, args := range [][]string{
-		{"--model", "synthetic-vision", "--trust-boundary", "private", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", strings.Repeat("a", 64)},
-		{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", "invalid"},
+	for _, tc := range []struct {
+		flag string
+		args []string
+	}{
+		{"--trust-boundary", []string{"--model", "synthetic-vision", "--trust-boundary", "private", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment}},
+		{"--trust-boundary", []string{"--model", "synthetic-vision", "--trust-boundary", "local_process", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment}},
+		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--deployment-fingerprint", deployment}},
+		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com/v1", "--deployment-fingerprint", deployment}},
+		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "http://vision.example.com", "--deployment-fingerprint", deployment}},
+		{"--model", []string{"--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment}},
+		{"--deployment-fingerprint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", "invalid"}},
 	} {
-		_, err := runCLI(t, append([]string{"processing", "vision-fingerprints"}, args...)...)
+		output, err := runCLI(t, append([]string{"processing", "vision-fingerprints"}, tc.args...)...)
 		require.Error(t, err)
+		require.ErrorContains(t, err, tc.flag)
 		require.Equal(t, exitUsage, commandExitCode(err, true))
+		require.Empty(t, output)
 		require.NoDirExists(t, home)
 	}
 }

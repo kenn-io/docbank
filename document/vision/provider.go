@@ -34,6 +34,9 @@ const MaxRequestTimeout = 10 * time.Minute
 const MaxResponseBytes = 1 << 20
 const InputProfile = "grid-jpeg-512-metadata-stripped-v1"
 
+// ErrInvalidTrustBoundary rejects a trust boundary without a network provider.
+var ErrInvalidTrustBoundary = errors.New("vision trust boundary must be operator_network or hosted_provider")
+
 var captionListMarker = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 var captionStrong = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 var captionEmphasis = regexp.MustCompile(`\*([^*\s](?:[^*]*[^*\s])?)\*`)
@@ -67,6 +70,9 @@ type Provider struct {
 
 // Descriptor binds model, prompt, and input policy to the provider identity.
 func Descriptor(model string, trust document.RenditionTrustBoundary) (document.RenditionDescriptor, error) {
+	if trust != document.RenditionTrustOperatorNetwork && trust != document.RenditionTrustHostedProvider {
+		return document.RenditionDescriptor{}, ErrInvalidTrustBoundary
+	}
 	if model == "" || len(model) > 255 || model != strings.TrimSpace(model) || strings.ContainsAny(model, "\r\n\x00") {
 		return document.RenditionDescriptor{}, errors.New("vision model is invalid")
 	}
@@ -79,12 +85,17 @@ func DisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, de
 	return providerutil.SHA256Hex([]byte(strings.Join([]string{AdapterContract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment}, "\x00")))
 }
 
+// ValidateOrigin accepts a provider root origin under the selected trust boundary.
+func ValidateOrigin(origin string, trust document.RenditionTrustBoundary) (string, error) {
+	return provider.ValidateOrigin(origin, trust)
+}
+
 func New(profile Profile, secrets providerutil.SecretResolver, client *http.Client) (*Provider, error) {
 	descriptor, err := Descriptor(profile.Model, profile.TrustBoundary)
 	if err != nil {
 		return nil, err
 	}
-	origin, err := provider.ValidateOrigin(profile.Origin, profile.TrustBoundary)
+	origin, err := ValidateOrigin(profile.Origin, profile.TrustBoundary)
 	if err != nil {
 		return nil, err
 	}
