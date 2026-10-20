@@ -146,6 +146,12 @@ vault's ownership. Confirmation is bound to the previewed history. If snapshots
 change before confirmation, preview the repository again. Use `--json` for one
 result object on stdout; previews and prompts go to stderr.
 
+Ownership failures keep HTTP status `409` and distinct problem codes:
+`backup_repository_owner_conflict`, `backup_repository_claim_required`, and
+`backup_repository_claim_changed`. The CLI exits with `7`, `2`, and `4`,
+respectively. Automation can distinguish another vault's repository, required
+adoption, and a stale preview without parsing error text.
+
 This operation requires the operator's API credential. Embedded callers use
 `vault.ClaimBackupRepository(ctx, repository, false, "")` to preview, then
 `vault.ClaimBackupRepository(ctx, repository, true, preview.Preview)` to confirm. Existing snapshots remain readable, verifiable, and restorable

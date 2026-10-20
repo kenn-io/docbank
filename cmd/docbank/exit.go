@@ -10,19 +10,21 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 )
 
 const (
-	exitSuccess   = 0
-	exitGeneral   = 1
-	exitUsage     = 2
-	exitNotFound  = 3
-	exitStale     = 4
-	exitBusy      = 5
-	exitIntegrity = 6
+	exitSuccess             = 0
+	exitGeneral             = 1
+	exitUsage               = 2
+	exitNotFound            = 3
+	exitStale               = 4
+	exitBusy                = 5
+	exitIntegrity           = 6
+	exitBackupOwnerConflict = 7
 )
 
 type exitError struct {
@@ -61,8 +63,12 @@ func commandExitCode(err error, started bool) int {
 		return exitNotFound
 	}
 	if errors.Is(err, store.ErrStaleRevision) ||
-		errors.Is(err, store.ErrAuditPreviewStale) {
+		errors.Is(err, store.ErrAuditPreviewStale) ||
+		errors.Is(err, backupapp.ErrRepositoryClaimChanged) {
 		return exitStale
+	}
+	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) {
+		return exitBackupOwnerConflict
 	}
 	if errors.Is(err, home.ErrVaultLocked) || errors.Is(err, backup.ErrRepoLocked) ||
 		errors.Is(err, packstore.ErrPackRetirementDeferred) ||
@@ -75,7 +81,7 @@ func commandExitCode(err error, started bool) int {
 		errors.Is(err, store.ErrInvalidBatchMove) ||
 		errors.Is(err, store.ErrInvalidVersionPrune) ||
 		errors.Is(err, store.ErrInvalidAuditCursor) || errors.Is(err, store.ErrInvalidPhotoAsset) ||
-		errors.Is(err, store.ErrPhotoNodeNotEligible) {
+		errors.Is(err, store.ErrPhotoNodeNotEligible) || errors.Is(err, backupapp.ErrRepositoryClaimRequired) {
 		return exitUsage
 	}
 	if code, ok := daemonconn.ProblemCode(err); ok &&
@@ -111,6 +117,13 @@ func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) str
 		return "hint: " + hinted.hint
 	}
 	switch code {
+	case exitBackupOwnerConflict:
+		return `hint: select this vault's backup repository with --repo, or initialize a separate repository`
+	case exitStale:
+		if errors.Is(err, backupapp.ErrRepositoryClaimChanged) {
+			return `hint: run "docbank backup claim" again and review the current history`
+		}
+		return ""
 	case exitUsage:
 		if started {
 			return ""

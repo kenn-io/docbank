@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
@@ -34,6 +37,9 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "not found", err: fmt.Errorf("lookup: %w", store.ErrNotFound), started: true, want: exitNotFound},
 		{name: "stale revision", err: store.ErrStaleRevision, started: true, want: exitStale},
 		{name: "stale preview", err: store.ErrAuditPreviewStale, started: true, want: exitStale},
+		{name: "backup owner conflict", err: fmt.Errorf("capture: %w", backupapp.ErrRepositoryOwnerConflict), started: true, want: 7},
+		{name: "backup claim required", err: fmt.Errorf("capture: %w", backupapp.ErrRepositoryClaimRequired), started: true, want: 2},
+		{name: "backup claim changed", err: fmt.Errorf("claim: %w", backupapp.ErrRepositoryClaimChanged), started: true, want: 4},
 		{name: "vault busy", err: home.ErrVaultLocked, started: true, want: exitBusy},
 		{name: "repository busy", err: backup.ErrRepoLocked, started: true, want: exitBusy},
 		{name: "retirement busy", err: packstore.ErrPackRetirementDeferred, started: true, want: exitBusy},
@@ -161,6 +167,32 @@ func TestRunProcessRequiredFlagErrorsAreUsage(t *testing.T) {
 	assert.Empty(t, stdout.String())
 }
 
+func TestRunProcessBackupOwnershipExitCodes(t *testing.T) {
+	_ = setupVaultHome(t)
+	var stdout, stderr bytes.Buffer
+	run := func(args ...string) int {
+		resetFlags(rootCmd)
+		stdout.Reset()
+		stderr.Reset()
+		return runProcess(args, &stdout, &stderr)
+	}
+	path := filepath.Join(t.TempDir(), "repo")
+	require.Equal(t, 0, run("backup", "init", "--repo", path))
+	require.Equal(t, 0, run("backup", "create", "--repo", path, "--json"))
+	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+	require.Equal(t, 2, run("backup", "create", "--repo", path, "--json"))
+	require.Contains(t, stderr.String(), "docbank backup claim")
+	require.Empty(t, stdout.String())
+	require.Equal(t, 2, run("backup", "create", "--repo", path))
+	foreign, err := backup.Init(filepath.Join(t.TempDir(), "foreign-repo"))
+	require.NoError(t, err)
+	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), foreign, "00000000-0000-4000-8000-000000000001", false))
+	require.Equal(t, 7, run("backup", "create", "--repo", foreign.Root(), "--json"))
+	require.Contains(t, stderr.String(), "another vault")
+	require.Contains(t, stderr.String(), "select this vault's backup repository")
+	require.Empty(t, stdout.String())
+}
+
 func TestRunProcessErrorHints(t *testing.T) {
 	_ = setupVaultHome(t)
 	var stdout, stderr bytes.Buffer
@@ -230,6 +262,9 @@ func TestCommandErrorHint(t *testing.T) {
 		{"wrapped hint", lsCmd, fmt.Errorf("listing: %w", withHint(store.ErrNotFound, "try this")), exitNotFound, true, "hint: try this"},
 		{"vault locked", jobsCmd, home.ErrVaultLocked, exitBusy, true, ""},
 		{"backup repository locked", backupCreateCmd, backup.ErrRepoLocked, exitBusy, true, `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`},
+		{"backup owner conflict", backupCreateCmd, backupapp.ErrRepositoryOwnerConflict, 7, true, `hint: select this vault's backup repository with --repo, or initialize a separate repository`},
+		{"backup claim required", backupCreateCmd, backupapp.ErrRepositoryClaimRequired, 2, true, ""},
+		{"backup claim changed", backupClaimCmd, backupapp.ErrRepositoryClaimChanged, 4, true, `hint: run "docbank backup claim" again and review the current history`},
 		{"pack retirement deferred", storageRepackCmd, packstore.ErrPackRetirementDeferred, exitBusy, true, ""},
 		{"maintenance busy", jobsCmd, daemonconn.ErrMaintenanceBusy, exitBusy, true, `hint: wait and retry; "docbank jobs" shows active work`},
 		{"stale", rmCmd, store.ErrStaleRevision, exitStale, true, ""},

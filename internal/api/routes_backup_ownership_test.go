@@ -27,6 +27,7 @@ func TestBackupRepositoryInitAndClaimOwnership(t *testing.T) {
 	response, body = do(t, second, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": true})
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Contains(t, body, "another vault")
+	require.Contains(t, body, `"code":"backup_repository_owner_conflict"`)
 	response, body = do(t, first, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, second, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{})
@@ -36,6 +37,7 @@ func TestBackupRepositoryInitAndClaimOwnership(t *testing.T) {
 	response, body = do(t, first, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{})
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Contains(t, body, "backup claim")
+	require.Contains(t, body, `"code":"backup_repository_claim_required"`)
 	var identity string
 	for _, confirmed := range []bool{false, true} {
 		response, body = do(t, first, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": confirmed, "preview": identity})
@@ -108,6 +110,7 @@ func TestBackupRepositoryClaimRejectsChangedHistory(t *testing.T) {
 	response, body = do(t, server, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": true, "preview": preview.Preview})
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Contains(t, body, "history changed")
+	require.Contains(t, body, `"code":"backup_repository_claim_changed"`)
 	_, err = os.Stat(filepath.Join(path, "docbank-owner"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 	// A fresh preview can adopt the changed history.

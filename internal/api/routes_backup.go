@@ -829,8 +829,14 @@ func backupProblem(err error) *Error {
 	if errors.Is(err, backup.ErrRepoLocked) {
 		return NewError(http.StatusConflict, "backup_locked", err.Error())
 	}
-	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) || errors.Is(err, backupapp.ErrRepositoryClaimRequired) || errors.Is(err, backupapp.ErrRepositoryClaimChanged) {
-		return NewError(http.StatusConflict, "backup_repository_owner", err.Error())
+	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) {
+		return NewError(http.StatusConflict, "backup_repository_owner_conflict", err.Error())
+	}
+	if errors.Is(err, backupapp.ErrRepositoryClaimRequired) {
+		return NewError(http.StatusConflict, "backup_repository_claim_required", err.Error())
+	}
+	if errors.Is(err, backupapp.ErrRepositoryClaimChanged) {
+		return NewError(http.StatusConflict, "backup_repository_claim_changed", err.Error())
 	}
 	return NewError(http.StatusInternalServerError, "backup_failed", err.Error())
 }

@@ -316,11 +316,12 @@ stderr. Human error text remains explanatory and may change.
 |------|---------|----------------|
 | `0` | Success, including an empty result or a dry run that found nothing | Continue |
 | `1` | General operational failure, such as local I/O, transport, daemon, or an otherwise unclassified conflict | Report or inspect stderr |
-| `2` | Invalid command usage, arguments, flag combinations, values, or request validation | Correct the invocation |
+| `2` | Invalid command usage, arguments, flag combinations, values, request validation, or backup history needs an explicit claim | Correct the invocation or review and claim the repository |
 | `3` | The daemon returned `not_found` for the requested vault object | Refresh names or identities |
-| `4` | Stale optimistic state: a revision or audit enrollment preview no longer matches | Re-read, reconsider, and retry deliberately |
+| `4` | Stale optimistic state: a revision, audit enrollment preview, or backup claim preview no longer matches | Re-read, reconsider, and retry deliberately |
 | `5` | Vault maintenance is active, or a vault, backup repository, or physical pack resource is busy or locked | Wait and retry, or release the known owner; do not blindly force-unlock |
 | `6` | A completed verification reported integrity findings, or a content stream failed terminal size/hash/digest proof | Do not trust or publish the affected bytes |
+| `7` | The backup repository belongs to another vault | Select this vault's repository or initialize a separate one |
 
 Integrity commands may write their complete human or JSON report before
 exiting `6`. The report is evidence, not a success indication. Failures that
