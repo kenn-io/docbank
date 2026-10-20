@@ -1096,6 +1096,10 @@ CREATE INDEX IF NOT EXISTS visual_preview_generations_output
     ON visual_preview_generations(output_blob_hash, generation_id)
     WHERE output_blob_hash IS NOT NULL;
 
+-- Photo description backfill walks the ready previews of one recipe in version order.
+CREATE INDEX IF NOT EXISTS visual_preview_generations_ready
+    ON visual_preview_generations(recipe_fingerprint, content_version_id) WHERE state='ready';
+
 CREATE TABLE IF NOT EXISTS visual_preview_heads (
     content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
     generation_id      TEXT NOT NULL UNIQUE,
