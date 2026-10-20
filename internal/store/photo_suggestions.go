@@ -80,13 +80,9 @@ func photoDescriptionSettledTx(ctx context.Context, q metadataQuerier, versionID
 }
 
 // publishPhotoSuggestionTx stores a provider's description for a version
-// unless the version is settled. Fields already equal to the authored caption
+// unless the version is settled. The description is already normalized. Fields already equal to the authored caption
 // or an assigned tag, and fields the owner resolved before a restore, are left out.
 func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
-	description, err := normalizePhotoDescription(description)
-	if err != nil {
-		return err
-	}
 	explicitProducer := ""
 	if explicit {
 		explicitProducer = producer
@@ -114,7 +110,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	var awaiting int64
 	var captionResolved bool
 	var resolvedJSON string
-	err = tx.QueryRowContext(ctx, `SELECT id,caption_resolved,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND awaiting`, version).Scan(&awaiting, &captionResolved, &resolvedJSON)
+	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND awaiting`, version).Scan(&awaiting, &captionResolved, &resolvedJSON)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -275,7 +271,7 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 	if request.Caption {
 		edit.Patch.Caption = &row.Value.Caption
 	}
-	targets, loaded, err := s.photoAuthoredBatchTargetsTx(ctx, tx, edit, true)
+	targets, loaded, err := s.photoAuthoredBatchTargetsTx(ctx, tx, edit, photoAuthoredTargetChecks{requireNodeRevision: true, hiddenUnlocked: row.hidden})
 	if errors.Is(err, ErrStaleRevision) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidPhotoAsset) {
 		return nil, ErrPhotoSuggestionConflict
 	}

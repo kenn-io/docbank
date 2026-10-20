@@ -32,6 +32,8 @@ func publishPhotoDescription(t *testing.T, s *Store, asset PhotoAsset, producer 
 	ctx := t.Context()
 	node, err := s.NodeByID(ctx, fileByID(asset.Files, *asset.DisplayFileID).NodeID)
 	require.NoError(t, err)
+	description, err = normalizePhotoDescription(description)
+	require.NoError(t, err)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		return publishPhotoSuggestionTx(ctx, tx, node.CurrentVersionID, producer, explicit, description, time.Now().UTC())
 	}))

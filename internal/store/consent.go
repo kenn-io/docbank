@@ -85,6 +85,9 @@ type ProviderOperationAuthorizationRequest struct {
 	// PriorAuthorization binds atomic publication and fenced provider retries
 	// to the original grant. A replacement grant cannot revive revoked work.
 	PriorAuthorization *ProviderOperationAuthorization
+	// explicitPhoto reports, for a photo description waiter, that an explicit
+	// start admitted its job. Waiter authorization sets it.
+	explicitPhoto bool
 }
 
 // ProviderOperationAuthorization is an immutable receipt. It is evidence of a

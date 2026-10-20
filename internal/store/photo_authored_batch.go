@@ -284,7 +284,7 @@ func (s *Store) EditPhotoAuthoredBatch(ctx context.Context, request PhotoAuthore
 		return result, ErrPhotoEditFileLimit
 	}
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		targets, loaded, err := s.photoAuthoredBatchTargetsTx(ctx, tx, request, false)
+		targets, loaded, err := s.photoAuthoredBatchTargetsTx(ctx, tx, request, photoAuthoredTargetChecks{})
 		if err != nil {
 			return err
 		}
@@ -356,9 +356,17 @@ func loadPhotoAuthoredBatchRowsTx(ctx context.Context, tx *sql.Tx, targets []Pho
 	return loaded, err
 }
 
+// photoAuthoredTargetChecks narrows the checks of photoAuthoredBatchTargetsTx
+// for a caller whose transaction already decided them.
+type photoAuthoredTargetChecks struct {
+	requireNodeRevision bool
+	// hiddenUnlocked means the caller already confirmed the hidden session.
+	hiddenUnlocked bool
+}
+
 // photoAuthoredBatchTargetsTx checks each requested target, in request order,
 // against its current asset, file, and node revisions.
-func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch, requireNodeRevision bool) ([]PhotoAuthoredTarget, map[string]photoAuthoredLoaded, error) {
+func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch, checks photoAuthoredTargetChecks) ([]PhotoAuthoredTarget, map[string]photoAuthoredLoaded, error) {
 	rows, err := loadPhotoAuthoredBatchRowsTx(ctx, tx, request.Targets)
 	if err != nil {
 		return nil, nil, err
@@ -366,7 +374,7 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 	targets := make([]PhotoAuthoredTarget, 0, len(request.Targets))
 	assets := map[string]photoAuthoredAssetAccess{}
 	loaded := map[string]photoAuthoredLoaded{}
-	unlocked := false
+	unlocked := checks.hiddenUnlocked
 	for _, expected := range request.Targets {
 		asset, checked := assets[expected.AssetID]
 		if !checked {
@@ -397,7 +405,7 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 			return nil, nil, fmt.Errorf("node %d: %w", file.NodeID, ErrNotFound)
 		}
 		loaded[file.ID] = photoAuthoredLoaded{file, node}
-		if file.AssetID != expected.AssetID || asset.revision != expected.AssetRevision || (requireNodeRevision || len(request.Keywords) > 0) && node.Revision != expected.NodeRevision {
+		if file.AssetID != expected.AssetID || asset.revision != expected.AssetRevision || (checks.requireNodeRevision || len(request.Keywords) > 0) && node.Revision != expected.NodeRevision {
 			return nil, nil, ErrStaleRevision
 		}
 		if expected.ContentVersionID != "" && asset.displayVersionID.String != expected.ContentVersionID {

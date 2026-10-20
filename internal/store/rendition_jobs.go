@@ -1338,8 +1338,9 @@ func (s *Store) StageRenditionJobGeneration(
 }
 
 type renditionJobWaiterAuthority struct {
-	waiter  RenditionJobWaiter
-	profile ProcessingProfileRecord
+	waiter        RenditionJobWaiter
+	profile       ProcessingProfileRecord
+	explicitPhoto bool
 }
 
 // PublishRenditionJob rechecks the egress grant and every waiter inside the
@@ -1489,7 +1490,7 @@ func (s *Store) publishRenditionJob(
 				return err
 			}
 			authorized = append(authorized, renditionJobWaiterAuthority{
-				waiter: waiter, profile: profile,
+				waiter: waiter, profile: profile, explicitPhoto: request.explicitPhoto,
 			})
 		}
 		publishedAt := at.UTC().Format(timestampLayout)
@@ -1510,11 +1511,7 @@ func (s *Store) publishRenditionJob(
 		}
 		if derived {
 			for _, authority := range authorized {
-				explicit, err := photoDescriptionInputTx(ctx, tx, executionIdentity, authority.waiter.ContentVersionID, job.SourceSHA256)
-				if err != nil {
-					return err
-				}
-				if err := publishPhotoSuggestionTx(ctx, tx, authority.waiter.ContentVersionID, job.RenditionRequestFingerprint, explicit, description, at); err != nil {
+				if err := publishPhotoSuggestionTx(ctx, tx, authority.waiter.ContentVersionID, job.RenditionRequestFingerprint, authority.explicitPhoto, description, at); err != nil {
 					return err
 				}
 			}
@@ -1863,9 +1860,11 @@ func renditionWaiterAuthorizationTx(
 			ErrRenditionJobStaleAuthority)
 	}
 	if execution.Upload.InputKind == document.RenditionInputDerivedUpload {
-		if _, err := photoDescriptionInputTx(ctx, tx, execution, versionID, job.SourceSHA256); err != nil {
+		explicit, err := photoDescriptionInputTx(ctx, tx, execution, versionID, job.SourceSHA256)
+		if err != nil {
 			return ProviderOperationAuthorizationRequest{}, err
 		}
+		request.explicitPhoto = explicit
 	}
 	return request, nil
 }
