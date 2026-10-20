@@ -268,25 +268,20 @@ describe("document processing drawer", () => {
               capability: "rendition",
               provider_id: "private-provider",
               trust_boundary: "local_process",
-              input_classes: ["derived_upload"],
+              input_classes: ["original_file"],
               runtime_disclosure: {
                 immediate_processor: "private-provider",
                 ultimate_processor: "private-provider",
                 endpoint: "in-process",
                 deployment: fingerprint,
                 metadata_classes: [],
-                retained_artifact_roles: [],
+                retained_artifact_roles: ["sanitized_markdown"],
               },
             },
           ],
-          disclosed_classes: ["derived_upload"],
-          retained_classes: ["normalized_evidence"],
-          estimate: {
-            source_bytes: 1,
-            provider_calls: 1,
-            vector_spaces: 0,
-            scope: "Granting consent automatically queues eligible photos throughout this vault.",
-          },
+          disclosed_classes: ["original_file"],
+          retained_classes: ["sanitized_markdown"],
+          estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 0 },
           consent_required: false,
           consent_state: "active",
           backup_consequence: "retained derivatives enter future backups",
@@ -336,7 +331,6 @@ describe("document processing drawer", () => {
     });
 
     expect(await screen.findByText(/rendition.*complete/i)).toBeTruthy();
-    expect(screen.getByText(/queues eligible photos throughout this vault/)).toBeTruthy();
     await fireEvent.change(screen.getByRole("combobox", { name: "Profile" }), {
       target: { value: "hosted" },
     });
@@ -382,7 +376,7 @@ describe("document processing drawer", () => {
               trust_boundary: "operator_network",
               input_classes: ["original_file"],
               disclose_filename: true,
-              filename: "report.pdf",
+              filename: "harbor.jpg",
               runtime_disclosure: {
                 immediate_processor: "Docbank rendition adapter",
                 ultimate_processor: "Docling Serve",
@@ -414,7 +408,12 @@ describe("document processing drawer", () => {
           ],
           disclosed_classes: ["original_file", "rendition_chunk"],
           retained_classes: ["sanitized_markdown", "embedding_vector_set"],
-          estimate: { source_bytes: 2048, provider_calls: 2, vector_spaces: 1 },
+          estimate: {
+            source_bytes: 2048,
+            provider_calls: 2,
+            vector_spaces: 1,
+            scope: "Granting consent automatically queues eligible photos throughout this vault.",
+          },
           consent_required: true,
           consent_state: "required",
           backup_consequence: "retained derivatives enter future backups",
@@ -480,7 +479,7 @@ describe("document processing drawer", () => {
               rank: 1,
               lexical_rank: 1,
               score: 1,
-              path: "/Reports/report.pdf",
+              path: "/Photos/harbor.jpg",
               excerpt: "Synthetic match",
               evidence: [
                 {
@@ -503,7 +502,7 @@ describe("document processing drawer", () => {
       session: "short-lived",
       node: {
         id: 42,
-        name: "report.pdf",
+        name: "harbor.jpg",
         kind: "file",
         current_version_id: versionID,
         size: 2048,
@@ -511,7 +510,7 @@ describe("document processing drawer", () => {
         created_at: "",
         modified_at: "",
       },
-      path: "/Reports/report.pdf",
+      path: "/Photos/harbor.jpg",
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
       onrendition: openRendition,
@@ -520,7 +519,7 @@ describe("document processing drawer", () => {
     expect(await screen.findByText("docling-local")).toBeTruthy();
     expect(screen.getAllByText(fingerprint).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Private network").length).toBeGreaterThan(0);
-    expect(screen.getByText("Disclosed filename: report.pdf")).toBeTruthy();
+    expect(screen.getByText("Disclosed filename: harbor.jpg")).toBeTruthy();
     expect(screen.getByText("Local process")).toBeTruthy();
     expect(
       screen.getByText(/processing profile and operator scope until revoked or expired/i),
@@ -529,6 +528,7 @@ describe("document processing drawer", () => {
       screen.getByText("Extracted text is saved in the vault and included in backups."),
     ).toBeTruthy();
     expect(screen.getByText(/2 provider calls/i)).toBeTruthy();
+    expect(screen.getByText(/queues eligible photos throughout this vault/)).toBeTruthy();
     expect(screen.getByText(/1 vector space/i)).toBeTruthy();
     expect(screen.getByText(/retained derivatives enter future backups/i)).toBeTruthy();
     expect(screen.getByText(/original_file.*rendition_chunk/i)).toBeTruthy();

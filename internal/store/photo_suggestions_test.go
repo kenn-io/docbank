@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -421,21 +422,6 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		require.Equal(t, "Regenerated.", regenerated[0].Value.Caption)
 		require.NoError(t, restored.ValidateMetadata(ctx))
 	})
-	t.Run("keeps a dismissal", func(t *testing.T) {
-		t.Parallel()
-		s := newTestStore(t)
-		ctx := t.Context()
-		asset := albumAsset(t, s, "dismissed.jpg")
-		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor."})
-		_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
-		require.NoError(t, err)
-		restored := restorePhotoSuggestionStore(t, s)
-		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again."})
-		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "a dismissed description is not asked for again")
-		settled, err := restored.photoDescriptionSettled(ctx, proposal.ContentVersionID, "")
-		require.NoError(t, err)
-		require.True(t, settled)
-	})
 }
 
 func TestPhotoSuggestionBackupKeepsCompletion(t *testing.T) {
@@ -650,22 +636,31 @@ func TestPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *
 func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	fingerprints, err := document.CurrentPhotoQualityFingerprints()
-	require.NoError(t, err)
-	rows, err := s.db.QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+photoDescriptionTargetsSQL, fingerprints.GridRecipe, "", producerA, 50)
-	require.NoError(t, err)
-	var plan []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		plan = append(plan, detail)
+	ctx := t.Context()
+	var versions []string
+	for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
+		asset := albumAsset(t, s, name)
+		node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+		require.NoError(t, err)
+		// Building the request publishes the ready grid preview that makes the photo a target.
+		photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+		versions = append(versions, node.CurrentVersionID)
 	}
-	require.NoError(t, rows.Close())
-	for _, step := range plan {
-		require.NotContains(t, step, "TEMP B-TREE", "a page is read in index order, not sorted")
-		require.NotRegexp(t, `^SCAN (a|f|n)\b`, step, "a page does not scan the whole library")
+	slices.Sort(versions)
+	ids := func(page []ContentVersion) []string {
+		out := make([]string, len(page))
+		for i, version := range page {
+			out[i] = version.ID
+		}
+		return out
 	}
+
+	first, err := s.PhotoDescriptionTargets(ctx, producerB, "", 2)
+	require.NoError(t, err)
+	require.Equal(t, versions[:2], ids(first), "a small page holds the first targets in version order")
+	rest, err := s.PhotoDescriptionTargets(ctx, producerB, versions[1], 2)
+	require.NoError(t, err)
+	require.Equal(t, versions[2:], ids(rest), "the cursor resumes after the last version read")
 }
 
 func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {

@@ -147,6 +147,38 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 	}
 }
 
+func TestProbeSendsSyntheticImageWithoutNamingColors(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body request
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			return
+		}
+		encoded := strings.TrimPrefix(body.Messages[0].Content[1].ImageURL.URL, "data:image/jpeg;base64,")
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if !assert.NoError(t, err) {
+			return
+		}
+		img, err := jpeg.Decode(bytes.NewReader(data))
+		if !assert.NoError(t, err) {
+			return
+		}
+		assert.NotContains(t, body.Messages[0].Content[0].Text, "red")
+		assert.NotContains(t, body.Messages[0].Content[0].Text, "blue")
+		assert.Equal(t, image.Rect(0, 0, 64, 32), img.Bounds())
+		red, _, blue, _ := img.At(16, 16).RGBA()
+		assert.Greater(t, red, blue)
+		red, _, blue, _ = img.At(48, 16).RGBA()
+		assert.Greater(t, blue, red)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(visiontest.Completion("red,blue"))
+	}))
+	defer server.Close()
+	p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	require.NoError(t, err)
+	require.NoError(t, p.Probe(t.Context()))
+}
+
 func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -165,29 +197,7 @@ func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 	} {
 		t.Run(tc.answer, func(t *testing.T) {
 			t.Parallel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body request
-				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-					return
-				}
-				encoded := strings.TrimPrefix(body.Messages[0].Content[1].ImageURL.URL, "data:image/jpeg;base64,")
-				data, err := base64.StdEncoding.DecodeString(encoded)
-				if !assert.NoError(t, err) {
-					return
-				}
-				img, err := jpeg.Decode(bytes.NewReader(data))
-				if !assert.NoError(t, err) {
-					return
-				}
-				if tc.answer == "red,blue" {
-					assert.NotContains(t, body.Messages[0].Content[0].Text, "red")
-					assert.NotContains(t, body.Messages[0].Content[0].Text, "blue")
-					assert.Equal(t, image.Rect(0, 0, 64, 32), img.Bounds())
-					red, _, blue, _ := img.At(16, 16).RGBA()
-					assert.Greater(t, red, blue)
-					red, _, blue, _ = img.At(48, 16).RGBA()
-					assert.Greater(t, blue, red)
-				}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(visiontest.Completion(tc.answer))
 			}))

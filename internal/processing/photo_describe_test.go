@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,6 +42,8 @@ type photoDescriptionFixture struct {
 	service *Service
 	profile document.ProcessingProfileV1
 	server  *httptest.Server
+	// skew moves the services' clock ahead of real time.
+	skew atomic.Int64
 
 	mu           sync.Mutex
 	probeCalls   int
@@ -131,6 +134,7 @@ func (f *photoDescriptionFixture) newService(t *testing.T, name, model string) *
 	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
 	f.profile = profile
 	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing",
+		Clock:    func() time.Time { return time.Now().UTC().Add(time.Duration(f.skew.Load())) },
 		Profiles: map[string]ProfileConfig{name: {Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}}})
 	require.NoError(t, err)
 	return service
@@ -351,13 +355,15 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	f.mu.Lock()
 	f.probeFails = false
 	f.mu.Unlock()
-	f.service.mediaOriginMu.Lock()
-	id := visionReadinessKey(f.service.profiles["vision"].record.Fingerprint)
-	observation := f.service.mediaOriginEvidence[id]
-	observation.ProbedAt = observation.ProbedAt.Add(-2 * time.Minute)
-	f.service.mediaOriginEvidence[id] = observation
-	f.service.mediaOriginMu.Unlock()
-	require.Equal(t, 1, f.backfill(t, f.service), "the provider recovers without a restart")
+	// A minute later the retry is due. Only the readiness check sees the later
+	// clock, because the queue compares job times with real time.
+	f.skew.Add(int64(61 * time.Second))
+	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	f.skew.Store(0)
+	require.NoError(t, err)
+	require.Len(t, targets, 1, "the provider recovers without a restart")
+	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]))
+	f.runWorker(t, f.service)
 	require.Len(t, f.suggestions(t), 1)
 }
 

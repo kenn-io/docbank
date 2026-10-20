@@ -56,6 +56,7 @@ func TestFromStoreErrorMappings(t *testing.T) {
 		{store.ErrPersonMergeTooLarge, http.StatusUnprocessableEntity, "person_merge_too_large"},
 		{store.ErrPersonRetired, http.StatusConflict, "person_retired"},
 		{store.ErrPhotoEditReceiptLimit, http.StatusUnprocessableEntity, "photo_edit_receipt_limit"},
+		{store.ErrInvalidPhotoSuggestionResponse, http.StatusUnprocessableEntity, "invalid_photo_suggestion_response"},
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			mapped := &Error{}

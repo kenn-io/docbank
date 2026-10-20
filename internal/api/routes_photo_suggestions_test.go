@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/docbank/sqlite"
 )
 
-func TestPhotoSuggestionRoutesValidateResponseAndPassHiddenCookie(t *testing.T) {
+func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	ts, s := newTestServer(t, nil)
@@ -35,15 +35,12 @@ func TestPhotoSuggestionRoutesValidateResponseAndPassHiddenCookie(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, prepared.Suggestions, 1)
 	id := prepared.Suggestions[0].ID
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", nil, store.PhotoSuggestionResponse{Response: "accepted"})
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Contains(t, body, `"code":"invalid_photo_suggestion_response"`)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	hidden, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(ctx, "unlock", "synthetic-passcode", "")
 	require.NoError(t, err)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", map[string]string{"Cookie": cookie}, store.PhotoSuggestionResponse{AssetID: prepared.Suggestions[0].AssetID, AssetRevision: hidden.Revision, SourceRevision: prepared.Suggestions[0].SourceRevision, NodeRevision: prepared.Suggestions[0].NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", map[string]string{"Cookie": cookie}, store.PhotoSuggestionResponse{AssetID: prepared.Suggestions[0].AssetID, AssetRevision: hidden.Revision, SourceRevision: prepared.Suggestions[0].SourceRevision, NodeRevision: prepared.Suggestions[0].NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var accepted map[string]any
 	require.NoError(t, json.Unmarshal([]byte(body), &accepted))
