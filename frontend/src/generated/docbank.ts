@@ -5850,7 +5850,6 @@ export interface PhotoMapRow {
   latitude: number | null;
   /** @nullable */
   longitude: number | null;
-  matched_ai_suggestion?: boolean;
   name: string;
   previews: PhotoMapRowPreviewsStruct;
   /** @minimum 1 */

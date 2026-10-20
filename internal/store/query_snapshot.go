@@ -358,7 +358,10 @@ func materializeSnapshotRows(
 	var population compiledQueryFragment
 	var err error
 	if options.Photos {
-		population, err = photoSnapshotPopulation(compiled, generationID, coverage, options.MaxRows)
+		var suggestions bool
+		if suggestions, err = photoSuggestionsExist(ctx, q); err == nil {
+			population, err = photoSnapshotPopulation(compiled, generationID, coverage, options.MaxRows, suggestions)
+		}
 	} else {
 		population, err = matchedPopulation(compiled, generationID, nil)
 	}

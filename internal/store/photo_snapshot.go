@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-func photoSnapshotPopulation(compiled CompiledQuery, generation string, coverage CoverageSelection, limit int64) (compiledQueryFragment, error) {
+func photoSnapshotPopulation(compiled CompiledQuery, generation string, coverage CoverageSelection, limit int64, suggestions bool) (compiledQueryFragment, error) {
 	if err := validatePhotoQuerySort(compiled.Query); err != nil {
 		return compiledQueryFragment{}, err
 	}
 	if compiled.Query.Sort.Field == "relevance" {
-		statement, args, err := rankedPhotoStatement(compiled, generation, coverage, int(limit+1), true)
+		statement, args, err := rankedPhotoStatement(compiled, generation, coverage, int(limit+1), true, suggestions)
 		return compiledQueryFragment{sql: statement, args: args}, err
 	}
 	key := photoBrowseMissingKey(compiled.Query.Sort.Field)

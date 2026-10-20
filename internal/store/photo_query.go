@@ -527,6 +527,9 @@ func markSuggestionOnlyMatches(
 	if _, content := photoTextOperands(compiled); content == "" || len(items) == 0 {
 		return nil
 	}
+	if suggestions, err := photoSuggestionsExist(ctx, q); err != nil || !suggestions {
+		return err
+	}
 	compiled.withoutSuggestion = true
 	scope, err := newPhotoBrowseScope(ctx, q, compiled, generation, coverage, hidden)
 	if err != nil {
@@ -562,7 +565,7 @@ func markSuggestionOnlyMatches(
 	return nil
 }
 
-func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot bool) (string, []any, error) {
+func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot, suggestions bool) (string, []any, error) {
 	names, content := photoTextOperands(compiled)
 	population, err := photoBrowsePopulation(compiled, generation, coverage)
 	if err != nil {
@@ -583,7 +586,7 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 	// higher than the suggestion tier, below any fully authored match.
 	// Without suggestion-searchable text every match is a plain one.
 	plain := compiledQueryFragment{sql: `SELECT node_id FROM eligible`}
-	if content != "" {
+	if content != "" && suggestions {
 		withoutSuggestion := compiled
 		withoutSuggestion.withoutSuggestion = true
 		if plain, err = photoBrowsePopulation(withoutSuggestion, generation, coverage); err != nil {
@@ -624,8 +627,20 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 	return statement, args, nil
 }
 
+// photoSuggestionsExist reports whether any suggestion row exists, so a library
+// without descriptions skips the suggestion-aware ranking pass.
+func photoSuggestionsExist(ctx context.Context, q metadataQuerier) (bool, error) {
+	var exists bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_suggestions)`).Scan(&exists)
+	return exists, err
+}
+
 func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int) ([]PhotoBrowseRow, error) {
-	statement, args, err := rankedPhotoStatement(compiled, generation, coverage, pageSize, false)
+	suggestions, err := photoSuggestionsExist(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	statement, args, err := rankedPhotoStatement(compiled, generation, coverage, pageSize, false, suggestions)
 	if err != nil {
 		return nil, err
 	}

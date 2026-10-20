@@ -98,7 +98,6 @@ type PhotoMapRow struct {
 	Previews         struct {
 		Grid PhotoPreviewSlot `json:"grid"`
 	} `json:"previews"`
-	MatchedAISuggestion bool `json:"matched_ai_suggestion,omitempty"`
 }
 
 // PhotoStack is one burst among a page's items.
