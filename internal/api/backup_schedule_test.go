@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
@@ -164,6 +165,48 @@ func TestBackupScheduleRetryAndCancellation(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestBackupScheduleStaleWarningPersistsUntilHealthyCheck(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t, time.Hour)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		old, err := createScheduledBackupSnapshot(t.Context(), repo, d)
+		require.NoError(t, err)
+		time.Sleep(49 * time.Hour)
+		checks := make(chan struct{})
+		checked := make(chan error)
+		supervisor := jobs.New(t.Context(), d.Logger)
+		require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error {
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-checks:
+					_, err := scheduledBackup(ctx, d, d.Logger, false)
+					checked <- err
+				}
+			}
+		}))
+		checks <- struct{}{}
+		require.NoError(t, <-checked)
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		require.NotEqual(t, old.ID, points[0].SnapshotID, "stale capture and cleanup completed")
+		assert.Contains(t, supervisor.Snapshot()[0].Error, "newest scheduled backup is stale")
+		// A later healthy check clears the warning without another capture.
+		checks <- struct{}{}
+		require.NoError(t, <-checked)
+		assert.Empty(t, supervisor.Snapshot()[0].Error)
+		after, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, after, 1)
+		require.Equal(t, points[0].SnapshotID, after[0].SnapshotID)
+		require.NoError(t, supervisor.Shutdown(t.Context()))
+	})
 }
 
 func TestBackupScheduleClearsErrorWhenHealthyPointIsNotDue(t *testing.T) {
