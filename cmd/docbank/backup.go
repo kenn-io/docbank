@@ -73,6 +73,7 @@ var (
 
 var backupClaimCmd = &cobra.Command{
 	Use: "claim", Short: "Assign existing backup history to this vault", Args: cobra.NoArgs,
+	Example: `  docbank backup claim --repo ~/docbank-backup`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		repo, err := absoluteBackupRepo(backupClaimRepo)
 		if err != nil {
@@ -547,7 +548,7 @@ func writeBackupRestoreReport(w io.Writer, report api.BackupRestoreReport) error
 func init() {
 	backupClaimCmd.Flags().StringVar(&backupClaimRepo, "repo", "", "backup repository directory")
 	backupClaimCmd.Flags().BoolVar(&backupClaimYes, "yes", false, "confirm adoption without prompting")
-	backupClaimCmd.Flags().BoolVar(&backupClaimJSON, "json", false, "output JSON")
+	backupClaimCmd.Flags().BoolVar(&backupClaimJSON, "json", false, "print JSON to stdout")
 	backupInitCmd.Flags().StringVar(&backupInitRepo, "repo", "", "backup repository directory")
 	backupInitCmd.Flags().BoolVar(&backupInitJSON, "json", false, "print JSON to stdout")
 	backupCreateCmd.Flags().StringVar(&backupCreateRepo, "repo", "", "backup repository directory")
