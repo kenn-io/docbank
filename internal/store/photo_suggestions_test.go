@@ -272,13 +272,13 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	asset := albumAsset(t, s, "owned.jpg")
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
 
-	tag, err := s.CreateTag(ctx, "coast")
+	tag, err := s.CreateTag(ctx, "Coast")
 	require.NoError(t, err)
 	_, err = s.AssignTag(ctx, tag.ID, asset.Files[0].NodeID, UnconditionalRev)
 	require.NoError(t, err)
 	offered := photoSuggestionValues(t, s, asset.ID)
 	require.Len(t, offered, 1)
-	require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"sunset"}}, offered[0].Value, "a tag assigned by hand is no longer offered, whatever its case")
+	require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"sunset"}}, offered[0].Value, "a tag assigned by hand is no longer offered")
 
 	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}})
 	require.NoError(t, err)
@@ -298,29 +298,35 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	var caption, tags string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions WHERE content_version_id=(SELECT current_version_id FROM nodes WHERE id=?)`, early.Files[0].NodeID).Scan(&caption, &tags))
 	require.Empty(t, caption, "publication leaves out the authored caption")
-	require.JSONEq(t, `["sunset"]`, tags, "publication leaves out the assigned tag, whatever its case")
+	require.JSONEq(t, `["sunset"]`, tags, "publication leaves out the assigned tag")
 }
 
-func TestPhotoSuggestionAcceptanceReusesATagThatDiffersInCase(t *testing.T) {
+func TestPhotoSuggestionKeepsTagsThatDifferInCase(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ existing, suggested string }{{"Dog", "dog"}, {"CAFÉ", "café"}} {
-		t.Run(tc.existing, func(t *testing.T) {
+	for _, tc := range []struct{ owned, suggested string }{{"US", "us"}, {"CAFÉ", "café"}} {
+		t.Run(tc.owned, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
 			ctx := t.Context()
 			asset := albumAsset(t, s, "cased.jpg")
-			existing, err := s.CreateTag(ctx, tc.existing)
+			owned, err := s.CreateTag(ctx, tc.owned)
 			require.NoError(t, err)
 			proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Tags: []string{tc.suggested}})
+			_, err = s.AssignTag(ctx, owned.ID, asset.Files[0].NodeID, UnconditionalRev)
+			require.NoError(t, err)
+			offered := photoSuggestionValues(t, s, asset.ID)
+			require.Len(t, offered, 1)
+			require.Equal(t, []string{tc.suggested}, offered[0].Value.Tags, "a case variant of an assigned tag is still offered")
 
 			accepted := acceptPhotoSuggestion(t, s, proposal, false, tc.suggested)
 			require.NotNil(t, accepted.AuthoredReceipt)
 			_, total, err := s.Tags(ctx, 10, 0)
 			require.NoError(t, err)
-			require.Equal(t, 1, total, "no second tag for the same keyword")
+			require.Equal(t, 2, total, "the case variant is its own tag")
 			assigned, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
 			require.NoError(t, err)
-			require.Equal(t, []string{existing.ID}, assigned.Targets[0].Tags)
+			require.Len(t, assigned.Targets[0].Tags, 2)
+			require.Contains(t, assigned.Targets[0].Tags, owned.ID)
 		})
 	}
 }

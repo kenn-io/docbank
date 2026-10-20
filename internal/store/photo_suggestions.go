@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"slices"
-	"strings"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -105,14 +104,8 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 	if description.Caption == authored {
 		description.Caption = ""
 	}
-	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return containsFold(assigned, tag) })
+	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return slices.Contains(assigned, tag) })
 	return true, nil
-}
-
-// containsFold reports whether names has tag, ignoring case. Tags differing only
-// in case are distinct stored values, but the owner reads them as one keyword.
-func containsFold(names []string, tag string) bool {
-	return slices.ContainsFunc(names, func(name string) bool { return strings.EqualFold(name, tag) })
 }
 
 // publishPhotoSuggestionTx stores a provider's description for a version
@@ -145,7 +138,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	if captionResolved {
 		description.Caption = ""
 	}
-	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return containsFold(resolved, tag) })
+	description.Tags = slices.DeleteFunc(description.Tags, func(tag string) bool { return slices.Contains(resolved, tag) })
 	tags, err := json.Marshal(description.Tags)
 	if err != nil {
 		return err
@@ -332,24 +325,12 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 }
 
 // suggestedTagTx returns the ID of the tag named name, creating it when
-// missing. A tag that differs only in case is the same keyword to the owner, as
-// in containsFold, and an exact match wins.
+// missing. Tags match by exact NFC name, as they do everywhere else, so a case
+// variant of an existing tag becomes its own tag.
 func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (string, error) {
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=?`, name).Scan(&id)
 	if !errors.Is(err, sql.ErrNoRows) {
-		return id, err
-	}
-	if err := queryRows(ctx, tx, `SELECT id,name FROM tags ORDER BY name`, nil, func(rows *sql.Rows) error {
-		var candidate, candidateName string
-		if err := rows.Scan(&candidate, &candidateName); err != nil {
-			return err
-		}
-		if id == "" && strings.EqualFold(candidateName, name) {
-			id = candidate
-		}
-		return nil
-	}); err != nil || id != "" {
 		return id, err
 	}
 	created, err := s.createTagTx(ctx, tx, name)
