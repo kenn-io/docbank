@@ -51,6 +51,7 @@ type photoDescriptionFixture struct {
 	probeFails   bool
 	reply        string
 	onDescribe   func()
+	onProbe      func(call int)
 }
 
 func newPhotoDescriptionFixture(t *testing.T) *photoDescriptionFixture {
@@ -91,11 +92,16 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 		}
 		f.mu.Lock()
 		probe := visiontest.IsProbe(body)
-		reply, hook := f.reply, f.onDescribe
+		reply, hook, onProbe := f.reply, f.onDescribe, f.onProbe
 		switch {
 		case probe:
 			f.probeCalls++
 			reply = "red,blue"
+			if onProbe != nil {
+				f.mu.Unlock()
+				onProbe(f.probeCalls)
+				f.mu.Lock()
+			}
 			if f.probeFails {
 				f.mu.Unlock()
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -353,6 +359,42 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	f.service.mediaOriginMu.Unlock()
 	require.Equal(t, 1, f.backfill(t, f.service), "the provider recovers without a restart")
 	require.Len(t, f.suggestions(t), 1)
+}
+
+func TestPhotoDescriptionStartupProbeSharesTheInlineProbe(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	f.mu.Lock()
+	// The first probe waits; any other probe fails.
+	f.onProbe = func(call int) {
+		if call == 1 {
+			<-release
+			return
+		}
+		f.mu.Lock()
+		f.probeFails = true
+		f.mu.Unlock()
+	}
+	f.mu.Unlock()
+	startup := make(chan error, 1)
+	go func() { startup <- f.service.ProbeMediaOrigins(t.Context()) }()
+	require.Eventually(t, func() bool { probes, _ := f.counts(); return probes == 1 }, 5*time.Second, time.Millisecond)
+
+	inline := make(chan error, 1)
+	go func() { inline <- f.service.requireVisionReadiness(t.Context(), f.service.profiles["vision"]) }()
+	require.Never(t, func() bool { probes, _ := f.counts(); return probes > 1 }, 100*time.Millisecond, time.Millisecond,
+		"an overlapping request waits for the probe in flight")
+	unblock()
+	require.NoError(t, <-startup)
+	require.NoError(t, <-inline, "the success stands")
+	require.NoError(t, f.service.requireVisionReadiness(t.Context(), f.service.profiles["vision"]))
+	probes, _ := f.counts()
+	require.Equal(t, 1, probes)
 }
 
 func TestPhotoDescriptionStartSavesConsentBeforeReportingProbeFailure(t *testing.T) {
