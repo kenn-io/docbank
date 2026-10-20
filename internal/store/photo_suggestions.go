@@ -144,6 +144,15 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		return err
 	}
 	if awaiting != 0 {
+		// The producer's own dismissal stands. The restored row settles without text.
+		var dismissed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND dismissed AND id<>?)`, version, producer, awaiting).Scan(&dismissed); err != nil {
+			return err
+		}
+		if dismissed {
+			_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET awaiting=0 WHERE id=?`, awaiting)
+			return err
+		}
 		// The restored row now belongs to the producer that regenerated it. An
 		// older row of that producer is superseded by the owner's decisions it holds.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {

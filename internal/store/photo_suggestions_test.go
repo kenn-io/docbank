@@ -404,7 +404,7 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		require.Len(t, regenerated, 1)
 		require.Equal(t, document.PhotoDescription{Tags: []string{"coast", "sunset"}}, regenerated[0].Value, "the resolved caption stays resolved")
 	})
-	t.Run("regenerates over another producer's dismissal", func(t *testing.T) {
+	t.Run("keeps a dismissal when another producer's restored row regenerates", func(t *testing.T) {
 		t.Parallel()
 		s := newTestStore(t)
 		ctx := t.Context()
@@ -419,16 +419,15 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 
 		restored := restorePhotoSuggestionStore(t, s)
 		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again.", Tags: []string{"coast", "sunset", "boats"}})
-		regenerated := photoSuggestionValues(t, restored, asset.ID)
-		require.Len(t, regenerated, 1)
-		require.Equal(t, document.PhotoDescription{Tags: []string{"sunset", "boats"}}, regenerated[0].Value)
+		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "A's dismissal stands, so A's fresh text is not offered")
+		var dismissed int
+		require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_suggestions WHERE producer_fingerprint=? AND dismissed`, producerA).Scan(&dismissed))
+		require.Equal(t, 1, dismissed, "A's dismissal survives the regeneration")
 		require.NoError(t, restored.ValidateMetadata(ctx))
-		_, err = restored.RespondPhotoSuggestion(ctx, regenerated[0].ID, PhotoSuggestionResponse{Response: "dismissed"})
-		require.NoError(t, err)
-		for producer, want := range map[string]bool{producerA: true, producerB: false} {
-			settled, err := restored.photoDescriptionSettled(ctx, regenerated[0].ContentVersionID, producer)
+		for _, producer := range []string{"", producerA, producerB} {
+			settled, err := restored.photoDescriptionSettled(ctx, first.ContentVersionID, producer)
 			require.NoError(t, err)
-			require.Equal(t, want, settled, "one row remains, and it is A's: %s", producer[:1])
+			require.True(t, settled, "nothing is owed after the restored row settles: %q", producer)
 		}
 	})
 	t.Run("regenerates a pending suggestion nobody has decided on", func(t *testing.T) {
