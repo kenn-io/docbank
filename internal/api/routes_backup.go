@@ -52,6 +52,19 @@ type backupRestoreRequest struct {
 	StoreMap    string `json:"store_map,omitzero" doc:"Loopback-only server-local path to an owner-private TOML restore mapping file."`
 }
 
+// initOrOpenBackupRepo resumes an init that published Kit's config but not the
+// owner marker; EnsureRepositoryOwner still rejects any other existing state.
+func initOrOpenBackupRepo(path string) (*backup.Repo, error) {
+	repo, err := backup.Init(path)
+	if err == nil {
+		return repo, nil
+	}
+	if existing, openErr := backup.Open(path); openErr == nil {
+		return existing, nil
+	}
+	return nil, err
+}
+
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	registerBackupCleanupRoutes(api, d)
 	type initOutput struct{ Body BackupRepository }
@@ -67,7 +80,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		repo, err := backup.Init(repoPath)
+		repo, err := initOrOpenBackupRepo(repoPath)
 		if err != nil {
 			return nil, NewError(http.StatusConflict, "backup_repository", err.Error())
 		}
