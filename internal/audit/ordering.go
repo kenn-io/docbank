@@ -364,15 +364,10 @@ func attachedRecordIdentity(record *Record) ([]byte, error) {
 		}
 		identity = Record{Kind: "tag_definition_identity", Fields: []Field{{Name: "tag_id", Value: tagID}}}
 	case "photo_representative", "photo_burst_settings":
-		name := "asset_id"
-		if record.Kind == "photo_burst_settings" {
-			name = "singleton"
-		}
-		value, err := recordField(record, name)
-		if err != nil {
+		var err error
+		if identity, err = PhotoDecisionIdentity(*record); err != nil {
 			return nil, err
 		}
-		identity = Record{Kind: record.Kind + "_identity", Fields: []Field{{Name: name, Value: value}}}
 	case "derivative_purge_suppression":
 		source, err := recordField(record, "source_sha256")
 		if err != nil {
@@ -395,6 +390,20 @@ func attachedRecordIdentity(record *Record) ([]byte, error) {
 		return nil, fmt.Errorf("record kind %q has no attached-metadata identity", record.Kind)
 	}
 	return encodeCanonical(identity)
+}
+
+// PhotoDecisionIdentity returns the identity record of a photo_representative
+// or photo_burst_settings record.
+func PhotoDecisionIdentity(record Record) (Record, error) {
+	name := "asset_id"
+	if record.Kind == "photo_burst_settings" {
+		name = "singleton"
+	}
+	value, err := recordField(&record, name)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{Kind: record.Kind + "_identity", Fields: []Field{{Name: name, Value: value}}}, nil
 }
 
 func collectionRecord(value Value) (*Record, error) {
