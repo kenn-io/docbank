@@ -857,6 +857,22 @@ func TestPhotoDescriptionAutomaticJoinKeepsEarlierExplicitRequest(t *testing.T) 
 	require.Equal(t, "From B.", published[0].Value.Caption)
 }
 
+func TestPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "lease.jpg")
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	request := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+	grantRenditionJobConsent(t, s, request)
+	at := time.Now().UTC().Add(time.Minute)
+	job, _, _ := startPhotoDescription(t, s, request, at)
+	// The daemon stops mid call and the lease runs out. A description has no side effects, so the next claim just runs it again.
+	_, err = s.ClaimRenditionJob(ctx, job.ID, "restarted-worker", at.Add(2*time.Hour), time.Hour)
+	require.NoError(t, err)
+}
+
 func TestDerivativePurgeLeavesPhotoSuggestionsButVersionPurgeRemovesThem(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

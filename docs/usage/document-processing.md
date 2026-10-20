@@ -122,7 +122,7 @@ still apply.
 
 Configure a [vision profile](../configuration.md#photo-descriptions), review `processing plan` for a photo, and grant consent with `processing build`. Eligible photos then queue automatically, a few at a time. The provider receives the cached grid JPEG, at most 512 pixels on its longest edge and re-encoded without metadata; filenames and original bytes stay in the vault. Hidden, excluded, trashed, and superseded photos are skipped before the call and again at publication, and a hidden photo retries once it is eligible again.
 
-The first request to a provider checks it with a synthetic image, and a failed check retries no sooner than a minute later. If it fails when you grant consent, the error says consent was saved. Caption, tags, and visible text arrive as one [suggestion](photos.md#suggested-metadata). An invalid caption or an oversized tag is dropped alone; a non-JSON reply publishes nothing.
+The first request to a provider checks it with a synthetic image, and a failed check retries no sooner than a minute later. If it fails when you grant consent, the error says consent was saved. Caption, tags, and visible text arrive as one [suggestion](photos.md#suggested-metadata). An invalid caption or an oversized tag is dropped alone; a non-JSON reply publishes nothing. A dropped connection, timeout, or daemon restart during a description call retries it with backoff, since a description has no side effects.
 
 Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
 

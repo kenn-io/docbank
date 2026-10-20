@@ -50,6 +50,7 @@ type photoDescriptionFixture struct {
 	describeBody []byte
 	describes    int
 	probeFails   bool
+	dropDescribe bool
 	reply        string
 	onDescribe   func()
 	onProbe      func(call int)
@@ -111,6 +112,14 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 		default:
 			f.describes++
 			f.describeBody = bytes.Clone(body)
+			if f.dropDescribe {
+				f.mu.Unlock()
+				connection, _, err := w.(http.Hijacker).Hijack()
+				if assert.NoError(t, err) {
+					_ = connection.Close()
+				}
+				return
+			}
 		}
 		f.mu.Unlock()
 		if !probe && hook != nil {
@@ -372,6 +381,30 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]))
 	f.runWorker(t, f.service)
 	require.Len(t, f.suggestions(t), 1)
+}
+
+func TestPhotoDescriptionRetriesAfterADroppedConnection(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	f.mu.Lock()
+	f.dropDescribe = true
+	f.mu.Unlock()
+	require.Equal(t, 1, f.backfill(t, f.service))
+	_, describes := f.counts()
+	require.Equal(t, 1, describes, "the call went out and the connection dropped")
+	require.Empty(t, f.suggestions(t))
+
+	// The endpoint heals. The call has no side effects, so it is simply asked for again.
+	f.mu.Lock()
+	f.dropDescribe = false
+	f.mu.Unlock()
+	// The retry waits out its backoff, so pass until the queue offers it.
+	for deadline := time.Now().Add(10 * time.Second); len(f.suggestions(t)) == 0 && time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		f.backfill(t, f.service)
+	}
+	require.Len(t, f.suggestions(t), 1, "the retry produces the suggestion once the endpoint answers")
+	require.Zero(t, f.waitingDescriptions(t))
 }
 
 func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {

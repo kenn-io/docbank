@@ -474,6 +474,9 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 	var snapshot document.RenditionExecutionSnapshotV1
 	var egressFence *store.ProviderEgressFence
 	var durableResume atomic.Bool
+	// A photo description has no side effects, so asking again is always safe and
+	// an unclear outcome retries instead of waiting for an operator.
+	durableResume.Store(work.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload)
 	workerOwnsUpload := false
 	resuming := claim.ResumeHandle != ""
 	if resuming {
@@ -873,6 +876,9 @@ func (worker *RenditionWorker) classifyProviderError(
 			delay := providerError.RetryAfter()
 			if delay <= 0 {
 				delay = 30 * time.Second
+				if work.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
+					delay = renditionProviderRetryDelay(providerAttempt)
+				}
 			}
 			return worker.markRetry(
 				ctx, claim, store.RenditionFailureTransient, now, now.Add(delay))

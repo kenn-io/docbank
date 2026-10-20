@@ -572,6 +572,24 @@ func (s *Store) ClaimRenditionJob(
 				return ErrRenditionJobLeaseHeld
 			}
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
+				// A photo description has no side effects, so it runs again instead of waiting for an operator.
+				var description bool
+				if err := tx.QueryRowContext(ctx, `SELECT json_extract(execution_identity_json,'$.upload.input_kind')='derived_upload' FROM rendition_jobs WHERE job_id=?`, jobID).Scan(&description); err != nil {
+					return fmt.Errorf("reading rendition job input kind: %w", err)
+				}
+				if description {
+					if _, err := tx.ExecContext(ctx, `
+						UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,
+						lease_expires_at=NULL,provider_started=0,execution_snapshot_json=NULL,
+						selected_waiter_id=NULL,authorization_grant_id=NULL,authorization_incarnation_id=NULL,
+						authorization_revocation_fence=NULL,failure_code=NULL,updated_at=? WHERE job_id=?`,
+						at.Format(timestampLayout), jobID); err != nil {
+						return fmt.Errorf("requeueing expired photo description: %w", err)
+					}
+					state, phase, providerStarted = RenditionJobQueued, RenditionPhaseQueued, false
+				}
+			}
+			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
 				if _, err := tx.ExecContext(ctx, `
 					UPDATE rendition_jobs SET state='operator_required',claim_owner=NULL,
 					lease_expires_at=NULL,failure_code='ambiguous',updated_at=? WHERE job_id=?`,
