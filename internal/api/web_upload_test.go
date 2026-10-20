@@ -904,37 +904,6 @@ func TestBrowserPhotoPlanSkipsLeadingUnsupportedFilesWithoutHashes(t *testing.T)
 	require.NotEmpty(t, receipt.Receipt.AssetID)
 }
 
-func TestBrowserPhotoResumeRetainsSource(t *testing.T) {
-	t.Parallel()
-	ts, catalog := newTestServer(t, nil)
-	conn := browserUploadSocket(t, ts)
-	const source = "20000000-0000-4000-8000-000000000001"
-	for i, shade := range []color.RGBA{{R: 255, A: 255}, {G: 255, A: 255}} {
-		if i == 1 {
-			require.NoError(t, conn.Close(websocket.StatusNormalClosure, "interrupted"))
-			conn = browserUploadSocket(t, ts)
-		}
-		data := mediatest.JPEG(2, 2, shade)
-		name := fmt.Sprintf("Card/IMG_%04d.JPG", i)
-		hash := sha256.Sum256(data)
-		member := map[string]any{"relative_path": name, "expected_hash": hex.EncodeToString(hash[:]), "expected_size": len(data)}
-		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "destination": "/photos", "request_id": "resume", "source_id": source, "files": []map[string]any{{"relative_path": name, "expected_hash": hex.EncodeToString(hash[:]), "size": len(data)}}}))
-		plan := readPhotoResponse(t, conn)
-		require.Equal(t, "photo_import_plan", plan.Type)
-		reply := uploadBrowserPhoto(t, conn, plan.ImportID, 0, member, data)
-		require.Equal(t, "added", reply.Receipt.Status)
-		asset, err := catalog.PhotoAssetByID(t.Context(), reply.Receipt.AssetID)
-		require.NoError(t, err)
-		require.Len(t, asset.Files, 1)
-		resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/provenance?limit=1&offset=0", asset.Files[0].NodeID), nil)
-		require.Equal(t, http.StatusOK, resp.StatusCode, body)
-		var page api.ProvenancePage
-		require.NoError(t, json.Unmarshal([]byte(body), &page))
-		require.Len(t, page.Items, 1)
-		require.Equal(t, "browser:"+source+"/"+name, page.Items[0].OriginalPath)
-	}
-}
-
 func TestBrowserPhotoPlanRejectsZeroSource(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)

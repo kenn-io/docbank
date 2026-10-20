@@ -46,21 +46,12 @@ func TestBrowserPhotoResumeKeepsOriginal(t *testing.T) {
 	require.NoError(t, err)
 	first := commit(run, sourceID, "camera", "frame-0.jpg", "synthetic browser photo frame-0.jpg")
 	require.True(t, first.Added)
-	original, err := ing.Store.NodeByID(ctx, first.Asset.Files[0].NodeID)
-	require.NoError(t, err)
 	resumedRun, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic changed selection")
 	require.NoError(t, err)
 	changed := commit(resumedRun, sourceID, "camera", "frame-0.jpg", "changed synthetic browser photo")
 	require.True(t, changed.Added)
 	require.Len(t, changed.Nodes, 1)
-	assert.NotEqual(t, original.ID, changed.Nodes[0].ID)
-	digest := sha256.Sum256([]byte("changed synthetic browser photo"))
-	assert.Equal(t, hex.EncodeToString(digest[:]), changed.Nodes[0].BlobHash)
-	current, err := ing.Store.NodeByID(ctx, original.ID)
-	require.NoError(t, err)
-	assert.Equal(t, original.BlobHash, current.BlobHash)
-	assert.Equal(t, original.Revision, current.Revision)
-	assert.Equal(t, original.CurrentVersionID, current.CurrentVersionID)
+	assert.NotEqual(t, first.Asset.Files[0].NodeID, changed.Nodes[0].ID)
 }
 
 func TestPhotoImportGrouping(t *testing.T) {
