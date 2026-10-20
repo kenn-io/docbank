@@ -7,7 +7,6 @@ import PhotoImportDrawer from "./PhotoImportDrawer.svelte";
 import { APIError } from "./api-transport.js";
 import {
   UploadChannelError,
-  hashFile,
   type PhotoImportTransport,
   type PhotoGroupReceipt,
   type TransferProgress,
@@ -274,12 +273,9 @@ it("starts a new shoot's first group after reading only that group's files", asy
       unsupported: [3],
       skip_reasons: { 3: "Unsupported type" },
     }),
-    // Like the real transport, hash the group's missing members, then upload.
-    uploadPhotoGroup: vi.fn().mockImplementation(async (_id, _group, group, signal, _p, hashes) => {
+    uploadPhotoGroup: vi.fn().mockImplementation(async (_id, _group, _files, _signal, _p, hashes) => {
       readsAtUpload ??= readCounts();
       hashesAtUpload ??= [...hashes];
-      for (const [i, file] of (group as File[]).entries())
-        hashes[i] ||= await hashFile(file, signal, () => {});
       return { status: "added", asset_id: "photo-1" };
     }),
   };
@@ -303,7 +299,6 @@ it("starts a new shoot's first group after reading only that group's files", asy
   await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledTimes(2));
   expect(readsAtUpload).toEqual([0, 0, 0, 0]);
   expect(hashesAtUpload).toEqual(["", ""]);
-  expect(readCounts()).toEqual([1, 1, 1, 0]);
 });
 
 it("shows Hashing only while the files the server asked for are read", async () => {

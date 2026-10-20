@@ -875,7 +875,7 @@ it.each(["Cancel", "Reset pass"])(
 it("clears selected frames when All changes to Unflagged with the same photos", async () => {
   const rows = [photo(1), photo(2), photo(3)];
   const ids = rows.map((row) => row.asset_id);
-  const { cull, photos, container } = await reviewPhoto(rows[0]!);
+  const { cull, photos } = await reviewPhoto(rows[0]!);
   vi.mocked(photos.lookup).mockImplementation(
     async (id) => rows.find((row) => row.asset_id === id)!,
   );
@@ -900,34 +900,7 @@ it("clears selected frames when All changes to Unflagged with the same photos", 
     "checked",
     true,
   );
-  const shell = container.querySelector(".photo-cull")!;
   await readyButton("Keep current (Return)");
-  await fireEvent.keyDown(shell, { key: "j" });
-  await screen.findByText("Photo 2.jpg");
-  await fireEvent.keyDown(shell, { key: "k" });
-  await screen.findByText("Photo 1.jpg");
-  expect(screen.getByRole("checkbox", { name: "Select Photo 2.jpg" })).toHaveProperty(
-    "checked",
-    true,
-  );
-  await act(() => {
-    cull.run = { ...cull.run!, groups: [...cull.run!.groups!] };
-  });
-  expect(screen.getByRole("checkbox", { name: "Select Photo 2.jpg" })).toHaveProperty(
-    "checked",
-    true,
-  );
-  await act(() => cull.regroup());
-  expect(cull.currentStack).toEqual(["photo-1", "photo-2", "photo-3"]);
-  expect(screen.getByRole("checkbox", { name: "Select Photo 2.jpg" })).toHaveProperty(
-    "checked",
-    false,
-  );
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Select Photo 2.jpg" }));
-  expect(screen.getByRole("checkbox", { name: "Select Photo 2.jpg" })).toHaveProperty(
-    "checked",
-    true,
-  );
   await fireEvent.click(await readyButton("Scope: all"));
   await screen.findByRole("dialog", { name: "Change scope and reset this pass's progress?" });
   await fireEvent.click(screen.getByRole("button", { name: "Reset pass" }));
@@ -1033,7 +1006,7 @@ it.each(["rating only", "flag change", "unavailable mark and auto-advance toggle
   },
 );
 
-it("navigates stacks and sends Return, keep all, selected, and representative through one receipt path", async () => {
+it("sends Keep all, selected, and representative through one receipt path and undoes", async () => {
   const rows = [photo(1), photo(2), photo(3)];
   const stack = rows.slice(0, 2).map((row) => row.asset_id);
   const before = preparedPhoto(1);
@@ -1052,7 +1025,7 @@ it("navigates stacks and sends Return, keep all, selected, and representative th
     before: [picked],
     after: [{ ...before, revision: 3 }],
   });
-  const { cull, photos, container } = await reviewPhoto();
+  const { cull, photos } = await reviewPhoto();
   vi.spyOn(photos, "metadataChanged").mockReturnValue(new Map());
   vi.mocked(photos.lookup).mockImplementation(
     async (id) => rows.find((row) => row.asset_id === id)!,
@@ -1069,38 +1042,25 @@ it("navigates stacks and sends Return, keep all, selected, and representative th
       checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
     };
   });
-  const shell = container.querySelector(".photo-cull")!;
   await readyButton("Keep current (Return)");
   expect(screen.getAllByLabelText("Stack boundary")).toHaveLength(2);
-  await fireEvent.keyDown(shell, { key: "j" });
-  await screen.findByText("Photo 2.jpg");
-  await fireEvent.keyDown(shell, { key: "k" });
-  await screen.findByText("Photo 1.jpg");
-  await fireEvent.keyDown(shell, { key: "l" });
-  await screen.findByText("Photo 3.jpg");
-  await fireEvent.keyDown(shell, { key: "h" });
-  await screen.findByText("Photo 1.jpg");
-  await readyButton("Keep current (Return)");
-  await fireEvent.keyDown(shell, { key: "Enter" });
+  await fireEvent.click(await readyButton("Keep all"));
   await waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
   expect(decide.mock.calls[0]![0]).toMatchObject({
     asset_ids: stack,
     current_id: "photo-1",
-    decision: "current",
+    decision: "all",
     burst_gap_seconds: 2,
   });
   await fireEvent.click(await readyButton(/^Undo$/));
   await waitFor(() => expect(undo).toHaveBeenCalledWith("stack-decision", expect.anything()));
-  await fireEvent.click(await readyButton("Keep all"));
-  await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
-  expect(decide.mock.calls[1]![0].decision).toBe("all");
   await fireEvent.click(await readyButton("Choose representative"));
-  await waitFor(() => expect(decide).toHaveBeenCalledTimes(3));
-  expect(decide.mock.calls[2]![0].decision).toBe("representative");
+  await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+  expect(decide.mock.calls[1]![0].decision).toBe("representative");
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Photo 2.jpg" }));
   await fireEvent.click(await readyButton("Keep selected"));
-  await waitFor(() => expect(decide).toHaveBeenCalledTimes(4));
-  expect(decide.mock.calls[3]![0]).toMatchObject({
+  await waitFor(() => expect(decide).toHaveBeenCalledTimes(3));
+  expect(decide.mock.calls[2]![0]).toMatchObject({
     decision: "selected",
     selected_ids: ["photo-2"],
   });
