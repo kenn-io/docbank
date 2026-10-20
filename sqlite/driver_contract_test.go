@@ -64,6 +64,7 @@ func assertDriverSynchronous(t *testing.T, driver docsqlite.Driver, defaultSynch
 	t.Helper()
 	defer sqlitetest.DisableSync.Store(false)
 	databasePath := filepath.Join(t.TempDir(), "synchronous.db")
+	var baseline int
 	for _, disabled := range []bool{false, true} {
 		sqlitetest.DisableSync.Store(disabled)
 		for _, access := range []docsqlite.AccessMode{docsqlite.Create, docsqlite.ReadWriteExisting} {
@@ -77,8 +78,10 @@ func assertDriverSynchronous(t *testing.T, driver docsqlite.Driver, defaultSynch
 				require.NoError(t, conn.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
 				if disabled {
 					require.Zero(t, synchronous)
+					require.NotEqual(t, baseline, synchronous)
 				} else {
-					require.Equal(t, defaultSynchronous, synchronous)
+					baseline = synchronous
+					require.Equal(t, defaultSynchronous, baseline)
 				}
 			}
 		}
