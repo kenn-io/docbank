@@ -66,37 +66,40 @@ func TestFromStoreErrorMappings(t *testing.T) {
 	}
 }
 
-func TestRuntimeUnavailableDetailCarriesTheProbeFailure(t *testing.T) {
+func TestRuntimeUnavailableMapsToAGenericReadinessError(t *testing.T) {
 	t.Parallel()
-	mapped := &Error{}
-	require.ErrorAs(t, fromProcessingError(&processing.RuntimeUnavailableError{Cause: errors.New("provider returned HTTP 503")}), &mapped)
-	assert.Equal(t, "rendition_runtime_unavailable", mapped.Code)
-	assert.Contains(t, mapped.Detail, "HTTP 503")
-	assert.NotContains(t, mapped.Detail, "photo")
+	for _, test := range []struct {
+		name, detailHas string
+		err             error
+	}{
+		{"without a cause", "not ready", processing.ErrRenditionRuntimeUnavailable},
+		{"with the probe failure", "HTTP 503", &processing.RuntimeUnavailableError{Cause: errors.New("provider returned HTTP 503")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mapped := &Error{}
+			require.ErrorAs(t, fromProcessingError(test.err), &mapped)
+			assert.Equal(t, http.StatusServiceUnavailable, mapped.Status)
+			assert.Equal(t, "rendition_runtime_unavailable", mapped.Code)
+			assert.Contains(t, mapped.Detail, test.detailHas)
+			// Original-file profiles reach this error as well as photo descriptions.
+			assert.NotContains(t, mapped.Detail, "photo")
+		})
+	}
 }
 
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		err    error
-		code   string
-		status int // checked when set
-		// The runtime is also unavailable for original-file profiles, so its detail names no photo feature.
-		detailOmits string
+		err  error
+		code string
 	}{
-		{err: processing.ErrRenditionFailed, code: "rendition_failed"},
-		{err: processing.ErrRenditionOperatorRequired, code: "rendition_operator_required"},
-		{err: vectorindex.ErrSimilarSearchScoringBudgetExceeded, code: "similar_search_too_large"},
-		{err: processing.ErrRenditionRuntimeUnavailable, code: "rendition_runtime_unavailable", status: http.StatusServiceUnavailable, detailOmits: "photo"},
+		{processing.ErrRenditionFailed, "rendition_failed"},
+		{processing.ErrRenditionOperatorRequired, "rendition_operator_required"},
+		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large"},
 	} {
 		mapped := &Error{}
 		require.ErrorAs(t, fromProcessingError(test.err), &mapped)
 		assert.Equal(t, test.code, mapped.Code)
-		if test.status != 0 {
-			assert.Equal(t, test.status, mapped.Status)
-		}
-		if test.detailOmits != "" {
-			assert.NotContains(t, mapped.Detail, test.detailOmits)
-		}
 	}
 }

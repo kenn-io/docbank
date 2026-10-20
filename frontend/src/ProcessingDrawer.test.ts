@@ -268,20 +268,25 @@ describe("document processing drawer", () => {
               capability: "rendition",
               provider_id: "private-provider",
               trust_boundary: "local_process",
-              input_classes: ["original_file"],
+              input_classes: ["derived_upload"],
               runtime_disclosure: {
                 immediate_processor: "private-provider",
                 ultimate_processor: "private-provider",
                 endpoint: "in-process",
                 deployment: fingerprint,
                 metadata_classes: [],
-                retained_artifact_roles: ["sanitized_markdown"],
+                retained_artifact_roles: [],
               },
             },
           ],
-          disclosed_classes: ["original_file"],
-          retained_classes: ["sanitized_markdown"],
-          estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 0 },
+          disclosed_classes: ["derived_upload"],
+          retained_classes: ["suggestion_text"],
+          estimate: {
+            source_bytes: 1,
+            provider_calls: 1,
+            vector_spaces: 0,
+            scope: "Granting consent automatically queues eligible photos throughout this vault.",
+          },
           consent_required: false,
           consent_state: "active",
           backup_consequence: "retained derivatives enter future backups",
@@ -331,6 +336,7 @@ describe("document processing drawer", () => {
     });
 
     expect(await screen.findByText(/rendition.*complete/i)).toBeTruthy();
+    expect(screen.getByText(/queues eligible photos throughout this vault/)).toBeTruthy();
     await fireEvent.change(screen.getByRole("combobox", { name: "Profile" }), {
       target: { value: "hosted" },
     });
@@ -408,12 +414,7 @@ describe("document processing drawer", () => {
           ],
           disclosed_classes: ["original_file", "rendition_chunk"],
           retained_classes: ["sanitized_markdown", "embedding_vector_set"],
-          estimate: {
-            source_bytes: 2048,
-            provider_calls: 2,
-            vector_spaces: 1,
-            scope: "Consent also queues photos in this vault.",
-          },
+          estimate: { source_bytes: 2048, provider_calls: 2, vector_spaces: 1 },
           consent_required: true,
           consent_state: "required",
           backup_consequence: "retained derivatives enter future backups",
@@ -528,7 +529,6 @@ describe("document processing drawer", () => {
       screen.getByText("Extracted text is saved in the vault and included in backups."),
     ).toBeTruthy();
     expect(screen.getByText(/2 provider calls/i)).toBeTruthy();
-    expect(screen.getByText(/Consent also queues photos in this vault/)).toBeTruthy();
     expect(screen.getByText(/1 vector space/i)).toBeTruthy();
     expect(screen.getByText(/retained derivatives enter future backups/i)).toBeTruthy();
     expect(screen.getByText(/original_file.*rendition_chunk/i)).toBeTruthy();

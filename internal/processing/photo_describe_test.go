@@ -403,12 +403,15 @@ func TestPhotoDescriptionStartSavesConsentBeforeReportingProbeFailure(t *testing
 	plan, err = f.service.Plan(t.Context(), f.selector("vision"))
 	require.NoError(t, err)
 	require.False(t, plan.ConsentRequired, "the grant stayed saved")
+}
 
+func TestPhotoDescriptionStartRefusesAnIneligiblePhotoBeforeSavingConsent(t *testing.T) {
+	t.Parallel()
 	hidden := newPhotoDescriptionFixture(t)
 	require.NoError(t, hidden.catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
-	_, err = hidden.catalog.SetPhotoAssetHidden(t.Context(), hidden.asset.ID, hidden.asset.Revision, true)
+	_, err := hidden.catalog.SetPhotoAssetHidden(t.Context(), hidden.asset.ID, hidden.asset.Revision, true)
 	require.NoError(t, err)
-	plan, err = hidden.service.Plan(t.Context(), hidden.selector("vision"))
+	plan, err := hidden.service.Plan(t.Context(), hidden.selector("vision"))
 	require.NoError(t, err)
 	require.NotEmpty(t, plan.RenditionIneligibleReason)
 	_, err = hidden.service.Start(t.Context(), StartRequest{Selector: hidden.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true})

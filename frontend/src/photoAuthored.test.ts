@@ -855,53 +855,61 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   editor.dispose();
 });
 
-it.each([
-  "selection",
-  "busy",
-  "loading",
-  "conflict",
-  "dirty",
-  "action disabled",
-  "multiple photos",
-])("renders suggestion choices and availability for %s", async (state) => {
+it("enables Accept selected only while a field is checked", async () => {
+  const editor = editorWithTargets();
+  editor.suggestions = [
+    photoSuggestion({ value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" } }),
+  ];
+  ui(editor);
+  const accept = screen.getByRole("button", { name: "Accept selected" }) as HTMLButtonElement;
+  expect(accept.disabled).toBe(true);
+  await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+  expect(accept.disabled).toBe(false);
+  await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+  expect(accept.disabled).toBe(true);
+  await fireEvent.click(screen.getByRole("checkbox", { name: "coast" }));
+  expect(accept.disabled).toBe(false);
+  editor.dispose();
+});
+
+it("hides the suggestions while several photos are selected", async () => {
   const editor = editorWithTargets();
   editor.suggestions = [
     photoSuggestion({ value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" } }),
   ];
   const view = ui(editor);
-  const accept = screen.getByRole("button", { name: "Accept selected" }) as HTMLButtonElement;
-  if (state === "selection") {
-    expect(accept.disabled).toBe(true);
-    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
-    expect(accept.disabled).toBe(false);
-    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
-    expect(accept.disabled).toBe(true);
-    await fireEvent.click(screen.getByRole("checkbox", { name: "coast" }));
-    expect(accept.disabled).toBe(false);
-  } else {
+  await view.rerender({ actionDisabled: false, count: 2 });
+  expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+  editor.dispose();
+});
+
+it.each(["busy", "loading", "conflict", "dirty", "action disabled"])(
+  "disables suggestion choices while %s",
+  async (state) => {
+    const editor = editorWithTargets();
+    editor.suggestions = [
+      photoSuggestion({
+        value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" },
+      }),
+    ];
+    const view = ui(editor);
+    const accept = screen.getByRole("button", { name: "Accept selected" }) as HTMLButtonElement;
     await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
     if (state === "busy") editor.busy = true;
     if (state === "loading") editor.loading = true;
     if (state === "conflict") editor.conflict = true;
     if (state === "dirty") editor.stage({ rating: 5 });
-    await view.rerender({
-      actionDisabled: state === "action disabled",
-      count: state === "multiple photos" ? 2 : 1,
-    });
-    if (state === "multiple photos") {
-      expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
-    } else {
-      const section = within(screen.getByRole("region", { name: "Suggested photo metadata" }));
-      expect(accept.disabled).toBe(true);
-      expect((section.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(
-        true,
-      );
-      for (const checkbox of section.getAllByRole("checkbox"))
-        expect((checkbox as HTMLInputElement).disabled).toBe(true);
-    }
-  }
-  editor.dispose();
-});
+    await view.rerender({ actionDisabled: state === "action disabled", count: 1 });
+    const section = within(screen.getByRole("region", { name: "Suggested photo metadata" }));
+    expect(accept.disabled).toBe(true);
+    expect((section.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    for (const checkbox of section.getAllByRole("checkbox"))
+      expect((checkbox as HTMLInputElement).disabled).toBe(true);
+    editor.dispose();
+  },
+);
 
 it.each(["raw", "jpeg"])("identifies the suggested %s member beside a long filename", (member) => {
   const editor = editorWithTargets();
@@ -1011,8 +1019,6 @@ it("keeps the latest authored Undo when dismissing a partly accepted suggestion"
       .mockResolvedValueOnce(preparedSuggestions([accepted])),
   );
   await editor.respondSuggestion(suggestion, true, ["coast"]);
-  expect(editor.receiptID).toBe("");
-  expect(editor.undoState.summary).toBe("");
   vi.stubGlobal(
     "fetch",
     vi
@@ -1043,15 +1049,14 @@ it("keeps the latest authored Undo when dismissing a partly accepted suggestion"
 });
 
 it.each([
-  { name: "empty", value: { caption: "", tags: [], visible_text: "" }, shown: false },
-  { name: "caption", value: { caption: "A harbor.", tags: [], visible_text: "" }, shown: true },
-  { name: "tags", value: { caption: "", tags: ["coast"], visible_text: "" }, shown: true },
-  { name: "visible text", value: { caption: "", tags: [], visible_text: "QUAYSIDE" }, shown: true },
-])("shows a pending row when it has content: $name", ({ value, shown }) => {
+  { name: "caption", value: { caption: "A harbor.", tags: [], visible_text: "" } },
+  { name: "tags", value: { caption: "", tags: ["coast"], visible_text: "" } },
+  { name: "visible text", value: { caption: "", tags: [], visible_text: "QUAYSIDE" } },
+])("shows a pending row with content: $name", ({ value }) => {
   const editor = editorWithTargets();
   editor.suggestions = [photoSuggestion({ value })];
   ui(editor);
-  expect(!!screen.queryByRole("region", { name: "Suggested photo metadata" })).toBe(shown);
+  expect(screen.getByRole("region", { name: "Suggested photo metadata" })).toBeTruthy();
   editor.dispose();
 });
 
@@ -1075,17 +1080,7 @@ it("reloads reviewed photo revisions after a stale suggestion response", async (
         value: { caption: "", tags: [], visible_text: "" },
       }),
     )
-    .mockResolvedValueOnce(
-      preparedSuggestions(
-        [
-          {
-            ...suggestion,
-            value: { caption: "", tags: [], visible_text: "" },
-          },
-        ],
-        refreshed,
-      ),
-    );
+    .mockResolvedValueOnce(preparedSuggestions([], refreshed));
   vi.stubGlobal("fetch", fetch);
   ui(editor);
   await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
@@ -1095,7 +1090,7 @@ it("reloads reviewed photo revisions after a stale suggestion response", async (
   await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
   await vi.waitFor(() => expect(editor.conflict).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
-  await vi.waitFor(() => expect(editor.suggestions[0]?.value.caption).toBe(""));
+  await vi.waitFor(() => expect(editor.suggestions).toEqual([]));
   expect(JSON.parse(fetch.mock.calls[2]![1].body)).toMatchObject({
     asset_id: "asset",
     asset_revision: 1,

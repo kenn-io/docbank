@@ -12,11 +12,7 @@ export class PhotoUndoState {
 export class PhotoAuthoredEditor {
   suggestions = $state<api.PhotoSuggestion[]>([]);
   get activeSuggestion() {
-    return this.suggestions.find(
-      (suggestion) =>
-        suggestion.target === this.asset?.display_file_id &&
-        (suggestion.value.caption || suggestion.value.tags.length || suggestion.value.visible_text),
-    );
+    return this.suggestions.find((suggestion) => suggestion.target === this.asset?.display_file_id);
   }
   suggestionsError = $state("");
   asset = $state<api.PhotoAsset>();
