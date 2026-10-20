@@ -341,6 +341,55 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		require.Equal(t, document.PhotoDescription{Tags: []string{"sunset", "harbor"}, VisibleText: "NEW TEXT"}, regenerated[0].Value,
 			"the resolved caption and the removed tag are not offered again")
 	})
+	t.Run("regenerates through another producer", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "switched.jpg")
+		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}})
+		acceptPhotoSuggestion(t, s, proposal, true)
+
+		restored := restorePhotoSuggestionStore(t, s)
+		publishPhotoDescription(t, restored, asset, producerB, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"coast", "sunset"}})
+		regenerated := photoSuggestionValues(t, restored, asset.ID)
+		require.Len(t, regenerated, 1)
+		require.Equal(t, document.PhotoDescription{Tags: []string{"coast", "sunset"}}, regenerated[0].Value, "the resolved caption stays resolved")
+		_, err := restored.RespondPhotoSuggestion(ctx, regenerated[0].ID, PhotoSuggestionResponse{Response: "dismissed"})
+		require.NoError(t, err)
+
+		for producer, want := range map[string]bool{producerB: true, producerA: false} {
+			settled, err := restored.PhotoDescriptionSettled(ctx, regenerated[0].ContentVersionID, producer)
+			require.NoError(t, err)
+			require.Equal(t, want, settled, "the dismissal belongs to B, so only B is settled: %s", producer[:1])
+		}
+	})
+	t.Run("regenerates over another producer's dismissal", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "replaced.jpg")
+		first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
+		_, err := s.RespondPhotoSuggestion(ctx, first.ID, PhotoSuggestionResponse{Response: "dismissed"})
+		require.NoError(t, err)
+		publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"coast", "sunset"}})
+		second := photoSuggestionValues(t, s, asset.ID)
+		require.Len(t, second, 1)
+		acceptPhotoSuggestion(t, s, second[0], true, "coast")
+
+		restored := restorePhotoSuggestionStore(t, s)
+		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again.", Tags: []string{"coast", "sunset", "boats"}})
+		regenerated := photoSuggestionValues(t, restored, asset.ID)
+		require.Len(t, regenerated, 1)
+		require.Equal(t, document.PhotoDescription{Tags: []string{"sunset", "boats"}}, regenerated[0].Value)
+		require.NoError(t, restored.ValidateMetadata(ctx))
+		_, err = restored.RespondPhotoSuggestion(ctx, regenerated[0].ID, PhotoSuggestionResponse{Response: "dismissed"})
+		require.NoError(t, err)
+		for producer, want := range map[string]bool{producerA: true, producerB: false} {
+			settled, err := restored.PhotoDescriptionSettled(ctx, regenerated[0].ContentVersionID, producer)
+			require.NoError(t, err)
+			require.Equal(t, want, settled, "one row remains, and it is A's: %s", producer[:1])
+		}
+	})
 	t.Run("keeps a dismissal", func(t *testing.T) {
 		t.Parallel()
 		s := newTestStore(t)

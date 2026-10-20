@@ -133,7 +133,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	var awaiting int64
 	var captionResolved bool
 	var resolvedJSON string
-	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND awaiting`, version).Scan(&awaiting, &captionResolved, &resolvedJSON)
+	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &resolvedJSON)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -152,7 +152,12 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		return err
 	}
 	if awaiting != 0 {
-		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET caption=?,tags_json=?,visible_text=?,awaiting=0 WHERE id=?`, description.Caption, string(tags), description.VisibleText, awaiting)
+		// The restored row now belongs to the producer that regenerated it. An
+		// older row of that producer is superseded by the owner's decisions it holds.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,awaiting=0 WHERE id=?`, producer, description.Caption, string(tags), description.VisibleText, awaiting)
 		return err
 	}
 	id, err := newUUIDv4()
