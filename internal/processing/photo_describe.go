@@ -171,24 +171,20 @@ func preparePhotoDescription(ctx context.Context, catalog *store.Store, blobs *b
 	if !capability.Eligible {
 		return providerExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 	}
-	empty := sha256.Sum256(nil)
-	metadata := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/jpeg", ByteLength: int64(len(data)), SHA256: capability.SourceSHA256, CapabilityRecordChecksum: capability.Checksum, ProviderMetadataChecksum: hex.EncodeToString(empty[:]), InputKind: document.RenditionInputDerivedUpload}
-	evidence, rendition, err := document.RenditionExecutionPoliciesForProfileV1(profile.portable)
+	metadata := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/jpeg", ByteLength: int64(len(data)), SHA256: capability.SourceSHA256, CapabilityRecordChecksum: capability.Checksum, InputKind: document.RenditionInputDerivedUpload}
+	maximum := int(profile.portable.Rendition.MaxResponseBytes)
+	result, err := newProviderExecution(profile, version, metadata, document.RenditionAuthorization{AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: maximum, MaxArtifacts: 1, MaxTotalResultBytes: maximum})
 	if err != nil {
 		return providerExecution{}, err
 	}
-	descriptor := profile.provider.Descriptor()
-	now := clock().UTC()
-	maximum := int(profile.portable.Rendition.MaxResponseBytes)
-	authorization := document.RenditionAuthorization{ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint, RenditionRequestFingerprint: profile.record.RenditionRequestFingerprint, SourceSHA256: version.BlobHash, SourceBytes: version.Size, CapabilityRecordChecksum: capability.Checksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: maximum, MaxArtifacts: 1, MaxTotalResultBytes: maximum, AuthorizedAt: now.Format(timestampForm), ExpiresAt: now.Add(10 * time.Minute).Format(timestampForm)}
-	result := providerExecution{Provider: profile.provider, Authorization: authorization, EvidencePolicy: evidence, RenditionPolicy: rendition, metadata: metadata}
 	if withUpload {
 		sealed, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: spool}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
 		if err != nil {
 			return providerExecution{}, err
 		}
-		result.Upload = &boundAuthorizedUpload{AuthorizedUpload: sealed, metadata: metadata}
+		result.Upload = &boundAuthorizedUpload{AuthorizedUpload: sealed, metadata: result.metadata}
 	}
+	result.openAuthorization(clock)
 	return result, nil
 }
 

@@ -2111,12 +2111,10 @@ func prepareProviderExecution(ctx context.Context, catalog *store.Store, blobs *
 		return providerExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 	}
 	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
-	emptyDigest := sha256.Sum256(nil)
 	metadata := document.AuthorizedUploadMetadata{Filename: filename,
 		MediaFamily: capability.MediaFamily, MediaType: capability.MediaType,
 		ByteLength: version.Size, SHA256: version.BlobHash,
 		CapabilityRecordChecksum: capability.Checksum,
-		ProviderMetadataChecksum: hex.EncodeToString(emptyDigest[:]),
 		InputKind:                document.RenditionInputOriginalFile}
 	maximum := int(min(profile.portable.Rendition.MaxResponseBytes, int64(math.MaxInt)))
 	markdownMaximum, artifactMaximum := 0, 0
@@ -2129,25 +2127,15 @@ func prepareProviderExecution(ctx context.Context, catalog *store.Store, blobs *
 			artifactMaximum = min(maximum, document.MaxRenditionArtifactBytes)
 		}
 	}
-	authorization := document.RenditionAuthorization{ProviderID: profile.provider.Descriptor().ID,
-		DescriptorFingerprint:       profile.provider.Descriptor().Fingerprint,
-		PolicyFingerprint:           profile.provider.Descriptor().PolicyFingerprint,
-		RenditionRequestFingerprint: profile.record.RenditionRequestFingerprint,
-		SourceSHA256:                version.BlobHash, SourceBytes: version.Size,
-		CapabilityRecordChecksum: capability.Checksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
-		MediaFamily: capability.MediaFamily, MediaType: capability.MediaType,
-		InputKind:                document.RenditionInputOriginalFile,
+	result, err := newProviderExecution(profile, version, metadata, document.RenditionAuthorization{
 		DiscloseFilename:         profile.portable.Rendition.DiscloseFilename,
 		AllowedArtifactRoles:     artifactRoles,
 		MaxProviderMarkdownBytes: markdownMaximum, MaxArtifactBytes: artifactMaximum,
 		MaxArtifacts:        len(artifactRoles),
-		MaxTotalResultBytes: maximum}
-	evidence, rendition, err := document.RenditionExecutionPoliciesForProfileV1(profile.portable)
+		MaxTotalResultBytes: maximum})
 	if err != nil {
 		return providerExecution{}, err
 	}
-	result := providerExecution{Provider: profile.provider,
-		Authorization: authorization, EvidencePolicy: evidence, RenditionPolicy: rendition, metadata: metadata}
 	if withUpload {
 		source, size, err := blobs.OpenStreamContext(ctx, version.BlobHash)
 		if err != nil {
@@ -2163,13 +2151,40 @@ func prepareProviderExecution(ctx context.Context, catalog *store.Store, blobs *
 		}
 		result.metadata = result.Upload.Metadata()
 	}
-	// Start the interval after inspection and spooling. A 4 GiB source on slow
-	// storage can take longer than the interval to prepare, and an interval that
-	// expired during preparation would fail every retry the same way.
-	authorizedAt := clock().UTC()
-	result.Authorization.AuthorizedAt = authorizedAt.Format(timestampForm)
-	result.Authorization.ExpiresAt = authorizedAt.Add(10 * time.Minute).Format(timestampForm)
+	result.openAuthorization(clock)
 	return result, nil
+}
+
+// openAuthorization starts the interval after inspection and spooling. A 4 GiB
+// source on slow storage can take longer than the interval to prepare, and an
+// interval that expired during preparation would fail every retry the same way.
+func (execution *providerExecution) openAuthorization(clock func() time.Time) {
+	authorizedAt := clock().UTC()
+	execution.Authorization.AuthorizedAt = authorizedAt.Format(timestampForm)
+	execution.Authorization.ExpiresAt = authorizedAt.Add(10 * time.Minute).Format(timestampForm)
+}
+
+// newProviderExecution holds what every input kind's execution shares: the
+// profile's policies and the authorization identity of the version and its
+// upload. limits carries the artifact bounds and anything else particular to
+// the input; the caller opens the authorization interval once its upload is ready.
+func newProviderExecution(profile configuredProfile, version store.ContentVersion,
+	metadata document.AuthorizedUploadMetadata, limits document.RenditionAuthorization,
+) (providerExecution, error) {
+	evidence, rendition, err := document.RenditionExecutionPoliciesForProfileV1(profile.portable)
+	if err != nil {
+		return providerExecution{}, err
+	}
+	emptyDigest := sha256.Sum256(nil)
+	metadata.ProviderMetadataChecksum = hex.EncodeToString(emptyDigest[:])
+	descriptor := profile.provider.Descriptor()
+	limits.ProviderID, limits.DescriptorFingerprint, limits.PolicyFingerprint = descriptor.ID, descriptor.Fingerprint, descriptor.PolicyFingerprint
+	limits.RenditionRequestFingerprint = profile.record.RenditionRequestFingerprint
+	limits.SourceSHA256, limits.SourceBytes = version.BlobHash, version.Size
+	limits.CapabilityRecordChecksum, limits.ProviderMetadataChecksum = metadata.CapabilityRecordChecksum, metadata.ProviderMetadataChecksum
+	limits.MediaFamily, limits.MediaType, limits.InputKind = metadata.MediaFamily, metadata.MediaType, metadata.InputKind
+	return providerExecution{Provider: profile.provider, Authorization: limits,
+		EvidencePolicy: evidence, RenditionPolicy: rendition, metadata: metadata}, nil
 }
 
 func runtimeVersion(work store.RenditionJobWork) store.ContentVersion {
