@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"os"
@@ -84,7 +85,9 @@ func TestReportTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	reportTUISessionEnded(&tuiTelemetry{}, 2*time.Minute)
 	require.Eventually(t, func() bool {
 		data, err := os.ReadFile(filepath.Join(d.root, "telemetry-tui-state"))
-		return err == nil && (string(data) == day || string(data) == time.Now().UTC().Format(time.DateOnly))
+		var receipt tuiTelemetryReceipt
+		return err == nil && json.Unmarshal(data, &receipt) == nil && receipt.Disabled &&
+			(receipt.Day == day || receipt.Day == time.Now().UTC().Format(time.DateOnly))
 	}, time.Second, time.Millisecond)
 }
 

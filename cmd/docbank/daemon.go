@@ -25,6 +25,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 	kitlogging "go.kenn.io/kit/logging"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/emailpdf"
@@ -48,7 +49,6 @@ import (
 	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/docbank/internal/version"
 	docweb "go.kenn.io/docbank/internal/web"
-	"go.kenn.io/kit/telemetry/posthog"
 )
 
 var daemonRunCmd = &cobra.Command{

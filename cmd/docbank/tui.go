@@ -85,7 +85,7 @@ func tuiProgramRan(err error) bool {
 	return err == nil || errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled)
 }
 
-// A report that doesn't finish within 50 ms may be lost.
+// reportTUISessionEnded uses only a running daemon; unfinished reports may be lost after 50 ms.
 func reportTUISessionEnded(gate *tuiTelemetry, elapsed time.Duration) {
 	var sends posthog.SendGroup
 	defer sends.Wait(50 * time.Millisecond)
@@ -115,10 +115,11 @@ type tuiClientFactory func(context.Context) (*daemonconn.Connection, error)
 // proven client intentionally refuses to reconnect its pinned socket to a
 // replacement process.
 type tuiDaemonBackend struct {
+	mu      sync.Mutex
+	ensure  tuiClientFactory
+	initial *daemonconn.Connection
+
 	telemetry tuiTelemetry
-	mu        sync.Mutex
-	ensure    tuiClientFactory
-	initial   *daemonconn.Connection
 }
 
 func (b *tuiDaemonBackend) acquire(ctx context.Context) (*daemonconn.Connection, error) {

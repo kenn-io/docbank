@@ -21,11 +21,18 @@ export function startTelemetryReporting(session: string) {
       }),
   });
   let latestScreen: string | undefined;
+  let active = false;
   const reportVisibleScreen = () => {
-    if (latestScreen !== undefined && document.visibilityState === "visible")
+    if (active && latestScreen !== undefined && document.visibilityState === "visible")
       reporter.reportScreen(latestScreen);
   };
-  document.addEventListener("visibilitychange", reportVisibleScreen);
+  const unsubscribe = reporter.onQuietChange((_quiet, reason) => {
+    const resume = reason === "checking" || reason === "enabled";
+    if (resume && !active) document.addEventListener("visibilitychange", reportVisibleScreen);
+    if (!resume && active) document.removeEventListener("visibilitychange", reportVisibleScreen);
+    active = resume;
+    if (active) reportVisibleScreen();
+  });
   return {
     ...reporter,
     reportScreen(screen: string) {
@@ -33,8 +40,8 @@ export function startTelemetryReporting(session: string) {
       reportVisibleScreen();
     },
     stop() {
-      document.removeEventListener("visibilitychange", reportVisibleScreen);
       reporter.stop();
+      unsubscribe();
     },
   };
 }

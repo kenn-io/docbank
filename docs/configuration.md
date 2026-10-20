@@ -1012,8 +1012,9 @@ Docbank sends these events:
 - `daemon_active` at startup and on the first hourly check of each later UTC
   day. Days when the machine sleeps are not backfilled.
 - `app_opened` when the web app loads, and again on the first window focus of
-  a later UTC day. The browser remembers the day for the daemon's address, so
-  it sends about one per UTC day until the daemon restarts on a new address.
+  a later UTC day. Claims use `docbank.web.telemetry.v1` in browser storage,
+  retain the latest 35 claimed dates, and apply per browser origin across daemon
+  restarts.
 - `session_ended` once when a browser tab closes or stays hidden for 30 minutes,
   or the terminal browser exits, including when its terminal closes. Browser
   visible time adds up across tab switches. Hidden time is excluded. The
@@ -1039,13 +1040,22 @@ best effort.
 
 Browser reports share a daily gate. Disabled receipts stop reports and duration
 listeners until a later day's load or focus. Failures back off and stop after
-six attempts. Hidden tabs report their latest screen when visible.
+six attempts. Hidden tabs report their latest screen when visible. Screen visibility
+listeners stop while disabled or unavailable; focus can check on a later day.
+Up to 64 duration-only `session_ended` events waiting for permission survive page
+teardown under separate versioned browser storage keys. An enabled receipt
+replays them through the shared gate with keepalive; a disabled receipt deletes
+them. Blocked storage falls back to the shared gate's page-memory queue.
 
 TUI reports use a running daemon and lock `telemetry-tui-state` while checking.
-The private file stores the UTC date alone when disabled, or the date followed
-by accepted screen names. Restarts reuse valid state; other content is empty.
-Missing daemons and busy locks retry on input after 30 seconds. Six failed POSTs
-pause this TUI's reports until UTC rollover. Data operations can start daemons.
+The private v1 JSON file stores the UTC day, disabled receipt, and accepted
+screen names. Restarts reuse today's state, including opaque screen names.
+Unsupported versions and unknown fields are refused without rewriting. Malformed
+v1 state and other dates, including future dates after clock correction, are
+empty until a new receipt replaces them.
+Failures retry on input after 30 seconds, including after screen changes. Six
+failed attempts pause this process's reports until UTC rollover, covering file,
+lock, discovery, POST, and receipt errors. Data operations can start daemons.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 

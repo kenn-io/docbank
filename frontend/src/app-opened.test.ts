@@ -60,6 +60,26 @@ describe("app_opened reporting", () => {
     });
   });
 
+  it("detaches visibility work while disabled and restores it after the next enabled check", async () => {
+    const add = vi.spyOn(document, "addEventListener");
+    const remove = vi.spyOn(document, "removeEventListener");
+    reporter = startTelemetryReporting("secret");
+    reporter.reportScreen("browse");
+    await settle();
+    const listener = add.mock.calls.find(([name]) => name === "visibilitychange")?.[1];
+    expect(listener).toBeDefined();
+    expect(remove).toHaveBeenCalledWith("visibilitychange", listener);
+    reporter.reportScreen("help");
+    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
+    vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
+    focus();
+    await settle();
+    expect(add.mock.calls.filter(([name]) => name === "visibilitychange")).toHaveLength(2);
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body)).properties.screen).toBe(
+      "help",
+    );
+  });
+
   it("treats a problem response as answered without an unhandled rejection", async () => {
     const unhandled = vi.fn();
     window.addEventListener("unhandledrejection", unhandled);

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -60,30 +61,71 @@ func TestTUITelemetryReceipts(t *testing.T) {
 	}
 }
 
-func TestTUITelemetryUnexpectedDateIsEmpty(t *testing.T) {
-	for _, value := range []string{"2000-01-01", time.Now().UTC().Format(time.DateOnly) + "\nunknown"} {
-		t.Run(value, func(t *testing.T) {
+func TestTUITelemetryStoredStates(t *testing.T) {
+	day := time.Now().UTC().Format(time.DateOnly)
+	for _, tc := range []struct {
+		value   string
+		refused bool
+	}{
+		{`{"version":1,"day":"2000-01-01","disabled":true}`, false},
+		{`{"version":1,"day":"2999-01-01","disabled":true}`, false},
+		{`{"version":1,"day":42}`, false},
+		{`truncated`, false},
+		{`{"version":2,"disabled":true}`, true},
+		{`{"version":1,"future":true}`, true},
+		{`{"version":1,"day":"` + day + `","screens":["future_screen"]}`, false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
 			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
-			require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state"), []byte(value), 0o600))
+			path := filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state")
+			require.NoError(t, os.WriteFile(path, []byte(tc.value), 0o600))
 			backend := &tuiDaemonBackend{}
-			require.NoError(t, backend.ReportScreen(t.Context(), "help"))
-			assert.Equal(t, int32(1), requests.Load())
+			err := backend.ReportScreen(t.Context(), "help")
+			data, readErr := os.ReadFile(path)
+			require.NoError(t, readErr)
+			if tc.refused {
+				require.Error(t, err)
+				assert.Equal(t, tc.value, string(data))
+				assert.Zero(t, requests.Load())
+			} else {
+				require.NoError(t, err)
+				assert.Contains(t, string(data), `"help"`)
+				if strings.Contains(tc.value, "future_screen") {
+					assert.Contains(t, string(data), `"future_screen"`)
+				}
+				assert.Equal(t, int32(1), requests.Load())
+			}
 		})
 	}
 }
 
-func TestTUITelemetryRetriesMissingDaemonAndBoundsPostFailures(t *testing.T) {
-	t.Setenv("DOCBANK_HOME", t.TempDir())
-	backend := &tuiDaemonBackend{}
-	for range 8 {
-		require.ErrorContains(t, backend.ReportScreen(t.Context(), "help"), "daemon is not running")
+func TestTUITelemetryBoundsEveryFailure(t *testing.T) {
+	for _, failure := range []string{"file", "lock", "discovery", "post", "receipt"} {
+		t.Run(failure, func(t *testing.T) {
+			status := http.StatusAccepted
+			if failure == "post" {
+				status = http.StatusServiceUnavailable
+			}
+			setupTUITelemetryDaemon(t, status, "future")
+			if failure == "discovery" {
+				t.Setenv("DOCBANK_HOME", t.TempDir())
+			}
+			if failure == "file" {
+				require.NoError(t, os.Mkdir(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state"), 0o700))
+			}
+			backend := &tuiDaemonBackend{}
+			for range 6 {
+				ctx, cancel := context.WithCancel(t.Context())
+				if failure == "lock" {
+					cancel()
+				}
+				require.Error(t, backend.ReportScreen(ctx, "help"))
+				cancel()
+			}
+			t.Setenv("DOCBANK_HOME", filepath.Join(t.TempDir(), "missing"))
+			require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
+		})
 	}
-	requests := setupTUITelemetryDaemon(t, http.StatusServiceUnavailable, "")
-	for range 6 {
-		require.Error(t, backend.ReportScreen(t.Context(), "help"))
-	}
-	require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
-	assert.Equal(t, int32(6), requests.Load())
 }
 
 func TestTUITelemetryBusyLockReturnsRetryError(t *testing.T) {
