@@ -445,6 +445,67 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 	})
 }
 
+func TestPhotoSuggestionBackupKeepsCompletion(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		publish document.PhotoDescription
+		respond func(*testing.T, *Store, PhotoSuggestion)
+		settled bool
+	}{
+		{"every caption and tag accepted", document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}},
+			func(t *testing.T, s *Store, proposal PhotoSuggestion) {
+				acceptPhotoSuggestion(t, s, proposal, true, "coast", "sunset")
+			}, true},
+		{"nothing to review", document.PhotoDescription{}, nil, true},
+		{"partly accepted", document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}},
+			func(t *testing.T, s *Store, proposal PhotoSuggestion) {
+				acceptPhotoSuggestion(t, s, proposal, true, "coast")
+			}, false},
+		{"visible text left to review", document.PhotoDescription{Caption: "A harbor.", VisibleText: "QUAYSIDE"},
+			func(t *testing.T, s *Store, proposal PhotoSuggestion) { acceptPhotoSuggestion(t, s, proposal, true) }, false},
+		{"pending only", document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}}, nil, false},
+		{"dismissed", document.PhotoDescription{Caption: "A harbor."},
+			func(t *testing.T, s *Store, proposal PhotoSuggestion) {
+				_, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
+				require.NoError(t, err)
+			}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "completion.jpg")
+			publishPhotoDescription(t, s, asset, producerA, false, tc.publish)
+			node, err := s.NodeByID(ctx, fileByID(asset.Files, *asset.DisplayFileID).NodeID)
+			require.NoError(t, err)
+			if tc.respond != nil {
+				values := photoSuggestionValues(t, s, asset.ID)
+				require.Len(t, values, 1)
+				tc.respond(t, s, values[0])
+			}
+			current := s
+			for restore := 1; restore <= 2; restore++ {
+				current = restorePhotoSuggestionStore(t, current)
+				require.NoError(t, current.ValidateMetadata(ctx))
+				settled, err := current.photoDescriptionSettled(ctx, node.CurrentVersionID, "")
+				require.NoError(t, err)
+				require.Equal(t, tc.settled, settled, "after restore %d, fresh consent backfills only a description still owed", restore)
+			}
+			// Fresh consent runs the automatic backfill, which publishes only when the version is owed one.
+			publishPhotoDescription(t, current, asset, producerA, false, document.PhotoDescription{Caption: "Again.", Tags: []string{"harbor"}, VisibleText: "NEW"})
+			regenerated := photoSuggestionValues(t, current, asset.ID)
+			if tc.settled {
+				require.Empty(t, regenerated)
+			} else {
+				require.Len(t, regenerated, 1)
+				require.NotEmpty(t, regenerated[0].Value.Tags)
+			}
+		})
+	}
+}
+
 func TestPhotoDescriptionPredicates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

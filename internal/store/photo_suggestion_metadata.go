@@ -9,8 +9,11 @@ import (
 
 // metadataPhotoSuggestion records what the owner decided about a description,
 // never the generated text. A pending description with nothing decided is
-// recorded too, so restore asks for it again. After restore the row awaits
-// regeneration, which fills only the fields this record leaves open.
+// recorded too, so restore asks for it again. Awaiting is true while any text
+// is still pending or already awaiting regeneration, and it carries through
+// repeated restores. An awaiting row regenerates after restore and fills only
+// the fields this record leaves open. A description with nothing pending is
+// restored settled.
 type metadataPhotoSuggestion struct {
 	Type                string   `json:"type"`
 	ID                  string   `json:"suggestion_id" db:"suggestion_id"`
@@ -19,6 +22,7 @@ type metadataPhotoSuggestion struct {
 	Dismissed           bool     `json:"dismissed" db:"dismissed"`
 	CaptionResolved     bool     `json:"caption_resolved" db:"caption_resolved"`
 	ResolvedTags        []string `json:"resolved_tags" db:"resolved_tags_json,json"`
+	Awaiting            bool     `json:"awaiting" db:"awaiting OR caption<>'' OR tags_json<>'[]' OR visible_text<>''"`
 	CreatedAt           string   `json:"created_at" db:"created_at"`
 }
 
@@ -37,6 +41,9 @@ func validatePhotoSuggestionMetadata(value metadataPhotoSuggestion) error {
 			return errors.Join(ErrInvalidTag, err)
 		}
 	}
+	if value.Dismissed && value.Awaiting {
+		return errors.New("dismissed photo suggestion awaits regeneration")
+	}
 	if err := validateCatalogSHA256(value.ProducerFingerprint, "suggestion producer"); err != nil {
 		return err
 	}
@@ -45,6 +52,6 @@ func validatePhotoSuggestionMetadata(value metadataPhotoSuggestion) error {
 
 func insertPhotoSuggestionMetadata(ctx context.Context, tx *sql.Tx, value metadataPhotoSuggestion) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,dismissed,caption_resolved,resolved_tags_json,awaiting,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		value.ID, value.ContentVersionID, value.ProducerFingerprint, value.Dismissed, value.CaptionResolved, mustCatalogJSON(value.ResolvedTags), !value.Dismissed, value.CreatedAt)
+		value.ID, value.ContentVersionID, value.ProducerFingerprint, value.Dismissed, value.CaptionResolved, mustCatalogJSON(value.ResolvedTags), value.Awaiting, value.CreatedAt)
 	return err
 }
