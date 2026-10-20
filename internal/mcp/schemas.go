@@ -785,6 +785,7 @@ func getProcessingPlanSchemas() (schema, schema) {
 		},
 		"estimate": objectSchema(schema{
 			"source_bytes": integerSchema(0, 0), "provider_calls": integerSchema(0, 0), "vector_spaces": integerSchema(0, 0),
+			"scope": stringSchema(256),
 		}, "source_bytes", "provider_calls", "vector_spaces"),
 		"consent_required":            booleanSchema(),
 		"consent_state":               enumSchema("active", "required", "expired", "revoked"),

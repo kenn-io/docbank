@@ -31,8 +31,9 @@ docbank processing plan /inbox/notes.txt --profile <configured-profile>
 
 The plan names the stable node and content-version IDs, profile fingerprint,
 every provider flow and trust boundary, input classes disclosed to each flow,
-retained derivative classes, estimated source bytes and provider calls, whether
-consent is currently required, and the backup consequence. Each flow also names
+retained derivative classes, estimated source bytes and provider calls, any
+work beyond the selected source that consent starts, whether consent is
+currently required, and the backup consequence. Each flow also names
 the immediate and ultimate processor, endpoint, deployment, model and revision,
 vector space where applicable, provider-visible metadata, and retained artifact
 roles. These runtime disclosures are part of the plan fingerprint. Re-run the

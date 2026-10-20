@@ -225,7 +225,8 @@ func fromProcessingPlan(plan internalprocessing.Plan) ProcessingPlan {
 		BackupConsequence:         plan.BackupConsequence,
 		RenditionIneligibleReason: plan.RenditionIneligibleReason,
 		Estimate: ProcessingEstimate{SourceBytes: plan.Estimate.SourceBytes,
-			ProviderCalls: plan.Estimate.ProviderCalls, VectorSpaces: plan.Estimate.VectorSpaces},
+			ProviderCalls: plan.Estimate.ProviderCalls, VectorSpaces: plan.Estimate.VectorSpaces,
+			Scope: plan.Estimate.Scope},
 		Flow: make([]ProcessingFlowHop, len(plan.Flow))}
 	for index, hop := range plan.Flow {
 		result.Flow[index] = ProcessingFlowHop{Capability: hop.Capability,

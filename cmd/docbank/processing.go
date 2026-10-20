@@ -180,6 +180,9 @@ func writeProcessingPlan(cmd *cobra.Command, plan api.ProcessingPlan) error {
 	_, _ = fmt.Fprintf(w, "retains:\t%s\n", displayList(plan.RetainedClasses))
 	_, _ = fmt.Fprintf(w, "estimate:\t%d provider call(s), %d vector space(s), %d source byte(s)\n",
 		plan.Estimate.ProviderCalls, plan.Estimate.VectorSpaces, plan.Estimate.SourceBytes)
+	if plan.Estimate.Scope != "" {
+		_, _ = fmt.Fprintf(w, "scope:\t%s\n", plan.Estimate.Scope)
+	}
 	_, _ = fmt.Fprintf(w, "consent required:\t%t\n", plan.ConsentRequired)
 	_, _ = fmt.Fprintf(w, "backup:\t%s\n", plan.BackupConsequence)
 	if plan.RenditionIneligibleReason != "" {

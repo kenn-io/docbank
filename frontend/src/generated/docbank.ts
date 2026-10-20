@@ -6650,6 +6650,11 @@ export interface ProcessingConsentRevocationRequest {
 export interface ProcessingEstimate {
   /** @minimum 0 */
   provider_calls: number;
+  /**
+     * Work beyond the selected source that consent starts.
+     * @maxLength 256
+     */
+  scope?: string;
   /** @minimum 0 */
   source_bytes: number;
   /** @minimum 0 */

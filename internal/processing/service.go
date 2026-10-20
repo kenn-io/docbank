@@ -202,6 +202,9 @@ type Estimate struct {
 	SourceBytes   int64
 	ProviderCalls int
 	VectorSpaces  int
+	// Scope names work beyond the selected source that consent starts. Omitted
+	// when empty, so other plan fingerprints are unchanged.
+	Scope string `json:",omitzero"`
 }
 
 // ProfileSummary describes one locally executable processing profile without
@@ -731,7 +734,8 @@ func (service *Service) planForSource(selector Selector, node store.Node,
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "filename")
 		}
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-			plan.BackupConsequence = "Granting consent automatically queues eligible photos throughout this vault. Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
+			plan.Estimate.Scope = "Granting consent automatically queues eligible photos throughout this vault."
+			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
 		}
 		plan.Flow = append(plan.Flow, hop)
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(profileRenditionInput(profile)))

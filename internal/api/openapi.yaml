@@ -15325,6 +15325,10 @@ components:
           format: int64
           minimum: 0
           type: integer
+        scope:
+          description: Work beyond the selected source that consent starts.
+          maxLength: 256
+          type: string
         source_bytes:
           format: int64
           minimum: 0
