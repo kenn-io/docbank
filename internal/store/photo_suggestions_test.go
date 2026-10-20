@@ -782,6 +782,39 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 	}
 }
 
+func TestPhotoDescriptionAutomaticJoinKeepsEarlierExplicitRequest(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "joined.jpg")
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
+	_, err = s.RespondPhotoSuggestion(ctx, first.ID, PhotoSuggestionResponse{Response: "dismissed"})
+	require.NoError(t, err)
+
+	explicit := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, true)
+	grantRenditionJobConsent(t, s, explicit)
+	job, waiter, err := s.EnqueueRenditionJob(ctx, explicit)
+	require.NoError(t, err)
+	// A delayed backfill admission arrives for the same photo and profile.
+	automatic := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+	joined, _, err := s.EnqueueRenditionJob(ctx, automatic)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, joined.ID)
+
+	at := time.Now().UTC().Add(time.Minute)
+	claim, err := s.ClaimRenditionJob(ctx, job.ID, "description-worker", at, time.Hour)
+	require.NoError(t, err, "the explicit request is still waiting for its description")
+	_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID, at, renditionJobTestSnapshot(explicit))
+	require.NoError(t, err)
+	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
+	require.NoError(t, err)
+	published := photoSuggestionValues(t, s, asset.ID)
+	require.Len(t, published, 1, "the explicit request replaces the dismissal")
+	require.Equal(t, "From B.", published[0].Value.Caption)
+}
+
 func TestDerivativePurgeLeavesPhotoSuggestionsButVersionPurgeRemovesThem(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

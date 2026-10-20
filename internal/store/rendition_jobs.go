@@ -363,8 +363,15 @@ func (s *Store) EnqueueRenditionJob(
 			return fmt.Errorf("checking rendition job waiter: %w", err)
 		}
 		if derived {
+			// A waiter that an explicit start created stays explicit when an automatic request joins it.
+			explicit := request.ExplicitStart
+			if !explicit {
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters WHERE waiter_id=?)`, waiterID).Scan(&explicit); err != nil {
+					return fmt.Errorf("reading explicit start: %w", err)
+				}
+			}
 			var joinErr error
-			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, request.ExplicitStart, now)
+			job, waiter, joinErr = joinPhotoDescriptionTx(ctx, tx, jobID, waiterID, request.ContentVersionID, profile.RenditionRequestFingerprint, explicit, now)
 			return joinErr
 		}
 		var alreadyActive bool
