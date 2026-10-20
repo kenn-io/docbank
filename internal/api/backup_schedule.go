@@ -20,19 +20,17 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 	if interval <= 0 {
 		return nil
 	}
-	if err := d.Cfg.Validate(); err != nil {
-		return err
-	}
 	logger := d.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	retry := min(interval, 5*time.Minute)
+	captureDue := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		delay, err := scheduledBackup(ctx, d, logger)
+		delay, err := scheduledBackup(ctx, d, logger, captureDue)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -43,6 +41,11 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 		}
 		if err := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now); err != nil {
 			return err
+		}
+		if err == nil {
+			// Consume the elapsed capture deadline even if Kit timestamps remain
+			// ahead of wall time after a clock correction. Retries keep this due state.
+			captureDue = true
 		}
 	}
 }
@@ -65,7 +68,7 @@ func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time
 	}
 }
 
-func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger) (time.Duration, error) {
+func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDue bool) (time.Duration, error) {
 	interval := d.Cfg.Backup.Interval.Std()
 	if err := backupapp.ValidateDisjointRoots(d.VaultRoot, d.Cfg.Backup.Repo); err != nil {
 		return 0, err
@@ -90,11 +93,10 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger) (time.Dur
 		jobs.ReportError(ctx, warning)
 		logger.Warn(warning.Error())
 	}
-	if delay > 0 {
+	if delay > 0 && !captureDue {
 		return delay, nil
 	}
-	snapshot, err := createBackupSnapshot(ctx, repo, d, d.Gate,
-		backupCreateRequest{Tag: backupapp.ScheduledTag}, nil)
+	snapshot, err := createScheduledBackupSnapshot(ctx, repo, d)
 	if err != nil {
 		return 0, err
 	}
@@ -106,6 +108,13 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger) (time.Dur
 		logger.Warn("scheduled backup cleanup failed", "error", err)
 	}
 	return interval, nil
+}
+
+func createScheduledBackupSnapshot(ctx context.Context, repo *backup.Repo, d Deps) (BackupSnapshot, error) {
+	return captureBackupSnapshot(ctx, d.Gate, func() (*backup.Manifest, error) {
+		return backupapp.CreateScheduled(ctx, repo, version.Version, d.Store, d.Blobs,
+			backup.CreateOptions{ZstdLevel: d.Cfg.Backup.ZstdLevel, Freezer: &gateFreezer{gate: d.Gate}})
+	})
 }
 
 func retainScheduledBackups(ctx context.Context, repo *backup.Repo, keep int, created string) error {

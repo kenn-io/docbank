@@ -1,7 +1,6 @@
 package backupapp
 
 import (
-	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -12,13 +11,8 @@ import (
 // ScheduledTag identifies recovery points owned by the daemon's retention policy.
 const ScheduledTag = "docbank:scheduled"
 
-// ValidateManualTag prevents manual recovery points from entering scheduled retention.
-func ValidateManualTag(tag string) error {
-	if tag == ScheduledTag {
-		return fmt.Errorf("backup tag %q is reserved for scheduled backups", tag)
-	}
-	return nil
-}
+// ErrReservedScheduledTag prevents manual captures from entering scheduled retention.
+var ErrReservedScheduledTag = fmt.Errorf("backup tag %q is reserved for scheduled backups", ScheduledTag)
 
 // Kit lists validated manifests oldest first; retention consumes newest first.
 func scheduledPoints(manifests []*backup.Manifest) []*backup.Manifest {
@@ -33,7 +27,7 @@ func scheduledPoints(manifests []*backup.Manifest) []*backup.Manifest {
 }
 
 // ScheduleDelay derives the next capture and stale warning from durable manifests.
-// Future timestamps preserve the same durable deadline across daemon restarts.
+// Future timestamps delay recovery by at most one interval per daemon run.
 func ScheduleDelay(manifests []*backup.Manifest, now time.Time, interval time.Duration) (time.Duration, bool, error) {
 	points := scheduledPoints(manifests)
 	if len(points) == 0 {
@@ -49,14 +43,11 @@ func ScheduleDelay(manifests []*backup.Manifest, now time.Time, interval time.Du
 	if age >= interval {
 		return 0, stale, nil
 	}
-	return at.Add(interval).Sub(now), stale, nil
+	return min(interval, at.Add(interval).Sub(now)), stale, nil
 }
 
 // ScheduledRetention selects old scheduled points, always preserving the new capture.
 func ScheduledRetention(manifests []*backup.Manifest, keep int, created string) ([]string, error) {
-	if keep <= 0 {
-		return nil, errors.New("scheduled backup keep_last must be positive")
-	}
 	points := scheduledPoints(manifests)
 	found := false
 	for _, point := range points {

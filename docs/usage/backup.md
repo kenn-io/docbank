@@ -93,8 +93,10 @@ drawer shows its standard error indicator with details redacted for browser
 sessions. Daemon logs also report failures and warn before capture when the
 newest scheduled snapshot is older than both 48 hours and twice the interval.
 This check reads snapshot timestamps on startup, so a restart preserves stale
-backup detection. A timestamp in the future keeps its next deadline at that
-snapshot time plus the interval, including across daemon restarts.
+backup detection. After a clock correction leaves a snapshot timestamp in the
+future, the daemon waits at most one interval before capturing and then keeps
+the configured cadence. Restarting during that wait starts a new bounded wait,
+so frequent restarts can defer recovery.
 
 Set `interval = "0"` to disable the schedule. Enabling it requires both `repo`
 and a positive `keep_last`; there is no default retained count.
@@ -200,6 +202,10 @@ docbank backup prune [--repo DIR] [--dry-run] [--force-unlock] [--json]
 ```
 
 Use exact IDs from `backup list`; unknown or misspelled IDs return 404. Forget refuses the last recovery point unless you pass `--allow-empty`, and refuses a parent required by a retained incremental snapshot. Forget removes manifests; prune separately removes unused packs and rewrites packs with less than half their encoded content still live. Dry runs take the same repository lock and report the planned work. Text output starts with `dry run: nothing removed`.
+
+Ownership checks govern captures and automatic retention. Explicit `forget` and
+`prune` operate on the repository selected by the operator, independently of its
+source vault.
 
 These commands require the master daemon credential. Browser sessions cannot run them. Cleanup errors with selected, planned, or completed work include partial reports in the API problem's `backup_forget` or `backup_prune` field. The CLI prints the report in text or JSON before returning the cleanup error and exiting nonzero. Text lists selected and forgotten snapshot IDs, planned pack removals and rewrites, and removed pack names. Items absent from completed lists remain pending or unconfirmed; bytes written alone do not prove a rewrite completed. Planned bytes are not net savings, and cleanup does not securely erase content.
 

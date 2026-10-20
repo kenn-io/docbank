@@ -148,6 +148,33 @@ func Create(
 	blobs BlobStreamer,
 	opts backup.CreateOptions,
 ) (*backup.Manifest, error) {
+	if opts.Tag == ScheduledTag {
+		return nil, ErrReservedScheduledTag
+	}
+	return create(ctx, repo, version, metadata, blobs, opts)
+}
+
+// CreateScheduled captures a recovery point managed by scheduled retention.
+func CreateScheduled(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	metadata *store.Store,
+	blobs BlobStreamer,
+	opts backup.CreateOptions,
+) (*backup.Manifest, error) {
+	opts.Tag = ScheduledTag
+	return create(ctx, repo, version, metadata, blobs, opts)
+}
+
+func create(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	metadata *store.Store,
+	blobs BlobStreamer,
+	opts backup.CreateOptions,
+) (*backup.Manifest, error) {
 	if opts.MetadataSource != nil || opts.ContentSource != nil || opts.DBPath != "" {
 		return nil, errors.New("backupapp: create options must not supply metadata or content sources")
 	}

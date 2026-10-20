@@ -109,9 +109,6 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Body backupCreateRequest
 	}) (*createOutput, error) {
-		if err := backupapp.ValidateManualTag(in.Body.Tag); err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
-		}
 		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
@@ -142,9 +139,6 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Body backupCreateRequest
 	}) (*huma.StreamResponse, error) {
-		if err := backupapp.ValidateManualTag(in.Body.Tag); err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
-		}
 		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
@@ -375,15 +369,21 @@ func createBackupSnapshot(
 	in backupCreateRequest,
 	progress func(backup.ProgressEvent),
 ) (BackupSnapshot, error) {
-	var manifest *backup.Manifest
-	err := g.CaptureContext(ctx, func() error {
-		var err error
-		manifest, err = backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
+	return captureBackupSnapshot(ctx, g, func() (*backup.Manifest, error) {
+		return backupapp.Create(ctx, repo, version.Version, d.Store, d.Blobs,
 			backup.CreateOptions{
 				Tag: in.Tag, ZstdLevel: d.Cfg.Backup.ZstdLevel,
 				Freezer: &gateFreezer{gate: g}, ForceUnlock: in.ForceUnlock, Jobs: in.Jobs,
 				Progress: progress,
 			})
+	})
+}
+
+func captureBackupSnapshot(ctx context.Context, g *gate, capture func() (*backup.Manifest, error)) (BackupSnapshot, error) {
+	var manifest *backup.Manifest
+	err := g.CaptureContext(ctx, func() error {
+		var err error
+		manifest, err = capture()
 		return err
 	})
 	if err != nil {
@@ -812,6 +812,9 @@ func fromBackupError(err error) error {
 func backupProblem(err error) *Error {
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
+	}
+	if errors.Is(err, backupapp.ErrReservedScheduledTag) {
+		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	}
 	if unsupported, ok := errors.AsType[*backupapp.UnsupportedCoverageVersionError](err); ok {
 		return NewError(http.StatusUnprocessableEntity, "backup_coverage_unsupported",

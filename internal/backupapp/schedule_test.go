@@ -19,7 +19,7 @@ func TestScheduleDelay(t *testing.T) {
 		{"due", 24 * time.Hour, 24 * time.Hour, 0, false},
 		{"stale after restart", 49 * time.Hour, 24 * time.Hour, 0, true},
 		{"long interval", 49 * time.Hour, 48 * time.Hour, 0, false},
-		{"future clock", -24 * time.Hour, time.Hour, 25 * time.Hour, false},
+		{"future clock", -24 * time.Hour, time.Hour, time.Hour, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			points := []*backup.Manifest{{CreatedAt: now.Add(-tc.age).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag}}}

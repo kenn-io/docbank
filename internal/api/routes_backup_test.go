@@ -126,9 +126,23 @@ func TestBackupManualReservedTag(t *testing.T) {
 	require.NoError(t, err)
 	for _, path := range []string{"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream"} {
 		resp, body := do(t, ts, http.MethodPost, path, nil, map[string]any{"tag": "docbank:scheduled"})
-		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		if strings.HasSuffix(path, "/stream") {
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			events := decodeBackupEvents(t, body)
+			require.Len(t, events, 1)
+			require.Equal(t, "error", events[0].Type)
+			require.NotNil(t, events[0].Error)
+			require.Equal(t, http.StatusUnprocessableEntity, events[0].Error.Status)
+		} else {
+			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		}
 		require.Contains(t, body, "reserved")
 	}
+	repo, err := backup.Open(repoPath)
+	require.NoError(t, err)
+	points, err := repo.ListSnapshots()
+	require.NoError(t, err)
+	require.Empty(t, points)
 }
 
 func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {

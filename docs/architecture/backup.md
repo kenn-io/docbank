@@ -78,7 +78,7 @@ describe different authority handoffs.
 Each repository has one source vault. Its root-level `docbank-owner` marker
 holds the stable vault identity. Daemon initialization assigns ownership;
 the embedded initializer creates an unassigned empty repository. The shared
-`backupapp.Create` path checks ownership for every daemon and embedded capture.
+capture path checks ownership for every daemon and embedded capture.
 Under Kit's exclusive repository lock, it rechecks the marker and history,
 assigns an empty unmarked repository, and rejects a different owner. Existing
 unmarked history requires an explicit claim. Marker publication is atomic;
@@ -98,11 +98,15 @@ background idle shutdown.
 
 The worker opens an initialized repository and derives due and stale times
 from manifests tagged `docbank:scheduled`, after checking ownership. A different
-vault cannot use its timestamps or trigger scheduled cleanup. Manual HTTP and embedded capture
-reject that reserved tag. Scheduling stores no separate checkpoint, so restart
+vault cannot use its timestamps or trigger scheduled cleanup. `backupapp.Create`
+rejects the reserved tag at the shared capture boundary; the scheduler uses
+`backupapp.CreateScheduled`. Scheduling stores no separate checkpoint, so restart
 uses the same timestamps and checks staleness before attempting capture.
-A future timestamp keeps its deadline at the snapshot time plus the interval
-across restarts.
+A future timestamp caps the initial wait at one interval. The worker consumes
+that deadline once, then captures at the configured interval even while Kit's
+timestamps remain ahead of wall time. A failed due capture keeps that state
+through its retry wait. Restarting resets the in-memory cadence, so frequent
+restarts before the first interval elapses can defer recovery.
 
 Claim confirmation carries a digest of the repository identity and ordered snapshot
 IDs from the preview. The ownership lock covers rechecking that digest and writing
@@ -161,6 +165,9 @@ Manifest `Stats.coverage` records a versioned, bounded inventory of photo assets
 Restore resolves one exact manifest before starting. Kit's existing stats proof recomputes coverage from the staged database and compares it before publication. It preserves the manifest's recorded exclusions when recounting, so later exclusion-list changes preserve version-1 restore compatibility. Coverage version 1 is supported; restore rejects other recorded versions with upgrade guidance before creating the target database. Quick and full verification check manifest consistency and report unsupported coverage versions; full verification also checks physical content. Verification does not recount photo coverage. Snapshot listing preserves base statistics and IDs for unsupported coverage versions, omits the uninterpreted payload, and adds a per-snapshot warning. Historical manifests without coverage retain their original stats representation. Metadata import validates photo relationships and receipts; checkout import restores definitions and entries with inactive, unbound defaults. Hidden passcode and lockout records survive, while process-memory unlock sessions clear.
 
 Forget and prune reuse Kit's exclusive repository lock without opening the source vault. Operator routes and CLI output retain partial reports on error, including exact selected, planned, and completed item identities. Unknown selected snapshot IDs return 404; filesystem I/O failures remain server errors. The [user guide](../usage/backup.md#recover-on-a-fresh-installation) describes recovery with a fresh daemon home and a disjoint target.
+
+Explicit forget and prune address the operator-selected repository independently
+of its source owner. Ownership gates captures and automatic retention.
 
 ## When does copied content become trusted?
 
