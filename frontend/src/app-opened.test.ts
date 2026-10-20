@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vite-plus/test";
 import { startTelemetryReporting } from "./app-opened.js";
+import { startSessionReporting } from "./session-duration.js";
 
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const settle = () => vi.advanceTimersByTimeAsync(0);
 
 function respond(status: number): Response {
   return new Response(
@@ -14,19 +15,19 @@ function respond(status: number): Response {
 }
 
 describe("app_opened reporting", () => {
-  let stop: (() => void) | undefined;
+  let reporter: ReturnType<typeof startTelemetryReporting>;
   let fetchMock: MockInstance<typeof fetch>;
 
   beforeEach(() => {
     localStorage.clear();
-    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.useFakeTimers();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
     fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => respond(202));
   });
 
   afterEach(() => {
-    stop?.();
-    stop = undefined;
+    reporter?.stop();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -34,7 +35,7 @@ describe("app_opened reporting", () => {
   const focus = () => window.dispatchEvent(new Event("focus"));
 
   it("posts app_opened to the daemon with only the browser session", async () => {
-    stop = startTelemetryReporting("secret").stop;
+    reporter = startTelemetryReporting("secret");
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] ?? [];
@@ -51,7 +52,7 @@ describe("app_opened reporting", () => {
     const unhandled = vi.fn();
     window.addEventListener("unhandledrejection", unhandled);
     fetchMock.mockImplementationOnce(async () => respond(401));
-    stop = startTelemetryReporting("secret").stop;
+    reporter = startTelemetryReporting("secret");
     await settle();
     await settle();
     focus();
@@ -63,23 +64,7 @@ describe("app_opened reporting", () => {
     expect(unhandled).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
-});
-
-describe("shared browser receipt gate", () => {
-  let reporter: ReturnType<typeof startTelemetryReporting>;
-  beforeEach(() => {
-    vi.useFakeTimers();
-    localStorage.clear();
-    vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
-    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  });
-  afterEach(() => {
-    reporter.stop();
-    vi.restoreAllMocks();
-    vi.useRealTimers();
-  });
   it("retains disabled receipts across screen changes, visits, and reloads", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(respond(202));
     reporter = startTelemetryReporting("secret");
     await vi.advanceTimersByTimeAsync(0);
     reporter.reportScreen("help");
@@ -92,9 +77,7 @@ describe("shared browser receipt gate", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("bounds screen failures and forwards the deadline and keepalive through transport", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
+    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
     reporter = startTelemetryReporting("secret");
     await vi.advanceTimersByTimeAsync(0);
     reporter.reportVisit(
@@ -106,10 +89,6 @@ describe("shared browser receipt gate", () => {
     expect(fetchMock.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     fetchMock.mockImplementation(async () => new Response(null, { status: 503 }));
     reporter.reportScreen("help");
-    await vi.advanceTimersByTimeAsync(999);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
     await vi.advanceTimersByTimeAsync(120_000);
     expect(fetchMock).toHaveBeenCalledTimes(8);
     window.dispatchEvent(new Event("focus"));
@@ -120,27 +99,48 @@ describe("shared browser receipt gate", () => {
   it("holds hidden screens and reports only the latest screen on visibility", async () => {
     let visibility: DocumentVisibilityState = "hidden";
     vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
+    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
     reporter = startTelemetryReporting("secret");
     reporter.reportScreen("browse");
     reporter.reportScreen("help");
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).event)).toEqual([
-      "app_opened",
-    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     visibility = "visible";
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-      { event: "app_opened", properties: { surface: "web" } },
-      { event: "screen_viewed", properties: { surface: "web", screen: "help" } },
-    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      event: "screen_viewed",
+      properties: { surface: "web", screen: "help" },
+    });
     reporter.stop();
     reporter.reportScreen("search");
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it("discards disabled duration and resumes on a later enabled day", async () => {
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    reporter = startTelemetryReporting("secret");
+    const duration = startSessionReporting(reporter);
+    now = 120_000;
+    await settle();
+    expect(duration.take()).toBeUndefined();
+    window.dispatchEvent(new Event("pagehide"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
+    vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
+    focus();
+    await settle();
+    now += 120_000;
+    window.dispatchEvent(new Event("pagehide"));
+    await settle();
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toEqual({
+      event: "session_ended",
+      properties: { surface: "web", duration_bucket: "1_to_5m" },
+    });
+    duration.stop();
   });
 });

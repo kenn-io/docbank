@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
 	"go.kenn.io/kit/atomicfile"
-	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -46,23 +48,29 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 	if err != nil {
 		return fmt.Errorf("resolving telemetry state: %w", err)
 	}
-	path := filepath.Join(layout.Root, "telemetry-tui-disabled")
+	path := filepath.Join(layout.Root, "telemetry-tui-state")
 	lock := flock.New(path + ".lock")
-	locked, err := lock.TryLockContext(ctx, 10*time.Millisecond)
+	_, err = lock.TryLockContext(ctx, 10*time.Millisecond)
 	if err != nil {
 		return fmt.Errorf("locking TUI telemetry: %w", err)
-	}
-	if !locked {
-		return errors.New("locking TUI telemetry: lock unavailable")
 	}
 	defer func() { _ = lock.Close() }()
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading TUI telemetry receipt: %w", err)
 	}
-	if string(data) == day {
-		r.disabled = true
-		return nil
+	lines := strings.Split(string(data), "\n")
+	cached := make(map[string]bool)
+	valid := lines[0] == day
+	for _, name := range lines[1:] {
+		valid = valid && slices.Contains(telemetry.ScreenNames(), name)
+		cached[name] = true
+	}
+	if valid {
+		r.disabled, r.screens = len(lines) == 1, cached
+		if r.disabled || r.screens[screen] {
+			return nil
+		}
 	}
 	c, ok, err := daemonconn.Running(ctx)
 	if err != nil {
@@ -80,9 +88,6 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 	switch receipt.Status {
 	case "disabled":
 		r.disabled = true
-		if err := atomicfile.WriteFile(path, []byte(day), atomicfile.WithPrivate()); err != nil {
-			return fmt.Errorf("saving TUI telemetry receipt: %w", err)
-		}
 	case "queued":
 		if screen != "" {
 			r.screens[screen] = true
@@ -92,17 +97,12 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 		return fmt.Errorf("reporting TUI telemetry: unexpected receipt %q", receipt.Status)
 	}
 
+	if r.disabled || screen != "" {
+		state := day
+		if !r.disabled {
+			state += "\n" + strings.Join(slices.Sorted(maps.Keys(r.screens)), "\n")
+		}
+		return atomicfile.WriteFile(path, []byte(state), atomicfile.WithPrivate())
+	}
 	return nil
-}
-
-// A report that doesn't finish within 50 ms may be lost.
-func (r *tuiTelemetry) sessionEnded(elapsed time.Duration) {
-	var sends posthog.SendGroup
-	defer sends.Wait(50 * time.Millisecond)
-	sends.Go(func() {
-		_ = r.report(context.Background(), &apiclient.ReportTelemetryEventBody{
-			Event:      telemetry.EventSessionEnded,
-			Properties: &apiclient.TelemetryEventProperties{Surface: "tui", DurationBucket: telemetry.DurationBucket(elapsed)},
-		})
-	})
 }

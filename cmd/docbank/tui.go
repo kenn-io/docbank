@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -71,7 +72,7 @@ enrollment remain outside the TUI.`,
 		_, err = tea.NewProgram(model, opts...).Run()
 		if tuiProgramRan(err) {
 			// Usage reporting is best effort.
-			backend.telemetry.sessionEnded(time.Since(started))
+			reportTUISessionEnded(&backend.telemetry, time.Since(started))
 		}
 		if err != nil {
 			return fmt.Errorf("running docbank TUI: %w", err)
@@ -82,6 +83,18 @@ enrollment remain outside the TUI.`,
 
 func tuiProgramRan(err error) bool {
 	return err == nil || errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled)
+}
+
+// A report that doesn't finish within 50 ms may be lost.
+func reportTUISessionEnded(gate *tuiTelemetry, elapsed time.Duration) {
+	var sends posthog.SendGroup
+	defer sends.Wait(50 * time.Millisecond)
+	sends.Go(func() { _ = sendTUISessionEnded(context.Background(), gate, elapsed) })
+}
+
+func sendTUISessionEnded(ctx context.Context, gate *tuiTelemetry, elapsed time.Duration) error {
+	properties := &apiclient.TelemetryEventProperties{Surface: "tui", DurationBucket: telemetry.DurationBucket(elapsed)}
+	return gate.report(ctx, &apiclient.ReportTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: properties})
 }
 
 func (b *tuiDaemonBackend) Close() error {

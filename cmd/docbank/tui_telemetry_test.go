@@ -44,36 +44,43 @@ func TestTUITelemetryReceipts(t *testing.T) {
 				})
 			}
 			group.Wait()
-			path := filepath.Join(root, "telemetry-tui-disabled")
+			path := filepath.Join(root, "telemetry-tui-state")
+			expected := time.Now().UTC().Format(time.DateOnly)
 			if receipt == "queued" {
-				assert.Equal(t, int32(2), requests.Load())
-				assert.NoFileExists(t, path)
-				return
+				require.NoError(t, backends[0].ReportScreen(t.Context(), "browse"))
+				expected += "\nbrowse\nhelp"
 			}
 			data, err := os.ReadFile(path)
 			require.NoError(t, err)
-			assert.Equal(t, time.Now().UTC().Format(time.DateOnly), string(data))
+			assert.Equal(t, expected, string(data))
 			runtimePath, err := daemonconn.RuntimeStore(root).Path(os.Getpid())
 			require.NoError(t, err)
 			require.NoError(t, os.Remove(runtimePath))
 			restarted := &tuiDaemonBackend{}
-			require.NoError(t, restarted.ReportScreen(t.Context(), "browse"))
+			require.NoError(t, restarted.ReportScreen(t.Context(), "help"))
 			require.NoError(t, os.Remove(path))
 			for _, backend := range append(backends, restarted) {
-				require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
-				backend.telemetry.sessionEnded(time.Minute)
+				require.NoError(t, backend.ReportScreen(t.Context(), "help"))
+				if receipt == "disabled" {
+					require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
+					reportTUISessionEnded(&backend.telemetry, time.Minute)
+				}
 			}
 			assert.NoFileExists(t, path)
-			assert.Equal(t, int32(1), requests.Load())
+			expectedRequests := int32(1)
+			if receipt == "queued" {
+				expectedRequests++
+			}
+			assert.Equal(t, expectedRequests, requests.Load())
 		})
 	}
 }
 
 func TestTUITelemetryUnexpectedDateIsEmpty(t *testing.T) {
-	for _, value := range []string{"", "invalid", "2000-01-01", time.Now().UTC().Format(time.DateOnly) + "\n"} {
+	for _, value := range []string{"", "invalid", "2000-01-01", time.Now().UTC().Format(time.DateOnly) + "\n", time.Now().UTC().Format(time.DateOnly) + "\nunknown", "2000-01-01\nhelp"} {
 		t.Run(value, func(t *testing.T) {
 			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
-			require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-disabled"), []byte(value), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state"), []byte(value), 0o600))
 			backend := &tuiDaemonBackend{}
 			require.NoError(t, backend.ReportScreen(t.Context(), "help"))
 			assert.Equal(t, int32(1), requests.Load())
@@ -108,7 +115,7 @@ func TestTUITelemetryRetriesMissingDaemonWithoutEnsure(t *testing.T) {
 
 func TestTUITelemetryBusyLockReturnsRetryError(t *testing.T) {
 	requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
-	lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-disabled.lock"))
+	lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.lock"))
 	require.NoError(t, lock.Lock())
 	defer func() { require.NoError(t, lock.Close()) }()
 	backend := &tuiDaemonBackend{}

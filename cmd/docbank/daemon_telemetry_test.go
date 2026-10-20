@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,10 +79,12 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 
 func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
-	startTelemetryTestDaemon(t)
-	reporter := &tuiTelemetry{}
-	reporter.sessionEnded(2 * time.Minute)
-	require.Eventually(t, func() bool { reporter.mu.Lock(); defer reporter.mu.Unlock(); return reporter.disabled }, time.Second, time.Millisecond)
+	d := startTelemetryTestDaemon(t)
+	reportTUISessionEnded(&tuiTelemetry{}, 2*time.Minute)
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(filepath.Join(d.root, "telemetry-tui-state"))
+		return err == nil && string(data) == time.Now().UTC().Format(time.DateOnly)
+	}, time.Second, time.Millisecond)
 }
 
 func TestServeAcceptsAppOpenedWhenTelemetryOptedOut(t *testing.T) {

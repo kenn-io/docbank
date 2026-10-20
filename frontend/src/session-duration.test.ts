@@ -1,6 +1,5 @@
 import type { BrowserTelemetryReporter } from "@kenn-io/kit-ui/utils/browser-telemetry";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { startTelemetryReporting } from "./app-opened.js";
 import { startSessionReporting } from "./session-duration.js";
 
 describe("session_ended reporting", () => {
@@ -8,7 +7,7 @@ describe("session_ended reporting", () => {
   const reporter: Pick<BrowserTelemetryReporter, "reportVisit" | "onQuietChange"> = {
     reportVisit,
     onQuietChange: (listener) => {
-      listener(false, "enabled");
+      listener(true, "checking");
       return () => undefined;
     },
   };
@@ -130,19 +129,6 @@ describe("session_ended reporting", () => {
     ]);
   });
 
-  it("keeps elapsed time while the gate checks", () => {
-    reporting = startSessionReporting({
-      reportVisit,
-      onQuietChange: (listener) => {
-        listener(true, "checking");
-        return () => undefined;
-      },
-    });
-    now = 120_000;
-    expect(reporting.take()).toBe("1_to_5m");
-    expect(sessionReports()).toHaveLength(0);
-  });
-
   it("takes the final bucket once without sending it", () => {
     reporting = startSessionReporting(reporter);
     now = 120_000;
@@ -165,39 +151,4 @@ describe("session_ended reporting", () => {
     reporting.stop();
     expectBucket("1_to_5m");
   });
-});
-
-it("discards duration after opt-out and resumes on a later enabled day", async () => {
-  vi.useFakeTimers();
-  localStorage.clear();
-  vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-  let now = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => now);
-  const fetchMock = vi
-    .spyOn(globalThis, "fetch")
-    .mockImplementation(async () => new Response('{"status":"disabled"}', { status: 202 }));
-  const reporter = startTelemetryReporting("secret");
-  const duration = startSessionReporting(reporter);
-  now = 120_000;
-  await vi.advanceTimersByTimeAsync(0);
-  expect(duration.take()).toBeUndefined();
-  window.dispatchEvent(new Event("pagehide"));
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
-  vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
-  window.dispatchEvent(new Event("focus"));
-  await vi.advanceTimersByTimeAsync(0);
-  now += 120_000;
-  window.dispatchEvent(new Event("pagehide"));
-  await vi.advanceTimersByTimeAsync(0);
-  expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toEqual({
-    event: "session_ended",
-    properties: { surface: "web", duration_bucket: "1_to_5m" },
-  });
-  duration.stop();
-  reporter.stop();
-  vi.restoreAllMocks();
-  vi.useRealTimers();
 });

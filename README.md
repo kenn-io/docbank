@@ -129,12 +129,10 @@ trash, maintenance, and restore.
 
 Docbank sends anonymous usage events by default:
 
-- `daemon_active` each time the daemon starts and once per later UTC day while
-  it runs.
+- `daemon_active` at startup and once per later UTC day while running.
 - `app_opened` when the web app opens, about once a day per browser and daemon
   run.
-- `screen_viewed` with a fixed screen name, once per vault per UTC day for
-  each interface, browser and terminal, across daemon restarts.
+- `screen_viewed` with a fixed screen name, once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
 - `session_ended` once when a tab closes or stays hidden for 30 minutes, or the
   terminal browser exits, with duration grouped into four buckets. Browser
   visible time adds up across tab switches. Hidden time is excluded. The
@@ -142,10 +140,8 @@ Docbank sends anonymous usage events by default:
 
 Each event carries a random per-vault install ID, the version and commit, and
 the operating system and architecture. Events never include document content,
-names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` to turn telemetry
-off. Browser and TUI reports stop for the UTC day after the daemon confirms
-telemetry is off. Failed reports use bounded backoff, and TUI reports only
-contact an already-running daemon. See
+names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` to turn
+telemetry off. See
 [anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).
 
 ## Documentation
