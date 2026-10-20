@@ -3536,14 +3536,17 @@ async function hideSetupFlow(staleConfigured = false, selection = [1, 2]) {
   }
   const dialog = await screen.findByRole("dialog", { name: "Set a Hidden passcode" });
   const input = within(dialog).getByLabelText("Passcode") as HTMLInputElement;
+  const confirmation = within(dialog).getByLabelText("Confirm passcode") as HTMLInputElement;
   const submit = async () => {
     await fireEvent.input(input, { target: { value: "synthetic-passcode" } });
-    await fireEvent.submit(input.closest("form")!);
+    await fireEvent.input(confirmation, { target: { value: "synthetic-passcode" } });
+    await fireEvent.keyDown(confirmation, { key: "Enter" });
   };
   return {
     ...flow,
     dialog,
     input,
+    confirmation,
     submit,
   };
 }
@@ -3627,6 +3630,9 @@ it("keeps a partial Hide success and sets up Hidden on an explicit Hide of the r
   const dialog = await screen.findByRole("dialog", { name: "Set a Hidden passcode" });
   const input = within(dialog).getByLabelText("Passcode");
   await fireEvent.input(input, { target: { value: "synthetic-passcode" } });
+  await fireEvent.input(within(dialog).getByLabelText("Confirm passcode"), {
+    target: { value: "synthetic-passcode" },
+  });
   await fireEvent.submit(input.closest("form")!);
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect([...hidden]).toEqual(["photo-1", "photo-2"]);
@@ -3640,12 +3646,14 @@ it("keeps a partial Hide success and sets up Hidden on an explicit Hide of the r
 });
 
 it.each([
-  ["empty", "", "Enter a passcode."],
-  ["over 1,024 bytes", "é".repeat(513), "Use 1 to 1,024 bytes."],
-])("rejects %s setup input before sending a request", async (_kind, value, message) => {
-  const { dialog, input, fetcher } = await hideSetupFlow();
+  ["empty", "", "", "Enter a passcode."],
+  ["over 1,024 bytes", "é".repeat(513), "é".repeat(513), "Use 1 to 1,024 bytes."],
+  ["mismatched", "synthetic-passcode", "synthetic-passcodf", "Passcodes don't match."],
+])("rejects %s setup input before sending a request", async (_kind, value, repeat, message) => {
+  const { dialog, input, confirmation, fetcher } = await hideSetupFlow();
   await fireEvent.input(input, { target: { value } });
-  await fireEvent.submit(input.closest("form")!);
+  await fireEvent.input(confirmation, { target: { value: repeat } });
+  await fireEvent.keyDown(confirmation, { key: "Enter" });
   expect(await within(dialog).findByText(message)).toBeTruthy();
   expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/hidden/setup"))).toBe(false);
 });

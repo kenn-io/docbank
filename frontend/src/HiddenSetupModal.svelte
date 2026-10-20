@@ -7,6 +7,8 @@
   let { access }: { access: HiddenAccess } = $props();
   let passcode = $state("");
   let passcodeError = $state("");
+  let confirmation = $state("");
+  let confirmationError = $state("");
   let error = $state("");
   let busy = $state(false);
   const focusPasscode = () => document.getElementById("hidden-setup-passcode")?.focus();
@@ -20,12 +22,17 @@
     if (busy) return;
     passcodeError = passcodeValidation(passcode, "Enter a passcode.");
     if (passcodeError) return focusPasscode();
+    if (confirmation !== passcode) {
+      confirmationError = "Passcodes don't match.";
+      return document.getElementById("hidden-setup-confirmation")?.focus();
+    }
     error = "";
     busy = true;
     const prompt = access.setupPrompt;
     try {
       await access.createPasscode(passcode);
       passcode = "";
+      confirmation = "";
       prompt?.done("saved");
     } catch (cause) {
       if (prompt?.signal.aborted || (cause instanceof APIError && cause.status === 401)) {
@@ -43,8 +50,14 @@
 </script>
 
 <Modal title="Set a Hidden passcode" onclose={cancel} closable={!busy} closeOnOverlayClick={!busy}>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions (two fields without an in-form submit button disable implicit Enter submission) -->
   <form
     onsubmit={(event) => {
+      event.preventDefault();
+      void save();
+    }}
+    onkeydown={(event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
       void save();
     }}
@@ -63,6 +76,22 @@
       oninput={(value) => {
         passcode = value;
         passcodeError = "";
+        confirmationError = "";
+      }}
+    />
+    <FormField
+      type="password"
+      field={{
+        id: "hidden-setup-confirmation",
+        label: "Confirm passcode",
+        value: confirmation,
+        error: confirmationError,
+        disabled: busy,
+      }}
+      autocomplete="new-password"
+      oninput={(value) => {
+        confirmation = value;
+        confirmationError = "";
       }}
     />
   </form>
