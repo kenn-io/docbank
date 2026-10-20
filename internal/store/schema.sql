@@ -1787,6 +1787,9 @@ CREATE TABLE IF NOT EXISTS rendition_job_waiters (
 CREATE INDEX IF NOT EXISTS rendition_job_waiters_job
     ON rendition_job_waiters(job_id, state, waiter_id);
 
+CREATE INDEX IF NOT EXISTS rendition_job_waiters_content_version
+    ON rendition_job_waiters(content_version_id, job_id);
+
 -- Photo description waiters that an explicit start asked for. A description job
 -- is shared by automatic and explicit requests, and an explicit one may replace
 -- another profile's dismissed suggestion. This records in-flight intent only, so
@@ -1794,8 +1797,6 @@ CREATE INDEX IF NOT EXISTS rendition_job_waiters_job
 CREATE TABLE IF NOT EXISTS photo_description_explicit_waiters (
     waiter_id TEXT PRIMARY KEY REFERENCES rendition_job_waiters(waiter_id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS rendition_job_waiters_content_version
-    ON rendition_job_waiters(content_version_id, job_id);
 
 -- Root producers outside the immutable rendition catalog retain one exact
 -- build or lexical generation. Lease expiry uses canonical fixed-width UTC
