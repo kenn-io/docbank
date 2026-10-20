@@ -86,7 +86,7 @@ func tuiProgramRan(err error) bool {
 }
 
 // reportTUISessionEnded sends session_ended only to an already-running daemon.
-// A report that doesn't finish within 50 ms is dropped.
+// A report that doesn't finish within 50 ms may be lost.
 func reportTUISessionEnded(elapsed time.Duration) {
 	var sends posthog.SendGroup
 	defer sends.Wait(50 * time.Millisecond)

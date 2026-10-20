@@ -1024,7 +1024,7 @@ Docbank sends these events:
   A terminal browser left idle past the daemon's idle timeout reports nothing
   on exit because it sends the report only to a running daemon.
   TUI exit waits at most 50 ms for daemon discovery and reporting.
-  A report that hasn't finished within that wait is dropped.
+  A report that hasn't finished within that wait may be lost.
   Web Lock and sign-out send the final duration bucket in one revoke request,
   which removes the token first. The request that removes a live token then
   attempts to queue the event without waiting for delivery.
