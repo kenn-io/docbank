@@ -273,11 +273,13 @@ it("starts a new shoot's first group after reading only that group's files", asy
       unsupported: [3],
       skip_reasons: { 3: "Unsupported type" },
     }),
-    uploadPhotoGroup: vi.fn().mockImplementation(async (_id, _group, _files, _signal, _p, hashes) => {
-      readsAtUpload ??= readCounts();
-      hashesAtUpload ??= [...hashes];
-      return { status: "added", asset_id: "photo-1" };
-    }),
+    uploadPhotoGroup: vi
+      .fn()
+      .mockImplementation(async (_id, _group, _files, _signal, _p, hashes) => {
+        readsAtUpload ??= readCounts();
+        hashesAtUpload ??= [...hashes];
+        return { status: "added", asset_id: "photo-1" };
+      }),
   };
   render(PhotoImportDrawer, {
     vaultID: "vault-new-shoot",
