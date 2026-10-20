@@ -387,6 +387,45 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	require.Len(t, f.suggestions(t), 1)
 }
 
+// addPhoto ingests a second displayed photo with a ready grid preview and returns its version ID.
+func (f *photoDescriptionFixture) addPhoto(t *testing.T, name string, height int) string {
+	t.Helper()
+	ctx := t.Context()
+	written, err := f.blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.JPEG(1024, height, color.White)))
+	require.NoError(t, err)
+	run, err := f.catalog.BeginIngest(ctx, "cli", "Second synthetic photo")
+	require.NoError(t, err)
+	node, err := f.catalog.IngestFileExact(ctx, run, f.catalog.RootID(), name, written.Hash, written.Size, "image/jpeg", name, "", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+	require.NoError(t, err)
+	return node.CurrentVersionID
+}
+
+func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlot(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	f.addPhoto(t, "second.jpg", 700)
+	f.mu.Lock()
+	f.dropDescribe = true
+	f.mu.Unlock()
+
+	// One worker: the first photo fails into its retry backoff.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	first, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 1)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	require.NoError(t, f.service.admitPhotoDescription(ctx, first[0]))
+	f.runWorker(t, f.service)
+
+	next, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 1)
+	require.NoError(t, err, "a sleeping retry does not hold the only admission slot")
+	require.Len(t, next, 1)
+	require.NotEqual(t, first[0].version.ID, next[0].version.ID, "the other photo is admitted meanwhile")
+}
+
 func TestPhotoDescriptionRetriesAfterADroppedConnection(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)

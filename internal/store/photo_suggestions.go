@@ -395,10 +395,12 @@ func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, producer, 
 	return result, err
 }
 
-// UnclaimedPhotoDescriptionWaiters counts waiting photos that consume admission slots.
+// UnclaimedPhotoDescriptionWaiters counts waiting photos that consume admission
+// slots: those a worker can claim now. A retry still in its backoff holds none.
 func (s *Store) UnclaimedPhotoDescriptionWaiters(ctx context.Context, profile string, now time.Time) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.profile_fingerprint=? AND w.state='waiting' AND (j.state IN ('queued','retry_wait') OR j.state='running' AND j.lease_expires_at<=?)`, profile, now.UTC().Format(timestampLayout)).Scan(&count)
+	at := now.UTC().Format(timestampLayout)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.profile_fingerprint=? AND w.state='waiting' AND (j.state='queued' OR j.state='retry_wait' AND j.available_at<=? OR j.state='running' AND j.lease_expires_at<=?)`, profile, at, at).Scan(&count)
 	return count, err
 }
 
