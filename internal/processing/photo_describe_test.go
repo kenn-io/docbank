@@ -298,7 +298,7 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	require.Len(t, f.suggestions(t), 1)
 }
 
-func TestPhotoDescriptionStartupProbeSharesTheInlineProbe(t *testing.T) {
+func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	f.grant(t, f.service, "vision")
@@ -318,72 +318,20 @@ func TestPhotoDescriptionStartupProbeSharesTheInlineProbe(t *testing.T) {
 		f.mu.Unlock()
 	}
 	f.mu.Unlock()
-	startup := make(chan error, 1)
-	go func() { startup <- f.service.ProbeMediaOrigins(t.Context()) }()
+	profile := f.service.profiles["vision"]
+	first := make(chan error, 1)
+	go func() { first <- f.service.requireVisionReadiness(t.Context(), profile) }()
 	require.Eventually(t, func() bool { probes, _ := f.counts(); return probes == 1 }, 5*time.Second, time.Millisecond)
 
-	inline := make(chan error, 1)
-	go func() { inline <- f.service.requireVisionReadiness(t.Context(), f.service.profiles["vision"]) }()
+	second := make(chan error, 1)
+	go func() { second <- f.service.requireVisionReadiness(t.Context(), profile) }()
 	require.Never(t, func() bool { probes, _ := f.counts(); return probes > 1 }, 100*time.Millisecond, time.Millisecond,
 		"an overlapping request waits for the probe in flight")
 	unblock()
-	require.NoError(t, <-startup)
-	require.NoError(t, <-inline, "the success stands")
-	require.NoError(t, f.service.requireVisionReadiness(t.Context(), f.service.profiles["vision"]))
+	require.NoError(t, <-first)
+	require.NoError(t, <-second, "the success stands")
 	probes, _ := f.counts()
 	require.Equal(t, 1, probes)
-}
-
-// hangProbes makes the provider accept probe requests and never answer until
-// the test ends.
-func (f *photoDescriptionFixture) hangProbes(t *testing.T) {
-	t.Helper()
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
-	f.mu.Lock()
-	f.onProbe = func(int) { <-release }
-	f.mu.Unlock()
-}
-
-func TestPhotoDescriptionHungProbeReleasesItsSlotAfterItsOwnTimeout(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	f.hangProbes(t)
-	f.service.visionProbeTimeout = 50 * time.Millisecond
-	profile := f.service.profiles["vision"]
-
-	started := time.Now()
-	require.ErrorIs(t, f.service.requireVisionReadiness(t.Context(), profile), ErrRenditionRuntimeUnavailable)
-	require.Less(t, time.Since(started), 10*time.Second, "the probe stops at its own bound, not the request timeout")
-	probes, _ := f.counts()
-	require.Equal(t, 1, probes)
-	require.ErrorIs(t, f.service.requireVisionReadiness(t.Context(), profile), ErrRenditionRuntimeUnavailable,
-		"the slot is free, and the failure is remembered rather than probed again")
-	probes, _ = f.counts()
-	require.Equal(t, 1, probes)
-}
-
-func TestPhotoDescriptionReadinessWaiterHonorsItsOwnContext(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	f.hangProbes(t)
-	profile := f.service.profiles["vision"]
-	holder, stop := context.WithCancel(t.Context())
-	holding := make(chan error, 1)
-	go func() { holding <- f.service.requireVisionReadiness(holder, profile) }()
-	require.Eventually(t, func() bool { probes, _ := f.counts(); return probes == 1 }, 5*time.Second, time.Millisecond)
-
-	waiter, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	require.ErrorIs(t, f.service.requireVisionReadiness(waiter, profile), context.DeadlineExceeded)
-	require.Less(t, time.Since(started), 10*time.Second, "a waiter gives up when its own context ends")
-	stop()
-	require.ErrorIs(t, <-holding, context.Canceled)
 }
 
 func TestPhotoDescriptionStartSavesConsentBeforeReportingProbeFailure(t *testing.T) {

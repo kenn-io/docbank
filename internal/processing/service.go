@@ -145,6 +145,7 @@ type Service struct {
 	mediaOriginProbes   map[string]MediaOriginProbe
 	mediaOriginMu       sync.Mutex
 	mediaOriginEvidence map[string]mediaOriginObservation
+	visionProbes        map[string]MediaOriginProbe
 	visionLocks         map[string]chan struct{}
 	visionProbeTimeout  time.Duration
 	mediaTokenKey       [32]byte
@@ -410,6 +411,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		mediaMaxBytes: config.MediaMaxBytes,
 		mediaOrigins:  mediaOrigins, mediaOriginProbes: mediaOriginProbes,
 		mediaOriginEvidence: make(map[string]mediaOriginObservation, len(mediaOriginProbes)),
+		visionProbes:        make(map[string]MediaOriginProbe),
 		visionLocks:         make(map[string]chan struct{}),
 		visionProbeTimeout:  visionProbeTimeout,
 		mediaTokenKey:       config.MediaTokenKey}
@@ -590,7 +592,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		service.profiles[name] = configured
 		if profileRenditionInput(configured) == document.RenditionInputDerivedUpload {
 			id := visionReadinessKey(configured.record.Fingerprint)
-			service.mediaOriginProbes[id] = service.visionProbe(configured)
+			service.visionProbes[id] = service.visionProbe(configured)
 			service.visionLocks[id] = make(chan struct{}, 1)
 		}
 	}

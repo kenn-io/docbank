@@ -102,15 +102,6 @@ func (service *Service) ProbeMediaOrigins(ctx context.Context) error {
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		if fingerprint, vision := strings.CutPrefix(id, visionReadinessKey("")); vision {
-			// A description profile shares its lock and cached result with requests.
-			// A failed probe is retried by the next request, so startup ignores it.
-			_ = service.requireVisionFingerprint(ctx, fingerprint)
-			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
-			}
-			continue
-		}
 		evidence, err := service.mediaOriginProbes[id](ctx)
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr
@@ -437,7 +428,7 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 		}
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, service.visionProbeTimeout)
-	evidence, err := service.mediaOriginProbes[id](probeCtx)
+	evidence, err := service.visionProbes[id](probeCtx)
 	cancel()
 	if ctx.Err() != nil {
 		return ctx.Err()

@@ -1929,14 +1929,9 @@ func renditionJobProviderBoundaryAmbiguous(
 		phase != RenditionPhaseGenerationStaged
 }
 
-// validateRenditionWaiterInputClasses requires the one input class a job
-// uploads; an empty kind admits either.
+// validateRenditionWaiterInputClasses requires the one input class a job uploads.
 func validateRenditionWaiterInputClasses(inputs []string, kind document.RenditionInputKind) error {
-	allowed := []string{string(document.RenditionInputOriginalFile), string(document.RenditionInputDerivedUpload)}
-	if kind != "" {
-		allowed = []string{string(kind)}
-	}
-	if len(inputs) != 1 || !slices.Contains(allowed, inputs[0]) {
+	if len(inputs) != 1 || inputs[0] != string(kind) {
 		return errors.New("rendition waiter input classes do not match original source egress")
 	}
 	return nil
