@@ -59,6 +59,26 @@ func TestBackupRepositoryInitAndClaimOwnership(t *testing.T) {
 	require.Len(t, points, 2)
 }
 
+func TestBackupRepositoryInitCompletesMissingOwner(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "repo")
+	server, catalog := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = path })
+	// Initialization can stop after Kit publishes its config but before owner binding.
+	repo, err := backup.Init(path)
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(path, "docbank-owner"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	response, body := do(t, server, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	owner, err := os.ReadFile(filepath.Join(path, "docbank-owner"))
+	require.NoError(t, err)
+	require.Equal(t, catalog.VaultID()+"\n", string(owner))
+	reopened, err := backup.Open(path)
+	require.NoError(t, err)
+	require.Equal(t, repo.Config().RepoID, reopened.Config().RepoID)
+	require.NoError(t, backupapp.EnsureRepositoryOwner(t.Context(), reopened, catalog.VaultID(), false))
+}
+
 func TestBackupRepositoryClaimRequiresOperator(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "repo")
