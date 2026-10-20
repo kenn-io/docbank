@@ -80,8 +80,8 @@ type PhotoPreviewSlot struct {
 }
 
 type PhotoBrowseRow struct {
-	// MatchedAISuggestion marks a row whose best evidence is
-	// a pending suggestion.
+	// MatchedAISuggestion marks a row that matches the whole query only with
+	// pending suggestion text.
 	MatchedAISuggestion bool
 	Quality             *document.PhotoQualitySignals
 	// QualityUnavailable marks a terminal evaluator result with no signals.
