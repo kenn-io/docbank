@@ -124,6 +124,8 @@ Configure a [vision profile](../configuration.md#photo-descriptions), review `pr
 
 The first request to a provider checks it with a synthetic image, and a failed check retries no sooner than a minute later. If it fails when you grant consent, the error says consent was saved. Caption, tags, and visible text arrive as one [suggestion](photos.md#suggested-metadata). An invalid caption or an oversized tag is dropped alone; a non-JSON reply publishes nothing.
 
+Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
+
 ## Convert documents with Docling
 
 Configure a [Docling document rendition profile](../configuration.md#document-conversion-with-docling)
