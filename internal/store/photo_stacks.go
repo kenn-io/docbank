@@ -60,6 +60,13 @@ func (frame *photoStackFrame) applyMetadataFingerprint(actual, expected string) 
 	}
 }
 
+// photoStackAnyStale reports whether any frame was read by an outdated
+// extractor. Its serial is unknown, so a decision that changes flags refuses
+// the stack until backfill reads it.
+func photoStackAnyStale(frames map[string]photoStackFrame) bool {
+	return slices.ContainsFunc(slices.Collect(maps.Values(frames)), func(frame photoStackFrame) bool { return frame.Stale })
+}
+
 // photoStackPartition separates camera streams before chaining capture times.
 type photoStackPartition struct{ folder, make, model, serial string }
 
@@ -191,7 +198,7 @@ func groupRankedPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBro
 	if err != nil {
 		return err
 	}
-	page.GroupingIncomplete = slices.ContainsFunc(slices.Collect(maps.Values(frames)), func(frame photoStackFrame) bool { return frame.Stale })
+	page.GroupingIncomplete = photoStackAnyStale(frames)
 	byID := make(map[string]PhotoStack)
 	for _, group := range groupPhotoStackFrames(slices.Collect(maps.Values(frames)), gap) {
 		stack := newPhotoStack(group)
@@ -285,7 +292,7 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool,
 				unavailable = append(unavailable, id)
 			}
 		}
-		incomplete = slices.ContainsFunc(slices.Collect(maps.Values(frames)), func(frame photoStackFrame) bool { return frame.Stale })
+		incomplete = photoStackAnyStale(frames)
 		groups = photoStackRequestGroups(slices.Collect(maps.Values(frames)), settings.BurstGapSeconds, position)
 		return nil
 	})
@@ -355,7 +362,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		if err != nil {
 			return err
 		}
-		if len(found) != len(request.AssetIDs) {
+		if len(found) != len(request.AssetIDs) || (request.Decision != "representative" && photoStackAnyStale(found)) {
 			return ErrStalePhotoStack
 		}
 		frames := slices.SortedFunc(maps.Values(found), comparePhotoStackFrames)

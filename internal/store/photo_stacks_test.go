@@ -1401,6 +1401,37 @@ func TestPhotoStackAfterExtractorUpgrade(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// Until backfill reads the serials, frames from two bodies of one model look
+// like one stack, so a flag change would pick or reject the other body's frames.
+func TestPhotoStackDecisionsRefuseStaleMetadata(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic mixed bodies")
+	require.NoError(t, err)
+	var ids []string
+	for i, serial := range []string{"body-a", "body-b", "body-a", "body-b"} {
+		stamp := time.Date(2024, 6, 10, 12, 0, i, 0, time.UTC).Format(time.RFC3339)
+		ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shots/frame-%d.jpg", i), stamp, document.SourceMetadataPrecisionSecond,
+			photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon")),
+			photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("R5")),
+			photoMetadataField("image.exif.body_serial_number", "image.exif", "BodySerialNumber", photoString(serial))))
+	}
+	fingerprint := browseHash("upgraded-extractor")
+	targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
+	for _, decision := range []string{"current", "all", "selected"} {
+		_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: slices.Clone(targets), Decision: decision, CurrentID: ids[0], SelectedIDs: ids[:1], SourceMetadataFingerprint: fingerprint})
+		require.ErrorIs(t, err, ErrStalePhotoStack, decision)
+	}
+	var receipts int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM photo_change_receipts`).Scan(&receipts))
+	require.Zero(t, receipts)
+	for _, id := range ids {
+		asset, err := s.PhotoAssetByID(t.Context(), id)
+		require.NoError(t, err)
+		require.Empty(t, asset.Files[0].Flag)
+	}
+}
+
 func TestPhotoStackPartialMetadataCandidates(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
