@@ -239,7 +239,9 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 				return err
 			}
 		}
-		if row.dismissed || row.awaiting && accepted {
+		if row.dismissed || row.awaiting && accepted ||
+			request.AssetID != row.AssetID || request.AssetRevision != row.AssetRevision ||
+			request.SourceRevision != row.SourceRevision || request.NodeRevision != row.NodeRevision {
 			return ErrPhotoSuggestionConflict
 		}
 		if accepted {
