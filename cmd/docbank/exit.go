@@ -56,7 +56,7 @@ func commandExitCode(err error, started bool) int {
 	if classified, ok := errors.AsType[*exitError](err); ok {
 		return classified.code
 	}
-	if errors.Is(err, daemonconn.ErrIntegrity) {
+	if errors.Is(err, daemonconn.ErrIntegrity) || errors.Is(err, backupapp.ErrRepositoryOwnerInvalid) {
 		return exitIntegrity
 	}
 	if errors.Is(err, store.ErrNotFound) {

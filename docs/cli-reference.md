@@ -320,7 +320,7 @@ stderr. Human error text remains explanatory and may change.
 | `3` | The daemon returned `not_found` for the requested vault object | Refresh names or identities |
 | `4` | Stale optimistic state: a revision, audit enrollment preview, or backup claim preview no longer matches | Re-read, reconsider, and retry deliberately |
 | `5` | Vault maintenance is active, or a vault, backup repository, or physical pack resource is busy or locked | Wait and retry, or release the known owner; do not blindly force-unlock |
-| `6` | A completed verification reported integrity findings, or a content stream failed terminal size/hash/digest proof | Do not trust or publish the affected bytes |
+| `6` | A completed verification reported integrity findings, a content stream failed terminal size/hash/digest proof, or backup ownership metadata is malformed or unsupported | Inspect backup ownership metadata, or do not trust or publish affected content |
 | `7` | The backup repository belongs to another vault | Select this vault's repository or initialize a separate one |
 
 Integrity commands may write their complete human or JSON report before

@@ -872,6 +872,8 @@ needs adoption, `ErrBackupRepositoryClaimChanged` when history changed after
 the preview, and `ErrBackupRepositoryOwnerConflict` when another vault owns the
 repository. `ErrBackupRepositoryOwnerInvalid` means its owner marker is malformed
 or uses an unsupported format; inspect the repository metadata before retrying.
+Daemon clients preserve this sentinel for `errors.Is`; HTTP reports `409` with
+`backup_repository_owner_invalid`, and the CLI exits with integrity code `6`.
 A changed preview requires another review before confirmation;
 claiming cannot replace another vault's ownership. See
 [Adopt an existing repository](usage/backup.md#adopt-an-existing-repository).

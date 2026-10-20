@@ -450,6 +450,7 @@ var codeToTypedErr = map[string]error{
 	"snapshot_too_large":              store.ErrQuerySnapshotTooLarge,
 	"invalid_saved_query_run":         store.ErrInvalidSavedQueryRun,
 
+	"backup_repository_owner_invalid":  backupapp.ErrRepositoryOwnerInvalid,
 	"backup_repository_owner_conflict": backupapp.ErrRepositoryOwnerConflict,
 	"backup_repository_claim_required": backupapp.ErrRepositoryClaimRequired,
 	"backup_repository_claim_changed":  backupapp.ErrRepositoryClaimChanged,

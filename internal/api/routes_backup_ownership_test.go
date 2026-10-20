@@ -189,3 +189,18 @@ func TestBackupConcurrentDaemonAndEmbeddedFirstBinding(t *testing.T) {
 		require.Equal(t, winner, point.Options.Tag)
 	}
 }
+
+func TestBackupRepositoryMalformedOwnerProblem(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "repo")
+	server, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = path })
+	_, err := backup.Init(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(path, "docbank-owner"), []byte("damaged"), 0o600))
+	for _, route := range []string{"/api/v1/backup/snapshots", "/api/v1/backup/claim"} {
+		response, body := do(t, server, http.MethodPost, route, nil, map[string]any{})
+		require.Equal(t, http.StatusConflict, response.StatusCode, body)
+		require.Contains(t, body, `"code":"backup_repository_owner_invalid"`)
+		require.Contains(t, body, "owner marker is malformed or unsupported")
+	}
+}

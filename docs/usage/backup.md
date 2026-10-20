@@ -151,7 +151,9 @@ Ownership failures keep HTTP status `409` and distinct problem codes:
 `backup_repository_owner_conflict`, `backup_repository_claim_required`, and
 `backup_repository_claim_changed`. The CLI exits with `7`, `2`, and `4`,
 respectively. Automation can distinguish another vault's repository, required
-adoption, and a stale preview without parsing error text.
+adoption, and a stale preview without parsing error text. A malformed or unsupported
+owner marker returns HTTP `409` with `backup_repository_owner_invalid`, and the
+CLI exits with integrity code `6`. Inspect the repository metadata before retrying.
 
 This operation requires the operator's API credential. Embedded callers use
 `vault.ClaimBackupRepository(ctx, repository, false, "")` to preview, then

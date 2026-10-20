@@ -37,6 +37,7 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "not found", err: fmt.Errorf("lookup: %w", store.ErrNotFound), started: true, want: exitNotFound},
 		{name: "stale revision", err: store.ErrStaleRevision, started: true, want: exitStale},
 		{name: "stale preview", err: store.ErrAuditPreviewStale, started: true, want: exitStale},
+		{name: "backup owner invalid", err: fmt.Errorf("capture: %w", backupapp.ErrRepositoryOwnerInvalid), started: true, want: 6},
 		{name: "backup owner conflict", err: fmt.Errorf("capture: %w", backupapp.ErrRepositoryOwnerConflict), started: true, want: 7},
 		{name: "backup claim required", err: fmt.Errorf("capture: %w", backupapp.ErrRepositoryClaimRequired), started: true, want: 2},
 		{name: "backup claim changed", err: fmt.Errorf("claim: %w", backupapp.ErrRepositoryClaimChanged), started: true, want: 4},
@@ -191,6 +192,12 @@ func TestRunProcessBackupOwnershipExitCodes(t *testing.T) {
 	require.Contains(t, stderr.String(), "another vault")
 	require.Contains(t, stderr.String(), "select this vault's backup repository")
 	require.Empty(t, stdout.String())
+	require.NoError(t, os.WriteFile(filepath.Join(path, "docbank-owner"), []byte("damaged"), 0o600))
+	for _, args := range [][]string{{"backup", "create", "--repo", path, "--json"}, {"backup", "create", "--repo", path}} {
+		require.Equal(t, 6, run(args...))
+		require.Contains(t, stderr.String(), "owner marker is malformed or unsupported")
+		require.Empty(t, stdout.String())
+	}
 }
 
 func TestRunProcessBackupClaimAnswers(t *testing.T) {
