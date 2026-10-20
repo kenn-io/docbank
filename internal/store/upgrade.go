@@ -128,6 +128,7 @@ var (
 	removeInvalidUpgradeStage = removeUpgradeFileSet
 )
 
+// currentSchemaTables selects a subset of schema tables for column validation.
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata",
 	"mailbox_containers", "mailbox_chunks",
