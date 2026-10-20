@@ -265,7 +265,8 @@ mutexes on the real clock.
 
 All repository workflows use GitHub-hosted runners. The main CI workflow uses
 Ubuntu 24.04 for Linux jobs and Windows Server 2025 for Windows amd64. Windows
-arm64 uses `windows-11-vs2026-arm` with two package shards. Pull requests call
+arm64 uses `windows-11-vs2026-arm`. Both Windows architectures use four package
+shards. Pull requests call
 `ci.yml` from `main`, so changes to that workflow take effect for pull requests
 after merge. Workflow validation runs against the proposed workflow changes.
 
@@ -290,6 +291,10 @@ design-specific checks are:
   path handlers; and
 - cross-filesystem storage behavior is exercised through Kit rather than
   mocked into a second docbank implementation.
+
+Disposable `internal/store` test databases use `synchronous=OFF` through an
+internal setting shared by both SQLite adapters. Ordinary application opens
+keep the adapters' durability defaults.
 
 ## Review posture
 

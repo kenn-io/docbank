@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/sqlitetest"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
 )
@@ -146,6 +147,29 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 		!driver.IsUniqueViolation(errors.New("UNIQUE constraint failed: contract.value"))
 	observations.notNullFalse, observations.checkFalse, observations.foreignKeyFalse,
 		observations.syntaxFalse, observations.primaryKeyFalse = observeFalsePositiveClassifications(t, driver, databasePath)
+
+	t.Run("synchronous", func(t *testing.T) {
+		defer sqlitetest.DisableSync.Store(false)
+		for _, disabled := range []bool{false, true} {
+			sqlitetest.DisableSync.Store(disabled)
+			for _, access := range []docsqlite.AccessMode{docsqlite.Create, docsqlite.ReadWriteExisting} {
+				db := openAndPing(t, driver, databasePath, docsqlite.OpenOptions{Access: access})
+				// Hold both connections so the second query must open a fresh one.
+				for range 2 {
+					conn, err := db.Conn(t.Context())
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, conn.Close()) })
+					var synchronous int
+					require.NoError(t, conn.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
+					if disabled {
+						require.Zero(t, synchronous)
+					} else {
+						require.Positive(t, synchronous)
+					}
+				}
+			}
+		}
+	})
 
 	return observations
 }

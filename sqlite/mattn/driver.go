@@ -16,6 +16,7 @@ import (
 	sqlite3 "github.com/mattn/go-sqlite3"
 
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/sqlitetest"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -61,6 +62,9 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 	}
 	if opts.Access != docsqlite.ReadOnlyImmutable {
 		query.Set("_txlock", string(opts.TransactionMode))
+		if sqlitetest.DisableSync.Load() {
+			query.Set("_synchronous", "OFF")
+		}
 	}
 	return sql.Open(driverName, sqliteURI(path, query))
 }
