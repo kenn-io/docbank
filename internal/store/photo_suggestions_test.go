@@ -404,6 +404,30 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 			require.Equal(t, want, settled, "one row remains, and it is A's: %s", producer[:1])
 		}
 	})
+	t.Run("regenerates a pending suggestion nobody has decided on", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "pending.jpg")
+		first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
+		_, err := s.RespondPhotoSuggestion(ctx, first.ID, PhotoSuggestionResponse{Response: "dismissed"})
+		require.NoError(t, err)
+		publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"harbor"}, VisibleText: "QUAYSIDE"})
+		require.Len(t, photoSuggestionValues(t, s, asset.ID), 1)
+
+		var backup bytes.Buffer
+		require.NoError(t, s.ExportMetadata(ctx, &backup))
+		for _, text := range []string{"From B.", "harbor", "QUAYSIDE"} {
+			require.NotContains(t, backup.String(), text, "pending text is not backed up")
+		}
+		restored := restorePhotoSuggestionStore(t, s)
+		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "nothing is shown until the description is regenerated")
+		publishPhotoDescription(t, restored, asset, producerB, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"harbor"}})
+		regenerated := photoSuggestionValues(t, restored, asset.ID)
+		require.Len(t, regenerated, 1, "the newer suggestion is asked for again after restore")
+		require.Equal(t, "Regenerated.", regenerated[0].Value.Caption)
+		require.NoError(t, restored.ValidateMetadata(ctx))
+	})
 	t.Run("keeps a dismissal", func(t *testing.T) {
 		t.Parallel()
 		s := newTestStore(t)
