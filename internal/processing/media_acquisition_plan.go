@@ -46,8 +46,6 @@ type MediaOrigin struct {
 
 type MediaOriginEvidence struct {
 	AdapterContract, DeploymentRevision, ProbeState string
-	// GrantID is the consent grant a description provider's probe ran under.
-	GrantID string
 }
 
 type MediaOriginProbe func(context.Context) (MediaOriginEvidence, error)
@@ -373,15 +371,11 @@ const (
 // visionReadinessKey names a description profile's probe and evidence.
 func visionReadinessKey(fingerprint string) string { return "vision:" + fingerprint }
 
-// visionProbeFunc sends the synthetic image under the grant its caller
-// authorized and reports the evidence for that grant.
-type visionProbeFunc func(ctx context.Context, grantID string) (MediaOriginEvidence, error)
-
 // visionProbe builds the probe for one description profile.
-func (service *Service) visionProbe(profile configuredProfile) visionProbeFunc {
-	return func(ctx context.Context, grantID string) (MediaOriginEvidence, error) {
+func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe {
+	return func(ctx context.Context) (MediaOriginEvidence, error) {
 		evidence := MediaOriginEvidence{AdapterContract: profile.portable.Rendition.AdapterContract,
-			DeploymentRevision: profile.portable.Rendition.DeploymentFingerprint, GrantID: grantID, ProbeState: "provider_unavailable"}
+			DeploymentRevision: profile.portable.Rendition.DeploymentFingerprint, ProbeState: "provider_unavailable"}
 		probe, ok := profile.provider.(interface {
 			Probe(ctx context.Context) error
 		})
@@ -417,7 +411,7 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 	service.mediaOriginMu.Lock()
 	observation := service.mediaOriginEvidence[id]
 	service.mediaOriginMu.Unlock()
-	if observation.Evidence.GrantID == authorization.GrantID {
+	if observation.GrantID == authorization.GrantID {
 		if observation.Evidence.ProbeState == "ready" {
 			return nil
 		}
@@ -426,13 +420,13 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 		}
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, service.visionProbeTimeout)
-	evidence, err := service.visionProbes[id](probeCtx, authorization.GrantID)
+	evidence, err := service.visionProbes[id](probeCtx)
 	cancel()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	service.mediaOriginMu.Lock()
-	service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, ProbedAt: service.clock().UTC(), Cause: err}
+	service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, GrantID: authorization.GrantID, ProbedAt: service.clock().UTC(), Cause: err}
 	service.mediaOriginMu.Unlock()
 	if evidence.ProbeState != "ready" {
 		return runtimeUnavailable(err)

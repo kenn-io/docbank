@@ -145,7 +145,7 @@ type Service struct {
 	mediaOriginProbes   map[string]MediaOriginProbe
 	mediaOriginMu       sync.Mutex
 	mediaOriginEvidence map[string]mediaOriginObservation
-	visionProbes        map[string]visionProbeFunc
+	visionProbes        map[string]MediaOriginProbe
 	visionLocks         map[string]chan struct{}
 	visionNotReady      sync.Map
 	visionProbeTimeout  time.Duration
@@ -155,6 +155,7 @@ type Service struct {
 type mediaOriginObservation struct {
 	Evidence MediaOriginEvidence
 	ProbedAt time.Time
+	GrantID  string
 	// Cause is why the probe failed, kept for callers that retry within the back-off.
 	Cause error
 }
@@ -414,7 +415,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		mediaMaxBytes: config.MediaMaxBytes,
 		mediaOrigins:  mediaOrigins, mediaOriginProbes: mediaOriginProbes,
 		mediaOriginEvidence: make(map[string]mediaOriginObservation, len(mediaOriginProbes)),
-		visionProbes:        make(map[string]visionProbeFunc),
+		visionProbes:        make(map[string]MediaOriginProbe),
 		visionLocks:         make(map[string]chan struct{}),
 		visionProbeTimeout:  visionProbeTimeout,
 		mediaTokenKey:       config.MediaTokenKey}
