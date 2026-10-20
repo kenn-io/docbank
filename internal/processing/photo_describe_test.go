@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -158,7 +159,7 @@ func (f *photoDescriptionFixture) grant(t *testing.T, service *Service, name str
 func (f *photoDescriptionFixture) backfill(t *testing.T, service *Service) int {
 	t.Helper()
 	ctx := t.Context()
-	targets, err := service.photoDescriptionTargets(ctx, "", 50, 4)
+	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
 	require.NoError(t, err)
 	for _, target := range targets {
 		require.NoError(t, service.admitPhotoDescription(ctx, target))
@@ -198,7 +199,7 @@ func TestPhotoDescriptionProfileCoverageIgnoresDescriptionJobs(t *testing.T) {
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	f.grant(t, f.service, "vision")
-	targets, err := f.service.photoDescriptionTargets(ctx, "", 50, 4)
+	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "a description job is waiting")
@@ -350,6 +351,24 @@ func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
 	require.NoError(t, <-second, "the success stands")
 	probes, _ := f.counts()
 	require.Equal(t, 1, probes)
+}
+
+func TestPhotoDescriptionBackfillLogsOnceWhenTheProviderFailsItsProbe(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	f.mu.Lock()
+	f.probeFails = true
+	f.mu.Unlock()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	for range 3 {
+		targets, err := f.service.photoDescriptionTargets(t.Context(), logger, "", 50, 4)
+		require.NoError(t, err)
+		require.Empty(t, targets)
+	}
+	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), logs.String())
+	require.Contains(t, logs.String(), "profile=vision")
 }
 
 func TestPhotoDescriptionStartSavesConsentBeforeReportingProbeFailure(t *testing.T) {

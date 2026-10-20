@@ -214,7 +214,7 @@ func (service *Service) PhotoDescriptionBackfill(ctx context.Context, logger *sl
 	backfill := Backfill[photoDescriptionTarget]{Name: "photo-descriptions", Page: 50, IdleDelay: time.Second, Logger: logger,
 		Key: func(value photoDescriptionTarget) string { return value.version.ID },
 		List: func(ctx context.Context, after string, limit int) ([]photoDescriptionTarget, error) {
-			return service.photoDescriptionTargets(ctx, after, limit, workers)
+			return service.photoDescriptionTargets(ctx, logger, after, limit, workers)
 		},
 		Process: service.admitPhotoDescription,
 	}
@@ -244,8 +244,8 @@ type photoDescriptionTarget struct {
 
 // photoDescriptionTargets lists photos once fewer than workers requests wait,
 // so a large library cannot flood the queue.
-func (service *Service) photoDescriptionTargets(ctx context.Context, after string, limit, workers int) ([]photoDescriptionTarget, error) {
-	name, err := service.photoDescriptionProfile(ctx)
+func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slog.Logger, after string, limit, workers int) ([]photoDescriptionTarget, error) {
+	name, err := service.photoDescriptionProfile(ctx, logger)
 	if name == "" || err != nil {
 		return nil, err
 	}
@@ -275,15 +275,21 @@ func (service *Service) photoDescriptionTargets(ctx context.Context, after strin
 }
 
 // photoDescriptionProfile selects the first description profile, by name, that
-// has consent and a provider that answers its probe.
-func (service *Service) photoDescriptionProfile(ctx context.Context) (string, error) {
+// has consent and a provider that answers its probe. A consented profile whose
+// provider does not answer is logged once, until it answers again.
+func (service *Service) photoDescriptionProfile(ctx context.Context, logger *slog.Logger) (string, error) {
 	for _, name := range service.visionProfileNames() {
 		err := service.requireVisionReadiness(ctx, service.profiles[name])
 		switch {
 		case err == nil:
+			service.visionNotReady.Delete(name)
 			return name, nil
+		case errors.Is(err, ErrRenditionRuntimeUnavailable):
+			if _, logged := service.visionNotReady.LoadOrStore(name, true); !logged && logger != nil {
+				logger.Warn("photo descriptions are paused: the vision provider did not pass its probe", "profile", name)
+			}
 		case errors.Is(err, store.ErrProcessingConsentRequired), errors.Is(err, store.ErrProcessingConsentExpired),
-			errors.Is(err, store.ErrProcessingConsentRevoked), errors.Is(err, ErrRenditionRuntimeUnavailable):
+			errors.Is(err, store.ErrProcessingConsentRevoked):
 		default:
 			return "", err
 		}

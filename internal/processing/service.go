@@ -147,6 +147,7 @@ type Service struct {
 	mediaOriginEvidence map[string]mediaOriginObservation
 	visionProbes        map[string]MediaOriginProbe
 	visionLocks         map[string]chan struct{}
+	visionNotReady      sync.Map
 	visionProbeTimeout  time.Duration
 	mediaTokenKey       [32]byte
 }
