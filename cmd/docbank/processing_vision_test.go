@@ -29,7 +29,7 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 	require.Equal(t, vision.DisclosureFingerprint(descriptor, "https://vision.example.com", deployment), fingerprints.Disclosure)
 	require.NoDirExists(t, home)
 	for _, args := range [][]string{
-		{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "http://vision.example.com", "--deployment-fingerprint", strings.Repeat("a", 64)},
+		{"--model", "synthetic-vision", "--trust-boundary", "private", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", strings.Repeat("a", 64)},
 		{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", "invalid"},
 	} {
 		_, err := runCLI(t, append([]string{"processing", "vision-fingerprints"}, args...)...)

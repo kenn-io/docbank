@@ -3,8 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"net/http"
-	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document"
@@ -28,14 +26,10 @@ func newProcessingVisionFingerprintsCommand() *cobra.Command {
 		if !canonicalSHA256(deployment) {
 			return usageError(errors.New("--deployment-fingerprint must be lowercase SHA-256"))
 		}
-		provider, err := vision.New(vision.Profile{
-			Origin: endpoint, Model: model, TrustBoundary: document.RenditionTrustBoundary(trust),
-			RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20,
-		}, nil, &http.Client{})
+		descriptor, err := vision.Descriptor(model, document.RenditionTrustBoundary(trust))
 		if err != nil {
 			return usageError(err)
 		}
-		descriptor := provider.Descriptor()
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "descriptor_fingerprint = %q\ndisclosure_fingerprint = %q\n", descriptor.Fingerprint, vision.DisclosureFingerprint(descriptor, endpoint, deployment))
 		if err != nil {
 			return fmt.Errorf("writing vision fingerprints: %w", err)
