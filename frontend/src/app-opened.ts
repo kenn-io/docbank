@@ -23,7 +23,7 @@ export function startTelemetryReporting(session: string) {
   let latestScreen: string | undefined;
   let active = false;
   const reportVisibleScreen = () => {
-    if (active && latestScreen !== undefined && document.visibilityState === "visible")
+    if (latestScreen !== undefined && document.visibilityState === "visible")
       reporter.reportScreen(latestScreen);
   };
   const unsubscribe = reporter.onQuietChange((_quiet, reason) => {
@@ -33,6 +33,8 @@ export function startTelemetryReporting(session: string) {
     active = resume;
     if (active) reportVisibleScreen();
   });
+  // Update the current screen before kit-ui's focus handler rolls over the UTC day.
+  window.addEventListener("focus", reportVisibleScreen, true);
   return {
     ...reporter,
     reportScreen(screen: string) {
@@ -40,6 +42,7 @@ export function startTelemetryReporting(session: string) {
       reportVisibleScreen();
     },
     stop() {
+      window.removeEventListener("focus", reportVisibleScreen, true);
       reporter.stop();
       unsubscribe();
     },

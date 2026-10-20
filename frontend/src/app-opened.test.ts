@@ -101,4 +101,69 @@ describe("app_opened reporting", () => {
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    ["unavailable and visible", 503, 6, "visible"],
+    ["disabled and visible", 202, 1, "visible"],
+    ["unavailable and hidden", 503, 6, "hidden"],
+    ["disabled and hidden", 202, 1, "hidden"],
+  ] as const)(
+    "keeps the latest screen while %s for the next UTC day",
+    async (_reason, status, attempts, visibility) => {
+      fetchMock.mockImplementation(async () => respond(status));
+      reporter = startTelemetryReporting("secret");
+      reporter.reportScreen("browse");
+      await vi.advanceTimersByTimeAsync(60_000);
+      const open = { event: "app_opened", properties: { surface: "web" } };
+      expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual(
+        Array.from({ length: attempts }, () => open),
+      );
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue(visibility);
+      reporter.reportScreen("help");
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(attempts);
+      fetchMock.mockClear();
+      fetchMock.mockImplementation(
+        async () => new Response('{"status":"queued"}', { status: 202 }),
+      );
+      vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      focus();
+      await settle();
+      expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+        open,
+        { event: "screen_viewed", properties: { surface: "web", screen: "help" } },
+      ]);
+    },
+  );
+
+  it.each([
+    ["unavailable", 503, 6],
+    ["disabled", 202, 1],
+  ] as const)(
+    "defers hidden navigation after a %s reporter crosses UTC midnight",
+    async (_reason, status, attempts) => {
+      fetchMock.mockImplementation(async () => respond(status));
+      reporter = startTelemetryReporting("secret");
+      reporter.reportScreen("browse");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(attempts);
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+      vi.setSystemTime(new Date("2026-03-05T10:00:00Z"));
+      fetchMock.mockImplementation(
+        async () => new Response('{"status":"queued"}', { status: 202 }),
+      );
+      reporter.reportScreen("help");
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(attempts);
+      fetchMock.mockClear();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      focus();
+      await settle();
+      expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+        { event: "app_opened", properties: { surface: "web" } },
+        { event: "screen_viewed", properties: { surface: "web", screen: "help" } },
+      ]);
+    },
+  );
 });
