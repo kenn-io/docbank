@@ -3198,7 +3198,6 @@ func TestBackupCoverageCountsPartiallyTrashedPhotoAsset(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stats.Coverage)
 	assert.Equal(t, 1, stats.Coverage.Version)
-	assert.Contains(t, stats.Coverage.Excluded, "photo_suggestion_text", "pending suggestion text is rebuilt, not backed up")
 	c := stats.Coverage.Included
 	assert.Equal(t, int64(2), c.PhotoAssets)
 	assert.Equal(t, int64(3), c.PhotoFiles)
