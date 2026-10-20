@@ -212,33 +212,46 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
 
-func TestPhotoSuggestionDismissalChecksTheAssetItWasReviewedUnder(t *testing.T) {
+func TestPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t *testing.T) {
 	t.Parallel()
-	dismissal := func(proposal PhotoSuggestion) PhotoSuggestionResponse {
-		return PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "dismissed"}
+	response := func(proposal PhotoSuggestion, kind string) PhotoSuggestionResponse {
+		request := PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: kind}
+		if kind == "accepted" {
+			request.Caption, request.Tags = true, []string{"coast"}
+		}
+		return request
 	}
+	dismissal := func(proposal PhotoSuggestion) PhotoSuggestionResponse { return response(proposal, "dismissed") }
 	dismissed := func(s *Store, proposal PhotoSuggestion) bool {
 		var value bool
 		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT dismissed FROM photo_suggestions WHERE suggestion_id=?`, proposal.ID).Scan(&value))
 		return value
 	}
-	t.Run("file moved to another photo", func(t *testing.T) {
-		t.Parallel()
-		s := newTestStore(t)
-		ctx := t.Context()
-		source := albumAsset(t, s, "dismiss-from.jpg")
-		target := albumAsset(t, s, "dismiss-to.jpg")
-		proposal := putPhotoSuggestion(t, s, source, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
-		file := source.Files[0]
-		_, err := s.DetachPhotoFile(ctx, source.ID, source.Revision, file.ID, PhotoDetachOptions{})
-		require.NoError(t, err)
-		_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, file.NodeID, "", nil)
-		require.NoError(t, err)
+	for _, kind := range []string{"accepted", "dismissed"} {
+		t.Run("file moved to another photo, "+kind, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			source := albumAsset(t, s, "moved-from.jpg")
+			target := albumAsset(t, s, "moved-to.jpg")
+			proposal := putPhotoSuggestion(t, s, source, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
+			file := source.Files[0]
+			_, err := s.DetachPhotoFile(ctx, source.ID, source.Revision, file.ID, PhotoDetachOptions{})
+			require.NoError(t, err)
+			_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, file.NodeID, "", nil)
+			require.NoError(t, err)
 
-		_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, dismissal(proposal))
-		require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "the owner reviewed the file under another photo")
-		require.False(t, dismissed(s, proposal), "the pending text stays")
-	})
+			_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, response(proposal, kind))
+			require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "the owner reviewed the file under another photo")
+			require.False(t, dismissed(s, proposal), "the pending text stays")
+			prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{target.ID}})
+			require.NoError(t, err)
+			for _, moved := range prepared.Targets {
+				require.Empty(t, moved.Values.Caption, "the photo that now holds the file gained nothing")
+				require.Empty(t, moved.Tags)
+			}
+		})
+	}
 	t.Run("revisions moved on", func(t *testing.T) {
 		t.Parallel()
 		s := newTestStore(t)
@@ -258,29 +271,6 @@ func TestPhotoSuggestionDismissalChecksTheAssetItWasReviewedUnder(t *testing.T) 
 		require.NoError(t, err, "a current suggestion can be dismissed")
 		require.True(t, dismissed(s, proposal))
 	})
-}
-
-func TestPhotoSuggestionAcceptanceRejectsAFileMovedToAnotherPhoto(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	source := albumAsset(t, s, "moved-from.jpg")
-	target := albumAsset(t, s, "moved-to.jpg")
-	proposal := putPhotoSuggestion(t, s, source, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
-	file := source.Files[0]
-	_, err := s.DetachPhotoFile(ctx, source.ID, source.Revision, file.ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, file.NodeID, "", nil)
-	require.NoError(t, err)
-
-	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
-	require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "the owner reviewed the file under another photo")
-	prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{target.ID}})
-	require.NoError(t, err)
-	for _, moved := range prepared.Targets {
-		require.Empty(t, moved.Values.Caption)
-		require.Empty(t, moved.Tags)
-	}
 }
 
 func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
@@ -496,6 +486,7 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
 		asset := albumAsset(t, s, "replaced.jpg")
+		freshAsset := albumAsset(t, s, "fresh.jpg")
 		first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
 		_, err := s.RespondPhotoSuggestion(ctx, first.ID, dismissalOf(ctx, t, s, first))
 		require.NoError(t, err)
@@ -505,6 +496,30 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		acceptPhotoSuggestion(t, s, second[0], true, "coast")
 
 		restored := restorePhotoSuggestionStore(t, s)
+		// Backfill lists the restored photo for B only; the fresh photo wants A.
+		version := func(asset PhotoAsset) string {
+			node, err := restored.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			// Building the request publishes the ready grid preview that makes the photo a target.
+			photoDescriptionJobRequest(t, restored, node.CurrentVersionID, producerA, false)
+			return node.CurrentVersionID
+		}
+		restoredVersion, freshVersion := version(asset), version(freshAsset)
+		targets := func(producer string, restoredOnly bool) []string {
+			page, err := restored.PhotoDescriptionTargets(ctx, producer, producer, "", 10, restoredOnly)
+			require.NoError(t, err)
+			ids := []string{}
+			for _, version := range page {
+				ids = append(ids, version.ID)
+			}
+			slices.Sort(ids)
+			return ids
+		}
+		require.Equal(t, []string{freshVersion}, targets(producerA, false), "A dismissed the restored photo, so only the fresh one wants A")
+		require.Empty(t, targets(producerA, true), "nothing is re-run for the producer that was dismissed")
+		require.ElementsMatch(t, []string{restoredVersion, freshVersion}, targets(producerB, false))
+		require.Equal(t, []string{restoredVersion}, targets(producerB, true), "B is offered its restored photo and no fresh one")
+
 		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again.", Tags: []string{"coast", "sunset", "boats"}})
 		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "A is dismissed on this photo, so its publish does nothing")
 
@@ -765,42 +780,6 @@ func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
 	require.Equal(t, versions[2:], ids(rest), "the cursor resumes after the last version read")
 }
 
-func TestPhotoDescriptionTargetsOfferRestoredRowsToProducersNotDismissed(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	restoredAsset := albumAsset(t, s, "restored.jpg")
-	freshAsset := albumAsset(t, s, "fresh.jpg")
-	first := putPhotoSuggestion(t, s, restoredAsset, document.PhotoDescription{Caption: "From A."})
-	_, err := s.RespondPhotoSuggestion(ctx, first.ID, dismissalOf(ctx, t, s, first))
-	require.NoError(t, err)
-	publishPhotoDescription(t, s, restoredAsset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"coast", "sunset"}})
-
-	restored := restorePhotoSuggestionStore(t, s)
-	version := func(asset PhotoAsset) string {
-		node, err := restored.NodeByID(ctx, asset.Files[0].NodeID)
-		require.NoError(t, err)
-		// Building the request publishes the ready grid preview that makes the photo a target.
-		photoDescriptionJobRequest(t, restored, node.CurrentVersionID, producerA, false)
-		return node.CurrentVersionID
-	}
-	restoredVersion, freshVersion := version(restoredAsset), version(freshAsset)
-	targets := func(producer string, restoredOnly bool) []string {
-		page, err := restored.PhotoDescriptionTargets(ctx, producer, producer, "", 10, restoredOnly)
-		require.NoError(t, err)
-		ids := []string{}
-		for _, version := range page {
-			ids = append(ids, version.ID)
-		}
-		slices.Sort(ids)
-		return ids
-	}
-	require.Equal(t, []string{freshVersion}, targets(producerA, false), "A dismissed the restored photo, so only the fresh one wants A")
-	require.Empty(t, targets(producerA, true), "nothing is re-run for the producer that was dismissed")
-	require.ElementsMatch(t, []string{restoredVersion, freshVersion}, targets(producerB, false))
-	require.Equal(t, []string{restoredVersion}, targets(producerB, true), "B is offered its restored photo and no fresh one")
-}
-
 func TestPhotoDescriptionTargetsSkipPhotosWithActiveWorkForAnotherProfile(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -936,39 +915,38 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 		_, waiter, _ = startPhotoDescription(t, s, explicit, at)
 		require.Equal(t, "waiting", waiter.State, "an explicit start by another profile asks again")
 	})
-}
+	t.Run("explicit then automatic", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "joined.jpg")
+		node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+		require.NoError(t, err)
+		first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
+		_, err = s.RespondPhotoSuggestion(ctx, first.ID, dismissalOf(ctx, t, s, first))
+		require.NoError(t, err)
 
-func TestPhotoDescriptionAutomaticJoinKeepsEarlierExplicitRequest(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "joined.jpg")
-	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
-	require.NoError(t, err)
-	first := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
-	_, err = s.RespondPhotoSuggestion(ctx, first.ID, dismissalOf(ctx, t, s, first))
-	require.NoError(t, err)
+		explicit := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, true)
+		grantRenditionJobConsent(t, s, explicit)
+		job, waiter, err := s.EnqueueRenditionJob(ctx, explicit)
+		require.NoError(t, err)
+		// A delayed backfill admission arrives for the same photo and profile.
+		automatic := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+		joined, _, err := s.EnqueueRenditionJob(ctx, automatic)
+		require.NoError(t, err)
+		require.Equal(t, job.ID, joined.ID)
 
-	explicit := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, true)
-	grantRenditionJobConsent(t, s, explicit)
-	job, waiter, err := s.EnqueueRenditionJob(ctx, explicit)
-	require.NoError(t, err)
-	// A delayed backfill admission arrives for the same photo and profile.
-	automatic := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
-	joined, _, err := s.EnqueueRenditionJob(ctx, automatic)
-	require.NoError(t, err)
-	require.Equal(t, job.ID, joined.ID)
-
-	at := time.Now().UTC().Add(time.Minute)
-	claim, err := s.ClaimRenditionJob(ctx, job.ID, "description-worker", at, time.Hour)
-	require.NoError(t, err, "the explicit request is still waiting for its description")
-	_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID, at, renditionJobTestSnapshot(explicit))
-	require.NoError(t, err)
-	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
-	require.NoError(t, err)
-	published := photoSuggestionValues(t, s, asset.ID)
-	require.Len(t, published, 1, "the explicit request replaces the dismissal")
-	require.Equal(t, "From B.", published[0].Value.Caption)
+		at := time.Now().UTC().Add(time.Minute)
+		claim, err := s.ClaimRenditionJob(ctx, job.ID, "description-worker", at, time.Hour)
+		require.NoError(t, err, "the explicit request is still waiting for its description")
+		_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID, at, renditionJobTestSnapshot(explicit))
+		require.NoError(t, err)
+		_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("From B."), at)
+		require.NoError(t, err)
+		published := photoSuggestionValues(t, s, asset.ID)
+		require.Len(t, published, 1, "the explicit request replaces the dismissal")
+		require.Equal(t, "From B.", published[0].Value.Caption)
+	})
 }
 
 func TestPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t *testing.T) {

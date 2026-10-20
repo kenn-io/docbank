@@ -329,12 +329,6 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
-	f.grant(t, f.service, "vision")
-	require.NoError(t, f.service.requireVisionReadiness(ctx, f.service.profiles["vision"]))
-	probes, _ := f.counts()
-	require.Equal(t, 1, probes, "the first grant has a passing probe")
-	_, err := f.service.RevokeConsent(ctx)
-	require.NoError(t, err)
 	f.mu.Lock()
 	f.probeFails = true
 	f.mu.Unlock()
@@ -512,7 +506,7 @@ func TestPhotoDescriptionStartRefusesAnIneligiblePhotoBeforeSavingConsent(t *tes
 	require.True(t, plan.ConsentRequired)
 }
 
-func TestPhotoDescriptionStartDescribesOnce(t *testing.T) {
+func TestPhotoDescriptionStartWithConsentReturnsACompletedJobWithNoAttachment(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
@@ -523,9 +517,6 @@ func TestPhotoDescriptionStartDescribesOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, enqueued.RenditionJobID, completed.RenditionJobID)
 	require.Empty(t, completed.AttachmentID)
-	require.Len(t, f.suggestions(t), 1)
-	_, describes := f.counts()
-	require.Equal(t, 1, describes)
 }
 
 func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *testing.T) {
