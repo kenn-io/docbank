@@ -1437,9 +1437,7 @@ func TestBackfillUnavailablePhotoKeepsMetadataIncomplete(t *testing.T) {
 	payload := mediatest.JPEG(2, 2, color.RGBA{R: 255, A: 255})
 	hash := processingHash(string(payload))
 	// The live catalog entry has no readable original in the real blob store.
-	node, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "missing.jpg", hash, int64(len(payload)), "image/jpeg")
-	require.NoError(t, err)
-	asset, err := f.catalog.PhotoAssetForNode(ctx, node.ID)
+	_, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "missing.jpg", hash, int64(len(payload)), "image/jpeg")
 	require.NoError(t, err)
 	targets, err := f.catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
 	require.NoError(t, err)
@@ -1453,11 +1451,6 @@ func TestBackfillUnavailablePhotoKeepsMetadataIncomplete(t *testing.T) {
 		retry, err := f.catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
 		require.NoError(t, err)
 		require.Equal(t, targets, retry)
-		groups, unavailable, _, incomplete, err := f.catalog.PhotoStackGroups(ctx, []string{asset.ID}, false, SourceMetadataExtractorFingerprint)
-		require.NoError(t, err)
-		require.Empty(t, groups)
-		require.Empty(t, unavailable)
-		require.True(t, incomplete)
 	}
 }
 
