@@ -572,7 +572,7 @@ Schema 41 adds `photo_suggestions`, one row per content version and producer fin
 
 `photo_suggestion_fts` indexes pending text by the row's `id`, with tags joined by a private-use token so a phrase cannot span two tags. `tag_fts` indexes tag names by the tag's rowid, so a photo matches text search through any tag assigned to it. Triggers keep both current, including during restore, and both stay out of metadata backup.
 
-`photo_description_explicit_waiters` marks the waiters an explicit start created. Publication reads it to decide whether a shared description job may replace another producer's dismissal. It is in-flight intent only and is not backed up: a restored waiter counts as automatic.
+`photo_description_explicit_waiters` marks the waiters an explicit start created. Publication reads it to decide whether a shared description job may replace another producer's dismissal. It records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
 
 `visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
 
