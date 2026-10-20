@@ -73,6 +73,31 @@ authority changes take the preservation side exclusively for their short
 catalog commit, so the logical membership and placement artifact cannot
 describe different authority handoffs.
 
+## Who schedules captures and retention?
+
+The daemon supervisor owns one serial `backup:scheduled` job when
+`[backup] interval` is positive. It shares the HTTP capture helper and operation
+gate, so scheduled captures preserve the same metadata freeze and physical
+content guarantees as manual captures. Supervisor shutdown cancels and drains
+the worker before closing the vault. An enabled schedule also prevents
+background idle shutdown.
+
+The worker opens an initialized repository and derives due and stale times
+from manifests tagged `docbank:scheduled`. Manual HTTP and embedded capture
+reject that reserved tag. Scheduling stores no separate checkpoint, so restart
+uses the same timestamps and checks staleness before attempting capture.
+A future timestamp triggers a capture followed by an interval wait.
+
+After capture, retention preserves the new point and the remaining newest
+scheduled points up to `keep_last`, then uses Kit's forget and prune operations.
+Each logical metadata snapshot is self-contained, so retention can remove an
+ancestor while preserving the new recovery point. Manual points remain outside
+the selection. Capture and repository errors retry after the shorter of the
+interval and five minutes. Cleanup errors leave the new point intact and wait
+until the next scheduled capture. The worker reports errors through the existing
+supervisor status and logs. The [backup guide](../usage/backup.md#schedule-backups)
+owns configuration and stale-warning thresholds.
+
 ## What metadata does a snapshot retain?
 
 Docbank exports logical metadata as deterministic JSONL: one JSON record per

@@ -62,6 +62,42 @@ repo = "~/Backups/docbank"
 Restart the daemon after changing `config.toml`. Configuration is read only at
 daemon startup.
 
+## Schedule backups
+
+Initialize the repository first, then add a schedule to `config.toml`:
+
+```toml
+[backup]
+repo = "~/Backups/docbank"
+interval = "24h"
+keep_last = 14
+```
+
+Restart the daemon to apply the schedule. It captures immediately when no
+scheduled snapshot exists or the newest one is due. Later captures run on the
+configured interval. An enabled schedule keeps a background daemon running
+through idle periods. The daemon opens the repository but never initializes it.
+Repository and capture failures retry after the shorter of the interval and
+five minutes.
+
+After a capture, the daemon keeps the newest `keep_last` scheduled snapshots,
+always including the one it just created. It forgets older scheduled snapshots
+and prunes unused storage. Manual snapshots stay available. Cleanup failures
+leave the new snapshot available and retry after the next scheduled capture.
+The tag `docbank:scheduled` is reserved for the daemon; manual capture through
+the CLI, HTTP API, or embedded API rejects it.
+
+`docbank jobs` shows the `backup:scheduled` job and its latest error. The Jobs
+drawer shows its standard error indicator with details redacted for browser
+sessions. Daemon logs also report failures and warn before capture when the
+newest scheduled snapshot is older than both 48 hours and twice the interval.
+This check reads snapshot timestamps on startup, so a restart preserves stale
+backup detection. A timestamp in the future triggers a recovery capture, then
+the daemon waits one interval before trying again.
+
+Set `interval = "0"` to disable the schedule. Enabling it requires both `repo`
+and a positive `keep_last`; there is no default retained count.
+
 ## Initialize a repository
 
 ```bash

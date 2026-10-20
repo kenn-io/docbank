@@ -230,6 +230,9 @@ func (v *Vault) CreateBackup(
 		return BackupSnapshot{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	if err := backupapp.ValidateManualTag(opts.Tag); err != nil {
+		return BackupSnapshot{}, err
+	}
 	if repository == nil || repository.repo == nil {
 		return BackupSnapshot{}, errors.New("docbank backup repository is required")
 	}

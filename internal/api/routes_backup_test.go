@@ -118,6 +118,19 @@ func TestBackupSnapshots(t *testing.T) {
 	assert.Empty(t, verified.Problems)
 }
 
+func TestBackupManualReservedTag(t *testing.T) {
+	t.Parallel()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
+	_, err := backup.Init(repoPath)
+	require.NoError(t, err)
+	for _, path := range []string{"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream"} {
+		resp, body := do(t, ts, http.MethodPost, path, nil, map[string]any{"tag": "docbank:scheduled"})
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		require.Contains(t, body, "reserved")
+	}
+}
+
 func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)

@@ -91,6 +91,14 @@ provider values and their secret handling directly, while
 `document.ProcessingProfileV1` remains immutable non-secret policy. A caller
 must supply the matching providers and tokenizers for any profile it exposes.
 
+## Scheduled backup configuration
+
+`[backup] interval` defaults to zero, which disables scheduled captures.
+An enabled schedule requires a configured `repo` and a positive `keep_last`.
+`interval` and `keep_last` must be nonnegative. Restart the daemon after changing them.
+See [Schedule backups](backup.md#schedule-backups) for initialization,
+retention, retries, and stale warnings.
+
 ## Retention is configuration, not a cleanup promise
 
 `retain_sanitized_markdown`, `retain_provider_markdown`, and
