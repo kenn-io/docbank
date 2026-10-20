@@ -1009,7 +1009,10 @@ event to its own daemon, which sends it.
 
 Docbank sends these events:
 
-- `daemon_active` at each daemon start, then on the first hourly check of each later UTC day. Days when the machine sleeps are not backfilled. A background daemon exits after `idle_timeout`, 30 minutes by default, and starts again on the next command.
+- `daemon_active` at each daemon start, then on the first hourly check of each
+  later UTC day. Days when the machine sleeps are not backfilled. A background
+  daemon exits after `idle_timeout`, 30 minutes by default, and starts again
+  on the next command.
 - `app_opened` when the web app loads, and again on the first window focus of
   a later UTC day. The browser remembers the day for the daemon's address, so
   it sends about one per UTC day until the daemon restarts on a new address.
@@ -1036,9 +1039,22 @@ The daemon remembers which screen events it has queued today in memory and in
 event, that screen remains eligible for another attempt. Remote delivery is
 best effort.
 
-Browser reports share one gate for app opens, screens, and session duration. After the daemon replies `disabled`, the browser stops duration listeners and reports for the UTC day. A later day's load or focus checks again. Failed browser requests back off from one second and stop after six failures. Hidden tabs retain their latest screen and report it when visible.
+Browser reports share one gate for app opens, screens, and session duration.
+After the daemon replies `disabled`, the browser stops duration listeners and
+reports for the UTC day. A later day's load or focus checks again. Failed
+browser requests back off from one second and stop after six failures. Hidden
+tabs retain their latest screen and report it when visible.
 
-TUI screen and exit reports contact an already-running daemon. The private `telemetry-tui-disabled` file at the canonical vault root contains only the UTC date after the daemon replies `disabled`. That receipt stops discovery and file reads in the current TUI. Later TUI runs read it once and stay quiet for the same day. Unexpected file content behaves as an empty cache. Accepted screens stay in memory; the daemon owns daily deduplication across TUI restarts. Failed reports can retry on input after 30 seconds, up to six failed POSTs per process per UTC day. A missing daemon or busy receipt lock returns a retryable error without spending that POST budget. Data operations can still start the daemon.
+TUI screen and exit reports contact an already-running daemon. The private
+`telemetry-tui-disabled` file at the canonical vault root contains only the
+UTC date after the daemon replies `disabled`. That receipt stops discovery and
+file reads in the current TUI. Later TUI runs read it once and stay quiet for
+the same day. Unexpected file content behaves as an empty cache. Accepted
+screens stay in memory; the daemon owns daily deduplication across TUI
+restarts. Failed reports can retry on input after 30 seconds, up to six failed
+POSTs per process per UTC day. A missing daemon or busy receipt lock returns a
+retryable error without spending that POST budget. Data operations can still
+start the daemon.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 

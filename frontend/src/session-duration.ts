@@ -15,7 +15,9 @@ function durationBucket(elapsed: number): TelemetryEventPropertiesDurationBucket
  * Reports session_ended with the page's visible time when the page hides for good, stays hidden
  * for thirty minutes, or stop runs. take consumes the final duration for a revoke request.
  */
-export function startSessionReporting(reporter: BrowserTelemetryReporter) {
+export function startSessionReporting(
+  reporter: Pick<BrowserTelemetryReporter, "reportVisit" | "onQuietChange">,
+) {
   let disabled = false;
   let started = document.hidden ? undefined : performance.now();
   let visible = 0;

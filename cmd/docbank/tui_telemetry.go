@@ -26,7 +26,6 @@ type tuiTelemetry struct {
 	disabled bool
 	screens  map[string]bool
 	failures int
-	running  func(context.Context) (*daemonconn.Connection, bool, error)
 }
 
 func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemetryEventBody) error {
@@ -65,11 +64,7 @@ func (r *tuiTelemetry) report(ctx context.Context, body *apiclient.ReportTelemet
 		r.disabled = true
 		return nil
 	}
-	running := r.running
-	if running == nil {
-		running = daemonconn.Running
-	}
-	c, ok, err := running(ctx)
+	c, ok, err := daemonconn.Running(ctx)
 	if err != nil {
 		return fmt.Errorf("finding daemon for telemetry: %w", err)
 	}

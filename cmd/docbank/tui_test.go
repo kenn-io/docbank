@@ -357,7 +357,7 @@ func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
 }
 
 func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
@@ -368,12 +368,8 @@ func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
-	}))
-	defer server.Close()
-	t.Setenv("DOCBANK_HOME", t.TempDir())
-	backend := &tuiDaemonBackend{telemetry: tuiTelemetry{running: func(context.Context) (*daemonconn.Connection, bool, error) {
-		return daemonconn.New(server.URL, "synthetic-key"), true, nil
-	}}, ensure: func(context.Context) (*daemonconn.Connection, error) {
+	})
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
 		t.Fatal("telemetry started a daemon")
 		return nil, context.Canceled
 	}}
