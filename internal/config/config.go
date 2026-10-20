@@ -615,6 +615,9 @@ func (c Config) Validate() error {
 	if c.Backup.Interval.Std() < 0 || c.Backup.KeepLast < 0 {
 		return errors.New("[backup] interval and keep_last must not be negative")
 	}
+	if c.Backup.Interval.Std() > 0 && c.Backup.Interval.Std() < time.Minute {
+		return errors.New("[backup] interval must be at least one minute when enabled")
+	}
 	if c.Backup.Interval.Std() > 0 && (c.Backup.Repo == "" || c.Backup.KeepLast == 0) {
 		return errors.New("[backup] repo and positive keep_last are required when interval is enabled")
 	}

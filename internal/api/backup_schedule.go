@@ -96,6 +96,7 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger, captureDu
 		logger.Warn(warning.Error())
 	}
 	if delay > 0 && !captureDue {
+		jobs.ReportError(ctx, nil)
 		return delay, nil
 	}
 	snapshot, err := createScheduledBackupSnapshot(ctx, repo, d)

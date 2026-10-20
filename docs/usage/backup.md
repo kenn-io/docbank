@@ -104,7 +104,9 @@ Moving the clock backward during an active capture or retry wait cannot extend
 that wait.
 
 Set `interval = "0"` to disable the schedule. Enabling it requires both `repo`
-and a positive `keep_last`; there is no default retained count.
+and a positive `keep_last`; there is no default retained count. Enabled intervals
+must be at least one minute because each capture also scans and prunes the
+repository.
 
 After upgrading, make a one-time claim before resuming captures into an existing
 repository. This applies to manual CLI use, scripts, and embedded callers.

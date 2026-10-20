@@ -193,6 +193,28 @@ func TestRunProcessBackupOwnershipExitCodes(t *testing.T) {
 	require.Empty(t, stdout.String())
 }
 
+func TestRunProcessBackupClaimEOFRequiresConfirmation(t *testing.T) {
+	_ = setupVaultHome(t)
+	path := filepath.Join(t.TempDir(), "repo")
+	_, err := runCLI(t, "backup", "init", "--repo", path)
+	require.NoError(t, err)
+	_, err = runCLI(t, "backup", "create", "--repo", path, "--json")
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+	t.Cleanup(func() { rootCmd.SetIn(nil) })
+	for _, input := range []string{"", "y"} {
+		resetFlags(rootCmd)
+		rootCmd.SetIn(strings.NewReader(input))
+		var stdout, stderr bytes.Buffer
+		require.Equal(t, 2, runProcess([]string{"backup", "claim", "--repo", path, "--json"}, &stdout, &stderr))
+		require.Empty(t, stdout.String())
+		require.Contains(t, stderr.String(), "requires confirmation")
+		require.Contains(t, stderr.String(), "use --yes")
+		_, err := os.Stat(filepath.Join(path, "docbank-owner"))
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+}
+
 func TestRunProcessErrorHints(t *testing.T) {
 	_ = setupVaultHome(t)
 	var stdout, stderr bytes.Buffer

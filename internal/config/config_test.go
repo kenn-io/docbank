@@ -40,6 +40,8 @@ func TestBackupScheduleConfig(t *testing.T) {
 	}{
 		{"disabled", "", ""},
 		{"enabled", "repo = 'snapshots'\ninterval = '24h'\nkeep_last = 14", ""},
+		{"minimum interval", "repo = 'snapshots'\ninterval = '1m'\nkeep_last = 1", ""},
+		{"short interval", "repo = 'snapshots'\ninterval = '59s'\nkeep_last = 1", "at least one minute"},
 		{"missing repo", "interval = '24h'\nkeep_last = 14", "repo and positive keep_last"},
 		{"missing count", "repo = 'snapshots'\ninterval = '24h'", "positive keep_last"},
 		{"negative count", "keep_last = -1", "must not be negative"},
@@ -57,10 +59,13 @@ func TestBackupScheduleConfig(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			if tc.name == "enabled" {
+			switch tc.name {
+			case "enabled":
 				require.Equal(t, 24*time.Hour, cfg.Backup.Interval.Std())
 				require.Equal(t, 14, cfg.Backup.KeepLast)
-			} else {
+			case "minimum interval":
+				require.Equal(t, time.Minute, cfg.Backup.Interval.Std())
+			default:
 				require.Zero(t, cfg.Backup.Interval.Std())
 			}
 		})

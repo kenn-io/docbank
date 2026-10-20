@@ -166,6 +166,29 @@ func TestBackupScheduleRetryAndCancellation(t *testing.T) {
 	}
 }
 
+func TestBackupScheduleClearsErrorWhenHealthyPointIsNotDue(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t, time.Hour)
+		supervisor := jobs.New(t.Context(), d.Logger)
+		require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
+		synctest.Wait()
+		require.NotEmpty(t, supervisor.Snapshot()[0].Error)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		point, err := createScheduledBackupSnapshot(t.Context(), repo, d)
+		require.NoError(t, err)
+		time.Sleep(5 * time.Minute)
+		synctest.Wait()
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		require.Equal(t, point.ID, points[0].SnapshotID)
+		require.Empty(t, supervisor.Snapshot()[0].Error)
+		require.NoError(t, supervisor.Shutdown(t.Context()))
+	})
+}
+
 func TestBackupScheduleAfterForgettingFutureHistory(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
