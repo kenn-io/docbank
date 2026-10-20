@@ -145,7 +145,7 @@ type Service struct {
 	mediaOriginProbes   map[string]MediaOriginProbe
 	mediaOriginMu       sync.Mutex
 	mediaOriginEvidence map[string]mediaOriginObservation
-	visionProbes        map[string]MediaOriginProbe
+	visionProbes        map[string]visionProbeFunc
 	visionLocks         map[string]chan struct{}
 	visionNotReady      sync.Map
 	visionProbeTimeout  time.Duration
@@ -414,7 +414,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		mediaMaxBytes: config.MediaMaxBytes,
 		mediaOrigins:  mediaOrigins, mediaOriginProbes: mediaOriginProbes,
 		mediaOriginEvidence: make(map[string]mediaOriginObservation, len(mediaOriginProbes)),
-		visionProbes:        make(map[string]MediaOriginProbe),
+		visionProbes:        make(map[string]visionProbeFunc),
 		visionLocks:         make(map[string]chan struct{}),
 		visionProbeTimeout:  visionProbeTimeout,
 		mediaTokenKey:       config.MediaTokenKey}

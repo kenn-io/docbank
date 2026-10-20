@@ -373,17 +373,15 @@ const (
 // visionReadinessKey names a description profile's probe and evidence.
 func visionReadinessKey(fingerprint string) string { return "vision:" + fingerprint }
 
-// visionProbe sends the synthetic image only under active consent and records
-// the grant it ran under.
-func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe {
-	return func(ctx context.Context) (MediaOriginEvidence, error) {
+// visionProbeFunc sends the synthetic image under the grant its caller
+// authorized and reports the evidence for that grant.
+type visionProbeFunc func(ctx context.Context, grantID string) (MediaOriginEvidence, error)
+
+// visionProbe builds the probe for one description profile.
+func (service *Service) visionProbe(profile configuredProfile) visionProbeFunc {
+	return func(ctx context.Context, grantID string) (MediaOriginEvidence, error) {
 		evidence := MediaOriginEvidence{AdapterContract: profile.portable.Rendition.AdapterContract,
-			DeploymentRevision: profile.portable.Rendition.DeploymentFingerprint, ProbeState: "consent_required"}
-		authorization, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
-		if err != nil {
-			return evidence, err
-		}
-		evidence.GrantID, evidence.ProbeState = authorization.GrantID, "provider_unavailable"
+			DeploymentRevision: profile.portable.Rendition.DeploymentFingerprint, GrantID: grantID, ProbeState: "provider_unavailable"}
 		probe, ok := profile.provider.(interface {
 			Probe(ctx context.Context) error
 		})
@@ -428,13 +426,10 @@ func (service *Service) requireVisionReadiness(ctx context.Context, profile conf
 		}
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, service.visionProbeTimeout)
-	evidence, err := service.visionProbes[id](probeCtx)
+	evidence, err := service.visionProbes[id](probeCtx, authorization.GrantID)
 	cancel()
 	if ctx.Err() != nil {
 		return ctx.Err()
-	}
-	if evidence.GrantID == "" {
-		return err
 	}
 	service.mediaOriginMu.Lock()
 	service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, ProbedAt: service.clock().UTC(), Cause: err}
