@@ -298,12 +298,6 @@ export class PhotoAuthoredEditor {
       }
     }
   }
-  suggestionChoices(suggestion: api.PhotoSuggestion) {
-    return {
-      caption: !!suggestion.value.caption,
-      tags: suggestion.value.tags,
-    };
-  }
   async respondSuggestion(
     suggestion: api.PhotoSuggestion,
     caption = false,
@@ -593,6 +587,7 @@ export class PhotoAuthoredEditor {
       const tags = await this.refreshKeywords(receipt);
       this.endWrite(write);
       await refresh(receipt, tags);
+      if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) {
         this.error = this.failure(cause);

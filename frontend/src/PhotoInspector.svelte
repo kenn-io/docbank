@@ -109,10 +109,9 @@
       {@const suggestion = editor.activeSuggestion}
       {@const source = editor.targets.find((target) => target.file_id === suggestion.target)}
       {@const member = editor.asset?.files.find((file) => file.id === suggestion.target)}
-      {@const choices = editor.suggestionChoices(suggestion)}
       {@const selected = selections[suggestion.suggestion_id]}
-      {@const caption = choices.caption && !!selected?.caption}
-      {@const tags = choices.tags.filter((tag) => selected?.tags.includes(tag))}
+      {@const caption = !!suggestion.value.caption && !!selected?.caption}
+      {@const tags = suggestion.value.tags.filter((tag) => selected?.tags.includes(tag))}
       {@const replaces = !!source?.values.caption}
       {@const replacementID = `caption-replacement-${suggestion.suggestion_id}`}
       <section class="suggestions" aria-label="Suggested photo metadata">
@@ -125,7 +124,7 @@
             </p>
           {/if}
         </header>
-        {#if choices.caption}
+        {#if suggestion.value.caption}
           <div class="suggestion-field">
             <h4>Caption</h4>
             <Checkbox
@@ -141,11 +140,11 @@
               </p>{/if}
           </div>
         {/if}
-        {#if choices.tags.length}
+        {#if suggestion.value.tags.length}
           <fieldset class="suggestion-field suggested-keywords">
             <legend>Keywords</legend>
             <div class="suggested-tags">
-              {#each choices.tags as tag (tag)}
+              {#each suggestion.value.tags as tag (tag)}
                 <Checkbox
                   class="suggested-keyword"
                   label={tag}
@@ -169,7 +168,7 @@
             message={editor.suggestionsError}
           />{/if}
         <div class="suggestion-actions">
-          {#if choices.caption || choices.tags.length}
+          {#if suggestion.value.caption || suggestion.value.tags.length}
             <Button
               size="sm"
               tone="info"
