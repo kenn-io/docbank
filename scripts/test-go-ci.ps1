@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Two-shard callers keep the original package grouping.
+# Selecting -ShardCount 2 uses the original package grouping.
 $legacy = @('./docbank', './internal/store', './cmd/docbank')
 # Seed measured hot packages; distribute the remainder round-robin across all four shards.
 $groups = @{

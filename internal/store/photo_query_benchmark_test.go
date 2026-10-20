@@ -48,8 +48,6 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, browseHash("benchmark-metadata"), canonical)
 		require.NoError(b, err)
 	}
-	_, err = s.db.ExecContext(ctx, `PRAGMA synchronous=FULL`)
-	require.NoError(b, err)
 	var assets, heads, projected, captured int
 	require.NoError(b, s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_assets), (SELECT count(*) FROM source_metadata_heads), (SELECT count(*) FROM photo_technical_metadata), (SELECT count(*) FROM photo_technical_metadata WHERE capture_time IS NOT NULL)`).Scan(&assets, &heads, &projected, &captured))
 	require.Equal(b, assetCount, assets)
