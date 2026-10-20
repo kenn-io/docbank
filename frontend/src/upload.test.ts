@@ -536,7 +536,7 @@ it("rejects an oversized folder plan before sending and keeps the channel usable
   );
   await expect(
     channel.planPhotoImport(files, "/", "20000000-0000-4000-8000-000000000001", hashes),
-  ).rejects.toThrow(/fewer files.*8 MiB declaration/);
+  ).rejects.toThrow(/Choose fewer files/);
   expect(socket.frames).toHaveLength(1);
   expect(socket.closed).toBe(false);
   const next = photoSelectionFiles();

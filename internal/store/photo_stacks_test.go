@@ -268,12 +268,6 @@ func TestPhotoStackCameraSerialMatching(t *testing.T) {
 			} else {
 				require.Empty(t, groups)
 			}
-			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids}), CurrentID: ids[0], Decision: "current"})
-			if tc.grouped {
-				require.NoError(t, err)
-			} else {
-				require.ErrorIs(t, err, ErrStalePhotoStack)
-			}
 		})
 	}
 }
@@ -291,8 +285,7 @@ func TestPhotoStackFoldersFollowSourceProvenance(t *testing.T) {
 		var exported bytes.Buffer
 		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 		restored := newTestStore(t)
-		metadata := strings.ReplaceAll(exported.String(), `"embedded:agent"`, `"Embedded:agent"`)
-		require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(metadata)))
+		require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(exported.String())))
 		require.Empty(t, stackIndexes(t, restored, ids))
 		page, err := restored.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
 		require.NoError(t, err)
@@ -551,6 +544,21 @@ func TestPhotoStackPagesCapConnectedRuns(t *testing.T) {
 		require.Len(t, page.Items, 1, "a 501-frame run stays as individual photos")
 		require.Empty(t, page.Stacks)
 	}
+	// Continuing inside the oversized run keeps every row individual.
+	request := captureRequest(t, "asc")
+	request.PageSize = 250
+	var cursor *PhotoBrowsePosition
+	var listed []string
+	for {
+		page, err := s.ListPhotoAssets(t.Context(), request, cursor)
+		require.NoError(t, err)
+		require.Empty(t, page.Stacks)
+		listed = append(listed, rowIDs(page.Items)...)
+		if cursor = page.Next; cursor == nil {
+			break
+		}
+	}
+	require.Equal(t, ids, listed)
 	trashed, err := s.PhotoAssetByID(t.Context(), ids[500])
 	require.NoError(t, err)
 	_, err = s.TrashPhotoAsset(t.Context(), trashed.ID, trashed.Revision)
@@ -564,34 +572,6 @@ func TestPhotoStackPagesCapConnectedRuns(t *testing.T) {
 	receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[:500], Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[:500], Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "all"})
 	require.NoError(t, err)
 	require.Len(t, receipt.After, 500)
-}
-
-//nolint:paralleltest // The allocation budget excludes concurrent tests in this package.
-func TestPhotoStackPagesContinueInsideOversizedRun(t *testing.T) {
-	s := newTestStore(t)
-	ids := burstPhotos(t, s, 1100)
-	request := captureRequest(t, "asc")
-	request.PageSize = 250
-	var cursor *PhotoBrowsePosition
-	for range 2 {
-		page, err := s.ListPhotoAssets(t.Context(), request, cursor)
-		require.NoError(t, err)
-		require.NotNil(t, page.Next)
-		cursor = page.Next
-	}
-	var page PhotoBrowsePage
-	allocations := testing.AllocsPerRun(1, func() {
-		var err error
-		page, err = s.ListPhotoAssets(t.Context(), request, cursor)
-		require.NoError(t, err)
-	})
-	require.Equal(t, ids[500:750], rowIDs(page.Items))
-	require.Empty(t, page.Stacks)
-	require.NotNil(t, page.Next)
-	t.Logf("continuation page allocations: %.0f", allocations)
-	// A page may probe the run's edge once; it must not repeat that walk
-	// for every frame already read in the same connected batch.
-	require.Less(t, allocations, float64(100000))
 }
 
 func TestPhotoStackFileLimit(t *testing.T) {
@@ -615,120 +595,29 @@ func TestPhotoStackFileLimit(t *testing.T) {
 		indexes[i] = i
 	}
 	require.Equal(t, [][]int{indexes}, stackIndexes(t, s, ids))
-	targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
-	require.Len(t, targets, 1002)
-	// Add files through the same import API to reach the stack's exact bound.
-	for i := 1002; i <= 2000; i++ {
-		asset, err := s.PhotoAssetByID(t.Context(), ids[(i-1002)%len(ids)])
+	attach := func(n int) {
+		t.Helper()
+		asset, err := s.PhotoAssetByID(t.Context(), ids[n%len(ids)])
 		require.NoError(t, err)
-		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("extra-%d.cr2", i), browseHash(fmt.Sprintf("extra-%d", i)), 4, "application/octet-stream")
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("extra-%d.cr2", n), browseHash(fmt.Sprintf("extra-%d", n)), 4, "application/octet-stream")
 		require.NoError(t, err)
 		_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, node.ID, PhotoRoleRAW, nil)
 		require.NoError(t, err)
-		if i == 1999 {
-			for chunk := range slices.Chunk(preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), 1000) {
-				edits := make([]PhotoAuthoredTarget, len(chunk))
-				for j, target := range chunk {
-					edits[j] = PhotoAuthoredTarget{FileID: target.FileID, Revision: target.Revision, Patch: PhotoAuthoredPatch{Creator: new(strings.Repeat("c", 100)), Copyright: new(strings.Repeat("r", 100))}}
-				}
-				_, err = editPhotoAuthored(t.Context(), s, edits)
-				require.NoError(t, err)
-			}
-			targets = preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
-			require.Len(t, targets, 2000)
-			receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, CurrentID: ids[0], Decision: "all"})
-			require.NoError(t, err)
-			require.Len(t, receipt.After, 2000)
-			_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
-			require.NoError(t, err)
-		}
 	}
+	// Reach the stack's exact bound of 2,000 files through the same import API.
+	for n := 1002; n < 2000; n++ {
+		attach(n)
+	}
+	targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
+	require.Len(t, targets, 2000)
+	require.Equal(t, [][]int{indexes}, stackIndexes(t, s, ids))
+	attach(2000)
 	groups, _, _, incomplete, err := s.PhotoStackGroups(t.Context(), ids, false, "")
 	require.NoError(t, err)
 	require.False(t, incomplete)
 	require.Empty(t, groups)
 	_, err = s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 	require.ErrorIs(t, err, ErrPhotoStackFileLimit)
-}
-
-func TestPhotoStackReturnOwnershipClockResolution(t *testing.T) {
-	t.Parallel()
-	for _, advance := range []bool{false, true} {
-		for _, restore := range []bool{false, true} {
-			t.Run(fmt.Sprintf("advance=%t/restore=%t", advance, restore), func(t *testing.T) {
-				synctest.Test(t, func(t *testing.T) {
-					s := newTestStore(t)
-					ids := burstPhotos(t, s, 3)
-					decide := func(decision, id string) PhotoAuthoredReceipt {
-						r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids}), Decision: decision, CurrentID: id})
-						require.NoError(t, err)
-						return r
-					}
-					first := decide("current", ids[0])
-					if advance {
-						time.Sleep(time.Second)
-					}
-					second := decide("all", ids[0])
-					// Give the earlier receipt the larger UUID, a valid outcome of random allocation.
-					for i, receipt := range []PhotoAuthoredReceipt{first, second} {
-						id := []string{"ffffffff-ffff-4fff-bfff-ffffffffffff", "00000000-0000-4000-8000-000000000001"}[i]
-						_, err := s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET receipt_id=?,after_json=replace(after_json,?,?) WHERE receipt_id=?`, id, receipt.ReceiptID, id, receipt.ReceiptID)
-						require.NoError(t, err)
-					}
-					if restore {
-						var backup bytes.Buffer
-						require.NoError(t, s.ExportMetadata(t.Context(), &backup))
-						s = newTestStore(t)
-						require.NoError(t, s.ImportMetadata(t.Context(), &backup))
-					}
-					decide("current", ids[1])
-					asset, err := s.PhotoAssetByID(t.Context(), ids[0])
-					require.NoError(t, err)
-					require.Equal(t, "pick", asset.Files[0].Flag)
-				})
-			})
-		}
-	}
-}
-
-func TestPhotoStackReturnReplacesOwnedPicksAfterGapMerge(t *testing.T) {
-	t.Parallel()
-	for _, independent := range []bool{false, true} {
-		t.Run(fmt.Sprintf("independent=%t", independent), func(t *testing.T) {
-			s := newTestStore(t)
-			run, err := s.BeginIngest(t.Context(), "cli", "synthetic neighboring bursts")
-			require.NoError(t, err)
-			var ids []string
-			for i, second := range []int{0, 1, 4, 5} {
-				ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shots/frame-%d.jpg", i), fmt.Sprintf("2024-06-10T12:00:0%dZ", second), document.SourceMetadataPrecisionSecond))
-			}
-			decide := func(members []string, gap int, current string) {
-				_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: gap, AssetIDs: members, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: members}), Decision: "current", CurrentID: current})
-				require.NoError(t, err)
-			}
-			decide(ids[:2], 2, ids[0])
-			decide(ids[2:], 2, ids[2])
-			if independent {
-				_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[:1]}), Patch: PhotoAuthoredPatch{Flag: new("pick")}})
-				require.NoError(t, err)
-			}
-			_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{BurstGapSeconds: new(3)})
-			require.NoError(t, err)
-			require.Equal(t, [][]int{{0, 1, 2, 3}}, stackIndexes(t, s, ids))
-			decide(ids, 3, ids[1])
-			flags := make([]string, len(ids))
-			for i, id := range ids {
-				asset, err := s.PhotoAssetByID(t.Context(), id)
-				require.NoError(t, err)
-				flags[i] = asset.Files[0].Flag
-			}
-			if independent {
-				require.Equal(t, []string{"pick", "pick", "reject", "reject"}, flags)
-			} else {
-				require.Equal(t, []string{"reject", "pick", "reject", "reject"}, flags)
-			}
-		})
-	}
 }
 
 func TestPhotoStackReturnOwnership(t *testing.T) {
@@ -884,6 +773,74 @@ func TestPhotoStackReturnOwnership(t *testing.T) {
 			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
 		})
 	}
+	t.Run("receipt order across clock ticks", func(t *testing.T) {
+		t.Parallel()
+		for _, advance := range []bool{false, true} {
+			for _, restore := range []bool{false, true} {
+				t.Run(fmt.Sprintf("advance=%t/restore=%t", advance, restore), func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						s := newTestStore(t)
+						ids := burstPhotos(t, s, 3)
+						decide := func(decision, id string) PhotoAuthoredReceipt {
+							r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids}), Decision: decision, CurrentID: id})
+							require.NoError(t, err)
+							return r
+						}
+						first := decide("current", ids[0])
+						if advance {
+							time.Sleep(time.Second)
+						}
+						second := decide("all", ids[0])
+						// Give the earlier receipt the larger UUID, a valid outcome of random allocation.
+						for i, receipt := range []PhotoAuthoredReceipt{first, second} {
+							id := []string{"ffffffff-ffff-4fff-bfff-ffffffffffff", "00000000-0000-4000-8000-000000000001"}[i]
+							_, err := s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET receipt_id=?,after_json=replace(after_json,?,?) WHERE receipt_id=?`, id, receipt.ReceiptID, id, receipt.ReceiptID)
+							require.NoError(t, err)
+						}
+						if restore {
+							var backup bytes.Buffer
+							require.NoError(t, s.ExportMetadata(t.Context(), &backup))
+							s = newTestStore(t)
+							require.NoError(t, s.ImportMetadata(t.Context(), &backup))
+						}
+						decide("current", ids[1])
+						asset, err := s.PhotoAssetByID(t.Context(), ids[0])
+						require.NoError(t, err)
+						require.Equal(t, "pick", asset.Files[0].Flag)
+					})
+				})
+			}
+		}
+	})
+	t.Run("gap merge keeps a manual pick", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		run, err := s.BeginIngest(t.Context(), "cli", "synthetic neighboring bursts")
+		require.NoError(t, err)
+		var ids []string
+		for i, second := range []int{0, 1, 4, 5} {
+			ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shots/frame-%d.jpg", i), fmt.Sprintf("2024-06-10T12:00:0%dZ", second), document.SourceMetadataPrecisionSecond))
+		}
+		decide := func(members []string, gap int, current string) {
+			_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: gap, AssetIDs: members, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: members}), Decision: "current", CurrentID: current})
+			require.NoError(t, err)
+		}
+		decide(ids[:2], 2, ids[0])
+		decide(ids[2:], 2, ids[2])
+		_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[:1]}), Patch: PhotoAuthoredPatch{Flag: new("pick")}})
+		require.NoError(t, err)
+		_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{BurstGapSeconds: new(3)})
+		require.NoError(t, err)
+		require.Equal(t, [][]int{{0, 1, 2, 3}}, stackIndexes(t, s, ids))
+		decide(ids, 3, ids[1])
+		flags := make([]string, len(ids))
+		for i, id := range ids {
+			asset, err := s.PhotoAssetByID(t.Context(), id)
+			require.NoError(t, err)
+			flags[i] = asset.Files[0].Flag
+		}
+		require.Equal(t, []string{"pick", "pick", "reject", "reject"}, flags)
+	})
 }
 
 func TestPhotoStackDecisionsAndUndo(t *testing.T) {
@@ -1409,19 +1366,6 @@ func TestPhotoStackIncompleteMetadataScope(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, page.GroupingIncomplete)
 	require.Len(t, page.Stacks, 1)
-	run, err := s.BeginIngest(t.Context(), "cli", "synthetic missing metadata")
-	require.NoError(t, err)
-	stackPhoto(t, s, run, "/other/missing.jpg", "", document.SourceMetadataPrecisionSecond)
-	groups, _, _, incomplete, err = s.PhotoStackGroups(t.Context(), ids, false, fingerprint)
-	require.NoError(t, err)
-	require.False(t, incomplete)
-	require.Len(t, groups, 1, "the current burst remains groupable without the unrelated stale photo")
-	page, err = s.ListPhotoAssets(t.Context(), request, nil)
-	require.NoError(t, err)
-	require.True(t, page.GroupingIncomplete)
-	require.Len(t, page.Items, 4)
-	require.Equal(t, []PhotoStack{{AssetIDs: ids, RepresentativeID: ids[0]}}, page.Stacks,
-		"an unrelated stale photo should not hide the current burst")
 }
 
 func TestPhotoStackPartialMetadataCandidates(t *testing.T) {

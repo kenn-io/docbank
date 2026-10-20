@@ -35,6 +35,20 @@ func TestPhotoImportCheckpointPersistsSelectionAndValidatesFormatAndHeaderSize(t
 	preserved, err := os.ReadFile(file)
 	require.NoError(t, err)
 	require.Equal(t, future, string(preserved))
+	// Unknown members, broken JSON, and other manifest versions are malformed formats.
+	line, rest, _ := strings.Cut(strings.TrimSuffix(string(original), "\n"), "\n")
+	for _, contents := range []string{
+		strings.Replace(line, `"formatVersion":2`, `"formatVersion":2,"unknown":true`, 1) + "\n" + rest,
+		line + "\n" + strings.Replace(rest, `"destination"`, `"unknown":true,"destination"`, 1),
+		"{broken\n" + rest,
+		line + "\n{broken",
+		line + "\n" + strings.Replace(rest, `"manifestVersion":2`, `"manifestVersion":1`, 1),
+		line + "\n" + strings.Replace(rest, `"manifestVersion":2`, `"manifestVersion":99`, 1),
+	} {
+		require.NoError(t, os.WriteFile(file, []byte(contents), 0600))
+		_, _, err = reopened.read("profile", true)
+		require.ErrorContains(t, err, "unsupported or malformed format", contents)
+	}
 	// The small header remains readable even when the body cannot be decoded.
 	require.NoError(t, os.WriteFile(file, original[:bytes.IndexByte(original, '\n')+1], 0600))
 	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0600)

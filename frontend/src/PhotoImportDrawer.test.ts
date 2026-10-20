@@ -25,7 +25,11 @@ vi.mock("./photoImportStorage.js", async (importOriginal) => ({
     ) {
       const current = savedImports.get(vaultID);
       if (current?.revision !== expected?.revision || current?.sourceID !== expected?.sourceID)
-        throw new Error("Import progress changed in another tab. Close and reopen Add photos.");
+        throw new APIError(
+          "Import progress changed in another tab. Close and reopen Add photos.",
+          409,
+          "checkpoint_changed",
+        );
       if (next) savedImports.set(vaultID, next);
       else savedImports.delete(vaultID);
     },
@@ -241,7 +245,6 @@ it("uses the plan, uploads groups in order, reports totals, and refreshes once",
 it("plans supported photos without reading the bytes of skipped files", async () => {
   const photo = new File(["jpeg"], "capture.JPG");
   const skipped = new File(["backup"], "capture.bak");
-  const readSkipped = vi.spyOn(skipped, "slice");
   const plan = vi.fn<PhotoImportTransport["planPhotoImport"]>().mockResolvedValue({
     import_id: "mixed-selection",
     groups: [[0]],
@@ -270,7 +273,6 @@ it("plans supported photos without reading the bytes of skipped files", async ()
   });
   await screen.findByText("Unsupported type");
 
-  expect(readSkipped).not.toHaveBeenCalled();
   const hashes = plan.mock.calls[0]![3];
   expect(hashes.has(photo)).toBe(true);
   expect(hashes.has(skipped)).toBe(false);

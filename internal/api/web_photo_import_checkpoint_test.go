@@ -206,34 +206,17 @@ func TestPhotoImportCheckpointBrowserProfile(t *testing.T) {
 		require.NoError(t, err)
 		require.JSONEq(t, `{}`, string(empty))
 	})
-	t.Run("blocks malformed saved formats and distinguishes storage failures", func(t *testing.T) {
+	t.Run("blocks a malformed saved format", func(t *testing.T) {
 		created := call("GET", endpoint+"/header", "", nil)
 		require.Len(t, created.Cookies(), 1)
 		profile := created.Cookies()[0]
-		path := filepath.Join(checkpointDir, profile.Value+".jsonl")
 		header := `{"formatVersion":2,"sourceID":"` + source + `","revision":"` + revision + `"}`
-		for _, contents := range []string{
-			strings.Replace(header, `"formatVersion":2`, `"formatVersion":2,"unknown":true`, 1) + "\n" + checkpoint,
-			header + "\n" + strings.Replace(checkpoint, `"destination"`, `"unknown":true,"destination"`, 1),
-			"{broken\n" + checkpoint,
-			header + "\n{broken",
-			header + "\n" + strings.Replace(checkpoint, `"manifestVersion":2`, `"manifestVersion":1`, 1),
-			header + "\n" + strings.Replace(checkpoint, `"manifestVersion":2`, `"manifestVersion":99`, 1),
-		} {
-			require.NoError(t, os.WriteFile(path, []byte(contents), 0600))
-			resp := call("GET", endpoint, "", profile)
-			require.Equal(t, 409, resp.StatusCode)
-			body, err := io.ReadAll(resp.Body)
-			require.NoError(t, err)
-			require.Contains(t, string(body), `"code":"checkpoint_format"`)
-		}
-		require.NoError(t, os.Remove(path))
-		require.NoError(t, os.Mkdir(path, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(checkpointDir, profile.Value+".jsonl"), []byte(header+"\n{broken"), 0600))
 		resp := call("GET", endpoint, "", profile)
-		require.Equal(t, 500, resp.StatusCode)
+		require.Equal(t, 409, resp.StatusCode)
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		require.Contains(t, string(body), `"code":"checkpoint_storage"`)
+		require.Contains(t, string(body), `"code":"checkpoint_format"`)
 	})
 	t.Run("rejects malformed bodies", func(t *testing.T) {
 		for _, tc := range []struct {

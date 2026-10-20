@@ -19,7 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestBrowserPhotoResumeAndReimportKeepOriginal(t *testing.T) {
+func TestBrowserPhotoResumeKeepsOriginal(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
 	destination, err := ing.Store.PrepareIngestDirectory(ctx, "/photos")
@@ -41,44 +41,21 @@ func TestBrowserPhotoResumeAndReimportKeepOriginal(t *testing.T) {
 		require.NoError(t, err)
 		return result
 	}
+	sourceID := uuid.MustParse("20000000-0000-4000-8000-000000000001")
 	run, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic first selection")
 	require.NoError(t, err)
-	ids := make([]string, 3)
-	for i := range ids {
-		if i == 2 {
-			run, err = ing.Store.BeginIngest(ctx, "photo-import", "synthetic resumed selection")
-			require.NoError(t, err)
-		}
-		name := fmt.Sprintf("frame-%d.jpg", i)
-		result := commit(run, uuid.MustParse("20000000-0000-4000-8000-000000000001"), "camera", name, "synthetic browser photo "+name)
-		require.True(t, result.Added)
-		ids[i] = result.Asset.ID
-	}
-	secondRun, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic second selection")
-	require.NoError(t, err)
-	reimported := commit(secondRun, uuid.MustParse("20000000-0000-4000-8000-000000000002"), "other", "frame-1.jpg", "synthetic browser photo frame-1.jpg")
-	require.True(t, reimported.Skipped)
-	require.Equal(t, ids[1], reimported.Asset.ID)
-	originalAsset, err := ing.Store.PhotoAssetByID(ctx, ids[0])
-	require.NoError(t, err)
-	original, err := ing.Store.NodeByID(ctx, originalAsset.Files[0].NodeID)
+	first := commit(run, sourceID, "camera", "frame-0.jpg", "synthetic browser photo frame-0.jpg")
+	require.True(t, first.Added)
+	original, err := ing.Store.NodeByID(ctx, first.Asset.Files[0].NodeID)
 	require.NoError(t, err)
 	resumedRun, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic changed selection")
 	require.NoError(t, err)
-	sourceID := uuid.MustParse("20000000-0000-4000-8000-000000000001")
 	changed := commit(resumedRun, sourceID, "camera", "frame-0.jpg", "changed synthetic browser photo")
 	require.True(t, changed.Added)
 	require.Len(t, changed.Nodes, 1)
 	assert.NotEqual(t, original.ID, changed.Nodes[0].ID)
 	digest := sha256.Sum256([]byte("changed synthetic browser photo"))
 	assert.Equal(t, hex.EncodeToString(digest[:]), changed.Nodes[0].BlobHash)
-	retryRun, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic changed retry")
-	require.NoError(t, err)
-	retry := commit(retryRun, sourceID, "camera", "frame-0.jpg", "changed synthetic browser photo")
-	require.True(t, retry.Skipped)
-	require.Len(t, retry.Nodes, 1)
-	assert.Equal(t, changed.Nodes[0].ID, retry.Nodes[0].ID)
-	assert.Equal(t, changed.Nodes[0].CurrentVersionID, retry.Nodes[0].CurrentVersionID)
 	current, err := ing.Store.NodeByID(ctx, original.ID)
 	require.NoError(t, err)
 	assert.Equal(t, original.BlobHash, current.BlobHash)

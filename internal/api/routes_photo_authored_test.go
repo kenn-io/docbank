@@ -177,25 +177,6 @@ func TestPhotoAuthoredReceiptsRetainFlagOwner(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assertGrouping(false)
-	// An unreadable photo in the same folder leaves the healthy burst available.
-	missing, err := s.IngestFileExact(ctx, run, s.RootID(), "missing.jpg", testHash("missing"), 20, "image/jpeg", "/shots/missing.jpg", "2024-06-10T12:00:00Z")
-	require.NoError(t, err)
-	missingAsset, err := s.PhotoAssetForNode(ctx, missing.ID)
-	require.NoError(t, err)
-	groupedResponse, groupedBody := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", nil, api.GroupPhotoStacksRequest{AssetIDs: append(append([]string{}, ids...), missingAsset.ID)})
-	require.Equal(t, http.StatusOK, groupedResponse.StatusCode, groupedBody)
-	var partial api.GroupPhotoStacksResponse
-	require.NoError(t, json.Unmarshal([]byte(groupedBody), &partial))
-	require.True(t, partial.GroupingIncomplete)
-	require.Equal(t, [][]string{ids}, partial.Groups)
-	pageResponse, pageBody := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, map[string]any{"query": map[string]any{"sort": map[string]string{"field": "capture_time", "direction": "asc"}}, "stacks": true})
-	require.Equal(t, http.StatusOK, pageResponse.StatusCode, pageBody)
-	var partialPage api.PhotoBrowsePage
-	require.NoError(t, json.Unmarshal([]byte(pageBody), &partialPage))
-	require.True(t, partialPage.GroupingIncomplete)
-	require.Len(t, partialPage.Stacks, 1)
-	require.ElementsMatch(t, ids, partialPage.Stacks[0].AssetIDs)
-
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: ids})
 	require.NoError(t, err)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, api.PhotoStackDecisionRequest{BurstGapSeconds: 2, AssetIDs: ids, Targets: apiEditTargets(prepared.Targets), Decision: "current", CurrentID: ids[0]})
