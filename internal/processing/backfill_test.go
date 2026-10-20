@@ -200,6 +200,44 @@ func TestBackfillRejectsIncompleteConfiguration(t *testing.T) {
 	require.Error(t, backfill.Run(t.Context()))
 }
 
+func TestBackfillIdleWaitScalesWithEmptyListDuration(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name     string
+		duration time.Duration
+		waits    []time.Duration
+	}{
+		{name: "fast", waits: []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 10 * time.Second, 10 * time.Second}},
+		{name: "slow", duration: 2 * time.Second, waits: []time.Duration{200 * time.Second, 200 * time.Second}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				backfill := newTestBackfill(newFakeBackfillCatalog(), 10, false)
+				backfill.IdleDelay = time.Second
+				backfill.Now = time.Now
+				calls := 0
+				var listed time.Time
+				backfill.List = func(context.Context, string, int) ([]string, error) {
+					if calls > 0 {
+						assert.Equal(t, testCase.waits[calls-1], time.Since(listed))
+					}
+					if calls == len(testCase.waits) {
+						cancel()
+						return nil, ctx.Err()
+					}
+					calls++
+					time.Sleep(testCase.duration)
+					listed = time.Now()
+					return nil, nil
+				}
+				require.ErrorIs(t, backfill.Run(ctx), context.Canceled)
+			})
+		})
+	}
+}
+
 func TestBackfillRetrySetDropsTargetsAbsentFromCompletedScan(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
