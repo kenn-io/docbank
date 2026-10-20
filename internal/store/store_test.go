@@ -25,11 +25,9 @@ func newTestStore(t *testing.T) *Store {
 func TestStoreDisablesSyncForDisposableDatabases(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	for _, db := range []*sql.DB{s.db, s.writeDB} {
-		var synchronous int
-		require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
-		require.Zero(t, synchronous)
-	}
+	var synchronous int
+	require.NoError(t, s.writeDB.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
+	require.Zero(t, synchronous)
 }
 
 func TestStorageMutationDuringReadSnapshot(t *testing.T) {

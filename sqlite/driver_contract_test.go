@@ -153,7 +153,7 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 		for _, disabled := range []bool{false, true} {
 			sqlitetest.DisableSync.Store(disabled)
 			for _, access := range []docsqlite.AccessMode{docsqlite.Create, docsqlite.ReadWriteExisting} {
-				db := openAndPing(t, driver, databasePath, docsqlite.OpenOptions{Access: access})
+				db := openAndPing(t, driver, databasePath, docsqlite.OpenOptions{Access: access, TransactionMode: docsqlite.Deferred})
 				// Hold both connections so the second query must open a fresh one.
 				for range 2 {
 					conn, err := db.Conn(t.Context())
