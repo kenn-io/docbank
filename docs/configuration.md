@@ -53,7 +53,7 @@ The directory layout is created on first use:
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
-├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
+├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created when the environment permits telemetry, including source/development builds; opt-outs and any present CI prevent creation; existing files remain
 ├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
 ├── config.toml          # optional; see below
 ├── lane-controls.json   # local job pause and concurrency settings
@@ -1066,8 +1066,7 @@ to geolocate. Separately configured document providers are unrelated to usage
 telemetry and unchanged by it.
 
 The install ID lives in `telemetry-install.json` at the vault root (see the
-[layout](#vault-location) above). The daemon creates it the first time it runs
-with telemetry on, and never while telemetry is off. Each vault has its own ID.
+[layout](#vault-location) above). When the environment permits telemetry, the daemon loads or creates this file, including in source/development builds that send nothing. Opt-outs and any present `CI` prevent creation; an existing file remains. Each vault has its own ID.
 
 To opt out, set `DOCBANK_TELEMETRY_ENABLED=0`, `TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` in the
 environment that starts the daemon, then run `docbank daemon restart`. A CLI
