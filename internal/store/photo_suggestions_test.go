@@ -399,7 +399,7 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		_, err = restored.RespondPhotoSuggestion(ctx, regenerated[0].ID, PhotoSuggestionResponse{Response: "dismissed"})
 		require.NoError(t, err)
 		for producer, want := range map[string]bool{producerA: true, producerB: false} {
-			settled, err := restored.PhotoDescriptionSettled(ctx, regenerated[0].ContentVersionID, producer)
+			settled, err := restored.photoDescriptionSettled(ctx, regenerated[0].ContentVersionID, producer)
 			require.NoError(t, err)
 			require.Equal(t, want, settled, "one row remains, and it is A's: %s", producer[:1])
 		}
@@ -439,7 +439,7 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		restored := restorePhotoSuggestionStore(t, s)
 		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again."})
 		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "a dismissed description is not asked for again")
-		settled, err := restored.PhotoDescriptionSettled(ctx, proposal.ContentVersionID, "")
+		settled, err := restored.photoDescriptionSettled(ctx, proposal.ContentVersionID, "")
 		require.NoError(t, err)
 		require.True(t, settled)
 	})
@@ -456,7 +456,7 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 		return node.CurrentVersionID
 	}()
 	settled := func(explicitProducer string) bool {
-		value, err := s.PhotoDescriptionSettled(ctx, version, explicitProducer)
+		value, err := s.photoDescriptionSettled(ctx, version, explicitProducer)
 		require.NoError(t, err)
 		return value
 	}
@@ -564,7 +564,7 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult(""), at)
 	require.NoError(t, err)
 	require.Empty(t, photoSuggestionValues(t, s, empty.ID))
-	settled, err := s.PhotoDescriptionSettled(ctx, emptyNode.CurrentVersionID, "")
+	settled, err := s.photoDescriptionSettled(ctx, emptyNode.CurrentVersionID, "")
 	require.NoError(t, err)
 	require.True(t, settled, "an empty answer still settles the version")
 }

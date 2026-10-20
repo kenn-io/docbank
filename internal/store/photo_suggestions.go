@@ -65,9 +65,9 @@ func (s *Store) PhotoDescriptionEligible(ctx context.Context, versionID string) 
 	return photoDescriptionEligibleTx(ctx, s.db, versionID)
 }
 
-// PhotoDescriptionSettled reports whether no description is wanted for the
+// photoDescriptionSettled reports whether no description is wanted for the
 // version. A non-empty explicitProducer applies the explicit-start predicate.
-func (s *Store) PhotoDescriptionSettled(ctx context.Context, versionID, explicitProducer string) (bool, error) {
+func (s *Store) photoDescriptionSettled(ctx context.Context, versionID, explicitProducer string) (bool, error) {
 	return photoDescriptionSettledTx(ctx, s.db, versionID, explicitProducer)
 }
 
