@@ -783,6 +783,8 @@
   }
   async function refreshView() {
     await Promise.all([refresh(), albums?.load()]);
+    // An open inspector can be showing a description that finished since it loaded.
+    await photos.authored.reload();
   }
   async function remove() {
     if (!albums || !album) return;
