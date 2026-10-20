@@ -1871,6 +1871,55 @@ func TestBackupClaimCLIConfirmation(t *testing.T) {
 	require.Contains(t, out, "already belongs")
 }
 
+func TestBackupClaimCLIJSON(t *testing.T) {
+	_ = setupVaultHome(t)
+	path := filepath.Join(t.TempDir(), "repo")
+	_, err := runCLI(t, "backup", "init", "--repo", path)
+	require.NoError(t, err)
+	_, err = runCLI(t, "backup", "create", "--repo", path, "--json")
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+	t.Cleanup(func() { rootCmd.SetIn(nil) })
+	for _, tc := range []struct {
+		status string
+		yes    bool
+		owned  bool
+	}{
+		{status: "declined"},
+		{status: "claimed", yes: true, owned: true},
+		{status: "already_owned", owned: true},
+	} {
+		resetFlags(rootCmd)
+		var stdout, stderr bytes.Buffer
+		rootCmd.SetOut(&stdout)
+		rootCmd.SetErr(&stderr)
+		rootCmd.SetIn(strings.NewReader("n\n"))
+		args := []string{"backup", "claim", "--repo", path, "--json"}
+		if tc.yes {
+			args = append(args, "--yes")
+		}
+		rootCmd.SetArgs(args)
+		require.NoError(t, rootCmd.ExecuteContext(context.Background()))
+		rootCmd.SetArgs(nil)
+		var result struct {
+			Status     string `json:"status"`
+			Repository struct {
+				Owned         bool `json:"owned"`
+				SnapshotCount int  `json:"snapshot_count"`
+			} `json:"repository"`
+		}
+		require.NoError(t, json.Unmarshal(stdout.Bytes(), &result), stdout.String())
+		require.Equal(t, tc.status, result.Status)
+		require.Equal(t, tc.owned, result.Repository.Owned)
+		require.Equal(t, 1, result.Repository.SnapshotCount)
+		if tc.status == "declined" {
+			require.Contains(t, stderr.String(), "[y/N]")
+			_, err := os.Stat(filepath.Join(path, "docbank-owner"))
+			require.ErrorIs(t, err, os.ErrNotExist)
+		}
+	}
+}
+
 func TestStoragePackBudgetAndJSON(t *testing.T) {
 	_ = setupVaultHome(t)
 	for name, content := range map[string]string{"a.txt": "alpha", "b.txt": "bravo"} {

@@ -105,7 +105,6 @@ func scheduledBackup(ctx context.Context, d Deps, logger *slog.Logger) (time.Dur
 	if err != nil {
 		logger.Warn("scheduled backup cleanup failed", "error", err)
 	}
-	// Also bounds recovery captures when the repository's clock is in the future.
 	return interval, nil
 }
 

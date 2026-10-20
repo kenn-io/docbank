@@ -19,7 +19,7 @@ func TestScheduleDelay(t *testing.T) {
 		{"due", 24 * time.Hour, 24 * time.Hour, 0, false},
 		{"stale after restart", 49 * time.Hour, 24 * time.Hour, 0, true},
 		{"long interval", 49 * time.Hour, 48 * time.Hour, 0, false},
-		{"future clock", -24 * time.Hour, time.Hour, 0, false},
+		{"future clock", -24 * time.Hour, time.Hour, 25 * time.Hour, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			points := []*backup.Manifest{{CreatedAt: now.Add(-tc.age).Format(time.RFC3339), Options: backup.ManifestOptions{Tag: ScheduledTag}}}
@@ -36,11 +36,12 @@ func TestScheduleDelay(t *testing.T) {
 }
 
 func TestScheduledRetentionPreservesManualAndNewCapture(t *testing.T) {
+	// ListSnapshots returns validated history in chronological order.
 	points := []*backup.Manifest{
-		{SnapshotID: "old", CreatedAt: "2026-01-01T00:00:00Z", Options: backup.ManifestOptions{Tag: ScheduledTag}},
 		{SnapshotID: "manual", CreatedAt: "2025-01-01T00:00:00Z"},
-		{SnapshotID: "future", CreatedAt: "2027-01-01T00:00:00Z", Options: backup.ManifestOptions{Tag: ScheduledTag}},
+		{SnapshotID: "old", CreatedAt: "2026-01-01T00:00:00Z", Options: backup.ManifestOptions{Tag: ScheduledTag}},
 		{SnapshotID: "created", CreatedAt: "2026-02-01T00:00:00Z", Options: backup.ManifestOptions{Tag: ScheduledTag}},
+		{SnapshotID: "future", CreatedAt: "2027-01-01T00:00:00Z", Options: backup.ManifestOptions{Tag: ScheduledTag}},
 	}
 	remove, err := ScheduledRetention(points, 2, "created")
 	require.NoError(t, err)
@@ -48,4 +49,15 @@ func TestScheduledRetentionPreservesManualAndNewCapture(t *testing.T) {
 	remove, err = ScheduledRetention(points, 1, "created")
 	require.NoError(t, err)
 	require.Equal(t, []string{"future", "old"}, remove)
+}
+
+func TestScheduledRetentionWithoutNewCapturePreservesHistory(t *testing.T) {
+	points := []*backup.Manifest{
+		{SnapshotID: "older", Options: backup.ManifestOptions{Tag: ScheduledTag}},
+		{SnapshotID: "manual"},
+		{SnapshotID: "old", Options: backup.ManifestOptions{Tag: ScheduledTag}},
+	}
+	remove, err := ScheduledRetention(points, 1, "removed-new-capture")
+	require.NoError(t, err)
+	require.Empty(t, remove)
 }

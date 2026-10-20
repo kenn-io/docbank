@@ -1218,6 +1218,7 @@ export interface ClaimBackupRepositoryRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   confirm?: boolean;
+  preview?: string;
   repo?: string;
 }
 
@@ -7011,6 +7012,7 @@ export interface RepositoryClaim {
   newest_at?: string;
   owned: boolean;
   path: string;
+  preview: string;
   snapshot_count: number;
 }
 

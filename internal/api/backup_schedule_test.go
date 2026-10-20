@@ -165,7 +165,7 @@ func TestBackupScheduleRetryAndCancellation(t *testing.T) {
 	}
 }
 
-func TestBackupScheduleFutureCaptureWaitsInterval(t *testing.T) {
+func TestBackupScheduleFutureTimestampSurvivesRestart(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		d := scheduledDeps(t, time.Hour)
@@ -176,21 +176,36 @@ func TestBackupScheduleFutureCaptureWaitsInterval(t *testing.T) {
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
 		points[0].CreatedAt = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
-		_, err = repo.WriteManifest(points[0])
+		future, err := repo.WriteManifest(points[0])
 		require.NoError(t, err)
+		// Both restarts must preserve the same future point and deadline.
+		for range 2 {
+			supervisor := jobs.New(t.Context(), d.Logger)
+			require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
+			synctest.Wait()
+			time.Sleep(30 * time.Minute)
+			synctest.Wait()
+			points, err = repo.ListSnapshots()
+			require.NoError(t, err)
+			require.Len(t, points, 2)
+			require.Equal(t, future, points[1].SnapshotID)
+			require.NoError(t, supervisor.Shutdown(t.Context()))
+		}
 		supervisor := jobs.New(t.Context(), d.Logger)
 		require.NoError(t, supervisor.Start("backup:scheduled", func(ctx context.Context) error { return RunBackupSchedule(ctx, d) }))
+		synctest.Wait()
+		time.Sleep(24*time.Hour - time.Second)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2)
+		require.Equal(t, future, points[1].SnapshotID)
+		time.Sleep(time.Second)
 		synctest.Wait()
 		points, err = repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Len(t, points, 1)
-		created := points[0].SnapshotID
-		require.Greater(t, points[0].CreatedAt, time.Now().Format(time.RFC3339))
-		time.Sleep(59 * time.Minute)
-		synctest.Wait()
-		points, err = repo.ListSnapshots()
-		require.NoError(t, err)
-		require.Equal(t, created, points[0].SnapshotID)
+		require.NotEqual(t, future, points[0].SnapshotID)
 		require.NoError(t, supervisor.Shutdown(t.Context()))
 	})
 }

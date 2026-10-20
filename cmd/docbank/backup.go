@@ -68,6 +68,7 @@ var backupInitCmd = &cobra.Command{
 var (
 	backupClaimRepo string
 	backupClaimYes  bool
+	backupClaimJSON bool
 )
 
 var backupClaimCmd = &cobra.Command{
@@ -87,21 +88,34 @@ var backupClaimCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		result := func(status string, claim *apiclient.RepositoryClaim) error {
+			return writeBackupJSON(cmd.OutOrStdout(), struct {
+				Status     string                     `json:"status"`
+				Repository *apiclient.RepositoryClaim `json:"repository"`
+			}{status, claim})
+		}
+		previewOut := cmd.OutOrStdout()
+		if backupClaimJSON {
+			previewOut = cmd.ErrOrStderr()
+		}
 		newest := preview.NewestAt
 		if newest == "" {
 			newest = "none"
 		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "repository %s at %s\nsnapshots: %d\nnewest snapshot: %s\n", preview.ID, preview.Path, preview.SnapshotCount, newest); err != nil {
+		if _, err := fmt.Fprintf(previewOut, "repository %s at %s\nsnapshots: %d\nnewest snapshot: %s\n", preview.ID, preview.Path, preview.SnapshotCount, newest); err != nil {
 			return fmt.Errorf("writing backup claim preview: %w", err)
 		}
 		if preview.Owned {
+			if backupClaimJSON {
+				return result("already_owned", preview)
+			}
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "repository already belongs to this vault"); err != nil {
 				return fmt.Errorf("writing backup claim status: %w", err)
 			}
 			return nil
 		}
 		if !backupClaimYes {
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), "Assign this repository and its history to this vault? [y/N] "); err != nil {
+			if _, err := fmt.Fprint(previewOut, "Assign this repository and its history to this vault? [y/N] "); err != nil {
 				return fmt.Errorf("writing backup claim confirmation: %w", err)
 			}
 			line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
@@ -109,16 +123,23 @@ var backupClaimCmd = &cobra.Command{
 				return fmt.Errorf("reading backup claim confirmation: %w", err)
 			}
 			if !strings.EqualFold(strings.TrimSpace(line), "y") {
+				if backupClaimJSON {
+					return result("declined", preview)
+				}
 				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "claim declined"); err != nil {
 					return fmt.Errorf("writing backup claim decision: %w", err)
 				}
 				return nil
 			}
 		}
-		if _, err := c.API().ClaimBackupRepository(cmd.Context(), &apiclient.ClaimBackupRepositoryRequestOptions{
-			Body: &apiclient.ClaimBackupRepositoryBody{Repo: new(repo), Confirm: new(true)},
-		}); err != nil {
+		claimed, err := c.API().ClaimBackupRepository(cmd.Context(), &apiclient.ClaimBackupRepositoryRequestOptions{
+			Body: &apiclient.ClaimBackupRepositoryBody{Repo: new(repo), Confirm: new(true), Preview: new(preview.Preview)},
+		})
+		if err != nil {
 			return err
+		}
+		if backupClaimJSON {
+			return result("claimed", claimed)
 		}
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "claimed backup repository %s for this vault\n", preview.ID); err != nil {
 			return fmt.Errorf("writing backup claim result: %w", err)
@@ -522,6 +543,7 @@ func writeBackupRestoreReport(w io.Writer, report api.BackupRestoreReport) error
 func init() {
 	backupClaimCmd.Flags().StringVar(&backupClaimRepo, "repo", "", "backup repository directory")
 	backupClaimCmd.Flags().BoolVar(&backupClaimYes, "yes", false, "confirm adoption without prompting")
+	backupClaimCmd.Flags().BoolVar(&backupClaimJSON, "json", false, "output JSON")
 	backupInitCmd.Flags().StringVar(&backupInitRepo, "repo", "", "backup repository directory")
 	backupInitCmd.Flags().BoolVar(&backupInitJSON, "json", false, "print JSON to stdout")
 	backupCreateCmd.Flags().StringVar(&backupCreateRepo, "repo", "", "backup repository directory")

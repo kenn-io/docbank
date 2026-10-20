@@ -2,12 +2,13 @@ package backupapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"strings"
-	"time"
 
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/backup"
@@ -18,6 +19,7 @@ const repositoryOwnerFile = "docbank-owner"
 var (
 	ErrRepositoryOwnerConflict = errors.New("backup repository belongs to another vault")
 	ErrRepositoryClaimRequired = errors.New("backup repository has unclaimed history; run docbank backup claim before capturing")
+	ErrRepositoryClaimChanged  = errors.New("backup repository history changed; preview it again before confirming")
 )
 
 // RepositoryClaim previews the history an operator would assign to this vault.
@@ -27,22 +29,24 @@ type RepositoryClaim struct {
 	SnapshotCount int    `json:"snapshot_count"`
 	NewestAt      string `json:"newest_at,omitzero"`
 	Owned         bool   `json:"owned"`
+	// Preview identifies this exact history and must accompany confirmation.
+	Preview string `json:"preview"`
 }
 
 // EnsureRepositoryOwner binds empty repositories and refuses unclaimed history.
 // Every capture must check this before asking Kit to write a snapshot.
 func EnsureRepositoryOwner(ctx context.Context, repo *backup.Repo, vaultID string, forceUnlock bool) error {
-	_, err := repositoryOwnership(ctx, repo, vaultID, true, false, forceUnlock)
+	_, err := repositoryOwnership(ctx, repo, vaultID, true, false, forceUnlock, "")
 	return err
 }
 
 // ClaimRepository previews ownership, or adopts existing history when confirmed.
-// An existing owner cannot be replaced.
-func ClaimRepository(ctx context.Context, repo *backup.Repo, vaultID string, confirm bool) (RepositoryClaim, error) {
-	return repositoryOwnership(ctx, repo, vaultID, false, confirm, false)
+// Confirmation must carry the preceding Preview; an existing owner cannot be replaced.
+func ClaimRepository(ctx context.Context, repo *backup.Repo, vaultID string, confirm bool, preview string) (RepositoryClaim, error) {
+	return repositoryOwnership(ctx, repo, vaultID, false, confirm, false, preview)
 }
 
-func repositoryOwnership(ctx context.Context, repo *backup.Repo, vaultID string, capture, confirm, forceUnlock bool) (preview RepositoryClaim, err error) {
+func repositoryOwnership(ctx context.Context, repo *backup.Repo, vaultID string, capture, confirm, forceUnlock bool, expected string) (preview RepositoryClaim, err error) {
 	if vaultID == "" {
 		return preview, errors.New("backup repository requires a vault identity")
 	}
@@ -67,21 +71,23 @@ func repositoryOwnership(ctx context.Context, repo *backup.Repo, vaultID string,
 		return preview, fmt.Errorf("reading backup repository history: %w", err)
 	}
 	preview = RepositoryClaim{ID: repo.Config().RepoID, Path: repo.Root(), SnapshotCount: len(manifests), Owned: owned}
-	var newest time.Time
+	history := sha256.New()
+	_, _ = fmt.Fprintln(history, preview.ID)
 	for _, manifest := range manifests {
-		at, parseErr := time.Parse(time.RFC3339Nano, manifest.CreatedAt)
-		if parseErr != nil {
-			return preview, fmt.Errorf("reading backup snapshot time: %w", parseErr)
-		}
-		if at.After(newest) {
-			newest, preview.NewestAt = at, manifest.CreatedAt
-		}
+		_, _ = fmt.Fprintln(history, manifest.SnapshotID)
+	}
+	preview.Preview = hex.EncodeToString(history.Sum(nil))
+	if len(manifests) > 0 {
+		preview.NewestAt = manifests[len(manifests)-1].CreatedAt
 	}
 	if owned {
 		return preview, nil
 	}
 	if capture && len(manifests) > 0 {
 		return preview, ErrRepositoryClaimRequired
+	}
+	if confirm && expected != preview.Preview {
+		return preview, ErrRepositoryClaimChanged
 	}
 	if capture || confirm {
 		if err := atomicfile.WriteNew(repo.Path(repositoryOwnerFile), []byte(vaultID+"\n")); err != nil {

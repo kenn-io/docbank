@@ -1509,6 +1509,7 @@ problem was found.
 
 ```text
 docbank backup init [--repo <dir>] [--json]
+docbank backup claim [--repo <dir>] [--yes] [--json]
 docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 docbank backup list [--repo <dir>] [--json]
@@ -1530,12 +1531,17 @@ repository and reclaims unused backup storage. Supply `--repo` or configure
 | Command | Behavior |
 |---------|----------|
 | `init` | Initialize a repository |
+| `claim` | Preview and confirm adoption of existing repository history; `--yes` confirms without a prompt |
 | `create` | Capture a verified snapshot using logical JSONL metadata |
 | `list` | List snapshot history |
 | `verify` | Check the latest snapshot, a named snapshot, or every snapshot with `--all`; `--quick` skips content reads |
 | `restore` | Restore the latest or a named snapshot to a separate `--target` |
 | `forget` | Remove exact snapshot IDs; `--allow-empty` permits removing the last recovery point |
 | `prune` | Remove unused packs and rewrite eligible partly live packs; `--dry-run` reports the plan |
+
+`claim --json` writes one result object with `status` (`declined`, `claimed`, or
+`already_owned`) and `repository` to stdout. Previews and prompts go to stderr.
+Confirmation rejects history that changed after the preview.
 
 `create` pauses mutations briefly to fix the metadata view for the snapshot.
 It then streams loose or packed content while normal daemon work resumes.

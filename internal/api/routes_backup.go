@@ -85,13 +85,17 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 		Body struct {
 			Repo    string `json:"repo,omitzero"`
 			Confirm bool   `json:"confirm,omitzero"`
+			Preview string `json:"preview,omitzero"`
 		}
 	}) (*claimOutput, error) {
 		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
 		}
-		preview, err := backupapp.ClaimRepository(ctx, repo, d.Store.VaultID(), in.Body.Confirm)
+		if err := backupapp.ValidateDisjointRoots(d.VaultRoot, repo.Root()); err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		}
+		preview, err := backupapp.ClaimRepository(ctx, repo, d.Store.VaultID(), in.Body.Confirm, in.Body.Preview)
 		if err != nil {
 			return nil, fromBackupError(err)
 		}
@@ -822,7 +826,7 @@ func backupProblem(err error) *Error {
 	if errors.Is(err, backup.ErrRepoLocked) {
 		return NewError(http.StatusConflict, "backup_locked", err.Error())
 	}
-	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) || errors.Is(err, backupapp.ErrRepositoryClaimRequired) {
+	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) || errors.Is(err, backupapp.ErrRepositoryClaimRequired) || errors.Is(err, backupapp.ErrRepositoryClaimChanged) {
 		return NewError(http.StatusConflict, "backup_repository_owner", err.Error())
 	}
 	return NewError(http.StatusInternalServerError, "backup_failed", err.Error())

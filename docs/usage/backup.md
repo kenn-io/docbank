@@ -93,11 +93,15 @@ drawer shows its standard error indicator with details redacted for browser
 sessions. Daemon logs also report failures and warn before capture when the
 newest scheduled snapshot is older than both 48 hours and twice the interval.
 This check reads snapshot timestamps on startup, so a restart preserves stale
-backup detection. A timestamp in the future triggers a recovery capture, then
-the daemon waits one interval before trying again.
+backup detection. A timestamp in the future keeps its next deadline at that
+snapshot time plus the interval, including across daemon restarts.
 
 Set `interval = "0"` to disable the schedule. Enabling it requires both `repo`
 and a positive `keep_last`; there is no default retained count.
+
+After upgrading, make a one-time claim before resuming captures into an existing
+repository. This applies to manual CLI use, scripts, and embedded callers.
+Follow [Adopt an existing repository](#adopt-an-existing-repository).
 
 ## Initialize a repository
 
@@ -130,11 +134,13 @@ time before asking for confirmation. Inspect the history and confirm that it
 belongs to the selected vault. Answer `y` to assign it, or decline to leave it
 unchanged. Use `--yes` to confirm without a prompt. A repository already
 assigned to this vault reports that outcome; a claim cannot replace another
-vault's ownership.
+vault's ownership. Confirmation is bound to the previewed history. If snapshots
+change before confirmation, preview the repository again. Use `--json` for one
+result object on stdout; previews and prompts go to stderr.
 
 This operation requires the operator's API credential. Embedded callers use
-`vault.ClaimBackupRepository(ctx, repository, false)` to preview and `true` to
-confirm. Existing snapshots remain readable, verifiable, and restorable
+`vault.ClaimBackupRepository(ctx, repository, false, "")` to preview, then
+`vault.ClaimBackupRepository(ctx, repository, true, preview.Preview)` to confirm. Existing snapshots remain readable, verifiable, and restorable
 before and after a claim.
 
 ## Create a snapshot

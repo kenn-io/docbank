@@ -101,12 +101,18 @@ from manifests tagged `docbank:scheduled`, after checking ownership. A different
 vault cannot use its timestamps or trigger scheduled cleanup. Manual HTTP and embedded capture
 reject that reserved tag. Scheduling stores no separate checkpoint, so restart
 uses the same timestamps and checks staleness before attempting capture.
-A future timestamp triggers a capture followed by an interval wait.
+A future timestamp keeps its deadline at the snapshot time plus the interval
+across restarts.
+
+Claim confirmation carries a digest of the repository identity and ordered snapshot
+IDs from the preview. The ownership lock covers rechecking that digest and writing
+the marker, so changed history requires another preview.
 
 After capture, retention preserves the new point and the remaining newest
 scheduled points up to `keep_last`, then uses Kit's forget and prune operations.
 Each logical metadata snapshot is self-contained, so retention can remove an
-ancestor while preserving the new recovery point. Manual points remain outside
+ancestor while preserving the new recovery point. If that new point disappears
+before cleanup lists history, retention removes no snapshots. Manual points remain outside
 the selection. Capture and repository errors retry after the shorter of the
 interval and five minutes. Capture and retry deadlines use wall time and are
 rechecked at least once a minute, so a deadline passed during sleep is noticed

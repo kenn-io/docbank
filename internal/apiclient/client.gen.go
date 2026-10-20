@@ -27959,6 +27959,7 @@ type ClaimBackupRepositoryRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string `json:"$schema,omitempty"`
 	Confirm *bool   `json:"confirm,omitempty"`
+	Preview *string `json:"preview,omitempty"`
 	Repo    *string `json:"repo,omitempty"`
 }
 

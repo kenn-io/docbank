@@ -36,8 +36,9 @@ func TestBackupRepositoryInitAndClaimOwnership(t *testing.T) {
 	response, body = do(t, first, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{})
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Contains(t, body, "backup claim")
+	var identity string
 	for _, confirmed := range []bool{false, true} {
-		response, body = do(t, first, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": confirmed})
+		response, body = do(t, first, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": confirmed, "preview": identity})
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 		var preview backupapp.RepositoryClaim
 		require.NoError(t, json.Unmarshal([]byte(body), &preview))
@@ -45,6 +46,7 @@ func TestBackupRepositoryInitAndClaimOwnership(t *testing.T) {
 		require.Equal(t, 1, preview.SnapshotCount)
 		require.NotEmpty(t, preview.ID)
 		require.NotEmpty(t, preview.NewestAt)
+		identity = preview.Preview
 	}
 	response, body = do(t, first, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -74,6 +76,64 @@ func TestBackupRepositoryClaimRequiresOperator(t *testing.T) {
 	var preview backupapp.RepositoryClaim
 	require.NoError(t, json.Unmarshal([]byte(body), &preview))
 	require.False(t, preview.Owned)
+}
+
+func TestBackupRepositoryClaimRejectsChangedHistory(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "repo")
+	server, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = path })
+	response, body := do(t, server, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	for range 2 {
+		response, body = do(t, server, http.MethodPost, "/api/v1/backup/snapshots", nil, map[string]any{})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+	}
+	require.NoError(t, os.Remove(filepath.Join(path, "docbank-owner")))
+	response, body = do(t, server, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var preview backupapp.RepositoryClaim
+	require.NoError(t, json.Unmarshal([]byte(body), &preview))
+	require.Equal(t, 2, preview.SnapshotCount)
+	repo, err := backup.Open(path)
+	require.NoError(t, err)
+	points, err := repo.ListSnapshots()
+	require.NoError(t, err)
+	// Replace an older point without changing the count or newest timestamp.
+	replacement := *points[0]
+	replacement.Options.Tag = "replacement"
+	_, err = repo.WriteManifest(&replacement)
+	require.NoError(t, err)
+	_, err = backup.Forget(t.Context(), repo, backup.ForgetOptions{SnapshotIDs: []string{points[0].SnapshotID}})
+	require.NoError(t, err)
+	response, body = do(t, server, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": true, "preview": preview.Preview})
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "history changed")
+	_, err = os.Stat(filepath.Join(path, "docbank-owner"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	// A fresh preview can adopt the changed history.
+	newest := preview.NewestAt
+	response, body = do(t, server, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &preview))
+	require.Equal(t, 2, preview.SnapshotCount)
+	require.Equal(t, newest, preview.NewestAt)
+	response, body = do(t, server, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": true, "preview": preview.Preview})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+}
+
+func TestBackupRepositoryClaimRejectsVaultOverlap(t *testing.T) {
+	t.Parallel()
+	var path string
+	server, _ := newTestServer(t, func(d *api.Deps) {
+		path = filepath.Join(d.VaultRoot, "nested-repository")
+		d.Cfg.Backup.Repo = path
+	})
+	_, err := backup.Init(path)
+	require.NoError(t, err)
+	response, body := do(t, server, http.MethodPost, "/api/v1/backup/claim", nil, map[string]any{"confirm": true})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	_, err = os.Stat(filepath.Join(path, "docbank-owner"))
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestBackupConcurrentDaemonAndEmbeddedFirstBinding(t *testing.T) {
@@ -107,7 +167,7 @@ func TestBackupConcurrentDaemonAndEmbeddedFirstBinding(t *testing.T) {
 	status, err := <-reply, <-captured
 	require.Contains(t, []int{http.StatusOK, http.StatusConflict}, status)
 	require.True(t, err == nil || errors.Is(err, backup.ErrRepoLocked) || errors.Is(err, backupapp.ErrRepositoryOwnerConflict), "%v", err)
-	preview, err := backupapp.ClaimRepository(t.Context(), repo, catalog.VaultID(), false)
+	preview, err := backupapp.ClaimRepository(t.Context(), repo, catalog.VaultID(), false, "")
 	winner := "daemon"
 	if errors.Is(err, backupapp.ErrRepositoryOwnerConflict) {
 		winner = "embedded"

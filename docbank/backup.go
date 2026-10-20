@@ -19,6 +19,8 @@ var (
 	ErrBackupRepositoryOwnerConflict = backupapp.ErrRepositoryOwnerConflict
 	// ErrBackupRepositoryClaimRequired means existing history needs explicit adoption.
 	ErrBackupRepositoryClaimRequired = backupapp.ErrRepositoryClaimRequired
+	// ErrBackupRepositoryClaimChanged means history changed after the claim preview.
+	ErrBackupRepositoryClaimChanged = backupapp.ErrRepositoryClaimChanged
 	// ErrBackupRepositoryLocked means another writer owns the snapshot repository.
 	ErrBackupRepositoryLocked = backup.ErrRepoLocked
 	// ErrBackupRestoreTargetActive means another vault or restore owns an overlapping root.
@@ -40,8 +42,9 @@ type BackupRepository struct {
 type BackupRepositoryClaim = backupapp.RepositoryClaim
 
 // ClaimBackupRepository previews adoption of repository history for this vault.
-// Confirm permits adoption; a repository already owned by another vault is refused.
-func (v *Vault) ClaimBackupRepository(ctx context.Context, repository *BackupRepository, confirm bool) (BackupRepositoryClaim, error) {
+// Confirm requires the Preview returned by the preceding preview request.
+// A repository already owned by another vault is refused.
+func (v *Vault) ClaimBackupRepository(ctx context.Context, repository *BackupRepository, confirm bool, preview string) (BackupRepositoryClaim, error) {
 	if err := v.begin(); err != nil {
 		return BackupRepositoryClaim{}, err
 	}
@@ -52,7 +55,7 @@ func (v *Vault) ClaimBackupRepository(ctx context.Context, repository *BackupRep
 	if err := backupapp.ValidateDisjointRoots(v.root.Name(), repository.repo.Root()); err != nil {
 		return BackupRepositoryClaim{}, err
 	}
-	return backupapp.ClaimRepository(ctx, repository.repo, v.metadata.VaultID(), confirm)
+	return backupapp.ClaimRepository(ctx, repository.repo, v.metadata.VaultID(), confirm, preview)
 }
 
 // BackupExtraFile is one host-owned file captured in the snapshot and
