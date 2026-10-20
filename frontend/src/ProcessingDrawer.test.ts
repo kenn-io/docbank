@@ -280,7 +280,7 @@ describe("document processing drawer", () => {
             },
           ],
           disclosed_classes: ["derived_upload"],
-          retained_classes: ["suggestion_text"],
+          retained_classes: ["normalized_evidence"],
           estimate: {
             source_bytes: 1,
             provider_calls: 1,

@@ -222,7 +222,7 @@ func TestPhotoDescriptionFlow(t *testing.T) {
 	require.Empty(t, reason)
 	require.Equal(t, preview.Generation.Preview.Output.Size, plan.Estimate.SourceBytes, "the estimate counts the preview bytes uploaded, not the original file")
 	require.Less(t, plan.Estimate.SourceBytes, f.written.Size)
-	require.Equal(t, []string{"suggestion_text"}, plan.RetainedClasses, "the profile keeps the suggestion text")
+	require.Equal(t, retainedRenditionClasses(f.service.profiles["vision"].portable), plan.RetainedClasses, "the plan states the classes consent authorizes")
 	_, err = f.service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
 	require.ErrorIs(t, err, ErrConsentRequired)
 	probes, describes := f.counts()

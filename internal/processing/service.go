@@ -757,9 +757,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(profileRenditionInput(profile)))
 		plan.Estimate.ProviderCalls++
 	}
-	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-		plan.RetainedClasses = append(plan.RetainedClasses, "suggestion_text")
-	} else if profile.portable.Rendition != nil {
+	if profile.portable.Rendition != nil {
 		if profile.portable.RetentionDisclosure.RetainSanitizedMarkdown {
 			plan.RetainedClasses = append(plan.RetainedClasses, "sanitized_markdown")
 		}
