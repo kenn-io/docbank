@@ -2828,8 +2828,11 @@ func TestScreenReportingFollowsNavigationAndIgnoresPolling(t *testing.T) {
 	model.reportedDay = "2000-01-01"
 	model, _ = updateModel(t, model, spinnerTickMsg{})
 	assert.Equal(t, expectedScreens, backend.screens)
+	backend.screenErr = errors.New("synthetic telemetry rejection")
+	beforeRetry := time.Now()
 	model, cmd = updateModel(t, model, runeKey('s'))
-	_ = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, cmd)
+	assert.WithinRange(t, model.screenRetryAt, beforeRetry.Add(ScreenRetryDelay), time.Now().Add(ScreenRetryDelay))
 	assert.Equal(t, append(expectedScreens, "browse"), backend.screens)
 }
 

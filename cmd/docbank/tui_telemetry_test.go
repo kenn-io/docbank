@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,15 +20,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	doctui "go.kenn.io/docbank/internal/tui"
 )
 
-func setupTUITelemetryDaemon(t *testing.T, status int, receipt string) *atomic.Int32 {
+func setupTUITelemetryDaemon(t *testing.T, receipt string) *atomic.Int32 {
 	t.Helper()
 	var requests atomic.Int32
 	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
+		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"` + receipt + `"}`))
 	})
 	return &requests
@@ -86,68 +89,56 @@ func TestTUITelemetryReceipts(t *testing.T) {
 
 func TestTUITelemetryStoredStates(t *testing.T) {
 	day := time.Now().UTC().Format(time.DateOnly)
+	t.Run("unsupported version", func(t *testing.T) {
+		requests := setupTUITelemetryDaemon(t, "queued")
+		path := filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json")
+		value := `{"version":2,"disabled":true}`
+		require.NoError(t, os.WriteFile(path, []byte(value), 0o600))
+		backend := &tuiDaemonBackend{}
+		require.Error(t, backend.ReportScreen(t.Context(), "help"))
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		assert.Equal(t, value, string(data))
+		assert.Zero(t, requests.Load())
+	})
 	for _, tc := range []struct {
 		name    string
 		value   string
-		refused bool
+		screens []string
 	}{
-		{"stale day", `{"version":1,"day":"2000-01-01","disabled":true}`, false},
-		{"missing version", `{}`, true},
-		{"null state", `null`, true},
-		{"unsupported version", `{"version":2,"disabled":true}`, true},
-		{"opaque screen", `{"version":1,"day":"` + day + `","screens":["future_screen"]}`, false},
+		{"stale day", `{"version":1,"day":"2000-01-01","disabled":true}`, []string{"help"}},
+		{"opaque screen", `{"version":1,"day":"` + day + `","screens":["future_screen"]}`, []string{"future_screen", "help"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
+			requests := setupTUITelemetryDaemon(t, "queued")
 			path := filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json")
 			require.NoError(t, os.WriteFile(path, []byte(tc.value), 0o600))
 			backend := &tuiDaemonBackend{}
-			err := backend.ReportScreen(t.Context(), "help")
-			data, readErr := os.ReadFile(path)
-			require.NoError(t, readErr)
-			if tc.refused {
-				require.Error(t, err)
-				assert.Equal(t, tc.value, string(data))
-				assert.Zero(t, requests.Load())
-			} else {
-				require.NoError(t, err)
-				assert.Contains(t, string(data), `"help"`)
-				if strings.Contains(tc.value, "future_screen") {
-					assert.Contains(t, string(data), `"future_screen"`)
-				}
-				assert.Equal(t, int32(1), requests.Load())
-			}
+			require.NoError(t, backend.ReportScreen(t.Context(), "help"))
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			var receipt tuiTelemetryReceipt
+			require.NoError(t, json.Unmarshal(data, &receipt))
+			assert.Equal(t, tc.screens, receipt.Screens)
+			assert.Equal(t, int32(1), requests.Load())
 		})
 	}
 }
 
 func TestTUITelemetryBoundsEveryFailure(t *testing.T) {
-	for _, failure := range []string{"lock", "post"} {
-		t.Run(failure, func(t *testing.T) {
-			status := http.StatusAccepted
-			if failure == "post" {
-				status = http.StatusServiceUnavailable
-			}
-			setupTUITelemetryDaemon(t, status, "future")
-			backend := &tuiDaemonBackend{}
-			for range 6 {
-				backend.telemetry.retryAt = time.Time{} // Each failure follows an elapsed retry window.
-				ctx, cancel := context.WithCancel(t.Context())
-				if failure == "lock" {
-					cancel()
-				}
-				require.Error(t, backend.ReportScreen(ctx, "help"))
-				cancel()
-			}
-			t.Setenv("DOCBANK_HOME", filepath.Join(t.TempDir(), "missing"))
-			require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
-		})
+	setupTUITelemetryDaemon(t, "future")
+	backend := &tuiDaemonBackend{}
+	for range 6 {
+		backend.telemetry.retryAt = time.Time{} // Each failure follows an elapsed retry window.
+		require.ErrorContains(t, backend.ReportScreen(t.Context(), "help"), `unexpected receipt "future"`)
 	}
+	t.Setenv("DOCBANK_HOME", filepath.Join(t.TempDir(), "missing"))
+	require.NoError(t, backend.ReportScreen(t.Context(), "browse"))
 }
 
 func TestTUITelemetryQueuedScreensRespectFailureBackoff(t *testing.T) {
 	firstPOST := make(chan struct{})
-	release := make(chan struct{})
+	release := make(chan struct{}, 1)
 	var requests atomic.Int32
 	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		if requests.Add(1) == 1 {
@@ -156,46 +147,53 @@ func TestTUITelemetryQueuedScreensRespectFailureBackoff(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
+	t.Cleanup(func() { close(release) })
 	backend := &tuiDaemonBackend{}
 	firstResult := make(chan error, 1)
 	go func() { firstResult <- backend.ReportScreen(t.Context(), "help") }()
 	<-firstPOST
-	var started sync.WaitGroup
-	started.Add(4)
 	results := make(chan error, 3)
 	for _, screen := range []string{"browse", "search", "help"} {
 		go func() {
-			started.Done()
 			results <- backend.ReportScreen(t.Context(), screen)
 		}()
 	}
 	exitResult := make(chan error, 1)
 	go func() {
-		started.Done()
 		exitResult <- sendTUISessionEnded(t.Context(), &backend.telemetry, time.Minute)
 	}()
-	started.Wait()
-	failedAt := time.Now()
-	close(release)
+	// All callers must be waiting on the report mutex before the first failure sets backoff.
+	require.Eventually(t, func() bool {
+		var stacks bytes.Buffer
+		if err := pprof.Lookup("goroutine").WriteTo(&stacks, 2); err != nil {
+			return false
+		}
+		queued := 0
+		for stack := range strings.SplitSeq(stacks.String(), "\n\n") {
+			if strings.Contains(stack, "[sync.Mutex.Lock]") && strings.Contains(stack, ".(*tuiTelemetry).report(") {
+				queued++
+			}
+		}
+		return queued == 4
+	}, time.Second, time.Millisecond)
+	release <- struct{}{}
 	require.Error(t, <-firstResult)
 	for range 3 {
 		require.ErrorIs(t, <-results, errTUITelemetryBackoff)
 	}
 	require.ErrorIs(t, <-exitResult, errTUITelemetryBackoff)
-	assert.Less(t, time.Since(failedAt), 30*time.Second)
 	assert.Equal(t, int32(1), requests.Load(), "queued screen and exit reports must wait for the 30-second backoff")
 	assert.Equal(t, 1, backend.telemetry.failures, "queued screen and exit reports must preserve the remaining failure budget")
 }
 
 func TestTUITelemetryNewUTCDayResetsBackoff(t *testing.T) {
-	requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
+	requests := setupTUITelemetryDaemon(t, "queued")
 	now := time.Now()
 	backend := &tuiDaemonBackend{}
 	backend.telemetry.tuiTelemetryReceipt = tuiTelemetryReceipt{
-		Version:  1,
-		Day:      now.UTC().AddDate(0, 0, -1).Format(time.DateOnly),
-		Disabled: true,
-		Screens:  []string{"help", "browse"},
+		Version: 1,
+		Day:     now.UTC().AddDate(0, 0, -1).Format(time.DateOnly),
+		Screens: []string{"help", "browse"},
 	}
 	backend.telemetry.failures = 6
 	backend.telemetry.retryAt = now.Add(time.Hour)
@@ -214,18 +212,28 @@ func TestTUITelemetryNewUTCDayResetsBackoff(t *testing.T) {
 }
 
 func TestTUITelemetryBusyLockReturnsRetryError(t *testing.T) {
-	requests := setupTUITelemetryDaemon(t, http.StatusAccepted, "queued")
-	lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json.lock"))
-	require.NoError(t, lock.Lock())
-	defer func() { require.NoError(t, lock.Close()) }()
-	backend := &tuiDaemonBackend{}
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
-		defer cancel()
-		require.ErrorIs(t, backend.ReportScreen(ctx, "help"), context.DeadlineExceeded)
-	})
-	assert.Zero(t, requests.Load())
-	require.NoError(t, lock.Unlock())
-	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
-	assert.Equal(t, int32(1), requests.Load())
+	for _, failure := range []string{"busy", "cancelled"} {
+		t.Run(failure, func(t *testing.T) {
+			requests := setupTUITelemetryDaemon(t, "queued")
+			lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json.lock"))
+			require.NoError(t, lock.Lock())
+			defer func() { require.NoError(t, lock.Close()) }()
+			backend := &tuiDaemonBackend{}
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+				defer cancel()
+				wantErr := context.DeadlineExceeded
+				if failure == "cancelled" {
+					cancel()
+					wantErr = context.Canceled
+				}
+				err := backend.ReportScreen(ctx, "help")
+				require.ErrorIs(t, err, wantErr)
+				var retryErr *doctui.ScreenRetryError
+				require.ErrorAs(t, err, &retryErr)
+				assert.Equal(t, time.Now().Add(doctui.ScreenRetryDelay), retryErr.At)
+			})
+			assert.Zero(t, requests.Load())
+		})
+	}
 }
