@@ -4,11 +4,13 @@ package visiontest
 import (
 	"bytes"
 	"encoding/json/v2"
+
+	"go.kenn.io/docbank/document"
 )
 
-// IsProbe recognizes the synthetic color-recognition setup request.
+// IsProbe recognizes the adapter's synthetic color-recognition readiness request.
 func IsProbe(body []byte) bool {
-	return bytes.Contains(body, []byte("left and right"))
+	return bytes.Contains(body, []byte(document.VisionProbePrompt))
 }
 
 // Completion wraps synthetic content in the provider's completion envelope.

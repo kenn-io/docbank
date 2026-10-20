@@ -289,7 +289,7 @@ func (p *Provider) Probe(ctx context.Context) error {
 	if err := jpeg.Encode(&jpegData, probeImage, nil); err != nil {
 		return fmt.Errorf("encode probe JPEG: %w", err)
 	}
-	response, err := p.describe(ctx, jpegData.Bytes(), "What are the colors of the left and right halves of this image? Reply with two lowercase color names separated by a comma and no other text.", 2048, "")
+	response, err := p.describe(ctx, jpegData.Bytes(), document.VisionProbePrompt, 2048, "")
 	if err != nil {
 		// Synthetic probes can retry safely and retain the provider's delay.
 		if classified, ok := errors.AsType[*document.RenditionProviderError](err); ok && classified.Code() == document.RenditionErrorAmbiguousSubmission {
