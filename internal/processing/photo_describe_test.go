@@ -174,13 +174,20 @@ func (f *photoDescriptionFixture) backfill(t *testing.T, service *Service) int {
 
 func (f *photoDescriptionFixture) runWorker(t *testing.T, service *Service) {
 	t.Helper()
+	require.NoError(t, f.drainWorker(t.Context(), service))
+}
+
+// drainWorker runs the rendition worker until the queue is empty. It returns
+// the error instead of asserting, so a goroutine can call it.
+func (f *photoDescriptionFixture) drainWorker(ctx context.Context, service *Service) error {
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
-	require.NoError(t, err)
+	if err != nil {
+		return err
+	}
 	for {
-		processed, err := worker.RunOne(t.Context())
-		require.NoError(t, err)
-		if !processed {
-			return
+		processed, err := worker.RunOne(ctx)
+		if err != nil || !processed {
+			return err
 		}
 	}
 }
@@ -490,8 +497,8 @@ func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *tes
 		require.NoError(t, err)
 		require.Len(t, targets, 1)
 		require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]))
-		working := make(chan struct{})
-		go func() { defer close(working); f.runWorker(t, f.service) }()
+		working := make(chan error, 1)
+		go func() { working <- f.drainWorker(ctx, f.service) }()
 		require.Eventually(t, func() bool { _, describes := f.counts(); return describes == 1 }, 5*time.Second, time.Millisecond)
 
 		plan, err := f.service.Plan(ctx, f.selector("vision"))
@@ -505,7 +512,7 @@ func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *tes
 			"the explicit request joins the call in flight")
 		unblock()
 		require.NoError(t, <-started)
-		<-working
+		require.NoError(t, <-working)
 		_, describes := f.counts()
 		require.Equal(t, 1, describes)
 		require.Len(t, f.suggestions(t), 1)

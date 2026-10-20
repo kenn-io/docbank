@@ -434,18 +434,24 @@ func TestPhotoSuggestionBackupKeepsCompletion(t *testing.T) {
 	}{
 		{"every caption and tag accepted", document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}},
 			func(t *testing.T, s *Store, proposal PhotoSuggestion) {
+				t.Helper()
 				acceptPhotoSuggestion(t, s, proposal, true, "coast", "sunset")
 			}, true},
 		{"nothing to review", document.PhotoDescription{}, nil, true},
 		{"partly accepted", document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}},
 			func(t *testing.T, s *Store, proposal PhotoSuggestion) {
+				t.Helper()
 				acceptPhotoSuggestion(t, s, proposal, true, "coast")
 			}, false},
 		{"visible text left to review", document.PhotoDescription{Caption: "A harbor.", VisibleText: "QUAYSIDE"},
-			func(t *testing.T, s *Store, proposal PhotoSuggestion) { acceptPhotoSuggestion(t, s, proposal, true) }, false},
+			func(t *testing.T, s *Store, proposal PhotoSuggestion) {
+				t.Helper()
+				acceptPhotoSuggestion(t, s, proposal, true)
+			}, false},
 		{"pending only", document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}}, nil, false},
 		{"dismissed", document.PhotoDescription{Caption: "A harbor."},
 			func(t *testing.T, s *Store, proposal PhotoSuggestion) {
+				t.Helper()
 				_, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, PhotoSuggestionResponse{Response: "dismissed"})
 				require.NoError(t, err)
 			}, true},

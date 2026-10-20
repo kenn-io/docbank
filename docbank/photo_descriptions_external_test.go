@@ -23,10 +23,12 @@ func TestEmbeddedPhotoDescriptionBackfillQueuesEligiblePhoto(t *testing.T) {
 	// A caller may build consent from the plan's classes or grant the reviewed plan; both must authorize the work.
 	for name, grant := range map[string]func(t *testing.T, vault *docbank.Vault, request docbank.ProcessingPlanRequest, plan docbank.ProcessingPlan, disclosure string){
 		"from the plan's classes": func(t *testing.T, vault *docbank.Vault, _ docbank.ProcessingPlanRequest, plan docbank.ProcessingPlan, disclosure string) {
+			t.Helper()
 			_, err := vault.GrantProcessingConsent(t.Context(), document.ProcessingConsentRequest{Principal: "embedded:operator", Scope: "document-processing", ProfileFingerprint: plan.ProfileFingerprint, DisclosureFingerprint: disclosure, InputClasses: plan.DisclosedClasses, RetainedArtifactClasses: plan.RetainedClasses})
 			require.NoError(t, err)
 		},
 		"from the reviewed plan": func(t *testing.T, vault *docbank.Vault, request docbank.ProcessingPlanRequest, plan docbank.ProcessingPlan, _ string) {
+			t.Helper()
 			_, err := vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint})
 			require.NoError(t, err)
 		},
