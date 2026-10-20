@@ -669,3 +669,32 @@ func TestPhotoDescriptionUploadsStrippedPreviewBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestMergePhotoDescriptionTargetsStopsAtTheSmallestOpenPage(t *testing.T) {
+	t.Parallel()
+	target := func(profile, id string) photoDescriptionTarget {
+		return photoDescriptionTarget{profile: profile, version: store.ContentVersion{ID: id}}
+	}
+	ids := func(targets []photoDescriptionTarget) []string {
+		out := []string{}
+		for _, target := range targets {
+			out = append(out, target.version.ID)
+		}
+		return out
+	}
+	// A has room for one photo and more behind it; B's restored photo sits far ahead.
+	merged := mergePhotoDescriptionTargets([]photoDescriptionSource{
+		{targets: []photoDescriptionTarget{target("a", "v01")}, more: true},
+		{targets: []photoDescriptionTarget{target("b", "v50")}},
+	}, 50)
+	require.Equal(t, []string{"v01"}, ids(merged), "the next page resumes after v01 and still reaches A's v02")
+
+	// Pages that ended early cover everything, so every photo is listed once, first profile first.
+	merged = mergePhotoDescriptionTargets([]photoDescriptionSource{
+		{targets: []photoDescriptionTarget{target("a", "v02"), target("a", "v03")}},
+		{targets: []photoDescriptionTarget{target("b", "v03"), target("b", "v50")}},
+	}, 50)
+	require.Equal(t, []string{"v02", "v03", "v50"}, ids(merged))
+	require.Equal(t, "a", merged[1].profile)
+	require.Len(t, mergePhotoDescriptionTargets([]photoDescriptionSource{{targets: merged}}, 2), 2, "the page holds at most limit photos")
+}

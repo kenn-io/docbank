@@ -249,14 +249,37 @@ func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slo
 	if err != nil {
 		return nil, err
 	}
-	var out []photoDescriptionTarget
-	seen := map[string]bool{}
+	sources := make([]photoDescriptionSource, len(names))
 	for i, name := range names {
-		listed, err := service.photoDescriptionProfileTargets(ctx, name, i > 0, after, limit, workers)
-		if err != nil {
+		if sources[i], err = service.photoDescriptionProfileTargets(ctx, name, i > 0, after, limit, workers); err != nil {
 			return nil, err
 		}
-		for _, target := range listed {
+	}
+	return mergePhotoDescriptionTargets(sources, limit), nil
+}
+
+// photoDescriptionSource is one profile's page. More marks a page that filled
+// its room, so the profile may have further targets past its last key.
+type photoDescriptionSource struct {
+	targets []photoDescriptionTarget
+	more    bool
+}
+
+// mergePhotoDescriptionTargets joins the profiles' pages in version order, each
+// photo once, for the first profile that listed it. The page ends at the
+// smallest last key of a profile with more to list, because the caller resumes
+// after the page's last key and must not skip that profile's remaining photos.
+func mergePhotoDescriptionTargets(sources []photoDescriptionSource, limit int) []photoDescriptionTarget {
+	var out []photoDescriptionTarget
+	seen := map[string]bool{}
+	bound := ""
+	for _, source := range sources {
+		if source.more && len(source.targets) > 0 {
+			if last := source.targets[len(source.targets)-1].version.ID; bound == "" || last < bound {
+				bound = last
+			}
+		}
+		for _, target := range source.targets {
 			if !seen[target.version.ID] {
 				seen[target.version.ID] = true
 				out = append(out, target)
@@ -264,40 +287,44 @@ func (service *Service) photoDescriptionTargets(ctx context.Context, logger *slo
 		}
 	}
 	slices.SortFunc(out, func(a, b photoDescriptionTarget) int { return strings.Compare(a.version.ID, b.version.ID) })
-	return out[:min(len(out), limit)], nil
+	if bound != "" {
+		out = slices.DeleteFunc(out, func(target photoDescriptionTarget) bool { return target.version.ID > bound })
+	}
+	return out[:min(len(out), limit)]
 }
 
 // photoDescriptionProfileTargets lists the photos one profile wants described,
 // leaving room for work already waiting. Only restored photos are listed
 // when restoredOnly is set.
-func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name string, restoredOnly bool, after string, limit, workers int) ([]photoDescriptionTarget, error) {
+func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name string, restoredOnly bool, after string, limit, workers int) (photoDescriptionSource, error) {
 	profile := service.profiles[name]
 	var waiting int
 	for {
 		var err error
 		waiting, err = service.catalog.UnclaimedPhotoDescriptionWaiters(ctx, profile.record.Fingerprint, service.clock())
 		if err != nil {
-			return nil, err
+			return photoDescriptionSource{}, err
 		}
 		if waiting < workers {
 			break
 		}
 		if restoredOnly {
-			return nil, nil
+			return photoDescriptionSource{}, nil
 		}
 		if err := jobs.Wait(ctx, time.Second); err != nil {
-			return nil, err
+			return photoDescriptionSource{}, err
 		}
 	}
-	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, min(limit, workers-waiting), restoredOnly)
+	room := min(limit, workers-waiting)
+	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly)
 	if err != nil {
-		return nil, err
+		return photoDescriptionSource{}, err
 	}
 	out := make([]photoDescriptionTarget, len(versions))
 	for i, version := range versions {
 		out[i] = photoDescriptionTarget{profile: name, version: version}
 	}
-	return out, nil
+	return photoDescriptionSource{targets: out, more: len(versions) == room}, nil
 }
 
 // photoDescriptionProfiles lists, by name, the description profiles that have
