@@ -1044,9 +1044,8 @@ six attempts. Hidden tabs report their latest screen when visible.
 TUI reports use a running daemon and lock `telemetry-tui-state` while checking.
 The private file stores the UTC date alone when disabled, or the date followed
 by accepted screen names. Restarts reuse valid state; other content is empty.
-Missing daemons and busy locks can retry on input after 30 seconds. Six failed
-POSTs stop retries within one TUI process; the cap resets at UTC rollover.
-Data operations can still start the daemon.
+Missing daemons and busy locks retry on input after 30 seconds. Six failed POSTs
+pause this TUI's reports until UTC rollover. Data operations can start daemons.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 
