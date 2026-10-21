@@ -1809,8 +1809,14 @@
         naturalSearchNote = "No live documents match the current filter.";
         loading = false;
         // No search ran, so there is no search_run; a submission still counts as an empty search.
-        if (submitted)
+        if (submitted) {
+          try {
+            parseQuery(JSON.stringify({ text: query }));
+          } catch {
+            return;
+          }
           reportAction(session, "search_empty", mapped.mode === "auto" ? "lexical" : mapped.mode);
+        }
         return;
       }
       const baseRequest: generated.DocumentSearchRequest = {

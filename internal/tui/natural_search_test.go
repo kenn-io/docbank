@@ -792,6 +792,7 @@ func TestNaturalSearchInactiveSettingsDoNotSubmit(t *testing.T) {
 func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
+		query     string
 		mode      string
 		unbound   bool
 		submitted bool
@@ -802,6 +803,7 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 		{name: "submitted hybrid", mode: naturalHybrid, submitted: true, want: []actionCall{{event: "search_empty", searchType: "hybrid"}}},
 		{name: "submitted auto without a binding runs lexical", mode: naturalAuto, unbound: true, submitted: true, want: []actionCall{{event: "search_empty", searchType: "lexical"}}},
 		{name: "refresh or mode change", mode: naturalHybrid},
+		{name: "over-long submitted query", query: strings.Repeat("q", 8193), mode: naturalHybrid, submitted: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeBackend()
@@ -820,7 +822,11 @@ func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T
 			model.naturalMode = tc.mode
 			model.naturalRerank = tc.rerank
 
-			base, ok := model.loadNaturalSearch("nothing", model.requestID)().(naturalSearchBaseLoadedMsg)
+			text := tc.query
+			if text == "" {
+				text = "nothing"
+			}
+			base, ok := model.loadNaturalSearch(text, model.requestID)().(naturalSearchBaseLoadedMsg)
 			require.True(t, ok)
 			updated, cmd := model.applyNaturalSearchBase(base)
 			result, ok := updated.(Model)

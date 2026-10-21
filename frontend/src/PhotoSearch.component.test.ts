@@ -1,8 +1,7 @@
 import * as actions from "./action-events.js";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoSearch from "./PhotoSearch.svelte";
-import { photo } from "./photo-test-fixtures.js";
 import { Photos } from "./photos.svelte.js";
 import { tick } from "svelte";
 
@@ -164,47 +163,55 @@ it("applies the draft when the search mode changes", async () => {
   photos.dispose();
 });
 
-it.each([false, true])(
-  "reports a Photos search only when it ran, retained draft=%s",
-  async (retained) => {
-    const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
-    vi.stubGlobal("fetch", fetcher);
-    const photos = new Photos("scoped", vi.fn());
-    photos.started = true;
-    if (retained) {
-      photos.items = [photo(1)];
-      photos.total = 2;
-      photos.cursor = "next-page";
-      await photos.loadMore();
-      photos.authored.stage({ caption: "Retained draft" });
-      fetcher.mockClear();
-    }
-    render(PhotoSearch, { photos });
-    const search = screen.getByRole("searchbox", { name: "Search photos" });
-    if (!retained) {
-      fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
-      await fireEvent.input(search, { target: { value: "Nikon" } });
-      await fireEvent.submit(search.closest("form")!);
-      await waitFor(() =>
-        expect(actions.reportSearch).toHaveBeenCalledExactlyOnceWith("scoped", "text", true),
-      );
-      vi.mocked(actions.reportSearch).mockClear();
-    }
-    await fireEvent.input(search, { target: { value: "Canon" } });
-    await fireEvent.submit(search.closest("form")!);
-    if (retained) {
-      expect(fetcher).not.toHaveBeenCalled();
-      expect(actions.reportFailure).not.toHaveBeenCalled();
-    } else {
-      await waitFor(() =>
-        expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
-          "scoped",
-          "search",
-          expect.objectContaining({ status: 500 }),
-        ),
-      );
-    }
-    expect(actions.reportSearch).not.toHaveBeenCalled();
-    photos.dispose();
-  },
-);
+it("reports a Photos search only when it ran", async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  render(PhotoSearch, { photos });
+  const search = screen.getByRole("searchbox", { name: "Search photos" });
+  fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
+  await fireEvent.input(search, { target: { value: "Nikon" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() =>
+    expect(actions.reportSearch).toHaveBeenCalledExactlyOnceWith("scoped", "text", true),
+  );
+  vi.mocked(actions.reportSearch).mockClear();
+  await fireEvent.input(search, { target: { value: "Canon" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() =>
+    expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+      "scoped",
+      "search",
+      expect.objectContaining({ status: 500 }),
+    ),
+  );
+  vi.mocked(actions.reportFailure).mockClear();
+  fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
+  await fireEvent.input(search, { target: { value: "   " } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(photos.loading).toBe(false));
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(actions.reportFailure).not.toHaveBeenCalled();
+
+  fetcher.mockClear();
+  await fireEvent.input(search, { target: { value: "q".repeat(8193) } });
+  await fireEvent.submit(search.closest("form")!);
+  expect(photos.error).toContain("8192");
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(actions.reportFailure).not.toHaveBeenCalled();
+
+  fetcher.mockImplementationOnce(
+    (_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) =>
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason)),
+      ),
+  );
+  await fireEvent.input(search, { target: { value: "Fuji" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(photos.loading).toBe(true));
+  await act(() => photos.dispose());
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(actions.reportFailure).not.toHaveBeenCalled();
+});

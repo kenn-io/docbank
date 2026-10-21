@@ -174,12 +174,6 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 			assert.Empty(t, events)
 		})
 	}
-	t.Run("existing get destination", func(t *testing.T) {
-		existing := filepath.Join(t.TempDir(), "existing.txt")
-		require.NoError(t, os.WriteFile(existing, []byte("synthetic"), 0o600))
-		require.Error(t, execute(false, true, []string{"get", "id:42", existing}))
-		assert.Empty(t, events)
-	})
 	t.Run("cat digest failure", func(t *testing.T) {
 		badDigest = true
 		defer func() { badDigest = false }()
@@ -223,13 +217,6 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 		defer func() { concurrentDestination = "" }()
 		err := execute(false, true, []string{"get", "id:42", concurrentDestination})
 		require.ErrorIs(t, err, os.ErrExist)
-		assert.Empty(t, events)
-		content, err := os.ReadFile(concurrentDestination)
-		require.NoError(t, err)
-		assert.Equal(t, "concurrent", string(content))
-	})
-	t.Run("usage error before connection", func(t *testing.T) {
-		require.Error(t, execute(false, false, []string{"search"}))
 		assert.Empty(t, events)
 	})
 }

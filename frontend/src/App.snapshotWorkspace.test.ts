@@ -741,7 +741,7 @@ it("refreshes live metadata and download authority after tagging an inspected fr
 
 it("reports a submitted frozen run that finds nothing or fails", async () => {
   const searchAction = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
-  const failure = vi.spyOn(actions, "reportFailure");
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   history.replaceState(
     null,
     "",
@@ -763,14 +763,8 @@ it("reports a submitted frozen run that finds nothing or fails", async () => {
     });
   const empty = snapshot(initialQuery, [], {}, 0);
   let runs = 0;
-  const events: unknown[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "/api/daemon/telemetry/events") {
-      const event = JSON.parse(String(init?.body));
-      if (event.event === "error_shown") events.push(event);
-      return new Response(null, { status: 202 });
-    }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url.startsWith("/api/v1/nodes/1000/children"))
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
@@ -799,9 +793,7 @@ it("reports a submitted frozen run that finds nothing or fails", async () => {
   expect(failure).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   await waitFor(() =>
-    expect(events).toEqual([
-      { event: "error_shown", properties: { surface: "web", kind: "search" } },
-    ]),
+    expect(failure).toHaveBeenCalledExactlyOnceWith("synthetic", "search", expect.any(Error)),
   );
   expect(searchAction).toHaveBeenCalledOnce();
   // A rejected session sends the person to sign in rather than counting a failed search.
@@ -809,5 +801,4 @@ it("reports a submitted frozen run that finds nothing or fails", async () => {
   await waitFor(() => expect(runs).toBe(3));
   await screen.findByText(/session expired or was rejected/);
   expect(failure).toHaveBeenCalledOnce();
-  expect(events).toHaveLength(1);
 });

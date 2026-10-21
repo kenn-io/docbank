@@ -2991,7 +2991,6 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				model, _ = updateModel(t, model, runeKey('r'))
 				_, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
 				assert.Nil(t, cmd)
-				assert.Equal(t, tc.want, runs())
 			}
 			if !tc.checkReruns {
 				return

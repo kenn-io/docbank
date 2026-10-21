@@ -994,6 +994,7 @@ it("sends the selected tag filter in the resolver body", async () => {
 it("shows the empty-fence note without posting a search and reports it once, not for reruns", async () => {
   const searchRun = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
   const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const file = node(2, "empty.txt", baseVersion);
   const harness = installHarness({
     profiles: [
@@ -1024,58 +1025,90 @@ it("shows the empty-fence note without posting a search and reports it once, not
   await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
   await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 2));
   expect(action).toHaveBeenCalledOnce();
+  action.mockClear();
+  await submitSearch("q".repeat(8193));
+  await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 3));
+  await screen.findByText("No live documents match the current filter.");
+  expect(action).not.toHaveBeenCalled();
+  expect(searchRun).not.toHaveBeenCalled();
+  expect(failure).not.toHaveBeenCalled();
+  expect(harness.postBodies).toHaveLength(0);
 });
 
-it.each([
-  { legacyStatus: undefined, reports: 0 },
-  { legacyStatus: 500, reports: 1 },
-])(
-  "keeps a non-401 processing failure on the legacy GET path (legacy status $legacyStatus)",
-  async ({ legacyStatus, reports }) => {
-    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
-    const file = node(2, "fallback.txt", baseVersion);
-    const harness = installHarness({
-      profiles: [
-        {
-          name: "private",
-          fingerprint: "a".repeat(64),
-          rendition: true,
-          embedding_bindings: ["embed"],
-          reranking_available: true,
-        },
-      ],
-      files: [file],
-      baseReport: report("hybrid", []),
-      baseSearchStatus: 500,
-      legacySearchStatus: legacyStatus,
-      tagSearch: {
-        hits: [{ node: file, path: file.path, match: "name" }],
-        limit: 1000,
-        truncated: false,
+it("keeps a non-401 processing failure on the legacy GET path", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+  const file = node(2, "fallback.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
       },
-    });
-    render(App);
-    await screen.findAllByText("fallback.txt");
-    await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
-    await submitSearch("fallback");
-    if (legacyStatus) {
-      await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
-    } else {
-      await screen.findByText("/fallback.txt");
-      await screen.findByText(/Natural-language search unavailable/);
-      expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
-      expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
-    }
-    expect(harness.postBodies).toHaveLength(1);
-    expect(
-      harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
-        .length,
-    ).toBe(1);
-    // A fallback that succeeds shows results, not an error, so only a double failure is reported.
-    expect(failure).toHaveBeenCalledTimes(reports);
-    if (reports) expect(failure).toHaveBeenCalledWith("short-lived", "search", expect.any(Error));
-  },
-);
+    ],
+    files: [file],
+    baseReport: report("hybrid", []),
+    baseSearchStatus: 500,
+    legacySearchStatus: undefined,
+    tagSearch: {
+      hits: [{ node: file, path: file.path, match: "name" }],
+      limit: 1000,
+      truncated: false,
+    },
+  });
+  render(App);
+  await screen.findAllByText("fallback.txt");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("fallback");
+  await screen.findByText("/fallback.txt");
+  await screen.findByText(/Natural-language search unavailable/);
+  expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
+  expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
+  expect(harness.postBodies).toHaveLength(1);
+  expect(
+    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
+      .length,
+  ).toBe(1);
+  expect(failure).not.toHaveBeenCalled();
+});
+
+it("reports a failed legacy GET fallback after a processing failure", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+  const file = node(2, "fallback.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", []),
+    baseSearchStatus: 500,
+    legacySearchStatus: 500,
+    tagSearch: {
+      hits: [{ node: file, path: file.path, match: "name" }],
+      limit: 1000,
+      truncated: false,
+    },
+  });
+  render(App);
+  await screen.findAllByText("fallback.txt");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("fallback");
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
+  expect(harness.postBodies).toHaveLength(1);
+  expect(
+    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
+      .length,
+  ).toBe(1);
+  expect(failure).toHaveBeenCalledExactlyOnceWith("short-lived", "search", expect.any(Error));
+});
 
 it("does not fall back to GET after a processing 401", async () => {
   const file = node(2, "unauthorized.txt", baseVersion);

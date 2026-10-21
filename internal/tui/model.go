@@ -17,6 +17,7 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -2466,6 +2467,9 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.reportSearchID = 0
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		if !submitted {
+			return m, nil
+		}
+		if _, err := query.Canonical(query.Query{V: 1, Text: msg.query, Syntax: "simple", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}); err != nil {
 			return m, nil
 		}
 		// No search ran, so there is no search_run; a submission still counts as an empty search.
