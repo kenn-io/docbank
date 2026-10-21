@@ -954,25 +954,35 @@ it.each([true, false])(
     editor.suggestions = [
       photoSuggestion({ value: { caption: "A harbor.", tags: [], visible_text: "" } }),
     ];
+    const stackTargets = [
+      ...targets,
+      preparedPhoto(3, { asset_id: "other", file_id: "other-file" }),
+    ]
+      .map((target) => ({
+        ...target,
+        values: { ...target.values, confirmed_fields: target.values.rating ? 1 : 0 },
+      }))
+      .sort((a, b) => a.file_id.localeCompare(b.file_id));
     vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
       assets: [asset],
-      targets: [...targets, preparedPhoto(3, { asset_id: "other", file_id: "other-file" })],
+      targets: stackTargets,
       suggestions: [],
     });
     await editor.prepareStack(["asset", "other"], false);
     vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
       receipt_id: "stack-receipt",
-      before: [],
-      after: [
-        {
-          file_id: "jpeg",
-          node_id: 2,
-          revision: 2,
-          values: { ...targets[1]!.values, flag: "pick" },
-        },
-      ],
-      keyword_nodes: [{ node_id: 2, after_revision: 3 }],
-      representatives: [{ asset_id: "asset", before_revision: 1, after_revision: 4 }],
+      before: stackTargets.map(({ file_id, node_id, revision, values }) => ({
+        file_id,
+        node_id,
+        revision,
+        values,
+      })),
+      after: stackTargets.map(({ file_id, node_id, values }) => ({
+        file_id,
+        node_id,
+        revision: 2,
+        values: { ...values, flag: "pick", confirmed_fields: values.confirmed_fields | 2 },
+      })),
     });
     const respond = vi.spyOn(api, "respondPhotoSuggestion").mockResolvedValue(photoSuggestion({}));
     expect(
@@ -993,9 +1003,9 @@ it.each([true, false])(
       expect.objectContaining({
         response: accept ? "accepted" : "dismissed",
         asset_id: "asset",
-        asset_revision: 4,
+        asset_revision: 1,
         source_revision: 2,
-        node_revision: 3,
+        node_revision: 2,
       }),
       expect.anything(),
     );
