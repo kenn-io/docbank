@@ -992,6 +992,11 @@ func TestPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t *testing.T) {
 	// The daemon stops mid call and the lease runs out. A description has no side effects, so the next claim just runs it again.
 	_, err = s.ClaimRenditionJob(ctx, job.ID, "restarted-worker", at.Add(2*time.Hour), time.Hour)
 	require.NoError(t, err)
+	retried, err := s.RenditionJobByID(ctx, job.ID)
+	require.NoError(t, err)
+	require.Equal(t, RenditionJobRunning, retried.State)
+	require.Equal(t, RenditionPhaseQueued, retried.Phase, "the next worker restarts the provider call")
+	require.Equal(t, 1, retried.ProviderAttempts, "reclaiming preserves the first attempt until the provider starts again")
 }
 
 func TestDerivativePurgeLeavesPhotoSuggestionsButVersionPurgeRemovesThem(t *testing.T) {
