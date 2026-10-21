@@ -44,6 +44,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -347,6 +348,99 @@ it("puts ordinary drawer selections in history and preserves other hash keys", a
   await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
   expect(location.hash).toBe("#source=example");
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("closes row-opened version history when a pending tag removal selects the next file", async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  history.replaceState(null, "", `/#${credentials}`);
+  const vaultID = "55555555-5555-4555-8555-555555555555";
+  const tag = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 1,
+    assignment_count: 2,
+  };
+  localStorage.setItem(
+    `docbank:tag-hotkeys:v1:${vaultID}`,
+    JSON.stringify({ version: 1, bindings: { "1": tag.id } }),
+  );
+  const otherNode = { ...node, id: 99, name: "other.txt", path: "/other.txt" };
+  let removed = false;
+  let release!: (response: Response) => void;
+  api((url, init) => {
+    if (url.includes("/children"))
+      return Response.json({
+        directory: root,
+        items: [node, otherNode],
+        total: 2,
+        limit: 1000,
+        offset: 0,
+      });
+    if (url.startsWith("/api/v1/audit/status"))
+      return Response.json({
+        enabled: false,
+        vault_id: vaultID,
+        operation_sequence_high_water: 0,
+        allocation_entry_count: 0,
+        scopes: [],
+      });
+    if (url === "/api/v1/tags?limit=1000&offset=0")
+      return Response.json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === `/api/v1/tags/${tag.id}/nodes?limit=1000&offset=0&live_only=true`) {
+      const nodes = removed ? [otherNode] : [node, otherNode];
+      return Response.json({
+        items: nodes.map((node) => ({ node, path: node.path })),
+        total: nodes.length,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/nodes/42/tags?limit=1000&offset=0")
+      return Response.json({
+        items: removed ? [] : [tag],
+        total: removed ? 0 : 1,
+        limit: 1000,
+        offset: 0,
+      });
+    if (url === `/api/v1/nodes/42/tags/${tag.id}` && init?.method === "DELETE")
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    if (url === "/api/v1/nodes/99") return Response.json(otherNode);
+    return undefined;
+  });
+  render(App);
+  await screen.findByRole("cell", { name: "example.txt" });
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(await screen.findByRole("option", { name: "tax (2)" }));
+  await fireEvent.click(await screen.findByRole("cell", { name: "/reports/example.txt" }));
+  expect((await screen.findByRole("group", { name: "Assigned tags" })).textContent).toContain(
+    "tax",
+  );
+  await fireEvent.keyDown(window, { key: "1" });
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  await fireEvent.click(screen.getByRole("button", { name: "Version history" }));
+  await within(await screen.findByRole("dialog")).findByText(currentID);
+  expect(location.hash).toBe(link(currentID));
+
+  await act(() => {
+    removed = true;
+    release(
+      Response.json({
+        tag: { ...tag, revision: 2, assignment_count: 1 },
+        node: { ...node, revision: 1002 },
+        changed: true,
+      }),
+    );
+  });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.queryByRole("cell", { name: "/reports/example.txt" })).toBeNull();
+  expect(screen.getByLabelText("Document authority for other.txt")).toBeTruthy();
 });
 
 it("replaces an ordinary version drawer when a linked version opens in the same tab", async () => {

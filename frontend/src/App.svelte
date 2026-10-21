@@ -298,7 +298,8 @@
       )
         return;
       const sameNode = !("error" in selection) && panel?.linked?.node.id === selection.nodeId;
-      activePanel = sameNode ? panel! : { kind: "versions" as const, fromLink: true };
+      activePanel = sameNode ? panel! : { kind: "versions" as const };
+      activePanel.fromLink = true;
       const target = activePanel;
       if ("error" in selection) {
         nodeVersionError = invalidNodeVersionLink;
@@ -2193,7 +2194,7 @@
         ["history", "versions", "provenance", "processing", "rendition"].includes(
           activePanel.kind,
         ) &&
-        !(activePanel.kind === "versions" && nodeVersionSelection)
+        !(activePanel.kind === "versions" && activePanel.fromLink)
       )
         activePanel = null;
     }
@@ -2905,7 +2906,6 @@
     if (!node || node.id !== version.node_id) return;
     const initial = !activePanel.linked;
     activePanel.linked = { node, version };
-    activePanel.fromLink = true;
     if (initial) photoNavigation.replace(history.state, nodeVersionURL(version));
     else {
       const state = { ...history.state };
