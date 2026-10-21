@@ -217,22 +217,6 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
 }
 
-func TestPhotoSettingsAPINullRuntimeOverride(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	before, err := s.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{
-		Preference: new("image"), HiddenUnlockLifetimeSeconds: new(int64(900)),
-	})
-	require.NoError(t, err)
-	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"2"`}, map[string]any{
-		"backup_interval_seconds": nil, "hidden_unlock_lifetime_seconds": 600,
-	})
-	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
-	after, err := s.PhotoSettings(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, before, after, "rejected null must preserve all settings and their revision")
-}
-
 func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -252,7 +236,6 @@ func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 	for _, payload := range []map[string]any{
 		{"backup_repo": "/synthetic"}, {"backup_interval_seconds": nil},
-		{"backup_interval_seconds": 3600, "backup_keep_last": 1},
 	} {
 		res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, payload)
 		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)

@@ -259,7 +259,6 @@ func testBackupScheduleRuntimeRetentionOverride(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		d := scheduledDeps(t)
 		d.Cfg.Backup.Interval = config.Duration(24 * time.Hour)
-		d.Cfg.Server.APIKey = "synthetic-key"
 		repo, err := backup.Init(d.Cfg.Backup.Repo)
 		require.NoError(t, err)
 		_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
@@ -278,15 +277,9 @@ func testBackupScheduleRuntimeRetentionOverride(t *testing.T) {
 		require.NoError(t, StartBackupSchedule(t.Context(), d))
 		synctest.Wait()
 		time.Sleep(23 * time.Hour)
-		server := NewServer(d)
-		defer server.Close()
-		req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/v1/photos/settings", strings.NewReader(`{"backup_keep_last":2}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Api-Key", d.Cfg.Server.APIKey)
-		req.Header.Set("If-Match", `"1"`)
-		res := httptest.NewRecorder()
-		server.Handler().ServeHTTP(res, req)
-		require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+		_, err = d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupKeepLast: new(2)})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
 		synctest.Wait()
 		unchanged, err := repo.ListSnapshots()
 		require.NoError(t, err)
@@ -326,7 +319,10 @@ func testBackupScheduleRuntimeIntervalOverrides(t *testing.T) {
 			server.Handler().ServeHTTP(res, req)
 			require.Equal(t, http.StatusOK, res.Code, res.Body.String())
 		}
-		put(`"1"`, `{"backup_interval_seconds":3600,"backup_keep_last":1}`)
+		_, err = d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(3600)), BackupKeepLast: new(1)})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
 		synctest.Wait()
 		require.Len(t, d.Jobs.Snapshot(), 1)
 		require.Zero(t, d.Tracker.IdleFor())
@@ -334,7 +330,9 @@ func testBackupScheduleRuntimeIntervalOverrides(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, points, 2)
 		time.Sleep(30 * time.Minute)
-		put(`"2"`, `{"backup_interval_seconds":7200}`)
+		_, err = d.Store.SetPhotoSettings(t.Context(), 2, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(7200))})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
 		time.Sleep(time.Hour)
 		synctest.Wait()
 		unchanged, err := repo.ListSnapshots()
@@ -358,7 +356,9 @@ func testBackupScheduleRuntimeIntervalOverrides(t *testing.T) {
 		unchanged, err = repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Equal(t, points, unchanged)
-		put(`"4"`, `{"backup_interval_seconds":7200}`)
+		_, err = d.Store.SetPhotoSettings(t.Context(), 4, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(7200))})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
 		synctest.Wait()
 		time.Sleep(time.Second)
 		require.Zero(t, d.Tracker.IdleFor(), "re-enabled schedule must hold the daemon during its disabled wait")

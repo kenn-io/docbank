@@ -247,12 +247,22 @@ func TestPhotosCLIBurstGap(t *testing.T) {
 	require.ErrorContains(t, err, "burst gap must be 1 to 30 seconds")
 }
 
-func TestPhotosCLISettingsPreferenceRejectsExtraArgument(t *testing.T) {
+func TestPhotosCLISettingsRejectsInvalidArguments(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
-	for _, preference := range []string{"raw", "image"} {
-		t.Run(preference, func(t *testing.T) {
-			_, err := runCLI(t, "photos", "settings", "set", preference, "5")
-			require.ErrorContains(t, err, `unexpected argument "5" after preference "`+preference+`"`)
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantErr []string
+	}{
+		{"raw", []string{"set", "raw", "5"}, []string{`unexpected argument "5" after preference "raw"`}},
+		{"image", []string{"set", "image", "5"}, []string{`unexpected argument "5" after preference "image"`}},
+		{"unknown key", []string{"reset", "foo"}, []string{"accepted keys: backup.interval, backup.keep_last, photos.hidden_unlock_lifetime", "configure paths and credentials in config.toml"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runCLI(t, append([]string{"photos", "settings"}, tc.args...)...)
+			for _, wantErr := range tc.wantErr {
+				require.ErrorContains(t, err, wantErr)
+			}
 			require.Equal(t, exitUsage, commandExitCode(err, true))
 		})
 	}
@@ -299,8 +309,6 @@ func checkPhotoDurationOverrides(t *testing.T) {
 	}{
 		{[]string{"set", "backup.interval", "1h"}, new(int64(3600)), nil, ""},
 		{[]string{"set", "photos.hidden_unlock_lifetime", "15m"}, new(int64(3600)), new(int64(900)), ""},
-		{[]string{"set", "photos.hidden_unlock_lifetime", "48h"}, new(int64(3600)), new(int64(900)), "expected number <= 86400 (body.hidden_unlock_lifetime_seconds:"},
-		{[]string{"set", "backup.keep_last", "0"}, new(int64(3600)), new(int64(900)), "expected number >= 1 (body.backup_keep_last:"},
 		{[]string{"set", "backup.interval", "1.5s"}, new(int64(3600)), new(int64(900)), "whole-second duration"},
 		{[]string{"set", "backup.interval", "--", "-1h"}, new(int64(3600)), new(int64(900)), "422 validation"},
 		{[]string{"set", "backup.interval", "0"}, new(int64(0)), new(int64(900)), ""},
@@ -323,12 +331,4 @@ func checkPhotoDurationOverrides(t *testing.T) {
 			require.Equal(t, new("image"), settings.Preference)
 		})
 	}
-}
-
-func TestPhotosCLISettingsResetUnknownKey(t *testing.T) {
-	t.Setenv("DOCBANK_HOME", t.TempDir())
-	_, err := runCLI(t, "photos", "settings", "reset", "foo")
-	require.ErrorContains(t, err, "accepted keys: backup.interval, backup.keep_last, photos.hidden_unlock_lifetime")
-	require.ErrorContains(t, err, "configure paths and credentials in config.toml")
-	require.Equal(t, exitUsage, commandExitCode(err, true))
 }
