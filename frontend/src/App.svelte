@@ -117,6 +117,7 @@
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
   import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
+  import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError } from "./api-transport.js";
   import {
     changeNodeTag,
@@ -261,6 +262,56 @@
   };
 
   let webSession = $state("");
+  let nodeVersionHash = $state(location.hash);
+  let linkedVersion = $state<Awaited<ReturnType<typeof resolveNodeVersionLink>> | null>(null);
+  let nodeVersionError = $state("");
+  let nodeVersionLoading = $state(false);
+
+  $effect(() => {
+    const session = webSession;
+    const selection = parseNodeVersionLink(nodeVersionHash);
+    linkedVersion = null;
+    nodeVersionError = "";
+    nodeVersionLoading = false;
+    if (!session || !selection) return;
+    if ("error" in selection) {
+      nodeVersionError = "Invalid node/version link. Use a positive node ID and a version UUID.";
+      return;
+    }
+    const controller = new AbortController();
+    let current = true;
+    nodeVersionLoading = true;
+    void resolveNodeVersionLink(session, selection, controller.signal)
+      .then((resolved) => {
+        if (current) linkedVersion = resolved;
+      })
+      .catch((cause: unknown) => {
+        if (!current) return;
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else if (cause instanceof APIError && (cause.status === 404 || cause.status === 410))
+          nodeVersionError = "The linked node or version is missing or purged.";
+        else
+          nodeVersionError =
+            cause instanceof Error ? cause.message : "The linked version is unavailable.";
+      })
+      .finally(() => {
+        if (current) nodeVersionLoading = false;
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  });
+
+  function closeLinkedVersion(): void {
+    const url = new URL(location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    params.delete("node");
+    params.delete("version");
+    url.hash = params.toString();
+    photoNavigation.replace(history.state, url.href);
+    nodeVersionHash = location.hash;
+  }
   const photoUndo = $derived.by(() => {
     void webSession;
     return new PhotoUndoState();
@@ -383,6 +434,7 @@
   }
   function syncPhotoLocation() {
     if (photoNavigation.blocked()) return;
+    nodeVersionHash = location.hash;
     clearPhotoNotice();
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "",
       path = location.pathname;
@@ -1122,11 +1174,13 @@
 
     mounted = true;
     const session = takeFragmentSession();
-    if (photoMode && photoID) {
+    if (!parseNodeVersionLink(location.hash) && photoMode && photoID) {
       const url = new URL(location.href);
       url.hash = `photo=${encodeURIComponent(photoID)}`;
       photoNavigation.replace(history.state, url.href);
-    } else if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
+    } else if (!parseNodeVersionLink(location.hash) && savedQueryDraft)
+      replaceQueryURL(savedQueryDraft);
+    nodeVersionHash = location.hash;
     photoNavigation.accept();
     if (session) activateBrowserSession(session);
     else
@@ -1454,7 +1508,7 @@
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
-    replaceQueryURL(null);
+    if (!parseNodeVersionLink(location.hash)) replaceQueryURL(null);
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;
@@ -4423,6 +4477,24 @@
         onbindingchange={changeTagHotkeyBinding}
         onclose={() => (shortcutHelpOpen = false)}
       />
+    {/if}
+    {#if nodeVersionLoading || nodeVersionError}
+      <Modal title="Linked content version" onclose={closeLinkedVersion}>
+        {#if nodeVersionError}<p role="alert">{nodeVersionError}</p>
+        {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
+      </Modal>
+    {/if}
+    {#if linkedVersion}
+      {#key linkedVersion}
+        <VersionHistoryDrawer
+          session={webSession}
+          node={linkedVersion.node}
+          path={linkedVersion.node.path ?? linkedVersion.node.name}
+          pinnedVersion={linkedVersion.version}
+          onclose={closeLinkedVersion}
+          onauthfailure={handleFailure}
+        />
+      {/key}
     {/if}
     {#each activePanel ? [activePanel] : [] as panel (panel)}
       {#if panel.kind === "history" && currentInspectorNode && membership?.protected}

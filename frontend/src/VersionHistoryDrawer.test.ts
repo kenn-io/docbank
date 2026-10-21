@@ -47,6 +47,75 @@ afterEach(() => {
 });
 
 describe("version history drawer", () => {
+  it("keeps a directly fetched version pinned outside the newest 1000", async () => {
+    const versions = Array.from({ length: 1000 }, (_, index) => ({
+      ...version(
+        `${(index + 1).toString(16).padStart(8, "0")}-2222-4222-8222-222222222222`,
+        2,
+        "content_replace",
+        "c",
+      ),
+      node_revision: 1001 - index,
+    }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      Response.json({ items: versions, total: 1001, limit: 1000, offset: 0 }),
+    );
+    render(VersionHistoryDrawer, {
+      session: "short-lived",
+      node: { ...node, trashed_at: "2026-10-01T00:00:00Z" },
+      path: "/Reports/quarterly-report.txt",
+      pinnedVersion: version(createdVersionID, 1, "content_create", "a"),
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    await screen.findByText("1001 retained versions");
+    expect(screen.getAllByText(createdVersionID).length).toBeGreaterThan(0);
+    expect(screen.getByText("a".repeat(64))).toBeTruthy();
+    expect(screen.getByText("128 B (128 bytes)")).toBeTruthy();
+    expect(screen.getByText("Trash")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
+    expect(
+      screen.getByText("Restore this file before downloading versions or email PDFs."),
+    ).toBeTruthy();
+  });
+
+  it("hides email PDF actions for a trashed node", async () => {
+    const emailVersion = {
+      ...version(createdVersionID, 1, "content_create", "a"),
+      mime_type: "message/rfc822",
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/api/v1/email-pdfs/")) return Response.json([]);
+      return Response.json({
+        items: [emailVersion],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      });
+    });
+    render(VersionHistoryDrawer, {
+      session: "short-lived",
+      node: {
+        ...node,
+        name: "message.eml",
+        mime_type: "message/rfc822",
+        trashed_at: "2026-10-01T00:00:00Z",
+      },
+      path: "/Reports/message.eml",
+      pinnedVersion: emailVersion,
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(await screen.findByText("1 retained version")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Exact email PDF" })).toBeNull();
+    expect(
+      screen.getByText("Restore this file before downloading versions or email PDFs."),
+    ).toBeTruthy();
+  });
+
   it("shows newest-first authority and revert lineage", async () => {
     const versions = [
       version(currentVersionID, 3, "content_revert", "c", createdVersionID),

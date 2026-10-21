@@ -25,11 +25,12 @@
     session: string;
     node: Node;
     path: string;
+    pinnedVersion?: ContentVersion;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { session, node, path, onclose, onauthfailure }: Props = $props();
+  let { session, node, path, pinnedVersion, onclose, onauthfailure }: Props = $props();
 
   let page = $state<ContentVersionPage | null>(null);
   let selectedVersionID = $state("");
@@ -37,7 +38,11 @@
   let error = $state("");
   let generation = 0;
 
-  const selectedVersion = $derived(page?.items.find((version) => version.id === selectedVersionID));
+  const selectedVersion = $derived(
+    pinnedVersion && (!selectedVersionID || pinnedVersion.id === selectedVersionID)
+      ? pinnedVersion
+      : page?.items.find((version) => version.id === selectedVersionID),
+  );
 
   onMount(() => {
     void load();
@@ -58,12 +63,12 @@
       );
       if (request !== generation) return;
       page = next;
-      selectedVersionID = next.items[0]?.id ?? "";
+      selectedVersionID = pinnedVersion?.id ?? next.items[0]?.id ?? "";
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
-        onclose();
+        if (!pinnedVersion) onclose();
         return;
       }
       error = cause instanceof Error ? cause.message : String(cause);
@@ -106,6 +111,7 @@
         <span>Immutable version history</span>
         <strong>{basename(path)}</strong>
         <span class="path">{path} · id:{node.id}</span>
+        {#if node.trashed_at}<Chip size="xs" tone="warning">Trash</Chip>{/if}
       </div>
       <IconButton size="sm" ariaLabel="Close version history" onclick={onclose}>
         <XIcon size="14" aria-hidden="true" />
@@ -239,18 +245,26 @@
               </div>
             {/if}
           </dl>
-          <div class="version-actions">
-            {#key selectedVersion.id}
-              <DownloadButton
-                {session}
-                {node}
-                version={selectedVersion}
-                label="Download this version"
-                {onauthfailure}
-              />
-            {/key}
-          </div>
-          {#if selectedVersion.mime_type === "message/rfc822"}
+          {#if node.trashed_at}
+            <div class="version-actions">
+              <p class="limit-note" role="note">
+                Restore this file before downloading versions or email PDFs.
+              </p>
+            </div>
+          {:else}
+            <div class="version-actions">
+              {#key selectedVersion.id}
+                <DownloadButton
+                  {session}
+                  {node}
+                  version={selectedVersion}
+                  label="Download this version"
+                  {onauthfailure}
+                />
+              {/key}
+            </div>
+          {/if}
+          {#if !node.trashed_at && selectedVersion.mime_type === "message/rfc822"}
             {#key selectedVersion.id}
               <EmailPDFButton {session} {node} version={selectedVersion} {onauthfailure} />
             {/key}
