@@ -53,7 +53,7 @@ The directory layout is created on first use:
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
-├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created when the environment permits telemetry, including source/development builds; opt-outs and any present CI prevent creation; existing files remain
+├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created unless telemetry is turned off, kept if it is later turned off
 ├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
 ├── config.toml          # optional; see below
 ├── lane-controls.json   # local job pause and concurrency settings
@@ -985,8 +985,7 @@ forwarding headers do not change that peer check.
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |
 | `DOCBANK_TELEMETRY_ENABLED` | `0`, `false`, `no` or `off` turns off anonymous usage telemetry. Read when the daemon starts; restart the daemon after changing it. |
 | `TELEMETRY_ENABLED` | The same values have the same effect; shared with other Kenn tools. |
-| `DO_NOT_TRACK` | Any present value turns off anonymous usage telemetry except `0` or `false` (trimmed and case-insensitive). |
-| `CI` | Any present value turns off anonymous usage telemetry, including an empty value. |
+| `DO_NOT_TRACK` | `1` turns off anonymous usage telemetry. |
 
 Nonempty startup overrides take precedence over TOML; empty variables keep
 its values. `DOCBANK_API_KEY` and `DOCBANK_API_KEY_FILE` cannot both be
@@ -1044,18 +1043,15 @@ best effort.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 
-Only release versions matching plain `vX.Y.Z` or `X.Y.Z` (numeric components) report usage. Development builds and builds with version suffixes send nothing. Any present `CI` disables reporting, including an empty value.
+Each event carries these fields:
 
-Each event carries these fields, as listed in [Kit's shared field table](https://github.com/kenn-io/kit/blob/v0.39.0/telemetry/posthog/fields.md):
-
-- `event`: the event name; `uuid`: a random event UUID; `timestamp`: the capture time in UTC
+- the event name, a random event UUID, and a timestamp
 - `distinct_id`: a random install ID generated on this machine
 - `application=docbank`, `source=daemon`, the Docbank `version` and `commit`,
   `goos`, `goarch`, and `install_age_hours` (whole hours since the install ID
   was created)
 - `$process_person_profile=false` and `$geoip_disable=true`
-- `$lib=posthog-go` and `$lib_version`: the PostHog Go library name and version
-- The batch envelope carries `api_key`, the public PostHog project key, and `batch`, the events
+- fields the PostHog Go library adds: `$lib` and `$lib_version`
 - `session_ended` also carries `surface` as `web` or `tui` and `duration_bucket`
   as `under_1m`, `1_to_5m`, `5_to_30m`, or `over_30m`
 
@@ -1066,12 +1062,14 @@ to geolocate. Separately configured document providers are unrelated to usage
 telemetry and unchanged by it.
 
 The install ID lives in `telemetry-install.json` at the vault root (see the
-[layout](#vault-location) above). When the environment permits telemetry, the daemon loads or creates this file, including in source/development builds that send nothing. Opt-outs and any present `CI` prevent creation; an existing file remains. Each vault has its own ID.
+[layout](#vault-location) above). The daemon creates it the first time it runs
+unless telemetry is turned off. Each vault has its own ID.
 
-To opt out, set `DOCBANK_TELEMETRY_ENABLED=0`, `TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` in the
+Only release builds send telemetry, and it stays off in CI. To opt out, set
+`DOCBANK_TELEMETRY_ENABLED=0`, `TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` in the
 environment that starts the daemon, then run `docbank daemon restart`. A CLI
 command that starts the daemon automatically passes its own environment, so
-set the variable in your shell profile. Any present `DO_NOT_TRACK` disables reporting except `0` or `false`, after trimming whitespace and ignoring case. Go applications that embed a vault
+set the variable in your shell profile. Go applications that embed a vault
 in-process send nothing.
 
 ## Photo map tiles
