@@ -291,8 +291,8 @@
       )
         return;
       const sameNode = !("error" in selection) && panel?.linked?.node.id === selection.nodeId;
-      const target = sameNode ? panel! : { kind: "versions" as const, fromLink: true };
-      activePanel = target;
+      activePanel = sameNode ? panel! : { kind: "versions" as const, fromLink: true };
+      const target = activePanel;
       if ("error" in selection) {
         nodeVersionError = invalidNodeVersionLink;
         return;
@@ -302,10 +302,10 @@
       nodeVersionLoading = true;
       void resolveNodeVersionLink(session, selection, controller.signal)
         .then((resolved) => {
-          if (current && activePanel?.kind === "versions") activePanel.linked = resolved;
+          if (current && activePanel === target) target.linked = resolved;
         })
         .catch((cause: unknown) => {
-          if (!current) return;
+          if (!current || activePanel !== target) return;
           if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
           else if (cause instanceof APIError && (cause.status === 404 || cause.status === 410))
             nodeVersionError = "The linked node or version is missing or purged.";
@@ -2906,7 +2906,11 @@
     activePanel.linked = { node, version };
     activePanel.fromLink = true;
     if (initial) photoNavigation.replace(history.state, nodeVersionURL(version));
-    else pushPhotoHistory(history.state, nodeVersionURL(version));
+    else {
+      const state = { ...history.state };
+      delete state.photoReturn;
+      pushPhotoHistory(state, nodeVersionURL(version));
+    }
     nodeVersionHash = location.hash;
   }
 

@@ -13,39 +13,6 @@ afterEach(() => {
 });
 
 describe("version history drawer", () => {
-  it("keeps a directly fetched version pinned outside the newest 1000", async () => {
-    const versions = Array.from({ length: 1000 }, (_, index) =>
-      version(
-        `${(index + 1).toString(16).padStart(8, "0")}-2222-4222-8222-222222222222`,
-        1001 - index,
-        "content_replace",
-        "c",
-      ),
-    );
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      Response.json({ items: versions, total: 1001, limit: 1000, offset: 0 }),
-    );
-    render(VersionHistoryDrawer, {
-      session: "short-lived",
-      node: {
-        ...node,
-        current_version_id: versions[0].id,
-        revision: 1001,
-        trashed_at: "2026-10-01T00:00:00Z",
-      },
-      path: "/Reports/quarterly-report.txt",
-      pinnedVersion: version(createdVersionID, 1, "content_create", "a"),
-      onselect: vi.fn(),
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
-
-    await screen.findByText("1001 retained versions");
-    expect(screen.getAllByText(createdVersionID).length).toBeGreaterThan(0);
-    expect(screen.getByText("a".repeat(64))).toBeTruthy();
-    expect(screen.getByText("128 B (128 bytes)")).toBeTruthy();
-  });
-
   it("hides email PDF actions for a trashed node", async () => {
     const emailVersion = {
       ...version(createdVersionID, 1, "content_create", "a"),

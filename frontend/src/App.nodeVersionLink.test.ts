@@ -431,3 +431,90 @@ it("ignores an old drawer close after another panel takes ownership", async () =
   expect(await screen.findByRole("dialog", { name: "Physical storage status" })).toBeTruthy();
   expect(location.hash).toBe(link());
 });
+
+it("discards a delayed linked version when another versions drawer replaces it", async () => {
+  history.replaceState(null, "", `/#${credentials}`);
+  const otherNode = { ...node, id: 99, name: "other.txt", path: "/other.txt" };
+  const otherVersion = { ...currentVersion, node_id: 99 };
+  let release!: (response: Response) => void;
+  let releaseHistory!: (response: Response) => void;
+  api((url) => {
+    if (url.includes("/children"))
+      return Response.json({
+        directory: root,
+        items: [otherNode],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      });
+    if (url === "/api/v1/nodes/99") return Response.json(otherNode);
+    if (url === `/api/v1/versions/${oldID}`)
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    if (url === "/api/v1/nodes/99/versions?limit=1000&offset=0")
+      return new Promise<Response>((resolve) => {
+        releaseHistory = resolve;
+      });
+    return undefined;
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "other.txt" }));
+  await act(() => {
+    history.pushState(null, "", `/${link()}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  await fireEvent.click(screen.getByRole("button", { name: "Version history" }));
+  await waitFor(() => expect(releaseHistory).toBeTypeOf("function"));
+  await act(() => release(Response.json(oldVersion)));
+  expect(screen.queryByText(oldID)).toBeNull();
+  await act(() =>
+    releaseHistory(Response.json({ items: [otherVersion], total: 1, limit: 1000, offset: 0 })),
+  );
+  await within(screen.getByRole("dialog")).findByText(currentID);
+  expect(
+    screen.getByRole("dialog", { name: "Immutable version history for /other.txt" }),
+  ).toBeTruthy();
+  expect(location.hash).toBe(`#node=99&version=${currentID}`);
+});
+
+it("returns to the grid after selecting a version over a photo opened from the grid", async () => {
+  history.replaceState(null, "", `/photos#${credentials}`);
+  storage();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  api(
+    (url, init) =>
+      photoMetadataResponse(url, init) ??
+      (url.endsWith("/photos/hidden")
+        ? Response.json({ configured: false })
+        : url.endsWith("/photos/assets/query")
+          ? Response.json({ items: [photo(1)], total: 1 })
+          : url === "/api/v1/nodes/42/versions?limit=1000&offset=0"
+            ? Response.json({
+                items: [currentVersion, oldVersion],
+                total: 2,
+                limit: 1000,
+                offset: 0,
+              })
+            : undefined),
+  );
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+  await screen.findByRole("dialog", { name: /Photo viewer/ });
+  expect(history.state?.photoReturn).toBeTruthy();
+  await act(() => {
+    history.replaceState(history.state, "", `/photos#photo=photo-1&${link().slice(1)}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  await screen.findByText(oldID);
+  await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
+  await screen.findByText(currentID);
+  await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+  await waitFor(() => expect(location.hash).toBe(""));
+  expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Close version history" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Open Photo 1.jpg" })).toBeTruthy();
+});
