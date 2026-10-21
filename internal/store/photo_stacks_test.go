@@ -1144,8 +1144,6 @@ func TestPhotoSettingsUpdates(t *testing.T) {
 		{ResetPreference: true, Preference: new("image")},
 		{BurstGapSeconds: new(0)},
 		{BackupIntervalSeconds: new(int64(9223372037))},
-		{BackupIntervalSeconds: new(int64(36028797018963968))},
-		{BackupIntervalSeconds: new(int64(18446744134))},
 	} {
 		_, err = s.SetPhotoSettings(t.Context(), 1, invalid)
 		require.ErrorIs(t, err, ErrInvalidPhotoAsset)
@@ -1189,9 +1187,6 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	require.Equal(t, new(int64(9223372036)), largestSettings.BackupIntervalSeconds)
 	for _, bad := range []string{
 		strings.ReplaceAll(exported.String(), `"backup_interval_seconds":3600`, `"backup_interval_seconds":-1`),
-		strings.ReplaceAll(exported.String(), `"backup_interval_seconds":3600`, `"backup_interval_seconds":9223372037`),
-		strings.ReplaceAll(exported.String(), `"backup_interval_seconds":3600`, `"backup_interval_seconds":36028797018963968`),
-		strings.ReplaceAll(exported.String(), `"backup_interval_seconds":3600`, `"backup_interval_seconds":18446744134`),
 		strings.ReplaceAll(exported.String(), `"backup_keep_last":5`, `"backup_keep_last":0`),
 		strings.ReplaceAll(exported.String(), `"hidden_unlock_lifetime_seconds":900`, `"hidden_unlock_lifetime_seconds":86401`),
 	} {

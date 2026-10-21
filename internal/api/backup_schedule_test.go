@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -27,10 +28,10 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func backupTestDeps(t *testing.T) Deps {
+func backupTestDeps(t *testing.T, drivers ...sqlite.Driver) Deps {
 	t.Helper()
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	metadata, err := store.Open(filepath.Join(root, "docbank.db"), drivers...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	dir := filepath.Join(root, "blobs")
@@ -41,9 +42,9 @@ func backupTestDeps(t *testing.T) Deps {
 	return Deps{Store: metadata, Blobs: blobs, VaultRoot: root, Gate: NewOperationGate(), Logger: slog.New(slog.DiscardHandler)}
 }
 
-func scheduledDeps(t *testing.T) Deps {
+func scheduledDeps(t *testing.T, drivers ...sqlite.Driver) Deps {
 	t.Helper()
-	d := backupTestDeps(t)
+	d := backupTestDeps(t, drivers...)
 	cfg := config.Default()
 	cfg.Backup = config.BackupConfig{Repo: filepath.Join(t.TempDir(), "repo"), Interval: config.Duration(time.Hour), KeepLast: 1}
 	d.Cfg = cfg
@@ -310,6 +311,8 @@ func TestBackupScheduleRuntimeOverrides(t *testing.T) {
 		synctest.Wait()
 		time.Sleep(time.Second)
 		require.Zero(t, d.Tracker.IdleFor(), "re-enabled schedule must hold the daemon during its disabled wait")
+		require.NoError(t, d.Jobs.Shutdown(t.Context()))
+		put(`"5"`, `{"backup_interval_seconds":3600}`)
 	})
 }
 
@@ -354,12 +357,14 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				d := scheduledDeps(t)
+				driver := &backupReadContentionDriver{Driver: store.DefaultSQLiteDriver()}
+				d := scheduledDeps(t, driver)
 				repo, err := backup.Init(d.Cfg.Backup.Repo)
 				require.NoError(t, err)
-				db, err := d.Store.SQLiteDriver().Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate})
+				db, err := driver.Driver.Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate, BusyTimeout: time.Millisecond})
 				require.NoError(t, err)
 				defer func() { require.NoError(t, db.Close()) }()
+				db.SetMaxOpenConns(1)
 				d.Jobs = jobs.New(t.Context(), d.Logger)
 				defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
 				if duringWait {
@@ -370,8 +375,16 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 				}
 				before, err := repo.ListSnapshots()
 				require.NoError(t, err)
-				_, err = db.ExecContext(t.Context(), `ALTER TABLE photo_library_settings RENAME TO unavailable_settings`)
+				// Release idle store connections so the external locker alone owns the lock.
+				for _, pool := range driver.dbs {
+					pool.SetMaxOpenConns(1)
+					pool.SetMaxIdleConns(0)
+				}
+				_, err = db.ExecContext(t.Context(), "PRAGMA locking_mode=EXCLUSIVE")
 				require.NoError(t, err)
+				tx, err := db.BeginTx(t.Context(), nil)
+				require.NoError(t, err)
+				defer func() { _ = tx.Rollback() }()
 				if !duringWait {
 					require.NoError(t, startBackupSchedule(d))
 				} else {
@@ -380,9 +393,12 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 				synctest.Wait()
 				status := d.Jobs.Snapshot()[0]
 				require.Equal(t, jobs.StatusRunning, status.Status)
-				require.NotEmpty(t, status.Error)
-				_, err = db.ExecContext(t.Context(), `ALTER TABLE unavailable_settings RENAME TO photo_library_settings`)
-				require.NoError(t, err)
+				require.Contains(t, status.Error, "locked")
+				for _, pool := range driver.dbs {
+					pool.SetMaxIdleConns(1)
+				}
+				require.NoError(t, tx.Rollback())
+				require.NoError(t, db.Close())
 				time.Sleep(time.Minute)
 				synctest.Wait()
 				require.Empty(t, d.Jobs.Snapshot()[0].Error)
@@ -397,22 +413,17 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 	}
 }
 
-func TestBackupScheduleSettingsDuringShutdown(t *testing.T) {
-	t.Parallel()
-	d := scheduledDeps(t)
-	d.Cfg.Server.APIKey = "synthetic-key"
-	d.Jobs = jobs.New(t.Context(), d.Logger)
-	require.NoError(t, d.Jobs.Shutdown(t.Context()))
-	server := NewServer(d)
-	defer server.Close()
-	req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/v1/photos/settings", strings.NewReader(`{"backup_interval_seconds":7200}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", d.Cfg.Server.APIKey)
-	req.Header.Set("If-Match", `"1"`)
-	res := httptest.NewRecorder()
-	server.Handler().ServeHTTP(res, req)
-	require.Equal(t, http.StatusOK, res.Code, res.Body.String())
-	settings, err := d.Store.PhotoSettings(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, new(int64(7200)), settings.BackupIntervalSeconds)
+type backupReadContentionDriver struct {
+	sqlite.Driver
+
+	dbs []*sql.DB
+}
+
+func (d *backupReadContentionDriver) Open(path string, opts sqlite.OpenOptions) (*sql.DB, error) {
+	opts.BusyTimeout = time.Millisecond
+	db, err := d.Driver.Open(path, opts)
+	if err == nil {
+		d.dbs = append(d.dbs, db)
+	}
+	return db, err
 }

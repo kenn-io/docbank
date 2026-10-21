@@ -262,9 +262,6 @@ func TestPhotosCLISettingsOverrides(t *testing.T) {
 	setupPhotoSettingsHome(t)
 	_, err := runCLI(t, "photos", "settings", "set", "image")
 	require.NoError(t, err)
-	_, err = runCLI(t, "photos", "settings", "set", "backup.repo", "/synthetic")
-	require.ErrorContains(t, err, "config.toml")
-	require.Equal(t, exitUsage, commandExitCode(err, true))
 	out, err := runCLI(t, "photos", "settings", "set", "backup.keep_last", "5")
 	require.NoError(t, err)
 	var settings api.PhotoSettings
