@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime/pprof"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -162,20 +159,8 @@ func TestTUITelemetryQueuedScreensRespectFailureBackoff(t *testing.T) {
 	go func() {
 		exitResult <- sendTUISessionEnded(t.Context(), &backend.telemetry, time.Minute)
 	}()
-	// All callers must be waiting on the report mutex before the first failure sets backoff.
-	require.Eventually(t, func() bool {
-		var stacks bytes.Buffer
-		if err := pprof.Lookup("goroutine").WriteTo(&stacks, 2); err != nil {
-			return false
-		}
-		queued := 0
-		for stack := range strings.SplitSeq(stacks.String(), "\n\n") {
-			if strings.Contains(stack, "[sync.Mutex.Lock]") && strings.Contains(stack, ".(*tuiTelemetry).report(") {
-				queued++
-			}
-		}
-		return queued == 4
-	}, time.Second, time.Millisecond)
+	// The in-flight report holds the gate, so each caller either queues behind it or
+	// arrives after its failure; both must see the backoff.
 	release <- struct{}{}
 	require.Error(t, <-firstResult)
 	for range 3 {

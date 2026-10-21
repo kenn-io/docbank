@@ -34,7 +34,11 @@ export function startTelemetryReporting(session: string) {
     if (active) reportVisibleScreen();
   });
   // Update the current screen before kit-ui's focus handler rolls over the UTC day.
-  window.addEventListener("focus", reportVisibleScreen, true);
+  // Capture also sees element focus, which needs no report.
+  const windowFocus = (event: FocusEvent) => {
+    if (!(event.target instanceof Node)) reportVisibleScreen();
+  };
+  window.addEventListener("focus", windowFocus, true);
   return {
     ...reporter,
     reportScreen(screen: string) {
@@ -42,7 +46,7 @@ export function startTelemetryReporting(session: string) {
       reportVisibleScreen();
     },
     stop() {
-      window.removeEventListener("focus", reportVisibleScreen, true);
+      window.removeEventListener("focus", windowFocus, true);
       reporter.stop();
       unsubscribe();
     },

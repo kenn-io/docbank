@@ -1013,8 +1013,9 @@ Docbank sends these events:
   day. Days when the machine sleeps are not backfilled.
 - `app_opened` when the web app loads, and again on the first window focus of
   a later UTC day. Claims use `docbank.web.telemetry.v1` in browser storage,
-  retain the latest 35 claimed dates, and apply per browser origin across daemon
-  restarts.
+  retain the latest 35 claimed dates, and apply per browser origin. The default
+  loopback origin changes at each daemon start, so a new daemon run checks
+  again. A fixed `[web] public_origin` keeps claims across restarts.
 - `session_ended` once when a browser tab closes or stays hidden for 30 minutes,
   or the terminal browser exits, including when its terminal closes. Browser
   visible time adds up across tab switches. Hidden time is excluded. The
@@ -1039,7 +1040,7 @@ event, that screen remains eligible for another attempt. Remote delivery is
 best effort.
 
 Browser reports share a daily gate. Disabled receipts stop reports and duration
-listeners until a later day's load or focus. Failures back off and stop after
+listeners until a later day's load or focus, or a load from a new origin. Failures back off and stop after
 six attempts. Hidden tabs report their latest screen when visible. Screen visibility
 listeners stop while disabled or unavailable; focus can check on a later day.
 Session reports use the shared gate's in-memory queue while it checks permission.
