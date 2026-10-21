@@ -80,6 +80,13 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 		}
 		settings, err := d.Store.PhotoSettings(ctx)
 		cfg := effectiveBackupConfig(d.Cfg.Backup, settings)
+		interval := cfg.Interval.Std()
+		if interval > 0 {
+			if !holding && d.Tracker != nil {
+				d.Tracker.Begin()
+			}
+			holding = true
+		}
 		if err == nil {
 			err = cfg.ValidateSchedule()
 		}
@@ -93,7 +100,6 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			}
 			continue
 		}
-		interval := cfg.Interval.Std()
 		if interval <= 0 {
 			if holding && d.Tracker != nil {
 				d.Tracker.End()
@@ -105,10 +111,6 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			}
 			continue
 		}
-		if !holding && d.Tracker != nil {
-			d.Tracker.Begin()
-		}
-		holding = true
 		retry := min(interval, 5*time.Minute)
 		delay, attempted, err := schedule.capture(ctx, d, logger, cfg, captureDue)
 		if err != nil {
@@ -138,14 +140,7 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			changed = effectiveBackupConfig(d.Cfg.Backup, next) != cfg
 			return changed, nil
 		}); waitErr != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			reportFailure(waitErr, time.Minute)
-			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
-				return err
-			}
-			continue
+			return waitErr
 		}
 		if changed {
 			captureDue = false

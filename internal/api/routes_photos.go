@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -229,7 +229,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		}
 		update.ValidateSchedule = func(next store.PhotoSettings) error {
 			if err := effectiveBackupConfig(d.Cfg.Backup, next).ValidateSchedule(); err != nil {
-				return fmt.Errorf("%w: %w", store.ErrInvalidPhotoAsset, err)
+				return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 			}
 			return nil
 		}
@@ -237,6 +237,9 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		err = g.mutate(func() error {
 			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, update)
 			if callErr != nil {
+				if problem, ok := errors.AsType[*Error](callErr); ok {
+					return problem
+				}
 				return FromStoreError(callErr)
 			}
 			if update.BackupIntervalSeconds != nil || update.ResetBackupInterval || update.BackupKeepLast != nil || update.ResetBackupKeepLast {

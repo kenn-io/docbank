@@ -320,6 +320,7 @@ func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		d := scheduledDeps(t)
+		d.Tracker = NewActivityTracker()
 		d.Cfg.Backup.Interval, d.Cfg.Backup.KeepLast = 0, 0
 		// Metadata restore validates overrides independently of this daemon's config.
 		_, err := d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(3600))})
@@ -334,6 +335,8 @@ func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
 		synctest.Wait()
 		require.Contains(t, d.Jobs.Snapshot()[0].Error, "positive keep_last")
 		require.Contains(t, logs.String(), "positive keep_last")
+		time.Sleep(time.Second)
+		require.Zero(t, d.Tracker.IdleFor(), "enabled invalid schedule must hold the daemon")
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Empty(t, points, "invalid retention must prevent capture")
@@ -345,6 +348,9 @@ func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, points, 1)
 		require.Empty(t, d.Jobs.Snapshot()[0].Error)
+		require.NoError(t, d.Jobs.Shutdown(t.Context()))
+		time.Sleep(time.Second)
+		require.Positive(t, d.Tracker.IdleFor(), "shutdown must release the schedule hold")
 	})
 }
 

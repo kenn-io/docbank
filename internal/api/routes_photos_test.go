@@ -244,6 +244,13 @@ func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(2), settings.Revision)
 	}
+	for _, seconds := range []int{30, 3600} {
+		res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"backup_interval_seconds": seconds})
+		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
+		problem := decodeProblem(t, body)
+		require.Equal(t, "validation", problem.Code)
+		require.True(t, strings.HasPrefix(problem.Detail, "[backup]"), body)
+	}
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"hidden_unlock_lifetime_seconds": 900})
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.Contains(t, body, `"hidden_unlock_lifetime_seconds":900`)
