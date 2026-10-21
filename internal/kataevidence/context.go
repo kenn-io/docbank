@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/kataclient"
 )
 
@@ -102,7 +103,7 @@ func (s Service) Context(ctx context.Context, r ContextRequest) (Context, error)
 		if entry.Pending != nil && bounded(entry.Pending.Quote, MaxChars) {
 			resolution.SavedQuote = entry.Pending.Quote
 		}
-		if digest(entry.Passage) {
+		if canonical.IsSHA256Hex(entry.Passage) {
 			for _, quote := range quotes {
 				matches := PassageID(entry.Reference, quote) == entry.Passage
 				if len(entry.legacy) > 0 {

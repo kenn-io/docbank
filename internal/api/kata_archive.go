@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -73,7 +72,7 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 		if err != nil {
 			return err
 		}
-		if !stream.Verified() || int64(len(data)) != node.Size || fmt.Sprintf("%x", sha256.Sum256(data)) != node.BlobHash {
+		if !stream.Verified() || int64(len(data)) != node.Size {
 			return document.ErrCitationIntegrity
 		}
 		if !utf8.Valid(data) {

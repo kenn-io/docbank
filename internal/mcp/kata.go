@@ -9,6 +9,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
@@ -124,16 +125,12 @@ func getKataContext(ctx context.Context, lease *daemonLease, raw []byte) (kataCo
 		if canceled := contextCancellation(ctx, err); canceled != nil {
 			return kataContextOutput{}, canceled
 		}
-		if !daemonconn.KataOfflineAllowed(err) {
-			return kataContextOutput{}, sanitizedDaemonError(errDaemonRequestFailed, err)
+		if daemonconn.IsTransportError(err) {
+			lease.discard(current)
 		}
-		// Release the dead endpoint before falling back, so the next read can discover a restarted daemon.
-		lease.discard(current)
-		page, err = daemonconn.ReadKataContextOffline(ctx, input)
+		return kataContextOutput{}, sanitizedDaemonError(errDaemonRequestFailed, err)
 	}
-	if err != nil {
-		return kataContextOutput{}, err
-	}
+
 	passages := make([]kataContextPassage, 0, len(page.Passages))
 	for _, passage := range page.Passages {
 		projected := kataContextPassage{State: passage.State, SavedQuote: passage.SavedQuote}
@@ -152,9 +149,6 @@ func citeKataEvidence(ctx context.Context, lease *daemonLease, raw []byte) (kata
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return kataCiteOutput{}, err
 	}
-	if kataevidence.ValidateCiteRequest(input) != nil {
-		return kataCiteOutput{}, invalidToolArgumentsError()
-	}
 	issue, err := daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (kataclient.Issue, error) { return c.CiteKataEvidence(ctx, input) })
 	if err != nil {
 		return kataCiteOutput{}, err
@@ -168,5 +162,5 @@ func kataEvidenceHasKnownShape(e kataevidence.Evidence) bool {
 		return false
 	}
 	reference.Version = 1 // Validate the structure independently of reader support.
-	return kataevidence.ValidateReference(reference) == nil && validSHA256Identity(e.ID) && validSHA256Identity(e.Passage)
+	return kataevidence.ValidateReference(reference) == nil && canonical.IsSHA256Hex(e.ID) && canonical.IsSHA256Hex(e.Passage)
 }

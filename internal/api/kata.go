@@ -34,7 +34,7 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 		RawBody []byte
 	}) (*citeOutput, error) {
 		var request kataevidence.CiteRequest
-		if json.Unmarshal(in.RawBody, &request, json.RejectUnknownMembers(true)) != nil || kataevidence.ValidateCiteRequest(request) != nil {
+		if json.Unmarshal(in.RawBody, &request, json.RejectUnknownMembers(true)) != nil {
 			return nil, kataProblem(kataevidence.ErrInvalid)
 		}
 		if err := clearRequestReadDeadline(ctx); err != nil {
@@ -95,6 +95,14 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 
 func kataProblem(err error) *Error {
 	if failure, ok := errors.AsType[*kataclient.Error](err); ok {
+		switch failure.Status {
+		case http.StatusUnauthorized:
+			return NewError(401, "kata_unauthorized", "Kata rejected the configured credential; update the Kata connection")
+		case http.StatusForbidden:
+			return NewError(403, "kata_forbidden", "Kata denied permission for this operation")
+		case http.StatusNotFound:
+			return NewError(404, "kata_issue_unavailable", "Kata issue or project is unavailable")
+		}
 		switch failure.Code {
 		case "incompatible_api":
 			return NewError(503, "kata_incompatible", "Kata API schema 0.21.0 or newer is required")

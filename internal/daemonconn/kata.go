@@ -15,9 +15,6 @@ import (
 )
 
 func (c *Connection) CiteKataEvidence(ctx context.Context, request kataevidence.CiteRequest) (kataclient.Issue, error) {
-	if err := kataevidence.ValidateCiteRequest(request); err != nil {
-		return kataclient.Issue{}, err
-	}
 	var response *http.Response
 	_, err := c.apiWithResponse(&response).CiteKataEvidence(runtime.WithStreamingResponse(ctx), &apiclient.CiteKataEvidenceRequestOptions{Body: &request})
 	if err != nil {

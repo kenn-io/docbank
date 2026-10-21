@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"uuid"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -104,25 +104,16 @@ type Archive interface {
 func ValidateReference(ref Reference) error {
 	p := ref.Docbank
 	if ref.Version != 1 || ref.Kind != "docbank" || p == nil || p.NodeID < 1 ||
-		!canonicalUUID(p.VaultUID) || !canonicalUUID(p.ContentVersionID) || !digest(p.ContentSHA256) ||
+		canonical.ValidateUUIDv4(p.VaultUID) != nil || canonical.ValidateUUIDv4(p.ContentVersionID) != nil || !canonical.IsSHA256Hex(p.ContentSHA256) ||
 		p.StartRune < 0 || p.EndRune <= p.StartRune || p.EndRune > 2147483647 || p.EndRune-p.StartRune > MaxChars {
 		return ErrInvalid
 	}
 	if p.RenditionAttachmentID != "" || p.BuildID != "" || p.RenditionSHA256 != "" {
-		if !digest(p.RenditionAttachmentID) || !digest(p.BuildID) || !digest(p.RenditionSHA256) {
+		if !canonical.IsSHA256Hex(p.RenditionAttachmentID) || !canonical.IsSHA256Hex(p.BuildID) || !canonical.IsSHA256Hex(p.RenditionSHA256) {
 			return ErrInvalid
 		}
 	}
 	return nil
-}
-
-func canonicalUUID(value string) bool {
-	id, err := uuid.Parse(value)
-	return err == nil && id.String() == value && id[6]>>4 == 4 && id[8]>>6 == 2
-}
-
-func digest(value string) bool {
-	return len(value) == 64 && strings.Trim(value, "0123456789abcdef") == ""
 }
 
 // Digest uses the same unambiguous length-prefix encoding as msgvault, with independent domains.

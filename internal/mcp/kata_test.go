@@ -6,8 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -122,11 +121,7 @@ func TestKataInputValidationPrecedesDaemonAcquisition(t *testing.T) {
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowKataWrites: true}, lease)
 	for _, args := range []map[string]any{
 		{"issue": "docbank#abcd"},
-		{"selector": map[string]any{"node_id": 7, "start_rune": 0, "end_rune": 1001}, "title": "Too much", "idempotency_key": "key"},
-		{"selector": map[string]any{"node_id": 7, "start_rune": 5, "end_rune": 3}, "title": "Backward", "idempotency_key": "key"},
-		{"selector": map[string]any{"node_id": 7, "start_rune": 0, "end_rune": 3}, "title": "No key"},
 		{"selector": map[string]any{"node_id": 7, "start_rune": 0, "end_rune": 3, "unexpected": true}, "title": "Unknown", "idempotency_key": "key"},
-		{"selector": map[string]any{"node_id": 7, "start_rune": 0, "end_rune": 3}, "issue": "docbank#abcd", "title": "Append title"},
 	} {
 		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "cite_kata_evidence", "arguments": args}))
 		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
@@ -139,7 +134,7 @@ func TestKataInputValidationPrecedesDaemonAcquisition(t *testing.T) {
 }
 
 func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
-	for _, code := range []string{"kata_incompatible", "kata_unconfigured", "invalid_kata_evidence", "kata_idempotency_conflict", "kata_evidence_changed", "kata_evidence_unavailable", "kata_evidence_unsupported", "kata_timeout", "kata_request_failed"} {
+	for _, code := range []string{"kata_incompatible", "kata_unconfigured", "invalid_kata_evidence", "kata_idempotency_conflict", "kata_evidence_changed", "kata_evidence_unavailable", "kata_evidence_unsupported", "kata_timeout", "kata_request_failed", "kata_unauthorized", "kata_forbidden", "kata_issue_unavailable"} {
 		t.Run(code, func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/problem+json")
@@ -223,41 +218,10 @@ func TestKataContextKeepsUnsupportedVersionAndSavedQuote(t *testing.T) {
 	require.EqualValues(t, 2, objectField(t, evidence, "reference")["version"])
 }
 
-func TestKataContextOfflineFallbackRequiresRequestTransportFailure(t *testing.T) {
-	for _, authenticated := range []bool{true, false} {
-		t.Run(map[bool]string{true: "unreachable daemon", false: "authentication refusal"}[authenticated], func(t *testing.T) {
-			var kataCalls atomic.Int32
-			evidence := kataevidence.NewEvidence(kataReferenceFixture(), "abc", "Synthetic text")
-			entry := kataevidence.Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference}
-			metadata, err := json.Marshal(map[string]any{"version": 1, "entries": []kataevidence.Entry{entry}})
-			require.NoError(t, err)
-			kata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				kataCalls.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/api/v1/health" {
-					_, _ = io.WriteString(w, `{"api_schema_version":"0.21.0"}`)
-					return
-				}
-				if r.URL.Path == "/api/v1/projects" {
-					_, _ = io.WriteString(w, `{"projects":[{"id":7,"name":"docbank","active":true}]}`)
-					return
-				}
-				assert.Equal(t, "/api/v1/projects/7/issues/abcd", r.URL.Path)
-				_, _ = io.WriteString(w, `{"issue":{"uid":"01TEST","short_id":"abcd","title":"Synthetic issue","body":"Evidence: Synthetic text\n\n> abc\n","metadata":{"docbank.evidence":`+string(metadata)+`}},"comments":[]}`)
-			}))
-			defer kata.Close()
-			root := t.TempDir()
-			t.Setenv("DOCBANK_HOME", root)
-			t.Setenv("DOCBANK_MCP_SYNTHETIC_KATA_KEY", "synthetic-key")
-			cfg := "[integrations.kata]\nenabled = true\nendpoint = \"" + kata.URL + "\"\napi_key_env = \"DOCBANK_MCP_SYNTHETIC_KATA_KEY\"\ndefault_project = \"docbank\"\n"
-			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(cfg), 0o600))
+func TestKataContextReturnsDaemonErrors(t *testing.T) {
+	for _, acquireFailure := range []bool{true, false} {
+		t.Run(strconv.FormatBool(acquireFailure), func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !authenticated {
-					w.Header().Set("Content-Type", "application/problem+json")
-					w.WriteHeader(http.StatusUnauthorized)
-					_, _ = io.WriteString(w, `{"status":401,"code":"unauthorized","detail":"private refusal"}`)
-					return
-				}
 				connection, _, err := http.NewResponseController(w).Hijack()
 				if !assert.NoError(t, err) {
 					return
@@ -265,52 +229,14 @@ func TestKataContextOfflineFallbackRequiresRequestTransportFailure(t *testing.T)
 				_ = connection.Close()
 			}))
 			defer daemon.Close()
-			recovered := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				page := kataevidence.Context{Issue: kataclient.Issue{UID: "01TEST", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: "Synthetic issue"}, Passages: []kataevidence.Resolution{{State: "available", Evidence: evidence, SavedQuote: "abc"}}}
-				data, err := json.Marshal(page)
-				if !assert.NoError(t, err) {
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write(data)
-			}))
-			defer recovered.Close()
-			var acquisitions atomic.Int32
 			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
-				base := daemon.URL
-				if acquisitions.Add(1) > 1 {
-					base = recovered.URL
+				if acquireFailure {
+					return nil, errDaemonUnavailable
 				}
-				connection := daemonconn.New(base, "synthetic-export-key")
-				t.Cleanup(func() { require.NoError(t, connection.Close()) })
-				return connection, nil
+				return daemonconn.New(daemon.URL, "synthetic-key"), nil
 			}, func(c *daemonconn.Connection) error { return c.Close() })
-			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
-			raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_kata_context", "arguments": map[string]any{"issue": "docbank#abcd"}}))
-			if !authenticated {
-				require.NotZero(t, decodeWireError(t, raw).Code)
-				require.Zero(t, kataCalls.Load(), "authentication refusals must not read local Kata credentials")
-				return
-			}
-			output := objectField(t, decodeResult(t, raw), "structuredContent")
-			passages, ok := output["passages"].([]any)
-			require.True(t, ok)
-			require.Len(t, passages, 1)
-			passage, ok := passages[0].(map[string]any)
-			require.True(t, ok)
-			require.Equal(t, "unreachable", passage["state"])
-			require.Equal(t, "abc", passage["saved_quote"])
-			require.Equal(t, int32(3), kataCalls.Load())
-			retry := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_kata_context", "arguments": map[string]any{"issue": "docbank#abcd"}}))
-			readback := objectField(t, decodeResult(t, retry), "structuredContent")
-			readbackPassages, ok := readback["passages"].([]any)
-			require.True(t, ok)
-			require.Len(t, readbackPassages, 1)
-			recoveredPassage, ok := readbackPassages[0].(map[string]any)
-			require.True(t, ok)
-			require.Equal(t, "available", recoveredPassage["state"], "retry must acquire the recovered daemon at its new endpoint")
-			require.Equal(t, int32(2), acquisitions.Load())
-			require.Equal(t, int32(3), kataCalls.Load(), "recovered reads use the daemon")
+			_, err := getKataContext(t.Context(), lease, []byte(`{"issue":"docbank#abcd"}`))
+			require.Error(t, err)
 		})
 	}
 }

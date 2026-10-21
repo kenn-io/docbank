@@ -5,13 +5,16 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/kataclient"
 )
 
 type Kata interface {
+	CheckProject(ref string) error
 	Get(ctx context.Context, ref string) (kataclient.Issue, error)
 	Create(ctx context.Context, key, title, body string, metadata map[string]jsontext.Value) (kataclient.Issue, error)
 	FindMarker(ctx context.Context, marker string) (*kataclient.Issue, error)
@@ -82,7 +85,7 @@ func (e envelope) encode() (jsontext.Value, error) {
 func parseNative(data jsontext.Value) (Entry, bool) {
 	var e Entry
 	if json.Unmarshal(data, &e) != nil || ValidateReference(e.Reference) != nil ||
-		e.ID != ID(e.Reference) || !digest(e.Passage) {
+		e.ID != ID(e.Reference) || !canonical.IsSHA256Hex(e.Passage) {
 		return e, false
 	}
 	if e.Pending != nil && (!bounded(e.Pending.Quote, MaxChars) || !bounded(e.Pending.Label, 512) || PassageID(e.Reference, e.Pending.Quote) != e.Passage) {
@@ -95,11 +98,11 @@ func bounded(text string, limit int) bool {
 	return utf8.ValidString(text) && utf8.RuneCountInString(text) <= limit
 }
 
-func ValidateCiteRequest(r CiteRequest) error {
+func validateCiteRequest(r CiteRequest) error {
 	p := r.Selector
 	validNode := p.NodeID > 0 && p.Path == "" || p.NodeID == 0 && strings.HasPrefix(p.Path, "/") && len(p.Path) <= 4096 && utf8.ValidString(p.Path) && !strings.ContainsRune(p.Path, 0)
 	if !validNode || p.StartRune < 0 || p.EndRune <= p.StartRune || p.EndRune > 2147483647 || p.EndRune-p.StartRune > MaxChars ||
-		!bounded(p.Quote, MaxChars) || p.ExpectedVersion != "" && !canonicalUUID(p.ExpectedVersion) ||
+		!bounded(p.Quote, MaxChars) || p.ExpectedVersion != "" && canonical.ValidateUUIDv4(p.ExpectedVersion) != nil ||
 		!bounded(r.Brief, 2000) || !bounded(r.Title, 512) || len(r.Issue) > 256 {
 		return ErrInvalid
 	}
@@ -121,7 +124,7 @@ func documentCitationMismatch(p Selector) bool {
 }
 
 func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, error) {
-	if err := ValidateCiteRequest(r); err != nil {
+	if err := validateCiteRequest(r); err != nil {
 		return kataclient.Issue{}, err
 	}
 	if s.Archive == nil {
@@ -177,6 +180,10 @@ func validateEvidence(e Evidence) error {
 }
 
 func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, error) {
+	if err := s.Kata.CheckProject(r.Issue); err != nil {
+		return kataclient.Issue{}, err
+	}
+
 	// A pinned selection already recorded on the issue is a retry, even if its source is gone.
 	current, err := s.Kata.Get(ctx, r.Issue)
 	if err != nil {
@@ -276,8 +283,11 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 			}
 			body := renderQuote(entry.Pending.Label, entry.Pending.Quote)
 			key := Digest("docbank.kata.comment.v1", issue.UID, entry.Passage, body)
-			if err := s.Kata.Comment(ctx, ref, key, body); err != nil {
-				return kataclient.Issue{}, err
+			if !slices.ContainsFunc(issue.Comments, func(comment kataclient.Comment) bool { return comment.Body == body }) {
+				if err := s.Kata.Comment(ctx, ref, key, body); err != nil {
+					return kataclient.Issue{}, err
+				}
+				issue.Comments = append(issue.Comments, kataclient.Comment{Body: body})
 			}
 			// Clear only our field; preserve any future fields on the entry.
 			var fields map[string]jsontext.Value

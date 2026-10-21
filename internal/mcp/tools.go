@@ -475,7 +475,7 @@ func stableDomainError(err error) (string, int) {
 	}
 	switch facts.Code {
 	case "kata_incompatible", "kata_unconfigured", "invalid_kata_evidence", "kata_idempotency_conflict", "kata_evidence_changed", "kata_evidence_unavailable",
-		"kata_evidence_unsupported", "kata_timeout", "kata_request_failed":
+		"kata_evidence_unsupported", "kata_timeout", "kata_request_failed", "kata_unauthorized", "kata_forbidden", "kata_issue_unavailable":
 		return facts.Code, 0
 	case "invalid_text_navigation", "text_navigation_limit",
 		"invalid_text_citation", "citation_unavailable", "citation_limit", "invalid_citation_range",
@@ -523,6 +523,12 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "kata_unauthorized":
+		return "Kata rejected the configured credential; update the Kata connection."
+	case "kata_forbidden":
+		return "Kata denied permission for this operation."
+	case "kata_issue_unavailable":
+		return "Kata issue or project is unavailable."
 	case "kata_incompatible":
 		return "Kata API schema 0.21.0 or newer is required."
 	case "kata_unconfigured":

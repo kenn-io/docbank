@@ -43,14 +43,11 @@ func newKataCommand() *cobra.Command {
 				}
 				selection.StartRune = citation.Start
 				selection.EndRune = citation.End
-			} else if !cmd.Flags().Changed("end") || start < 0 || end <= start || end-start > kataevidence.MaxChars || end > 2147483647 {
-				return usageError(errors.New("range requires --end greater than --start, with at most 1000 Unicode code points"))
+			} else if !cmd.Flags().Changed("end") {
+				return usageError(errors.New("range requires --end"))
 			}
 			// Keep caller input stable: the daemon resolves paths after replay reconciliation.
 			request := kataevidence.CiteRequest{Selector: selection, Title: title, Brief: brief, Issue: issue, IdempotencyKey: key}
-			if err := kataevidence.ValidateCiteRequest(request); err != nil {
-				return usageError(err)
-			}
 			if err := checkKataConfig(); err != nil {
 				return err
 			}
@@ -105,20 +102,7 @@ func newKataCommand() *cobra.Command {
 			if asJSON {
 				return writeCLIJSON(cmd.OutOrStdout(), result)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", result.Issue.QualifiedRef, result.Issue.Title)
-			for _, passage := range result.Passages {
-				p := passage.Evidence.Reference.Docbank
-				if p != nil {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s id:%d [%d,%d) version %s\n", passage.State, p.NodeID, p.StartRune, p.EndRune, p.ContentVersionID)
-				}
-				if passage.SavedQuote != "" {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), passage.SavedQuote)
-				}
-			}
-			if result.NextOffset != 0 {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Continue with --offset %d\n", result.NextOffset)
-			}
-			return nil
+			return writeKataContext(cmd.OutOrStdout(), result)
 		}}
 	contextCmd.Flags().IntVar(&offset, "offset", 0, "evidence entry offset from the preceding page")
 	contextCmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
@@ -154,10 +138,29 @@ func readKataCitation(path string) (document.TextCitation, error) {
 		return document.TextCitation{}, usageError(errors.New("citation file exceeds 16 KiB or could not be read"))
 	}
 	var citation document.TextCitation
-	if json.Unmarshal(data, &citation, json.RejectUnknownMembers(true)) != nil || document.ValidateTextCitation(citation) != nil {
+	if json.Unmarshal(data, &citation, json.RejectUnknownMembers(true)) != nil {
 		return citation, usageError(errors.New("citation file must contain one exact text citation"))
 	}
 	return citation, nil
 }
 
 func init() { rootCmd.AddCommand(newKataCommand()) }
+
+func writeKataContext(out io.Writer, result kataevidence.Context) error {
+	_, _ = fmt.Fprintf(out, "%s %s\n", result.Issue.QualifiedRef, result.Issue.Title)
+	for _, passage := range result.Passages {
+		p := passage.Evidence.Reference.Docbank
+		if p != nil {
+			_, _ = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", passage.State, p.NodeID, p.StartRune, p.EndRune, p.ContentVersionID)
+		} else {
+			_, _ = fmt.Fprintln(out, passage.State)
+		}
+		if passage.SavedQuote != "" {
+			_, _ = fmt.Fprintln(out, passage.SavedQuote)
+		}
+	}
+	if result.NextOffset != 0 {
+		_, _ = fmt.Fprintf(out, "Continue with --offset %d\n", result.NextOffset)
+	}
+	return nil
+}

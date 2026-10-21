@@ -10,6 +10,7 @@ import (
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -48,7 +49,7 @@ func parseRenditionResourceURI(raw string) (renditionResourceIdentity, rendition
 	}
 	nodeID, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || nodeID < 1 || strconv.FormatInt(nodeID, 10) != parts[2] ||
-		!daemonconn.IsCanonicalUUIDv4(parts[0]) || !daemonconn.IsCanonicalUUIDv4(parts[4]) || !validSHA256Identity(parts[6]) {
+		!daemonconn.IsCanonicalUUIDv4(parts[0]) || !daemonconn.IsCanonicalUUIDv4(parts[4]) || !canonical.IsSHA256Hex(parts[6]) {
 		return renditionResourceIdentity{}, renditionWindow{}, errors.New("invalid rendition resource identity")
 	}
 	query, err := url.ParseQuery(parsed.RawQuery)
@@ -75,18 +76,6 @@ func parseRenditionResourceURI(raw string) (renditionResourceIdentity, rendition
 	}
 	return renditionResourceIdentity{VaultID: parts[0], NodeID: nodeID,
 		ContentVersionID: parts[4], AttachmentID: parts[6]}, window, nil
-}
-
-func validSHA256Identity(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	for _, char := range value {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func registerResourceSurface(server *sdkmcp.Server, lease *daemonLease, logger *slog.Logger) {

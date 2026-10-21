@@ -22,6 +22,13 @@ type memoryKata struct {
 	markers           map[string]bool
 }
 
+func (*memoryKata) CheckProject(ref string) error {
+	if project, _, qualified := strings.Cut(ref, "#"); qualified && project != "docbank" {
+		return &kataclient.Error{Code: "wrong_project"}
+	}
+	return nil
+}
+
 func (k *memoryKata) snapshot() kataclient.Issue {
 	issue := k.issue
 	issue.Metadata = make(map[string]jsontext.Value, len(k.issue.Metadata))
@@ -347,5 +354,17 @@ func TestContextMalformedReferenceDoesNotHideOtherPassages(t *testing.T) {
 		require.Equal(t, "available", page.Passages[1].State)
 		require.Equal(t, "hello", page.Passages[1].SavedQuote)
 		require.Equal(t, 1, a.reads)
+	}
+}
+
+func TestCiteRejectsInvalidRequests(t *testing.T) {
+	for _, request := range []CiteRequest{
+		{Selector: Selector{NodeID: 2, EndRune: 1001}, Title: "Too much", IdempotencyKey: "key"},
+		{Selector: Selector{NodeID: 2, StartRune: 5, EndRune: 3}, Title: "Backward", IdempotencyKey: "key"},
+		{Selector: Selector{NodeID: 2, EndRune: 5}, Title: "Missing key"},
+		{Selector: Selector{NodeID: 2, EndRune: 5}, Issue: "abcd", Title: "Append title"},
+	} {
+		_, err := (Service{}).Cite(t.Context(), request)
+		require.ErrorIs(t, err, ErrInvalid)
 	}
 }

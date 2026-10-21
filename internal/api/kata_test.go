@@ -2,91 +2,44 @@ package api_test
 
 import (
 	"bytes"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
-	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
+	"go.kenn.io/kata/pkg/client/generated"
+	"go.kenn.io/kata/pkg/katatest"
 )
 
-func fakeKataForDocbank(t *testing.T) (*httptest.Server, *kataclient.Issue) {
+func realKataForDocbank(t *testing.T) (*httptest.Server, func() kataclient.Issue) {
 	t.Helper()
-	return fakeKataForDocbankWithDelay(t, nil)
+	return realKataForDocbankWithDelay(t, nil)
 }
 
-func fakeKataForDocbankWithDelay(t *testing.T, delayRequest func(*http.Request) bool) (*httptest.Server, *kataclient.Issue) {
+func realKataForDocbankWithDelay(t *testing.T, delayRequest func(*http.Request) bool) (*httptest.Server, func() kataclient.Issue) {
 	t.Helper()
-	issue := &kataclient.Issue{UID: "01K00000000000000000000000", ShortID: "abcd", Metadata: map[string]jsontext.Value{}}
+	backend := katatest.New(t, katatest.WithToken("synthetic-kata-token"))
+	sdk := backend.Client(t)
+	_, err := sdk.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
+	require.NoError(t, err)
+	client := kataclient.New(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-kata-token", Project: "docbank"})
+	_, err = client.Create(t.Context(), "seed", "Synthetic issue", "", nil)
+	require.NoError(t, err)
+	target, err := url.Parse(backend.Endpoint)
+	require.NoError(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(target)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "Bearer synthetic-kata-token", r.Header.Get("Authorization"))
-		w.Header().Set("Content-Type", "application/json")
-		var response any
-		switch {
-		case r.URL.Path == "/api/v1/health":
-			response = map[string]any{"api_schema_version": "0.21.0"}
-		case r.URL.Path == "/api/v1/projects":
-			response = map[string]any{"projects": []any{map[string]any{"id": 1, "name": "docbank", "active": true}}}
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
-			matches := []any{}
-			var marker string
-			_ = json.Unmarshal(issue.Metadata["docbank.action"], &marker)
-			if marker != "" && r.URL.Query().Get("meta") == "docbank.action="+marker {
-				matches = append(matches, issue)
-			}
-			response = map[string]any{"issues": matches}
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
-			var body struct {
-				Title    string                    `json:"title"`
-				Body     string                    `json:"body"`
-				Metadata map[string]jsontext.Value `json:"metadata"`
-			}
-			data, err := io.ReadAll(r.Body)
-			if !assert.NoError(t, err) || !assert.NoError(t, json.Unmarshal(data, &body)) {
-				return
-			}
-			issue.Title, issue.Body, issue.Metadata = body.Title, body.Body, body.Metadata
-			response = map[string]any{"issue": issue}
-		case r.Method == http.MethodGet:
-			response = map[string]any{"issue": issue, "comments": issue.Comments}
-		case strings.HasSuffix(r.URL.Path, "/metadata"):
-			var body struct {
-				Patch map[string]jsontext.Value `json:"patch"`
-			}
-			data, err := io.ReadAll(r.Body)
-			if !assert.NoError(t, err) || !assert.NoError(t, json.Unmarshal(data, &body)) {
-				return
-			}
-			maps.Copy(issue.Metadata, body.Patch)
-			response = map[string]any{"issue": issue}
-		case strings.HasSuffix(r.URL.Path, "/comments"):
-			var body struct {
-				Body string `json:"body"`
-			}
-			data, err := io.ReadAll(r.Body)
-			if !assert.NoError(t, err) || !assert.NoError(t, json.Unmarshal(data, &body)) {
-				return
-			}
-			issue.Comments = append(issue.Comments, kataclient.Comment{Body: body.Body})
-			response = map[string]any{"comment": map[string]any{"id": 1}}
-		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-		data, err := json.Marshal(response)
-		assert.NoError(t, err)
 		if delayRequest != nil && delayRequest(r) {
 			timer := time.NewTimer(6 * time.Second)
 			defer timer.Stop()
@@ -96,10 +49,17 @@ func fakeKataForDocbankWithDelay(t *testing.T, delayRequest func(*http.Request) 
 				return
 			}
 		}
-		_, _ = w.Write(data)
+		proxy.ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
-	return server, issue
+	return server, func() kataclient.Issue {
+		list, err := sdk.ListAllIssues(t.Context(), &generated.ListAllIssuesRequestOptions{Query: &generated.ListAllIssuesQuery{Sort: new(generated.ListAllIssuesQuerySort("created")), Limit: new(int64(1))}})
+		require.NoError(t, err)
+		require.Len(t, list.Issues, 1)
+		issue, err := client.Get(t.Context(), list.Issues[0].ProjectName+"#"+list.Issues[0].UID)
+		require.NoError(t, err)
+		return issue
+	}
 }
 
 func TestKataHTTPDisabledAndAuth(t *testing.T) {
@@ -116,7 +76,7 @@ func TestKataHTTPDisabledAndAuth(t *testing.T) {
 }
 
 func TestKataHTTPCreateAppendAndStaleness(t *testing.T) {
-	kata, issue := fakeKataForDocbank(t)
+	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata.URL, APIKeyEnv: "DKE_API_KATA_KEY"}
@@ -126,17 +86,17 @@ func TestKataHTTPCreateAppendAndStaleness(t *testing.T) {
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
 	require.Equal(t, 200, resp.StatusCode, body)
 	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
-	require.Contains(t, issue.Body, "> 🙂")
-	require.Contains(t, string(issue.Metadata[kataevidence.MetadataKey]), `"kind":"docbank"`)
-	contextRequest := kataevidence.ContextRequest{Issue: "abcd"}
+	require.Contains(t, issue().Body, "> 🙂")
+	require.Contains(t, string(issue().Metadata[kataevidence.MetadataKey]), `"kind":"docbank"`)
+	contextRequest := kataevidence.ContextRequest{Issue: issue().QualifiedRef}
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/kata/context", nil, contextRequest)
 	require.Equal(t, 200, resp.StatusCode, body)
 	require.Contains(t, body, `"state":"available"`)
-	request.Title, request.IdempotencyKey, request.Issue = "", "", "abcd"
+	request.Title, request.IdempotencyKey, request.Issue = "", "", issue().QualifiedRef
 	request.Selector.StartRune, request.Selector.EndRune, request.Selector.Quote = 0, 5, "hello"
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
 	require.Equal(t, 200, resp.StatusCode, body)
-	require.Len(t, issue.Comments, 1)
+	require.Len(t, issue().Comments, 1)
 	data := []byte("changed document")
 	replacement, response := sendContentReplacement(t, ts.URL, ts.Client(), node.ID, node.Revision, data, uploadIdentity(data), int64(len(data)), "text/plain")
 	require.Equal(t, 200, replacement.StatusCode, string(response))
@@ -159,14 +119,14 @@ func TestKataHTTPRoutesOutlastFiveSecondBodyReadTimeout(t *testing.T) {
 	tests := []struct {
 		name         string
 		delayRequest func(*http.Request) bool
-		request      func(*testing.T, *httptest.Server, *testStore) (*http.Response, string)
+		request      func(*testing.T, *httptest.Server, *testStore, string) (*http.Response, string)
 	}{
 		{
 			name: "cite",
 			delayRequest: func(r *http.Request) bool {
-				return r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects/1/issues"
+				return r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues")
 			},
-			request: func(t *testing.T, ts *httptest.Server, s *testStore) (*http.Response, string) {
+			request: func(t *testing.T, ts *httptest.Server, s *testStore, _ string) (*http.Response, string) {
 				t.Helper()
 				node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
 				request := kataevidence.CiteRequest{
@@ -179,24 +139,25 @@ func TestKataHTTPRoutesOutlastFiveSecondBodyReadTimeout(t *testing.T) {
 		{
 			name: "context",
 			delayRequest: func(r *http.Request) bool {
-				return r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/1/issues/abcd"
+				return r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/")
 			},
-			request: func(t *testing.T, ts *httptest.Server, _ *testStore) (*http.Response, string) {
+			request: func(t *testing.T, ts *httptest.Server, _ *testStore, ref string) (*http.Response, string) {
 				t.Helper()
-				return do(t, ts, http.MethodPost, "/api/v1/kata/context", nil, kataevidence.ContextRequest{Issue: "abcd"})
+				return do(t, ts, http.MethodPost, "/api/v1/kata/context", nil, kataevidence.ContextRequest{Issue: ref})
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kata, _ := fakeKataForDocbankWithDelay(t, tt.delayRequest)
+			kata, issue := realKataForDocbankWithDelay(t, tt.delayRequest)
 			t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 			ts, s := newTestServer(t, func(d *api.Deps) {
 				d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata.URL, APIKeyEnv: "DKE_API_KATA_KEY"}
 			})
 
+			ref := issue().QualifiedRef
 			started := time.Now()
-			response, body := tt.request(t, ts, s)
+			response, body := tt.request(t, ts, s, ref)
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
 			require.GreaterOrEqual(t, time.Since(started), 6*time.Second)
 		})
@@ -204,7 +165,7 @@ func TestKataHTTPRoutesOutlastFiveSecondBodyReadTimeout(t *testing.T) {
 }
 
 func TestKataHTTPOriginalPreparationFailuresAreNotRetryable(t *testing.T) {
-	kata, _ := fakeKataForDocbank(t)
+	kata, _ := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata.URL, APIKeyEnv: "DKE_API_KATA_KEY"}
@@ -246,7 +207,7 @@ func TestKataHTTPOriginalPreparationFailuresAreNotRetryable(t *testing.T) {
 }
 
 func TestKataHTTPRejectsMismatchedQuoteBeforeKataWrite(t *testing.T) {
-	kata, issue := fakeKataForDocbank(t)
+	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata.URL, APIKeyEnv: "DKE_API_KATA_KEY"}
@@ -255,11 +216,11 @@ func TestKataHTTPRejectsMismatchedQuoteBeforeKataWrite(t *testing.T) {
 	request := kataevidence.CiteRequest{Title: "Follow up", IdempotencyKey: "test", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5, Quote: "other"}}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
 	require.Equal(t, 409, resp.StatusCode, body)
-	require.Empty(t, issue.Body)
+	require.Empty(t, issue().Body)
 }
 
 func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
-	kata, issue := fakeKataForDocbank(t)
+	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	f := newCitationHTTPFixture(t, api.NewOperationGate())
 	cfg := config.Default()
@@ -274,9 +235,9 @@ func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
 	r := kataevidence.CiteRequest{Title: "Transcript follow-up", IdempotencyKey: "rendition-1", Selector: kataevidence.Selector{NodeID: f.citation.NodeID, StartRune: f.citation.Start, EndRune: f.citation.End, Citation: &f.citation}}
 	got, err := c.CiteKataEvidence(t.Context(), r)
 	require.NoError(t, err)
-	require.Equal(t, "docbank#abcd", got.QualifiedRef)
-	require.Contains(t, issue.Body, "> Verified alpha")
-	page, err := c.KataContext(t.Context(), kataevidence.ContextRequest{Issue: "abcd"})
+	require.Equal(t, issue().QualifiedRef, got.QualifiedRef)
+	require.Contains(t, issue().Body, "> Verified alpha")
+	page, err := c.KataContext(t.Context(), kataevidence.ContextRequest{Issue: issue().QualifiedRef})
 	require.NoError(t, err)
 	require.Len(t, page.Passages, 1)
 	require.Equal(t, "available", page.Passages[0].State)
@@ -288,13 +249,13 @@ func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
 	require.NoError(t, err)
 	response, body := sendContentReplacement(t, ts.URL, client, node.ID, node.Revision, data, uploadIdentity(data), int64(len(data)), "text/plain")
 	require.Equal(t, 200, response.StatusCode, string(body))
-	page, err = c.KataContext(t.Context(), kataevidence.ContextRequest{Issue: "abcd"})
+	page, err = c.KataContext(t.Context(), kataevidence.ContextRequest{Issue: issue().QualifiedRef})
 	require.NoError(t, err)
 	require.Equal(t, "changed", page.Passages[0].State)
 }
 
 func TestKataHTTPPathCreateReplaysAfterSourceDisappears(t *testing.T) {
-	kata, issue := fakeKataForDocbank(t)
+	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata.URL, APIKeyEnv: "DKE_API_KATA_KEY"}
@@ -303,16 +264,16 @@ func TestKataHTTPPathCreateReplaysAfterSourceDisappears(t *testing.T) {
 	request := map[string]any{"title": "Follow up", "idempotency_key": "path-replay", "selector": map[string]any{"path": "/notes.txt", "start_rune": 0, "end_rune": 5, "quote": "hello"}}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
 	require.Equal(t, 200, response.StatusCode, body)
-	original := issue.Body
+	original := issue().Body
 	response, body = do(t, ts, http.MethodPost, "/api/v1/nodes/"+strconv.FormatInt(node.ID, 10)+"/trash", map[string]string{"If-Match": `"1"`}, nil)
 	require.Equal(t, 200, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
 	require.Equal(t, 200, response.StatusCode, body)
-	require.Equal(t, original, issue.Body)
+	require.Equal(t, original, issue().Body)
 }
 
 func TestKataHTTPJSONOriginalWithCharset(t *testing.T) {
-	kata, issue := fakeKataForDocbank(t)
+	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata.URL, APIKeyEnv: "DKE_API_KATA_KEY"}
@@ -324,5 +285,5 @@ func TestKataHTTPJSONOriginalWithCharset(t *testing.T) {
 	request := kataevidence.CiteRequest{Title: "Review JSON", IdempotencyKey: "json-1", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: len(data)}}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.Equal(t, "Evidence: notes.json\n\n> {\"note\":\"hello\"}\n", issue.Body)
+	require.Equal(t, "Evidence: notes.json\n\n> {\"note\":\"hello\"}\n", issue().Body)
 }
