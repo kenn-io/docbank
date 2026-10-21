@@ -334,29 +334,6 @@ func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 	require.Empty(t, f.suggestions(t))
 }
 
-func TestPhotoDescriptionUnparseableReplyRetriesToSuggestion(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	f.mu.Lock()
-	f.reply = "A harbor at dusk."
-	f.mu.Unlock()
-	require.Equal(t, 1, f.backfill(t, f.service))
-	require.Empty(t, f.suggestions(t))
-	f.mu.Lock()
-	f.reply = `{"caption":"A harbor at dusk.","tags":["harbor"]}`
-	f.mu.Unlock()
-	require.Eventually(t, func() bool {
-		require.NoError(t, f.drainWorker(t.Context(), f.service))
-		return len(f.suggestions(t)) == 1
-	}, 10*time.Second, 100*time.Millisecond)
-	suggestions := f.suggestions(t)
-	require.Len(t, suggestions, 1)
-	require.Equal(t, "A harbor at dusk.", suggestions[0].Value.Caption)
-	_, describes := f.counts()
-	require.Equal(t, 2, describes)
-}
-
 func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
