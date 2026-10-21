@@ -380,7 +380,10 @@
     };
   });
   let alive = true;
-  onDestroy(() => (alive = false));
+  onDestroy(() => {
+    alive = false;
+    detailController?.abort();
+  });
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
   let renaming = $state(false);
   let renameAlbum = $state<PhotoAlbumItem>();

@@ -4092,6 +4092,7 @@ it.each([false, true])(
     const reads = lookup.mock.calls.length;
     const pass = photoEventPass()(idFreeChange).catch(() => undefined);
     await waitFor(() => expect(finish).toBeDefined());
+    expect(lookup.mock.calls.length).toBe(reads);
     await act(async () => {
       finish(
         fails

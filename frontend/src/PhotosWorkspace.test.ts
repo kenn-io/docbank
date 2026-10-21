@@ -3115,6 +3115,35 @@ it("reads the open photo again on a live change and conceals its cached image on
   photos.dispose();
 });
 
+it("ignores a live detail response after leaving and returning to Photos", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(photo(1));
+  const view = viewerWithCachedImage(photos, lookup);
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  let finish!: (row: PhotoBrowseRow) => void;
+  lookup.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  const changing = photos.changed(photoChange("photo-1"));
+  await waitFor(() => expect(finish).toBeDefined());
+  view.unmount();
+  stubPhotoFetch(async () =>
+    Response.json({ items: [{ ...photo(1), name: "Fresh.jpg" }], total: 1 }),
+  );
+  await act(() => photos.refresh());
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: "",
+  });
+  await screen.findByRole("button", { name: "Open Fresh.jpg" });
+  await act(async () => {
+    finish({ ...photo(1), name: "Older.jpg" });
+    await changing;
+  });
+  expect(screen.getByRole("button", { name: "Open Fresh.jpg" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Open Older.jpg" })).toBeNull();
+  photos.dispose();
+});
+
 it.each([
   { older: "foreground", outcome: "answers", newer: "live read" },
   { older: "foreground", outcome: "fails with 404", newer: "live read" },
