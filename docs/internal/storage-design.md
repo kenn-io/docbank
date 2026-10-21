@@ -471,6 +471,46 @@ Matching still requires a live file, a compatible photo role, and unsuperseded
 provenance. Matching edited files become new content versions on their existing nodes. A node shared with another active source path keeps its content;
 an edit from one path becomes a separate file.
 
+While a live photo stream is open, every storage write passes through the capture
+the writer connection arms with temp triggers, which the last subscriber removes.
+Photo imports pay it, and so do writes that touch no photo. Run
+`BenchmarkPhotoImportMetadata` (its `subscriber=true` cases) and
+`BenchmarkNonPhotoIngest` with `-benchtime=1x`, with and without CGo, for current
+figures.
+
+The first write after a subscriber arrives also installs the triggers, which
+the per-file figures amortize across a batch. With no subscriber the first
+write drops them and imports run at the unsubscribed speed.
+
+Live refresh rereads the complete loaded prefix because a change can insert,
+remove, or reorder photos anywhere in it. Library uses 250-photo pages, so a
+loaded prefix of N photos takes at most max(1, ceil(N / 250)) list requests per
+pass. Map uses 1,000-photo pages and caps its prefix at 20,000 photos. Each tab
+runs one pass at a time; changes during a pass queue one further pass. The next
+pass waits at least one second or twice the previous pass's duration, whichever
+is longer. Each pass and its required rest spend at most one third of their
+combined time refreshing, including the other workspace reads in the pass.
+
+Reproduce the browser measurement with
+`DOCBANK_PHOTO_IMPORT_MEASURE=1 make photo-tabs-browser-test`; it writes
+`bin/photo-tabs-proof/photo-import-refresh.json` unless the capture directory is
+overridden. The probe imports 10,000 synthetic camera files beside 1,000 seeded
+photos in one Chromium tab. The incoming files have 2020 modified times, before
+the seeded photos' 2022 capture times, so the loaded prefix stays at 1,000 rows.
+The probe measures the list request chain, excluding the pass's other workspace
+reads and image decoding.
+
+The scheduler bounds concurrent work and the rest between passes. Total
+transfer still grows with the loaded prefix and the number of passes. Keep
+full-prefix refresh: this append-only fixture doesn't establish a safe shortcut
+for changes that reorder the prefix.
+
+Capture a table when its writes can change a Photos list, viewer, or metadata
+read. A photo or file key alone doesn't make a table a dependency. Audit and
+export state, document-only metadata, work queues, and scheduling caches stay
+outside capture. Receipt and binding tables written with a captured authority
+row need no separate trigger.
+
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited
 display in one transaction, including excluded and empty assets, while asset

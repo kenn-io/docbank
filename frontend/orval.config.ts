@@ -2,7 +2,10 @@ import { defineConfig } from "orval";
 
 export default defineConfig({
   docbank: {
-    input: "../internal/api/openapi.yaml",
+    input: {
+      target: "../internal/api/openapi.yaml",
+      filters: { mode: "exclude", tags: ["Photo events"], includeUnreferencedSchemas: true },
+    },
     output: {
       target: "src/generated/docbank.ts",
       client: "fetch",

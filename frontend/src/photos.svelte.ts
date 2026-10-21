@@ -27,6 +27,7 @@ import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
+import { settleReads, type PhotoChange } from "./photoEvents.js";
 import { randomUUID } from "./crypto.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import {
@@ -239,7 +240,7 @@ export class Photos {
       /* Keep the current view usable without storage. */
     }
   }
-  async recoverSmartSet() {
+  async recoverSmartSet(rethrow = false) {
     if (this.hidden || this.withoutCounts) return;
     const storageKey = smartSetStorageKey(this.session);
     let id = this.smartSet?.id;
@@ -285,7 +286,7 @@ export class Photos {
         } catch {
           /* The missing definition stays unavailable in this view. */
         }
-      } else if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      } else if (!this.authFailure(cause) && rethrow) throw cause;
     }
   }
   openSmartSet(saved: SavedQuery) {
@@ -365,7 +366,21 @@ export class Photos {
       this.total > this.items.length
     );
   }
-  loading = $state(false);
+  #loading = $state(false);
+  private idle: (() => void)[] = [];
+  get loading() {
+    return this.#loading;
+  }
+  set loading(value: boolean) {
+    this.#loading = value;
+    if (!value) for (const resolve of this.idle.splice(0)) resolve();
+  }
+  /** A live refresh of a list that stays usable: edits and navigation do not wait for it. */
+  backgroundRefresh = $state(false);
+  /** Loading that blocks controls, which a background refresh does not. */
+  get blocking() {
+    return this.loading && !this.backgroundRefresh;
+  }
   trashing = $state(false);
   rejects = $state<PhotoRejectsPreflight>();
   rejectsLoading = $state(false);
@@ -411,7 +426,7 @@ export class Photos {
   private readonly withoutCounts: boolean;
 
   readonly projection?: "map" | undefined;
-  private readonly hiddenAccess?: HiddenAccess | undefined;
+  readonly hiddenAccess?: HiddenAccess | undefined;
   constructor(
     readonly session: string,
     readonly onauthfailure: (cause: unknown) => void,
@@ -459,12 +474,13 @@ export class Photos {
   async moveGroup(
     ids: string[],
     direction: -1 | 1,
+    preserve?: () => (() => Promise<void>) | undefined,
   ): Promise<
     | { status: "moved"; ids: string[] }
     | { status: "boundary" }
     | { status: "failed"; error: string }
   > {
-    if (this.disposed || this.loading) return { status: "boundary" };
+    if (this.disposed || this.blocking) return { status: "boundary" };
     const missingMember =
       "A compared photo is no longer in this query. Exit compare and select photos again.";
     while (!this.disposed) {
@@ -476,7 +492,7 @@ export class Photos {
           return { status: "moved", ids: positions.map((index) => order[index + direction]!) };
       }
       if (this.error) {
-        await this.retry();
+        await this.retry(preserve);
         if (this.error) return { status: "failed", error: this.error };
         continue;
       }
@@ -487,8 +503,13 @@ export class Photos {
               error: missingMember,
             }
           : { status: "boundary" };
+      // A live replacement in flight settles first, so its continuation is the one to load.
+      if (this.loading) {
+        await new Promise<void>((resolve) => this.idle.push(resolve));
+        continue;
+      }
       const cursor = this.cursor;
-      await this.loadMore();
+      await this.loadMore(preserve);
       if (this.error) return { status: "failed", error: this.error };
       if (this.cursor === cursor && this.items.length === order.length)
         return {
@@ -915,6 +936,7 @@ export class Photos {
     this.authored.validating = false;
     this.staged = undefined;
     this.loading = false;
+    this.backgroundRefresh = false;
     this.timelineController.abort();
     this.timelineLoading = false;
     this.cancelRejects();
@@ -1006,15 +1028,33 @@ export class Photos {
     );
   }
 
-  refresh(preserve?: () => (() => Promise<void>) | undefined) {
+  private readers = new Set<(change: PhotoChange) => Promise<unknown> | undefined>();
+  /** Registers a view of single photos that revalidates what it shows after a live change. */
+  watch(reader: (change: PhotoChange) => Promise<unknown> | undefined) {
+    this.readers.add(reader);
+    return () => void this.readers.delete(reader);
+  }
+  changed(change: PhotoChange) {
+    return settleReads([...this.readers].map((reader) => reader(change)));
+  }
+
+  async refresh(preserve?: () => (() => Promise<void>) | undefined, live = false) {
     this.timelineController.abort();
-    this.timeline = undefined;
+    // A live refresh keeps the timeline on screen until its replacement arrives.
+    if (!live) this.timeline = undefined;
     this.timelineError = "";
     this.timelineLoading = false;
-    if (this.view === "timeline") void this.loadTimeline();
-    return this.replacement === "date"
-      ? this.replace("date", undefined, this.replacementDate)
-      : this.replace("refresh", preserve);
+    const timeline = this.view === "timeline" ? this.loadTimeline() : undefined;
+    const done = await (this.replacement === "date"
+      ? this.replace("date", undefined, this.replacementDate, false, live)
+      : this.replace("refresh", preserve, undefined, live && this.resumeStaged, live));
+    if (!live) return done;
+    // Live refreshes report failure, of the list or the reads that follow it, so the watcher tries again.
+    await Promise.all([timeline, this.facetsRead]);
+    const failure =
+      (!done && this.error) || this.timelineError || (this.facetsRetryable && this.facetsError);
+    if (failure) throw new Error(failure);
+    return done;
   }
 
   setView(view: "grid" | "timeline") {
@@ -1063,34 +1103,45 @@ export class Photos {
         filters: query.filters?.gps_bounds ? { gps_bounds: query.filters.gps_bounds } : {},
       };
     const eligible = new Set(ids);
-    const absent = [
-      ...new Set([
-        ...this.trashTargets
-          .filter((row) => this.selection.selectedIDs.has(row.asset_id))
-          .map((row) => row.asset_id),
-        ...this.authored.targets.map((target) => target.asset_id),
-      ]),
-    ].filter((id) => !eligible.has(id));
-    const rows = await lookupPhotoRows<PhotoRow>(
-      this.session,
-      absent,
-      signal,
-      this.hidden,
-      (asset_ids, signal) =>
-        this.page(
-          { ...query, filters: { ...query.filters, asset_ids } },
-          AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-        ),
-    );
-    for (const row of rows) eligible.add(row.asset_id);
-    return eligible;
+    const checked = new Set(eligible);
+    const rows: PhotoRow[] = [];
+    // Selection stays usable while a live refresh checks displaced photos.
+    // Recheck its current inputs after each lookup before reconciling them.
+    while (true) {
+      const absent = [
+        ...new Set([
+          ...(this.allResults ? [] : this.selection.selectedIDs),
+          ...this.trashTargets
+            .filter((row) => this.selection.selectedIDs.has(row.asset_id))
+            .map((row) => row.asset_id),
+          ...this.authored.targets.map((target) => target.asset_id),
+        ]),
+      ].filter((id) => !checked.has(id));
+      if (!absent.length) break;
+      const found = await lookupPhotoRows<PhotoRow>(
+        this.session,
+        absent,
+        signal,
+        this.hidden,
+        (asset_ids, signal) =>
+          this.page(
+            { ...query, filters: { ...query.filters, asset_ids } },
+            AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+          ),
+      );
+      signal.throwIfAborted();
+      for (const id of absent) checked.add(id);
+      for (const row of found) eligible.add(row.asset_id);
+      rows.push(...found);
+    }
+    return { eligible, rows };
   }
 
   async revalidateAuthored(valid: () => boolean): Promise<boolean> {
     const controller = this.controller;
     this.authored.validating = true;
     try {
-      const eligible = await this.eligibleSelection([], this.query, controller.signal);
+      const { eligible } = await this.eligibleSelection([], this.query, controller.signal);
       if (controller.signal.aborted || this.disposed || !valid()) return false;
       if (this.authored.targets.length) {
         this.captureSelection();
@@ -1216,9 +1267,11 @@ export class Photos {
     preserve?: () => (() => Promise<void>) | undefined,
     date?: string,
     resume = false,
+    live = false,
   ) {
     if (this.disposed) return false;
-    this.authored.conceal();
+    // A live refresh leaves metadata editing usable; revalidate drops targets that left.
+    if (!live) this.authored.conceal();
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();
@@ -1227,6 +1280,7 @@ export class Photos {
     let signal = controller.signal;
     this.replacement = mode;
     this.replacementDate = date;
+    this.backgroundRefresh = live;
     const query = mode === "date" ? captureDateQuery(this.baseQuery, date) : this.query;
     this.loading = true;
     this.error = "";
@@ -1279,9 +1333,9 @@ export class Photos {
           (!this.projection &&
             (mode === "date" || (reachedPrefix && (mode === "refresh" || reachedPreviously))));
       }
-      const eligible =
+      const { eligible, rows } =
         mode === "date"
-          ? new Set(candidate.keys())
+          ? { eligible: new Set(candidate.keys()), rows: [] }
           : await this.eligibleSelection(candidate.keys(), query, controller.signal);
       if (controller.signal.aborted) return false;
       const restore = mode === "date" ? undefined : preserve?.();
@@ -1311,9 +1365,10 @@ export class Photos {
               : reconcileIDSelection(this.selection, eligible);
         if (!this.authored.targets.length && !this.selection.selectedIDs.size)
           this.allResults = false;
-        this.trashTargets = this.trashTargets.filter(
-          (item) => eligible.has(item.asset_id) && this.selectedIDs.has(item.asset_id),
-        );
+        // Selected photos beyond the window keep acting on the revisions just read.
+        this.trashTargets = [
+          ...new Map([...this.trashTargets, ...rows].map((row) => [row.asset_id, row])).values(),
+        ].filter((item) => eligible.has(item.asset_id) && this.selectedIDs.has(item.asset_id));
       }
       this.expired = false;
       this.replacement = undefined;
@@ -1321,7 +1376,7 @@ export class Photos {
       await restore?.();
       if (!controller.signal.aborted) {
         this.needsFacets = true;
-        void this.retryFacets();
+        this.facetsRead = this.retryFacets();
       }
       return !controller.signal.aborted;
     } catch (cause) {
@@ -1342,6 +1397,7 @@ export class Photos {
     } finally {
       if (this.controller === controller) {
         this.loading = false;
+        this.backgroundRefresh = false;
         this.authored.validating = false;
       }
     }
@@ -1437,6 +1493,10 @@ export class Photos {
     }
     return this.retryFacets();
   }
+
+  private facetsRead?: Promise<void>;
+  /** A live pass that only retries a failed one may keep the pages it already staged. */
+  resumeStaged = false;
 
   toggleFilters() {
     this.filtersOpen = !this.filtersOpen;

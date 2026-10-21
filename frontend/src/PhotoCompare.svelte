@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { affectsPhoto, type PhotoChange } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { Button, Modal } from "@kenn-io/kit-ui";
@@ -28,43 +29,53 @@
   onMount(() => {
     void restoreFocus();
   });
-  $effect(() => {
-    const members = target;
-    const controller = new AbortController();
+  let reading: AbortController | undefined;
+  async function load(members: string[], live = false) {
+    reading?.abort();
+    const controller = (reading = new AbortController());
     errors = [];
     loading = true;
-    void photos
-      .lookupMany(members, controller.signal)
-      .then((values) => {
-        if (!controller.signal.aborted) {
-          selected = members;
-          rows = values;
-          unavailable = members.length - values.length;
-          if (
-            members.some((id, index) => id !== photos.compareIDs[index]) ||
-            members.length !== photos.compareIDs.length
-          ) {
-            photos.compareView = { ...fittedPhotoView };
-            photos.compareCrop = undefined;
-          }
-          photos.compareIDs = members;
-          void restoreFocus();
-        }
-      })
-      .catch((cause) => {
-        if (!controller.signal.aborted)
-          errors = [cause instanceof Error ? cause.message : String(cause)];
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          loading = false;
-          moving = false;
-        }
-      });
-    return () => controller.abort();
+    try {
+      const values = await photos.lookupMany(members, controller.signal);
+      if (controller.signal.aborted) return;
+      selected = members;
+      rows = values;
+      unavailable = members.length - values.length;
+      if (
+        members.some((id, index) => id !== photos.compareIDs[index]) ||
+        members.length !== photos.compareIDs.length
+      ) {
+        photos.compareView = { ...fittedPhotoView };
+        photos.compareCrop = undefined;
+      }
+      photos.compareIDs = members;
+      if (!live) void restoreFocus();
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      errors = [cause instanceof Error ? cause.message : String(cause)];
+      throw cause;
+    } finally {
+      if (!controller.signal.aborted) {
+        loading = false;
+        moving = false;
+      }
+    }
+  }
+  $effect(() => {
+    const members = target;
+    untrack(() => void load(members).catch(() => {}));
+    return () => reading?.abort();
   });
+  // A live change reads the shown photos again, and the destination of a move in flight.
+  $effect(() =>
+    photos.watch((change: PhotoChange) =>
+      [...selected, ...target].some((id) => affectsPhoto(change, id))
+        ? load(target, true)
+        : undefined,
+    ),
+  );
   async function move(direction: -1 | 1) {
-    if (moving || photos.loading) return;
+    if (moving || photos.blocking) return;
     moving = true;
     navigationError = "";
     const result = await photos.moveGroup(selected, direction);
@@ -132,12 +143,12 @@
           >Compare {rows.length} photos</strong
         ><span>Zoom and navigation are linked</span><Button
           size="sm"
-          disabled={moving || photos.loading}
+          disabled={moving || photos.blocking}
           onclick={() => void move(-1)}>Previous</Button
         ><Button
           size="sm"
           disabled={moving ||
-            photos.loading ||
+            photos.blocking ||
             (!photos.cursor && selected.some((id) => id === photos.items.at(-1)?.asset_id))}
           onclick={() => void move(1)}>Next</Button
         ><Button
@@ -161,7 +172,7 @@
       {#if navigationError}<p role="alert">
           {navigationError}<Button
             size="sm"
-            disabled={moving || photos.loading}
+            disabled={moving || photos.blocking}
             onclick={() => void move(retryDirection)}
             >Retry {retryDirection > 0 ? "next" : "previous"} photo</Button
           >

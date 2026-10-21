@@ -38,7 +38,12 @@
   let current = $state.raw(untrack(() => photo));
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
   let reloadRevision = $state(0);
-  const identity = $derived(`${current.asset_id}:${current.content_version_id}`);
+  // A preview published for the same content version also starts a new load.
+  const identity = $derived(
+    [current.asset_id, current.content_version_id]
+      .concat(Object.values(current.previews).map((slot) => `${slot.state}${slot.generation_id}`))
+      .join(":"),
+  );
   $effect(() => {
     current = photo;
   });

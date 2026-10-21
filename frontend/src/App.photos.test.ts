@@ -1,7 +1,8 @@
 import { File as NodeFile } from "node:buffer";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
+  idFreeChange,
   photoMetadataResponse,
   preparedPhoto,
   photo,
@@ -11,6 +12,7 @@ import {
   savedSmartSet,
   storage,
 } from "./photo-test-fixtures.js";
+import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
@@ -38,6 +40,10 @@ vi.mock("./photoImportStorage.js", async (importOriginal) => ({
     },
   }),
 }));
+
+beforeEach(() => {
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue({ stop() {}, reconnect() {} });
+});
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => {
@@ -2464,7 +2470,9 @@ it.each([undefined, "first"])(
           return Response.json([{ ...album, included_count: changed ? 0 : 1 }]);
         }
         if (url.endsWith("/photos/assets/query")) {
-          expect(JSON.parse(init.body as string).query.filters.set_ids).toEqual([album.id]);
+          const { filters } = JSON.parse(init.body as string).query;
+          // The selection's eligibility lookup ignores the album.
+          if (!filters.asset_ids) expect(filters.set_ids).toEqual([album.id]);
           return Response.json({ items: changed ? [] : [photo(1)], total: changed ? 0 : 1 });
         }
         return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
@@ -3994,4 +4002,180 @@ it("closes Hidden setup and reports an expired session after a 401 save", async 
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
   expect(hidden.size).toBe(0);
+});
+
+function photoEventPass() {
+  const pass = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.at(-1)?.[1];
+  if (!pass) throw new Error("The event watcher has not started");
+  return pass;
+}
+const livePhotoStubs = () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  storage();
+};
+
+it("reaches the first page when a change arrives before it lands, then refreshes the rest", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  let finishFirstPage!: (response: Response) => void;
+  let firstPage: AbortSignal | undefined;
+  const requests = { lists: 0, tags: 0 };
+  stubPhotoFetch(
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (
+        url.endsWith("/photos/assets/query") &&
+        !JSON.parse(String(init.body)).query.filters?.asset_ids
+      ) {
+        if (++requests.lists === 1) {
+          firstPage = init.signal ?? undefined;
+          return new Promise<Response>((resolve) => (finishFirstPage = resolve));
+        }
+        return Response.json({ items: [photo(1), photo(2)], total: 2 });
+      }
+      if (url.includes("/tags")) requests.tags++;
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  render(App);
+  await waitFor(() => expect(finishFirstPage).toBeDefined());
+  // Changes keep arriving while an import runs: the pass waits instead of aborting the page.
+  expect(await photoEventPass()({ ids: new Set(), idFree: true })).toBe(false);
+  expect(await photoEventPass()({ ids: new Set(["photo-1"]), idFree: false })).toBe(false);
+  expect(firstPage?.aborted).toBe(false);
+  expect(requests.lists).toBe(1);
+  finishFirstPage(Response.json({ items: [photo(1)], total: 1 }));
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  // A change that names photos reloads the list; only an ID-free one reloads definitions.
+  const tags = requests.tags;
+  await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false });
+  await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
+  expect(requests.lists).toBe(2);
+  expect(requests.tags).toBe(tags);
+  await photoEventPass()({ ids: new Set(), idFree: true });
+  expect(requests.lists).toBe(3);
+  expect(requests.tags).toBeGreaterThan(tags);
+});
+
+it("reconnects the event stream when the Hidden unlock changes", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const reconnect = vi.fn();
+  vi.mocked(photoEvents.watchPhotoEvents).mockReturnValue({ stop() {}, reconnect });
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay !== 2000) return interval(callback, delay, ...args);
+    poll = callback as () => void;
+    return 0 as unknown as ReturnType<typeof setInterval>;
+  });
+  let expires: string | undefined = undefined;
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/hidden"))
+        return Response.json({ configured: true, change_id: "first", expires_at: expires });
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [photo(1)], total: 1 });
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  poll();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(reconnect).not.toHaveBeenCalled();
+  expires = "2099-01-01T00:00:00Z";
+  poll();
+  await waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
+  poll();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(reconnect).toHaveBeenCalledOnce();
+});
+
+it("clears the live update alert once the event stream opens again", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [photo(1)], total: 1 });
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const [, , failed, opened] = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.at(-1)!;
+  // One dropped connection retries on its own, so only a second failure in a row shows.
+  await act(() => failed(new Error("Failed to fetch")));
+  expect(screen.queryByText("Failed to fetch")).toBeNull();
+  await act(() => failed(new Error("Failed to fetch")));
+  await screen.findByText("Failed to fetch");
+  await act(() => opened!());
+  expect(screen.queryByText("Failed to fetch")).toBeNull();
+  await act(() => failed(new Error("Failed to fetch")));
+  expect(screen.queryByText("Failed to fetch")).toBeNull();
+});
+
+it.each([
+  ["album list", "/photos/albums"],
+  ["tag catalog", "/tags"],
+])(
+  "fails a live pass when the %s refresh fails, so the watcher retries it",
+  async (_name, path) => {
+    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+    livePhotoStubs();
+    let failing = false;
+    stubPhotoFetch(
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+        if (failing && new URL(url, "https://example.test").pathname.endsWith(path))
+          return Response.json({ detail: "Down" }, { status: 503 });
+        if (url.endsWith("/photos/assets/query"))
+          return Response.json({ items: [photo(1)], total: 1 });
+        if (url.endsWith("/photos/albums")) return Response.json([]);
+        return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+      }),
+    );
+    render(App);
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    failing = true;
+    await expect(photoEventPass()(idFreeChange)).rejects.toThrow("Down");
+    failing = false;
+    await expect(photoEventPass()(idFreeChange)).resolves.toBeUndefined();
+  },
+);
+
+it("lets a list keep its staged pages only on a pass that retries a failed one", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [photo(1)], total: 1 });
+      return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  const seen: boolean[] = [];
+  const refresh = Photos.prototype.refresh;
+  vi.spyOn(Photos.prototype, "refresh").mockImplementation(function (this: Photos, ...args) {
+    if (args[1]) seen.push(this.resumeStaged);
+    return refresh.apply(this, args);
+  });
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: true });
+  await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: false });
+  expect(seen).toEqual([true, false]);
 });

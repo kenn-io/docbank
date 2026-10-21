@@ -7,6 +7,8 @@
   import { reportAction } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
+  import { APIError } from "./api-transport.js";
+  import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import {
@@ -200,7 +202,8 @@
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
-  const actionDisabled = $derived(photos.loading || photos.hiding || photos.trashing);
+  // A live refresh never blocks edits: every write carries revisions the server checks.
+  const actionDisabled = $derived(photos.blocking || photos.hiding || photos.trashing);
   const narrow = new MediaQuery(MEDIA.compact);
   const cullDisabled = $derived(
     actionDisabled || !cull || cull.capturing || !vaultID || !photos.total,
@@ -243,6 +246,7 @@
     editor.tagsLoading = tagsLoading;
     editor.tagsTotal = tagsTotal;
   });
+  let changedDuringWrite: PhotoChange | undefined;
   async function metadataRefresh(
     receipt: PhotoAuthoredReceipt,
     tags: import("./generated/docbank.js").Tag[],
@@ -252,6 +256,10 @@
     if (refreshing) photos.cancelPending();
     const rotations = photos.metadataChanged(receipt);
     const displayFileID = editor.asset?.display_file_id ?? direct?.display_file_id;
+    if (photoID && receipt.after.some((target) => target.file_id === displayFileID)) {
+      detailController?.abort();
+      if (detailLoading) reload = { id: photoID };
+    }
     if (direct && rotations.has(direct.display_file_id))
       direct = { ...direct, rotation: rotations.get(direct.display_file_id)! };
     // A lookup that has not bound its display file yet may predate any rotation in this receipt.
@@ -263,7 +271,12 @@
       detailController?.abort();
       reload = { id: photoID };
     }
-    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) await refresh();
+    const change = changedDuringWrite;
+    if (change) {
+      await refresh(true);
+      if (photoID) await revalidateDetail(photoID);
+      if (changedDuringWrite === change) changedDuringWrite = undefined;
+    } else if (refreshing || (photos.started && photos.reloadsAfter(rotations))) await refresh();
   }
   function unavailable() {
     editor.unavailable(
@@ -420,6 +433,7 @@
   });
   $effect(() => {
     const id = photoID;
+    detailController?.abort();
     if (!id) {
       direct = undefined;
       detailError = "";
@@ -458,24 +472,17 @@
     void (photos.projection && explicit ? photos.reload(id, signal) : photos.lookup(id, signal))
       .then((photo) => {
         if (!signal.aborted) {
-          if (!photos.projection)
-            photos.items = photos.items.map((item) =>
-              item.asset_id === id
-                ? { ...photo, ...("stack" in item ? { stack: item.stack } : {}) }
-                : item,
-            );
-          direct = photo;
-          detailError = "";
+          const previewChanged = acceptDetail(id, photo);
           if (explicit) {
-            if (!photos.projection || photo.content_version_id === version) reloadRevision++;
+            if (!previewChanged && (!photos.projection || photo.content_version_id === version))
+              reloadRevision++;
             reloadedRow = untrack(() => listedRow);
             consumedReload = request;
           }
         }
       })
       .catch((cause) => {
-        if (!controller.signal.aborted)
-          detailError = cause instanceof Error ? cause.message : String(cause);
+        if (!controller.signal.aborted) rejectDetail(id, cause);
       })
       .finally(() => {
         if (!controller.signal.aborted) detailLoading = false;
@@ -485,6 +492,58 @@
       if (explicit) consumedReload = request;
     };
   });
+  function acceptDetail(id: string, photo: PhotoBrowseRow) {
+    // A detail read has no stack; the listed row keeps its own.
+    if (!photos.projection)
+      photos.items = photos.items.map((item) =>
+        item.asset_id === id
+          ? { ...photo, ...("stack" in item ? { stack: item.stack } : {}) }
+          : item,
+      );
+    const previewChanged = JSON.stringify(direct?.previews) !== JSON.stringify(photo.previews);
+    if (previewChanged) reloadRevision++;
+    direct = photo;
+    detailError = "";
+    return previewChanged;
+  }
+  function rejectDetail(id: string, cause: unknown) {
+    if (cause instanceof APIError && cause.status === 404) {
+      // The photo left this view: the viewer drops its cached image and says so.
+      direct = undefined;
+      photos.items = photos.items.filter((item) => item.asset_id !== id);
+    }
+    detailError = cause instanceof Error ? cause.message : String(cause);
+  }
+  // Reads the open photo again, since a change can affect it without moving its revision.
+  // It takes over from any detail read in flight, so an older answer never lands after it.
+  async function revalidateDetail(id: string) {
+    detailController?.abort();
+    const controller = (detailController = new AbortController());
+    try {
+      const photo = await photos.lookup(
+        id,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+      );
+      if (controller.signal.aborted) return;
+      acceptDetail(id, photo);
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      rejectDetail(id, cause);
+      if (!(cause instanceof APIError && cause.status === 404)) throw cause;
+    } finally {
+      if (!controller.signal.aborted) detailLoading = false;
+    }
+  }
+  $effect(() =>
+    photos.watch((change: PhotoChange) => {
+      if (editor.busy) changedDuringWrite = change;
+      return settleReads([
+        photoID && affectsPhoto(change, photoID) ? revalidateDetail(photoID) : undefined,
+        // The editor retains changes until the user clears a draft.
+        (photoID ? loupeMetadata : editing) ? editor.invalidate(change) : undefined,
+      ]);
+    }),
+  );
   async function restoreGrid() {
     const record = photos.viewerReturn!;
     await tick();
@@ -554,7 +613,10 @@
       direction === 1 &&
       index === ordered.length - 1
     ) {
-      await photos.loadMore(preserve);
+      const moved = await photos.moveGroup([id], direction, preserve);
+      if (controller.signal.aborted || photoID !== id) return;
+      if (moved.status === "moved") onphotochange(moved.ids[0]!, "step");
+      return;
     }
     if (controller.signal.aborted || photoID !== id) return;
     const currentIndex = ordered.findIndex((item) => item.asset_id === id);
@@ -574,8 +636,8 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
-  export function refresh() {
-    return photos.refresh(preserve);
+  export function refresh(live = false) {
+    return photos.refresh(preserve, live);
   }
   async function setHidden(id: string) {
     if (photos.hiding || photos.trashing) return;
@@ -1106,7 +1168,7 @@
                       }}>Move rejects</MenuItem
                     >
                     <MenuItem
-                      disabled={photos.loading ||
+                      disabled={photos.blocking ||
                         photos.total === 0 ||
                         photos.total > maxPhotoExportMembers}
                       onselect={() => exportPhotos()}
@@ -1225,7 +1287,7 @@
                       >{/if}
                   </div>{/if}
                 <FacetSidebar
-                  disabled={photos.loading || photos.hiding || photos.trashing}
+                  disabled={photos.blocking || photos.hiding || photos.trashing}
                   facets={photos.facets}
                   query={photos.baseQuery}
                   unit="photos"
@@ -1359,7 +1421,7 @@
               trashDisabled={!photos.selectedIDs.size ||
                 photos.trashing ||
                 photos.hiding ||
-                (!mapMode && (photos.loading || (photos.allResults && !editor.targets.length)))}
+                (!mapMode && (photos.blocking || (photos.allResults && !editor.targets.length)))}
             >
               {#snippet photoActions()}
                 {#if !mapMode && !photos.hidden}<Button

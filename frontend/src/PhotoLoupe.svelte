@@ -71,7 +71,7 @@
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);
   const next = $derived(
-    index >= 0 && (index < items.length - 1 || (canLoadMore && !photos.error && !photos.loading)),
+    index >= 0 && (index < items.length - 1 || (canLoadMore && !photos.error && !photos.blocking)),
   );
   const originalAllowed = $derived.by(() => {
     try {
@@ -215,7 +215,7 @@
   {#if (items.length || canLoadMore) && photos.error}<div class="loupe-error" role="alert">
       <span>{photos.error}</span><Button
         size="sm"
-        disabled={photos.loading}
+        disabled={photos.blocking}
         onclick={() => {
           dialog?.focus({ preventScroll: true });
           onretry();

@@ -54,7 +54,7 @@ export class PhotoAlbums {
     private onmemberschange?: (id?: string) => Promise<void>,
   ) {}
 
-  async load() {
+  async load(rethrow = false) {
     const request = ++this.generation;
     this.loading = true;
     try {
@@ -67,8 +67,10 @@ export class PhotoAlbums {
       this.loadError = "";
       return true;
     } catch (cause) {
-      if (!this.controller.signal.aborted && request === this.generation)
+      if (!this.controller.signal.aborted && request === this.generation) {
         this.loadError = this.failure(cause);
+        if (rethrow) throw cause;
+      }
     } finally {
       if (request === this.generation) this.loading = false;
     }

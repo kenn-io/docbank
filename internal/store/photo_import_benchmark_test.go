@@ -16,8 +16,9 @@ import (
 func BenchmarkPhotoImportMetadata(b *testing.B) {
 	const batch = 32
 	for _, existing := range []int{100, 10000} {
-		for _, edit := range []bool{false, true} {
-			b.Run(fmt.Sprintf("existing=%d/edit=%t", existing, edit), func(b *testing.B) {
+		for _, mode := range []struct{ edit, subscribed bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+			edit, subscribed := mode.edit, mode.subscribed
+			b.Run(fmt.Sprintf("existing=%d/edit=%t/subscriber=%t", existing, edit, subscribed), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					b.StopTimer()
@@ -57,6 +58,10 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 						}}}
 					}
 					require.NoError(b, s.Checkpoint(b.Context()))
+					stop := func() {}
+					if subscribed {
+						_, stop = s.SubscribePhotoEvents()
+					}
 					b.StartTimer()
 					for i, group := range groups {
 						result, err := s.IngestPhotoGroup(b.Context(), run, group)
@@ -71,6 +76,7 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 						}
 					}
 					b.StopTimer()
+					stop()
 					require.NoError(b, s.Close())
 					require.NoError(b, os.RemoveAll(dir))
 					b.StartTimer()
@@ -78,5 +84,42 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 				b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*batch), "ns/file")
 			})
 		}
+	}
+}
+
+// BenchmarkNonPhotoIngest measures the capture cost that document writes pay while a photo
+// stream is open, though none of their changes reach it.
+func BenchmarkNonPhotoIngest(b *testing.B) {
+	const files = 1000
+	for _, subscribed := range []bool{false, true} {
+		b.Run(fmt.Sprintf("subscriber=%t", subscribed), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				dir := b.TempDir()
+				s, err := Open(filepath.Join(dir, "docbank.db"))
+				require.NoError(b, err)
+				run, err := s.BeginIngest(b.Context(), "cli", "Synthetic documents")
+				require.NoError(b, err)
+				require.NoError(b, s.Checkpoint(b.Context()))
+				stop := func() {}
+				if subscribed {
+					_, stop = s.SubscribePhotoEvents()
+				}
+				b.StartTimer()
+				for i := range files {
+					name := fmt.Sprintf("note-%05d.txt", i)
+					_, _, err := s.IngestFile(b.Context(), run, s.RootID(), name,
+						fmt.Sprintf("%064x", i+1), 4, "text/plain", "/synthetic/"+name, "")
+					require.NoError(b, err)
+				}
+				b.StopTimer()
+				stop()
+				require.NoError(b, s.Close())
+				require.NoError(b, os.RemoveAll(dir))
+				b.StartTimer()
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*files), "ns/file")
+		})
 	}
 }

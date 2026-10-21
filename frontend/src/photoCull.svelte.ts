@@ -452,6 +452,7 @@ export class PhotoCull {
     this.flagRead?.abort();
     this.busy = true;
     this.checkingRemainder = remainder;
+    this.error = "";
     return (this.flagRead = new AbortController());
   }
   private finishFlagRead(controller: AbortController) {
@@ -464,12 +465,10 @@ export class PhotoCull {
   flagsChanged() {
     this.remainderPass = undefined;
   }
-  async checkRemainder() {
-    if (!this.run || !this.complete || this.stale) return;
-    const pass = this.run.checkpoint.pass;
-    if (this.remainderPass === pass) return;
+  async checkRemainder(rethrow = false) {
+    const pass = this.run?.checkpoint.pass;
+    if (!this.run || !this.complete || this.stale || this.remainderPass === pass) return;
     const controller = this.beginFlagRead(true);
-    this.error = "";
     this.remainder = false;
     this.remainderPass = undefined;
     try {
@@ -482,7 +481,9 @@ export class PhotoCull {
       this.remainder = this.matches("unflagged", flags).length > 0;
       this.remainderPass = pass;
     } catch (cause) {
-      if (!controller.signal.aborted) this.apiFailure(cause);
+      if (controller.signal.aborted) return;
+      this.apiFailure(cause);
+      if (rethrow) throw cause;
     } finally {
       this.finishFlagRead(controller);
     }
@@ -495,7 +496,6 @@ export class PhotoCull {
     const controller = this.beginFlagRead();
     this.changingPass = true;
     let changed = false;
-    this.error = "";
     try {
       if (
         !followUp &&

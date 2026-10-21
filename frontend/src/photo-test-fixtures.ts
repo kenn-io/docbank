@@ -8,6 +8,7 @@ import type {
   PhotoPreparedTarget,
   PhotoAuthoredPreparation,
 } from "./generated/docbank.js";
+import type { PhotoChange } from "./photoEvents.js";
 import type { Query } from "./query.js";
 import type { SavedQuery } from "./savedQueries.js";
 
@@ -240,3 +241,10 @@ export const photoSelectionFiles = () => [
   new File(["video"], "movie.MP4", { lastModified: photoSelectionLastModified }),
   new File(["text"], "notes.txt", { lastModified: photoSelectionLastModified }),
 ];
+
+/** A live change naming these photos, or an ID-free one when it names none. */
+export const photoChange = (...ids: string[]): PhotoChange => ({
+  ids: new Set(ids),
+  idFree: !ids.length,
+});
+export const idFreeChange = photoChange();

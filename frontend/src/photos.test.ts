@@ -83,6 +83,82 @@ it("moves compare backward locally after its next page fails, then retries that 
   photos.dispose();
 });
 
+it("waits for a live replacement at the page boundary, then loads its continuation", async () => {
+  const rows = [photo(1), photo(2), photo(3)];
+  let finish!: (response: Response) => void;
+  let first = true;
+  stubPhotoFetch(async (_url, init) => {
+    const cursor = JSON.parse(String(init.body)).cursor;
+    if (cursor === "after-refresh") return Response.json({ items: [photo(4)], total: 4 });
+    if (first) {
+      first = false;
+      return new Promise<Response>((resolve) => (finish = resolve));
+    }
+    return Response.json({ items: rows, total: 4 });
+  });
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows;
+  photos.started = true;
+  photos.cursor = "next";
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(finish).toBeDefined());
+  const moving = photos.moveGroup(["photo-2", "photo-3"], 1);
+  finish(Response.json({ items: rows, total: 4, next_cursor: "after-refresh" }));
+  await refreshing;
+  expect(await moving).toEqual({ status: "moved", ids: ["photo-3", "photo-4"] });
+  photos.dispose();
+});
+
+it.each(["timeline", "counts"])(
+  "fails a live refresh when its %s read fails, so the watcher retries it",
+  async (read) => {
+    let failing = false;
+    vi.spyOn(snapshots, "fetchPhotoTimeline").mockImplementation(async () => {
+      if (failing && read === "timeline") throw new Error("Timeline down");
+      return { facets: [] } as unknown as snapshots.PhotoTimelineCounts;
+    });
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) =>
+      failing && read === "counts" && JSON.parse(String(init.body)).facets?.length
+        ? Promise.resolve(Response.json({ detail: "Counts down" }, { status: 503 }))
+        : Promise.resolve(Response.json({ items: [photo(1)], total: 1, facets: [] })),
+    );
+    const photos = new Photos("scoped", vi.fn());
+    await photos.refresh();
+    photos.setView("timeline");
+    failing = true;
+    await expect(photos.refresh(undefined, true)).rejects.toThrow(/down/i);
+    failing = false;
+    await expect(photos.refresh(undefined, true)).resolves.toBe(true);
+    photos.dispose();
+  },
+);
+
+it("resumes a failed live refresh from its staged pages when nothing new has arrived", async () => {
+  const cursors: (string | undefined)[] = [];
+  let failNext = true;
+  stubPhotoFetch(async (_url, init) => {
+    const body = JSON.parse(String(init.body));
+    if (body.filters?.asset_ids || body.query?.filters?.asset_ids)
+      return Response.json({ items: [photo(1), photo(2), photo(3)], total: 3 });
+    cursors.push(body.cursor);
+    if (!body.cursor)
+      return Response.json({ items: [photo(1), photo(2)], total: 3, next_cursor: "p2" });
+    if (failNext) {
+      failNext = false;
+      return Response.json({ detail: "Down" }, { status: 503 });
+    }
+    return Response.json({ items: [photo(3)], total: 3 });
+  });
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2), photo(3)];
+  photos.started = true;
+  await expect(photos.refresh(undefined, true)).rejects.toThrow("Down");
+  photos.resumeStaged = true;
+  await expect(photos.refresh(undefined, true)).resolves.toBe(true);
+  expect(cursors).toEqual([undefined, "p2", "p2"]);
+  photos.dispose();
+});
+
 it.each(["replacement", "stalled continuation"])(
   "reports a missing compare member after %s",
   async (mode) => {
@@ -1210,7 +1286,8 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   photos.selectLoaded();
   fetcher
     .mockResolvedValueOnce(response([photo(1)], "more"))
-    .mockResolvedValueOnce(response([photo(6), photo(7), photo(8), photo(9)], "bounded"));
+    .mockResolvedValueOnce(response([photo(6), photo(7), photo(8), photo(9)], "bounded"))
+    .mockResolvedValueOnce(response([]));
   await photos.refresh();
   expect(photos.items.map((item) => item.asset_id)).toEqual([
     "photo-1",
@@ -1222,9 +1299,11 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   expect(photos.cursor).toBe("bounded");
   const boundedCalls = fetcher.mock.calls.length;
-  fetcher.mockResolvedValueOnce(response([photo(9)], "shortcut"));
+  fetcher
+    .mockResolvedValueOnce(response([photo(9)], "shortcut"))
+    .mockResolvedValueOnce(response([]));
   await photos.refresh();
-  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 1);
+  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 2);
   expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-9"]);
   expect(photos.cursor).toBe("shortcut");
   let finishReplacement!: (response: Response) => void;
@@ -1555,7 +1634,9 @@ it.each(
       expect([...photos.selection.selectedIDs]).toEqual(
         captured.slice(0, 64).map((item) => item.asset_id),
       );
-      expect(photos.trashTargets).toEqual(captured.slice(0, 64));
+      expect(photos.trashTargets).toEqual(
+        captured.slice(0, 64).map((item) => ({ ...item, revision: 7 })),
+      );
       await photos.setHidden(captured[0].asset_id);
       const writes = fetcher.mock.calls.filter(([url]) => !url.endsWith("/query"));
       expect(writes).toHaveLength(64);
@@ -1563,7 +1644,7 @@ it.each(
         `/api/v1/photos/assets/${captured[0].asset_id}/${hidden ? "unhide" : "hide"}`,
       );
       expect(
-        writes.every(([, options]) => new Headers(options.headers).get("If-Match") === "1"),
+        writes.every(([, options]) => new Headers(options.headers).get("If-Match") === "7"),
       ).toBe(true);
     } else {
       expect(photos.trashTargets).toEqual(captured);
@@ -2337,7 +2418,10 @@ it.each(["deselected anchor", "displaced selection"])(
       expect([...photos.selection.selectedIDs]).toEqual(ids);
       return;
     }
-    const fetcher = vi.fn().mockResolvedValueOnce(response([photo(2)], "next"));
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(response([photo(2)], "next"))
+      .mockResolvedValueOnce(response([]));
     stubPhotoFetch(fetcher);
     const photos = new Photos("scoped", vi.fn());
     photos.items = [photo(1)];
@@ -2346,7 +2430,7 @@ it.each(["deselected anchor", "displaced selection"])(
     expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
     await photos.refresh();
     expect(photos.selection.selectedIDs.size).toBe(0);
-    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledTimes(2);
     photos.selectAllResults();
     fetcher.mockResolvedValueOnce(response([photo(3)], "next"));
     await photos.refresh();
@@ -2357,6 +2441,24 @@ it.each(["deselected anchor", "displaced selection"])(
     expect(photos.scope()).toEqual({ asset_ids: ["photo-3"] });
   },
 );
+
+it("keeps selected photos that new photos pushed past the refreshed window, with their current revisions", async () => {
+  const moved = { ...photo(1), revision: 5 };
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(response([photo(2)], "next"))
+    .mockImplementationOnce(async (_url: string, options: RequestInit) => {
+      expect(JSON.parse(String(options.body)).query.filters.asset_ids).toEqual(["photo-1"]);
+      return response([moved]);
+    });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.selectLoaded();
+  await photos.refresh();
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.trashTargets).toEqual([moved]);
+});
 
 it("keeps an album scope through timeline counts, date filters, sort changes, and whole-query selection", async () => {
   const counts = vi.spyOn(snapshots, "fetchPhotoTimeline").mockResolvedValue({
@@ -3184,6 +3286,34 @@ it.each([true, undefined])(
     expect(photos.actionError).toBe("");
     expect(photos.hiding).toBe(false);
     expect(access.setupPrompt).toBeUndefined();
+    photos.dispose();
+  },
+);
+
+it.each([true, false])(
+  "validates selection added during refresh eligibility lookup, eligible=%s",
+  async (eligible) => {
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1), photo(2)];
+    photos.selectLoaded(["photo-1"]);
+    let finish!: (response: Response) => void;
+    const checked: string[][] = [];
+    stubPhotoFetch(async (_url, init) => {
+      const ids = JSON.parse(String(init.body)).query.filters.asset_ids as string[] | undefined;
+      if (!ids) return response([photo(3), photo(4)]);
+      checked.push(ids);
+      if (ids.includes("photo-1")) return new Promise<Response>((resolve) => (finish = resolve));
+      return response(eligible ? [{ ...photo(2), revision: 5 }] : []);
+    });
+    const refreshing = photos.refresh(undefined, true);
+    await waitFor(() => expect(finish).toBeDefined());
+    photos.select("photo-2", new MouseEvent("click", { ctrlKey: true }), ["photo-1", "photo-2"]);
+    finish(response([photo(1)]));
+    await refreshing;
+    expect(checked).toEqual([["photo-1"], ["photo-2"]]);
+    expect([...photos.selectedIDs]).toEqual(eligible ? ["photo-1", "photo-2"] : ["photo-1"]);
+    if (eligible)
+      expect(photos.trashTargets.find((row) => row.asset_id === "photo-2")?.revision).toBe(5);
     photos.dispose();
   },
 );
