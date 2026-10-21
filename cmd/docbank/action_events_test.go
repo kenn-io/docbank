@@ -49,9 +49,9 @@ func TestTUIActionUsesDaemonAndExcludesAgents(t *testing.T) {
 	}}
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv("CODEX_THREAD_ID", "")
-	require.NoError(t, backend.ReportAction(t.Context(), "search_run", "lexical"))
+	require.NoError(t, backend.ReportAction(t.Context(), "search_run", "lexical", ""))
 	t.Setenv("CODEX_THREAD_ID", "synthetic-agent")
-	require.NoError(t, backend.ReportAction(t.Context(), "search_run", "hybrid"))
+	require.NoError(t, backend.ReportAction(t.Context(), "search_run", "hybrid", ""))
 	require.Len(t, events, 1)
 	assert.JSONEq(t, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`, events[0])
 }

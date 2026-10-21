@@ -361,7 +361,7 @@ func TestTUIBackendDoesNotReplayActionAfterResponseIsLost(t *testing.T) {
 	}}
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv("CODEX_THREAD_ID", "")
-	err := backend.ReportAction(t.Context(), "search_run", "lexical")
+	err := backend.ReportAction(t.Context(), "search_run", "lexical", "")
 	require.Error(t, err)
 	assert.True(t, daemonconn.IsTransportError(err))
 	require.Len(t, accepted, 1)

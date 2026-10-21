@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
@@ -391,6 +391,7 @@
   let trashOpen = $state(false);
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
+  let detailCause = $state<unknown>();
   let detailLoading = $state(false);
   let reload = $state.raw<{ id: string }>();
   let consumedReload = $state.raw<typeof reload>();
@@ -474,8 +475,10 @@
         }
       })
       .catch((cause) => {
-        if (!controller.signal.aborted)
+        if (!controller.signal.aborted) {
+          detailCause = cause;
           detailError = cause instanceof Error ? cause.message : String(cause);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) detailLoading = false;
@@ -679,7 +682,10 @@
   $effect(() => {
     if (!openIntent) return;
     if (photoID && photoID !== openIntent) openIntent = "";
-    else if (current?.asset_id === openIntent && !detailLoading && !detailError) {
+    else if (photoID === openIntent && !detailLoading && detailError) {
+      openIntent = "";
+      reportFailure(photos.session, "open", detailCause);
+    } else if (current?.asset_id === openIntent && !detailLoading && !detailError) {
       openIntent = "";
       reportAction(photos.session, "document_opened");
     }

@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { reportAction } from "./action-events.js";
+import { reportAction, reportFailure, reportSearch } from "./action-events.js";
+import { APIError } from "./api-transport.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -39,4 +40,32 @@ it("ignores delivery errors", async () => {
   } finally {
     process.off("unhandledRejection", unhandled);
   }
+});
+
+it("reports an empty search after its search run", async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+  vi.stubGlobal("fetch", fetcher);
+  reportSearch("session", "lexical", true);
+  reportSearch("session", "semantic", false);
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body))).toEqual([
+    { event: "search_run", properties: { surface: "web", search_type: "text" } },
+    { event: "search_empty", properties: { surface: "web", search_type: "text" } },
+    { event: "search_run", properties: { surface: "web", search_type: "semantic" } },
+  ]);
+});
+
+it.each<[string, unknown, number]>([
+  ["a failed request", new Error("Upload failed"), 1],
+  ["a server failure", new APIError("Unavailable", 500, "internal"), 1],
+  ["a sign-in prompt", new APIError("Unauthorized", 401, "unauthorized"), 0],
+  ["a cancel", new DOMException("aborted", "AbortError"), 0],
+])("reports %s as an error with its kind", async (_name, cause, sent) => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+  vi.stubGlobal("fetch", fetcher);
+  reportFailure("session", "add", cause);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body))).toEqual(
+    sent ? [{ event: "error_shown", properties: { surface: "web", kind: "add" } }] : [],
+  );
 });

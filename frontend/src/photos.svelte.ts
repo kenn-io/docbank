@@ -742,7 +742,9 @@ export class Photos {
     }
   }
 
-  async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<boolean | void> {
+  async loadMore(
+    preserve?: () => (() => Promise<void>) | undefined,
+  ): Promise<{ accepted: true; empty: boolean } | { accepted: false; cause: unknown } | void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
     if (this.projection && this.replacement) {
       await this.retry(preserve);
@@ -800,7 +802,7 @@ export class Photos {
         this.needsFacets = true;
         void this.retryFacets();
       }
-      return !controller.signal.aborted;
+      if (!controller.signal.aborted) return { accepted: true, empty: this.total === 0 };
     } catch (cause) {
       if (controller.signal.aborted) return;
       this.authFailure(cause);
@@ -814,6 +816,7 @@ export class Photos {
           : cause instanceof Error
             ? cause.message
             : String(cause);
+      return { accepted: false, cause };
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }

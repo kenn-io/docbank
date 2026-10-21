@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import XIcon from "@lucide/svelte/icons/x";
@@ -101,6 +101,7 @@
       outcome = `Verified ${formatBytes(prepared.size)}; browser save started.`;
     } catch (cause) {
       if (controller !== active) return;
+      reportFailure(activeSession, "open", cause);
       if (cause instanceof DOMException && cause.name === "AbortError") {
         outcome = "Download cancelled; no file was published.";
       } else if (cause instanceof APIError && cause.status === 401) {

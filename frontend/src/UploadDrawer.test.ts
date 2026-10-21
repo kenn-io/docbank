@@ -2,6 +2,7 @@ import * as actions from "./action-events.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import UploadDrawer from "./UploadDrawer.svelte";
+import { APIError } from "./api-transport.js";
 import * as upload from "./upload.js";
 
 afterEach(() => {
@@ -14,6 +15,7 @@ describe("upload documents drawer", () => {
     "hashes and uploads selected files before refreshing the directory: %s",
     async (status) => {
       const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+      const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
       const hash = "a".repeat(64);
       vi.spyOn(upload, "hashFile").mockImplementation(async (file, _signal, onprogress) => {
         onprogress({ processed: file.size, total: file.size });
@@ -79,12 +81,14 @@ describe("upload documents drawer", () => {
       if (status === "skipped") {
         await waitFor(() => expect(complete).toHaveBeenCalledOnce());
         expect(action).not.toHaveBeenCalled();
+        expect(failure).not.toHaveBeenCalled();
         return;
       }
       expect(await screen.findByText("Added")).toBeTruthy();
       expect(screen.getByText(/Created node 8, revision 1/)).toBeTruthy();
       await waitFor(() => expect(complete).toHaveBeenCalledOnce());
       expect(action).toHaveBeenCalledExactlyOnceWith("session", "document_added");
+      expect(failure).not.toHaveBeenCalled();
       expect(upload.hashFile).toHaveBeenCalledOnce();
       expect(channel.uploadFile).toHaveBeenCalledWith(
         3,
@@ -97,6 +101,7 @@ describe("upload documents drawer", () => {
   );
 
   it("refreshes and reports an unconfirmed outcome after cancellation", async () => {
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
     const hash = "a".repeat(64);
     vi.spyOn(upload, "hashFile").mockResolvedValue(hash);
     const channel: upload.UploadTransport = {
@@ -150,6 +155,38 @@ describe("upload documents drawer", () => {
     expect(await screen.findByText("Unconfirmed")).toBeTruthy();
     expect(screen.getByText(/retry this file to converge safely/)).toBeTruthy();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(failure).not.toHaveBeenCalled();
+  });
+
+  it("reports two failed uploads once", async () => {
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+    vi.spyOn(upload, "hashFile").mockResolvedValue("a".repeat(64));
+    const channel: upload.UploadTransport = {
+      uploadFile: vi.fn().mockRejectedValue(new APIError("Upload failed", 422, "validation")),
+    };
+    render(UploadDrawer, {
+      session: "session",
+      channel,
+      directory: {
+        id: 3,
+        name: "Reports",
+        path: "/Reports",
+        kind: "dir",
+        size: 0,
+        revision: 1,
+        created_at: "2026-07-28T00:00:00Z",
+        modified_at: "2026-07-28T00:00:00Z",
+      },
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await fireEvent.change(screen.getByLabelText("Choose local files"), {
+      target: { files: [new File(["a"], "a.txt"), new File(["b"], "b.txt")] },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
+    await waitFor(() => expect(channel.uploadFile).toHaveBeenCalledTimes(2));
+    expect(failure).toHaveBeenCalledExactlyOnceWith("session", "add");
   });
 
   it("reports hashing cancellation without claiming an upload began", async () => {

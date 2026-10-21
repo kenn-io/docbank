@@ -490,7 +490,7 @@ it("ignores a rerank response after switching to Names and text", async () => {
 it.each([false, true])(
   "reports a search whose rerank is superseded after base results, abort rejects=%s",
   async (rerankAbortable) => {
-    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const action = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
     const file = node(2, "base.txt", baseVersion);
     const harness = installHarness({
       profiles: [
@@ -528,16 +528,13 @@ it.each([false, true])(
           }),
         ),
       );
-    await waitFor(() =>
-      expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
-        ["short-lived", "search_run", "hybrid"],
-      ]),
-    );
+    await waitFor(() => expect(action.mock.calls).toEqual([["short-lived", "hybrid", false]]));
   },
 );
 
-it("reports a completed reranked search and keeps reruns and failures silent", async () => {
-  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+it("reports completed searches and a failed submission once, not reruns", async () => {
+  const searchAction = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const file = node(2, "base.txt", baseVersion);
   const options: HarnessOptions = {
     profiles: [
@@ -561,7 +558,7 @@ it("reports a completed reranked search and keeps reruns and failures silent", a
   await submitSearch("annual report");
   await screen.findByText("Reranking results… Base results are shown.");
   expect(screen.getByText("base excerpt")).toBeTruthy();
-  expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([]);
+  expect(searchAction.mock.calls).toEqual([]);
   harness.resolveRerank(
     json(
       report("hybrid", [result(file, 1, "reranked excerpt")], {
@@ -574,11 +571,7 @@ it("reports a completed reranked search and keeps reruns and failures silent", a
     expect(screen.queryByText("Reranking results… Base results are shown.")).toBeNull(),
   );
   await screen.findByText("reranked excerpt");
-  await waitFor(() =>
-    expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
-      ["short-lived", "search_run", "hybrid"],
-    ]),
-  );
+  await waitFor(() => expect(searchAction.mock.calls).toEqual([["short-lived", "hybrid", false]]));
   await fireEvent.click(toggle);
   await screen.findByText("base excerpt");
   // Refresh and settings changes rerun the accepted search without a new action.
@@ -589,38 +582,36 @@ it("reports a completed reranked search and keeps reruns and failures silent", a
   await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
   await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
   await waitFor(() => expect(harness.postBodies.filter((body) => !body.rerank)).toHaveLength(3));
-  expect(action.mock.calls.filter(([, event]) => event === "search_run")).toHaveLength(1);
+  expect(searchAction.mock.calls).toHaveLength(1);
   await screen.findByText("text excerpt");
   await submitSearch("text query");
   await screen.findByText("text excerpt");
-  expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
-    ["short-lived", "search_run", "hybrid"],
-    ["short-lived", "search_run", "lexical"],
+  expect(searchAction.mock.calls).toEqual([
+    ["short-lived", "hybrid", false],
+    ["short-lived", "lexical", false],
   ]);
   await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Lexical" }));
   await fireEvent.click(screen.getByRole("option", { name: "Names and text" }));
   await waitFor(() => expect(harness.legacyCalls()).toBe(1));
   await submitSearch("names query");
   await waitFor(() =>
-    expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
-      ["short-lived", "search_run", "hybrid"],
-      ["short-lived", "search_run", "lexical"],
-      ["short-lived", "search_run", "text"],
+    expect(searchAction.mock.calls).toEqual([
+      ["short-lived", "hybrid", false],
+      ["short-lived", "lexical", false],
+      ["short-lived", "text", true],
     ]),
   );
-  action.mockClear();
+  searchAction.mockClear();
   options.legacySearchStatus = 500;
   await submitSearch("failed query");
   await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
-  expect(action).not.toHaveBeenCalled();
-  options.legacySearchStatus = undefined;
-  options.emptyFence = true;
-  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Names and text" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Auto" }));
-  await screen.findByText("No live documents match the current filter.");
-  await submitSearch("empty query");
-  await screen.findByText("No live documents match the current filter.");
-  expect(action).not.toHaveBeenCalled();
+  expect(searchAction).not.toHaveBeenCalled();
+  expect(failure).toHaveBeenCalledExactlyOnceWith("short-lived", "search", expect.any(Error));
+  // A refresh that fails again reports nothing.
+  const calls = harness.legacyCalls();
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(harness.legacyCalls()).toBe(calls + 1));
+  expect(failure).toHaveBeenCalledOnce();
 });
 
 it("keeps the current selection when reranking replaces the rows", async () => {
@@ -1000,7 +991,9 @@ it("sends the selected tag filter in the resolver body", async () => {
   expect(harness.fenceBodies[0]?.filters).toEqual({ tag_id: tagID });
 });
 
-it("shows the empty-fence note without posting a search", async () => {
+it("shows the empty-fence note without posting a search and reports it once, not for reruns", async () => {
+  const searchRun = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   const file = node(2, "empty.txt", baseVersion);
   const harness = installHarness({
     profiles: [
@@ -1021,43 +1014,68 @@ it("shows the empty-fence note without posting a search", async () => {
   await submitSearch("nothing");
   await screen.findByText("No live documents match the current filter.");
   expect(harness.postBodies).toHaveLength(0);
+  expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_empty", "hybrid");
+  expect(searchRun).not.toHaveBeenCalled();
+  // A refresh and a mode change rerun the same search without a new submission.
+  const fences = harness.fenceBodies.length;
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 1));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
+  await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 2));
+  expect(action).toHaveBeenCalledOnce();
 });
 
-it("keeps a non-401 processing failure on the legacy GET path", async () => {
-  const file = node(2, "fallback.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: true,
+it.each([
+  { legacyStatus: undefined, reports: 0 },
+  { legacyStatus: 500, reports: 1 },
+])(
+  "keeps a non-401 processing failure on the legacy GET path (legacy status $legacyStatus)",
+  async ({ legacyStatus, reports }) => {
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+    const file = node(2, "fallback.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [file],
+      baseReport: report("hybrid", []),
+      baseSearchStatus: 500,
+      legacySearchStatus: legacyStatus,
+      tagSearch: {
+        hits: [{ node: file, path: file.path, match: "name" }],
+        limit: 1000,
+        truncated: false,
       },
-    ],
-    files: [file],
-    baseReport: report("hybrid", []),
-    baseSearchStatus: 500,
-    tagSearch: {
-      hits: [{ node: file, path: file.path, match: "name" }],
-      limit: 1000,
-      truncated: false,
-    },
-  });
-  render(App);
-  await screen.findAllByText("fallback.txt");
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
-  await submitSearch("fallback");
-  await screen.findByText("/fallback.txt");
-  await screen.findByText(/Natural-language search unavailable/);
-  expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
-  expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
-  expect(harness.postBodies).toHaveLength(1);
-  expect(
-    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
-      .length,
-  ).toBe(1);
-});
+    });
+    render(App);
+    await screen.findAllByText("fallback.txt");
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+    await submitSearch("fallback");
+    if (legacyStatus) {
+      await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
+    } else {
+      await screen.findByText("/fallback.txt");
+      await screen.findByText(/Natural-language search unavailable/);
+      expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
+      expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
+    }
+    expect(harness.postBodies).toHaveLength(1);
+    expect(
+      harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
+        .length,
+    ).toBe(1);
+    // A fallback that succeeds shows results, not an error, so only a double failure is reported.
+    expect(failure).toHaveBeenCalledTimes(reports);
+    if (reports) expect(failure).toHaveBeenCalledWith("short-lived", "search", expect.any(Error));
+  },
+);
 
 it("does not fall back to GET after a processing 401", async () => {
   const file = node(2, "unauthorized.txt", baseVersion);

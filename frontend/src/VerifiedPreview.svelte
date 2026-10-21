@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -117,6 +117,7 @@
       activeTab = parseMediaType(next.mimeType) === "message/rfc822" ? "attachments" : "preview";
     } catch (cause) {
       if (request !== navigationEpoch || pending.signal.aborted) return;
+      reportFailure(session, "open", cause);
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
       else navigationError = cause instanceof Error ? cause.message : String(cause);
     } finally {

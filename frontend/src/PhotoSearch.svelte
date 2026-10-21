@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportFailure, reportSearch } from "./action-events.js";
   import { untrack } from "svelte";
   import { SearchInput, SelectDropdown } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
@@ -26,8 +26,10 @@
       syntax,
       sort: photoSearchSort({ text: search, syntax }),
     });
-    void pending?.then((accepted) => {
-      if (accepted && text) reportAction(photos.session, "search_run", "text");
+    void pending?.then((outcome) => {
+      if (!text || !outcome) return;
+      if (outcome.accepted) return reportSearch(photos.session, "text", outcome.empty);
+      reportFailure(photos.session, "search", outcome.cause);
     });
     return pending;
   }

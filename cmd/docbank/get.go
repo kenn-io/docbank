@@ -92,6 +92,11 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if !published && !errors.Is(retErr, os.ErrExist) {
+			reportFailure(cmd, c, "open", retErr, false)
+		}
+	}()
 	node, err := selector.resolveIncludingTrash(cmd.Context(), c)
 	if err != nil {
 		return err
@@ -119,7 +124,7 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 		}
 		return err
 	}
-	reportAction(cmd, c, "document_opened", "", false)
+	reportAction(cmd, c, "document_opened", "", "", false)
 	published = true
 
 	receipt := getReceipt{

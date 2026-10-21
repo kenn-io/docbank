@@ -129,6 +129,7 @@ it("keeps nested exact contexts separate and returns to the frozen source and fo
 
 it("cancels related version reads on source change and retains failed targets as visible occurrences", async () => {
   const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   let release!: (value: Response) => void;
   let signal: AbortSignal | null | undefined;
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -172,6 +173,8 @@ it("cancels related version reads on source change and retains failed targets as
     expect(screen.queryByText(`Exact related version ${child.version_id}`)).toBeNull(),
   );
   expect(fetch.mock.calls.some(([input]) => String(input) === "/api/v1/nodes/2")).toBe(false);
+  // The read that a source change cancelled is not a failed open.
+  expect(failure).not.toHaveBeenCalled();
   await view.rerender({
     session: "session",
     source: selected,
@@ -195,4 +198,9 @@ it("cancels related version reads on source change and retains failed targets as
     within(screen.getByRole("region", { name: "Outgoing attachments" })).getAllByRole("listitem"),
   ).toHaveLength(1);
   expect(action).not.toHaveBeenCalled();
+  expect(failure).toHaveBeenCalledExactlyOnceWith(
+    "session",
+    "open",
+    expect.objectContaining({ status: 404 }),
+  );
 });

@@ -44,7 +44,7 @@ Exit 1 if any file failed (each failure is listed).`,
 	Use:     "add <path>...",
 	Short:   "Import files or directory trees into the vault",
 	Args:    cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 		abs := make([]string, len(args))
 		for i, a := range args {
 			// Windows absolute-path resolution converts through UTF-16 and can
@@ -88,6 +88,7 @@ Exit 1 if any file failed (each failure is listed).`,
 			}
 			return nil
 		}
+		defer func() { reportFailure(cmd, c, "add", retErr, false) }()
 		var rep api.IngestReport
 		if addJSON {
 			response, requestErr := c.API().Ingest(cmd.Context(), &apiclient.IngestRequestOptions{Body: &apiclient.IngestBody{Paths: abs, Dest: addDest, Include: opts.Include, Exclude: opts.Exclude, Replace: opts.Replace, CollectionLabel: opts.CollectionLabel}})
@@ -121,7 +122,7 @@ Exit 1 if any file failed (each failure is listed).`,
 			}
 		}
 		if rep.Added > 0 {
-			reportAction(cmd, c, "document_added", "", false)
+			reportAction(cmd, c, "document_added", "", "", false)
 		}
 		if len(rep.Failed) > 0 {
 			return fmt.Errorf("%d file(s) failed to import", len(rep.Failed))

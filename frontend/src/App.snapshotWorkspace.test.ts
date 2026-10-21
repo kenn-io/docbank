@@ -104,6 +104,8 @@ function snapshot(
 
 it("navigates frozen documents across pages and stops at the boundary or expiry", async () => {
   const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  const searchAction = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   history.replaceState(
     null,
     "",
@@ -236,8 +238,8 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
-  expect(action).toHaveBeenCalledExactlyOnceWith("synthetic", "search_run", "text");
-  action.mockClear();
+  expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
+  searchAction.mockClear();
   await waitFor(() => expect(highlightRequests).toBe(1));
   const opened = screen.getByRole("cell", { name: "/records/report-100.pdf" }).closest("tr")!;
   await fireEvent.click(opened, { detail: 1 });
@@ -266,6 +268,8 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   await screen.findByText(
     "This frozen snapshot expired. Run the query again to continue navigation.",
   );
+  // A page that fails while paging is not a submitted search.
+  expect(failure).not.toHaveBeenCalled();
   const expiredNavigation = within(
     screen.getByRole("navigation", { name: "Snapshot document navigation" }),
   );
@@ -286,8 +290,8 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
   await waitFor(() => expect(highlightRequests).toBe(2));
-  expect(action).toHaveBeenCalledExactlyOnceWith("synthetic", "search_run", "text");
-  action.mockClear();
+  expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
+  searchAction.mockClear();
   await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));
   await screen.findByRole("button", { name: "pdf, 101 documents, selected" });
   const results = screen.getByRole("region", { name: "Frozen query results" });
@@ -733,4 +737,77 @@ it("refreshes live metadata and download authority after tagging an inspected fr
       blob_hash: frozen.blob_hash,
     }),
   );
+});
+
+it("reports a submitted frozen run that finds nothing or fails", async () => {
+  const searchAction = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+  const failure = vi.spyOn(actions, "reportFailure");
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0 };
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  const empty = snapshot(initialQuery, [], {}, 0);
+  let runs = 0;
+  const events: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/daemon/telemetry/events") {
+      const event = JSON.parse(String(init?.body));
+      if (event.event === "error_shown") events.push(event);
+      return new Response(null, { status: 202 });
+    }
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.startsWith("/api/v1/nodes/1000/children"))
+      return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?") || url.startsWith("/api/v1/saved-queries?"))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse")
+      return json({
+        query: initialQuery,
+        query_fingerprint: empty.query_fingerprint,
+        dependencies: [],
+      });
+    if (url === "/api/v1/queries/highlights")
+      return json({ query_fingerprint: empty.query_fingerprint, dependencies: [], terms: [] });
+    if (url === "/api/v1/workspace/queries")
+      return ++runs === 1
+        ? json(empty)
+        : json({ code: "internal", detail: "synthetic failure" }, runs === 2 ? 500 : 401);
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await waitFor(() =>
+    expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", true),
+  );
+  expect(failure).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await waitFor(() =>
+    expect(events).toEqual([
+      { event: "error_shown", properties: { surface: "web", kind: "search" } },
+    ]),
+  );
+  expect(searchAction).toHaveBeenCalledOnce();
+  // A rejected session sends the person to sign in rather than counting a failed search.
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await waitFor(() => expect(runs).toBe(3));
+  await screen.findByText(/session expired or was rejected/);
+  expect(failure).toHaveBeenCalledOnce();
+  expect(events).toHaveLength(1);
 });

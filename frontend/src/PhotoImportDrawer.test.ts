@@ -197,6 +197,7 @@ it.each([false, true])(
   "uses the plan, uploads groups in order, reports totals, and refreshes once: skipped=%s",
   async (skipped) => {
     const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
     const selected = files();
     const channel: PhotoImportTransport = {
       planPhotoImport: vi.fn().mockResolvedValue({
@@ -235,6 +236,7 @@ it.each([false, true])(
     });
     await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(failure).not.toHaveBeenCalled();
     if (skipped) {
       expect(action).not.toHaveBeenCalled();
       return;
@@ -432,6 +434,7 @@ it("stops after the current group when cancelled", async () => {
 });
 
 it("reports ambiguous and failed groups and uses the chosen destination", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const selected = [
     files()[0],
     files()[1],
@@ -479,6 +482,7 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
   expect(screen.getByText("Ambiguous: 1")).toBeTruthy();
   expect(screen.getByText("Failed: 1")).toBeTruthy();
   expect(screen.getByText("Hash mismatch")).toBeTruthy();
+  expect(failure).toHaveBeenCalledExactlyOnceWith("session", "add");
   expect(channel.planPhotoImport).toHaveBeenCalledWith(
     expect.any(Array),
     "/photos",

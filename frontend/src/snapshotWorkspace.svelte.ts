@@ -46,18 +46,18 @@ export class SnapshotWorkspace {
     this.overlays = {};
   }
 
-  async run(query: Query, options: SnapshotOptions): Promise<"text" | undefined> {
+  async run(
+    query: Query,
+    options: SnapshotOptions,
+  ): Promise<"text" | { type: "failed"; cause: Error } | undefined> {
     this.invalidateActions();
     const epoch = this.epoch;
     const session = this.getSession();
     await this.snapshotSession().run(query, options);
-    if (
-      epoch === this.epoch &&
-      session === this.getSession() &&
-      this.state.status === "ready" &&
-      !this.state.error
-    )
-      return "text";
+    if (epoch !== this.epoch || session !== this.getSession()) return;
+    // A 401 signs the person out and resets this state, so it never reads as failed.
+    if (this.state.error) return { type: "failed", cause: this.state.error };
+    if (this.state.status === "ready") return "text";
   }
 
   private invalidateActions(): void {

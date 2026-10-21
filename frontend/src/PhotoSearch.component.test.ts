@@ -1,14 +1,21 @@
 import * as actions from "./action-events.js";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoSearch from "./PhotoSearch.svelte";
+import { photo } from "./photo-test-fixtures.js";
 import { Photos } from "./photos.svelte.js";
 import { tick } from "svelte";
 
-vi.mock("./action-events.js", () => ({ reportAction: vi.fn() }));
+vi.mock("./action-events.js", () => ({
+  reportAction: vi.fn(),
+  reportSearch: vi.fn(),
+  reportFailure: vi.fn(),
+}));
 
 beforeEach(() => {
   vi.mocked(actions.reportAction).mockClear();
+  vi.mocked(actions.reportSearch).mockClear();
+  vi.mocked(actions.reportFailure).mockClear();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -157,36 +164,47 @@ it("applies the draft when the search mode changes", async () => {
   photos.dispose();
 });
 
-it("reports completed photo searches while blank and canceled searches stay silent", async () => {
-  const action = vi.mocked(actions.reportAction);
-  let finish!: (response: Response) => void;
-  const fetcher = vi.fn(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] })));
-  vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  photos.started = true;
-  const submit = vi.spyOn(photos, "setQuery");
-  render(PhotoSearch, { photos });
-  const search = screen.getByRole("searchbox", { name: "Search photos" });
-  await fireEvent.input(search, { target: { value: "   " } });
-  await fireEvent.submit(search.closest("form")!);
-  await waitFor(() => expect(photos.loading).toBe(false));
-  expect(action).not.toHaveBeenCalled();
-  await fireEvent.input(search, { target: { value: "Nikon" } });
-  await fireEvent.submit(search.closest("form")!);
-  await waitFor(() =>
-    expect(action).toHaveBeenCalledExactlyOnceWith("scoped", "search_run", "text"),
-  );
-  action.mockClear();
-  fetcher.mockClear();
-  submit.mockClear();
-  fetcher.mockImplementation(() => new Promise<Response>((resolve) => (finish = resolve)));
-  await fireEvent.input(search, { target: { value: "river" } });
-  await fireEvent.submit(search.closest("form")!);
-  expect(fetcher).toHaveBeenCalledOnce();
-  photos.dispose();
-  await act(async () => {
-    finish(Response.json({ items: [], total: 0, facets: [] }));
-    await submit.mock.results[0].value;
-  });
-  expect(action).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "reports a Photos search only when it ran, retained draft=%s",
+  async (retained) => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
+    vi.stubGlobal("fetch", fetcher);
+    const photos = new Photos("scoped", vi.fn());
+    photos.started = true;
+    if (retained) {
+      photos.items = [photo(1)];
+      photos.total = 2;
+      photos.cursor = "next-page";
+      await photos.loadMore();
+      photos.authored.stage({ caption: "Retained draft" });
+      fetcher.mockClear();
+    }
+    render(PhotoSearch, { photos });
+    const search = screen.getByRole("searchbox", { name: "Search photos" });
+    if (!retained) {
+      fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
+      await fireEvent.input(search, { target: { value: "Nikon" } });
+      await fireEvent.submit(search.closest("form")!);
+      await waitFor(() =>
+        expect(actions.reportSearch).toHaveBeenCalledExactlyOnceWith("scoped", "text", true),
+      );
+      vi.mocked(actions.reportSearch).mockClear();
+    }
+    await fireEvent.input(search, { target: { value: "Canon" } });
+    await fireEvent.submit(search.closest("form")!);
+    if (retained) {
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(actions.reportFailure).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() =>
+        expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+          "scoped",
+          "search",
+          expect.objectContaining({ status: 500 }),
+        ),
+      );
+    }
+    expect(actions.reportSearch).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);
