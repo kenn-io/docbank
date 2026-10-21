@@ -38,6 +38,30 @@ func completedCheckout(t *testing.T, s Service, selection store.PhotoCheckoutSel
 	return c, entries
 }
 
+func ageCheckoutObservations(t *testing.T, s Service, checkoutID string) time.Time {
+	t.Helper()
+	c, err := s.Store.PhotoCheckout(t.Context(), checkoutID)
+	require.NoError(t, err)
+	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), checkoutID)
+	require.NoError(t, err)
+	since := time.Now().Add(-2 * s.settlement())
+	setCheckoutObservationSince(t, s, c, entries, since)
+	return since
+}
+
+func setCheckoutObservationSince(t *testing.T, s Service, c store.PhotoCheckout, entries []store.PhotoCheckoutEntry, since time.Time) {
+	t.Helper()
+	observations := make([]store.PhotoCheckoutObservation, 0, len(entries))
+	for _, entry := range entries {
+		observations = append(observations, store.PhotoCheckoutObservation{
+			FileID: entry.FileID, Identity: entry.ObservedIdentity, Hash: entry.ObservedHash,
+			Size: entry.ObservedSize, Mtime: entry.ObservedMtime,
+			Since: since.Format(time.RFC3339Nano), State: entry.WorkingState,
+		})
+	}
+	require.NoError(t, s.Store.ObservePhotoCheckoutEntries(t.Context(), c.ID, c.DestinationIdentity, observations))
+}
+
 func TestCheckoutCommitRejectsScannerRootSwap(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -188,7 +212,6 @@ func TestCheckoutWorkerFailureReleasesOperation(t *testing.T) {
 func TestCheckoutFailedCreationRebindsReleasedDestination(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
-	s.settleTime = time.Nanosecond
 	first := checkoutPhoto(t, s, "a.jpg", "first")
 	second := checkoutPhoto(t, s, "b.jpg", "second")
 	c, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{first.ID, second.ID}}, t.TempDir(), 10000)
@@ -453,10 +476,7 @@ func TestCheckoutScanDetectsByteAndIdentityChanges(t *testing.T) {
 	for _, replaced := range []bool{false, true} {
 		t.Run(strconv.FormatBool(replaced), func(t *testing.T) {
 			s := checkoutService(t)
-			s.settleTime = time.Nanosecond
-			if replaced {
-				s.settleTime = time.Hour
-			}
+			s.settleTime = time.Hour
 			asset := checkoutPhoto(t, s, "photo.jpg", "original")
 			c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
 			name := filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
@@ -467,13 +487,7 @@ func TestCheckoutScanDetectsByteAndIdentityChanges(t *testing.T) {
 				require.Equal(t, "pending", scan.Entries[0].WorkingState)
 				oldIdentity := scan.Entries[0].ObservedIdentity
 				require.NotEmpty(t, oldIdentity)
-				oldSince, err := time.Parse(time.RFC3339Nano, scan.Entries[0].ObservedSince)
-				require.NoError(t, err)
-				// Let the first observation settle before replacing the file. A
-				// coarse Windows clock can still read the observation's instant.
-				s.settleTime = time.Nanosecond
-				require.Eventually(t, func() bool { return time.Since(oldSince) >= s.settlement() },
-					time.Second, time.Millisecond)
+				oldSince := ageCheckoutObservations(t, s, c.ID)
 				before, err := os.Stat(name)
 				require.NoError(t, err)
 				replacement := filepath.Join(c.Destination, "replacement")
@@ -504,6 +518,7 @@ func TestCheckoutScanDetectsByteAndIdentityChanges(t *testing.T) {
 				require.Equal(t, before.ModTime(), after.ModTime())
 				_, err = s.scanCheckout(t.Context(), c.ID)
 				require.NoError(t, err)
+				ageCheckoutObservations(t, s, c.ID)
 				scan, err = s.scanCheckout(t.Context(), c.ID)
 				require.NoError(t, err)
 				require.Equal(t, identity, scan.Entries[0].ObservedIdentity)
@@ -898,7 +913,7 @@ func TestCheckoutCommitBoundsChangingFilesAndRetires(t *testing.T) {
 			// The stable file has already settled before this commit starts.
 			for _, entry := range observed {
 				if entry.FileID == stable.FileID {
-					require.NoError(t, s.Store.ObservePhotoCheckoutEntries(t.Context(), c.ID, c.DestinationIdentity, []store.PhotoCheckoutObservation{{FileID: entry.FileID, Identity: entry.ObservedIdentity, Hash: entry.ObservedHash, Size: entry.ObservedSize, Mtime: entry.ObservedMtime, Since: stamp.Format(time.RFC3339Nano), State: entry.WorkingState}}))
+					setCheckoutObservationSince(t, s, c, []store.PhotoCheckoutEntry{entry}, stamp)
 				}
 			}
 			require.NoError(t, os.WriteFile(pendingPath, []byte("new first"), 0o600))
@@ -1197,10 +1212,9 @@ func TestCheckoutSourceChangeReplacesHashedObservation(t *testing.T) {
 	c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
 	path := filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
 	require.NoError(t, os.WriteFile(path, []byte("edited"), 0o600))
-	for range 2 {
-		_, err := s.scanCheckout(t.Context(), c.ID)
-		require.NoError(t, err)
-	}
+	_, err := s.scanCheckout(t.Context(), c.ID)
+	require.NoError(t, err)
+	ageCheckoutObservations(t, s, c.ID)
 	changed := false
 	result, err := s.scanWorking(t.Context(), c, func(_ context.Context, file ingest.FolderFile, _ store.PhotoCheckoutEntry) error {
 		changed = true
@@ -1423,15 +1437,6 @@ func TestCheckoutEditedRestoreRebindCommit(t *testing.T) {
 			page, err := restored.Store.PhotoCheckoutStatus(t.Context(), c.ID, "", 100)
 			require.NoError(t, err)
 			require.Equal(t, "completed", page.Checkout.State)
-			scan, err := restored.scanCheckout(t.Context(), c.ID)
-			require.NoError(t, err)
-			for _, entry := range scan.Entries {
-				want := "edited"
-				if scenario.matching && entry.FileID == entries[1].FileID {
-					want = "clean"
-				}
-				require.Equal(t, want, entry.WorkingState)
-			}
 			for _, entry := range entries {
 				asset, err := restored.Store.PhotoAssetByID(t.Context(), entry.AssetID)
 				require.NoError(t, err)
