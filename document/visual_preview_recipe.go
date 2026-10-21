@@ -3,7 +3,7 @@ package document
 import "fmt"
 
 const (
-	xImageDrawVersion = "x-image-draw-v0.44.0"
+	xImageDrawVersion = "x-image-draw-v0.47.0"
 	// VisualPreviewMaxEdgePixels bounds the large built-in preview.
 	VisualPreviewMaxEdgePixels = 4096
 	// VisualPreviewMaxSourcePixels bounds decoded source images and photo exports.
