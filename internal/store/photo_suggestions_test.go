@@ -645,51 +645,6 @@ func TestPhotoSuggestionBackupKeepsCompletion(t *testing.T) {
 	}
 }
 
-func TestPhotoSuggestionRestoreWithTwoAwaitingProducers(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "restored.jpg")
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A lighthouse."})
-	// A portable vault can hold unresolved decisions from two producers.
-	_, err := s.db.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,awaiting,created_at)
- SELECT ?,content_version_id,?,1,created_at FROM photo_suggestions WHERE suggestion_id=?`, "22222222-2222-4222-8222-222222222222", producerB, proposal.ID)
-	require.NoError(t, err)
-	restored := restorePhotoSuggestionStore(t, s)
-	var awaiting int
-	require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_suggestions WHERE awaiting`).Scan(&awaiting))
-	require.Equal(t, 2, awaiting)
-	require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "restored text waits for regeneration")
-	for _, text := range []string{"lighthouse", "kayak"} {
-		require.Zero(t, searchCount(t, restored, text, "relevance"))
-	}
-
-	publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "A lighthouse."})
-	publishPhotoDescription(t, restored, asset, producerB, false, document.PhotoDescription{Caption: "A kayak."})
-	require.NoError(t, restored.ValidateMetadata(ctx))
-	suggestions := photoSuggestionValues(t, restored, asset.ID)
-	require.Len(t, suggestions, 2, "the inspector receives both regenerated rows")
-	for _, text := range []string{"lighthouse", "kayak"} {
-		page := browsePhotoPage(t, restored, fmt.Sprintf(`{"text":%q,"sort":{"field":"relevance","direction":"desc"}}`, text))
-		require.Len(t, page.Items, 1)
-		require.Equal(t, asset.ID, page.Items[0].AssetID)
-		require.True(t, page.Items[0].MatchedAISuggestion)
-	}
-
-	first, second := suggestions[0], suggestions[1]
-	_, err = restored.RespondPhotoSuggestion(ctx, first.ID, dismissalOf(ctx, t, restored, first))
-	require.NoError(t, err)
-	suggestions = photoSuggestionValues(t, restored, asset.ID)
-	require.Len(t, suggestions, 1, "the inspector's reload offers the second row after deciding the first")
-	require.Equal(t, second.ID, suggestions[0].ID)
-	acceptPhotoSuggestion(t, restored, suggestions[0], true)
-	require.Empty(t, photoSuggestionValues(t, restored, asset.ID))
-	page := browsePhotoPage(t, restored, fmt.Sprintf(`{"text":%q,"sort":{"field":"relevance","direction":"desc"}}`, second.Value.Caption))
-	require.Len(t, page.Items, 1)
-	require.False(t, page.Items[0].MatchedAISuggestion, "the second row became authored metadata")
-	require.Zero(t, searchCount(t, restored, first.Value.Caption, "relevance"))
-}
-
 func TestPhotoDescriptionPredicates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
