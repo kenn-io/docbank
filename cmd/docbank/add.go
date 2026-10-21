@@ -78,11 +78,13 @@ Exit 1 if any file failed (each failure is listed).`,
 		}
 		if addPreflight {
 			rep, err := c.API().PreflightIngest(cmd.Context(), &apiclient.PreflightIngestRequestOptions{Body: &apiclient.PreflightIngestBody{Paths: abs, Include: addInclude, Exclude: addExclude}})
+
 			if err != nil {
 				return err
 			}
 			if addJSON {
-				if err := json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  ")), rep); err != nil {
+				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+				if err := json.MarshalEncode(enc, rep); err != nil {
 					return fmt.Errorf("encoding preflight report: %w", err)
 				}
 			} else {
@@ -106,6 +108,7 @@ Exit 1 if any file failed (each failure is listed).`,
 			if err == nil {
 				rep = *response
 			}
+
 		} else {
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
@@ -118,7 +121,8 @@ Exit 1 if any file failed (each failure is listed).`,
 			reportAction(cmd, c, "document_added", "", "", false)
 		}
 		if addJSON {
-			if err := json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  ")), rep); err != nil {
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			if err := json.MarshalEncode(enc, rep); err != nil {
 				return fmt.Errorf("encoding ingest report: %w", err)
 			}
 		} else {

@@ -62,7 +62,9 @@ beforeEach(() => {
 it.each(["conflict", "auth", "abort", "after item failure"])(
   "reports outer Add failures once with exclusions: %s",
   async (outcome) => {
-    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+    const failure = vi.spyOn(actions, "reportFailure");
+    const telemetry = vi.fn().mockResolvedValue(Response.json({ status: "queued" }));
+    vi.stubGlobal("fetch", telemetry);
     const module = await import("./photoImportStorage.js");
     const createStorage = module.photoImportStorage;
     let rejectSaved = false;
@@ -125,8 +127,19 @@ it.each(["conflict", "auth", "abort", "after item failure"])(
           ? /Canceled/
           : "Import progress changed in another tab. Close and reopen Add photos.",
       );
-    if (outcome === "auth" || outcome === "abort") expect(failure).not.toHaveBeenCalled();
-    else expect(failure).toHaveBeenCalledExactlyOnceWith("session", "add");
+    expect(failure).toHaveBeenCalledExactlyOnceWith(
+      "session",
+      "add",
+      expect.objectContaining({ name: outcome === "abort" ? "AbortError" : "APIError" }),
+    );
+    if (outcome === "auth" || outcome === "abort") expect(telemetry).not.toHaveBeenCalled();
+    else {
+      expect(telemetry).toHaveBeenCalledOnce();
+      expect(JSON.parse(telemetry.mock.calls[0][1].body)).toEqual({
+        event: "error_shown",
+        properties: { surface: "web", kind: "add" },
+      });
+    }
   },
 );
 
@@ -553,7 +566,11 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
   expect(screen.getByText("Ambiguous: 1")).toBeTruthy();
   expect(screen.getByText("Failed: 1")).toBeTruthy();
   expect(screen.getByText("Hash mismatch")).toBeTruthy();
-  expect(failure).toHaveBeenCalledExactlyOnceWith("session", "add");
+  expect(failure).toHaveBeenCalledExactlyOnceWith(
+    "session",
+    "add",
+    expect.objectContaining({ message: "Hash mismatch" }),
+  );
   expect(channel.planPhotoImport).toHaveBeenCalledWith(
     expect.any(Array),
     "/photos",

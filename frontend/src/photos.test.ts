@@ -2821,23 +2821,56 @@ it("recovers smart sets without stale identities", async () => {
   deleted.dispose();
 });
 
-it("rejects a failed smart-set search without remembering it", async () => {
+it("remembers a smart set before its first search fails", async () => {
   const saved = await savedSmartSet();
   const fetcher = vi
     .fn()
     .mockResolvedValue(Response.json({ detail: "Unavailable" }, { status: 503 }));
   stubPhotoFetch(fetcher);
   const photos = new Photos("session", vi.fn());
-  expect(await photos.openSmartSet(saved)).toBe(false);
-  expect(photos.smartSet).toBeUndefined();
-  expect(localStorage.length).toBe(0);
+  expect(photos.openSmartSet(saved)).toBe(true);
+  expect(photos.smartSet?.id).toBe(saved.id);
+  expect(localStorage.length).toBe(1);
   expect(fetcher).toHaveBeenCalledOnce();
   expect(JSON.parse(fetcher.mock.calls[0][1].body).query).toMatchObject({
     text: "rating:5",
     syntax: "advanced",
     filters: { kinds: ["photo", "video"] },
   });
-  expect(photos.error).toBe("Unavailable");
+  await waitFor(() => expect(photos.error).toBe("Unavailable"));
+  photos.dispose();
+});
+
+it.each([
+  { name: "over-long text", invalid: { text: "q".repeat(8193) } },
+  { name: "unknown syntax", invalid: { syntax: "invalid" as Query["syntax"] } },
+])("rejects an invalid smart-set payload without remembering it: $name", async ({ invalid }) => {
+  const saved = await savedSmartSet();
+  saved.payload = { ...saved.payload, ...invalid };
+  const fetcher = vi.fn();
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("session", vi.fn());
+  expect(photos.openSmartSet(saved)).toBe(false);
+  expect(photos.smartSet).toBeUndefined();
+  expect(localStorage.length).toBe(0);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(photos.error).not.toBe("");
+  photos.dispose();
+});
+
+it.each([
+  { status: 401, code: "unauthorized", hidden: false },
+  { status: 403, code: "hidden_locked", hidden: true },
+])("retains search error state after access failure: $code", async ({ status, code, hidden }) => {
+  stubPhotoFetch(
+    vi.fn().mockResolvedValue(Response.json({ detail: "Access denied", code }, { status })),
+  );
+  const onauth = vi.fn();
+  const photos = new Photos("session", onauth, hidden);
+  expect(await photos.loadMore()).toBeUndefined();
+  expect(onauth).toHaveBeenCalledOnce();
+  expect(photos.error).toBe("Access denied");
+  expect(photos.loading).toBe(false);
   photos.dispose();
 });
 

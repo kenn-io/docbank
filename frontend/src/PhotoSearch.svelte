@@ -20,12 +20,17 @@
   });
   function submit() {
     const text = search.trim();
-    const pending = photos.setQuery({
-      ...photos.baseQuery,
-      text: search,
-      syntax,
-      sort: photoSearchSort({ text: search, syntax }),
-    });
+    const pending = photos.setQuery(
+      {
+        ...photos.baseQuery,
+        text: search,
+        syntax,
+        sort: photoSearchSort({ text: search, syntax }),
+      },
+      (cause) => {
+        if (text) reportFailure(photos.session, "search", cause);
+      },
+    );
     void pending?.then((outcome) => {
       if (!text || !outcome) return;
       if (outcome.accepted) return reportSearch(photos.session, "text", outcome.empty);

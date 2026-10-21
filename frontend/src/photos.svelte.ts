@@ -288,10 +288,10 @@ export class Photos {
       } else if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
     }
   }
-  async openSmartSet(saved: SavedQuery) {
+  openSmartSet(saved: SavedQuery) {
     if (saved.kind !== "query" || this.disposed || this.hiding || this.trashing) return false;
-    const applied = await this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) });
-    if (!applied?.accepted) return false;
+    const applied = this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) });
+    if (!applied) return false;
     this.rememberSmartSet(saved);
     return true;
   }
@@ -687,7 +687,7 @@ export class Photos {
 
   // setQuery replaces the search, filter, or album scope. It clears the selected
   // date and the timeline counts, which describe the previous scope.
-  setQuery(query: Query) {
+  setQuery(query: Query, onrejected?: (cause: unknown) => void) {
     if (this.disposed || this.hiding || this.trashing || !this.authored.canChangeTarget()) return;
     this.cancelPending();
     let next: Query;
@@ -695,7 +695,8 @@ export class Photos {
       next = parseQuery(canonicalQuery(query));
     } catch (cause) {
       this.error = cause instanceof Error ? cause.message : String(cause);
-      return Promise.resolve({ accepted: false as const, cause });
+      onrejected?.(cause);
+      return;
     }
     this.baseQuery = next;
     this.query = next;
@@ -805,7 +806,7 @@ export class Photos {
       if (!controller.signal.aborted) return { accepted: true, empty: this.total === 0 };
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (this.authFailure(cause)) return;
+      const handled = this.authFailure(cause);
       this.expired =
         cause instanceof APIError &&
         ["cursor_expired", "invalid_photo_cursor"].includes(cause.code);
@@ -816,7 +817,7 @@ export class Photos {
           : cause instanceof Error
             ? cause.message
             : String(cause);
-      return { accepted: false, cause };
+      if (!handled) return { accepted: false, cause };
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }

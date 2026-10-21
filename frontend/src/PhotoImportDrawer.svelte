@@ -289,7 +289,7 @@
     controller = new AbortController();
     let refreshNeeded = false;
     let added = false;
-    let failed = false;
+    let failedCause: unknown;
     try {
       for (const item of items) {
         if (stopping || disabledReason || controller.signal.aborted) break;
@@ -347,15 +347,11 @@
               : cause instanceof Error
                 ? cause.message
                 : String(cause);
+          failedCause ??= cause;
           if (cause instanceof APIError && cause.status === 401) {
             onauthfailure(cause);
             break;
           }
-          if (
-            !controller.signal.aborted &&
-            !(cause instanceof DOMException && cause.name === "AbortError")
-          )
-            failed = true;
           if (cause instanceof UploadChannelError || controller.signal.aborted) break;
           if (
             cause instanceof APIError &&
@@ -377,14 +373,11 @@
         checkpoint = undefined;
       }
     } catch (cause) {
-      failed ||=
-        !controller.signal.aborted &&
-        !(cause instanceof APIError && cause.status === 401) &&
-        !(cause instanceof DOMException && cause.name === "AbortError");
+      failedCause ??= cause;
       showError(cause);
     } finally {
       if (added) reportAction(session, "document_added");
-      if (failed) reportFailure(session, "add");
+      if (failedCause) reportFailure(session, "add", failedCause);
       running = false;
       controller = null;
       if (refreshNeeded) {

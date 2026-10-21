@@ -2805,13 +2805,14 @@ it.each([false, true])("opens a smart set through Albums when search fails=%s", 
   );
   const saved = savedSmartSet(payload, await queryFingerprint(payload), { revision: 2 });
   const open = vi.spyOn(Photos.prototype, "openSmartSet");
+  let searchFails = failed;
   stubPhotoFetch(
     vi.fn(async (url: string, init: RequestInit) => {
       if (url.includes("/saved-queries?"))
         return Response.json({ items: [saved], total: 1, limit: 100, offset: 0 });
       if (url.endsWith("/photos/albums")) return albumResponse([]);
       if (url.endsWith("/photos/assets/query")) {
-        if (failed && JSON.parse(String(init.body)).query.text === "rating:5")
+        if (searchFails && JSON.parse(String(init.body)).query.text === "rating:5")
           return Response.json({ detail: "Search unavailable" }, { status: 503 });
         return albumResponse({ items: [photo(1)], total: 1 });
       }
@@ -2826,8 +2827,12 @@ it.each([false, true])("opens a smart set through Albums when search fails=%s", 
   expect(open).toHaveBeenCalledWith(saved);
   if (failed) {
     expect(await screen.findByText("Search unavailable")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-  } else expect(await screen.findByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
+    searchFails = false;
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  }
+  expect(await screen.findByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
+  expect(screen.getByText("Five stars")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Freeze results" })).toHaveProperty("disabled", false);
 });
 
 it("passes a registered Photos shortcut into the help dialog", async () => {
