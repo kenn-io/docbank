@@ -49,7 +49,7 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 	asset.Agreement = photoAgreement(asset.Files)
 	choice := selectPhotoDisplay(asset.Files, settings.Preference, asset.DisplayOverrideFileID)
 	asset.DisplaySource = choice.Source
-	if !equalPhotoString(asset.DisplayFileID, choice.FileID) {
+	if !equalPhotoOptional(asset.DisplayFileID, choice.FileID) {
 		return PhotoAsset{}, fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, asset.ID)
 	}
 	if err := validatePhotoAssetPointers(asset, asset.Files); err != nil {
@@ -198,7 +198,7 @@ func photoAssetMemberChanges(before, after PhotoAsset) []photoReceiptMemberChang
 	for _, id := range ordered {
 		beforeFile, hadBefore := beforeByID[id]
 		afterFile, hadAfter := afterByID[id]
-		if hadBefore && hadAfter && beforeFile.NodeID == afterFile.NodeID && beforeFile.Role == afterFile.Role && equalPhotoString(beforeFile.SidecarOfID, afterFile.SidecarOfID) {
+		if hadBefore && hadAfter && beforeFile.NodeID == afterFile.NodeID && beforeFile.Role == afterFile.Role && equalPhotoOptional(beforeFile.SidecarOfID, afterFile.SidecarOfID) {
 			continue
 		}
 		change := photoReceiptMemberChange{FileID: id}
@@ -309,15 +309,11 @@ func nullablePhotoText(value string) any {
 	return value
 }
 
-func equalPhotoString(left, right *string) bool {
+func equalPhotoOptional[T comparable](left, right *T) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
 	return *left == *right
-}
-
-func equalInt[T ~int | ~int64](left, right *T) bool {
-	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
 func inferPhotoRole(facts PhotoNodeFacts) string {
@@ -832,7 +828,7 @@ func (s *Store) SetPhotoDisplay(ctx context.Context, assetID string, revision in
 				return false, fmt.Errorf("%w: sidecars cannot display", ErrInvalidPhotoAsset)
 			}
 		}
-		if equalPhotoString(asset.DisplayOverrideFileID, override) {
+		if equalPhotoOptional(asset.DisplayOverrideFileID, override) {
 			return false, nil
 		}
 		asset.DisplayOverrideFileID = override
@@ -904,12 +900,12 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		if err := ValidatePhotoSettings(next); err != nil {
 			return err
 		}
-		if update.ValidateSchedule != nil && (!equalInt(current.BackupIntervalSeconds, next.BackupIntervalSeconds) || !equalInt(current.BackupKeepLast, next.BackupKeepLast)) {
+		if update.ValidateSchedule != nil && (!equalPhotoOptional(current.BackupIntervalSeconds, next.BackupIntervalSeconds) || !equalPhotoOptional(current.BackupKeepLast, next.BackupKeepLast)) {
 			if err := update.ValidateSchedule(next); err != nil {
 				return err
 			}
 		}
-		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoString(current.Preference, next.Preference) && equalInt(current.BackupIntervalSeconds, next.BackupIntervalSeconds) && equalInt(current.BackupKeepLast, next.BackupKeepLast) && equalInt(current.HiddenUnlockLifetimeSeconds, next.HiddenUnlockLifetimeSeconds) {
+		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoOptional(current.Preference, next.Preference) && equalPhotoOptional(current.BackupIntervalSeconds, next.BackupIntervalSeconds) && equalPhotoOptional(current.BackupKeepLast, next.BackupKeepLast) && equalPhotoOptional(current.HiddenUnlockLifetimeSeconds, next.HiddenUnlockLifetimeSeconds) {
 			result = current
 			return nil
 		}
@@ -917,7 +913,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		if err != nil {
 			return err
 		}
-		if active && !equalPhotoString(current.Preference, next.Preference) {
+		if active && !equalPhotoOptional(current.Preference, next.Preference) {
 			return fmt.Errorf("%w: display preference cannot be changed in an audited vault; set the burst gap without a preference", ErrAuditMutationUnsupported)
 		}
 		priorBurst, err := photoBurstSettingsTx(ctx, tx)
@@ -926,7 +922,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		}
 		// Read assets before the new preference is visible; reads resolve the display choice.
 		var assets []PhotoAsset
-		if !equalPhotoString(current.Preference, next.Preference) {
+		if !equalPhotoOptional(current.Preference, next.Preference) {
 			if assets, err = allPhotoAssetsTx(ctx, tx); err != nil {
 				return err
 			}
@@ -951,7 +947,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		}
 		for _, asset := range assets {
 			choice := selectPhotoDisplay(asset.Files, next.Preference, asset.DisplayOverrideFileID)
-			if equalPhotoString(asset.DisplayFileID, choice.FileID) {
+			if equalPhotoOptional(asset.DisplayFileID, choice.FileID) {
 				continue
 			}
 			if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {

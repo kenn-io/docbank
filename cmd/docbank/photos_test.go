@@ -247,6 +247,17 @@ func TestPhotosCLIBurstGap(t *testing.T) {
 	require.ErrorContains(t, err, "burst gap must be 1 to 30 seconds")
 }
 
+func TestPhotosCLISettingsPreferenceRejectsExtraArgument(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	for _, preference := range []string{"raw", "image"} {
+		t.Run(preference, func(t *testing.T) {
+			_, err := runCLI(t, "photos", "settings", "set", preference, "5")
+			require.ErrorContains(t, err, `unexpected argument "5" after preference "`+preference+`"`)
+			require.Equal(t, exitUsage, commandExitCode(err, true))
+		})
+	}
+}
+
 func TestPhotosCLISettingsOverrides(t *testing.T) {
 	_ = setupVaultHome(t)
 	_, err := runCLI(t, "photos", "settings", "set", "image")

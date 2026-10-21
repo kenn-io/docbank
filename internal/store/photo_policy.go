@@ -421,7 +421,7 @@ func validatePhotoGraphWhere(ctx context.Context, q metadataQuerier, where strin
 			return fmt.Errorf("%w: asset %s", ErrInvalidPhotoAsset, assetID)
 		}
 		choice := selectPhotoDisplay(entry.files, preference, entry.asset.DisplayOverrideFileID)
-		if !equalPhotoString(entry.asset.DisplayFileID, choice.FileID) {
+		if !equalPhotoOptional(entry.asset.DisplayFileID, choice.FileID) {
 			return fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, assetID)
 		}
 		if err := validatePhotoAssetPointers(entry.asset, entry.files); err != nil {

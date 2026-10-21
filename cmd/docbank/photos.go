@@ -316,6 +316,9 @@ var photoSettingsSetCmd = &cobra.Command{
 			return writePhotoSettings(cmd, api.SetPhotoSettingsRequest{})
 		}
 		if len(args) == 2 {
+			if args[0] == "raw" || args[0] == "image" {
+				return usageError(fmt.Errorf("unexpected argument %q after preference %q", args[1], args[0]))
+			}
 			return writePhotoOverride(cmd, args[0], &args[1])
 		}
 		switch args[0] {
