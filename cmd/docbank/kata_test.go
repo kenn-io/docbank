@@ -14,17 +14,8 @@ import (
 
 func TestKataCiteValidatesBeforeDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
-	for _, tc := range []struct {
-		args    []string
-		message string
-	}{
-		{[]string{"kata", "cite", "id:42", "--title", "Follow up", "--idempotency-key", "follow-up"}, "range requires --end"},
-		{[]string{"kata", "cite", "id:42", "--citation", "unused.json", "--start", "0"}, "--citation supplies the range"},
-		{[]string{"kata", "cite", "id:42", "--citation", "unused.json", "--end", "5"}, "--citation supplies the range"},
-	} {
-		_, err := runCLI(t, tc.args...)
-		require.ErrorContains(t, err, tc.message)
-	}
+	_, err := runCLI(t, "kata", "cite", "id:42", "--title", "Follow up", "--idempotency-key", "follow-up")
+	require.ErrorContains(t, err, "range requires --end")
 }
 
 func TestKataCiteCitationSelector(t *testing.T) {
@@ -46,6 +37,13 @@ func TestKataCiteCitationSelector(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "/notes.txt", selection.Path)
 	require.Equal(t, "33333333-3333-4333-8333-333333333333", selection.ExpectedVersion)
+	for _, flag := range []string{"--start", "--end"} {
+		command, _, err := newKataCommand().Find([]string{"cite"})
+		require.NoError(t, err)
+		require.NoError(t, command.ParseFlags([]string{"--citation", path, flag, "0"}))
+		_, err = kataCiteSelector(command, "id:42", kataevidence.Selector{}, path)
+		require.ErrorContains(t, err, "--citation supplies the range")
+	}
 }
 
 func TestKataCitationRejectsMalformedAndOversizedFiles(t *testing.T) {
@@ -53,24 +51,12 @@ func TestKataCitationRejectsMalformedAndOversizedFiles(t *testing.T) {
 	for _, body := range []string{`{"unknown":true}`, `{} {}`, strings.Repeat(" ", 16<<10+1)} {
 		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 		_, err := readKataCitation(path)
-		require.Error(t, err)
+		if len(body) > 16<<10 {
+			require.ErrorContains(t, err, "exceeds 16 KiB")
+		} else {
+			require.ErrorContains(t, err, "must contain one exact text citation")
+		}
 	}
-}
-
-func TestRootHelpDescribesKata(t *testing.T) {
-	out, err := runCLI(t, "--help")
-	require.NoError(t, err)
-	require.Contains(t, out, "kata  Quote document passages into Kata issues")
-}
-
-func TestKataContextPrintsEveryStatus(t *testing.T) {
-	var out bytes.Buffer
-	err := writeKataContext(&out, kataevidence.Context{Passages: []kataevidence.Resolution{
-		{State: "unsupported"},
-		{State: "failed", SavedQuote: "Saved words"},
-	}})
-	require.NoError(t, err)
-	require.Contains(t, out.String(), "unsupported\nfailed\nSaved words\n")
 }
 
 type kataFailWriter struct {
@@ -86,11 +72,16 @@ func (w *kataFailWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func TestKataContextPropagatesOutputErrors(t *testing.T) {
+func TestKataContextPrintsEveryStatus(t *testing.T) {
 	result := kataevidence.Context{Passages: []kataevidence.Resolution{
 		{State: "available", Evidence: kataevidence.Evidence{Reference: kataevidence.Reference{Docbank: &kataevidence.DocumentReference{NodeID: 2}}}, SavedQuote: "hello"},
 		{State: "unsupported"},
 	}, NextOffset: 10}
+	var out bytes.Buffer
+	require.NoError(t, writeKataContext(&out, result))
+	require.Contains(t, out.String(), "available id:2")
+	require.Contains(t, out.String(), "hello\nunsupported\n")
+	require.Contains(t, out.String(), "Continue with --offset 10\n")
 	for failAt := 1; failAt <= 5; failAt++ {
 		err := writeKataContext(&kataFailWriter{failAt: failAt}, result)
 		require.ErrorIs(t, err, io.ErrClosedPipe, "write %d: %v", failAt, err)

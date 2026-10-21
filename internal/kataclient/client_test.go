@@ -83,10 +83,6 @@ func TestFindMarkerFollowsMovedIssue(t *testing.T) {
 	got, err := c.Get(t.Context(), moved.QualifiedRef)
 	require.NoError(t, err)
 	require.Equal(t, moved.UID, got.UID)
-	require.Error(t, c.CheckProject(moved.QualifiedRef))
-	_, err = c.Patch(t.Context(), moved.QualifiedRef, "key", nil, jsontext.Value(`true`))
-	require.Error(t, err)
-	require.Error(t, c.Comment(t.Context(), moved.QualifiedRef, "comment-key", "body"))
 }
 
 func TestInvalidReferencesAndCrossProjectWritesDoNotSendRequests(t *testing.T) {

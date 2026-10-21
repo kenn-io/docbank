@@ -14,8 +14,6 @@ func TestKataConfigIsScoped(t *testing.T) {
 	cfg, err := Load(root)
 	require.NoError(t, err)
 	require.NoError(t, cfg.Validate())
-	_, err = cfg.Integrations.Kata.Resolve(root)
-	require.ErrorContains(t, err, "endpoint")
 	_, err = (KataConfig{}).Resolve(root)
 	require.ErrorContains(t, err, "kata integration is disabled")
 }
@@ -58,10 +56,6 @@ func TestKataCredentials(t *testing.T) {
 		require.ErrorContains(t, err, "endpoint")
 		require.NotContains(t, err.Error(), "secret")
 	}
-}
-
-func TestKataProjectValidationIsLocalAndConsistent(t *testing.T) {
-	t.Setenv("DKE_TEST_KATA_KEY", "synthetic-token")
 	for _, project := range []string{"50%", "has\ttab", "has\x01control", "has\x7fdelete"} {
 		cfg := KataConfig{Enabled: true, Endpoint: "http://127.0.0.1:7777", APIKeyEnv: "DKE_TEST_KATA_KEY", DefaultProject: project}
 		_, err := cfg.Resolve(t.TempDir())

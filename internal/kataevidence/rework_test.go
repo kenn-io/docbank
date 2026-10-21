@@ -3,8 +3,6 @@ package kataevidence
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,13 +17,7 @@ func TestAppendLeavesUnrelatedStalePendingInLargeDiscussion(t *testing.T) {
 	data, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
 	require.NoError(t, err)
 	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "")
-	for range 34 {
-		_, err = k.api.CreateComment(t.Context(), &generated.CreateCommentRequestOptions{
-			PathParams: &generated.CreateCommentPath{ProjectID: strconv.FormatInt(k.projectID, 10), Ref: k.ref},
-			Body:       &generated.CreateCommentBody{Actor: new("reader"), Body: strings.Repeat("x", 64<<10)},
-		})
-		require.NoError(t, err)
-	}
+	addLargeDiscussion(t, k.api, k.projectID, k.ref)
 	s := Service{Kata: k, Archive: &memoryArchive{}}
 	for _, pinned := range []bool{false, true} {
 		selector := Selector{NodeID: 2, EndRune: 5}
