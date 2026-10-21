@@ -296,6 +296,36 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 	})
 }
 
+func TestGetStagingFailureReportsOpen(t *testing.T) {
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	terminal := actionTerminal(t)
+	events := make(chan string, 10)
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		events <- string(body)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"status":"queued"}`)
+	})
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { require.NoError(t, os.Chmod(dir, 0o700)) })
+	output := filepath.Join(dir, "download.txt")
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); rootCmd.SetArgs(nil); resetFlags(rootCmd) })
+	resetFlags(rootCmd)
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(terminal)
+	rootCmd.SetArgs([]string{"get", "id:42", output})
+	err := rootCmd.ExecuteContext(context.Background())
+	require.ErrorIs(t, err, os.ErrPermission)
+	require.ErrorContains(t, err, "creating private download staging")
+	assert.NoFileExists(t, output)
+	require.Len(t, events, 1)
+	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"open"}}`, <-events)
+}
+
 func TestActionReportingStandardStreams(t *testing.T) {
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv("CODEX_THREAD_ID", "")

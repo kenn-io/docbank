@@ -56,6 +56,16 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	c, err := daemonconn.Ensure(cmd.Context())
+	if err != nil {
+		return err
+	}
+	published := false
+	defer func() {
+		if !published && !errors.Is(retErr, os.ErrExist) {
+			reportFailure(cmd, c, "open", retErr, false)
+		}
+	}()
 	mode := backupProgressAuto
 	if !getJSON {
 		mode, err = progressModeFromFlag("get", getProgress)
@@ -74,7 +84,6 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("creating private download staging: %w", err)
 	}
-	published := false
 	defer func() {
 		if cleanupErr := staging.removeAll(); cleanupErr != nil {
 			if published {
@@ -88,15 +97,6 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 		}
 	}()
 
-	c, err := daemonconn.Ensure(cmd.Context())
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if !published && !errors.Is(retErr, os.ErrExist) {
-			reportFailure(cmd, c, "open", retErr, false)
-		}
-	}()
 	node, err := selector.resolveIncludingTrash(cmd.Context(), c)
 	if err != nil {
 		return err
