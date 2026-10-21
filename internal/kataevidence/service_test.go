@@ -163,7 +163,7 @@ func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
 	concurrent := nativeReference()
 	concurrent.Docbank.NodeID = 3
 	var err error
-	k.concurrentEntry, err = json.Marshal(Entry{ID: ID(concurrent), Passage: PassageID(concurrent, "other"), Reference: concurrent, Quote: "other", Label: "other.txt"})
+	k.concurrentEntry, err = json.Marshal(Entry{ID: ID(concurrent), Reference: concurrent, Quote: "other", Label: "other.txt"})
 	require.NoError(t, err)
 	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
 	r := CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5}}
@@ -193,19 +193,15 @@ func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
 }
 
 func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.T) {
-	ref := nativeReference()
-	ref.Docbank.RenditionAttachmentID = strings.Repeat("b", 64)
-	ref.Docbank.BuildID = strings.Repeat("c", 64)
-	ref.Docbank.RenditionSHA256 = strings.Repeat("d", 64)
-	citation, err := ref.Docbank.TextCitation()
-	require.NoError(t, err)
+	ref := renditionReference()
+	citation := ref.Rendition
 	evidence := NewEvidence(ref, "hello", "notes.txt")
 	k := newTestKata(t, map[string]jsontext.Value{}, "")
 	k.commentFails = true
 	a := &memoryArchive{evidence: &evidence}
 	s := Service{Kata: k, Archive: a}
-	r := CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5, Citation: &citation}}
-	_, err = s.Cite(t.Context(), r)
+	r := CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5, Citation: citation}}
+	_, err := s.Cite(t.Context(), r)
 	require.ErrorContains(t, err, "status 503")
 	saved := k.snapshot()
 	var pending struct {
@@ -219,14 +215,14 @@ func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.
 	k.commentFails = false
 	a.prepareErr = ErrUnavailable
 	for _, field := range []string{"vault", "version"} {
-		altered := citation
+		altered := *citation
 		if field == "vault" {
 			altered.VaultUID[0]++
 		} else {
 			altered.ContentVersionID[0]++
 		}
 		conflicting := r
-		conflicting.Selector.ExpectedVersion = ref.Docbank.ContentVersionID
+		conflicting.Selector.ExpectedVersion = citation.ContentVersionID.String()
 		conflicting.Selector.Citation = &altered
 		_, err = s.Cite(t.Context(), conflicting)
 		require.ErrorIs(t, err, ErrUnavailable, "different citation %s must not finish the pending comment", field)
@@ -290,9 +286,9 @@ func TestAppendRejectsFullEnvelopeAtQuoteLimit(t *testing.T) {
 func TestContextUnsupportedNativeDoesNotHideOtherPassages(t *testing.T) {
 	future := nativeReference()
 	future.Version = 2
-	unsupported, err := json.Marshal(Entry{ID: ID(future), Passage: PassageID(future, "hello"), Reference: future, Quote: "hello", Label: "notes.txt"})
+	unsupported, err := json.Marshal(Entry{ID: ID(future), Reference: future, Quote: "hello", Label: "notes.txt"})
 	require.NoError(t, err)
-	valid, err := json.Marshal(Entry{ID: ID(nativeReference()), Passage: PassageID(nativeReference(), "hello"), Reference: nativeReference(), Quote: "hello", Label: "notes.txt"})
+	valid, err := json.Marshal(Entry{ID: ID(nativeReference()), Reference: nativeReference(), Quote: "hello", Label: "notes.txt"})
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		name       string

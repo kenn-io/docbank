@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,6 +53,9 @@ func TestKataCredentials(t *testing.T) {
 	got, err = cfg.Resolve(root)
 	require.NoError(t, err)
 	require.Equal(t, "synthetic-file-token", got.APIKey)
+	require.NoError(t, os.WriteFile(keyFile, []byte("synthetic-file-token"+strings.Repeat(" ", 4096)), 0600))
+	_, err = cfg.Resolve(root)
+	require.ErrorContains(t, err, "at most 4096 bytes")
 	cfg.APIKeyEnv = "DKE_TEST_KATA_KEY"
 	_, err = cfg.Resolve(root)
 	require.ErrorContains(t, err, "exactly one")

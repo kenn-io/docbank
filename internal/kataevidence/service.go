@@ -34,7 +34,6 @@ type Service struct {
 // Entry retains the selected words; Pending marks an undelivered comment.
 type Entry struct {
 	ID        string    `json:"id"`
-	Passage   string    `json:"passage"`
 	Reference Reference `json:"reference"`
 	Quote     string    `json:"quote"`
 	Label     string    `json:"label"`
@@ -86,10 +85,10 @@ func (e envelope) encode() (jsontext.Value, error) {
 func parseNative(data jsontext.Value) (Entry, bool) {
 	var e Entry
 	if json.Unmarshal(data, &e) != nil || ValidateReference(e.Reference) != nil ||
-		e.ID != ID(e.Reference) || !canonical.IsSHA256Hex(e.Passage) {
+		e.ID != ID(e.Reference) {
 		return e, false
 	}
-	if !bounded(e.Quote, MaxChars) || !bounded(e.Label, 512) || PassageID(e.Reference, e.Quote) != e.Passage {
+	if !bounded(e.Quote, MaxChars) || !bounded(e.Label, 512) {
 		return e, false
 	}
 	return e, true
@@ -178,7 +177,7 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 	if err != nil {
 		return kataclient.Issue{}, err
 	}
-	entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label})
+	entry, _ := json.Marshal(Entry{ID: evidence.ID, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label})
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
 	if err != nil {
@@ -210,7 +209,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 	for _, raw := range existing.entries {
 		entry, valid := parseNative(raw)
 		if valid && matchesSelection(entry.Reference, r.Selector, s.Archive.VaultUID()) &&
-			(r.Selector.Quote == "" || PassageID(entry.Reference, r.Selector.Quote) == entry.Passage) {
+			(r.Selector.Quote == "" || entry.Quote == r.Selector.Quote) {
 			return s.finishPending(ctx, r.Issue, current, entry.ID)
 		}
 	}
@@ -238,7 +237,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 			if len(env.entries) >= MaxEntries {
 				return kataclient.Issue{}, ErrEntryLimit
 			}
-			entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{}})
+			entry, _ := json.Marshal(Entry{ID: evidence.ID, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{}})
 			env.entries = append(env.entries, entry)
 			data, err := env.encode()
 			if err != nil {
@@ -265,19 +264,17 @@ func matchesSelection(ref Reference, p Selector, vault string) bool {
 	if expectedVersion == "" {
 		return false
 	}
-	d := ref.Docbank
 	nodeID := p.NodeID
 	if nodeID == 0 && p.Citation != nil {
 		nodeID = p.Citation.NodeID
 	}
-	if d.VaultUID != vault || d.NodeID != nodeID || d.ContentVersionID != expectedVersion || d.StartRune != p.StartRune || d.EndRune != p.EndRune {
-		return false
+	if c := ref.Rendition; c != nil {
+		return p.Citation != nil && c.VaultUID.String() == vault && c.NodeID == nodeID &&
+			c.ContentVersionID.String() == expectedVersion && *c == *p.Citation
 	}
-	if p.Citation == nil {
-		return d.RenditionAttachmentID == ""
-	}
-	citation, err := d.TextCitation()
-	return err == nil && citation == *p.Citation
+	d := ref.Docbank
+	return p.Citation == nil && d.VaultUID == vault && d.NodeID == nodeID &&
+		d.ContentVersionID == expectedVersion && d.StartRune == p.StartRune && d.EndRune == p.EndRune
 }
 
 func (s Service) finishPending(ctx context.Context, ref string, issue kataclient.Issue, entryID string) (kataclient.Issue, error) {

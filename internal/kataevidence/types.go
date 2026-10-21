@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"uuid"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
@@ -37,23 +36,20 @@ var (
 
 // Reference extends msgvault's reference union without inventing message provenance.
 type Reference struct {
-	Version int                `json:"version"`
-	Kind    string             `json:"kind"`
-	Docbank *DocumentReference `json:"docbank,omitzero"`
+	Version   int                    `json:"version"`
+	Kind      string                 `json:"kind"`
+	Docbank   *DocumentReference     `json:"docbank,omitzero"`
+	Rendition *document.TextCitation `json:"rendition,omitzero"`
 }
 
-// DocumentReference pins original UTF-8 text or an exact retained rendition.
-// Rune offsets are half-open; the three rendition fields are present together.
+// DocumentReference pins original UTF-8 text with half-open rune offsets.
 type DocumentReference struct {
-	VaultUID              string `json:"vault_uid"`
-	NodeID                int64  `json:"node_id"`
-	ContentVersionID      string `json:"content_version_id"`
-	ContentSHA256         string `json:"content_sha256"`
-	RenditionAttachmentID string `json:"rendition_attachment_id,omitzero"`
-	BuildID               string `json:"build_id,omitzero"`
-	RenditionSHA256       string `json:"rendition_sha256,omitzero"`
-	StartRune             int    `json:"start_rune"`
-	EndRune               int    `json:"end_rune"`
+	VaultUID         string `json:"vault_uid"`
+	NodeID           int64  `json:"node_id"`
+	ContentVersionID string `json:"content_version_id"`
+	ContentSHA256    string `json:"content_sha256"`
+	StartRune        int    `json:"start_rune"`
+	EndRune          int    `json:"end_rune"`
 }
 
 type Selector struct {
@@ -82,7 +78,6 @@ type ContextRequest struct {
 
 type Evidence struct {
 	ID           string    `json:"id"`
-	Passage      string    `json:"passage"`
 	Reference    Reference `json:"reference"`
 	Excerpt      string    `json:"excerpt"`
 	Label        string    `json:"label"`
@@ -103,16 +98,20 @@ type Archive interface {
 }
 
 func ValidateReference(ref Reference) error {
-	p := ref.Docbank
-	if ref.Version != 1 || ref.Kind != "docbank" || p == nil || p.NodeID < 1 ||
-		canonical.ValidateUUIDv4(p.VaultUID) != nil || canonical.ValidateUUIDv4(p.ContentVersionID) != nil || !canonical.IsSHA256Hex(p.ContentSHA256) ||
-		p.StartRune < 0 || p.EndRune <= p.StartRune || p.EndRune > 2147483647 || p.EndRune-p.StartRune > MaxChars {
+	if ref.Version != 1 || ref.Kind != "docbank" || (ref.Docbank == nil) == (ref.Rendition == nil) {
 		return ErrInvalid
 	}
-	if p.RenditionAttachmentID != "" || p.BuildID != "" || p.RenditionSHA256 != "" {
-		if !canonical.IsSHA256Hex(p.RenditionAttachmentID) || !canonical.IsSHA256Hex(p.BuildID) || !canonical.IsSHA256Hex(p.RenditionSHA256) {
+	if c := ref.Rendition; c != nil {
+		if document.ValidateTextCitation(*c) != nil || c.End-c.Start > MaxChars {
 			return ErrInvalid
 		}
+		return nil
+	}
+	p := ref.Docbank
+	if p.NodeID < 1 || canonical.ValidateUUIDv4(p.VaultUID) != nil ||
+		canonical.ValidateUUIDv4(p.ContentVersionID) != nil || !canonical.IsSHA256Hex(p.ContentSHA256) ||
+		p.StartRune < 0 || p.EndRune <= p.StartRune || p.EndRune > 2147483647 || p.EndRune-p.StartRune > MaxChars {
+		return ErrInvalid
 	}
 	return nil
 }
@@ -131,30 +130,6 @@ func ID(ref Reference) string {
 	return Digest("docbank.kata.evidence.v1", string(data))
 }
 
-func PassageID(ref Reference, words string) string {
-	p := ref.Docbank
-	if p == nil {
-		return ""
-	}
-	return Digest("docbank.kata.passage.v1", p.VaultUID, strconv.FormatInt(p.NodeID, 10),
-		p.RenditionAttachmentID, strconv.Itoa(p.StartRune), strconv.Itoa(p.EndRune), words)
-}
-
 func NewEvidence(ref Reference, words, label string) Evidence {
-	return Evidence{ID: ID(ref), Passage: PassageID(ref, words), Reference: ref, Excerpt: words, Label: label, ContentTrust: "untrusted"}
-}
-
-func (p DocumentReference) TextCitation() (document.TextCitation, error) {
-	vault, err := uuid.Parse(p.VaultUID)
-	if err != nil {
-		return document.TextCitation{}, fmt.Errorf("%w: vault", ErrInvalid)
-	}
-	version, err := uuid.Parse(p.ContentVersionID)
-	if err != nil {
-		return document.TextCitation{}, fmt.Errorf("%w: version", ErrInvalid)
-	}
-	c := document.TextCitation{Version: 1, VaultUID: vault, NodeID: p.NodeID, ContentVersionID: version,
-		ContentSHA256: p.ContentSHA256, RenditionAttachmentID: p.RenditionAttachmentID, BuildID: p.BuildID,
-		RenditionSHA256: p.RenditionSHA256, Start: p.StartRune, End: p.EndRune}
-	return c, document.ValidateTextCitation(c)
+	return Evidence{ID: ID(ref), Reference: ref, Excerpt: words, Label: label, ContentTrust: "untrusted"}
 }

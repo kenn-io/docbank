@@ -13,7 +13,7 @@ import (
 func TestAppendLeavesUnrelatedStalePendingInLargeDiscussion(t *testing.T) {
 	old := nativeReference()
 	old.Docbank.NodeID = 3
-	entry := Entry{ID: ID(old), Passage: PassageID(old, "older"), Reference: old, Quote: "older", Label: "older.txt", Pending: &Pending{SavedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}}
+	entry := Entry{ID: ID(old), Reference: old, Quote: "older", Label: "older.txt", Pending: &Pending{SavedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}}
 	data, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
 	require.NoError(t, err)
 	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "")

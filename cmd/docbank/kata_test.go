@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
 
@@ -59,31 +61,27 @@ func TestKataCitationRejectsMalformedAndOversizedFiles(t *testing.T) {
 	}
 }
 
-type kataFailWriter struct {
-	writes int
-	failAt int
-}
-
-func (w *kataFailWriter) Write(p []byte) (int, error) {
-	w.writes++
-	if w.writes == w.failAt {
-		return 0, io.ErrClosedPipe
-	}
-	return len(p), nil
-}
-
 func TestKataContextPrintsEveryStatus(t *testing.T) {
 	result := kataevidence.Context{Passages: []kataevidence.Resolution{
 		{State: "available", Evidence: kataevidence.Evidence{Reference: kataevidence.Reference{Docbank: &kataevidence.DocumentReference{NodeID: 2}}}, SavedQuote: "hello"},
 		{State: "unsupported"},
+		{State: "available", Evidence: kataevidence.Evidence{Reference: kataevidence.Reference{Rendition: &document.TextCitation{NodeID: 3, Start: 1, End: 3, ContentVersionID: uuid.MustParse("22222222-2222-4222-8222-222222222222")}}}},
 	}, NextOffset: 10}
 	var out bytes.Buffer
 	require.NoError(t, writeKataContext(&out, result))
 	require.Contains(t, out.String(), "available id:2")
 	require.Contains(t, out.String(), "hello\nunsupported\n")
 	require.Contains(t, out.String(), "Continue with --offset 10\n")
-	for failAt := 1; failAt <= 5; failAt++ {
-		err := writeKataContext(&kataFailWriter{failAt: failAt}, result)
+	require.Contains(t, out.String(), "available id:3 [1,3) version 22222222-2222-4222-8222-222222222222\n")
+	for failAt := 1; failAt <= 6; failAt++ {
+		writes := 0
+		err := writeKataContext(reportTestWriter(func(p []byte) (int, error) {
+			writes++
+			if writes == failAt {
+				return 0, io.ErrClosedPipe
+			}
+			return len(p), nil
+		}), result)
 		require.ErrorIs(t, err, io.ErrClosedPipe, "write %d: %v", failAt, err)
 	}
 }

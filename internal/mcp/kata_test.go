@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"uuid"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
@@ -151,11 +153,17 @@ func TestKataReadToolIsInDefaultCatalog(t *testing.T) {
 func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 	future := kataReferenceFixture()
 	future.Version = 2
+	rendition := kataevidence.Reference{Version: 1, Kind: "docbank", Rendition: &document.TextCitation{
+		Version: 1, VaultUID: uuid.MustParse("00000000-0000-4000-8000-000000000001"), NodeID: 7,
+		ContentVersionID: uuid.MustParse("00000000-0000-4000-8000-000000000007"), ContentSHA256: strings.Repeat("a", 64),
+		RenditionAttachmentID: strings.Repeat("b", 64), BuildID: strings.Repeat("c", 64), RenditionSHA256: strings.Repeat("d", 64), Start: 0, End: 3,
+	}}
 	for _, tc := range []struct {
 		name       string
 		passages   []kataevidence.Resolution
 		nextOffset int
 	}{
+		{"rendition", []kataevidence.Resolution{{State: "available", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(rendition, "abc", "Synthetic text")}}, 11},
 		{"changed", []kataevidence.Resolution{{State: "changed", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(kataReferenceFixture(), "abc", "Synthetic text")}}, 11},
 		{"unsupported_version", []kataevidence.Resolution{{State: "unsupported", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(future, "", "Synthetic text")}}, 11},
 		{"unsupported_reference", []kataevidence.Resolution{
@@ -200,6 +208,9 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 				} else {
 					evidence := objectField(t, passage, "evidence")
 					require.Equal(t, "untrusted", evidence["content_trust"])
+					if tc.name == "rendition" {
+						require.Equal(t, strings.Repeat("c", 64), objectField(t, objectField(t, evidence, "reference"), "rendition")["build_id"])
+					}
 					if tc.name == "unsupported_version" {
 						require.EqualValues(t, 2, objectField(t, evidence, "reference")["version"])
 					}

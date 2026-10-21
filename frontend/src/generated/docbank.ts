@@ -1579,13 +1579,10 @@ export interface Issue {
 }
 
 export interface DocumentReference {
-  build_id?: string;
   content_sha256: string;
   content_version_id: string;
   end_rune: number;
   node_id: number;
-  rendition_attachment_id?: string;
-  rendition_sha256?: string;
   start_rune: number;
   vault_uid: string;
 }
@@ -1593,6 +1590,7 @@ export interface DocumentReference {
 export interface Reference {
   docbank?: DocumentReference;
   kind: string;
+  rendition?: TextCitation;
   version: number;
 }
 
@@ -1601,7 +1599,6 @@ export interface Evidence {
   excerpt: string;
   id: string;
   label: string;
-  passage: string;
   reference: Reference;
 }
 

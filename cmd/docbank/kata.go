@@ -134,6 +134,8 @@ func writeKataContext(out io.Writer, result kataevidence.Context) error {
 		var err error
 		if p != nil {
 			_, err = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", passage.State, p.NodeID, p.StartRune, p.EndRune, p.ContentVersionID)
+		} else if c := passage.Evidence.Reference.Rendition; c != nil {
+			_, err = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", passage.State, c.NodeID, c.Start, c.End, c.ContentVersionID)
 		} else {
 			_, err = fmt.Fprintln(out, passage.State)
 		}

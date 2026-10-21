@@ -24,7 +24,7 @@ func kataService(d Deps, g *OperationGate) (kataevidence.Service, error) {
 	if err != nil {
 		return kataevidence.Service{}, NewError(503, "kata_unconfigured", err.Error()+"; restart the daemon after changing [integrations.kata]")
 	}
-	return kataevidence.Service{Kata: kataclient.New(cfg), Archive: kataArchive{deps: d, gate: g}}, nil
+	return kataevidence.Service{Kata: kataclient.New(cfg), Archive: kataArchive{deps: d, gate: g, originals: make(map[kataOriginalKey]kataOriginal)}}, nil
 }
 
 func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
@@ -110,7 +110,7 @@ func kataProblem(err error) *Error {
 		}
 		switch failure.Code {
 		case "incompatible_api":
-			return NewError(503, "kata_incompatible", "Kata API schema 0.21.0 or newer is required")
+			return NewError(503, "kata_incompatible", "unsupported Kata API schema: require 0.x at or above 0.21.0")
 		case "invalid_reference", "wrong_project", "project_unavailable":
 			return NewError(422, "invalid_kata_evidence", "Kata issue reference is invalid, unavailable, or outside the configured project")
 		}

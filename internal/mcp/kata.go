@@ -162,5 +162,5 @@ func kataEvidenceHasKnownShape(e kataevidence.Evidence) bool {
 		return false
 	}
 	reference.Version = 1 // Validate the structure independently of reader support.
-	return kataevidence.ValidateReference(reference) == nil && canonical.IsSHA256Hex(e.ID) && canonical.IsSHA256Hex(e.Passage)
+	return kataevidence.ValidateReference(reference) == nil && canonical.IsSHA256Hex(e.ID)
 }

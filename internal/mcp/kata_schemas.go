@@ -28,22 +28,25 @@ func kataReferenceSchema() schema {
 		"vault_uid": uuidSchema(), "node_id": integerSchema(1, math.MaxInt64),
 		"content_version_id": uuidSchema(), "content_sha256": sha256Schema(),
 		"start_rune": integerSchema(0, math.MaxInt32), "end_rune": integerSchema(1, math.MaxInt32),
-		"rendition_attachment_id": sha256Schema(), "build_id": sha256Schema(), "rendition_sha256": sha256Schema(),
 	}, "vault_uid", "node_id", "content_version_id", "content_sha256", "start_rune", "end_rune")
-	document["dependentRequired"] = schema{
-		"rendition_attachment_id": []string{"build_id", "rendition_sha256"},
-		"build_id":                []string{"rendition_attachment_id", "rendition_sha256"},
-		"rendition_sha256":        []string{"rendition_attachment_id", "build_id"},
-	}
+	citation, required := textCitationProperties()
 	// Future versions may retain familiar fields; incomplete references are omitted.
-	return objectSchema(schema{"version": integerSchema(1, math.MaxInt32), "kind": enumSchema("docbank"), "docbank": document}, "version", "kind", "docbank")
+	reference := objectSchema(schema{
+		"version": integerSchema(1, math.MaxInt32), "kind": enumSchema("docbank"),
+		"docbank": document, "rendition": objectSchema(citation, required...),
+	}, "version", "kind")
+	reference["oneOf"] = []schema{
+		{kataRequiredField: []string{"docbank"}, "not": schema{kataRequiredField: []string{"rendition"}}},
+		{kataRequiredField: []string{"rendition"}, "not": schema{kataRequiredField: []string{"docbank"}}},
+	}
+	return reference
 }
 
 func getKataContextSchemas() (schema, schema) {
 	evidence := objectSchema(schema{
-		"id": sha256Schema(), "passage": sha256Schema(), "reference": kataReferenceSchema(),
+		"id": sha256Schema(), "reference": kataReferenceSchema(),
 		"excerpt": stringSchema(kataevidence.MaxChars), "label": stringSchema(512), "content_trust": enumSchema("untrusted"),
-	}, "id", "passage", "reference", "excerpt", "label", "content_trust")
+	}, "id", "reference", "excerpt", "label", "content_trust")
 	passage := objectSchema(schema{
 		schemaStateField: enumSchema("available", "changed", "unavailable", "unreachable", "unsupported", "failed"),
 		"evidence":       evidence, "saved_quote": stringSchema(kataevidence.MaxChars),

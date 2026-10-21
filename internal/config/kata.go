@@ -99,8 +99,8 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 		}
 		// secretref reads whole files; retain this integration's credential size limit.
 		info, err := os.Stat(ref.File)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
-			return KataConnection{}, errors.New("integrations.kata: api_key_file must be a regular file of at most 4096 bytes")
+		if err != nil || info.Size() > 4096 {
+			return KataConnection{}, errors.New("integrations.kata: api_key_file must contain at most 4096 bytes")
 		}
 	}
 	secret, err := ref.Resolve()

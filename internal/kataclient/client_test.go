@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,4 +175,43 @@ func TestClientDoesNotRetryUnknownWriteOutcome(t *testing.T) {
 	posted, err := c.GetComments(t.Context(), issue.QualifiedRef)
 	require.NoError(t, err)
 	require.Equal(t, []string{"Evidence added"}, posted)
+}
+
+func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
+	backend := katatest.New(t, katatest.WithToken("synthetic-key"))
+	_, err := backend.Client(t).InitProject(t.Context(), &wire.InitProjectRequestOptions{Body: &wire.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		version   string
+		supported bool
+	}{
+		{"0.20.9", false}, {"0.21.0-rc.1", false}, {"0.21.0", true},
+		{"0.28.0", true}, {"0.99.0", true}, {"1.0.0", false}, {"2.21.0", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			var operationRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w, `{"api_schema_version":%q}`, tc.version)
+					return
+				}
+				operationRequests.Add(1)
+				backend.Service.Handler().ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+			issue, err := c.Create(t.Context(), "schema-"+tc.version, "Synthetic issue", "", nil)
+			if tc.supported {
+				require.NoError(t, err)
+				require.Equal(t, "Synthetic issue", issue.Title)
+			} else {
+				require.ErrorContains(t, err, "unsupported Kata API schema")
+				failure, ok := errors.AsType[*Error](err)
+				require.True(t, ok)
+				require.Equal(t, "incompatible_api", failure.Code)
+				require.Zero(t, operationRequests.Load())
+			}
+		})
+	}
 }

@@ -38,7 +38,6 @@ func TestKataContextRejectsForgedOriginalQuote(t *testing.T) {
 	require.Equal(t, "available", original.Passages[0].State)
 	require.Equal(t, "hello", original.Passages[0].Evidence.Excerpt)
 	envelope.Entries[0].Quote = "phony"
-	envelope.Entries[0].Passage = kataevidence.PassageID(envelope.Entries[0].Reference, "phony")
 	forged, err := json.Marshal(envelope)
 	require.NoError(t, err)
 	_, err = client.Patch(t.Context(), saved.QualifiedRef, kataevidence.MetadataKey, saved.Metadata[kataevidence.MetadataKey], forged)

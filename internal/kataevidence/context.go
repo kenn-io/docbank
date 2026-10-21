@@ -33,7 +33,7 @@ func (s Service) Context(ctx context.Context, r ContextRequest) (Context, error)
 	end := min(start+ContextPageSize, len(env.entries))
 	for _, raw := range env.entries[start:end] {
 		entry, valid := parseNative(raw)
-		resolution := Resolution{State: "unsupported", Evidence: Evidence{ID: entry.ID, Passage: entry.Passage, Reference: entry.Reference, ContentTrust: "untrusted"}}
+		resolution := Resolution{State: "unsupported", Evidence: Evidence{ID: entry.ID, Reference: entry.Reference, ContentTrust: "untrusted"}}
 		if valid {
 			resolution.State = "unreachable"
 			if s.Archive != nil {
@@ -41,7 +41,7 @@ func (s Service) Context(ctx context.Context, r ContextRequest) (Context, error)
 				if err != nil {
 					return Context{}, err
 				}
-				resolution.Evidence.ID, resolution.Evidence.Passage = entry.ID, entry.Passage
+				resolution.Evidence.ID = entry.ID
 			}
 		}
 		if bounded(entry.Quote, MaxChars) && bounded(entry.Label, 512) {

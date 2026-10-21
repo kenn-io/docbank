@@ -63,7 +63,7 @@ func TestAppendPendingReconciliation(t *testing.T) {
 				savedAt = time.Time{}
 			}
 			ref := nativeReference()
-			entry, err := json.Marshal(Entry{ID: ID(ref), Passage: PassageID(ref, "hello"), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{SavedAt: savedAt}})
+			entry, err := json.Marshal(Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{SavedAt: savedAt}})
 			require.NoError(t, err)
 			env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 			data, err := env.encode()
@@ -125,7 +125,7 @@ func TestAppendReplayRejectsMovedIssue(t *testing.T) {
 	require.NoError(t, err)
 	client := kataclient.New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
 	ref := nativeReference()
-	entry, err := json.Marshal(Entry{ID: ID(ref), Passage: PassageID(ref, "hello"), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{}})
+	entry, err := json.Marshal(Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{}})
 	require.NoError(t, err)
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
@@ -153,7 +153,7 @@ func TestAppendReplayRejectsMovedIssue(t *testing.T) {
 
 func TestDiscussionGrowthAndUnrelatedPurgeKeepFreshAppendReadable(t *testing.T) {
 	ref := nativeReference()
-	entry := Entry{ID: ID(ref), Passage: PassageID(ref, "hello"), Reference: ref, Quote: "hello", Label: "notes.txt"}
+	entry := Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt"}
 	data, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
 	require.NoError(t, err)
 	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "")

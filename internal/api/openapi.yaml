@@ -4316,8 +4316,6 @@ components:
     DocumentReference:
       additionalProperties: false
       properties:
-        build_id:
-          type: string
         content_sha256:
           type: string
         content_version_id:
@@ -4328,10 +4326,6 @@ components:
         node_id:
           format: int64
           type: integer
-        rendition_attachment_id:
-          type: string
-        rendition_sha256:
-          type: string
         start_rune:
           format: int64
           type: integer
@@ -6833,13 +6827,10 @@ components:
           type: string
         label:
           type: string
-        passage:
-          type: string
         reference:
           $ref: "#/components/schemas/Reference"
       required:
         - id
-        - passage
         - reference
         - excerpt
         - label
@@ -16191,6 +16182,8 @@ components:
           $ref: "#/components/schemas/DocumentReference"
         kind:
           type: string
+        rendition:
+          $ref: "#/components/schemas/TextCitation"
         version:
           format: int64
           type: integer

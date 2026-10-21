@@ -13,8 +13,8 @@ Files imported through any Docbank ingestion path can supply evidence.
 
 ## Connect Kata
 
-Kata API schema 0.21.0 or newer is required. This is the `api_schema_version`
-reported by `GET /api/v1/health`, separate from the Kata release number.
+Kata API schema 0.x at or above 0.21.0 is required. Other major versions are unsupported.
+`GET /api/v1/health` reports it as `api_schema_version`, separate from the Kata release number.
 Kata v0.18.0 reports schema 0.21.0; v0.19.0 reports 0.28.0. Both meet the
 requirement. Docbank checks it only when you use this integration.
 
@@ -159,7 +159,6 @@ Docbank mirrors msgvault's version-1 envelope and readable quotation format:
   "entries": [
     {
       "id": "<reference digest>",
-      "passage": "<passage digest>",
       "quote": "We agreed to review pricing.",
       "label": "meeting.txt",
       "reference": {
@@ -171,7 +170,7 @@ Docbank mirrors msgvault's version-1 envelope and readable quotation format:
           "content_version_id": "<version UUID>",
           "content_sha256": "<SHA-256>",
           "start_rune": 0,
-          "end_rune": 27
+          "end_rune": 28
         }
       }
     }
@@ -179,8 +178,9 @@ Docbank mirrors msgvault's version-1 envelope and readable quotation format:
 }
 ```
 
-Kata stores native entries under `docbank.evidence`. Renditions add
-`rendition_attachment_id`, `build_id` and `rendition_sha256` inside `docbank`.
+Kata stores native entries under `docbank.evidence`. Original-text references use
+`docbank`. Rendition references use `rendition` instead, containing an exact
+`TextCitation` with its own `version`, `start`, `end`, and retained rendition identity.
 The body or comment contains `Evidence: <filename>`, a blank line, and the
 quoted words as Markdown blockquote lines. Each appended comment ends with
 `<!-- docbank-evidence:<entry id> -->` on its own line. This marker is invisible

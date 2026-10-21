@@ -22,6 +22,7 @@ func TestKataProblemClassifiesPermanentReferenceFailures(t *testing.T) {
 		{"invalid_reference", &kataclient.Error{Code: "invalid_reference"}, 422, "invalid_kata_evidence", ""},
 		{"wrong_project", &kataclient.Error{Code: "wrong_project"}, 422, "invalid_kata_evidence", ""},
 		{"project_unavailable", &kataclient.Error{Code: "project_unavailable"}, 422, "invalid_kata_evidence", ""},
+		{"incompatible_schema", &kataclient.Error{Code: "incompatible_api"}, 503, "kata_incompatible", "unsupported Kata API schema"},
 		{"unsupported", kataevidence.ErrUnsupported, 409, "kata_evidence_unsupported", ""},
 		{"unauthorized", &kataclient.Error{Status: 401, Code: "http_error"}, 401, "kata_unauthorized", ""},
 		{"forbidden", &kataclient.Error{Status: 403, Code: "http_error"}, 403, "kata_forbidden", ""},

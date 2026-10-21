@@ -1,4 +1,4 @@
-// Package kataclient adapts Kata's public client to Docbank evidence operations.
+// Package kataclient wraps Kata's generated client for Docbank evidence operations.
 package kataclient
 
 import (
@@ -44,6 +44,9 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	if e.Code == "incompatible_api" {
+		return "unsupported Kata API schema: require 0.x at or above 0.21.0"
+	}
 	return fmt.Sprintf("Kata request failed (status %d, code %s)", e.Status, e.Code)
 }
 
@@ -415,7 +418,10 @@ func supportedSchema(version string) bool {
 		}
 		numbers[i] = n
 	}
-	if numbers[0] > 0 || numbers[1] > 21 {
+	if numbers[0] != 0 {
+		return false
+	}
+	if numbers[1] > 21 {
 		return true
 	}
 	return numbers[1] == 21 && (numbers[2] > 0 || prerelease == "")

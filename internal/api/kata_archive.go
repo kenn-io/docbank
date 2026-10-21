@@ -19,6 +19,8 @@ const kataOriginalMaxBytes = 16 << 20
 type kataArchive struct {
 	deps Deps
 	gate *OperationGate
+	// Each API operation owns its cache; later context calls verify sources again.
+	originals map[kataOriginalKey]kataOriginal
 }
 
 func (a kataArchive) VaultUID() string { return a.deps.Store.VaultID() }
@@ -60,25 +62,10 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 		if mediaErr != nil || !strings.HasPrefix(mediaType, "text/") && mediaType != jsonMediaType {
 			return fmt.Errorf("%w: document needs a retained text rendition; supply an exact text citation", kataevidence.ErrUnsupportedSource)
 		}
-		stream, size, err := a.deps.Blobs.OpenStreamContext(ctx, node.BlobHash)
+		text, err := a.originalText(ctx, node)
 		if err != nil {
 			return err
 		}
-		defer func() { _ = stream.Close() }()
-		if size != node.Size {
-			return document.ErrCitationIntegrity
-		}
-		data, err := io.ReadAll(io.LimitReader(stream, kataOriginalMaxBytes+1))
-		if err != nil {
-			return err
-		}
-		if !stream.Verified() || int64(len(data)) != node.Size {
-			return document.ErrCitationIntegrity
-		}
-		if !utf8.Valid(data) {
-			return fmt.Errorf("%w: document original is not UTF-8 text", kataevidence.ErrInvalid)
-		}
-		text := string(data)
 		runeCount := utf8.RuneCountInString(text)
 		if selector.StartRune < 0 || selector.EndRune <= selector.StartRune || selector.EndRune > runeCount || selector.EndRune-selector.StartRune > kataevidence.MaxChars {
 			return fmt.Errorf("%w: --end must be within the selected text and at most 1000 code points after --start", kataevidence.ErrInvalid)
@@ -133,9 +120,7 @@ func (a kataArchive) prepareRendition(ctx context.Context, selector kataevidence
 	if active.Build.ID != c.BuildID || active.Build.MarkdownChecksum != c.RenditionSHA256 {
 		return kataevidence.Evidence{}, kataevidence.ErrChanged
 	}
-	ref := kataevidence.Reference{Version: 1, Kind: "docbank", Docbank: &kataevidence.DocumentReference{
-		VaultUID: c.VaultUID.String(), NodeID: c.NodeID, ContentVersionID: c.ContentVersionID.String(), ContentSHA256: c.ContentSHA256,
-		RenditionAttachmentID: c.RenditionAttachmentID, BuildID: c.BuildID, RenditionSHA256: c.RenditionSHA256, StartRune: c.Start, EndRune: c.End}}
+	ref := kataevidence.Reference{Version: 1, Kind: "docbank", Rendition: &c}
 	return kataevidence.NewEvidence(ref, resolved.Text, boundedKataLabel(node.Name)), nil
 }
 
@@ -162,16 +147,22 @@ func boundedKataLabel(name string) string {
 
 func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference, quote string) (kataevidence.Resolution, error) {
 	result := kataevidence.Resolution{State: "unavailable", Evidence: kataevidence.Evidence{Reference: ref, ContentTrust: "untrusted"}}
-	if kataevidence.ValidateReference(ref) != nil {
-		result.State = "unsupported"
-		return result, nil //nolint:nilerr // Invalid references are reported as unsupported evidence.
+	var selector kataevidence.Selector
+	var vault, hash string
+	if c := ref.Rendition; c != nil {
+		vault, hash = c.VaultUID.String(), c.ContentSHA256
+		selector = kataevidence.Selector{NodeID: c.NodeID, ExpectedVersion: c.ContentVersionID.String(), StartRune: c.Start, EndRune: c.End, Citation: c}
+	} else {
+		p := ref.Docbank
+		vault, hash = p.VaultUID, p.ContentSHA256
+		selector = kataevidence.Selector{NodeID: p.NodeID, ExpectedVersion: p.ContentVersionID, StartRune: p.StartRune, EndRune: p.EndRune}
 	}
-	p := ref.Docbank
-	if p.VaultUID != a.deps.Store.VaultID() {
+	if vault != a.deps.Store.VaultID() {
 		result.State = "unreachable"
 		return result, nil
 	}
-	node, err := a.deps.Store.NodeByID(ctx, p.NodeID)
+
+	node, err := a.deps.Store.NodeByID(ctx, selector.NodeID)
 	if errors.Is(err, store.ErrNotFound) {
 		return result, nil
 	}
@@ -181,18 +172,9 @@ func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference, qu
 	if node.TrashedAt != nil || node.IsDir() {
 		return result, nil
 	}
-	if node.CurrentVersionID != p.ContentVersionID || node.BlobHash != p.ContentSHA256 {
+	if node.CurrentVersionID != selector.ExpectedVersion || node.BlobHash != hash {
 		result.State = "changed"
 		return result, nil
-	}
-	selector := kataevidence.Selector{NodeID: p.NodeID, ExpectedVersion: p.ContentVersionID, StartRune: p.StartRune, EndRune: p.EndRune}
-	if p.RenditionAttachmentID != "" {
-		citation, err := p.TextCitation()
-		if err != nil {
-			result.State = "unsupported"
-			return result, nil //nolint:nilerr // Unsupported citations remain readable alongside other evidence.
-		}
-		selector.Citation = &citation
 	}
 	evidence, err := a.Prepare(ctx, selector)
 	switch {
@@ -208,4 +190,46 @@ func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference, qu
 		result.State = "failed"
 	}
 	return result, nil
+}
+
+type kataOriginal struct {
+	text string
+	err  error
+}
+
+type kataOriginalKey struct {
+	nodeID int64
+	hash   string
+}
+
+func (a kataArchive) originalText(ctx context.Context, node store.Node) (string, error) {
+	key := kataOriginalKey{nodeID: node.ID, hash: node.BlobHash}
+	if original, ok := a.originals[key]; ok {
+		return original.text, original.err
+	}
+	text, err := a.readOriginal(ctx, node)
+	a.originals[key] = kataOriginal{text: text, err: err}
+	return text, err
+}
+
+func (a kataArchive) readOriginal(ctx context.Context, node store.Node) (string, error) {
+	stream, size, err := a.deps.Blobs.OpenStreamContext(ctx, node.BlobHash)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = stream.Close() }()
+	if size != node.Size {
+		return "", document.ErrCitationIntegrity
+	}
+	data, err := io.ReadAll(io.LimitReader(stream, kataOriginalMaxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if !stream.Verified() || int64(len(data)) != node.Size {
+		return "", document.ErrCitationIntegrity
+	}
+	if !utf8.Valid(data) {
+		return "", fmt.Errorf("%w: document original is not UTF-8 text", kataevidence.ErrInvalid)
+	}
+	return string(data), nil
 }

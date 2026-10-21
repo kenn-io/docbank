@@ -174,7 +174,7 @@ func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Passages, 1)
 	require.Equal(t, "available", page.Passages[0].State)
-	require.Equal(t, f.citation.BuildID, page.Passages[0].Evidence.Reference.Docbank.BuildID)
+	require.Equal(t, f.citation.BuildID, page.Passages[0].Evidence.Reference.Rendition.BuildID)
 	invalid := r
 	citation := f.citation
 	citation.End = 999
