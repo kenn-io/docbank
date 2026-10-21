@@ -417,7 +417,14 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 	f.mu.Lock()
 	f.probeFails = true
 	f.mu.Unlock()
-	f.grant(t, f.service, "vision")
+	plan, err := f.service.Plan(ctx, f.selector("vision"))
+	require.NoError(t, err)
+	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.ErrorIs(t, err, ErrConsentSaved)
+	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
+	plan, err = f.service.Plan(ctx, f.selector("vision"))
+	require.NoError(t, err)
+	require.False(t, plan.ConsentRequired, "the grant stayed saved")
 
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
@@ -431,7 +438,7 @@ func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T
 
 	require.Contains(t, logs.String(), "insufficient capacity", "the warning carries why the probe failed")
 	require.Zero(t, f.backfill(t, f.service), "the renewed grant has no passing probe")
-	plan, err := f.service.Plan(ctx, f.selector("vision"))
+	plan, err = f.service.Plan(ctx, f.selector("vision"))
 	require.NoError(t, err)
 	probesBefore, _ := f.counts()
 	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
@@ -585,22 +592,6 @@ func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
 	require.NoError(t, <-second, "the success stands")
 	probes, _ := f.counts()
 	require.Equal(t, 1, probes)
-}
-
-func TestPhotoDescriptionStartSavesConsentBeforeReportingProbeFailure(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.mu.Lock()
-	f.probeFails = true
-	f.mu.Unlock()
-	plan, err := f.service.Plan(t.Context(), f.selector("vision"))
-	require.NoError(t, err)
-	_, err = f.service.Start(t.Context(), StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true})
-	require.ErrorIs(t, err, ErrConsentSaved)
-	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
-	plan, err = f.service.Plan(t.Context(), f.selector("vision"))
-	require.NoError(t, err)
-	require.False(t, plan.ConsentRequired, "the grant stayed saved")
 }
 
 func TestPhotoDescriptionStartRefusesAnIneligiblePhotoBeforeSavingConsent(t *testing.T) {
