@@ -241,13 +241,50 @@ func TestStampRejectsNilDestination(t *testing.T) {
 	require.ErrorIs(t, err, ErrStampEngineFailure)
 }
 
-func TestStampSourceInspectionHonorsCancellation(t *testing.T) {
+func TestStampCancelsPdfcpuSourceParsing(t *testing.T) {
+	previousWorker := configuredWorker()
 	ConfigureWorker("")
-	source := syntheticPDF(t, 1, "Letter")
+	t.Cleanup(func() { ConfigureWorker(previousWorker) })
 	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	defer cancel()
+	source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
+	var output bytes.Buffer
 
-	_, err := InspectSupervised(ctx, bytes.NewReader(source))
+	_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
 
 	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, output.Len())
+	assert.False(t, source.readAfterCancel, "pdfcpu must stop reading after cancellation")
+}
+
+type cancelOnReadSeeker struct {
+	*bytes.Reader
+
+	cancel          context.CancelFunc
+	offset          int64
+	canceled        bool
+	readAfterCancel bool
+}
+
+func (r *cancelOnReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	position, err := r.Reader.Seek(offset, whence)
+	if err == nil {
+		r.offset = position
+	}
+	return position, err //nolint:wrapcheck // Preserve io.Seek errors for the ReadSeeker contract.
+}
+
+func (r *cancelOnReadSeeker) Read(p []byte) (int, error) {
+	if r.canceled {
+		r.readAfterCancel = true
+		return 0, io.ErrUnexpectedEOF
+	}
+	position := r.offset
+	n, err := r.Reader.Read(p)
+	r.offset = position + int64(n)
+	if position == 0 && n > 0 {
+		r.canceled = true
+		r.cancel()
+	}
+	return n, err //nolint:wrapcheck // Preserve io.EOF and source errors for the Reader contract.
 }

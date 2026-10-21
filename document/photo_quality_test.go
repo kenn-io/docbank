@@ -10,5 +10,5 @@ func TestPhotoQualityFingerprintCompatibility(t *testing.T) {
 	t.Parallel()
 	fingerprints, err := CurrentPhotoQualityFingerprints()
 	require.NoError(t, err)
-	require.Equal(t, sha256Hex([]byte("photo-quality:v2:16x16:catmull-rom:"+xImageDrawVersion+":focus-ceiling=0.15:"+fingerprints.GridRecipe)), fingerprints.Evaluator)
+	require.Equal(t, sha256Hex([]byte("photo-quality:v2:16x16:catmull-rom:x-image-draw-v0.47.0:focus-ceiling=0.15:"+fingerprints.GridRecipe)), fingerprints.Evaluator)
 }

@@ -31,6 +31,7 @@ func TestVisualPreviewRecipes(t *testing.T) {
 	}{
 		{"grid", 512, "8f5b6cd017e77566efe42d723b5db58396e20a6834e6f0a084cdc232a71df389"},
 		{"fit", 2560, "e9b756ba31a08aaeddd9353101960ddb41e9b59d57a7cb1e4c5fce8adaf99e3f"},
+		{"large", 4096, "aa987c8f4201d09fe4a20ba06712fa2e445fdf625ed7c8ea1824296c8ae2ae9c"},
 	} {
 		recipe, err := VisualPreviewRecipeForSize(test.size)
 		require.NoError(t, err)

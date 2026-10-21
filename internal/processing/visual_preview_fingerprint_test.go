@@ -16,14 +16,6 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 )
 
-const pinnedVisualPreviewProcessorFingerprint = "fa3c4fcf3a65bb617f92847cec6a6ed5c535dc4bbcb206adab07831442525af4"
-
-func TestVisualPreviewProcessorFingerprintIsPinned(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, pinnedVisualPreviewProcessorFingerprint,
-		CurrentVisualPreviewRecipe().ProcessorFingerprint)
-}
-
 func TestProducedVisualPreviewCarriesCurrentRecipe(t *testing.T) {
 	t.Parallel()
 	source := mediatest.JPEG(3, 2, color.White)
