@@ -109,6 +109,12 @@ export class PhotoAuthoredEditor {
         this.reconcile(tag);
         return tag;
       })
+      .catch((cause) => {
+        if (!(cause instanceof APIError && cause.status === 404)) throw cause;
+        if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
+          this.tags = this.tags.filter((tag) => tag.id !== id);
+        return undefined;
+      })
       .finally(() => {
         if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
       });
@@ -136,16 +142,10 @@ export class PhotoAuthoredEditor {
     else if (this.targets.some((target) => target.tags.includes(tag.id)))
       this.tags = [...this.tags, tag];
   }
-  /** Reads the tags on the prepared targets again: a rename can sit outside the catalog page. */
+  /** Reads assigned tags again for renames and deletions outside the catalog page. */
   async refreshAssignedTags() {
     const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
-    await Promise.all(
-      ids.map((id) =>
-        this.readTag(id, true).catch((cause) => {
-          if (!(cause instanceof APIError && cause.status === 404)) throw cause;
-        }),
-      ),
-    );
+    await Promise.all(ids.map((id) => this.readTag(id, true)));
   }
   private async refreshKeywords(receipt: api.PhotoAuthoredReceipt) {
     const changed = new Set(receipt.keywords?.map((change) => change.tag_id));
@@ -337,7 +337,7 @@ export class PhotoAuthoredEditor {
       return;
     const pending = this.pendingChange;
     let consumed = true;
-    if (this.targets.some((target) => affectsPhoto(pending, target.asset_id)))
+    if (this.prepared.some((target) => affectsPhoto(pending, target.asset_id)))
       consumed = !!(await this.reload(false, true));
     else if (
       !this.targets.length &&

@@ -660,7 +660,40 @@ it("shows field diagnostics for a failed edit and keeps its draft and Undo", asy
   editor.dispose();
 });
 
-it("reads the tags on its targets again, keeping the ones a delete or an error left", async () => {
+it.each(["catalog first", "preparation first"])(
+  "removes a deleted keyword from choices and preserves the draft, %s",
+  async (order) => {
+    const editor = editorWithTargets();
+    const remaining = { id: "remaining", name: "Portfolio" } as Tag;
+    editor.targets[0]!.tags = ["deleted"];
+    editor.catalog([{ id: "deleted", name: "Gone" } as Tag, remaining]);
+    let finish!: (value: api.PhotoAuthoredPreparation) => void;
+    vi.spyOn(api, "preparePhotoAuthored").mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    vi.spyOn(api, "getTag").mockRejectedValue(new APIError("Missing", 404, "not_found"));
+    const preparation = editor.prepare({ asset_ids: ["asset"] });
+    editor.stage({ caption: "Draft caption", rating: 5 });
+    const refreshCatalog = async () => {
+      editor.catalog([remaining]);
+      await editor.refreshAssignedTags();
+    };
+    if (order === "catalog first") await refreshCatalog();
+    finish({ assets: [asset], targets: structuredClone(targets) });
+    await preparation;
+    if (order === "preparation first") await refreshCatalog();
+    expect(editor.targets.flatMap((target) => target.tags)).toEqual([]);
+    expect(editor.tags).toEqual([remaining]);
+    expect(editor.patch).toEqual({ caption: "Draft caption", rating: 5 });
+    ui(editor);
+    await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
+    expect(screen.queryByRole("option", { name: /Gone/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /Portfolio/ })).toBeTruthy();
+    editor.dispose();
+  },
+);
+
+it("reads the tags on its targets again, removing deleted choices and retaining them on errors", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
   const tag = (id: string, name: string, revision = 1) =>
     ({ id, name, revision, assignment_count: 1 }) as Tag;
@@ -683,13 +716,13 @@ it("reads the tags on its targets again, keeping the ones a delete or an error l
   editor.targets = [preparedPhoto(1, { tags: ["renamed", "deleted"] })];
   editor.tags = [tag("renamed", "Old name"), tag("deleted", "Gone"), tag("other", "Other")];
   await editor.refreshAssignedTags();
-  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Gone", "Other"]);
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
   older();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Gone", "Other"]);
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
   fetcher.mockImplementation(async () => response({ detail: "Down" }, 503));
   await expect(editor.refreshAssignedTags()).rejects.toThrow("Down");
-  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Gone", "Other"]);
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
   editor.dispose();
 });
 

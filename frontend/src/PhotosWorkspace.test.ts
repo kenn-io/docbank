@@ -3234,6 +3234,56 @@ it("keeps rating shortcuts and stack decisions available during a background ref
   photos.dispose();
 });
 
+it("keeps all stack members after an external rating change with Metadata closed", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.authored.targets = [];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  let rating = 0;
+  const row = () => ({ ...photo(1), rating, stack });
+  photos.items = [row()];
+  photos.selectLoaded();
+  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () =>
+    photoPreparation([
+      preparedPhoto(1, {
+        revision: rating ? 2 : 1,
+        values: { ...preparedPhoto(1).values, rating },
+      }),
+      preparedPhoto(2),
+    ]),
+  );
+  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "kept",
+    before: [],
+    after: [],
+  });
+  stubPhotoFetch(async () => Response.json({ items: [row()], total: 1, stacks: [stack] }));
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+  expect(photos.authored.targets).toEqual([]);
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+  rating = 4;
+  await act(async () => {
+    await photos.refresh(undefined, true);
+    await photos.changed(photoChange("photo-1"));
+  });
+  await waitFor(() => expect(photos.authored.stackLoading).toBe(false));
+  expect(photos.items[0]).toMatchObject({ rating: 4 });
+  await fireEvent.click(screen.getByRole("button", { name: "Keep all" }));
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  expect(decide.mock.calls[0]?.[0]).toMatchObject({
+    decision: "all",
+    targets: [
+      { asset_id: "photo-1", file_id: "file-1", revision: 2 },
+      { asset_id: "photo-2", file_id: "file-2", revision: 1 },
+    ],
+  });
+  expect(photos.authored.conflict).toBe(false);
+  photos.dispose();
+});
+
 it("trashes with the refreshed revision after a shortcut prepared targets with Metadata closed", async () => {
   const photos = workspaceWithPreparedPhoto();
   photos.authored.targets = [];
