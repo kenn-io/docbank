@@ -120,9 +120,12 @@ Exit 1 if any file failed (each failure is listed).`,
 		if rep.Added > 0 {
 			reportAction(cmd, c, "document_added", "", "", false)
 		}
+		if len(rep.Failed) > 0 {
+			retErr = fmt.Errorf("%d file(s) failed to import", len(rep.Failed))
+		}
 		if addJSON {
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
-			if err := json.MarshalEncode(enc, rep); err != nil {
+			if err := json.MarshalEncode(enc, rep); err != nil && retErr == nil {
 				return fmt.Errorf("encoding ingest report: %w", err)
 			}
 		} else {
@@ -132,10 +135,7 @@ Exit 1 if any file failed (each failure is listed).`,
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
 			}
 		}
-		if len(rep.Failed) > 0 {
-			return fmt.Errorf("%d file(s) failed to import", len(rep.Failed))
-		}
-		return nil
+		return retErr
 	},
 }
 

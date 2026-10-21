@@ -61,6 +61,7 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 	events := make(chan string, 10)
 	var fail bool
 	var added int
+	var failedItems []api.IngestFailure
 	kind := "file"
 	badDigest := false
 	var concurrentDestination string
@@ -76,7 +77,7 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 		case fail:
 			http.Error(w, "synthetic failure", http.StatusInternalServerError)
 		case r.URL.Path == "/api/v1/ingest":
-			assert.NoError(t, json.MarshalWrite(w, api.IngestReport{Added: added}))
+			assert.NoError(t, json.MarshalWrite(w, api.IngestReport{Added: added, Failed: failedItems}))
 		case r.URL.Path == "/api/v1/processing/profiles":
 			assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"semantic"}}}))
 		case r.URL.Path == "/api/v1/info":
@@ -189,6 +190,25 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 			require.ErrorIs(t, rootCmd.ExecuteContext(context.Background()), cause)
 			require.Len(t, events, 1)
 			assert.JSONEq(t, `{"event":"document_added","properties":{"surface":"cli"}}`, <-events)
+			assert.Empty(t, events)
+		})
+	}
+	for _, closed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("add partial success closed pipe %t", closed), func(t *testing.T) {
+			added = 1
+			failedItems = []api.IngestFailure{{Path: "synthetic-failed.txt", Error: "synthetic failure"}}
+			defer func() { failedItems = nil }()
+			resetFlags(rootCmd)
+			rootCmd.SetErr(terminal)
+			rootCmd.SetOut(io.Discard)
+			if closed {
+				rootCmd.SetOut(reportTestWriter(func([]byte) (int, error) { return 0, io.ErrClosedPipe }))
+			}
+			rootCmd.SetArgs([]string{"add", "synthetic.txt", "synthetic-failed.txt", "--json"})
+			require.ErrorContains(t, rootCmd.ExecuteContext(context.Background()), "1 file(s) failed to import")
+			require.Len(t, events, 2)
+			assert.JSONEq(t, `{"event":"document_added","properties":{"surface":"cli"}}`, <-events)
+			assert.JSONEq(t, fmt.Sprintf(shown, "add"), <-events)
 			assert.Empty(t, events)
 		})
 	}
