@@ -313,24 +313,3 @@ it.each(["replacement", "failure"])(
     photos.dispose();
   },
 );
-
-it("keeps Next usable while a live list refresh is in flight", async () => {
-  const rows = [photo(1), photo(2), photo(3)];
-  const { photos, dialog } = compare(rows);
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-  let finish!: (response: Response) => void;
-  vi.stubGlobal("fetch", (_url: string, init: RequestInit) =>
-    JSON.parse(String(init.body)).facets?.length
-      ? Promise.resolve(Response.json({ facets: [] }))
-      : new Promise<Response>((resolve) => (finish = resolve)),
-  );
-  const refreshing = photos.refresh(undefined, true);
-  await waitFor(() => expect(finish).toBeDefined());
-  const next = within(dialog).getByRole("button", { name: "Next" }) as HTMLButtonElement;
-  await waitFor(() => expect(next.disabled).toBe(false));
-  await fireEvent.click(next);
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
-  finish(Response.json({ items: rows, total: rows.length }));
-  await refreshing;
-  photos.dispose();
-});

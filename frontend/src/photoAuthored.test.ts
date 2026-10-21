@@ -827,8 +827,14 @@ function editAfterQuietRead(editor: PhotoAuthoredEditor) {
 it.each([false, true])(
   "drops a pending quiet metadata read when an edit starts (Hidden access: %s)",
   async (hidden) => {
-    const editor = editorWithTargets();
-    if (hidden) Object.assign(editor, { hiddenAccess: new HiddenAccess("session", vi.fn()) });
+    const editor = new PhotoAuthoredEditor(
+      "session",
+      vi.fn(),
+      undefined,
+      hidden ? new HiddenAccess("session", vi.fn()) : undefined,
+    );
+    editor.targets = structuredClone(targets);
+    editor.asset = structuredClone(asset);
     const { edit, fetcher, answer } = editAfterQuietRead(editor);
     await vi.waitFor(() =>
       expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),

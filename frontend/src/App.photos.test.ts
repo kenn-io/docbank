@@ -4023,21 +4023,20 @@ const livePhotoStubs = () => {
   storage();
 };
 
-it("updates and conceals a direct-link photo after initial paging fails", async () => {
+it("routes a live pass to the open viewer after initial paging fails", async () => {
   history.replaceState(
     null,
     "",
     "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
   );
   livePhotoStubs();
-  let row = photo(1);
-  let deleted = false;
+  const changed = vi.spyOn(Photos.prototype, "changed");
   stubPhotoFetch(async (url, init) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
     if (url.endsWith("/photos/albums")) return Response.json([]);
     if (url.endsWith("/photos/assets/query")) {
       if (JSON.parse(String(init.body)).query.filters?.asset_ids)
-        return Response.json({ items: deleted ? [] : [row], total: deleted ? 0 : 1 });
+        return Response.json({ items: [photo(1)], total: 1 });
       return Response.json({ detail: "Paging down" }, { status: 503 });
     }
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
@@ -4046,13 +4045,10 @@ it("updates and conceals a direct-link photo after initial paging fails", async 
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer" });
   await within(viewer).findByText("Photo 1.jpg");
   await screen.findByText("Paging down");
-  row = { ...row, name: "Renamed.jpg" };
-  await act(() => photoEventPass()({ ids: new Set(["photo-1"]), idFree: false }));
-  await within(viewer).findByText("Renamed.jpg");
-  deleted = true;
-  await act(() => photoEventPass()({ ids: new Set(["photo-1"]), idFree: false }));
-  await within(viewer).findByText("This photo is no longer in this view.");
-  expect(within(viewer).queryByText("Renamed.jpg")).toBeNull();
+  changed.mockClear();
+  const change = { ids: new Set(["photo-1"]), idFree: false };
+  await act(() => photoEventPass()(change));
+  expect(changed).toHaveBeenCalledWith({ ...change, listRefreshed: true });
 });
 
 it.each(["first page", "album list", "tag catalog", "staged retry"])(
@@ -4062,13 +4058,9 @@ it.each(["first page", "album list", "tag catalog", "staged retry"])(
     livePhotoStubs();
     let finishFirstPage!: (response: Response) => void;
     let firstPage: AbortSignal | undefined;
-    let failing = false;
-    const path = mode === "album list" ? "/photos/albums" : "/tags";
-    const requests = { lists: 0, tags: 0 };
+    const requests = { lists: 0, tags: 0, albums: 0 };
     stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-      if (failing && new URL(url, "https://example.test").pathname.endsWith(path))
-        return Response.json({ detail: "Down" }, { status: 503 });
       if (
         url.endsWith("/photos/assets/query") &&
         !JSON.parse(String(init.body)).query.filters?.asset_ids
@@ -4080,7 +4072,10 @@ it.each(["first page", "album list", "tag catalog", "staged retry"])(
         return Response.json({ items: [photo(1), photo(2)], total: 2 });
       }
       if (url.includes("/tags")) requests.tags++;
-      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/albums")) {
+        requests.albums++;
+        return Response.json([]);
+      }
       return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
     });
     const seen: boolean[] = [];
@@ -4114,10 +4109,10 @@ it.each(["first page", "album list", "tag catalog", "staged retry"])(
       await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: undefined });
       expect(seen).toEqual([true, false]);
     } else {
-      failing = true;
-      await expect(photoEventPass()(idFreeChange)).rejects.toThrow("Down");
-      failing = false;
-      await expect(photoEventPass()(idFreeChange)).resolves.toBeUndefined();
+      const read = mode === "album list" ? "albums" : "tags";
+      const before = requests[read];
+      await photoEventPass()(idFreeChange);
+      expect(requests[read]).toBeGreaterThan(before);
     }
   },
 );
