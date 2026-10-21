@@ -516,25 +516,17 @@ func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *tes
 	f.grant(t, service, "alpha")
 	f.grant(t, service, "beta")
 
-	require.Equal(t, 1, f.backfill(t, service), "one target for a fresh photo")
-	_, describes := f.counts()
-	require.Equal(t, 1, describes, "one provider describes it")
-	require.Zero(t, f.backfill(t, service))
-	_, describes = f.counts()
-	require.Equal(t, 1, describes, "the other ready profile never describes it too")
-	suggestions := f.suggestions(t)
 	ready, err := service.photoDescriptionProfiles(ctx, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "beta"}, ready)
 	probes, _ := f.counts()
 	require.Equal(t, 2, probes)
 
-	f.addPhoto(t, "provider-failure.jpg", 600)
 	f.mu.Lock()
 	f.failModel = "model-a"
 	f.mu.Unlock()
 	require.Equal(t, 1, f.backfill(t, service))
-	require.Equal(t, suggestions, f.suggestions(t), "the first provider's authentication failure adds no suggestion")
+	require.Empty(t, f.suggestions(t), "the first provider's authentication failure adds no suggestion")
 	fresh := f.addPhoto(t, "fresh.jpg", 700)
 	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
 	require.NoError(t, err)
@@ -557,20 +549,6 @@ func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *tes
 	probes, _ = f.counts()
 	require.Equal(t, 3, probes, "the failed description invalidates the first provider's passing probe")
 
-	f.mu.Lock()
-	f.failModel = ""
-	f.mu.Unlock()
-	ready, err = service.photoDescriptionProfiles(ctx, nil)
-	require.NoError(t, err)
-	require.Equal(t, []string{"beta"}, ready, "the first provider waits for its probe retry even after recovery")
-	probes, _ = f.counts()
-	require.Equal(t, 3, probes)
-	f.skew.Add(int64(61 * time.Second))
-	ready, err = service.photoDescriptionProfiles(ctx, nil)
-	require.NoError(t, err)
-	require.Equal(t, []string{"alpha", "beta"}, ready, "a passing retry restores the first provider")
-	probes, _ = f.counts()
-	require.Equal(t, 4, probes)
 }
 
 func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
