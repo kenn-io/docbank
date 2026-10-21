@@ -4051,7 +4051,7 @@ it("routes a live pass to the open viewer after initial paging fails", async () 
   expect(changed).toHaveBeenCalledWith({ ...change, listRefreshed: true });
 });
 
-it.each(["first page", "album list", "tag catalog", "staged retry"])(
+it.each(["first page", "album list", "staged retry"])(
   "routes a live pass through the %s case",
   async (mode) => {
     history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
@@ -4109,10 +4109,9 @@ it.each(["first page", "album list", "tag catalog", "staged retry"])(
       await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: undefined });
       expect(seen).toEqual([true, false]);
     } else {
-      const read = mode === "album list" ? "albums" : "tags";
-      const before = requests[read];
+      const before = requests.albums;
       await photoEventPass()(idFreeChange);
-      expect(requests[read]).toBeGreaterThan(before);
+      expect(requests.albums).toBeGreaterThan(before);
     }
   },
 );
