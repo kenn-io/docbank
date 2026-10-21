@@ -14,11 +14,10 @@ export function parseNodeVersionLink(
     nodes.length !== 1 ||
     versions.length !== 1 ||
     !/^[1-9][0-9]*$/.test(nodes[0]) ||
-    !Number.isSafeInteger(nodeId) ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(versions[0])
+    !Number.isSafeInteger(nodeId)
   )
     return { error: "invalid" };
-  return { nodeId, versionId: versions[0].toLowerCase() };
+  return { nodeId, versionId: versions[0] };
 }
 
 export async function resolveNodeVersionLink(

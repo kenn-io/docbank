@@ -15,6 +15,16 @@ describe("exact version fragments", () => {
     });
   });
 
+  it.each(["invalid", "", "../content", "UPPERCASE"])(
+    "leaves version policy to the server: %s",
+    (versionId) => {
+      expect(parseNodeVersionLink(`#node=42&version=${encodeURIComponent(versionId)}`)).toEqual({
+        nodeId: 42,
+        versionId,
+      });
+    },
+  );
+
   it.each(["", "#query=%7B%7D", "#photo=image"])("ignores unrelated fragment %s", (hash) => {
     expect(parseNodeVersionLink(hash)).toBeNull();
   });
@@ -30,9 +40,6 @@ describe("exact version fragments", () => {
     `#node=9007199254740992&version=${version}`,
     `#node=42&node=43&version=${version}`,
     `#node=42&version=${version}&version=${version}`,
-    "#node=42&version=invalid",
-    "#node=42&version=",
-    "#node=42&version=../content",
   ])("rejects malformed recognized fragment %s", (hash) => {
     expect(parseNodeVersionLink(hash)).toEqual({ error: "invalid" });
   });

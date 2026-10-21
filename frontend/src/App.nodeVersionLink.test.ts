@@ -125,6 +125,7 @@ it("shows retained trash without restoring it", async () => {
   render(App);
   await screen.findByText(oldID);
   expect(screen.getByText("Trash", { selector: "span" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
   expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/restore"))).toBe(false);
 });
 
@@ -156,15 +157,54 @@ it.each(["missing node", "purged version", "wrong node"])(
   },
 );
 
-it("reports an invalid selection without requesting a version", async () => {
+it("reports the server's rejection of a malformed version ID", async () => {
   history.replaceState(null, "", `/#${credentials}node=42&version=invalid`);
-  const fetchMock = api();
+  const fetchMock = api((url) =>
+    url === "/api/v1/versions/invalid"
+      ? Response.json({ detail: "invalid UUID" }, { status: 400 })
+      : undefined,
+  );
   render(App);
   expect(await screen.findByText(/Invalid node\/version link/)).toBeTruthy();
-  expect(
-    fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/v1/versions/")),
-  ).toBe(false);
+  expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/v1/versions/invalid")).toBe(
+    true,
+  );
 });
+
+it.each(["resolved", "invalid"])(
+  "keeps the %s linked selection when root rows arrive after sign-in",
+  async (kind) => {
+    history.replaceState(null, "", kind === "resolved" ? `/${link()}` : "/#node=0&version=invalid");
+    let release!: (response: Response) => void;
+    api((url) =>
+      url.includes("/children")
+        ? new Promise<Response>((resolve) => {
+            release = resolve;
+          })
+        : undefined,
+    );
+    render(App);
+    await signIn();
+    await screen.findByText(kind === "resolved" ? oldID : /Invalid node\/version link/);
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await act(() =>
+      release(
+        Response.json({
+          directory: root,
+          items: [{ ...node, id: 99, name: "other.txt" }],
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        }),
+      ),
+    );
+    await screen.findByRole("cell", { name: "other.txt" });
+    expect(
+      screen.getByText(kind === "resolved" ? oldID : /Invalid node\/version link/),
+    ).toBeTruthy();
+    expect(location.hash).toBe(kind === "resolved" ? link() : "#node=0&version=invalid");
+  },
+);
 
 it("preserves linked intent through sign-in and a rejected session", async () => {
   history.replaceState(null, "", `/${link()}`);
@@ -273,20 +313,65 @@ it("resumes the same exact selection after remounting and signing in", async () 
   expect(location.hash).toBe(link());
 });
 
-it("reopens exact versions on browser back and forward", async () => {
+it("reopens exact versions on browser back and forward without refetching the node or list", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  api();
+  const fetchMock = api();
   render(App);
   await screen.findByText(oldID);
   await screen.findByText("1001 retained versions");
+  const drawer = screen.getByRole("dialog");
+  fetchMock.mockClear();
   await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
   await screen.findByText(currentID);
   expect(location.hash).toBe(link(currentID));
+  expect(screen.getByRole("dialog")).toBe(drawer);
+  expect(fetchMock.mock.calls).toHaveLength(0);
   history.back();
   await screen.findByText(oldID);
+  expect(screen.getByRole("dialog")).toBe(drawer);
+  expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+    `/api/v1/versions/${oldID}`,
+  ]);
   history.forward();
   await screen.findByText(currentID);
+  expect(screen.getByRole("dialog")).toBe(drawer);
+  expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+    `/api/v1/versions/${oldID}`,
+    `/api/v1/versions/${currentID}`,
+  ]);
   expect(location.hash).toBe(link(currentID));
+});
+
+it("puts ordinary drawer selections in history and preserves other hash keys", async () => {
+  history.replaceState(null, "", `/#${credentials}source=example`);
+  api((url) => {
+    if (url.includes("/children"))
+      return Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
+      return Response.json({
+        items: [currentVersion, oldVersion],
+        total: 2,
+        limit: 1000,
+        offset: 0,
+      });
+    return undefined;
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Version history" }));
+  await within(await screen.findByRole("dialog")).findByText(currentID);
+  expect(location.hash).toBe(`#source=example&node=42&version=${currentID}`);
+  const drawer = screen.getByRole("dialog");
+  await fireEvent.click(screen.getByText("Revision 1").closest("button")!);
+  await screen.findByText(oldID);
+  expect(location.hash).toBe(`#source=example&node=42&version=${oldID}`);
+  history.back();
+  await within(drawer).findByText(currentID);
+  expect(location.hash).toBe(`#source=example&node=42&version=${currentID}`);
+  expect(screen.getByRole("dialog")).toBe(drawer);
+  await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
+  expect(location.hash).toBe("#source=example");
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("replaces an ordinary version drawer when a linked version opens in the same tab", async () => {
@@ -299,7 +384,7 @@ it("replaces an ordinary version drawer when a linked version opens in the same 
   render(App);
   await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Version history" }));
-  await screen.findByText(currentID);
+  await within(await screen.findByRole("dialog")).findByText(currentID);
   await act(() => {
     location.hash = link();
   });

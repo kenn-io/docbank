@@ -34,16 +34,12 @@
   let { session, node, path, pinnedVersion, onselect, onclose, onauthfailure }: Props = $props();
 
   let page = $state<ContentVersionPage | null>(null);
-  let selectedVersionID = $state("");
+  let localVersion = $state<ContentVersion>();
   let loading = $state(true);
   let error = $state("");
   let generation = 0;
 
-  const selectedVersion = $derived(
-    pinnedVersion && (!selectedVersionID || pinnedVersion.id === selectedVersionID)
-      ? pinnedVersion
-      : page?.items.find((version) => version.id === selectedVersionID),
-  );
+  const selectedVersion = $derived(pinnedVersion ?? localVersion);
 
   onMount(() => {
     void load();
@@ -64,7 +60,10 @@
       );
       if (request !== generation) return;
       page = next;
-      selectedVersionID = pinnedVersion?.id ?? next.items[0]?.id ?? "";
+      if (!pinnedVersion && next.items[0]) {
+        localVersion = next.items[0];
+        onselect?.(next.items[0]);
+      }
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -145,10 +144,10 @@
               <Card
                 level="default"
                 padding="sm"
-                selected={version.id === selectedVersionID}
+                selected={version.id === selectedVersion?.id}
                 onclick={() => {
                   if (onselect) onselect(version);
-                  else selectedVersionID = version.id;
+                  else localVersion = version;
                 }}
                 ariaLabel={`${transitionLabel(version.transition_kind)} at ${formatDate(version.recorded_at)}`}
                 eyebrow={transitionLabel(version.transition_kind)}

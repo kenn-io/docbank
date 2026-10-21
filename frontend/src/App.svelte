@@ -274,40 +274,63 @@
   $effect(() => {
     const session = webSession;
     const selection = nodeVersionSelection;
-    untrack(() => {
-      if (activePanel?.kind === "versions" && activePanel.fromLink) activePanel = null;
+    return untrack(() => {
+      const panel = activePanel?.kind === "versions" ? activePanel : null;
+      nodeVersionError = "";
+      nodeVersionLoading = false;
+      if (!session || !selection) {
+        if (panel?.fromLink) activePanel = null;
+        return;
+      }
+      if (
+        !("error" in selection) &&
+        panel?.linked?.node.id === selection.nodeId &&
+        panel.linked.version.id === selection.versionId
+      )
+        return;
+      const sameNode = !("error" in selection) && panel?.linked?.node.id === selection.nodeId;
+      const target = sameNode ? panel! : { kind: "versions" as const, fromLink: true };
+      activePanel = target;
+      if ("error" in selection) {
+        nodeVersionError = "Invalid node/version link. Use a positive node ID and a version UUID.";
+        return;
+      }
+      const controller = new AbortController();
+      let current = true;
+      nodeVersionLoading = !sameNode;
+      const resolution = sameNode
+        ? generated
+            .getContentVersion(selection.versionId, { session, signal: controller.signal })
+            .then((version) => {
+              if (version.node_id !== selection.nodeId)
+                throw new Error("The linked version does not belong to the requested file node.");
+              return { node: panel!.linked!.node, version };
+            })
+        : resolveNodeVersionLink(session, selection, controller.signal);
+      void resolution
+        .then((resolved) => {
+          if (current && activePanel?.kind === "versions") activePanel.linked = resolved;
+        })
+        .catch((cause: unknown) => {
+          if (!current) return;
+          if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+          else if (cause instanceof APIError && cause.status === 400)
+            nodeVersionError =
+              "Invalid node/version link. Use a positive node ID and a version UUID.";
+          else if (cause instanceof APIError && (cause.status === 404 || cause.status === 410))
+            nodeVersionError = "The linked node or version is missing or purged.";
+          else
+            nodeVersionError =
+              cause instanceof Error ? cause.message : "The linked version is unavailable.";
+        })
+        .finally(() => {
+          if (current) nodeVersionLoading = false;
+        });
+      return () => {
+        current = false;
+        controller.abort();
+      };
     });
-    nodeVersionError = "";
-    nodeVersionLoading = false;
-    if (!session || !selection) return;
-    activePanel = { kind: "versions", fromLink: true };
-    if ("error" in selection) {
-      nodeVersionError = "Invalid node/version link. Use a positive node ID and a version UUID.";
-      return;
-    }
-    const controller = new AbortController();
-    let current = true;
-    nodeVersionLoading = true;
-    void resolveNodeVersionLink(session, selection, controller.signal)
-      .then((resolved) => {
-        if (current) activePanel = { kind: "versions", fromLink: true, linked: resolved };
-      })
-      .catch((cause: unknown) => {
-        if (!current) return;
-        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-        else if (cause instanceof APIError && (cause.status === 404 || cause.status === 410))
-          nodeVersionError = "The linked node or version is missing or purged.";
-        else
-          nodeVersionError =
-            cause instanceof Error ? cause.message : "The linked version is unavailable.";
-      })
-      .finally(() => {
-        if (current) nodeVersionLoading = false;
-      });
-    return () => {
-      current = false;
-      controller.abort();
-    };
   });
 
   function closeLinkedVersion(): void {
@@ -2180,7 +2203,10 @@
       invalidateTagHotkeyMutation();
       if (
         activePanel &&
-        ["history", "versions", "provenance", "processing", "rendition"].includes(activePanel.kind)
+        ["history", "versions", "provenance", "processing", "rendition"].includes(
+          activePanel.kind,
+        ) &&
+        !(activePanel.kind === "versions" && nodeVersionSelection)
       )
         activePanel = null;
     }
@@ -2871,6 +2897,11 @@
   }
 
   function selectLinkedVersion(version: generated.ContentVersion): void {
+    if (activePanel?.kind !== "versions") return;
+    const node = activePanel.linked?.node ?? selected?.node;
+    if (!node || node.id !== version.node_id) return;
+    activePanel.linked = { node, version };
+    activePanel.fromLink = true;
     const url = new URL(location.href);
     const params = new URLSearchParams(url.hash.slice(1));
     params.set("node", String(version.node_id));
@@ -4534,8 +4565,8 @@
             {node}
             path={panel.linked ? (node.path ?? node.name) : selected!.path}
             pinnedVersion={panel.linked?.version}
-            onselect={panel.fromLink ? selectLinkedVersion : undefined}
-            onclose={panel.fromLink ? closeLinkedVersion : closePanel(panel)}
+            onselect={selectLinkedVersion}
+            onclose={closeLinkedVersion}
             onauthfailure={handleFailure}
           />
         {/if}
