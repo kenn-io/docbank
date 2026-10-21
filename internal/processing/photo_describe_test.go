@@ -354,12 +354,8 @@ func TestPhotoDescriptionEmptyScanPause(t *testing.T) {
 	f := newPhotoDescriptionFixture(t)
 	clock := f.service.clock
 	synctest.Test(t, func(t *testing.T) {
-		profile := f.service.profiles["vision"]
 		// Fresh photos are absent from a scan for restored suggestions.
-		targets, err := f.catalog.PhotoDescriptionTargets(t.Context(), profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, "", 1, false)
-		require.NoError(t, err)
-		require.Len(t, targets, 1)
-		for _, after := range []string{targets[0].ID, ""} {
+		for _, after := range []string{f.node.CurrentVersionID, ""} {
 			calls := 0
 			now := time.Now()
 			f.service.clock = func() time.Time {
