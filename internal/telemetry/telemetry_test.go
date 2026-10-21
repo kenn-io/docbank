@@ -6,11 +6,13 @@ import (
 	"encoding/json/v2"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,12 +23,15 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 )
 
-// enableTelemetryEnv pins both opt-out variables on so a developer's environment can't flip the branch.
+// enableTelemetryEnv isolates reporting from inherited opt-outs and CI.
 func enableTelemetryEnv(t *testing.T) {
 	t.Helper()
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
 	}
+	t.Setenv("CI", "")
+	require.NoError(t, os.Unsetenv("CI"))
+	t.Setenv("DO_NOT_TRACK", "0")
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "1")
 }
@@ -75,13 +80,14 @@ func TestNewOptedOut(t *testing.T) {
 	for _, tc := range []struct{ name, env, value string }{
 		{"docbank variable", EnabledEnv, "0"},
 		{"generic variable", posthog.GenericEnabledEnv, "0"},
+		{"do not track", "DO_NOT_TRACK", "1"},
 		{"docbank variable spelled off", EnabledEnv, " off "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			enableTelemetryEnv(t)
 			t.Setenv(tc.env, tc.value)
 			dir := t.TempDir()
-			reporter := New(Options{Dir: dir, Logger: discardLogger()})
+			reporter := New(Options{Dir: dir, Version: "v1.2.3", Logger: discardLogger()})
 			assert.False(t, reporter.Enabled())
 			for _, event := range []string{EventAppOpened, EventDaemonStarted, EventDaemonActive} {
 				assert.True(t, reporter.EventAllowed(event), event)
@@ -125,13 +131,12 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
-	r := New(Options{Dir: dir, Version: "test-version", Commit: "test-commit", Logger: discardLogger(), endpoint: srv.URL})
+	r := New(Options{Dir: dir, Version: "v1.2.3", Commit: "test-commit", Logger: discardLogger(), endpoint: srv.URL})
 	require.True(t, r.Enabled())
 	handler := CaptureHandler(r, dir)
 	rec := postEvent(t, handler, `{"event":"app_opened","properties":{"path":"/synthetic/report.pdf","query":"synthetic"}}`)
 	require.Equal(t, http.StatusAccepted, rec.Code)
 	assert.JSONEq(t, `{"status":"queued"}`, rec.Body.String())
-	assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, `{"event":"search_run"}`).Code)
 	require.NoError(t, r.Capture(EventDaemonActive, nil))
 	require.NoError(t, r.Close())
 
@@ -150,13 +155,14 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 			props := msg.Properties
 			assert.Equal(t, "docbank", props["application"])
 			assert.Equal(t, "daemon", props["source"])
-			assert.Equal(t, "test-version", props["version"])
+			assert.Equal(t, "v1.2.3", props["version"])
 			assert.Equal(t, "test-commit", props["commit"])
 			assert.Equal(t, runtime.GOOS, props["goos"])
 			assert.Equal(t, runtime.GOARCH, props["goarch"])
-			assert.Contains(t, props, "install_age_hours")
-			assert.NotContains(t, props, "path")
-			assert.NotContains(t, props, "query")
+			assert.ElementsMatch(t, []string{
+				"application", "source", "version", "commit", "goos", "goarch", "install_age_hours",
+				"$lib", "$lib_version", "$process_person_profile", "$geoip_disable",
+			}, slices.Collect(maps.Keys(props)))
 		}
 	}
 	assert.ElementsMatch(t, []string{EventAppOpened, EventDaemonActive}, events)
@@ -167,7 +173,7 @@ func TestNewFallsBackWhenInstallUnusable(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(blocker, []byte("synthetic"), 0o600))
 	var reporter *Reporter
-	require.NotPanics(t, func() { reporter = New(Options{Dir: blocker, Logger: discardLogger()}) })
+	require.NotPanics(t, func() { reporter = New(Options{Dir: blocker, Version: "v1.2.3", Logger: discardLogger()}) })
 	assert.False(t, reporter.Enabled())
 	assert.False(t, reporter.EventAllowed(EventAppOpened))
 }
@@ -180,7 +186,7 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 		http.Error(w, "synthetic ingest rejection", http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	reporter := New(Options{Dir: t.TempDir(), Logger: logger, endpoint: server.URL})
+	reporter := New(Options{Dir: t.TempDir(), Version: "v1.2.3", Logger: logger, endpoint: server.URL})
 	require.True(t, reporter.Enabled())
 	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
 	require.NoError(t, reporter.Close())

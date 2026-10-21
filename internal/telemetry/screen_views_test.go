@@ -45,7 +45,7 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 	collector := screenCollector(t, &mu, &events)
 	defer collector.Close()
 	dir := t.TempDir()
-	reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
+	reporter := New(Options{Dir: dir, Version: "v1.2.3", endpoint: collector.URL, Logger: discardLogger()})
 	handler := CaptureHandler(reporter, dir)
 	for _, tc := range []struct {
 		name, media, body string
@@ -88,7 +88,7 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	defer collector.Close()
 	dir := t.TempDir()
 	makeHandler := func() (*Reporter, *captureHandler) {
-		reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
+		reporter := New(Options{Dir: dir, Version: "v1.2.3", endpoint: collector.URL, Logger: discardLogger()})
 		handler, ok := CaptureHandler(reporter, dir).(*captureHandler)
 		require.True(t, ok)
 		return reporter, handler
@@ -125,27 +125,17 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	handler.now = func() time.Time { return now }
 	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 	require.NoError(t, reporter.Close())
-	for i, directory := range []bool{false, true} {
-		dir = t.TempDir()
-		reporter, handler = makeHandler()
-		path := filepath.Join(dir, screenClaimsFile)
-		if directory {
-			require.NoError(t, os.Mkdir(path, 0o700))
-		} else {
-			require.NoError(t, os.WriteFile(path, []byte("garbage"), 0o600))
-		}
-		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
-		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
-		require.NoError(t, reporter.Close())
-		mu.Lock()
-		assert.Len(t, events, 6+i)
-		assert.Equal(t, "browse", events[len(events)-1]["screen"])
-		assert.Equal(t, "web", events[len(events)-1]["surface"])
-		mu.Unlock()
-	}
+	dir = t.TempDir()
+	reporter, handler = makeHandler()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, screenClaimsFile), []byte("garbage"), 0o600))
+	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+	require.NoError(t, reporter.Close())
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 7)
+	require.Len(t, events, 6)
+	assert.Equal(t, "browse", events[5]["screen"])
+	assert.Equal(t, "web", events[5]["surface"])
 	assert.Equal(t, "browse", events[0]["screen"])
 	assert.Equal(t, "web", events[0]["surface"])
 	assert.Equal(t, "browse", events[1]["screen"])

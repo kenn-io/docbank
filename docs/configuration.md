@@ -53,7 +53,7 @@ The directory layout is created on first use:
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
-├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
+├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created unless telemetry is turned off, kept if it is later turned off
 ├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
 ├── config.toml          # optional; see below
 ├── lane-controls.json   # local job pause and concurrency settings
@@ -985,6 +985,7 @@ forwarding headers do not change that peer check.
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |
 | `DOCBANK_TELEMETRY_ENABLED` | `0`, `false`, `no` or `off` turns off anonymous usage telemetry. Read when the daemon starts; restart the daemon after changing it. |
 | `TELEMETRY_ENABLED` | The same values have the same effect; shared with other Kenn tools. |
+| `DO_NOT_TRACK` | `1` turns off anonymous usage telemetry. |
 
 Nonempty startup overrides take precedence over TOML; empty variables keep
 its values. `DOCBANK_API_KEY` and `DOCBANK_API_KEY_FILE` cannot both be
@@ -1050,8 +1051,7 @@ Each event carries these fields:
   `goos`, `goarch`, and `install_age_hours` (whole hours since the install ID
   was created)
 - `$process_person_profile=false` and `$geoip_disable=true`
-- fields the PostHog Go library adds: `$lib`, `$lib_version`, `$os`,
-  `$os_version`, `$os_distro` (Linux only), and `$go_version`
+- fields the PostHog Go library adds: `$lib` and `$lib_version`
 - `session_ended` also carries `surface` as `web` or `tui` and `duration_bucket`
   as `under_1m`, `1_to_5m`, `5_to_30m`, or `over_30m`
 
@@ -1063,9 +1063,10 @@ telemetry and unchanged by it.
 
 The install ID lives in `telemetry-install.json` at the vault root (see the
 [layout](#vault-location) above). The daemon creates it the first time it runs
-with telemetry on, and never while telemetry is off. Each vault has its own ID.
+unless telemetry is turned off. Each vault has its own ID.
 
-To opt out, set `DOCBANK_TELEMETRY_ENABLED=0` (or `TELEMETRY_ENABLED=0`) in the
+Only release builds send telemetry, and it stays off in CI. To opt out, set
+`DOCBANK_TELEMETRY_ENABLED=0`, `TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` in the
 environment that starts the daemon, then run `docbank daemon restart`. A CLI
 command that starts the daemon automatically passes its own environment, so
 set the variable in your shell profile. Go applications that embed a vault

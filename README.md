@@ -141,8 +141,8 @@ Docbank sends anonymous usage events by default:
 
 Each event carries a random per-vault install ID, the version and commit, and
 the operating system and architecture. Events never include document content,
-names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` to turn
-telemetry off. See
+names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` or
+`DO_NOT_TRACK=1` to turn telemetry off. See
 [anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).
 
 ## Documentation
