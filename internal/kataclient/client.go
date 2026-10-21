@@ -4,7 +4,6 @@ package kataclient
 import (
 	"bytes"
 	"context"
-	jsonv1 "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -436,9 +435,11 @@ func safeCause(ctx context.Context, err error) error {
 // Generated metadata maps use any. Keep opaque JSON integers exact when
 // adapting them back into raw evidence for subsequent guarded writes.
 func decodeResponseNumbers(data []byte, target any) error {
-	decoder := jsonv1.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(target); err != nil {
+	rawValues := json.UnmarshalFunc(func(data []byte, value *any) error {
+		*value = jsontext.Value(data).Clone()
+		return nil
+	})
+	if err := json.Unmarshal(data, target, json.WithUnmarshalers(rawValues)); err != nil {
 		return &Error{Code: "invalid_response"}
 	}
 	return nil
