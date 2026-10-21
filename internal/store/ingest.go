@@ -6,19 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 // Keep the stored prefix compatible with existing provenance records.
 const callerSuppliedSourceKindPrefix = "embedded:"
 
-func sourceKindIsEmbedded(kind string) bool {
-	return len(kind) >= len(callerSuppliedSourceKindPrefix) &&
-		strings.EqualFold(kind[:len(callerSuppliedSourceKindPrefix)], callerSuppliedSourceKindPrefix)
-}
-
 func publicProvenanceSourceKind(kind string) string {
-	if sourceKindIsEmbedded(kind) {
+	if query.IsEmbeddedSourceKind(kind) {
 		return kind[len(callerSuppliedSourceKindPrefix):]
 	}
 	return kind
@@ -53,7 +49,7 @@ func (s *Store) BeginIngestWithLabel(
 	if err != nil {
 		return IngestRun{}, err
 	}
-	if hasLabel && sourceKindIsEmbedded(sourceKind) {
+	if hasLabel && query.IsEmbeddedSourceKind(sourceKind) {
 		return IngestRun{}, fmt.Errorf(
 			"%w: caller-supplied provenance cannot define a collection label",
 			ErrInvalidCollectionLabel,
@@ -260,7 +256,7 @@ func resolveIngestNameTx(
 			// Without provenance, only a name in the incoming suffix family
 			// identifies a prior import of this content.
 			_, match = parseSuffix(sibName, base, ext)
-		} else if storedSourceKind.String == sourceKind && !sourceKindIsEmbedded(storedSourceKind.String) {
+		} else if storedSourceKind.String == sourceKind && !query.IsEmbeddedSourceKind(storedSourceKind.String) {
 			// Operational origins use normalized local basenames. Embedded
 			// references are opaque and must never be treated as paths.
 			originName, err := NormalizeName(filepath.Base(originalPath.String))

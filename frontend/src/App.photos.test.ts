@@ -1,3 +1,4 @@
+import { File as NodeFile } from "node:buffer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
@@ -19,16 +20,36 @@ import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 
+const savedImportCheckpoints = vi.hoisted(
+  () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
+);
+vi.mock("./photoImportStorage.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./photoImportStorage.js")>()),
+  photoImportStorage: (vaultID: string) => ({
+    async saved() {
+      return savedImportCheckpoints.get(vaultID);
+    },
+    async load() {
+      return savedImportCheckpoints.get(vaultID);
+    },
+    async replace(next: import("./photoImportStorage.js").PhotoImportCheckpoint | undefined) {
+      if (next) savedImportCheckpoints.set(vaultID, next);
+      else savedImportCheckpoints.delete(vaultID);
+    },
+  }),
+}));
+
 // Answers background filter-count requests so tests that predate counts see only their own reads.
-const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
-  vi.stubGlobal(
-    "fetch",
-    (url: string, init: RequestInit) =>
+const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => {
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+    return (
       photoMetadataResponse(url, init) ??
       (url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length
         ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))
-        : fetcher(url, init)),
-  );
+        : fetcher(url, init))
+    );
+  });
+};
 
 const map = vi.hoisted(() => ({
   props: undefined as
@@ -50,6 +71,7 @@ const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObje
 afterEach(() => {
   cleanup();
   map.props = undefined;
+  savedImportCheckpoints.clear();
   document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach((meta) => meta.remove());
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
@@ -2335,6 +2357,7 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
 });
 
 it("refreshes Documents, Library, and album counts after adding photos", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -2374,6 +2397,8 @@ it("refreshes Documents, Library, and album counts after adding photos", async (
   };
   const reads = { documents: 0, albums: 0, library: 0 };
   stubPhotoFetch(async (url: string) => {
+    if (url.startsWith("/api/v1/audit/status"))
+      return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
     if (url.endsWith("/photos/albums")) {
       reads.albums++;
       return albumResponse([photoAlbum({ included_count: imported ? 1 : 0 })]);
@@ -2398,8 +2423,13 @@ it("refreshes Documents, Library, and album counts after adding photos", async (
   await waitFor(() => expect(reads.documents).toBe(1));
   const before = { ...reads };
   await fireEvent.click(screen.getAllByRole("button", { name: "Add photos" })[0]);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
+      false,
+    ),
+  );
   await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
-    target: { files: [new File(["jpeg"], "capture.JPG")] },
+    target: { files: [new NodeFile(["jpeg"], "capture.JPG")] },
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
   await waitFor(() => {
@@ -2415,6 +2445,7 @@ it("refreshes Documents, Library, and album counts after adding photos", async (
 it.each(["search", "tag", "snapshot"] as const)(
   "retains the Documents %s after adding photos",
   async (mode) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
     const query = parseQuery("{}");
     const fingerprint = await queryFingerprint(query);
     history.replaceState(
@@ -2450,6 +2481,8 @@ it.each(["search", "tag", "snapshot"] as const)(
     };
     const reads = { directory: 0, search: 0, tag: 0, snapshot: 0, photos: 0 };
     stubPhotoFetch(async (url: string, init: RequestInit) => {
+      if (url.startsWith("/api/v1/audit/status"))
+        return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
       if (url.endsWith("/processing/profiles")) return albumResponse([]);
       if (url.endsWith("/photos/assets/query")) {
         reads.photos++;
@@ -2522,8 +2555,13 @@ it.each(["search", "tag", "snapshot"] as const)(
     const before = { ...reads };
     await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
     await fireEvent.click((await screen.findAllByRole("button", { name: "Add photos" }))[0]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
     await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
-      target: { files: [new File(["jpeg"], "capture.JPG")] },
+      target: { files: [new NodeFile(["jpeg"], "capture.JPG")] },
     });
     await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
     await waitFor(() => expect(upload).toHaveBeenCalledOnce());

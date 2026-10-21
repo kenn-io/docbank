@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -139,5 +140,83 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 				}
 			})
 		}
+	}
+}
+
+// BenchmarkPhotoStackMixed100K measures browsing, including freshness checks,
+// with interleaved two-frame bursts in healthy and stale source folders.
+func BenchmarkPhotoStackMixed100K(b *testing.B) {
+	b.StopTimer()
+	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, s.Close()) })
+	ctx := b.Context()
+	run, err := s.BeginIngest(ctx, "cli", "synthetic mixed freshness")
+	require.NoError(b, err)
+	current, stale := browseHash("current-extractor"), browseHash("stale-extractor")
+	require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for i := range 100_000 {
+			name := fmt.Sprintf("frame-%06d.jpg", i)
+			hash := browseHash(fmt.Sprintf("mixed-source-%d", i/2))
+			stamp := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i/4) * 10 * time.Second).Format(time.RFC3339)
+			folder, fingerprint := "healthy", current
+			if i%4 >= 2 {
+				folder, fingerprint = "stale", stale
+			}
+			_, _, _, err := s.ingestFileTx(ctx, tx, run, s.RootID(), name, hash, 128, "image/jpeg", fmt.Sprintf("/%s/%06d/%s", folder, i/4, name), stamp, ingestFileOptions{exact: true})
+			if err != nil {
+				return err
+			}
+			if i%2 != 0 {
+				continue
+			}
+			metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneUTC, ""))}}
+			canonical, checksum, err := document.MarshalSourceMetadataV1(metadata)
+			if err != nil {
+				return err
+			}
+			generation := sourceMetadataGenerationID(hash, metadata.ContractVersion, fingerprint, checksum)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at) VALUES(?,?,?,?,?,?,?)`, generation, hash, metadata.ContractVersion, fingerprint, canonical, checksum, stamp); err != nil {
+				return err
+			}
+			fields, err := photoTechnicalFieldsForMetadata(metadata)
+			if err != nil {
+				return err
+			}
+			if err := insertPhotoTechnicalMetadataTx(ctx, tx, generation, fields); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) VALUES(?,?,?)`, hash, generation, stamp); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	value, err := query.Parse([]byte(`{"sort":{"field":"capture_time","direction":"asc"}}`))
+	require.NoError(b, err)
+	request := PhotoBrowseRequest{Stacks: true, SourceMetadataFingerprint: current, Query: value, PageSize: 250}
+	first, err := s.ListPhotoAssets(ctx, request, nil)
+	require.NoError(b, err)
+	require.EqualValues(b, 100_000, first.Total)
+	require.NotNil(b, first.Next)
+	require.True(b, first.GroupingIncomplete)
+	require.NotEmpty(b, first.Stacks)
+	b.Logf("go=%s driver=%s assets=100000 healthy=50000 stale=50000 folders=50000 page_size=250 two_frame_bursts interleaved_capture_keys", runtime.Version(), DefaultSQLiteDriver().Name())
+	for _, page := range []struct {
+		name     string
+		boundary *PhotoBrowsePosition
+	}{{"first", nil}, {"continuation", first.Next}} {
+		b.Run(page.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				got, err := s.ListPhotoAssets(ctx, request, page.boundary)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(got.Items) != 250 || len(got.Stacks) == 0 || !got.GroupingIncomplete {
+					b.Fatalf("unexpected mixed page: items=%d stacks=%d incomplete=%t", len(got.Items), len(got.Stacks), got.GroupingIncomplete)
+				}
+			}
+		})
 	}
 }

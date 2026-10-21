@@ -430,7 +430,17 @@ revise this envelope.
 
 Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
-revision, and selected or overridden display pointers. `photo_files` owns the
+revision, a nullable `representative_rank`, and selected or overridden display pointers.
+The highest representative rank within a burst records its latest explicit choice;
+every explicit choice, including rechoosing the displayed frame, gets a fresh rank.
+A choice or its Undo advances the asset revision and leaves file flags unchanged.
+Schema 41 adds the internal `representative_sequence` on `photo_library_settings`. It never rewinds
+with Undo and leaves the public settings revision unchanged. JSONL v2 requires and preserves this sequence, including its empty NULL value. Imports of v1 backups default it to 0.
+Representative receipts must reference existing photo assets. Each file's `flag_owner` stores `"return"` when Return owns its flag and an empty string otherwise. A Return replaces earlier Return flags for that set until an independent flag edit, including a same-value edit, clears ownership. Rating and caption edits preserve ownership. Keep all and Keep selected record a receipt when they make an unchanged Return pick explicit, advancing only files whose ownership changes. Undo and Undo of Undo restore the recorded values and ownership together. JSONL v2 preserves `flag_owner` in files and receipt snapshots; v1 backups have no stack-decision ownership. Every current authored record includes this text field. Canonical audit records retain it.
+`photo_library_settings` owns the vault-wide display preference, `burst_gap_seconds`
+(default 2, range 1–30), and their shared revision. One settings update can
+change both values; API callers use `reset_preference: true` to reset the
+preference while changing the gap. Audited vaults support gap-only changes, representative choices, and representative Undo through the global attached-metadata allocation chain. The representative rank is keyed by asset ID; the gap and sequence share the vault singleton identity. Default records are omitted: no representative, gap 2, sequence 0. Choice advances the sequence once; Undo retains its high-water mark. These writes, their revisions, and receipts commit together. A settings request that also changes the display preference remains refused under audit. `photo_files` owns the
 role, revision, authored decisions, and same-asset sidecar relationship for each
 node. Its first operational `source_provenance_identity` preserves original checkout and sidecar filenames through replacement, pruning, and backup. Detached rows have NULL asset membership and no sidecar pointer; reattachment
 reuses their stable identity and decisions. A sidecar never
@@ -443,16 +453,20 @@ processing sources remain eligible. Automatic enrollment writes no human
 receipt. Existing graphs survive ordinary trash and restore; permanent node
 deletion removes memberships, repairs display pointers, advances each
 affected asset once, and retains an empty asset row.
-The unreleased authored receipt extension includes optional keyword deltas and node revision fences so fields and keywords undo together. Metadata JSONL advances to v2; restore still accepts v1 streams, while older readers refuse these unknown receipt members.
+The unreleased authored receipt extension includes optional keyword deltas and node revision fences so fields and keywords undo together. Authored receipts share a 2 MiB JSON limit across edits, stack decisions, Undo, and restore. Metadata JSONL advances to v2; restore still accepts v1 streams, while older readers refuse these unknown receipt members.
 
 Unaudited permanent deletion removes authored receipts that reference a deleted
 target or sidecar and their dependent undo receipts in the same transaction.
 Deleting one member removes its whole batch receipt even when other members survive.
 
-Grouped photo imports find edited files through the provenance index on
+Browser imports store a versioned revision header and compact checkpoint in one private JSONL file per browser profile. The checkpoint holds the source ID, revision, destination, picker kind, and digest of the file manifest. Manifest version 2 records every selected path, size, and modified time, with no content hashes. Resume recomputes the digest from the new selection and compares it before sending, without reading any file. The checkpoint stores the digest, not a copy of every file tuple. Replacing saved progress checks the observed source and revision, then atomically replaces the file; clearing removes it. Starting another selection asks before replacing unfinished recovery; cancel preserves its source identity. Unsupported checkpoint formats remain intact.
+
+Browser photo groups use the server-controlled `CreateOnly` policy. Reusing a source path with changed bytes creates or resolves to a separate node and preserves the existing node's content, revision, and current version. Identical content still deduplicates. Existing pairing rules can attach the new node to the same asset or create a separate asset.
+
+Filesystem photo imports find edited files through the provenance index on
 `original_path`, so a new source path does not scan unrelated provenance.
 Matching still requires a live file, a compatible photo role, and unsuperseded
-provenance. A node shared with another active source path keeps its content;
+provenance. Matching edited files become new content versions on their existing nodes. A node shared with another active source path keeps its content;
 an edit from one path becomes a separate file.
 
 The settings singleton represents an absent or NULL preference as the built-in
@@ -464,11 +478,11 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 40 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 39 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 39 with this binary; opening them fails the schema check.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 41 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 40 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 40 with this binary; opening them fails the schema check. Released JSONL v1 backups through v0.15.2 restore through the logical metadata contract. Copy media through the supported backup and restore flow.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
-Schema version 38 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
+Schema version 41 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.
@@ -535,7 +549,16 @@ the embedded Natural Earth map has no matching country or simplified boundary.
 
 ### Photo timeline
 
-Schema 37 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the earliest observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
+Schema 37 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the earliest observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key.
+Schema 41 also stores a nullable `folder_key` for burst grouping.
+`docbank_photo_folder_v1(source_kind, source_desc, original_path)` derives a
+SHA-256 folder key, normalizing Windows drive and UNC separators while
+preserving POSIX path bytes. Push and watch sources include their kind and
+description in the key. Missing source paths return SQL NULL. The timeline
+prefixes the capture-time zone lane and leaves the key NULL when a precise
+EXIF clock or an eligible active source folder is unavailable. When several active claims qualify, it uses the earliest observed binding, with provenance identity breaking ties. Later imports from another folder preserve that original grouping. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers. Schema 41 writes that fire `photo_timeline_refresh` require Docbank's [`sqlite/mattn`](../../sqlite/mattn/driver.go) or [`sqlite/modernc`](../../sqlite/modernc/driver.go) adapter, which registers `docbank_photo_folder_v1`; raw `sqlite3` reads work, but those writes fail without the function.
+
+Burst grouping partitions photos by the timeline `folder_key` and the displayed technical metadata's `camera_make_folded`, `camera_model_folded`, and exact `body_serial_number` before chaining capture times. Make and model require equal folded values; two missing values match, while a missing value and a known value stay separate. Serial matching is case-sensitive. Two missing serials match; a known serial stays separate from a missing or different serial. Interleaved camera streams keep separate chains. Stacked page cursors bind the gap and a fingerprint of relevant boundary membership, including the folded camera fields and exact body serial. A changed fingerprint requires a fresh page, so camera metadata changes at that boundary cannot silently omit frames.
 
 ### Photo quality signals
 

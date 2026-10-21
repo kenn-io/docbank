@@ -158,6 +158,137 @@ func (c *Client) ChallengeAPIKey(ctx context.Context, options *ChallengeAPIKeyRe
 	return responseParser(ctx, resp)
 }
 
+// GetPhotoImportCheckpoint Read the saved photo selection digest
+func (c *Client) GetPhotoImportCheckpoint(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoImportCheckpointResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/photo-import-checkpoint",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoImportCheckpointResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoImportCheckpointResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoImportCheckpointResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/photo-import-checkpoint")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReplacePhotoImportCheckpoint Replace or clear saved photo import progress if its identity still matches
+func (c *Client) ReplacePhotoImportCheckpoint(ctx context.Context, options *ReplacePhotoImportCheckpointRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/daemon/photo-import-checkpoint",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/photo-import-checkpoint")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoImportCheckpointHeader Read saved photo import identity and confirm the profile cookie
+func (c *Client) GetPhotoImportCheckpointHeader(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoImportCheckpointHeaderResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/photo-import-checkpoint/header",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoImportCheckpointHeaderResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoImportCheckpointHeaderResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoImportCheckpointHeaderResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/photo-import-checkpoint/header")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -9817,6 +9948,53 @@ func (c *Client) PreparePhotoAuthored(ctx context.Context, options *PreparePhoto
 	return responseParser(ctx, resp)
 }
 
+// DecidePhotoStack Decide one observed stack atomically
+func (c *Client) DecidePhotoStack(ctx context.Context, options *DecidePhotoStackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePhotoStackResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/stack",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DecidePhotoStackResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DecidePhotoStackResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DecidePhotoStackResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DecidePhotoStackErrorResponse](resp, "DecidePhotoStackErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/stack")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UndoPhotoAuthored Undo photo fields and keywords if their revisions still match
 func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoAuthoredResponse, error) {
 	var err error
@@ -10851,7 +11029,7 @@ func (c *Client) MovePhotoRejects(ctx context.Context, options *MovePhotoRejects
 	return responseParser(ctx, resp)
 }
 
-// GetPhotoSettings Inspect the photo display preference
+// GetPhotoSettings Inspect photo settings
 func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -10896,7 +11074,7 @@ func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.Req
 	return responseParser(ctx, resp)
 }
 
-// SetPhotoSettings Set or reset the photo display preference
+// SetPhotoSettings Set photo settings
 func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPhotoSettingsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -10934,6 +11112,53 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GroupPhotoStacks Group explicit photos into bursts
+func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GroupPhotoStacksResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/stacks/group",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GroupPhotoStacksResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GroupPhotoStacksResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GroupPhotoStacksResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GroupPhotoStacksErrorResponse](resp, "GroupPhotoStacksErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/stacks/group")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -15030,6 +15255,34 @@ func (o *ChallengeAPIKeyRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ChallengeAPIKeyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReplacePhotoImportCheckpointRequestOptions is the options needed to make a request to ReplacePhotoImportCheckpoint.
+type ReplacePhotoImportCheckpointRequestOptions struct {
+	Body *ReplacePhotoImportCheckpointBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReplacePhotoImportCheckpointRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReplacePhotoImportCheckpointRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReplacePhotoImportCheckpointRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReplacePhotoImportCheckpointRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -21461,6 +21714,34 @@ func (o *PreparePhotoAuthoredRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// DecidePhotoStackRequestOptions is the options needed to make a request to DecidePhotoStack.
+type DecidePhotoStackRequestOptions struct {
+	Body *DecidePhotoStackBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DecidePhotoStackRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *DecidePhotoStackRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DecidePhotoStackRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DecidePhotoStackRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UndoPhotoAuthoredRequestOptions is the options needed to make a request to UndoPhotoAuthored.
 type UndoPhotoAuthoredRequestOptions struct {
 	PathParams *UndoPhotoAuthoredPath
@@ -22110,6 +22391,34 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// GroupPhotoStacksRequestOptions is the options needed to make a request to GroupPhotoStacks.
+type GroupPhotoStacksRequestOptions struct {
+	Body *GroupPhotoStacksBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GroupPhotoStacksRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GroupPhotoStacksRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GroupPhotoStacksRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GroupPhotoStacksRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // DecidePhotoFaceRequestOptions is the options needed to make a request to DecidePhotoFace.
@@ -25573,6 +25882,11 @@ type ReadWorkspaceQueryPagePath struct {
 	ID string `json:"id"`
 }
 
+type ReplacePhotoImportCheckpointBody struct {
+	Expected *PhotoCheckpointIdentity `json:"expected"`
+	Next     *PhotoImportCheckpoint   `json:"next"`
+}
+
 type ReportTelemetryEventBody struct {
 	// Event An event the daemon's telemetry allowlist names. Other events return 400.
 	Event      string                    `json:"event"`
@@ -25797,6 +26111,8 @@ type EditPhotoAuthoredBody = PhotoAuthoredEditRequest
 
 type PreparePhotoAuthoredBody = PhotoAuthoredPrepareRequest
 
+type DecidePhotoStackBody = PhotoStackDecisionRequest
+
 type CreatePhotoCheckoutBody = PhotoCheckoutCreateRequest
 
 type EstimatePhotoCheckoutBody = PhotoCheckoutSelection
@@ -25824,6 +26140,8 @@ type PreflightPhotoRejectsBody = PhotoRejectsRequest
 type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
+
+type GroupPhotoStacksBody = GroupPhotoStacksRequest
 
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
 
@@ -26294,6 +26612,15 @@ type ChallengeDaemonResponse struct {
 
 type ChallengeAPIKeyResponse struct {
 	Proof string `json:"proof"`
+}
+
+type GetPhotoImportCheckpointResponse struct {
+	Checkpoint *PhotoImportCheckpoint `json:"checkpoint,omitempty"`
+}
+
+type GetPhotoImportCheckpointHeaderResponse struct {
+	Checkpoint *PhotoCheckpointHeader `json:"checkpoint,omitempty"`
+	Ready      bool                   `json:"ready"`
 }
 
 type ReportTelemetryEventResponse struct {
@@ -27183,6 +27510,10 @@ type PreparePhotoAuthoredResponse = api.PhotoAuthoredPreparation
 
 type PreparePhotoAuthoredErrorResponse = Error
 
+type DecidePhotoStackResponse = store.PhotoAuthoredReceipt
+
+type DecidePhotoStackErrorResponse = Error
+
 type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
@@ -27278,6 +27609,10 @@ type GetPhotoSettingsErrorResponse = Error
 type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
+
+type GroupPhotoStacksResponseJSON = api.GroupPhotoStacksResponse
+
+type GroupPhotoStacksErrorResponse = Error
 
 type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
 
@@ -28205,6 +28540,10 @@ type GcRequest struct {
 	Run    bool    `json:"run"`
 }
 
+type GroupPhotoStacksRequest = api.GroupPhotoStacksRequest
+
+type GroupPhotoStacksResponse = api.GroupPhotoStacksResponse
+
 type HighlightSetTermV1Schema struct {
 	Color string `json:"color"`
 	Text  string `json:"text"`
@@ -28566,6 +28905,17 @@ type PhotoCheckoutStatus = store.PhotoCheckoutStatus
 
 type PhotoCheckoutYears = store.PhotoCheckoutYears
 
+type PhotoCheckpointHeader struct {
+	FormatVersion int64   `json:"formatVersion"`
+	Revision      *string `json:"revision,omitempty"`
+	SourceID      *string `json:"sourceID,omitempty"`
+}
+
+type PhotoCheckpointIdentity struct {
+	Revision string `json:"revision"`
+	SourceID string `json:"sourceID"`
+}
+
 type PhotoExportSelection = bundle.PhotoExportSelection
 
 type PhotoFace = store.PhotoFace
@@ -28587,6 +28937,15 @@ type PhotoFlagsResponse = api.PhotoFlagsResponse
 type PhotoHiddenPasscodeRequest = api.PhotoHiddenPasscodeRequest
 
 type PhotoHiddenState = store.PhotoHiddenState
+
+type PhotoImportCheckpoint struct {
+	Destination     string `json:"destination"`
+	ManifestHash    string `json:"manifestHash"`
+	ManifestVersion int64  `json:"manifestVersion"`
+	PickerKind      string `json:"pickerKind"`
+	Revision        string `json:"revision"`
+	SourceID        string `json:"sourceID"`
+}
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest
 
@@ -28626,9 +28985,15 @@ type PhotoRejectsRequest = api.PhotoRejectsRequest
 
 type PhotoRenderProfile = bundle.PhotoRenderProfile
 
+type PhotoRepresentativeChange = store.PhotoRepresentativeChange
+
 type PhotoSettings = api.PhotoSettings
 
 type PhotoSidecarProvenance = store.PhotoSidecarProvenance
+
+type PhotoStack = api.PhotoStack
+
+type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
 
 type PhotoTimeline = api.PhotoTimeline
 

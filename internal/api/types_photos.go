@@ -1,6 +1,11 @@
 package api
 
-import "go.kenn.io/docbank/internal/store"
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+
+	"go.kenn.io/docbank/internal/store"
+)
 
 // PhotoFile is the daemon representation of one ordinary file node in an
 // asset. The node remains authoritative for bytes and content versions.
@@ -39,9 +44,10 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	Preference *string `json:"preference,omitzero" enum:"raw,image"`
-	Revision   int64   `json:"revision" minimum:"1"`
-	UpdatedAt  string  `json:"updated_at,omitzero" format:"date-time"`
+	BurstGapSeconds int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	Preference      *string `json:"preference,omitzero" enum:"raw,image"`
+	Revision        int64   `json:"revision" minimum:"1"`
+	UpdatedAt       string  `json:"updated_at,omitzero" format:"date-time"`
 }
 
 type CreatePhotoAssetRequest struct {
@@ -65,7 +71,25 @@ type SetPhotoExcludedRequest struct {
 }
 
 type SetPhotoSettingsRequest struct {
-	Preference *string `json:"preference,omitzero" enum:"raw,image"`
+	ResetPreference bool    `json:"reset_preference,omitzero" doc:"Reset the display preference, including when changing the burst gap. Conflicts with preference."`
+	Preference      *string `json:"preference,omitzero" enum:"raw,image" doc:"Omit to keep the display preference when changing the burst gap, or reset it otherwise."`
+	BurstGapSeconds *int    `json:"burst_gap_seconds,omitzero" minimum:"1" maximum:"30" doc:"Omit to keep the burst gap."`
+	preferenceNull  bool
+}
+
+func (in *SetPhotoSettingsRequest) UnmarshalJSON(raw []byte) error {
+	type fields SetPhotoSettingsRequest
+	var decoded fields
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	var members map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return err
+	}
+	*in = SetPhotoSettingsRequest(decoded)
+	in.preferenceNull = string(members["preference"]) == "null"
+	return nil
 }
 
 type photoAssetOutput struct {
@@ -91,5 +115,20 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 }
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
-	return PhotoSettings{Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+	return PhotoSettings{BurstGapSeconds: settings.BurstGapSeconds, Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+}
+
+// GroupPhotoStacksRequest names photos to regroup. The store rejects repeated
+// IDs: a schema uniqueItems check would echo the whole array once per repeat,
+// so 250,000 copies of one ID could not be answered.
+type GroupPhotoStacksRequest struct {
+	Hidden   bool     `json:"hidden,omitempty"`
+	AssetIDs []string `json:"asset_ids" maxItems:"250000" doc:"Distinct photo asset IDs, such as a saved Cull run."`
+}
+
+type GroupPhotoStacksResponse struct {
+	GroupingIncomplete bool       `json:"grouping_incomplete,omitempty" doc:"Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change."`
+	BurstGapSeconds    int        `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	Groups             [][]string `json:"groups" doc:"Bursts of two or more submitted photos, in request order; other available photos are single."`
+	UnavailableIDs     []string   `json:"unavailable_ids" doc:"Submitted photos that are no longer live in this library."`
 }

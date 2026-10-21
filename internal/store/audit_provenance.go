@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/audit"
+	"go.kenn.io/docbank/internal/query"
 )
 
 const (
@@ -571,7 +572,7 @@ func (replay *auditedHistoryReplay) requireSupersedableProvenance(nodeID uint64,
 	if err != nil {
 		return err
 	}
-	if !sourceKindIsEmbedded(sourceKind) {
+	if !query.IsEmbeddedSourceKind(sourceKind) {
 		return errors.New("operational ingest provenance cannot be superseded")
 	}
 	return nil
@@ -763,7 +764,7 @@ func validateReplayedIngest(record audit.Record) error {
 	if err != nil {
 		return err
 	}
-	if !sourceKindIsEmbedded(sourceKind) || len(sourceKind) == len(callerSuppliedSourceKindPrefix) {
+	if !query.IsEmbeddedSourceKind(sourceKind) || len(sourceKind) == len(callerSuppliedSourceKindPrefix) {
 		return errors.New("provenance mutation ingest requires a non-empty caller-supplied source kind")
 	}
 	description, err := auditField(record, "source_desc")

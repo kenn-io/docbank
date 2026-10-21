@@ -2,8 +2,9 @@
   import { onDestroy, onMount, untrack, tick } from "svelte";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
+  import { patchPhotoRows } from "./photoRows.js";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
-  import { Button, Modal, Notice } from "@kenn-io/kit-ui";
+  import { Button, Checkbox, Modal, Notice } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { PhotoCull } from "./photoCull.svelte.js";
   import type { Photos } from "./photos.svelte.js";
@@ -43,6 +44,9 @@
         photos.authored.undoState,
       )),
   );
+  onMount(() => {
+    void cull.checkSettings();
+  });
   onDestroy(() => {
     cull.cancel();
     reloadController.abort();
@@ -58,8 +62,9 @@
   let lookupAttempt = $state(0);
   const reloadController = new AbortController();
   let checkingDecision = $state(false);
+  let advanceToNextStack = false;
   let confirmation = $state<PhotoCullConfirmation>();
-  const busy = $derived(editor.loading || editor.busy || checkingDecision);
+  const busy = $derived(editor.loading || editor.stackLoading || editor.busy || checkingDecision);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let info = $state(0);
   let help = $state(false);
@@ -73,6 +78,21 @@
   let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
   const complete = $derived(cull.complete);
+  let selectedFrames = $state<string[]>([]);
+  let selectionRun: string | undefined;
+  let selectionPass: string[] | undefined;
+  let selectionGroups: string[][] | undefined;
+  let selectionGroupsKey: string | undefined;
+  $effect(() => {
+    const [run, groups] = [cull.run, cull.run?.groups];
+    const key = groups === selectionGroups ? selectionGroupsKey : JSON.stringify(groups);
+    const [runID, runPass] = [run?.checkpoint.runID, run?.checkpoint.pass];
+    if (runID !== selectionRun || runPass !== selectionPass || key !== selectionGroupsKey) {
+      selectedFrames = [];
+    }
+    [selectionRun, selectionPass] = [runID, runPass];
+    [selectionGroups, selectionGroupsKey] = [groups, key];
+  });
   const pass = $derived(checkpoint.pass);
   let lastLookupAttempt = 0;
   let lastPass: string[] | undefined;
@@ -89,6 +109,7 @@
         return;
       }
       const previous = photo;
+      if (previous?.asset_id === id) return;
       if (previous)
         neighbors = [...neighbors.filter((row) => row.asset_id !== previous.asset_id), previous];
       if (reload) return;
@@ -169,8 +190,9 @@
   }
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
-    photos.metadataChanged(receipt);
-    reconcile(receipt.after);
+    const changes = photos.metadataChanged(receipt);
+    if (photos.started && photos.reloadsAfter(changes)) void photos.refresh();
+    reconcile(receipt.after, receipt.representatives);
     if (
       receipt.after.some((after) => {
         const before = receipt.before.find((before) => before.file_id === after.file_id);
@@ -181,24 +203,27 @@
       if (cull.complete) await cull.checkRemainder();
     }
   }
-  function reconcile(targets: PhotoAuthoredSnapshot[]) {
-    const updated = (row: PhotoBrowseRow) => {
-      const after = targets.find((file) => file.file_id === row.display_file_id);
-      return after
-        ? {
-            ...row,
-            flag: after.values.flag,
-            rating: after.values.rating,
-            rotation: after.values.rotation,
-          }
-        : row;
-    };
-    if (photo) photo = updated(photo);
-    neighbors = neighbors.map(updated);
+  function reconcile(
+    targets: PhotoAuthoredSnapshot[],
+    representatives: PhotoAuthoredReceipt["representatives"] = [],
+  ) {
+    const receipt = { after: targets, representatives };
+    if (photo) [photo] = patchPhotoRows([photo], receipt);
+    neighbors = patchPhotoRows(neighbors, receipt);
   }
-  async function decide(patch: PhotoAuthoredPatch) {
-    if (!photo || loading || cull.stale || cull.busy || !canChangeTarget()) return;
+  async function decide(patch: PhotoAuthoredPatch, nextStack = false) {
+    if (
+      !photo ||
+      loading ||
+      cull.stale ||
+      cull.busy ||
+      cull.stackLoading ||
+      cull.stackError ||
+      !canChangeTarget()
+    )
+      return;
     editor.reset();
+    advanceToNextStack = nextStack;
     await applyDecision(photo, patch);
   }
   async function undo() {
@@ -262,7 +287,10 @@
       editor.noticeTone = "warning";
       editor.notice = `${selected.name}: changed only the shown file. Its paired file has a different ${patch.flag !== undefined ? "flag" : "rating"}.`;
     }
-    if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
+    if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) {
+      if (advanceToNextStack) cull.moveStack(1);
+      else cull.move(1);
+    }
   }
   async function retryDecision() {
     if (!photo || busy || editor.loading) return;
@@ -272,11 +300,18 @@
     }
     editor.loading = true;
     try {
-      const row = await photos.lookup(photo.asset_id, reloadController.signal);
+      const ids = cull.currentStack ?? [photo.asset_id];
+      const rows = cull.currentStack
+        ? await photos.lookupMany(ids, reloadController.signal)
+        : [await photos.lookup(photo.asset_id, reloadController.signal)];
+      const row = rows.find((row) => row.asset_id === photo!.asset_id);
+      if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
       if (reloadController.signal.aborted) return;
+      neighbors = [...neighbors.filter((row) => !ids.includes(row.asset_id)), ...rows];
       photo = row;
       view = { ...fittedPhotoView };
       editor.reset();
+      if (cull.currentStack) await cull.regroup();
     } catch (cause) {
       if (!reloadController.signal.aborted)
         editor.error = cause instanceof Error ? cause.message : String(cause);
@@ -284,8 +319,87 @@
       editor.loading = false;
     }
   }
+  // Hold every member's revisions once a stack is current, so its decision checks what was shown.
+  $effect(() => {
+    const stack = cull.currentStack;
+    if (
+      stack &&
+      photo &&
+      !busy &&
+      !cull.stale &&
+      !cull.stackLoading &&
+      !cull.stackError &&
+      !loading &&
+      !editor.conflict &&
+      editor.needsStack(stack, photos.hidden)
+    )
+      untrack(() => void prepareStack(stack));
+  });
+  async function prepareStack(stack: string[], retry = false) {
+    checkingDecision = true;
+    try {
+      if (await cull.verifyDecision()) await editor.prepareStack(stack, photos.hidden, retry);
+    } finally {
+      checkingDecision = false;
+    }
+  }
+  async function decideStack(decision: "current" | "all" | "selected" | "representative") {
+    const stack = cull.currentStack;
+    if (
+      !photo ||
+      !stack ||
+      cull.stackLoading ||
+      cull.stackError ||
+      loading ||
+      cull.busy ||
+      cull.stale ||
+      busy
+    )
+      return;
+    checkingDecision = true;
+    try {
+      if (!(await cull.verifyDecision())) return;
+    } finally {
+      checkingDecision = false;
+    }
+    const id = photo.asset_id;
+    const success = await editor.decideStack(
+      {
+        hidden: photos.hidden,
+        asset_ids: stack,
+        current_id: id,
+        decision,
+        selected_ids:
+          decision === "selected" ? selectedFrames.filter((id) => stack.includes(id)) : undefined,
+        burst_gap_seconds: cull.run!.burstGapSeconds!,
+      },
+      refresh,
+      {
+        observed: [
+          photo,
+          ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
+        ],
+        beforeWrite: () => cull.verifyDecision(),
+      },
+    );
+    if (!success) return;
+    announcement =
+      decision === "representative"
+        ? "Representative chosen"
+        : decision === "all"
+          ? "Stack kept"
+          : decision === "selected"
+            ? "Selected frames kept"
+            : "Current frame kept";
+    await tick();
+    if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
+      cull.moveStack(1);
+  }
   function close() {
     if (canChangeTarget()) onclose();
+  }
+  function keepCurrent() {
+    return cull.currentStack ? decideStack("current") : decide({ flag: "pick" }, true);
   }
   function key(event: KeyboardEvent) {
     const action = cullKey(event);
@@ -293,6 +407,11 @@
     event.preventDefault();
     event.stopPropagation();
     if (action === "close") close();
+    else if (action === "keep-current") void keepCurrent();
+    else if (action === "previous-stack" && canChangeTarget()) cull.moveStack(-1);
+    else if (action === "next-stack" && canChangeTarget()) cull.moveStack(1);
+    else if (action === "previous-frame" && canChangeTarget()) cull.moveFrame(-1);
+    else if (action === "next-frame" && canChangeTarget()) cull.moveFrame(1);
     else if (action === "previous") move(-1);
     else if (action === "next") move(1);
     else if (action === "auto") {
@@ -308,6 +427,7 @@
   }
 </script>
 
+<svelte:window onfocus={() => void cull.checkSettings()} />
 <svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
 
 <div class="review-shell">
@@ -340,13 +460,32 @@
         >
         <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
       </header>
-      {#if cull.error || editor.error || editor.notice}<p role="alert">
+      {#if cull.run?.groupingIncomplete}<p role="status">
+          Some camera details are missing or outdated. Stacks can change once they update.
+          <Button
+            size="sm"
+            disabled={busy || cull.busy || cull.stale || cull.stackLoading}
+            onclick={() => {
+              if (canChangeTarget()) void cull.regroup();
+            }}>Retry grouping</Button
+          >
+        </p>{/if}
+      {#if cull.error || cull.stackError || editor.error || editor.notice}<p role="alert">
           {cull.error ||
+            cull.stackError ||
             (editor.noticeTone === "warning" && editor.notice) ||
             editor.error ||
             editor.notice}
         </p>{/if}
+      {#if cull.stackError}<Button disabled={cull.stackLoading} onclick={() => void cull.regroup()}
+          >Retry stacks</Button
+        >{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
+      {#if cull.stackLoading}<p role="status">Grouping bursts...</p>{/if}
+      {#if editor.stackError && !editor.conflict && cull.currentStack}<Button
+          disabled={busy}
+          onclick={() => void prepareStack(cull.currentStack!, true)}>Retry</Button
+        >{/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button disabled={busy} onclick={() => void retryDecision()}
             >{editor.conflict ? "Reload photo" : "Retry edit"}</Button
@@ -356,12 +495,14 @@
             onclick={() => {
               editor.clearDraft();
               editor.reset();
+              if (cull.currentStack) void cull.regroup();
             }}>Discard edit</Button
           >
         </div>{/if}
       {#if help}<p class="key-map">
-          ← / ↑ previous · → / ↓ next · P pick · X reject · U clear flag · 0–5 rating · A
-          auto-advance · S next scope · Z 1:1 · I EXIF · ? keys · Esc exit
+          H / L stack · J / K frame · Return keep current · ← / ↑ previous · → / ↓ next · P pick · X
+          reject · U clear flag · 0–5 rating · A auto-advance · S next scope · Z 1:1 · I EXIF · ?
+          keys · Esc exit
         </p>{/if}
       {#if cull.complete}
         <section class="completion">
@@ -419,22 +560,73 @@
             </aside>{/if}
         </div>
         <div class="controls">
+          {#if cull.currentStack}
+            <Button
+              size="sm"
+              disabled={busy ||
+                !photo ||
+                loading ||
+                editor.conflict ||
+                cull.stackLoading ||
+                !!cull.stackError ||
+                editor.stackLoading ||
+                cull.stale}
+              onclick={() => void decideStack("current")}>Keep current (Return)</Button
+            >
+            <Button
+              size="sm"
+              disabled={busy ||
+                !photo ||
+                loading ||
+                editor.conflict ||
+                cull.stackLoading ||
+                !!cull.stackError ||
+                editor.stackLoading ||
+                cull.stale}
+              onclick={() => void decideStack("all")}>Keep all</Button
+            >
+            <Button
+              size="sm"
+              disabled={busy ||
+                !photo ||
+                loading ||
+                editor.conflict ||
+                cull.stackLoading ||
+                !!cull.stackError ||
+                cull.stale ||
+                !selectedFrames.some((id) => cull.currentStack!.includes(id))}
+              onclick={() => void decideStack("selected")}>Keep selected</Button
+            >
+            <Button
+              size="sm"
+              disabled={busy ||
+                !photo ||
+                loading ||
+                editor.conflict ||
+                cull.stackLoading ||
+                !!cull.stackError ||
+                editor.stackLoading ||
+                cull.stale ||
+                !editor.canChooseStackRepresentative(currentID ?? "")}
+              onclick={() => void decideStack("representative")}>Choose representative</Button
+            >
+          {/if}
           <Button size="sm" disabled={checkpoint.position === 0 || busy} onclick={() => move(-1)}
             >Previous</Button
           >
           <Button
             size="sm"
-            disabled={!photo || cull.stale || busy}
+            disabled={!photo || cull.stale || busy || cull.stackLoading || !!cull.stackError}
             onclick={() => void decide({ flag: "pick" })}>Pick (P)</Button
           >
           <Button
             size="sm"
-            disabled={!photo || cull.stale || busy}
+            disabled={!photo || cull.stale || busy || cull.stackLoading || !!cull.stackError}
             onclick={() => void decide({ flag: "reject" })}>Reject (X)</Button
           >
           <Button
             size="sm"
-            disabled={!photo || cull.stale || busy}
+            disabled={!photo || cull.stale || busy || cull.stackLoading || !!cull.stackError}
             onclick={() => void decide({ flag: "" })}>Clear flag (U)</Button
           >
           <Button
@@ -452,9 +644,24 @@
         {#if railError}<p role="alert">{railError}</p>{/if}
         <nav class="filmstrip" aria-label="Cull pass">
           <fieldset disabled={busy} style="display: contents">
-            {#each rail as id}{@const row =
+            {#each rail as id, index}{@const row =
                 id === currentID ? photo : neighbors.find((item) => item.asset_id === id)}
+              {#if cull.stacks.size && (index === 0 || cull.stacks.get(rail[index - 1]!) !== cull.stacks.get(id))}<span
+                  class="stack-divider"
+                  aria-label="Stack boundary"
+                ></span>{/if}
               <div class:current={id === cull.currentID} class="thumb">
+                {#if row && (cull.stacks.get(id)?.length ?? 0) > 1}<div class="frame-select">
+                    <Checkbox
+                      checked={selectedFrames.includes(id)}
+                      ariaLabel={`Select ${row.name}`}
+                      onchange={(checked) => {
+                        selectedFrames = checked
+                          ? [...selectedFrames, id]
+                          : selectedFrames.filter((selected) => selected !== id);
+                      }}
+                    />
+                  </div>{/if}
                 {#if row}<PhotoCell
                     photo={row}
                     selected={id === cull.currentID}
@@ -533,7 +740,18 @@
     padding: 12px;
     overflow: auto;
   }
+  .stack-divider {
+    border-left: 2px solid var(--border-default);
+    align-self: stretch;
+  }
+  .frame-select {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    z-index: 1;
+  }
   .thumb {
+    position: relative;
     width: 88px;
     height: 66px;
     flex-shrink: 0;

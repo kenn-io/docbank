@@ -119,10 +119,24 @@ it.each([
   ).toBe(suppressed);
 });
 
-it("maps only the cull keys and ignores modifier chords, repeated keys and text entry", () => {
-  expect(cullKey(new KeyboardEvent("keydown", { key: "P" }))).toBe("pick");
-  expect(cullKey(new KeyboardEvent("keydown", { key: "4" }))).toBe(4);
-  expect(cullKey(new KeyboardEvent("keydown", { key: "?", shiftKey: true }))).toBe("help");
+it("maps Cull keys and leaves modifiers, native controls, and handled Enter alone", () => {
+  const mappings: [string, string | number][] = [
+    ["P", "pick"],
+    ["4", 4],
+    ["?", "help"],
+    ["Enter", "keep-current"],
+    ["h", "previous-stack"],
+    ["l", "next-stack"],
+    ["j", "next-frame"],
+    ["k", "previous-frame"],
+  ];
+  for (const [key, action] of mappings)
+    expect(cullKey(new KeyboardEvent("keydown", { key }))).toBe(action);
+  const button = document.body.appendChild(document.createElement("button"));
+  expect(cullKey(keydown(button, { key: "Enter" }))).toBeUndefined();
+  const handled = new KeyboardEvent("keydown", { key: "Enter", cancelable: true });
+  handled.preventDefault();
+  expect(cullKey(handled)).toBeUndefined();
   for (const modifier of ["ctrlKey", "metaKey", "altKey", "repeat", "isComposing"])
     expect(cullKey(new KeyboardEvent("keydown", { key: "p", [modifier]: true }))).toBeUndefined();
   expect(cullKey(new KeyboardEvent("keydown", { key: " " }))).toBeUndefined();

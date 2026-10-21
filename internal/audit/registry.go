@@ -58,7 +58,7 @@ var (
 )
 
 var recordSchemas = map[string]recordSchema{
-	"photo_authored":          schema(field("file_id", uuidRule), field("node_id", unsignedRule), field("revision", unsignedRule), field("rating", unsignedRule), field("flag", textRule), field("label", textRule), field("caption", textRule), field("creator", textRule), field("copyright", textRule), field("rotation", unsignedRule), field("confirmed_fields", unsignedRule)),
+	"photo_authored":          schema(field("file_id", uuidRule), field("node_id", unsignedRule), field("revision", unsignedRule), field("rating", unsignedRule), field("flag", textRule), field("label", textRule), field("caption", textRule), field("creator", textRule), field("copyright", textRule), field("rotation", unsignedRule), field("confirmed_fields", unsignedRule), field("flag_owner", textRule)),
 	"photo_authored_identity": schema(field("file_id", uuidRule)),
 	"unknown_origin": schema(
 		field("node_id", unsignedRule),
@@ -101,6 +101,10 @@ var recordSchemas = map[string]recordSchema{
 		field("tag_id", uuidRule),
 		field("node_id", unsignedRule),
 	),
+	"photo_representative":          schema(field("asset_id", uuidRule), field("rank", unsignedRule)),
+	"photo_representative_identity": schema(field("asset_id", uuidRule)),
+	"photo_burst_settings":          schema(field("singleton", unsignedRule), field("gap", unsignedRule), field("sequence", unsignedRule)),
+	"photo_burst_settings_identity": schema(field("singleton", unsignedRule)),
 	"derivative_purge_suppression": schema(
 		field("source_sha256", digestRule),
 		field("profile_fingerprint", digestRule),
@@ -495,13 +499,13 @@ func orderedListOf(element valueRule, policy collectionPolicy) valueRule {
 
 func attachedRecordRule() valueRule {
 	return recordOf("ingest", "provenance", "tag_assignment", "tag_definition", "photo_authored",
-		"derivative_purge_suppression", "provenance_version_binding")
+		"derivative_purge_suppression", "provenance_version_binding", "photo_representative", "photo_burst_settings")
 }
 
 func attachedIdentityRule() valueRule {
 	return recordOf("ingest_identity", "provenance_identity_ref", "tag_assignment_identity", "photo_authored_identity",
 		"tag_definition_identity", "derivative_purge_suppression_identity",
-		"provenance_version_binding_identity")
+		"provenance_version_binding_identity", "photo_representative_identity", "photo_burst_settings_identity")
 }
 
 func eventAttachmentIdentityRule() valueRule {
@@ -510,7 +514,7 @@ func eventAttachmentIdentityRule() valueRule {
 
 func attachedRecordKindRule() valueRule {
 	return textEnum("ingest", "provenance", "tag_assignment", "tag_definition", "photo_authored",
-		"derivative_purge_suppression", "provenance_version_binding")
+		"derivative_purge_suppression", "provenance_version_binding", "photo_representative", "photo_burst_settings")
 }
 
 func eventPayloadRule() valueRule {

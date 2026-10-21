@@ -193,6 +193,10 @@ Key assumptions reviewers MUST account for:
    bytes, and exports sit outside that gate. Photos visibility and cached
    previews require validated access.
 
+22. PHOTO IMPORT PROFILE COOKIE: sibling `*.docbank.localhost` hosts may
+    receive the opaque locator, but checkpoint reads and writes still require
+    the active browser session and exact configured Host/Origin.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

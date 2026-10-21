@@ -81,7 +81,7 @@ artifact as `docbank-metadata-jsonl-v2`; restore also accepts v1 snapshots. It
 contains the complete virtual
 directory tree and file records, including stable IDs, content hashes,
 timestamps, trash coordinates, prior versions, ingest provenance,
-watched-source cursors, tags, and extracted text.
+watched-source cursors, tags, and extracted text. Photo files retain `flag_owner`, which holds `return` when a Return decision owns the flag and is empty otherwise, so explicit flag choices and Undo keep their meaning after restore.
 Snapshots also preserve people, their identifiers and merge/split history,
 custodian assignments, document assertions, and match candidates. Restore
 rebuilds document–person links from those records after rebuilding document

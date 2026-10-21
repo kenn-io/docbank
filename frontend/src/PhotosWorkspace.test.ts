@@ -14,8 +14,8 @@ import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoMetadataResponse,
-  preparedPhoto,
   photoPreparation,
+  preparedPhoto,
   mapPhoto,
   photo,
   touchTap,
@@ -337,6 +337,31 @@ it("keeps failed confirmation visible and closes after cancellation or success",
     expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull(),
   );
   expect(ontrashed).toHaveBeenCalledTimes(2);
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("renders surviving photos beside collapsed stacks after a failed refresh", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const photos = new Photos("scoped", vi.fn());
+  const otherStack = { asset_ids: ["photo-3", "photo-4"], representative_id: "photo-3" };
+  photos.items = [photo(2), ...[photo(3), photo(4)].map((row) => ({ ...row, stack: otherStack }))];
+  photos.total = 3;
+  photos.started = true;
+  photos.error = "Refresh unavailable";
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await screen.findByRole("button", { name: "Select Photo 2.jpg" });
+  expect(screen.getByRole("button", { name: "Select Photo 3.jpg" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Select Photo 4.jpg" })).toBeNull();
   photos.dispose();
   await cache.dispose();
 });
@@ -2701,6 +2726,12 @@ it("disables selected export when a metadata draft keeps an empty selection open
 it.each([false, true])(
   "reconciles grid selection after cull (one unavailable: %s)",
   async (oneUnavailable) => {
+    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({ revision: 1, burst_gap_seconds: 2 });
+    vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+      groups: [],
+      unavailable_ids: [],
+      burst_gap_seconds: 2,
+    });
     vi.stubGlobal("indexedDB", new IDBFactory());
     vi.stubGlobal("IDBKeyRange", IDBKeyRange);
     vi.stubGlobal(
@@ -3089,3 +3120,22 @@ it.each(
     photos.dispose();
   },
 );
+
+it("explains paused grouping beside the Library stack controls", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  photos.groupingIncomplete = true;
+  render(PhotosWorkspace, { photos, cache: new PhotoPreviewCache("scoped", vi.fn()) });
+  await screen.findByText(/Some camera details are missing or outdated/);
+  expect(screen.getByRole("spinbutton", { name: "Burst gap (seconds)" })).toBeTruthy();
+  photos.dispose();
+});

@@ -2,6 +2,8 @@ import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
+type PreparedFile = api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget;
+
 export class PhotoUndoState {
   receiptID = $state("");
   summary = $state("");
@@ -9,7 +11,57 @@ export class PhotoUndoState {
 
 export class PhotoAuthoredEditor {
   asset = $state<api.PhotoAsset>();
-  targets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
+  /** Every prepared file once, by file_id. The edit selection and the stack each name the files they use. */
+  private held = $state<Record<string, PreparedFile>>({});
+  private editIDs = $state.raw(new Set<string>());
+  private stackIDs = $state.raw(new Set<string>());
+  private editFiles = $derived(this.members(this.editIDs));
+  private stackFiles = $derived(this.members(this.stackIDs));
+  /** The edit selection. */
+  get targets() {
+    return this.editFiles;
+  }
+  set targets(targets: PreparedFile[]) {
+    this.editIDs = this.hold(targets);
+    this.prune();
+  }
+  /** Every stack member, prepared so one stack decision checks every member. */
+  get stackTargets() {
+    return this.stackFiles;
+  }
+  private setStack(targets: PreparedFile[]) {
+    this.stackIDs = this.hold(targets);
+    this.prune();
+  }
+  /** Each held file once, whichever scopes use it. */
+  get prepared() {
+    return Object.values(this.held);
+  }
+  private members(ids: Set<string>) {
+    return [...ids].flatMap((id) => this.held[id] ?? []);
+  }
+  private hold(targets: PreparedFile[]) {
+    for (const target of targets) this.held[target.file_id] = target;
+    return new Set(targets.map((target) => target.file_id));
+  }
+  private prune() {
+    for (const id of Object.keys(this.held))
+      if (!this.editIDs.has(id) && !this.stackIDs.has(id)) delete this.held[id];
+  }
+  stackLoading = $state(false);
+  canChooseStackRepresentative(assetID: string) {
+    const rejected = new Set(
+      this.stackTargets
+        .filter((target) => target.values.flag === "reject")
+        .map((target) => target.asset_id),
+    );
+    for (const target of this.stackTargets)
+      if (target.values.flag === "pick") rejected.delete(target.asset_id);
+    return (
+      this.stackTargets.some((target) => target.asset_id === assetID) &&
+      (!rejected.has(assetID) || this.stackTargets.every((target) => rejected.has(target.asset_id)))
+    );
+  }
   tags = $state<api.Tag[]>([]);
   tagsError = $state("");
   tagsLoading = $state(false);
@@ -96,6 +148,9 @@ export class PhotoAuthoredEditor {
   }
   private controller = new AbortController();
   private read = new AbortController();
+  private stackRead = new AbortController();
+  private stackKey = $state("");
+  stackError = $state("");
   private scope?: api.PhotoAuthoredPrepareRequest;
   constructor(
     private session: string,
@@ -123,7 +178,7 @@ export class PhotoAuthoredEditor {
     if (write === this.writes) this.busy = false;
   }
   canChangeTarget() {
-    if (this.loading) {
+    if (this.loading || this.stackLoading) {
       this.unavailable();
       return false;
     }
@@ -137,7 +192,13 @@ export class PhotoAuthoredEditor {
   }
   reset() {
     this.read.abort();
-    this.targets = [];
+    this.stackRead.abort();
+    this.held = {};
+    this.editIDs = new Set();
+    this.stackIDs = new Set();
+    this.stackKey = "";
+    this.stackError = "";
+    this.stackLoading = false;
     this.asset = undefined;
     this.fileID = "";
     this.patch = {};
@@ -219,7 +280,18 @@ export class PhotoAuthoredEditor {
     }
   }
   async reload(keepError = false) {
-    if (this.busy || this.loading || !this.targets.length) return;
+    if (this.busy || this.loading) return;
+    // Stack members prepare again once the stack is actionable.
+    this.stackRead.abort();
+    this.setStack([]);
+    this.stackKey = "";
+    this.stackError = "";
+    this.stackLoading = false;
+    if (!this.targets.length) {
+      this.conflict = false;
+      if (!keepError) this.error = "";
+      return;
+    }
     await this.prepare(
       {
         asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
@@ -302,7 +374,14 @@ export class PhotoAuthoredEditor {
   }
   private accept(receipt: api.PhotoAuthoredReceipt) {
     this.noticeTone = "success";
-    this.targets = this.targets.map((target) => {
+    for (const target of this.accepted(this.prepared, receipt)) this.held[target.file_id] = target;
+  }
+  private accepted(targets: PreparedFile[], receipt: api.PhotoAuthoredReceipt) {
+    return targets.map((target) => {
+      const representative = receipt.representatives?.find(
+        (change) => change.asset_id === target.asset_id,
+      );
+      if (representative) target = { ...target, asset_revision: representative.after_revision };
       const after = receipt.after.find((file) => file.file_id === target.file_id);
       if (!after) return target;
       const tags = new Set(target.tags);
@@ -348,7 +427,7 @@ export class PhotoAuthoredEditor {
       this.unavailable("Reload metadata before editing.");
       return;
     }
-    if (this.busy || this.loading || this.concealed) {
+    if (this.busy || this.loading || this.stackLoading || this.concealed) {
       this.unavailable();
       return;
     }
@@ -450,8 +529,153 @@ export class PhotoAuthoredEditor {
       this.endWrite(write);
     }
   }
+  needsStack(assetIDs: string[], hidden: boolean) {
+    return this.stackKey !== JSON.stringify([hidden, assetIDs]);
+  }
+  /** Prepare complete stack membership independently of the browser selection. */
+  async prepareStack(assetIDs: string[], hidden: boolean, retry = false) {
+    const key = JSON.stringify([hidden, assetIDs]);
+    if (this.controller.signal.aborted || (key === this.stackKey && !retry)) return;
+    this.stackKey = key;
+    this.stackRead.abort();
+    const controller = (this.stackRead = new AbortController());
+    const signal = AbortSignal.any([controller.signal, this.controller.signal]);
+    this.setStack([]);
+    this.stackLoading = true;
+    this.stackError = "";
+    this.error = "";
+    try {
+      const prepared = await this.request(() =>
+        api.preparePhotoAuthored(
+          { asset_ids: assetIDs, hidden, stack: true },
+          this.options(signal),
+        ),
+      );
+      if (!signal.aborted) this.setStack(prepared.targets);
+    } catch (cause) {
+      if (!signal.aborted) {
+        this.stackError = this.error = this.failure(cause);
+        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+      }
+    } finally {
+      if (!signal.aborted) this.stackLoading = false;
+    }
+  }
+  /**
+   * Decide one stack against the revisions this editor already holds. Each
+   * observed row's asset revision, display file, and content version must
+   * still match, so a stale view keeps its selection and offers Reload.
+   */
+  async decideStack(
+    request: Omit<api.PhotoStackDecisionRequest, "targets">,
+    refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
+    {
+      observed,
+      beforeWrite,
+    }: {
+      observed: Pick<
+        api.PhotoBrowseRow,
+        "asset_id" | "revision" | "display_file_id" | "content_version_id" | "flag" | "rating"
+      >[];
+      beforeWrite?: () => Promise<boolean>;
+    },
+  ) {
+    if (this.conflict) {
+      this.unavailable("Reload metadata before editing.");
+      return false;
+    }
+    if (this.busy || this.loading || this.stackLoading || this.concealed) {
+      this.unavailable();
+      return false;
+    }
+    if (this.dirty) {
+      this.unavailable("Apply or clear your metadata edits before deciding a stack.");
+      return false;
+    }
+    if (this.controller.signal.aborted) return false;
+    if (this.stackKey !== JSON.stringify([request.hidden ?? false, request.asset_ids])) {
+      this.unavailable();
+      return false;
+    }
+    const targets = this.stackTargets;
+    if (
+      request.decision === "representative" &&
+      !this.canChooseStackRepresentative(request.current_id)
+    )
+      return false;
+    if (request.asset_ids.some((id) => !targets.some((target) => target.asset_id === id))) {
+      this.unavailable();
+      return false;
+    }
+    const stale = observed.some((row) => {
+      const files = targets.filter((target) => target.asset_id === row.asset_id);
+      return (
+        files.length > 0 &&
+        (files.some((target) => target.asset_revision !== row.revision) ||
+          !files.some(
+            (target) =>
+              target.file_id === row.display_file_id &&
+              target.display_file_id === row.display_file_id &&
+              target.current_content_version_id === row.content_version_id &&
+              target.values.flag === row.flag &&
+              target.values.rating === row.rating,
+          ))
+      );
+    });
+    if (stale) {
+      this.error = "This photo changed. Reload the photo before deciding.";
+      this.conflict = true;
+      return false;
+    }
+    const write = this.beginWrite();
+    this.error = "";
+    this.notice = "";
+    try {
+      if (beforeWrite && !(await beforeWrite())) return false;
+      const receipt = await this.request(() =>
+        api.decidePhotoStack(
+          {
+            ...request,
+            targets: targets.map(
+              ({ asset_id, asset_revision, file_id, revision, node_revision }) => {
+                const row = observed.find((item) => item.display_file_id === file_id);
+                return {
+                  asset_id,
+                  asset_revision,
+                  file_id,
+                  revision,
+                  node_revision,
+                  ...(row ? { content_version_id: row.content_version_id } : {}),
+                };
+              },
+            ),
+          },
+          this.options(),
+        ),
+      );
+      this.accept(receipt);
+      if (!receipt.receipt_id) {
+        this.notice = "No changes to apply";
+        return true;
+      }
+      this.receiptID = receipt.receipt_id;
+      this.undoState.summary = receipt.after.length ? "Stack updated" : "Representative chosen";
+      this.endWrite(write);
+      await refresh(receipt, []);
+      return true;
+    } catch (cause) {
+      if (!this.controller.signal.aborted) {
+        this.error = this.failure(cause);
+        if (cause instanceof APIError && cause.errors.length) this.error = cause.errors.join("; ");
+        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+      }
+    } finally {
+      this.endWrite(write);
+    }
+    return false;
+  }
   async undo(refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>) {
-    if (this.busy || this.loading || this.concealed) {
+    if (this.busy || this.loading || this.stackLoading || this.concealed) {
       this.unavailable();
       return;
     }
@@ -479,5 +703,6 @@ export class PhotoAuthoredEditor {
   dispose() {
     this.controller.abort();
     this.read.abort();
+    this.stackRead.abort();
   }
 }

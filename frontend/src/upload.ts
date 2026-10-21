@@ -4,6 +4,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import { type BrowserSession } from "./browser-session.js";
+import { photoImportContentHashExtensions } from "./generated/photoSourceExtensions.js";
 import type { UploadReceipt } from "./generated/docbank.js";
 
 const hashChunkBytes = 1024 * 1024;
@@ -95,6 +96,8 @@ export interface PhotoImportPlan {
   groups: number[][];
   unsupported: number[];
   skip_reasons?: Record<number, string>;
+  // Hashes the server asked for before planning; every other file hashes with its group.
+  hashes?: ReadonlyMap<File, string>;
 }
 
 export interface PhotoGroupReceipt {
@@ -103,19 +106,67 @@ export interface PhotoGroupReceipt {
   reason?: string;
 }
 
+const declarationUUID = "00000000-0000-4000-8000-000000000000";
+
+export function photoImportDeclaration(
+  files: File[],
+  destination: string,
+  sourceID = declarationUUID,
+  requestID = declarationUUID,
+  hashes?: ReadonlyMap<File, string>,
+) {
+  const tooLarge = () =>
+    new Error(
+      "Choose fewer files or use `docbank photos import`. Photo selections allow 32,768 files and an 8 MiB declaration.",
+    );
+  if (files.length > 32768) throw tooLarge();
+  const message = {
+    type: "plan_photo_import",
+    source_id: sourceID,
+    request_id: requestID,
+    destination,
+    files: files.map((file) => ({
+      relative_path: photoRelativePath(file),
+      size: file.size,
+      modified_time: file.lastModified,
+      expected_hash: hashes
+        ? (hashes.get(file) ?? "")
+        : photoImportNeedsContentHash(file)
+          ? "0".repeat(64)
+          : "",
+    })),
+  };
+  if (utf8ToBytes(JSON.stringify(message)).byteLength > 8 * 1024 * 1024) throw tooLarge();
+  return message;
+}
+
 export interface PhotoImportTransport {
-  planPhotoImport(files: File[], destination: string): Promise<PhotoImportPlan>;
+  planPhotoImport(
+    files: File[],
+    destination: string,
+    sourceID: string,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
+  ): Promise<PhotoImportPlan>;
+  // An empty entry in hashes is a file not hashed yet. The upload hashes it
+  // first and fills in its entry, so a retry reuses the hash.
   uploadPhotoGroup(
     importID: string,
     groupIndex: number,
     group: File[],
     signal: AbortSignal,
     onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
+    hashes: string[],
   ): Promise<PhotoGroupReceipt>;
 }
 
-function photoRelativePath(file: File): string {
+export function photoRelativePath(file: File): string {
   return (file.webkitRelativePath || file.name).normalize("NFC");
+}
+
+export function photoImportNeedsContentHash(file: File): boolean {
+  const name = photoRelativePath(file).split("/").at(-1) ?? file.name;
+  return photoImportContentHashExtensions.has(name.slice(name.lastIndexOf(".")).toLowerCase());
 }
 
 interface UploadMessage {
@@ -127,6 +178,7 @@ interface UploadMessage {
   destination?: string;
   group?: number;
   hashes?: string[];
+  indexes?: number[];
   photo_group_receipt?: PhotoGroupReceipt;
   container_id?: string;
   chunk_index?: number;
@@ -287,29 +339,51 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     }
   }
 
-  async planPhotoImport(files: File[], destination: string): Promise<PhotoImportPlan> {
+  async planPhotoImport(
+    files: File[],
+    destination: string,
+    sourceID: string,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
+  ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
+    throwIfAborted(signal);
     this.busy = true;
     const requestID = randomUUID();
+    const hashes = new Map<File, string>();
     try {
-      const message = {
-        type: "plan_photo_import",
-        request_id: requestID,
-        destination,
-        files: files.map((file) => ({
-          relative_path: photoRelativePath(file),
-          size: file.size,
-          modified_time: file.lastModified,
-        })),
-      };
-      if (files.length > 32768 || utf8ToBytes(JSON.stringify(message)).byteLength > 8 * 1024 * 1024)
-        throw new Error(
-          "Choose fewer files or use `docbank photos import`. Photo selections allow 32,768 files and an 8 MiB declaration.",
-        );
-      this.send(message);
-      const plan = await this.nextMessage();
+      this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+      let plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
       this.throwProblem(plan);
+      // The daemon rechecks live sizes on every declaration, so a concurrent import can ask again.
+      while (plan.type === "photo_import_hashes_needed") {
+        // Only files the size of an earlier photo can continue its folder, so only they hash before the plan.
+        const indexes = plan.indexes;
+        if (
+          !Array.isArray(indexes) ||
+          new Set(indexes).size !== indexes.length ||
+          indexes.some((index) => !Number.isInteger(index) || index < 0 || index >= files.length)
+        )
+          throw this.protocolError();
+        const pending = indexes.filter((index) => !hashes.has(files[index]));
+        if (!pending.length) throw this.protocolError();
+        const total = pending.reduce((sum, index) => sum + files[index].size, 0);
+        let processed = 0;
+        for (const index of pending) {
+          hashes.set(
+            files[index],
+            await hashFile(files[index], signal, (progress) =>
+              onprogress({ processed: processed + progress.processed, total }),
+            ),
+          );
+          processed += files[index].size;
+        }
+        this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+        plan = await this.nextMessage();
+        this.requireMessage(plan, requestID);
+        this.throwProblem(plan);
+      }
       if (
         plan.type !== "photo_import_plan" ||
         typeof plan.import_id !== "string" ||
@@ -332,6 +406,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         groups: plan.groups,
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
+        hashes,
       };
     } finally {
       this.busy = false;
@@ -344,6 +419,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     group: File[],
     signal: AbortSignal,
     onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
+    hashes: string[],
   ): Promise<PhotoGroupReceipt> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
@@ -355,13 +431,14 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     let readyForBytes = false;
     try {
       const total = group.reduce((sum, file) => sum + file.size, 0);
-      const hashes = [];
+      const unhashed = group.reduce((sum, file, i) => sum + (hashes[i] ? 0 : file.size), 0);
       let processed = 0;
-      for (const file of group) {
-        const hash = await hashFile(file, signal, (progress) =>
-          onprogress("hashing", { processed: processed + progress.processed, total }),
+      for (const [i, file] of group.entries()) {
+        if (hashes[i]) continue;
+        const done = processed;
+        hashes[i] = await hashFile(file, signal, (progress) =>
+          onprogress("hashing", { processed: done + progress.processed, total: unhashed }),
         );
-        hashes.push(hash);
         processed += file.size;
       }
       this.send({

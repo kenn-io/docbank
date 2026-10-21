@@ -54,7 +54,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v20"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v21"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -111,6 +111,8 @@ type sourceMetadataBlobReader interface {
 
 // BackfillSourceMetadataTargets processes a selected batch while allowing
 // later originals to progress past a corrupt or temporarily unavailable one.
+// Read failures publish no generation and remain eligible for a later backfill;
+// missing metadata does not imply an extraction is currently running.
 func BackfillSourceMetadataTargets(ctx context.Context, catalog sourceMetadataCatalog, blobs sourceMetadataBlobReader, spoolParent string, targets []store.SourceMetadataTarget) (int, error) {
 	completed := 0
 	var targetErrors error
@@ -2023,6 +2025,7 @@ func (c *metadataCollector) extractExifDetails(reader exifReader, exif map[uint1
 	if focalLength, found := exifRational(reader, exif[0x920a], false); found && focalLength > 0 {
 		c.exifNumber("image.exif.focal_length_mm", "FocalLength", focalLength)
 	}
+	c.string("image.exif.body_serial_number", "image.exif", "BodySerialNumber", exifASCII(exif[0xa431]), true)
 	c.string("image.exif.lens_make", "image.exif", "LensMake", exifASCII(exif[0xa433]), false)
 	c.string("image.exif.lens_model", "image.exif", "LensModel", exifASCII(exif[0xa434]), false)
 	if width, found := exifUnsigned(reader, exif[0xa002]); found && width > 0 {

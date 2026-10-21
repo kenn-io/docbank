@@ -34,7 +34,7 @@ func photoAuthoredAuditRecord(s PhotoAuthoredSnapshot) (audit.Record, error) {
 	v := s.Values
 	rating, rotation := v.Rating, v.Rotation
 	fields := []audit.Field{{Name: "file_id", Value: file}, {Name: "node_id", Value: audit.Unsigned(node)}, {Name: "revision", Value: audit.Unsigned(revision)}, {Name: "rating", Value: audit.Unsigned(uint64(rating))}} //nolint:gosec // ValidatePhotoAuthored bounds rating to 0 through 5.
-	for _, f := range []struct{ name, value string }{{"flag", v.Flag}, {"label", v.Label}, {"caption", v.Caption}, {"creator", v.Creator}, {"copyright", v.Copyright}} {
+	for _, f := range []struct{ name, value string }{{"flag", v.Flag}, {"label", v.Label}, {"caption", v.Caption}, {"creator", v.Creator}, {"copyright", v.Copyright}, {"flag_owner", v.FlagOwner}} {
 		text, err := audit.Text(f.value)
 		if err != nil {
 			return audit.Record{}, err
@@ -81,7 +81,7 @@ func photoAuthoredFromAudit(r audit.Record) (PhotoAuthoredSnapshot, error) {
 	for _, f := range []struct {
 		name  string
 		value *string
-	}{{"flag", &s.Values.Flag}, {"label", &s.Values.Label}, {"caption", &s.Values.Caption}, {"creator", &s.Values.Creator}, {"copyright", &s.Values.Copyright}} {
+	}{{"flag", &s.Values.Flag}, {"label", &s.Values.Label}, {"caption", &s.Values.Caption}, {"creator", &s.Values.Creator}, {"copyright", &s.Values.Copyright}, {"flag_owner", &s.Values.FlagOwner}} {
 		*f.value, err = auditTextField(r, f.name)
 		if err != nil {
 			return s, err
@@ -94,7 +94,7 @@ func photoAuthoredFromAudit(r audit.Record) (PhotoAuthoredSnapshot, error) {
 }
 
 func appendAuditPhotoAuthored(ctx context.Context, q metadataQuerier, records *[]audit.Record) error {
-	rows, err := q.QueryContext(ctx, `SELECT file_id,node_id,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields FROM photo_files WHERE role<>'sidecar' ORDER BY file_id`)
+	rows, err := q.QueryContext(ctx, `SELECT file_id,node_id,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields,flag_owner FROM photo_files WHERE role<>'sidecar' ORDER BY file_id`)
 	if err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func appendAuditPhotoAuthored(ctx context.Context, q metadataQuerier, records *[
 	for rows.Next() {
 		var s PhotoAuthoredSnapshot
 		v := &s.Values
-		if err := rows.Scan(&s.FileID, &s.NodeID, &s.Revision, &v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation, &v.Confirmed); err != nil {
+		if err := rows.Scan(&s.FileID, &s.NodeID, &s.Revision, &v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation, &v.Confirmed, &v.FlagOwner); err != nil {
 			return err
 		}
 		r, err := photoAuthoredAuditRecord(s)

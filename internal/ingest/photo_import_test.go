@@ -2,18 +2,57 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestBrowserPhotoResumeKeepsOriginal(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	destination, err := ing.Store.PrepareIngestDirectory(ctx, "/photos")
+	require.NoError(t, err)
+	commit := func(run store.IngestRun, importID uuid.UUID, folder, name, content string) store.PhotoImportResult {
+		digest := sha256.Sum256([]byte(content))
+		var result store.PhotoImportResult
+		err := ing.Blobs.WithMutation(ctx, func() error {
+			prepared, err := ing.PrepareUpload(ctx, ing.Store.RootID(), name, "image/jpeg", strings.NewReader(content), hex.EncodeToString(digest[:]), int64(len(content)))
+			if err != nil {
+				return err
+			}
+			result, err = ing.CommitPhotoGroup(ctx, PhotoGroupCommit{
+				Run: run, Destination: &destination,
+				Paths: []string{"browser:" + importID.String() + "/" + folder + "/" + name}, Mtimes: []string{"2024-06-10T12:00:00Z"},
+			}, []*PreparedUpload{prepared})
+			return err
+		})
+		require.NoError(t, err)
+		return result
+	}
+	sourceID := uuid.MustParse("20000000-0000-4000-8000-000000000001")
+	run, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic first selection")
+	require.NoError(t, err)
+	first := commit(run, sourceID, "camera", "frame-0.jpg", "synthetic browser photo frame-0.jpg")
+	require.True(t, first.Added)
+	resumedRun, err := ing.Store.BeginIngest(ctx, "photo-import", "synthetic changed selection")
+	require.NoError(t, err)
+	changed := commit(resumedRun, sourceID, "camera", "frame-0.jpg", "changed synthetic browser photo")
+	require.True(t, changed.Added)
+	require.Len(t, changed.Nodes, 1)
+	assert.NotEqual(t, first.Asset.Files[0].NodeID, changed.Nodes[0].ID)
+}
 
 func TestPhotoImportGrouping(t *testing.T) {
 	root := t.TempDir()

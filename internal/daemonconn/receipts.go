@@ -111,7 +111,7 @@ func validBrowserOriginAddress(address string) bool {
 		return false
 	}
 	const prefix = "docbank-"
-	const suffix = ".localhost"
+	const suffix = ".docbank.localhost"
 	if !strings.HasPrefix(host, prefix) || !strings.HasSuffix(host, suffix) {
 		return false
 	}

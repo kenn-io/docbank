@@ -4600,6 +4600,8 @@
       {/if}
       {#if panel.kind === "photoImport" && uploadChannel}
         <PhotoImportDrawer
+          {vaultID}
+          session={webSession}
           channel={uploadChannel}
           disabledReason={uploadChannelError}
           onclose={closePanel(panel)}

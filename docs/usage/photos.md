@@ -36,9 +36,19 @@ RAW, JPEG, and XMP files in the same folder with the same name form one photo. V
 
 The drawer reports additions, files already in the vault, ambiguous groups, and failures. Photos, album counts, and the plain Documents directory refresh after the import. Retained searches, tag filters, and frozen snapshots stay unchanged.
 
-Imported groups share one collection named `browser: Card` when you pick a folder named `Card`, or `browser: Choose files` for individual files. Reusing a filename in a later selection creates a separate photo; identical RAW, image, and video content still returns already in vault. A lone XMP stays an ordinary file and is added again when picked in a new selection.
+Imported groups share one collection named `browser: Card` when you pick a folder named `Card`, or `browser: Choose files` for individual files. Reusing a filename with changed bytes creates a separate file node, including when a browser client reuses a saved source identity. The existing file keeps its content and current version. Existing pairing rules decide whether the new file joins the same photo or a separate photo; identical RAW, image, and video content still returns already in vault. A lone XMP stays an ordinary file and is added again when picked in a new selection.
 
-A lost receipt leaves the group unconfirmed. Reload the page and choose the folder again; identical RAW, image, and video content returns as already in vault. Other files, including lone XMP sidecars, may be added again. Failed groups remain available through **Add N groups**.
+A lost receipt leaves the group unconfirmed. Reload the page, reopen **Add photos**, choose **Resume import**, and reselect the same files or folder. Docbank checks every file path, size, and modified time before uploading, then retains the original source identity so the folder's bursts stay together. Resume survives a local daemon restart in the browser profile that saved the import. A persistent cookie locates the selection digest saved privately in that vault; clearing cookies removes access to it. The daemon uses a random host beneath `.docbank.localhost` to scope that cookie. Its earlier host was already random for each daemon run.
+
+**Choose folder** and **Choose files** start a new selection. When a directory contains a photo with the same bytes as an earlier browser import, its new siblings join that folder's burst groups and share stack decisions with those earlier photos, even if the matching file has a different name. Directories without a matching photo keep their own source. When a directory matches several earlier folders, its new photos keep the fresh selection identity automatically. Exact duplicates retain their earliest folder provenance. Each selected directory resolves independently.
+
+If an unfinished import is saved, Docbank asks before replacing it. Cancel keeps it available through Resume import. Saved imports from an unsupported format stay intact and require a compatible Docbank version to resume.
+
+Identical RAW, image, and video content returns as already in vault. Other files, including lone XMP sidecars, may be added again. Failed groups remain available through **Add N groups**.
+
+If cookies or checkpoint storage are unavailable, a notice lets you import for this session. Keep the tab open: this import cannot resume after closing it. Authentication failures, progress changed in another tab, and unsupported saved formats still block import and preserve the saved selection.
+
+The browser checks the 32,768-file and 8 MiB JSON declaration limits before asking to replace saved progress or reading photo content. Changing the destination checks the declaration again.
 
 Web imports run in the open tab. Control them in the drawer. **Stop after this group** finishes the current group before stopping the import.
 
@@ -403,6 +413,7 @@ docbank photos settings show
 docbank photos settings set raw [--revision REV]
 docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos settings set --burst-gap-seconds 5 [--revision REV]
 ```
 
 Asset and settings commands emit bounded JSON. Exit code 4 means the revision is stale: the
@@ -502,7 +513,7 @@ as a plain file. A later full scan pairs companions when both source files
 are still present. Matching uses files in the scan and their current duplicate
 owners. A video always becomes its own photo. Each photo commits in one
 transaction, so a failure leaves no half photo behind, and running the same
-import again skips content already in the vault. A file edited since it was
+import again skips content already in the vault. In a filesystem photo import, a file edited since it was
 imported, such as an XMP saved again by a photo editor, becomes a new version
 of the file already in the photo, not a second file.
 
@@ -661,7 +672,7 @@ from camera A. Saved expressions follow the same rule. Document metadata filters
 stay out.
 
 Sort by `relevance`, `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
-`media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture sorting converts recorded offsets
+`media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture-time album queries can return burst stacks; added-time queries keep individual rows. Capture sorting converts recorded offsets
 to UTC. Omitted zones use civil calendar coordinates. A photo without a
 readable capture time sorts by its file's modified time when Docbank recorded
 one. Photos with neither sort last in both directions and do not match
@@ -757,11 +768,24 @@ Map uses album membership when opened from an album. Otherwise it inherits Libra
 
 Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. A decision changes both files of a RAW and JPEG pair. When the pair's flags or ratings differ, it changes only the shown file and says so. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
 
+### Burst stacks
+
+Library groups adjacent capture times from the same import folder, camera make, model, and body serial number. Photos with no recorded serial group with other photos with no serial; known serials stay separate. A flat **Choose files** selection shares one folder identity. A collapsed stack shows its representative and a count. Selecting it selects every frame. Expand it to select frames separately.
+
+Set **Burst gap (seconds)** from 1 to 30 to regroup existing photos. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read; background extraction retries them. A notice says groups can change after details update, and Cull refreshes them when you choose **Retry grouping** or change the burst gap.
+
+In Cull, use H/L to move between stacks and J/K to move within a stack. Check frames in the filmstrip and choose **Keep selected** to retain those frames. Flags owned by another decision stay unchanged. Navigation preserves the checked frames; starting a new pass or regrouping clears them. A Cull stack holds only frames in the current pass, so a frame the pass excludes keeps its flag. **Keep all** picks every frame in the stack. **Keep current (Return)** picks the viewed frame and rejects the rest. Later Return decisions replace earlier Return assignments only for frames still owned by Return. Stack decisions update every live member file together, including paired originals, with one receipt and one Undo.
+
+Choose **Choose representative** to change which frame represents the stack while preserving every frame's flags. A rejected frame in a mixed stack cannot become its representative. Choose a picked or unflagged frame, or change its flag first.
+
 With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating and stay on the current photo.
 
 | Key | Action |
 | --- | --- |
 | Arrow keys | Previous or next photo |
+| H / L | Previous or next stack |
+| J / K | Next or previous frame within the stack |
+| Return | Keep the viewed frame and reject the other frames, except those with a flag you set yourself |
 | P / X / U | Pick, reject, or clear the flag |
 | 0–5 | Clear or set the star rating |
 | A | Toggle auto-advance, initially on |

@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -33,6 +35,8 @@ type PhotoImportGroup struct {
 	// Successful groups rebase the plan so later groups retain the directory identity.
 	DestinationPlan *IngestDirectoryPlan
 	Members         []PhotoImportMember
+	// CreateOnly preserves existing content when a source path has changed bytes.
+	CreateOnly bool
 }
 
 // Ambiguity reasons tell the operator why a group was left for manual pairing.
@@ -159,6 +163,105 @@ func photoImportRoleFilter(role string) (string, []any) {
 	default:
 		return "pf.role=?", []any{role}
 	}
+}
+
+// browserPhotoSourceSQL selects the eligible earlier browser photos: live,
+// visible, included, non-sidecar, and claimed by a canonical browser folder.
+func browserPhotoSourceSQL() string {
+	return `
+ FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
+ JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL AND pf.role<>'sidecar'
+ JOIN photo_source_claims c ON c.file_id=pf.file_id
+ WHERE n.trashed_at IS NULL AND c.folder_key IS NOT NULL
+ AND ` + photoBrowseEligibleMemberPredicate(false)
+}
+
+// BrowserPhotoSizeCandidates returns which of sizes belong to an eligible
+// earlier browser photo. Only files of those sizes can continue a folder, so
+// only they need a content hash before planning.
+func (s *Store) BrowserPhotoSizeCandidates(ctx context.Context, sizes []int64) (map[int64]bool, error) {
+	encoded, err := json.Marshal(sizes)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT cv.size`+browserPhotoSourceSQL()+`
+ AND substr(c.original_path, 1, 8)='browser:'
+ AND printf('%020d',cv.size) IN (SELECT printf('%020d',value) FROM json_each(?))`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("finding browser photo sizes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	candidates := map[int64]bool{}
+	for rows.Next() {
+		var size int64
+		if err := rows.Scan(&size); err != nil {
+			return nil, err
+		}
+		candidates[size] = true
+	}
+	return candidates, rows.Err()
+}
+
+// ResolveBrowserPhotoPaths continues a selected directory only when its matching
+// current photo content identifies one canonical browser folder. Members without
+// a hash never match.
+func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImportMember) ([]string, error) {
+	hashes := make([]string, 0, len(members))
+	for _, member := range members {
+		if member.BlobHash != "" {
+			hashes = append(hashes, member.BlobHash)
+		}
+	}
+	encoded, err := json.Marshal(hashes)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+ SELECT cv.blob_hash, c.original_path`+browserPhotoSourceSQL()+`
+ AND cv.blob_hash IN (SELECT value FROM json_each(?))`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("finding browser photo provenance: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	folders := map[string]map[string]bool{}
+	for rows.Next() {
+		var hash, original string
+		if err := rows.Scan(&hash, &original); err != nil {
+			return nil, err
+		}
+		if !strings.HasPrefix(original, "browser:") {
+			continue
+		}
+		if folders[hash] == nil {
+			folders[hash] = map[string]bool{}
+		}
+		folders[hash][path.Dir(original)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	directories := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, member := range members {
+		directory := path.Dir(member.OriginalPath)
+		for folder := range folders[member.BlobHash] {
+			if previous := directories[directory]; previous != "" && previous != folder {
+				ambiguous[directory] = true
+			}
+			directories[directory] = folder
+		}
+	}
+	for directory := range ambiguous {
+		delete(directories, directory)
+	}
+	resolved := make([]string, len(members))
+	for i, member := range members {
+		resolved[i] = member.OriginalPath
+		if folder := directories[path.Dir(member.OriginalPath)]; folder != "" {
+			resolved[i] = folder + "/" + path.Base(member.OriginalPath)
+		}
+	}
+	return resolved, nil
 }
 
 func (s *Store) photoImportCurrentDuplicateTx(
@@ -454,14 +557,14 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			return err
 		}
 		// Every member first takes the node it was imported as, so no other member's content match can take it.
-		// An edited source becomes that node's new version. RAW and image files then settle by
+		// An edited source becomes that node's new version unless the group is create-only. RAW and image files then settle by
 		// content so sidecars can see which photo the group joins.
 		for i, member := range group.Members {
 			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", false, claimed)
 			if err != nil {
 				return err
 			}
-			if !duplicate {
+			if !duplicate && !group.CreateOnly {
 				node, duplicate, err = s.photoImportChangedSourceTx(ctx, tx, run, member, roles[i], mediaTypes[i], claimed)
 				if err != nil {
 					return err

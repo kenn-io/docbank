@@ -66,6 +66,7 @@ describe("audited history drawer", () => {
       node_id: 42,
       revision: 1,
       values: {
+        flag_owner: "",
         rating: 0,
         flag: "",
         label: "",
@@ -77,6 +78,7 @@ describe("audited history drawer", () => {
     };
     for (const values of [
       {
+        flag_owner: "",
         confirmed_fields: 127,
         rating: 5,
         flag: "pick",

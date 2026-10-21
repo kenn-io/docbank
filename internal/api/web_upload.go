@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -48,6 +49,7 @@ var (
 
 type webPhotoFile struct {
 	RelativePath string `json:"relative_path"`
+	ExpectedHash string `json:"expected_hash"`
 	Size         int64  `json:"size"`
 	// ModifiedTime is the source file's last-modified time as JavaScript's
 	// File.lastModified: milliseconds since the Unix epoch, a pointer so a
@@ -77,6 +79,7 @@ type webPhotoReceipt struct {
 }
 
 type webUploadMessage struct {
+	SourceID     *uuid.UUID          `json:"source_id,omitzero"`
 	ImportID     string              `json:"import_id,omitzero"`
 	Files        []webPhotoFile      `json:"files,omitzero"`
 	Groups       [][]int             `json:"groups,omitzero"`
@@ -85,6 +88,7 @@ type webUploadMessage struct {
 	Destination  string              `json:"destination,omitzero"`
 	Group        int                 `json:"group,omitzero"`
 	Hashes       []string            `json:"hashes,omitzero"`
+	Indexes      []int               `json:"indexes,omitzero"`
 	PhotoReceipt *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
 	ContainerID  string              `json:"container_id,omitzero"`
 	ChunkIndex   int                 `json:"chunk_index,omitzero"`
@@ -627,13 +631,16 @@ func planWebPhotos(
 			skipReasons[index] = reason
 			continue
 		}
-		indexes[name] = index
 		source := store.ClassifyPhotoSource(name)
 		if source.Kind == store.PhotoSourceUnsupported {
 			unsupported = append(unsupported, index)
 			skipReasons[index] = "Unsupported type"
 			continue
 		}
+		if file.ExpectedHash != "" && !isCanonicalHash(file.ExpectedHash) {
+			return invalid()
+		}
+		indexes[name] = index
 		candidates = append(candidates, ingest.PhotoImportCandidate{Path: name, Kind: source.Kind})
 	}
 	groups := [][]int{}
@@ -650,10 +657,10 @@ func planWebPhotos(
 type webPhotoImport struct {
 	id          string
 	files       []webPhotoFile
+	paths       []string
 	groups      [][]int
 	run         store.IngestRun
 	destination store.IngestDirectoryPlan
-	hashes      [][]string
 }
 
 func (p *webPhotoImport) sourceDescription() string {
@@ -669,6 +676,40 @@ func (p *webPhotoImport) sourceDescription() string {
 	return "browser: Choose files"
 }
 
+// unhashedBrowserPhotos lists the planned files that declared no hash but
+// match the size of an eligible earlier browser photo. Only exact bytes can
+// continue a folder, so these are the only files the browser must hash before
+// the plan; the rest hash with their group at upload.
+func unhashedBrowserPhotos(
+	ctx context.Context, s *store.Store, files []webPhotoFile, groups [][]int,
+) ([]int, *Error) {
+	var sizes []int64
+	for _, group := range groups {
+		for _, index := range group {
+			if files[index].ExpectedHash == "" {
+				sizes = append(sizes, files[index].Size)
+			}
+		}
+	}
+	if len(sizes) == 0 {
+		return nil, nil
+	}
+	candidates, err := s.BrowserPhotoSizeCandidates(ctx, sizes)
+	if err != nil {
+		return nil, uploadError(err)
+	}
+	var needed []int
+	for _, group := range groups {
+		for _, index := range group {
+			if files[index].ExpectedHash == "" && candidates[files[index].Size] {
+				needed = append(needed, index)
+			}
+		}
+	}
+	slices.Sort(needed)
+	return needed, nil
+}
+
 // handleWebPhotoPlan answers one plan_photo_import message. It returns the
 // new import, or nil when the plan was rejected, and false when the socket
 // must close.
@@ -676,6 +717,9 @@ func handleWebPhotoPlan(
 	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage,
 ) (*webPhotoImport, bool) {
 	problem := validatePhotoImportDestination(begin.Destination)
+	if begin.SourceID != nil && *begin.SourceID == uuid.Nil() {
+		problem = NewError(http.StatusUnprocessableEntity, "validation", "source_id must be nonzero")
+	}
 	var destination store.IngestDirectoryPlan
 	if problem == nil {
 		var err error
@@ -690,12 +734,44 @@ func handleWebPhotoPlan(
 	if problem == nil {
 		groups, unsupported, skipReasons, problem = planWebPhotos(begin.RequestID, begin.Files)
 	}
+	var needed []int
+	if problem == nil {
+		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
+	}
 	if problem != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
+	if len(needed) > 0 {
+		return nil, wsjson.Write(ctx, conn, webUploadMessage{
+			Type: "photo_import_hashes_needed", RequestID: begin.RequestID, Indexes: needed,
+		}) == nil
+	}
+	sourceID := uuid.New()
+	if begin.SourceID != nil {
+		sourceID = *begin.SourceID
+	}
+	paths := make([]string, len(begin.Files))
+	for i, file := range begin.Files {
+		paths[i] = "browser:" + sourceID.String() + "/" + file.RelativePath
+	}
+	var members []store.PhotoImportMember
+	var indexes []int
+	for _, group := range groups {
+		for _, index := range group {
+			members = append(members, store.PhotoImportMember{BlobHash: begin.Files[index].ExpectedHash, OriginalPath: paths[index]})
+			indexes = append(indexes, index)
+		}
+	}
+	resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
+	if resolveErr != nil {
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
+	}
+	for i, index := range indexes {
+		paths[index] = resolved[i]
+	}
 	photoImport := &webPhotoImport{
-		id: rand.Text(), files: begin.Files, groups: groups, destination: destination,
-		hashes: make([][]string, len(groups)),
+		paths: paths,
+		id:    rand.Text(), files: begin.Files, groups: groups, destination: destination,
 	}
 	err := wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,
@@ -705,8 +781,9 @@ func handleWebPhotoPlan(
 }
 
 // groupFiles checks that begin names a group of this import plan, with one
-// canonical hash per member that matches the group's first attempt, and
-// returns the group's declared files.
+// canonical hash per member that matches any hash declared in the plan, and
+// returns the group's files. A member declared without a hash is pinned to the
+// hash of its first attempt, so a retry must upload the same bytes.
 func (p *webPhotoImport) groupFiles(begin webUploadMessage) ([]webPhotoFile, *Error) {
 	invalid := func(detail string) ([]webPhotoFile, *Error) {
 		return nil, NewError(http.StatusUnprocessableEntity, "validation", detail)
@@ -716,18 +793,19 @@ func (p *webPhotoImport) groupFiles(begin webUploadMessage) ([]webPhotoFile, *Er
 		return invalid("photo group must belong to the current import plan")
 	}
 	group := p.groups[begin.Group]
-	firstAttempt := p.hashes[begin.Group]
-	if len(begin.Hashes) != len(group) ||
-		(firstAttempt != nil && !slices.Equal(begin.Hashes, firstAttempt)) {
-		return invalid("Photo files must match the planned group and its first attempt. " +
-			"Choose the folder again.")
+	if len(begin.Hashes) != len(group) {
+		return invalid("Photo files must match the planned group. Choose the folder again.")
 	}
 	files := make([]webPhotoFile, len(group))
 	for i, index := range group {
-		if !isCanonicalHash(begin.Hashes[i]) {
-			return invalid("expected_hash must be canonical lowercase SHA-256")
+		declared := p.files[index].ExpectedHash
+		if !isCanonicalHash(begin.Hashes[i]) || declared != "" && begin.Hashes[i] != declared {
+			return invalid("expected_hash must be canonical lowercase SHA-256 and match the planned content. Choose the folder again.")
 		}
 		files[i] = p.files[index]
+	}
+	for i, index := range group {
+		p.files[index].ExpectedHash = begin.Hashes[i]
 	}
 	return files, nil
 }
@@ -740,7 +818,6 @@ func handleWebPhotoGroup(
 	if problem != nil {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
-	photoImport.hashes[begin.Group] = slices.Clone(begin.Hashes)
 	var reader *webUploadReader
 	var result store.PhotoImportResult
 	err := g.mutate(func() error {
@@ -775,7 +852,7 @@ func handleWebPhotoGroup(
 			paths := make([]string, len(files))
 			mtimes := make([]string, len(files))
 			for i, member := range files {
-				paths[i] = member.RelativePath
+				paths[i] = photoImport.paths[photoImport.groups[begin.Group][i]]
 				mtimes[i] = originalMtime(member.ModifiedTime)
 			}
 			var err error
@@ -787,7 +864,7 @@ func handleWebPhotoGroup(
 				}
 			}
 			result, err = ing.CommitPhotoGroup(ctx, ingest.PhotoGroupCommit{
-				Run: photoImport.run, ImportID: photoImport.id,
+				Run:         photoImport.run,
 				Destination: &photoImport.destination, Paths: paths, Mtimes: mtimes,
 			}, prepared)
 			prepared = nil

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -20,6 +21,7 @@ type metadataPhotoAsset struct {
 	DisplayOverrideFileID *string `json:"display_override_file_id" db:"display_override_file_id"`
 	CreatedAt             string  `json:"created_at" db:"created_at"`
 	UpdatedAt             string  `json:"updated_at" db:"updated_at"`
+	RepresentativeRank    *int64  `json:"representative_rank,omitempty" db:"representative_rank"`
 }
 
 type metadataPhotoAssetBeforeHidden struct {
@@ -36,6 +38,7 @@ type metadataPhotoAssetBeforeHidden struct {
 
 type metadataPhotoFile struct {
 	SourceProvenanceIdentity *string             `json:"source_provenance_identity,omitempty" db:"source_provenance_identity"`
+	FlagOwner                string              `json:"flag_owner" db:"flag_owner"`
 	Confirmed                PhotoAuthoredFields `json:"confirmed_fields" db:"confirmed_fields"`
 	Revision                 int64               `json:"revision" db:"revision"`
 	Rating                   int                 `json:"rating" db:"rating"`
@@ -92,13 +95,34 @@ func normalizePhotoFileMetadata(raw jsontext.Value) (jsontext.Value, error) {
 	return json.Marshal(old.current(), json.Deterministic(true))
 }
 
+// A missing burst gap restores as NULL, the 2-second default.
 type metadataPhotoSettings struct {
+	Type                   string  `json:"type"`
+	Preference             *string `json:"preference" db:"preference"`
+	Revision               int64   `json:"revision" db:"revision"`
+	UpdatedAt              string  `json:"updated_at" db:"updated_at"`
+	BurstGapSeconds        *int    `json:"burst_gap_seconds,omitempty" db:"burst_gap_seconds"`
+	RepresentativeSequence *int64  `json:"representative_sequence" db:"representative_sequence"`
+	Singleton              int     `json:"-" db:"singleton"`
+}
+
+// Released settings tables predate the burst gap column.
+type metadataPhotoSettingsBeforeBurst struct {
 	Type       string  `json:"type"`
 	Preference *string `json:"preference" db:"preference"`
 	Revision   int64   `json:"revision" db:"revision"`
 	UpdatedAt  string  `json:"updated_at" db:"updated_at"`
-	Singleton  int     `json:"-" db:"singleton"`
+	// Released tables have no choices; their current-format export starts at 0.
+	RepresentativeSequence int64 `json:"representative_sequence"`
+	Singleton              int   `json:"-" db:"singleton"`
 }
+
+var photoSettingsBeforeBurstMetadata = newMetadataTable(metadataTable[metadataPhotoSettingsBeforeBurst]{
+	record: metadataPhotoSettingsBeforeBurst{Type: metadataPhotoSettingsType, Singleton: 1}, table: "photo_library_settings",
+	suffix: "WHERE singleton=1", validate: func(v metadataPhotoSettingsBeforeBurst) error {
+		return validatePhotoSettingsMetadataRecord(metadataPhotoSettings{Type: v.Type, Preference: v.Preference, Revision: v.Revision, UpdatedAt: v.UpdatedAt, Singleton: v.Singleton})
+	}, checkExport: true,
+})
 
 type metadataPhotoSet struct {
 	Type         string  `json:"type"`
@@ -160,6 +184,19 @@ var (
 		suffix: "WHERE singleton=1", validate: validatePhotoSettingsMetadataRecord, checkExport: true})
 )
 
+// importPhotoSettingsWithoutSequence defaults an absent sequence while preserving
+// explicit null and numeric values through the current typed codec.
+func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error {
+	required, nullable := photoSettingsMetadata.fields()
+	required = slices.DeleteFunc(slices.Clone(required), func(field string) bool { return field == "representative_sequence" })
+	if err := requireMetadataFields(raw, required, nullable); err != nil {
+		return err
+	}
+	codec := *photoSettingsMetadata
+	codec.record.RepresentativeSequence = new(int64(0))
+	return codec.importRecord(ctx, tx, raw)
+}
+
 // photoMetadataTables exports the photo records in dependency order.
 var photoMetadataTables = []metadataRecordCodec{
 	photoAssetMetadata, photoFileMetadata, photoSettingsMetadata,
@@ -192,7 +229,7 @@ const photoHiddenStorageSchemaVersion = 30
 const photoAuthoredStorageSchemaVersion = 32
 
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
-	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
+	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 || v.RepresentativeRank != nil && *v.RepresentativeRank < 1 {
 		return errors.New("invalid photo asset metadata")
 	}
 	if v.HiddenAt != nil {
@@ -230,7 +267,7 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 	if v.Revision < 1 {
 		return errors.New("invalid photo file revision")
 	}
-	values := PhotoAuthored{Confirmed: v.Confirmed, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
+	values := PhotoAuthored{FlagOwner: v.FlagOwner, Confirmed: v.Confirmed, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
 	if err := ValidatePhotoAuthored(values); err != nil {
 		return err
 	}
@@ -242,7 +279,10 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 }
 
 func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
-	if v.Type != metadataPhotoSettingsType || v.Revision < 1 || !photoPreferenceValid(v.Preference) {
+	if v.RepresentativeSequence != nil && *v.RepresentativeSequence < 0 {
+		return errors.New("invalid photo representative sequence")
+	}
+	if v.Type != metadataPhotoSettingsType || v.Revision < 1 || !photoPreferenceValid(v.Preference) || v.BurstGapSeconds != nil && (*v.BurstGapSeconds < 1 || *v.BurstGapSeconds > 30) {
 		return errors.New("invalid photo settings metadata")
 	}
 	if v.UpdatedAt != "" {
@@ -252,7 +292,11 @@ func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
 }
 
 func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
-	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
+	limit := maxBatchTagReceiptJSONBytes
+	if slices.Contains([]string{"authored", "authored_undo", "authored_sidecar"}, v.Operation) {
+		limit = maxPhotoAuthoredReceiptJSONBytes
+	}
+	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > limit {
 		return errors.New("invalid photo receipt metadata")
 	}
 	if v.Operation == "checkout_commit" {
@@ -367,6 +411,23 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 			return err
 		}
 	}
+	if version >= photoBurstStorageSchemaVersion {
+		var behind bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+ COALESCE((SELECT representative_sequence FROM photo_library_settings WHERE singleton=1),0) < COALESCE(MAX(rank),0)
+ FROM (
+ SELECT representative_rank AS rank FROM photo_assets
+ UNION ALL
+ SELECT MAX(COALESCE(json_extract(entry.value,'$.before'),0),COALESCE(json_extract(entry.value,'$.after'),0))
+ FROM photo_change_receipts r, json_each(r.after_json,'$.representatives') entry
+ WHERE r.operation IN ('authored','authored_undo')
+ )`).Scan(&behind); err != nil {
+			return fmt.Errorf("checking photo representative sequence: %w", err)
+		}
+		if behind {
+			return errors.New("photo representative sequence is below retained ranks")
+		}
+	}
 	return nil
 }
 
@@ -383,6 +444,17 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 	if invalid != 0 {
 		return errors.New("authored receipts reference missing or different file nodes")
 	}
+	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r,
+ json_each(r.after_json,'$.representatives') entry
+ LEFT JOIN photo_assets a ON a.asset_id=json_extract(entry.value,'$.asset_id')
+ WHERE r.operation IN ('authored','authored_undo') AND a.asset_id IS NULL`).Scan(&invalid)
+	if err != nil {
+		return err
+	}
+	if invalid != 0 {
+		return errors.New("representative receipts reference missing photo assets")
+	}
+
 	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
  LEFT JOIN photo_files sidecar ON sidecar.file_id=json_extract(r.after_json,'$.sidecar.file_id')
  LEFT JOIN content_versions version ON version.version_id=json_extract(r.after_json,'$.sidecar.version_id')
@@ -453,6 +525,9 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
 	for i, table := range tables {
+		if version < photoBurstStorageSchemaVersion && table.kind() == metadataPhotoSettingsType {
+			tables[i] = photoSettingsBeforeBurstMetadata
+		}
 		if version < photoAuthoredStorageSchemaVersion && table.kind() == metadataPhotoFileType {
 			tables[i] = photoFileBeforeAuthoredMetadata
 		}

@@ -585,12 +585,11 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 }
 
 // PhotoGroupCommit describes where a browser photo group lands and where its
-// members came from. Paths and Mtimes are aligned by index with the prepared
+// members came from. Paths are resolved browser provenance paths. Paths and Mtimes are aligned by index with the prepared
 // uploads; each Mtimes entry is a canonical UTC RFC3339Nano original modified
 // time, empty when the browser didn't report one.
 type PhotoGroupCommit struct {
 	Run         store.IngestRun
-	ImportID    string
 	Destination *store.IngestDirectoryPlan
 	Paths       []string
 	Mtimes      []string
@@ -613,11 +612,11 @@ func (ing *Ingester) CommitPhotoGroup(
 			BlobHash:      upload.result.ComputedHash,
 			Size:          upload.result.ComputedSize,
 			Physical:      upload.result.physical,
-			OriginalPath:  "browser:" + commit.ImportID + "/" + commit.Paths[i],
+			OriginalPath:  commit.Paths[i],
 			OriginalMtime: commit.Mtimes[i],
 		}
 	}
 	return ing.Store.IngestPhotoGroup(ctx, commit.Run, store.PhotoImportGroup{
-		DestinationPlan: commit.Destination, Members: members,
+		DestinationPlan: commit.Destination, Members: members, CreateOnly: true,
 	})
 }

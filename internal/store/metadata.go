@@ -1133,15 +1133,20 @@ func (s *Store) importMetadataLines(
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
-		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
+		err = s.importMetadataRecord(ctx, tx, header.Version, kind.Type, raw)
+		if err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
 
 func (s *Store) importMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
+	ctx context.Context, tx *sql.Tx, version int, kind string, raw jsontext.Value,
 ) error {
+	// Version 1 predates the burst fields; they restore as their defaults.
+	if version < 2 && kind == metadataPhotoSettingsType {
+		return importPhotoSettingsWithoutSequence(ctx, tx, raw)
+	}
 	if kind == metadataSavedQueryRunType {
 		var err error
 		raw, err = normalizeSavedQueryRunMetadata(raw)
@@ -1154,6 +1159,17 @@ func (s *Store) importMetadataRecord(
 		raw, err = normalizePhotoFileMetadata(raw)
 		if err != nil {
 			return err
+		}
+		if version < 2 {
+			var fields map[string]jsontext.Value
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return err
+			}
+			fields["flag_owner"] = jsontext.Value(`""`)
+			raw, err = json.Marshal(fields, json.Deterministic(true))
+			if err != nil {
+				return err
+			}
 		}
 	}
 	required, ok := metadataRequiredFields[kind]

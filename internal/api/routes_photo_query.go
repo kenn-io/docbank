@@ -67,7 +67,8 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
 		request := store.PhotoBrowseRequest{
-			Query: value, Hidden: in.Body.Hidden,
+			SourceMetadataFingerprint: processing.SourceMetadataExtractorFingerprint,
+			Query:                     value, Hidden: in.Body.Hidden, Stacks: in.Body.Stacks && in.Body.Projection != "map",
 			Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint},
 			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
 		}
@@ -88,8 +89,12 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			return nil, workspaceQueryError(err)
 		}
 		wire := PhotoBrowsePage{
-			Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total,
+			GroupingIncomplete: page.GroupingIncomplete,
+			Items:              make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, BurstGapSeconds: page.BurstGapSeconds,
 			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
+		}
+		for _, stack := range page.Stacks {
+			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID})
 		}
 		if in.Body.Projection == "map" {
 			wire.Items = []PhotoBrowseRow{}
@@ -286,7 +291,7 @@ type photoCursorPayload struct {
 }
 
 func (service *documentQueryService) encodePhotoCursor(position store.PhotoBrowsePosition) (string, error) {
-	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v1", IssuedAt: service.now().Unix(), Position: position})
+	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v2", IssuedAt: service.now().Unix(), Position: position})
 	if err != nil {
 		return "", fmt.Errorf("encode photo cursor: %w", err)
 	}
@@ -307,7 +312,7 @@ func (service *documentQueryService) decodePhotoCursor(raw string) (store.PhotoB
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor
 	}
 	position := cursor.Position
-	if cursor.Type != "photo-v1" || query.ValidateTextOperand("asset", position.AssetID) != nil ||
+	if cursor.Type != "photo-v2" || query.ValidateTextOperand("asset", position.AssetID) != nil ||
 		len(position.Key) > store.MaxPhotoSortKeyBytes || len(position.QueryIdentity) != 64 ||
 		position.Missing && position.Key != "" || position.Total < 0 {
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor

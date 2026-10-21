@@ -55,6 +55,7 @@ func (f PhotoAuthoredFields) Names() string {
 }
 
 type PhotoAuthored struct {
+	FlagOwner string              `json:"flag_owner"`
 	Confirmed PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmation mask. See PhotoFile.confirmed_fields for supported bits."`
 	Rating    int                 `json:"rating" minimum:"0" maximum:"5"`
 	Flag      string              `json:"flag" enum:",pick,reject"`
@@ -68,6 +69,9 @@ type PhotoAuthored struct {
 // ValidatePhotoAuthored checks stored authored values, including that every non-default value is
 // confirmed.
 func ValidatePhotoAuthored(v PhotoAuthored) error {
+	if v.FlagOwner != "" && (v.FlagOwner != "return" || v.Confirmed&PhotoConfirmedFlag == 0) {
+		return ErrInvalidPhotoAsset
+	}
 	if !v.Confirmed.Valid() {
 		return fmt.Errorf("%w: invalid authored photo decision", ErrInvalidPhotoAsset)
 	}
@@ -97,7 +101,7 @@ func ValidatePhotoAuthoredValues(v PhotoAuthored) error {
 }
 
 func (f PhotoFile) Authored() PhotoAuthored {
-	return PhotoAuthored{Confirmed: f.Confirmed, Rating: f.Rating, Flag: f.Flag, Label: f.Label, Caption: f.Caption, Creator: f.Creator, Copyright: f.Copyright, Rotation: f.Rotation}
+	return PhotoAuthored{FlagOwner: f.flagOwner, Confirmed: f.Confirmed, Rating: f.Rating, Flag: f.Flag, Label: f.Label, Caption: f.Caption, Creator: f.Creator, Copyright: f.Copyright, Rotation: f.Rotation}
 }
 
 type PhotoAuthoredPatch struct {
@@ -154,6 +158,9 @@ var photoAuthoredFields = [...]photoAuthoredField{
 }
 
 func (p PhotoAuthoredPatch) apply(v PhotoAuthored) PhotoAuthored {
+	if p.Flag != nil {
+		v.FlagOwner = ""
+	}
 	for _, field := range photoAuthoredFields {
 		if field.apply(p, &v) {
 			v.Confirmed |= field.bit
@@ -180,28 +187,43 @@ type PhotoSidecarProvenance struct {
 	VersionID string `json:"version_id"`
 	FileID    string `json:"file_id"`
 }
+
+// PhotoRepresentativeChange records one asset's burst representative rank.
+// The asset revision guards undo; a nil rank is no explicit choice.
+type PhotoRepresentativeChange struct {
+	AssetID        string `json:"asset_id" format:"uuid"`
+	BeforeRevision int64  `json:"before_revision" minimum:"1"`
+	AfterRevision  int64  `json:"after_revision" minimum:"2"`
+	Before         *int64 `json:"before,omitzero" minimum:"1"`
+	After          *int64 `json:"after,omitzero" minimum:"1"`
+}
+
 type PhotoAuthoredReceipt struct {
-	ReceiptID    string                  `json:"receipt_id" doc:"Empty for a no-op, with empty before and after arrays; no receipt is created."`
-	Before       []PhotoAuthoredSnapshot `json:"before"`
-	After        []PhotoAuthoredSnapshot `json:"after"`
-	UndoOf       string                  `json:"undo_of,omitzero"`
-	Sidecar      *PhotoSidecarProvenance `json:"sidecar,omitzero"`
-	Keywords     []PhotoKeywordDelta     `json:"keywords,omitzero"`
-	KeywordNodes []PhotoKeywordNode      `json:"keyword_nodes,omitzero"`
+	ReceiptID       string                      `json:"receipt_id" doc:"Empty for a no-op, with empty before and after arrays; no receipt is created."`
+	Before          []PhotoAuthoredSnapshot     `json:"before"`
+	After           []PhotoAuthoredSnapshot     `json:"after"`
+	UndoOf          string                      `json:"undo_of,omitzero"`
+	Sidecar         *PhotoSidecarProvenance     `json:"sidecar,omitzero"`
+	Keywords        []PhotoKeywordDelta         `json:"keywords,omitzero"`
+	KeywordNodes    []PhotoKeywordNode          `json:"keyword_nodes,omitzero"`
+	Representatives []PhotoRepresentativeChange `json:"representatives,omitzero"`
 }
 
 type photoAuthoredReceiptAfter struct {
-	ReceiptID    string                  `json:"receipt_id"`
-	After        []PhotoAuthoredSnapshot `json:"after"`
-	UndoOf       string                  `json:"undo_of,omitzero"`
-	Sidecar      *PhotoSidecarProvenance `json:"sidecar,omitzero"`
-	Keywords     []PhotoKeywordDelta     `json:"keywords,omitzero"`
-	KeywordNodes []PhotoKeywordNode      `json:"keyword_nodes,omitzero"`
+	ReceiptID       string                      `json:"receipt_id"`
+	After           []PhotoAuthoredSnapshot     `json:"after"`
+	UndoOf          string                      `json:"undo_of,omitzero"`
+	Sidecar         *PhotoSidecarProvenance     `json:"sidecar,omitzero"`
+	Keywords        []PhotoKeywordDelta         `json:"keywords,omitzero"`
+	KeywordNodes    []PhotoKeywordNode          `json:"keyword_nodes,omitzero"`
+	Representatives []PhotoRepresentativeChange `json:"representatives,omitzero"`
 }
 
 func (r PhotoAuthoredReceipt) afterState() photoAuthoredReceiptAfter {
-	return photoAuthoredReceiptAfter{r.ReceiptID, r.After, r.UndoOf, r.Sidecar, r.Keywords, r.KeywordNodes}
+	return photoAuthoredReceiptAfter{r.ReceiptID, r.After, r.UndoOf, r.Sidecar, r.Keywords, r.KeywordNodes, r.Representatives}
 }
+
+const maxPhotoAuthoredReceiptJSONBytes = 2 << 20
 
 func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 	before, after := slices.Clone(r.Before), slices.Clone(r.After)
@@ -211,9 +233,13 @@ func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 	}
 	const id = "00000000-0000-4000-8000-000000000000"
 	// Reserve revision digits and receipt references equally for an edit and its inverse.
-	state := photoAuthoredReceiptAfter{id, after, id, &PhotoSidecarProvenance{math.MaxInt64, id, id}, r.Keywords, slices.Clone(r.KeywordNodes)}
+	state := photoAuthoredReceiptAfter{id, after, id, &PhotoSidecarProvenance{math.MaxInt64, id, id}, r.Keywords, slices.Clone(r.KeywordNodes), slices.Clone(r.Representatives)}
 	for i := range state.KeywordNodes {
 		state.KeywordNodes[i].AfterRevision = math.MaxInt64
+	}
+	rank := int64(math.MaxInt64)
+	for i := range state.Representatives {
+		state.Representatives[i] = PhotoRepresentativeChange{r.Representatives[i].AssetID, math.MaxInt64, math.MaxInt64, &rank, &rank}
 	}
 	b, err := json.Marshal(before, json.Deterministic(true))
 	if err != nil {
@@ -223,7 +249,7 @@ func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 	if err != nil {
 		return err
 	}
-	if len(b)+len(a) > maxBatchTagReceiptJSONBytes {
+	if len(b)+len(a) > maxPhotoAuthoredReceiptJSONBytes {
 		return ErrPhotoEditReceiptLimit
 	}
 	return nil
@@ -231,14 +257,14 @@ func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 
 func decodePhotoAuthoredReceipt(beforeJSON, afterJSON []byte, id string) (PhotoAuthoredReceipt, error) {
 	var r PhotoAuthoredReceipt
-	if len(beforeJSON)+len(afterJSON) > maxBatchTagReceiptJSONBytes {
+	if len(beforeJSON)+len(afterJSON) > maxPhotoAuthoredReceiptJSONBytes {
 		return r, ErrInvalidPhotoAsset
 	}
 	var after photoAuthoredReceiptAfter
 	if err := json.Unmarshal(afterJSON, &after, json.RejectUnknownMembers(true)); err != nil {
 		return r, err
 	}
-	r = PhotoAuthoredReceipt{ReceiptID: after.ReceiptID, After: after.After, UndoOf: after.UndoOf, Sidecar: after.Sidecar, Keywords: after.Keywords, KeywordNodes: after.KeywordNodes}
+	r = PhotoAuthoredReceipt{ReceiptID: after.ReceiptID, After: after.After, UndoOf: after.UndoOf, Sidecar: after.Sidecar, Keywords: after.Keywords, KeywordNodes: after.KeywordNodes, Representatives: after.Representatives}
 	if err := json.Unmarshal(beforeJSON, &r.Before, json.RejectUnknownMembers(true)); err != nil {
 		return r, err
 	}
@@ -288,7 +314,7 @@ func photoAgreement(files []PhotoFile) map[string]bool {
 }
 
 // photoFileLookupColumns matches scanPhotoFile and reads a file without an asset as an empty asset ID.
-const photoFileLookupColumns = `file_id,COALESCE(asset_id,''),node_id,role,sidecar_of_file_id,created_at,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields`
+const photoFileLookupColumns = `file_id,COALESCE(asset_id,''),node_id,role,sidecar_of_file_id,created_at,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields,flag_owner`
 
 func photoFileByIDQuery(ctx context.Context, q metadataQuerier, id string) (PhotoFile, error) {
 	f, err := scanPhotoFile(q.QueryRowContext(ctx, `SELECT `+photoFileLookupColumns+` FROM photo_files WHERE file_id=?`, id))
@@ -309,7 +335,8 @@ type photoAuthoredApply struct {
 	persist bool
 	// loaded supplies already-checked files and nodes. Files read from the
 	// database are added to it, and written node revisions are refreshed in it.
-	loaded map[string]photoAuthoredLoaded
+	loaded      map[string]photoAuthoredLoaded
+	returnFlags bool
 }
 
 // applyPhotoAuthoredTx applies targets and persists the receipt.
@@ -371,6 +398,9 @@ func (s *Store) planPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []P
 		v, err := photoAuthoredTargetValues(t, f, node)
 		if err != nil {
 			return nodes, err
+		}
+		if opts.returnFlags && (v.Flag != f.Flag || f.Confirmed&PhotoConfirmedFlag == 0 || f.flagOwner != "") {
+			v.FlagOwner = "return"
 		}
 		if v == f.Authored() && !opts.force {
 			continue
@@ -458,7 +488,7 @@ func (s *Store) writePhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, resu
 		if a.Revision == result.Before[i].Revision {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET revision=?,rating=?,flag=?,label=?,caption=?,creator=?,copyright=?,rotation=?,confirmed_fields=? WHERE file_id=?`, a.Revision, v.Rating, v.Flag, v.Label, v.Caption, v.Creator, v.Copyright, v.Rotation, v.Confirmed, a.FileID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET revision=?,rating=?,flag=?,label=?,caption=?,creator=?,copyright=?,rotation=?,confirmed_fields=?,flag_owner=? WHERE file_id=?`, a.Revision, v.Rating, v.Flag, v.Label, v.Caption, v.Creator, v.Copyright, v.Rotation, v.Confirmed, v.FlagOwner, a.FileID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=? WHERE id=?`, now, a.NodeID); err != nil {
@@ -476,6 +506,19 @@ func (s *Store) writePhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, resu
 		}
 	}
 	return nil
+}
+
+// persistPhotoRepresentativeReceiptTx records a choice that changes no file.
+func persistPhotoRepresentativeReceiptTx(ctx context.Context, tx *sql.Tx, result PhotoAuthoredReceipt) (PhotoAuthoredReceipt, error) {
+	result.Before, result.After = []PhotoAuthoredSnapshot{}, []PhotoAuthoredSnapshot{}
+	var err error
+	if result.ReceiptID, err = newUUIDv4(); err != nil {
+		return result, err
+	}
+	if err := checkPhotoAuthoredReceiptSize(result); err != nil {
+		return result, err
+	}
+	return result, persistPhotoAuthoredReceiptTx(ctx, tx, result)
 }
 
 func persistPhotoAuthoredReceiptTx(ctx context.Context, tx *sql.Tx, result PhotoAuthoredReceipt) error {
@@ -523,9 +566,35 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 			targets[i] = PhotoAuthoredTarget{FileID: a.FileID, Revision: a.Revision, restore: &receipt.Before[i].Values}
 		}
 		loaded := map[string]photoAuthoredLoaded{}
-		result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{undoOf: id, force: true, loaded: loaded})
+		result = PhotoAuthoredReceipt{UndoOf: id, Before: []PhotoAuthoredSnapshot{}, After: []PhotoAuthoredSnapshot{}}
+		if len(targets) > 0 {
+			result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{undoOf: id, force: true, loaded: loaded})
+			if err != nil {
+				return err
+			}
+		}
+		priorBurst, err := photoBurstSettingsTx(ctx, tx)
 		if err != nil {
 			return err
+		}
+		// A representative choice returns only while its asset still has the revision the choice wrote.
+		for _, change := range receipt.Representatives {
+			if err := s.photoAuthoredAccessTx(ctx, tx, change.AssetID); err != nil {
+				return err
+			}
+			restored, err := setPhotoRepresentativeTx(ctx, tx, change.AssetID, change.AfterRevision, change.Before)
+			if err != nil {
+				return err
+			}
+			result.Representatives = append(result.Representatives, restored)
+		}
+		if err := s.auditPhotoBurstTx(ctx, tx, priorBurst, result.Representatives); err != nil {
+			return err
+		}
+		if result.ReceiptID == "" && len(result.Representatives) > 0 {
+			if result.ReceiptID, err = newUUIDv4(); err != nil {
+				return err
+			}
 		}
 		changes := slices.Clone(receipt.Keywords)
 		for i := range changes {
@@ -579,7 +648,7 @@ func loadPhotoAuthoredReceipt(ctx context.Context, q metadataQuerier, id string)
 }
 
 func validatePhotoAuthoredReceipt(r PhotoAuthoredReceipt, id string) error {
-	if r.ReceiptID != id || validateUUIDv4(id) != nil || len(r.Before) < 1 || len(r.Before) > maxBatchTagTargets || len(r.Before) != len(r.After) || r.UndoOf != "" && validateUUIDv4(r.UndoOf) != nil {
+	if r.ReceiptID != id || validateUUIDv4(id) != nil || len(r.Before) < 1 && len(r.Representatives) == 0 || len(r.Before) > MaxPhotoStackTargets || len(r.Before) != len(r.After) || r.UndoOf != "" && validateUUIDv4(r.UndoOf) != nil {
 		return ErrInvalidPhotoAsset
 	}
 	if r.Sidecar != nil && (r.Sidecar.NodeID < 1 || validateUUIDv4(r.Sidecar.VersionID) != nil || validateUUIDv4(r.Sidecar.FileID) != nil || r.UndoOf != "") {
@@ -587,6 +656,15 @@ func validatePhotoAuthoredReceipt(r PhotoAuthoredReceipt, id string) error {
 	}
 	if err := validatePhotoKeywords(r); err != nil {
 		return err
+	}
+	if len(r.Representatives) > MaxPhotoStackFrames || r.Sidecar != nil && len(r.Representatives) > 0 {
+		return ErrInvalidPhotoAsset
+	}
+	for i, change := range r.Representatives {
+		if validateUUIDv4(change.AssetID) != nil || i > 0 && r.Representatives[i-1].AssetID >= change.AssetID || change.BeforeRevision < 1 || change.AfterRevision != change.BeforeRevision+1 ||
+			change.Before != nil && *change.Before < 1 || change.After != nil && *change.After < 1 || (change.Before == nil) == (change.After == nil) && (change.Before == nil || *change.Before == *change.After) {
+			return ErrInvalidPhotoAsset
+		}
 	}
 	keywordNodes := make(map[int64]bool, len(r.KeywordNodes))
 	for _, fence := range r.KeywordNodes {

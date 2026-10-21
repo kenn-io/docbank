@@ -1,8 +1,11 @@
+import { patchPhotoRows, photoRows, photoStacksChanged, type PhotoBrowseRow } from "./photoRows.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { photoSearchSort } from "./photoSearch.js";
 import { getSavedQuery, type SavedQuery } from "./savedQueries.js";
 import {
+  getPhotoSettings,
+  setPhotoSettings,
   getNode,
   hidePhotoAsset,
   unhidePhotoAsset,
@@ -15,7 +18,6 @@ import {
   type PhotoAuthoredPatch,
   type PhotoAuthoredReceipt,
   type PhotoPreviewSlot,
-  type PhotoBrowseRow,
   type PhotoMapRow,
   type SavedQueryV1Schema,
   type PhotoAlbumMembersRequest,
@@ -146,6 +148,10 @@ export function loadDensity(): Density {
   }
   return "comfortable";
 }
+
+// Stacks need a supported sort and more than one possible asset.
+const canStack = (query: Query) =>
+  query.filters.asset_ids?.length !== 1 && ["capture_time", "relevance"].includes(query.sort.field);
 
 let density = $state<Density>(loadDensity());
 
@@ -342,6 +348,9 @@ export class Photos {
     this.seenIDs = undefined;
     this.rows = value;
   }
+  burstGapSeconds = $state(2);
+  groupingIncomplete = $state(false);
+  expandedStacks = $state<ReadonlySet<string>>(new Set());
   total = $state(0);
   private countStale = false;
   cursor = $state<string | undefined>();
@@ -590,6 +599,7 @@ export class Photos {
       {
         query,
         projection: this.projection,
+        stacks: !this.projection && canStack(query),
         hidden: this.hidden,
         facets: [],
         page_size: this.projection ? 1000 : 250,
@@ -597,7 +607,9 @@ export class Photos {
       },
       { session: this.session, signal },
     );
-    return { ...page, items: this.projection ? (page.map_items ?? []) : page.items };
+    if (page.burst_gap_seconds) this.burstGapSeconds = page.burst_gap_seconds;
+    this.groupingIncomplete = !!page.grouping_incomplete;
+    return { ...page, items: this.projection ? (page.map_items ?? []) : photoRows(page) };
   }
 
   async preview(
@@ -776,8 +788,7 @@ export class Photos {
       this.authFailure(cause);
       this.expired =
         cause instanceof APIError &&
-        (cause.code === "cursor_expired" ||
-          (!!this.projection && cause.code === "invalid_photo_cursor"));
+        ["cursor_expired", "invalid_photo_cursor"].includes(cause.code);
       this.error =
         this.projection &&
         (signal.aborted || (cause instanceof Error && cause.name === "TimeoutError"))
@@ -919,19 +930,30 @@ export class Photos {
     return this.loadMore(preserve);
   }
 
-  metadataChanged(receipt: PhotoAuthoredReceipt) {
+  metadataChanged(receipt: PhotoAuthoredReceipt): Map<
+    string,
+    PhotoAuthoredReceipt["after"][number]["values"]["rotation"]
+  > & {
+    stacksUnresolved?: boolean;
+  } {
     const before = new Map(receipt.before.map((file) => [file.file_id, file]));
     const rotations = new Map(
       receipt.after
         .filter((file) => before.get(file.file_id)?.values.rotation !== file.values.rotation)
         .map((file) => [file.file_id, file.values.rotation]),
     );
-    if (rotations.size) {
-      this.items = this.items.map((row) =>
-        "display_file_id" in row && rotations.has(row.display_file_id)
-          ? { ...row, rotation: rotations.get(row.display_file_id)! }
-          : row,
-      );
+    let stacksUnresolved = false;
+    if (this.projection) {
+      if (rotations.size)
+        this.items = this.items.map((row) =>
+          "display_file_id" in row && rotations.has(row.display_file_id)
+            ? { ...row, rotation: rotations.get(row.display_file_id)! }
+            : row,
+        );
+    } else {
+      const rows = this.items as PhotoBrowseRow[];
+      stacksUnresolved = photoStacksChanged(rows, receipt, this.authored, this.cullEditor);
+      this.items = patchPhotoRows(rows, receipt);
     }
     if (
       !this.dependsOnAuthored &&
@@ -946,7 +968,7 @@ export class Photos {
       })
     )
       void this.reloadCounts();
-    return rotations;
+    return Object.assign(rotations, { stacksUnresolved });
   }
 
   /** Whether a metadata edit can change which photos this view lists or how it orders them. */
@@ -964,8 +986,12 @@ export class Photos {
   }
 
   /** Whether this view must reload after an edit with these display-file rotations, because compact Map rows cannot be matched to rotated files. */
-  reloadsAfter(rotations: ReadonlyMap<string, number>) {
-    return this.dependsOnAuthored || (this.projection === "map" && rotations.size > 0);
+  reloadsAfter(rotations: ReadonlyMap<string, number> & { stacksUnresolved?: boolean }) {
+    return (
+      rotations.stacksUnresolved ||
+      this.dependsOnAuthored ||
+      (this.projection === "map" && rotations.size > 0)
+    );
   }
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {
@@ -1434,6 +1460,75 @@ export class Photos {
     }
   }
 
+  stackMembers(id: string) {
+    const row = this.items.find((item) => item.asset_id === id);
+    return row && "stack" in row && row.stack && !this.expandedStacks.has(row.stack.asset_ids[0]!)
+      ? row.stack.asset_ids
+      : [id];
+  }
+  toggleStack(id: string) {
+    const row = this.items.find((item) => item.asset_id === id);
+    if (!row || !("stack" in row) || !row.stack) return;
+    const key = row.stack.asset_ids[0]!;
+    const expanded = new Set(this.expandedStacks);
+    if (expanded.has(key)) expanded.delete(key);
+    else expanded.add(key);
+    this.expandedStacks = expanded;
+  }
+  private selectStackMembers(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
+    const selected = new Set(this.selection.selectedIDs);
+    const anchor = this.selection.anchorID;
+    const start = anchor ? orderedIDs.indexOf(anchor) : -1;
+    const end = orderedIDs.indexOf(id);
+    const affected = new Set(
+      range && start >= 0 && end >= 0
+        ? orderedIDs.slice(Math.min(start, end), Math.max(start, end) + 1)
+        : [id],
+    );
+    const handled = new Set<string>();
+    for (const row of this.items) {
+      if (
+        !affected.has(row.asset_id) ||
+        !("stack" in row) ||
+        !row.stack ||
+        this.expandedStacks.has(row.stack.asset_ids[0]!)
+      )
+        continue;
+      const key = row.stack.asset_ids[0]!;
+      if (handled.has(key)) continue;
+      handled.add(key);
+      for (const member of row.stack.asset_ids) {
+        if (checked) selected.add(member);
+        else selected.delete(member);
+      }
+    }
+    this.selection = { ...this.selection, selectedIDs: selected };
+  }
+  private burstFailure(cause: unknown) {
+    this.authFailure(cause);
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+  async setBurstGap(gap: number, preserve?: () => (() => Promise<void>) | undefined) {
+    if (gap < 1 || gap > 30 || !Number.isInteger(gap)) {
+      this.actionError = "burst gap must be a whole number of seconds from 1 to 30";
+      return;
+    }
+    if (!this.authored.canChangeTarget()) return;
+    this.actionError = "";
+    try {
+      const settings = await getPhotoSettings({ session: this.session });
+      const next = await setPhotoSettings(
+        { burst_gap_seconds: gap },
+        { "If-Match": `"${settings.revision}"` },
+        { session: this.session },
+      );
+      this.burstGapSeconds = next.burst_gap_seconds;
+      this.expandedStacks = new Set();
+      await this.refresh(preserve);
+    } catch (cause) {
+      this.actionError = this.burstFailure(cause);
+    }
+  }
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
     if (event.button !== 0) return;
     if (!this.authored.canChangeTarget()) return;
@@ -1448,7 +1543,8 @@ export class Photos {
         event.shiftKey || !this.selection.selectedIDs.has(id),
         event.shiftKey,
       );
-    } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
+    } else this.selection = { selectedIDs: new Set(this.stackMembers(id)), anchorID: id };
+    this.selectStackMembers(id, this.selection.selectedIDs.has(id), event.shiftKey, orderedIDs);
     this.pruneTrashTargets();
   }
 
@@ -1458,6 +1554,7 @@ export class Photos {
     this.changeEditScope();
     this.allResults = false;
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
+    this.selectStackMembers(id, checked, range, orderedIDs);
     this.pruneTrashTargets();
   }
 
@@ -1490,7 +1587,14 @@ export class Photos {
     const ids = new Set(this.selectedIDs);
     const listed = this.items.some((item) => item.asset_id === id);
     this.authored.targets = this.authored.targets.filter((target) => target.asset_id !== id);
-    this.items = this.items.filter((item) => item.asset_id !== id);
+    // A failed refresh must leave survivors visible even if their representative was removed.
+    this.items = this.items
+      .filter((item) => item.asset_id !== id)
+      .map((item) =>
+        "stack" in item && item.stack?.asset_ids.includes(id)
+          ? { ...item, stack: undefined }
+          : item,
+      );
     // Map checks prepared targets only against its bounds, so an unlisted one may be beyond the loaded rows or outside the result.
     if (listed || !this.projection) this.total = Math.max(0, this.total - 1);
     else this.countStale = true;

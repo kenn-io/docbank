@@ -57,6 +57,7 @@ func TestPhotoTechnicalMetadataFields(t *testing.T) {
 	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{
 		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Synthetic Camera")),
 		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Model 1")),
+		photoMetadataField("image.exif.body_serial_number", "image.exif", "BodySerialNumber", photoString("Body-001")),
 		photoMetadataField("image.exif.lens_make", "image.exif", "LensMake", photoString("Synthetic Lens")),
 		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens 1")),
 		photoMetadataField("image.exif.iso", "image.exif", "PhotographicSensitivity", photoInteger(400)),
@@ -79,6 +80,7 @@ func TestPhotoTechnicalMetadataFields(t *testing.T) {
 	require.NoError(t, err)
 	fields := projectPhotoTechnicalMetadata(decoded, nil)
 	require.NotNil(t, fields.CameraMake)
+	require.Equal(t, new("Body-001"), fields.BodySerialNumber)
 	assert.Equal(t, "Synthetic Camera", *fields.CameraMake)
 	assert.Equal(t, "Synthetic Lens", *fields.LensMake)
 	assert.Equal(t, int64(400), *fields.ISO)
@@ -388,7 +390,8 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 		photoMetadataField("created", "image.exif", "DateTimeOriginal",
 			photoTimestamp("2024-06-02T00:30:00+02:00", "2024-06-02T00:30:00+02:00",
 				document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "+02:00")),
-		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Current"))))
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Current")),
+		photoMetadataField("image.exif.body_serial_number", "image.exif", "BodySerialNumber", photoString("Body-001"))))
 	require.NoError(t, err)
 	gained, err := s.CreateFile(ctx, s.RootID(), "gained.jpg", fakeHash("b3"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -396,7 +399,7 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Gained"))))
 	require.NoError(t, err)
 	// Simulate rows from an older recipe: one stale row and one generation it left without a row.
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_technical_metadata SET camera_model='Stale',
+	_, err = s.db.ExecContext(ctx, `UPDATE photo_technical_metadata SET camera_model='Stale', body_serial_number=NULL,
 		capture_sort_key='', capture_date='', camera_model_folded=''
 		WHERE generation_id<>?`, gainedGeneration.GenerationID)
 	require.NoError(t, err)
@@ -413,6 +416,9 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 		projection, err := reopened.ContentVersionPhotoMetadata(ctx, versionID)
 		require.NoError(t, err)
 		assert.Equal(t, want, *projection.Fields.CameraModel)
+		if versionID == stale.CurrentVersionID {
+			require.Equal(t, new("Body-001"), projection.Fields.BodySerialNumber)
+		}
 	}
 	current, err := photoTechnicalRecipeCurrent(ctx, reopened.db)
 	require.NoError(t, err)
@@ -513,7 +519,7 @@ func TestPhotoTechnicalMetadataMembershipIndependence(t *testing.T) {
 	assert.Equal(t, group.ID, attachedMembership.ID)
 
 	preference := "image"
-	settings, err := s.SetPhotoSettings(ctx, 1, &preference)
+	settings, err := s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), settings.Revision)
 	group, err = s.PhotoAssetByID(ctx, group.ID)
@@ -643,7 +649,7 @@ func TestPhotoTechnicalProjectionRecipeIsPinnedToMapData(t *testing.T) {
 		sum := sha256.Sum256(data)
 		sums[name] = hex.EncodeToString(sum[:])
 	}
-	assert.Equal(t, "photo-technical/v2", PhotoTechnicalProjectionRecipe)
+	assert.Equal(t, "photo-technical/v3", PhotoTechnicalProjectionRecipe)
 	assert.Equal(t, map[string]string{
 		"ne_10m_admin_0_countries.geojson":        "27db73de0818a97f9c7beda9590d39a0c39e9ff45e8f2f32fe6c9f284945d572",
 		"ne_10m_admin_1_states_provinces.geojson": "ae0d6d65975daead72e054f3715273eda770e89386df5fc299b4cc198f9f4f20",

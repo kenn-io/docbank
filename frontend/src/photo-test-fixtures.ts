@@ -1,8 +1,8 @@
+import { type PhotoBrowseRow } from "./photoRows.js";
 import { Blob } from "node:buffer";
 import { vi } from "vite-plus/test";
 import { fireEvent } from "@testing-library/svelte";
 import type {
-  PhotoBrowseRow,
   PhotoMapRow,
   PhotoAlbumSummary,
   PhotoPreparedTarget,
@@ -140,8 +140,10 @@ export function preparedPhoto(
   overrides: Partial<PhotoPreparedTarget> = {},
 ): PhotoPreparedTarget {
   return {
+    current_content_version_id: `version-${id}`,
     asset_id: `photo-${id}`,
     asset_revision: 1,
+    display_file_id: `file-${id}`,
     file_id: `file-${id}`,
     file_name: `Photo ${id}.jpg`,
     node_id: id,
@@ -149,6 +151,7 @@ export function preparedPhoto(
     node_revision: 1,
     tags: [],
     values: {
+      flag_owner: "",
       rating: 0,
       flag: "",
       label: "",

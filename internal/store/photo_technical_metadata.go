@@ -21,7 +21,7 @@ import (
 // PhotoTechnicalProjectionRecipe identifies the mapping and embedded
 // gazetteer data used to derive projection rows. Changing it re-projects every
 // retained source generation the next time a store opens.
-const PhotoTechnicalProjectionRecipe = "photo-technical/v2"
+const PhotoTechnicalProjectionRecipe = "photo-technical/v3"
 
 // PhotoTechnicalFields are typed facts projected from one source-metadata
 // generation. Nil values mean that the source did not provide a valid fact.
@@ -29,6 +29,7 @@ const PhotoTechnicalProjectionRecipe = "photo-technical/v2"
 type PhotoTechnicalFields struct {
 	CameraMake           *string  `json:"camera_make"`
 	CameraModel          *string  `json:"camera_model"`
+	BodySerialNumber     *string  `json:"body_serial_number"`
 	LensMake             *string  `json:"lens_make"`
 	LensModel            *string  `json:"lens_model"`
 	ISO                  *int64   `json:"iso"`
@@ -115,6 +116,8 @@ func projectPhotoTechnicalMetadata(metadata document.SourceMetadataV1, places *g
 			result.CameraMake = sourceMetadataString(field, "Make")
 		case "image.exif.camera_model":
 			result.CameraModel = sourceMetadataString(field, "Model")
+		case "image.exif.body_serial_number":
+			result.BodySerialNumber = sourceMetadataString(field, "BodySerialNumber")
 		case "image.exif.lens_make":
 			result.LensMake = sourceMetadataString(field, "LensMake")
 		case "image.exif.lens_model":

@@ -6,15 +6,25 @@ import type { UploadReceipt } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import {
   hashFile,
+  photoImportDeclaration,
   UploadChannelError,
   validateUploadReceipt,
   VerifiedUploadChannel,
 } from "./upload.js";
 
-import { photoSelectionFiles, photoSelectionLastModified } from "./photo-test-fixtures.js";
+import { photoSelectionFiles } from "./photo-test-fixtures.js";
 
 const testToken = "browser-session";
 const testUploadSecret = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+
+function oversizedPhotoFiles(): File[] {
+  const folder = ["旅".repeat(70), "旅".repeat(70), "旅".repeat(70)].join("/");
+  return Array.from({ length: 12000 }, (_, index) => {
+    const file = new File([], `photo-${index}.JPG`, { lastModified: 0 });
+    Object.defineProperty(file, "webkitRelativePath", { value: `${folder}/${file.name}` });
+    return file;
+  });
+}
 
 function daemonProof(nonce: string): string {
   const proofBytes = hmac(
@@ -42,6 +52,10 @@ class DaemonSocket extends EventTarget {
   packageContainerID = "";
   requestID = "";
   photoMembers = 0;
+  // Indexes the daemon asks to have hashed before it plans, once per socket.
+  needHashes: number[] = [];
+  // Further requests the daemon makes after those hashes arrive, one per declaration.
+  followUps: number[][] = [];
   frames: (string | ArrayBuffer)[] = [];
 
   constructor() {
@@ -61,10 +75,28 @@ class DaemonSocket extends EventTarget {
       request_id?: string;
       container_id?: string;
       hashes?: unknown[];
+      files?: { expected_hash: string }[];
     };
     if (message.type === "authenticate" && this.authenticate) {
       this.emit({ type: "authenticated", proof: daemonProof(message.nonce ?? "") });
     } else if (message.type === "plan_photo_import") {
+      if (this.needHashes.length && !message.files?.[this.needHashes[0]!]?.expected_hash) {
+        this.emit({
+          type: "photo_import_hashes_needed",
+          request_id: message.request_id,
+          indexes: this.needHashes,
+        });
+        return;
+      }
+      const followUp = this.followUps.shift();
+      if (followUp) {
+        this.emit({
+          type: "photo_import_hashes_needed",
+          request_id: message.request_id,
+          indexes: followUp,
+        });
+        return;
+      }
       this.emit({
         type: "photo_import_plan",
         request_id: message.request_id,
@@ -435,13 +467,30 @@ it("plans on the server and streams each photo member between ready and end", as
   const files = photoSelectionFiles();
   for (const file of files)
     Object.defineProperty(file, "webkitRelativePath", { value: `Trip/${file.name}` });
-  expect(await channel.planPhotoImport(files, "/photos")).toEqual({
+  const hashes = new Map([
+    [files[0], "d7439bee24773bcbfa2d0a97947ee36227b10d1022b1a55847e928965bb6bfde"],
+    [files[1], "41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61"],
+    [files[2], "0cab1c9617404faf2b24e221e189ca5945813e14d3f766345b09ca13bbe28ffc"],
+  ]);
+  const reads = files.map((file) => vi.spyOn(file, "slice"));
+  expect(
+    await channel.planPhotoImport(
+      files,
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).toEqual({
     import_id: "import-1",
     groups: [[0, 1], [2]],
     unsupported: [3],
     skip_reasons: { 3: "Unsupported type" },
+    hashes: new Map(),
   });
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([0, 0, 0, 0]);
   const progress = vi.fn();
+  const groupHashes = ["", ""];
   expect(
     await channel.uploadPhotoGroup(
       "import-1",
@@ -449,8 +498,11 @@ it("plans on the server and streams each photo member between ready and end", as
       files.slice(0, 2),
       new AbortController().signal,
       progress,
+      groupHashes,
     ),
   ).toEqual({ status: "added", asset_id: "photo-1" });
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([2, 2, 0, 0]);
+  expect(groupHashes).toEqual(files.slice(0, 2).map((file) => hashes.get(file)));
   const frames = socket.frames.map((frame) =>
     typeof frame === "string" ? JSON.parse(frame) : "bytes",
   );
@@ -465,16 +517,20 @@ it("plans on the server and streams each photo member between ready and end", as
   ]);
   expect(frames[1].files[0]).toEqual({
     relative_path: "Trip/capture.ARW",
+    expected_hash: "",
     size: 3,
-    modified_time: photoSelectionLastModified,
+    modified_time: 1700000000000,
   });
   expect(frames[2].import_id).toBe("import-1");
   expect(frames[1].destination).toBe("/photos");
+  expect(frames[1].source_id).toBe("20000000-0000-4000-8000-000000000001");
   expect(frames[2].group).toBe(0);
   expect(frames[2].hashes).toEqual([
-    expect.stringMatching(/^[a-f0-9]{64}$/),
-    expect.stringMatching(/^[a-f0-9]{64}$/),
+    "d7439bee24773bcbfa2d0a97947ee36227b10d1022b1a55847e928965bb6bfde",
+    "41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61",
   ]);
+  expect(progress.mock.calls[0]![0]).toBe("hashing");
+  expect(progress).toHaveBeenCalledWith("hashing", { processed: 7, total: 7 });
   expect(progress).toHaveBeenLastCalledWith("uploading", {
     processed: 7,
     total: 7,
@@ -490,27 +546,164 @@ it("rejects a photo plan that doesn't account for every selected file", async ()
     () => socket as unknown as WebSocket,
   );
   await channel.connect();
-  await expect(channel.planPhotoImport([new File(["raw"], "capture.ARW")], "/")).rejects.toThrow(
-    /invalid response/,
-  );
+  const file = new File(["raw"], "capture.ARW");
+  await expect(
+    channel.planPhotoImport(
+      [file],
+      "/",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/invalid response/);
   expect(socket.closed).toBe(true);
 });
 
-it("rejects an oversized UTF-8 plan without touching the channel", async () => {
+it("hashes only the files the daemon asks for before it plans", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [1];
+  const files = photoSelectionFiles();
+  const reads = files.map((file) => vi.spyOn(file, "slice"));
+  const progress = vi.fn();
+  const plan = await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000001",
+    new AbortController().signal,
+    progress,
+  );
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([0, 1, 0, 0]);
+  expect(plan.hashes).toEqual(
+    new Map([[files[1], "41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61"]]),
+  );
+  expect(progress).toHaveBeenLastCalledWith({ processed: 4, total: 4 });
+  const declarations = socket.frames
+    .filter((frame): frame is string => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .filter((frame) => frame.type === "plan_photo_import");
+  expect(declarations.map((frame) => frame.files.map((file: any) => file.expected_hash))).toEqual([
+    ["", "", "", ""],
+    ["", plan.hashes!.get(files[1]), "", ""],
+  ]);
+  expect(declarations[1].request_id).toBe(declarations[0].request_id);
+  channel.close();
+});
+
+it("answers a second hash request when another import adds a matching size", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [1];
+  socket.followUps = [[1, 2]];
+  const files = photoSelectionFiles();
+  const reads = files.map((file) => vi.spyOn(file, "slice"));
+  const plan = await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000001",
+    new AbortController().signal,
+    vi.fn(),
+  );
+  expect(reads.map((read) => read.mock.calls.length)).toEqual([0, 1, 1, 0]);
+  expect([...plan.hashes!.keys()]).toEqual([files[1], files[2]]);
+  expect(plan.import_id).toBe("import-1");
+  socket.needHashes = [];
+  await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000002",
+    new AbortController().signal,
+    vi.fn(),
+  );
+  expect(socket.closed).toBe(false);
+  channel.close();
+});
+
+it.each([
+  { name: "an index outside the selection", indexes: [4] },
+  { name: "a repeated index", indexes: [1, 1] },
+])("rejects a hash request with $name", async ({ indexes }) => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = indexes;
+  const files = photoSelectionFiles();
+  await expect(
+    channel.planPhotoImport(
+      files,
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/invalid response/);
+  expect(socket.closed).toBe(true);
+});
+
+it("rejects a second hash request that names only hashed files", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [1];
+  socket.followUps = [[1]];
+  await expect(
+    channel.planPhotoImport(
+      photoSelectionFiles(),
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/invalid response/);
+  expect(socket.closed).toBe(true);
+});
+
+it("keeps the channel usable when hashing for the plan is cancelled", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.needHashes = [0];
+  const files = photoSelectionFiles();
+  const controller = new AbortController();
+  await expect(
+    channel.planPhotoImport(
+      files,
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      controller.signal,
+      () => controller.abort(),
+    ),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(socket.closed).toBe(false);
+  socket.needHashes = [];
+  await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000002",
+    new AbortController().signal,
+    vi.fn(),
+  );
+  channel.close();
+});
+
+it("rejects an oversized folder plan before sending and keeps the channel usable", async () => {
   const socket = new DaemonSocket();
   const channel = new VerifiedUploadChannel(
     { token: testToken, uploadSecret: testUploadSecret },
     () => socket as unknown as WebSocket,
   );
   await channel.connect();
-  const file = new File([], "capture.JPG");
-  Object.defineProperty(file, "webkitRelativePath", { value: `${"旅".repeat(300)}/capture.JPG` });
-  await expect(channel.planPhotoImport(Array(10000).fill(file), "/")).rejects.toThrow(
-    /fewer files.*docbank photos import/,
-  );
+  const files = oversizedPhotoFiles();
+  await expect(
+    channel.planPhotoImport(
+      files,
+      "/",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/Choose fewer files/);
   expect(socket.frames).toHaveLength(1);
   expect(socket.closed).toBe(false);
-  await channel.planPhotoImport(photoSelectionFiles(), "/");
+  await channel.planPhotoImport(
+    photoSelectionFiles(),
+    "/",
+    "20000000-0000-4000-8000-000000000002",
+    new AbortController().signal,
+    vi.fn(),
+  );
   expect(socket.frames).toHaveLength(2);
   channel.close();
 });
@@ -524,14 +717,11 @@ it("reports terminal submission when an empty photo loses its receipt", async ()
   await channel.connect();
   socket.onend = () => queueMicrotask(() => socket.close());
   const progress = vi.fn();
+  const empty = new File([], "empty.JPG");
   await expect(
-    channel.uploadPhotoGroup(
-      "import-1",
-      0,
-      [new File([], "empty.JPG")],
-      new AbortController().signal,
-      progress,
-    ),
+    channel.uploadPhotoGroup("import-1", 0, [empty], new AbortController().signal, progress, [
+      await hashFile(empty, new AbortController().signal, () => {}),
+    ]),
   ).rejects.toThrow(/channel ended/);
   expect(progress).toHaveBeenLastCalledWith("uploading", {
     processed: 0,
@@ -565,12 +755,14 @@ it("reports a server error that arrives while photo bytes are still sending", as
     queueMicrotask(() => socket.close());
   };
   const large = new File([new Uint8Array(3 * 1024 * 1024)], "large.JPG");
+  const digest = await hashFile(large, new AbortController().signal, () => {});
   const upload = channel.uploadPhotoGroup(
     "import-1",
     0,
     [large],
     new AbortController().signal,
     vi.fn(),
+    [digest],
   );
   await expect(upload).rejects.toBeInstanceOf(APIError);
   await expect(upload).rejects.toMatchObject({
@@ -595,47 +787,105 @@ it("retires the channel when a photo file can't be read during upload", async ()
               Promise.reject(new DOMException("File changed on disk", "NotReadableError")),
           },
   });
+  const digest = await hashFile(unreadable, new AbortController().signal, () => {});
   const upload = channel.uploadPhotoGroup(
     "import-1",
     0,
     [unreadable],
     new AbortController().signal,
     vi.fn(),
+    [digest],
   );
   await expect(upload).rejects.toBeInstanceOf(UploadChannelError);
   await expect(upload).rejects.toThrow("File changed on disk");
   expect(socket.closed).toBe(true);
+  const next = new File(["jpg"], "next.JPG");
   const progress = vi.fn();
   await expect(
-    channel.uploadPhotoGroup(
-      "import-1",
-      1,
-      [new File(["jpg"], "next.JPG")],
-      new AbortController().signal,
-      progress,
-    ),
+    channel.uploadPhotoGroup("import-1", 1, [next], new AbortController().signal, progress, [
+      await hashFile(next, new AbortController().signal, () => {}),
+    ]),
   ).rejects.toThrow(/channel ended/);
   expect(progress).not.toHaveBeenCalled();
 });
 
 it("refuses a second photo group while one is active", async () => {
   const { channel } = await photoChannel();
+  const firstFile = new File(["jpg"], "first.JPG");
+  const secondFile = new File(["jpg"], "second.JPG");
   const first = channel.uploadPhotoGroup(
     "import-1",
     0,
-    [new File(["jpg"], "first.JPG")],
+    [firstFile],
     new AbortController().signal,
     vi.fn(),
+    [await hashFile(firstFile, new AbortController().signal, () => {})],
   );
   await expect(
-    channel.uploadPhotoGroup(
-      "import-1",
-      1,
-      [new File(["jpg"], "second.JPG")],
-      new AbortController().signal,
-      vi.fn(),
-    ),
+    channel.uploadPhotoGroup("import-1", 1, [secondFile], new AbortController().signal, vi.fn(), [
+      await hashFile(secondFile, new AbortController().signal, () => {}),
+    ]),
   ).rejects.toBeInstanceOf(UploadChannelError);
   await expect(first).resolves.toEqual({ status: "added", asset_id: "photo-1" });
   channel.close();
+});
+
+it("counts UTF-8 declaration bytes for folder files at the 8 MiB boundary", () => {
+  const limit = 8 * 1024 * 1024;
+  const folder = ["旅".repeat(70), "旅".repeat(70), "旅".repeat(70)].join("/");
+  const files = Array.from({ length: 10500 }, (_, index) => {
+    const file = new File([], `image-${String(index).padStart(5, "0")}.JPG`, { lastModified: 0 });
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: `${folder}/${file.name}`,
+      configurable: true,
+    });
+    return file;
+  });
+  const initialSize = utf8ToBytes(JSON.stringify(photoImportDeclaration(files, "/"))).byteLength;
+  const remaining = limit - initialSize;
+  expect(remaining).toBeGreaterThanOrEqual(0);
+  const paddingPerFile = Math.floor(remaining / files.length);
+  const paddedFiles = remaining % files.length;
+  for (const [index, file] of files.entries()) {
+    const padding = "x".repeat(paddingPerFile + (index < paddedFiles ? 1 : 0));
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: `${folder}/${file.name.replace(".JPG", `${padding}.JPG`)}`,
+    });
+  }
+  expect(utf8ToBytes(JSON.stringify(photoImportDeclaration(files, "/"))).byteLength).toBe(limit);
+  const actual = photoImportDeclaration(
+    files,
+    "/",
+    undefined,
+    undefined,
+    new Map(files.map((file) => [file, "f".repeat(64)])),
+  );
+  expect(utf8ToBytes(JSON.stringify(actual)).byteLength).toBe(limit);
+  const last = files.at(-1)!;
+  Object.defineProperty(last, "webkitRelativePath", {
+    value: last.webkitRelativePath.replace(".JPG", "x.JPG"),
+  });
+  expect(() => photoImportDeclaration(files, "/")).toThrow(/Choose fewer files/);
+
+  const mixedFiles = Array.from({ length: 32768 }, (_, index) => {
+    const file = new File([], index === 0 ? "image.JPG" : `file-${index}.txt`, {
+      lastModified: 0,
+    });
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: `${"x".repeat(130)}/${file.name}`,
+    });
+    return file;
+  });
+  const mixedActual = photoImportDeclaration(
+    mixedFiles,
+    "/",
+    undefined,
+    undefined,
+    new Map([[mixedFiles[0], "f".repeat(64)]]),
+  );
+  expect(utf8ToBytes(JSON.stringify(mixedActual)).byteLength).toBeLessThan(limit);
+  const mixedPreflight = photoImportDeclaration(mixedFiles, "/");
+  expect(utf8ToBytes(JSON.stringify(mixedPreflight)).byteLength).toBe(
+    utf8ToBytes(JSON.stringify(mixedActual)).byteLength,
+  );
 });

@@ -104,8 +104,8 @@ func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
 		rawURL   string
 		host     string
 	}{
-		{first, firstURL, "docbank-00000000000000000000000000000000.localhost"},
-		{second, secondURL, "docbank-01010101010101010101010101010101.localhost"},
+		{first, firstURL, "docbank-00000000000000000000000000000000.docbank.localhost"},
+		{second, secondURL, "docbank-01010101010101010101010101010101.docbank.localhost"},
 	} {
 		u, err := url.Parse(test.rawURL)
 		require.NoError(t, err)

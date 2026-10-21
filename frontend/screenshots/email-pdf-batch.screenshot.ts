@@ -116,7 +116,7 @@ test("real Takeout exports verified PDFs and explicit attachment occurrences thr
     started = true;
     const url = new URL(await run("web", "--no-browser"));
     expect(url.protocol).toBe("http:");
-    expect(url.hostname).toMatch(/^docbank-[0-9a-f]{32}\.localhost$/);
+    expect(url.hostname).toMatch(/^docbank-[0-9a-f]{32}\.docbank\.localhost$/);
     const session = new URLSearchParams(url.hash.slice(1)).get("web_session");
     if (!session) throw new Error("missing synthetic browser session");
     const api = async <T>(route: string): Promise<T> => {

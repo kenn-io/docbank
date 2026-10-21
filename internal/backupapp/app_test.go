@@ -292,7 +292,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	preference := "image"
-	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, &preference)
+	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, store.PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 
 	album, err := fixture.metadata.CreatePhotoSet(ctx, "Recovered album")
@@ -2729,6 +2729,7 @@ func (s legacyMetadataSnapshot) OpenMetadata(
 	if bytes.Equal(metadata, buffer.Bytes()) {
 		return nil, 0, errors.New("legacy metadata header version was not found")
 	}
+	metadata = bytes.ReplaceAll(metadata, []byte(`,"representative_sequence":null`), nil)
 	return io.NopCloser(bytes.NewReader(metadata)), int64(len(metadata)), nil
 }
 

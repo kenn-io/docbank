@@ -14,6 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
+
 const targets = [
   preparedPhoto(1, {
     asset_id: "asset",
@@ -248,6 +249,37 @@ it("sends keyboard rotation as one atomic relative edit for each member", async 
   expect(editor.receiptID).toBe("rotated");
 });
 
+it("holds a file prepared by both the edit selection and the stack once", async () => {
+  const editor = editorWithTargets(),
+    sibling = preparedPhoto(3, { asset_id: "other", file_id: "other-file" });
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(
+      response({ assets: [], targets: [...structuredClone(targets), sibling] }),
+    )
+    .mockResolvedValueOnce(
+      response({
+        receipt_id: "rated",
+        after: [{ file_id: "raw", revision: 9, values: { ...targets[0]!.values, rating: 5 } }],
+      }),
+    );
+  vi.stubGlobal("fetch", fetcher);
+  await editor.prepareStack(["asset", "other"], false);
+  expect(editor.prepared.map((target) => target.file_id).toSorted()).toEqual([
+    "jpeg",
+    "other-file",
+    "raw",
+  ]);
+  await editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  const revisions = (list: typeof editor.targets) =>
+    list.filter((target) => target.file_id === "raw").map((target) => target.revision);
+  expect(revisions(editor.targets)).toEqual([9]);
+  expect(revisions(editor.stackTargets)).toEqual([9]);
+  expect(editor.prepared).toHaveLength(3);
+  editor.reset();
+  expect(editor.prepared).toEqual([]);
+});
+
 it("leaves shortcut navigation usable when preparing its targets fails", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
   vi.stubGlobal(
@@ -363,7 +395,7 @@ async function reloadPreparedMembers(
     .mockResolvedValueOnce(response({ receipt_id: "retry", after: [] }));
   vi.stubGlobal("fetch", fetcher);
   if (selected === "revalidated") {
-    editor.targets.push(preparedPhoto(3));
+    editor.targets = [...editor.targets, preparedPhoto(3)];
     editor.stage({ caption: "River" }, [{ tag_id: "tag", assign: true }]);
     editor.revalidate(new Set(["asset"]));
     expect(editor.membershipChanged).toBe(false);
