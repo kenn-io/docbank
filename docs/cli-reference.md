@@ -98,7 +98,7 @@ The web application imports a ZIP of the same layout through
 
 ## docbank bates
 
-Before upgrading to pdfcpu v0.16.3, publish any Bates reservations you still need. After upgrading, `docbank bates reserve` and `docbank bates export run` reject recipes tied to pdfcpu v0.15.0. Old unpublished reservations cannot be published or released, and their numbers remain consumed. Inspect them with `docbank bates show <allocation-id>`.
+Before upgrading Docbank to a release that uses pdfcpu v0.16.3, publish any Bates reservations you still need. After upgrading, `docbank bates reserve` and `docbank bates export run` reject recipes tied to pdfcpu v0.15.0. An API publish request with an old recipe returns `bates_reservation_conflict`. Old unpublished reservations cannot be published or released, and their numbers remain consumed. Inspect them with `docbank bates show <allocation-id>`.
 
 Published artifacts remain available through `docbank bates export status`, `docbank bates export history`, and `docbank bates export download`. Exact `docbank bates export run` retries with the old recipe fail.
 
