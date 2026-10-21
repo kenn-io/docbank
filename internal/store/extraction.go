@@ -36,7 +36,8 @@ type ExtractionResult struct {
 	Text             string
 }
 
-func supportsTextExtractionMIME(value string) bool {
+// SupportsTextExtractionMIME reports whether originals use Docbank's text extraction path.
+func SupportsTextExtractionMIME(value string) bool {
 	mediaType, _, err := mime.ParseMediaType(value)
 	if err != nil {
 		return false
@@ -48,7 +49,7 @@ func supportsTextExtractionMIME(value string) bool {
 }
 
 func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) error {
-	if !supportsTextExtractionMIME(mimeType) {
+	if !SupportsTextExtractionMIME(mimeType) {
 		return nil
 	}
 	if _, err := tx.Exec(`
@@ -72,7 +73,7 @@ func enqueueTextBlobTx(tx *sql.Tx, blobHash string) error {
 func queueTextExtractionTx(
 	ctx context.Context, tx *sql.Tx, versionID, blobHash, mimeType string,
 ) error {
-	if !supportsTextExtractionMIME(mimeType) {
+	if !SupportsTextExtractionMIME(mimeType) {
 		return nil
 	}
 	suppressed, err := legacyTextVersionSuppressedTx(ctx, tx, blobHash, versionID)
@@ -185,7 +186,7 @@ func rebuildImportedTextExtractionStateTx(ctx context.Context, tx *sql.Tx) error
 		); err != nil {
 			return fmt.Errorf("discovering imported text extraction work: scanning row: %w", err)
 		}
-		if supportsTextExtractionMIME(item.mimeType) {
+		if SupportsTextExtractionMIME(item.mimeType) {
 			seeds = append(seeds, item)
 		}
 	}
@@ -265,7 +266,7 @@ func (s *Store) SeedTextExtractionQueue(
 			); err != nil {
 				return fmt.Errorf("discovering text extraction work: scanning row: %w", err)
 			}
-			if supportsTextExtractionMIME(item.mimeType) {
+			if SupportsTextExtractionMIME(item.mimeType) {
 				seeds = append(seeds, item)
 			}
 		}

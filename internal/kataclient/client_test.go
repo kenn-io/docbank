@@ -215,3 +215,29 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 		})
 	}
 }
+
+func TestFindMarkerSearchesVisibleProjectsWhenGlobalDenied(t *testing.T) {
+	backend := katatest.New(t, katatest.WithToken("synthetic-key"))
+	sdk := backend.Client(t)
+	for _, name := range []string{"docbank", "other"} {
+		_, err := sdk.InitProject(t.Context(), &wire.InitProjectRequestOptions{Body: &wire.InitProjectBody{Name: &name, Actor: new("docbank")}})
+		require.NoError(t, err)
+	}
+	other := New(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-key", Project: "other"})
+	issue, err := other.Create(t.Context(), "create", "Review", "", map[string]jsontext.Value{"docbank.action": jsontext.Value(`"marker"`)})
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/issues" && r.URL.Query().Get("project_id") == "" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		backend.Service.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+	found, err := c.FindMarker(t.Context(), "marker")
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	require.Equal(t, issue.UID, found.UID)
+	require.Equal(t, issue.QualifiedRef, found.QualifiedRef)
+}

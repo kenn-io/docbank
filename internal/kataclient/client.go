@@ -93,8 +93,11 @@ func requestError(ctx context.Context, err error) error {
 	if status, ok := errors.AsType[*runtime.ClientAPIError](err); ok {
 		failure.Status = status.StatusCode()
 	}
-	if envelope, ok := errors.AsType[wire.ErrorEnvelope](err); ok && envelope.ErrorData.Code == "metadata_guard_failed" {
-		failure.Code = "metadata_guard_failed"
+	if envelope, ok := errors.AsType[wire.ErrorEnvelope](err); ok {
+		switch envelope.ErrorData.Code {
+		case "metadata_guard_failed", "token_invalid":
+			failure.Code = envelope.ErrorData.Code
+		}
 	}
 	return failure
 }
@@ -242,12 +245,33 @@ func (c *Client) FindMarker(ctx context.Context, marker string) (*Issue, error) 
 	if err != nil {
 		failure, ok := errors.AsType[*runtime.ClientAPIError](err)
 		if ok && (failure.StatusCode() == 401 || failure.StatusCode() == 403 || failure.StatusCode() == 404) {
-			id, projectErr := c.projectID(ctx, c.project)
-			if projectErr != nil {
-				return nil, projectErr
+			// A scoped credential can see several projects while lacking global
+			// search authority. Search its complete visible catalog before creating.
+			projects, listErr := c.api.ListProjectsWithResponse(ctx, &wire.ListProjectsRequestOptions{})
+			if listErr != nil {
+				return nil, requestError(ctx, listErr)
 			}
-			query.ProjectID = &id
-			raw, err = c.api.ListAllIssuesWithResponse(ctx, &wire.ListAllIssuesRequestOptions{Query: query})
+			var catalog wire.ListProjectsResponseBody
+			if decodeErr := decodeResponseNumbers(projects.Body, &catalog); decodeErr != nil {
+				return nil, decodeErr
+			}
+			for _, project := range catalog.Projects {
+				query.ProjectID = &project.ID
+				raw, err = c.api.ListAllIssuesWithResponse(ctx, &wire.ListAllIssuesRequestOptions{Query: query})
+				if err != nil {
+					return nil, requestError(ctx, err)
+				}
+				var matches wire.ListAllIssuesResponseBody
+				if decodeErr := decodeResponseNumbers(raw.Body, &matches); decodeErr != nil {
+					return nil, decodeErr
+				}
+				if len(matches.Issues) > 0 {
+					break
+				}
+			}
+			if len(catalog.Projects) == 0 {
+				return nil, nil //nolint:nilnil // No visible projects means no visible marker.
+			}
 		}
 	}
 	if err != nil {

@@ -167,6 +167,9 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 		return kataclient.Issue{}, err
 	}
 	if existing != nil {
+		if err := s.Kata.CheckProject(existing.QualifiedRef); err != nil {
+			return kataclient.Issue{}, err
+		}
 		var recorded string
 		if json.Unmarshal(existing.Metadata["docbank.request"], &recorded) != nil || recorded != requestHash {
 			return kataclient.Issue{}, ErrIdempotencyConflict
@@ -385,6 +388,7 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 }
 
 func renderQuote(label, words string) string {
+	words = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(words)
 	return "Evidence: " + strings.NewReplacer("\n", " ", "\r", " ").Replace(label) + "\n\n> " + strings.ReplaceAll(words, "\n", "\n> ") + "\n"
 }
 

@@ -51,6 +51,9 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	selection.NodeID = other.ID
 	_, err = service.Archive.Prepare(t.Context(), selection)
 	require.Error(t, err)
+	resolutionAfterSwitch, err := service.Archive.Resolve(t.Context(), ref, "world")
+	require.NoError(t, err)
+	require.Equal(t, "failed", resolutionAfterSwitch.State)
 	// A later context request verifies the source again.
 	next, err := kataService(deps, gate)
 	require.NoError(t, err)

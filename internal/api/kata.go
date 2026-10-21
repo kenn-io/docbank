@@ -100,6 +100,9 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 
 func kataProblem(err error) *Error {
 	if failure, ok := errors.AsType[*kataclient.Error](err); ok {
+		if failure.Code == "token_invalid" {
+			return NewError(403, "kata_token_invalid", "Kata token was rejected; configure Kata with that token")
+		}
 		switch failure.Status {
 		case http.StatusUnauthorized:
 			return NewError(401, "kata_unauthorized", "Kata rejected the configured credential; update the Kata connection")

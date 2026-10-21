@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"strings"
 	"unicode/utf8"
 
@@ -19,7 +18,7 @@ const kataOriginalMaxBytes = 16 << 20
 type kataArchive struct {
 	deps Deps
 	gate *OperationGate
-	// Each API operation owns its cache; later context calls verify sources again.
+	// Each operation caches only its last original; later calls verify sources again.
 	originals map[kataOriginalKey]kataOriginal
 }
 
@@ -58,8 +57,7 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 		if node.Size < 0 || node.Size > kataOriginalMaxBytes {
 			return fmt.Errorf("%w: document exceeds the 16 MiB original-text citation limit", kataevidence.ErrUnsupportedSource)
 		}
-		mediaType, _, mediaErr := mime.ParseMediaType(node.MimeType)
-		if mediaErr != nil || !strings.HasPrefix(mediaType, "text/") && mediaType != jsonMediaType {
+		if !store.SupportsTextExtractionMIME(node.MimeType) {
 			return fmt.Errorf("%w: document needs a retained text rendition; supply an exact text citation", kataevidence.ErrUnsupportedSource)
 		}
 		text, err := a.originalText(ctx, node)
@@ -70,7 +68,8 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 		if selector.StartRune < 0 || selector.EndRune <= selector.StartRune || selector.EndRune > runeCount || selector.EndRune-selector.StartRune > kataevidence.MaxChars {
 			return fmt.Errorf("%w: --end must be within the selected text and at most 1000 code points after --start", kataevidence.ErrInvalid)
 		}
-		quote := sliceKataRunes(text, selector.StartRune, selector.EndRune)
+		// A returned excerpt must not keep an evicted original's backing bytes alive.
+		quote := strings.Clone(sliceKataRunes(text, selector.StartRune, selector.EndRune))
 		if selector.Quote != "" && selector.Quote != quote {
 			return fmt.Errorf("%w: --quote does not match the selected range", kataevidence.ErrInvalid)
 		}
@@ -85,9 +84,6 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 
 func (a kataArchive) prepareRendition(ctx context.Context, selector kataevidence.Selector) (kataevidence.Evidence, error) {
 	c := *selector.Citation
-	if c.NodeID != selector.NodeID || c.Start != selector.StartRune || c.End != selector.EndRune || c.End-c.Start > kataevidence.MaxChars {
-		return kataevidence.Evidence{}, kataevidence.ErrInvalid
-	}
 	if a.deps.Processing == nil {
 		return kataevidence.Evidence{}, kataevidence.ErrUnavailable
 	}
@@ -172,9 +168,14 @@ func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference, qu
 	if node.TrashedAt != nil || node.IsDir() {
 		return result, nil
 	}
-	if node.CurrentVersionID != selector.ExpectedVersion || node.BlobHash != hash {
+	if node.BlobHash != hash || ref.Rendition != nil && node.CurrentVersionID != selector.ExpectedVersion {
 		result.State = "changed"
 		return result, nil
+	}
+	// Identical original bytes remain verifiable after a version-only rewrite.
+	// Pin the current version so Prepare still detects a concurrent replacement.
+	if ref.Docbank != nil {
+		selector.ExpectedVersion = node.CurrentVersionID
 	}
 	evidence, err := a.Prepare(ctx, selector)
 	switch {
@@ -207,6 +208,7 @@ func (a kataArchive) originalText(ctx context.Context, node store.Node) (string,
 	if original, ok := a.originals[key]; ok {
 		return original.text, original.err
 	}
+	clear(a.originals)
 	text, err := a.readOriginal(ctx, node)
 	a.originals[key] = kataOriginal{text: text, err: err}
 	return text, err

@@ -29,7 +29,8 @@ default_project = "docbank"
 ```
 
 Supply `DOCBANK_KATA_TOKEN` to the Docbank daemon through your process or
-secret manager. Alternatively, replace `api_key_env` with
+secret manager, and configure Kata with the same token. A keyless loopback
+Kata rejects requests carrying this token. Alternatively, replace `api_key_env` with
 `api_key_file = "secrets/kata-token"`. Relative paths resolve inside
 `DOCBANK_HOME`. Choose exactly one credential source. Literal secrets in
 configuration are rejected. Key files must be regular, private files owned by the daemon user and at most
@@ -63,14 +64,18 @@ Offsets count Unicode code points, starting at zero. The start is included;
 the end is excluded. A passage contains at most 1,000 code points. `--quote`
 checks that the selected words still match. To bind an earlier version, pass
 `--expected-version` with the content version from `stat --json` and keep that
-value unchanged on retries. Original text must be UTF-8 text or JSON and at most
-16 MiB. An out-of-range `--end` or a mismatched `--quote` returns an input
+value unchanged on retries. Original text must be UTF-8 and use a media type
+supported by Docbank's text extraction, including text, JSON, YAML, NDJSON, JSONL,
+and TeX. It must be at most 16 MiB. An out-of-range `--end` or a mismatched `--quote` returns an input
 error that names the field. Binary documents use a retained text rendition instead.
 
 Keep the same idempotency key when retrying the same create request. Reusing
 the key with different input fails. Docbank records a durable create marker
 in Kata in addition to Kata's own replay protection. Create retries are reconciled
 before looking up the source, even if it has since changed or disappeared.
+The marker search covers every project visible to the credential. If the issue
+moved outside `default_project`, the retry returns the same project error as an
+append. It keeps the moved issue and creates no replacement.
 
 Append another passage:
 
@@ -93,6 +98,8 @@ Kata returns `401` for a rejected credential, `403` for denied permission, and
 `404` for a missing issue or project. Correct the connection, permissions, or
 issue reference before trying again. Upstream outages return `502` with retry
 guidance.
+A `403 token_invalid` response says the Kata token was rejected and asks you to
+configure Kata with that token.
 
 ## Quote a transcript or rendition
 
@@ -127,15 +134,16 @@ operation error.
 
 | State | Meaning |
 | --- | --- |
-| `available` | The current document version and verified passage match the reference. |
-| `changed` | The document's version/hash or selected rendition authority changed. |
+| `available` | The current original bytes and verified passage match, or the exact rendition remains current. |
+| `changed` | The document's content hash or selected rendition authority changed. |
 | `unavailable` | The document was deleted or trashed, or the cited text is no longer retained. |
 | `unreachable` | The owning Docbank vault could not be reached. Retry later. |
 | `unsupported` | The reference version or shape is unsupported. |
 | `failed` | Docbank could not verify or read the retained bytes. |
 
 Retaining an older content version does not make it current: changing the file
-still reports `changed`. An unavailable Kata connection is an operation error,
+still reports `changed`. Rewriting byte-identical original text stays `available`
+after Docbank verifies the range and saved quote again. An unavailable Kata connection is an operation error,
 not evidence that a document changed.
 
 ## Use MCP
@@ -151,7 +159,11 @@ quote and omit evidence details whose reference shape cannot be verified.
 
 ## Evidence compatibility
 
-Docbank mirrors msgvault's version-1 envelope and readable quotation format:
+Docbank and msgvault share only the version-1 envelope's `version` and `entries`
+fields and each entry's `id` and `reference` fields. Their entry formats differ.
+Msgvault uses `passage` and pending `quote` and `label` fields under
+`msgvault.evidence`, and rejects unknown members. Docbank uses the following
+format under `docbank.evidence`:
 
 ```json
 {
