@@ -26,11 +26,12 @@
     node: Node;
     path: string;
     pinnedVersion?: ContentVersion;
+    onselect?: (version: ContentVersion) => void;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { session, node, path, pinnedVersion, onclose, onauthfailure }: Props = $props();
+  let { session, node, path, pinnedVersion, onselect, onclose, onauthfailure }: Props = $props();
 
   let page = $state<ContentVersionPage | null>(null);
   let selectedVersionID = $state("");
@@ -145,7 +146,10 @@
                 level="default"
                 padding="sm"
                 selected={version.id === selectedVersionID}
-                onclick={() => (selectedVersionID = version.id)}
+                onclick={() => {
+                  if (onselect) onselect(version);
+                  else selectedVersionID = version.id;
+                }}
                 ariaLabel={`${transitionLabel(version.transition_kind)} at ${formatDate(version.recorded_at)}`}
                 eyebrow={transitionLabel(version.transition_kind)}
                 meta={formatDate(version.recorded_at)}

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
-import type { ContentVersion, Node } from "./generated/docbank.js";
+import { storage } from "./photo-test-fixtures.js";
+import { node as fileNode, version } from "./version-test-fixtures.js";
+import type { Node } from "./generated/docbank.js";
 
 const oldID = "11111111-1111-4111-8111-111111111111";
 const currentID = "22222222-2222-4222-8222-222222222222";
@@ -16,8 +18,7 @@ const root: Node = {
   modified_at: "2026-01-01T00:00:00Z",
 };
 const node: Node = {
-  ...root,
-  id: 42,
+  ...fileNode,
   name: "example.txt",
   kind: "file",
   path: "/reports/example.txt",
@@ -26,25 +27,8 @@ const node: Node = {
   size: 200,
   revision: 1001,
 };
-const oldVersion: ContentVersion = {
-  id: oldID,
-  node_id: 42,
-  blob_hash: "a".repeat(64),
-  size: 7,
-  node_revision: 1,
-  recorded_at: "2026-01-01T00:00:00Z",
-  mime_type: "text/plain",
-  introduced_operation_id: "33333333-3333-4333-8333-333333333333",
-  transition_kind: "content_create",
-};
-const currentVersion: ContentVersion = {
-  ...oldVersion,
-  id: currentID,
-  blob_hash: "b".repeat(64),
-  size: 200,
-  node_revision: 1001,
-  transition_kind: "content_replace",
-};
+const oldVersion = { ...version(oldID, 1, "content_create", "a"), size: 7 };
+const currentVersion = { ...version(currentID, 1001, "content_replace", "b"), size: 200 };
 const link = (id = oldID) => `#node=42&version=${id}`;
 const credentials = "web_session=synthetic&web_upload_secret=proof&";
 
@@ -63,6 +47,7 @@ afterEach(() => {
   history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 function api(
@@ -293,14 +278,57 @@ it("reopens exact versions on browser back and forward", async () => {
   api();
   render(App);
   await screen.findByText(oldID);
-  await act(() => {
-    history.pushState(null, "", `/${link(currentID)}`);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
-  });
+  await screen.findByText("1001 retained versions");
+  await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
   await screen.findByText(currentID);
+  expect(location.hash).toBe(link(currentID));
   history.back();
   await screen.findByText(oldID);
   history.forward();
   await screen.findByText(currentID);
   expect(location.hash).toBe(link(currentID));
+});
+
+it("replaces an ordinary version drawer when a linked version opens in the same tab", async () => {
+  history.replaceState(null, "", `/#${credentials}`);
+  api((url) =>
+    url.includes("/children")
+      ? Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 })
+      : undefined,
+  );
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Version history" }));
+  await screen.findByText(currentID);
+  await act(() => {
+    location.hash = link();
+  });
+  await screen.findByText(oldID);
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(within(screen.getByRole("dialog")).getByText(oldID)).toBeTruthy();
+});
+
+it("clears the linked drawer when query editing replaces the hash", async () => {
+  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
+  api();
+  render(App);
+  await screen.findByText(oldID);
+  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  await screen.findByRole("region", { name: "Query editor" });
+  await waitFor(() => expect(screen.queryByText(oldID)).toBeNull());
+  expect(location.hash).toContain("query=");
+  expect(location.hash).not.toContain("node=");
+});
+
+it("keeps a linked version when photo cleanup rewrites a combined fragment", async () => {
+  history.replaceState(null, "", `/photos/hidden#${credentials}${link().slice(1)}&photo=example`);
+  storage();
+  api((url) => (url.endsWith("/photos/hidden") ? Response.json({ configured: true }) : undefined));
+  render(App);
+  await screen.findByText(oldID);
+  expect(new URLSearchParams(location.hash.slice(1)).get("photo")).toBe("example");
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(location.hash).toBe(link()));
+  expect(await screen.findByText(oldID)).toBeTruthy();
 });

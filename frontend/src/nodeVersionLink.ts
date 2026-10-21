@@ -30,11 +30,8 @@ export async function resolveNodeVersionLink(
     getNode(selection.nodeId, { session, signal }),
     getContentVersion(selection.versionId, { session, signal }),
   ]);
-  if (node.id !== selection.nodeId || node.kind !== "file" || version.node_id !== node.id) {
+  if (node.kind !== "file" || version.node_id !== node.id) {
     throw new Error("The linked version does not belong to the requested file node.");
-  }
-  if (version.id !== selection.versionId) {
-    throw new Error("The requested version is unavailable.");
   }
   return { node, version };
 }

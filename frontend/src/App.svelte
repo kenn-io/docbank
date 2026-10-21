@@ -105,7 +105,7 @@
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import { parseQuery, type Query } from "./query.js";
   import { readQueryHighlights } from "./queryHighlights.js";
-  import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
+  import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
   import TagLabel from "./TagLabel.svelte";
   import TagPicker from "./TagPicker.svelte";
@@ -215,7 +215,6 @@
     | {
         kind:
           | "history"
-          | "versions"
           | "provenance"
           | "jobs"
           | "auditEvidence"
@@ -229,6 +228,11 @@
           | "tagCatalog"
           | "telemetry"
           | "photoImport";
+      }
+    | {
+        kind: "versions";
+        linked?: Awaited<ReturnType<typeof resolveNodeVersionLink>>;
+        fromLink?: boolean;
       }
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
@@ -263,17 +267,20 @@
 
   let webSession = $state("");
   let nodeVersionHash = $state(location.hash);
-  let linkedVersion = $state<Awaited<ReturnType<typeof resolveNodeVersionLink>> | null>(null);
+  const nodeVersionSelection = $derived(parseNodeVersionLink(nodeVersionHash));
   let nodeVersionError = $state("");
   let nodeVersionLoading = $state(false);
 
   $effect(() => {
     const session = webSession;
-    const selection = parseNodeVersionLink(nodeVersionHash);
-    linkedVersion = null;
+    const selection = nodeVersionSelection;
+    untrack(() => {
+      if (activePanel?.kind === "versions" && activePanel.fromLink) activePanel = null;
+    });
     nodeVersionError = "";
     nodeVersionLoading = false;
     if (!session || !selection) return;
+    activePanel = { kind: "versions", fromLink: true };
     if ("error" in selection) {
       nodeVersionError = "Invalid node/version link. Use a positive node ID and a version UUID.";
       return;
@@ -283,7 +290,7 @@
     nodeVersionLoading = true;
     void resolveNodeVersionLink(session, selection, controller.signal)
       .then((resolved) => {
-        if (current) linkedVersion = resolved;
+        if (current) activePanel = { kind: "versions", fromLink: true, linked: resolved };
       })
       .catch((cause: unknown) => {
         if (!current) return;
@@ -311,6 +318,7 @@
     url.hash = params.toString();
     photoNavigation.replace(history.state, url.href);
     nodeVersionHash = location.hash;
+    activePanel = null;
   }
   const photoUndo = $derived.by(() => {
     void webSession;
@@ -389,8 +397,12 @@
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
   let dragOver = $state("");
-  const hashWithoutPhoto = () =>
-    new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash;
+  const hashWithoutPhoto = () => {
+    const params = new URLSearchParams(location.hash.slice(1));
+    params.delete("photo");
+    const fragment = params.toString();
+    return fragment ? `#${fragment}` : "";
+  };
   let hiddenPhotoActionError = $state("");
   let hiddenWorkspace = $state<HiddenPhotos>();
   const shortcutManager = createShortcutManager();
@@ -426,6 +438,7 @@
   onMount(() => photoNavigation.listen());
   function pushPhotoHistory(state: Record<string, unknown> | null, url: string) {
     photoNavigation.push(state, url);
+    nodeVersionHash = location.hash;
   }
   function guardPhotoUnload(event: BeforeUnloadEvent) {
     if (!photoMode || !retainedPhotoEditor()?.dirty) return;
@@ -485,11 +498,15 @@
       history.back();
     else {
       const url = new URL(location.href);
-      url.hash = id ? `photo=${encodeURIComponent(id)}` : "";
+      const params = new URLSearchParams(url.hash.slice(1));
+      if (id) params.set("photo", id);
+      else params.delete("photo");
+      url.hash = params.toString();
       if (mode === "open")
         pushPhotoHistory({ photoReturn: activePhotos()?.viewerReturn }, url.href);
       else photoNavigation.replace(history.state, url.href);
     }
+    nodeVersionHash = location.hash;
     photoID = id;
     return true;
   }
@@ -1174,12 +1191,12 @@
 
     mounted = true;
     const session = takeFragmentSession();
-    if (!parseNodeVersionLink(location.hash) && photoMode && photoID) {
+    nodeVersionHash = location.hash;
+    if (!nodeVersionSelection && photoMode && photoID) {
       const url = new URL(location.href);
       url.hash = `photo=${encodeURIComponent(photoID)}`;
       photoNavigation.replace(history.state, url.href);
-    } else if (!parseNodeVersionLink(location.hash) && savedQueryDraft)
-      replaceQueryURL(savedQueryDraft);
+    } else if (!nodeVersionSelection && savedQueryDraft) replaceQueryURL(savedQueryDraft);
     nodeVersionHash = location.hash;
     photoNavigation.accept();
     if (session) activateBrowserSession(session);
@@ -1508,7 +1525,7 @@
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
-    if (!parseNodeVersionLink(location.hash)) replaceQueryURL(null);
+    if (!nodeVersionSelection) replaceQueryURL(null);
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;
@@ -2846,6 +2863,20 @@
         direction: sortDirection,
       },
     };
+  }
+
+  function replaceQueryURL(query: Query | null): void {
+    writeQueryURL(query);
+    nodeVersionHash = location.hash;
+  }
+
+  function selectLinkedVersion(version: generated.ContentVersion): void {
+    const url = new URL(location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    params.set("node", String(version.node_id));
+    params.set("version", version.id);
+    url.hash = params.toString();
+    pushPhotoHistory(history.state, url.href);
   }
 
   function keepQueryDraft(query: Query): void {
@@ -4478,24 +4509,6 @@
         onclose={() => (shortcutHelpOpen = false)}
       />
     {/if}
-    {#if nodeVersionLoading || nodeVersionError}
-      <Modal title="Linked content version" onclose={closeLinkedVersion}>
-        {#if nodeVersionError}<p role="alert">{nodeVersionError}</p>
-        {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
-      </Modal>
-    {/if}
-    {#if linkedVersion}
-      {#key linkedVersion}
-        <VersionHistoryDrawer
-          session={webSession}
-          node={linkedVersion.node}
-          path={linkedVersion.node.path ?? linkedVersion.node.name}
-          pinnedVersion={linkedVersion.version}
-          onclose={closeLinkedVersion}
-          onauthfailure={handleFailure}
-        />
-      {/key}
-    {/if}
     {#each activePanel ? [activePanel] : [] as panel (panel)}
       {#if panel.kind === "history" && currentInspectorNode && membership?.protected}
         {#key `${webSession}:${currentInspectorNode.id}:${currentInspectorNode.revision}:${currentInspectorPath}`}
@@ -4508,14 +4521,24 @@
           />
         {/key}
       {/if}
-      {#if !snapshotActive && panel.kind === "versions" && selected?.node.kind === "file"}
-        <VersionHistoryDrawer
-          session={webSession}
-          node={selected.node}
-          path={selected.path}
-          onclose={closePanel(panel)}
-          onauthfailure={handleFailure}
-        />
+      {#if panel.kind === "versions"}
+        {#if panel.fromLink && (nodeVersionLoading || nodeVersionError)}
+          <Modal title="Linked content version" onclose={closeLinkedVersion}>
+            {#if nodeVersionError}<p role="alert">{nodeVersionError}</p>
+            {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
+          </Modal>
+        {:else if panel.linked || (!snapshotActive && selected?.node.kind === "file")}
+          {@const node = panel.linked?.node ?? selected!.node}
+          <VersionHistoryDrawer
+            session={webSession}
+            {node}
+            path={panel.linked ? (node.path ?? node.name) : selected!.path}
+            pinnedVersion={panel.linked?.version}
+            onselect={panel.fromLink ? selectLinkedVersion : undefined}
+            onclose={panel.fromLink ? closeLinkedVersion : closePanel(panel)}
+            onauthfailure={handleFailure}
+          />
+        {/if}
       {/if}
       {#if panel.kind === "provenance" && currentInspectorNode?.kind === "file"}
         <ProvenanceDrawer
