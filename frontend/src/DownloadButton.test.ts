@@ -1,3 +1,5 @@
+import * as actions from "./action-events.js";
+import * as downloads from "./download.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import DownloadButton from "./DownloadButton.svelte";
@@ -52,4 +54,30 @@ it("aborts an in-flight exact download on same-node version or session change", 
   expect(signals[0]?.aborted).toBe(true);
   expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
   expect(screen.queryByText(/Verified/)).toBeNull();
+});
+
+it.each([true, false])("reports only a verified completed download (%s)", async (succeeds) => {
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  const selected = source("11111111-1111-4111-8111-111111111111", "a".repeat(64));
+  const prepare = vi.spyOn(downloads, "prepareExactDownload");
+  if (succeeds)
+    prepare.mockResolvedValue({
+      url: "/verified",
+      name: "report.txt",
+      versionID: selected.versionID,
+      blobHash: selected.blobHash,
+      size: 12,
+    });
+  else prepare.mockRejectedValue(new Error("Digest mismatch"));
+  const offer = vi.spyOn(downloads, "offerPreparedDownload").mockImplementation(() => {});
+  render(DownloadButton, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 9,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Download" }));
+  await screen.findByText(succeeds ? /browser save started/ : "Digest mismatch");
+  expect(action.mock.calls).toEqual(succeeds ? [["session", "document_opened"]] : []);
+  expect(offer).toHaveBeenCalledTimes(succeeds ? 1 : 0);
 });

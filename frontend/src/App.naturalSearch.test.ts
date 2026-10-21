@@ -1,3 +1,4 @@
+import * as actions from "./action-events.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
@@ -118,6 +119,8 @@ interface HarnessOptions {
   childrenPending?: boolean;
   rerankReport?: unknown;
   rerankPending?: boolean;
+  // A pending rerank rejects on abort, as fetch does, instead of resolving later.
+  rerankAbortable?: boolean;
   rerankNode?: ReturnType<typeof node>;
   emptyFence?: boolean;
   nodeFailure?: { id: number; status: number };
@@ -249,6 +252,12 @@ function installHarness(options: HarnessOptions) {
       if (options.baseSearchStatus)
         return new Response("search failure", { status: options.baseSearchStatus });
       if (body.rerank) {
+        if (options.rerankPending && options.rerankAbortable)
+          return new Promise<Response>((_, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            ),
+          );
         if (options.rerankPending) return rerankPending;
         return json(options.rerankReport ?? options.baseReport);
       }
@@ -476,6 +485,142 @@ it("ignores a rerank response after switching to Names and text", async () => {
   );
   await waitFor(() => expect(screen.queryByText("reranked excerpt")).toBeNull());
   expect(screen.getByText("/base.txt")).toBeTruthy();
+});
+
+it.each([false, true])(
+  "reports a search whose rerank is superseded after base results, abort rejects=%s",
+  async (rerankAbortable) => {
+    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const file = node(2, "base.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [file],
+      baseReport: report("hybrid", [result(file, 1, "base excerpt")]),
+      rerankPending: true,
+      rerankAbortable,
+      tagSearch: {
+        hits: [{ node: file, path: file.path, match: "name" }],
+        limit: 1000,
+        truncated: false,
+      },
+    });
+    render(App);
+    await screen.findAllByText("base.txt");
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+    await submitSearch("annual report");
+    await screen.findByText("Reranking results… Base results are shown.");
+    await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Names and text" }));
+    if (!rerankAbortable)
+      harness.resolveRerank(
+        json(
+          report("hybrid", [result(file, 1, "reranked excerpt")], {
+            outcome: "applied",
+            candidate_count: 1,
+          }),
+        ),
+      );
+    await waitFor(() =>
+      expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
+        ["short-lived", "search_run", "hybrid"],
+      ]),
+    );
+  },
+);
+
+it("reports a completed reranked search and keeps reruns and failures silent", async () => {
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  const file = node(2, "base.txt", baseVersion);
+  const options: HarnessOptions = {
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "base excerpt")]),
+    rerankPending: true,
+  };
+  const harness = installHarness(options);
+  render(App);
+  await screen.findAllByText("base.txt");
+  const toggle = await screen.findByRole("checkbox", { name: "Rerank results" });
+  await fireEvent.click(toggle);
+  await submitSearch("annual report");
+  await screen.findByText("Reranking results… Base results are shown.");
+  expect(screen.getByText("base excerpt")).toBeTruthy();
+  expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([]);
+  harness.resolveRerank(
+    json(
+      report("hybrid", [result(file, 1, "reranked excerpt")], {
+        outcome: "applied",
+        candidate_count: 1,
+      }),
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.queryByText("Reranking results… Base results are shown.")).toBeNull(),
+  );
+  await screen.findByText("reranked excerpt");
+  await waitFor(() =>
+    expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
+      ["short-lived", "search_run", "hybrid"],
+    ]),
+  );
+  await fireEvent.click(toggle);
+  await screen.findByText("base excerpt");
+  // Refresh and settings changes rerun the accepted search without a new action.
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(harness.postBodies.filter((body) => !body.rerank)).toHaveLength(2));
+  await screen.findByText("base excerpt");
+  options.baseReport = report("lexical", [result(file, 1, "text excerpt")]);
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
+  await waitFor(() => expect(harness.postBodies.filter((body) => !body.rerank)).toHaveLength(3));
+  expect(action.mock.calls.filter(([, event]) => event === "search_run")).toHaveLength(1);
+  await screen.findByText("text excerpt");
+  await submitSearch("text query");
+  await screen.findByText("text excerpt");
+  expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
+    ["short-lived", "search_run", "hybrid"],
+    ["short-lived", "search_run", "lexical"],
+  ]);
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Lexical" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Names and text" }));
+  await waitFor(() => expect(harness.legacyCalls()).toBe(1));
+  await submitSearch("names query");
+  await waitFor(() =>
+    expect(action.mock.calls.filter(([, event]) => event === "search_run")).toEqual([
+      ["short-lived", "search_run", "hybrid"],
+      ["short-lived", "search_run", "lexical"],
+      ["short-lived", "search_run", "text"],
+    ]),
+  );
+  action.mockClear();
+  options.legacySearchStatus = 500;
+  await submitSearch("failed query");
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
+  expect(action).not.toHaveBeenCalled();
+  options.legacySearchStatus = undefined;
+  options.emptyFence = true;
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Names and text" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Auto" }));
+  await screen.findByText("No live documents match the current filter.");
+  await submitSearch("empty query");
+  await screen.findByText("No live documents match the current filter.");
+  expect(action).not.toHaveBeenCalled();
 });
 
 it("keeps the current selection when reranking replaces the rows", async () => {
@@ -1092,4 +1237,43 @@ it("preserves the chosen sort on a natural search refresh", async () => {
   expect(screen.getByRole("columnheader", { name: "Document" }).getAttribute("aria-sort")).toBe(
     "ascending",
   );
+});
+
+it("reports explicit file opens and leaves navigation silent", async () => {
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  const file = node(2, "report.txt", baseVersion);
+  const folder = { ...node(3, "folder", rerankedVersion), kind: "dir" };
+  installHarness({
+    profiles: [],
+    files: [file, node(4, "second.txt", rerankedVersion), folder],
+    baseReport: report("lexical", []),
+  });
+  render(App);
+  await screen.findAllByText("report.txt");
+  expect(action).not.toHaveBeenCalled();
+  await fireEvent.click(document.querySelector('tr[data-node-id="4"]')!);
+  expect(action).toHaveBeenCalledOnce();
+  expect(action).toHaveBeenCalledWith("short-lived", "document_opened");
+  action.mockClear();
+  await fireEvent.keyDown(window, { key: "k" });
+  await waitFor(() =>
+    expect(document.querySelector('tr[data-node-id="2"]')?.getAttribute("aria-selected")).toBe(
+      "true",
+    ),
+  );
+  expect(action).not.toHaveBeenCalled();
+  await fireEvent.keyDown(document.querySelector('tr[data-node-id="4"]')!, { key: "Enter" });
+  expect(action).toHaveBeenCalledOnce();
+  expect(action).toHaveBeenCalledWith("short-lived", "document_opened");
+  action.mockClear();
+  const row = document.querySelector('tr[data-node-id="4"]')!;
+  await fireEvent.click(row, { detail: 1 });
+  await fireEvent.click(row, { detail: 2 });
+  await fireEvent.dblClick(row, { detail: 2 });
+  expect(action).toHaveBeenCalledOnce();
+  expect(action).toHaveBeenCalledWith("short-lived", "document_opened");
+  action.mockClear();
+  await fireEvent.dblClick(document.querySelector('tr[data-node-id="3"]')!);
+  await waitFor(() => expect(document.querySelector('tr[data-node-id="2"]')).toBeNull());
+  expect(action).not.toHaveBeenCalled();
 });

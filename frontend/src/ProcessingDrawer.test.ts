@@ -1,5 +1,6 @@
+import * as actions from "./action-events.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
 import * as processingAPI from "./receipts.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
@@ -112,6 +113,50 @@ describe("document processing drawer", () => {
     expect(screen.getByText("Narrow this view to at most 4,096 file versions.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Find similar" })).toBeNull();
   });
+  it("reports completed version and similar searches and keeps unavailable results silent", async () => {
+    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const similar = vi
+      .spyOn(processingAPI, "documentSimilar")
+      .mockResolvedValue(contract.similar_report as DocumentSimilarReport);
+    vi.spyOn(processingAPI, "documentSearch").mockResolvedValue({
+      requested_mode: "auto",
+      actual_mode: "lexical",
+      coverage: {
+        binding_required: false,
+        scoped_documents: 1,
+        complete_documents: 1,
+        state: "complete",
+      },
+      degradations: [],
+      results: [],
+      truncated: false,
+      trace: [],
+    });
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
+    await screen.findByRole("button", { name: "Run processing" });
+    await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    await screen.findByText(contract.similar_report.results[0]!.path);
+    expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_run", "semantic");
+    similar.mockResolvedValue({
+      ...contract.similar_report,
+      state: "unavailable",
+      results: [],
+    } as DocumentSimilarReport);
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    await screen.findByText(/Unavailable: no current embedding/);
+    expect(action).toHaveBeenCalledTimes(1);
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search this document version" }), {
+      target: { value: "synthetic" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
+    await waitFor(() => expect(action).toHaveBeenCalledTimes(2));
+    expect(action.mock.calls).toEqual([
+      ["short-lived", "search_run", "semantic"],
+      ["short-lived", "search_run", "lexical"],
+    ]);
+  });
+
   it("uses the success tone for a completed job", async () => {
     renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
     await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));

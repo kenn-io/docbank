@@ -1,3 +1,4 @@
+import * as actions from "./action-events.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
@@ -102,6 +103,7 @@ function snapshot(
 }
 
 it("navigates frozen documents across pages and stops at the boundary or expiry", async () => {
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   history.replaceState(
     null,
     "",
@@ -175,7 +177,13 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
         terms: ["report"],
       });
     }
-    if (url === "/api/v1/workspace/queries") return json(first);
+    if (url === "/api/v1/workspace/queries") {
+      const { query } = JSON.parse(String(init?.body));
+      return json({
+        ...snapshot(query, first.rows, { next_cursor: "next" }),
+        snapshot_id: first.snapshot_id,
+      });
+    }
     if (url === "/api/v1/renditions/text") {
       const request = JSON.parse(String(init?.body));
       return json({
@@ -228,9 +236,17 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
+  expect(action).toHaveBeenCalledExactlyOnceWith("synthetic", "search_run", "text");
+  action.mockClear();
   await waitFor(() => expect(highlightRequests).toBe(1));
-  await fireEvent.click(screen.getByRole("cell", { name: "/records/report-100.pdf" }));
+  const opened = screen.getByRole("cell", { name: "/records/report-100.pdf" }).closest("tr")!;
+  await fireEvent.click(opened, { detail: 1 });
+  await fireEvent.click(opened, { detail: 2 });
+  await fireEvent.dblClick(opened, { detail: 2 });
   await screen.findByText("Document 100 of 101");
+  expect(action).toHaveBeenCalledExactlyOnceWith("synthetic", "document_opened");
+  expect(opened.getAttribute("aria-selected")).toBe("true");
+  action.mockClear();
   await fireEvent.click(
     within(screen.getByRole("navigation", { name: "Snapshot document navigation" })).getByRole(
       "button",
@@ -259,6 +275,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
     );
   }
   expect(cursors).toEqual(["next", "previous"]);
+  expect(action).not.toHaveBeenCalled();
   expect(highlightRequests).toBe(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   const choices = await screen.findByRole("combobox", { name: "Saved highlight set" });
@@ -269,6 +286,14 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
   await waitFor(() => expect(highlightRequests).toBe(2));
+  expect(action).toHaveBeenCalledExactlyOnceWith("synthetic", "search_run", "text");
+  action.mockClear();
+  await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));
+  await screen.findByRole("button", { name: "pdf, 101 documents, selected" });
+  const results = screen.getByRole("region", { name: "Frozen query results" });
+  await fireEvent.click(within(results).getByRole("button", { name: "Document" }));
+  await screen.findByText("Document 1 of 101");
+  expect(action).not.toHaveBeenCalled();
 });
 
 it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {

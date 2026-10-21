@@ -1002,7 +1002,7 @@ Secrets are resolved once per process; restart to rotate them.
 ## Anonymous usage telemetry
 
 The daemon reports anonymous usage events so the Docbank team can count
-active vaults, web app opens, and screens used in the browser and terminal UI.
+active vaults, web app opens, screens used, and document actions.
 Counts are per vault, not per person: one person with three vaults counts three
 times. The daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
 project 434713). The browser never contacts PostHog: the web app posts its
@@ -1034,6 +1034,14 @@ Docbank sends these events:
   Each screen counts once per vault per UTC day for each interface, including
   across daemon restarts. `surface` records which interface was used. The
   daemon rejects other screen or surface names with HTTP 400.
+
+Core actions send one event when a person's action completes:
+
+- `document_added` after a CLI `add`, web upload, or photo import adds at least one document. Uploads that end with an error still count if they added documents.
+- `search_run` after a submitted search returns accepted results, including empty results. Complete queries, exact-version searches, and similar-document searches also report. Automatic refreshes, filter changes, and mode changes stay silent. An empty source fence runs no search and sends no event. It carries `search_type` of `text`, `semantic`, or `hybrid`, using the executed mode after fallback. Photos reports only search form submissions.
+- `document_opened` after an explicit web open with Enter, double-click, or a row click, a related or duplicate document link, a successful download, or a Photos open from the grid or Map. Map opens report once the viewer shows the photo; a failed lookup or closing the viewer first sends nothing. Moving through listed documents with j/k, snapshot Previous/Next, Photos arrows or filmstrip, Compare, Cull, and inspector back or return sends nothing. Terminal UI Enter-open and CLI `cat` or `get` also report.
+
+Each core action requires `surface` of `web`, `tui`, or `cli`; a missing or unsupported value returns HTTP 400. Searches also require an allowed `search_type`. The daemon forwards every core action without counting state. PostHog queries count installs per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs. CLI and TUI actions stay silent when `CLAUDECODE` or `CODEX_THREAD_ID` is set. Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
 
 The daemon remembers which screen events it has queued today in memory and in
 `telemetry-screen-views.json` beside the install ID. If it cannot queue an

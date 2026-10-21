@@ -71,7 +71,7 @@ See docs/usage/search.md.`,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",
 	Short:   "Find files and folders by name, text, tag, type, folder, or date",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 		if searchAgent && searchJSON {
 			return usageError(errors.New("--agent and --json are mutually exclusive"))
 		}
@@ -205,6 +205,15 @@ See docs/usage/search.md.`,
 		if err != nil {
 			return err
 		}
+		searchType := "text"
+		if automatic.report != nil {
+			searchType = automatic.report.ActualMode
+		}
+		defer func() {
+			if retErr == nil {
+				reportAction(cmd, c, "search_run", searchType, searchAgent)
+			}
+		}()
 		if automatic.report != nil {
 			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
 		}
@@ -283,7 +292,7 @@ func documentSearchFlagsChanged(cmd *cobra.Command) bool {
 		cmd.Flags().Changed("explain") || searchRerank
 }
 
-func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nodeSelector, version string, options documentSearchCLIOptions) error {
+func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nodeSelector, version string, options documentSearchCLIOptions) (retErr error) {
 	node, err := selector.resolve(cmd.Context(), c)
 	if err != nil {
 		return err
@@ -319,6 +328,11 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if retErr == nil && report.State != "unavailable" {
+			reportAction(cmd, c, "search_run", "semantic", searchAgent)
+		}
+	}()
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}
@@ -353,7 +367,7 @@ func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarRepo
 	return nil
 }
 
-func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query string, options documentSearchCLIOptions) error {
+func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query string, options documentSearchCLIOptions) (retErr error) {
 	if err := validateDocumentSearchOptions(query, options); err != nil {
 		return err
 	}
@@ -384,6 +398,11 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if retErr == nil {
+			reportAction(cmd, c, "search_run", report.ActualMode, searchAgent)
+		}
+	}()
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}

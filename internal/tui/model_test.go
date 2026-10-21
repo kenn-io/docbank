@@ -22,6 +22,7 @@ import (
 )
 
 type fakeBackend struct {
+	actions                   []string
 	screenErr                 error
 	screens                   []string
 	nodes                     map[string]api.Node
@@ -2768,6 +2769,11 @@ func rowIDs(rows []row) []int64 {
 	return ids
 }
 
+func (f *fakeBackend) ReportAction(_ context.Context, event, searchType string) error {
+	f.actions = append(f.actions, event+":"+searchType)
+	return nil
+}
+
 func (f *fakeBackend) ReportScreen(_ context.Context, screen string) error {
 	f.screens = append(f.screens, screen)
 	return f.screenErr
@@ -2861,4 +2867,160 @@ func TestVisibleScreensAreAllowlisted(t *testing.T) {
 		seen[screen] = true
 	}
 	assert.Len(t, seen, 10)
+}
+
+func TestEnterOpenReportsDocumentOpened(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.rows = []row{{node: backend.nodes["/README.txt"]}}
+	model, command := updateModel(t, model, key(tea.KeyEnter))
+	runModelCommand(t, model, command)
+	assert.Equal(t, []string{"document_opened:"}, backend.actions)
+}
+
+func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
+	for _, pending := range []bool{true, false} {
+		t.Run(fmt.Sprint("pending=", pending), func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.naturalSearch.ActualMode = "hybrid"
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.searching = true
+			model.searchInput.SetValue("report")
+			model, _ = updateModel(t, model, key(tea.KeyEnter))
+			oldReply := model.loadSearch("report", model.requestID)()
+			if !pending {
+				var cmd tea.Cmd
+				model, cmd = updateModel(t, model, oldReply)
+				model = runModelCommand(t, model, cmd)
+				assert.Equal(t, []string{"search_run:text"}, backend.actions)
+				backend.actions = nil
+			}
+			model, cmd := updateModel(t, model, naturalProfilesLoadedMsg{
+				requestID: model.naturalProfilesRequest, profiles: backend.profiles,
+			})
+			require.NotNil(t, cmd)
+			model, stale := updateModel(t, model, oldReply)
+			require.Nil(t, stale)
+			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+			if cmd != nil {
+				model = runModelCommand(t, model, cmd)
+			}
+			assert.Equal(t, "report", model.searchQuery)
+			if pending {
+				assert.Equal(t, []string{"search_run:hybrid"}, backend.actions)
+			} else {
+				assert.Empty(t, backend.actions)
+			}
+		})
+	}
+}
+
+func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		mode             string
+		fallback         bool
+		failedSubmission bool
+		want             string
+		checkReruns      bool
+	}{
+		{name: "names", mode: naturalNames, want: "search_run:text", checkReruns: true},
+		{name: "auto", mode: naturalAuto, want: "search_run:hybrid"},
+		{name: "fallback", mode: naturalHybrid, fallback: true, want: "search_run:text"},
+		{name: "refresh after failure", mode: naturalNames, failedSubmission: true, want: "search_run:text"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.naturalSearch.ActualMode = "hybrid"
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.naturalMode = tc.mode
+			model.naturalProfiles = backend.profiles
+			model.searching = true
+			model.searchInput.SetValue("report")
+			model, _ = updateModel(t, model, key(tea.KeyEnter))
+			if tc.fallback {
+				model, _ = updateModel(t, model, naturalSearchBaseLoadedMsg{
+					requestID: model.requestID, searchID: model.naturalSearchID, query: "report",
+					err: errors.New("provider timed out"),
+				})
+			}
+			model, cmd := updateModel(t, model, model.loadSearch("report", model.requestID)())
+			if cmd != nil {
+				model = runModelCommand(t, model, cmd)
+			}
+			require.Equal(t, []string{tc.want}, backend.actions)
+			if tc.failedSubmission {
+				model.searching = true
+				model.searchInput.SetValue("failed query")
+				model, _ = updateModel(t, model, key(tea.KeyEnter))
+				backend.err = errors.New("search failed")
+				model, cmd = updateModel(t, model, model.loadSearch("failed query", model.requestID)())
+				require.Nil(t, cmd)
+				require.Equal(t, "report", model.searchQuery)
+				backend.err = nil
+				model, _ = updateModel(t, model, runeKey('r'))
+				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+				if cmd != nil {
+					model = runModelCommand(t, model, cmd)
+				}
+				assert.Equal(t, []string{tc.want}, backend.actions)
+			}
+			if !tc.checkReruns {
+				return
+			}
+			for _, keypress := range []tea.KeyPressMsg{runeKey('r'), key(tea.KeyTab), {Code: 'r', Mod: tea.ModCtrl}} {
+				model, _ = updateModel(t, model, keypress)
+				model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+				if cmd != nil {
+					model = runModelCommand(t, model, cmd)
+				}
+				assert.Equal(t, []string{tc.want}, backend.actions)
+			}
+			model.searching = true
+			model.searchInput.SetValue("report")
+			model, _ = updateModel(t, model, key(tea.KeyEnter))
+			model, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+			if cmd != nil {
+				model = runModelCommand(t, model, cmd)
+			}
+			// Tab above cycled the mode away from names, so a new submission reports hybrid.
+			assert.Equal(t, []string{tc.want, "search_run:hybrid"}, backend.actions)
+		})
+	}
+}
+
+func TestSimilarSearchReportsOnlyCurrentSuccessfulResults(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.processingOpen = true
+	model.processingRequestID = 5
+	model.processingSimilarID = 2
+	for _, tc := range []struct {
+		name             string
+		request, similar uint64
+		state            string
+		err              error
+		want             int
+	}{
+		{"superseded", 4, 1, "ready", nil, 0},
+		{"failed", 5, 2, "", errors.New("synthetic failure"), 0},
+		{"unavailable", 5, 2, "unavailable", nil, 0},
+		{"empty results", 5, 2, "ready", nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend.actions = nil
+			_, cmd := updateModel(t, model, processingSimilarLoadedMsg{requestID: tc.request, similarID: tc.similar, report: api.DocumentSimilarReport{State: tc.state}, err: tc.err})
+			if cmd != nil {
+				runModelCommand(t, model, cmd)
+			}
+			assert.Len(t, backend.actions, tc.want)
+			if tc.want > 0 {
+				assert.Equal(t, "search_run:semantic", backend.actions[0])
+			}
+		})
+	}
 }

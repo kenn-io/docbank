@@ -58,7 +58,7 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 		{"event key in another case", "application/json", `{"Event":"app_opened"}`, http.StatusBadRequest},
 		{"duplicate event", "application/json", `{"event":"app_opened","event":"screen_viewed"}`, http.StatusBadRequest},
 		{"duplicate property", "application/json", `{"event":"screen_viewed","properties":{"screen":"browse","screen":"help","surface":"web"}}`, http.StatusBadRequest},
-		{"unknown event", "application/json", `{"event":"search_run"}`, http.StatusBadRequest},
+		{"unknown event", "application/json", `{"event":"unsupported_event","properties":{"surface":"web","search_type":"text"}}`, http.StatusBadRequest},
 		{"blank event", "application/json", `{"event":" "}`, http.StatusBadRequest},
 		{"trailing data", "application/json", screenBody("browse", "web") + `{}`, http.StatusBadRequest},
 		{"truncated", "application/json", `{"event":"screen_viewed"`, http.StatusBadRequest},

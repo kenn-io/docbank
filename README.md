@@ -137,6 +137,9 @@ Docbank sends anonymous usage events by default:
   terminal browser exits, with duration grouped into four buckets. Browser
   visible time adds up across tab switches. Hidden time is excluded. The
   terminal browser counts the time from opening to exit, including idle time.
+- `document_added`, `search_run`, and `document_opened` after completed document actions, with `surface` of `web`, `tui`, or `cli`. Searches also carry `search_type` of `text`, `semantic`, or `hybrid`. PostHog counts these events per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs; CLI and TUI actions omit runs under `CLAUDECODE` or `CODEX_THREAD_ID`.
+
+Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
 
 Each event carries a random per-vault install ID, the version and commit, and
 the operating system and architecture. Events never include document content,

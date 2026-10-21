@@ -1,3 +1,4 @@
+import * as actions from "./action-events.js";
 import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
@@ -192,73 +193,85 @@ it.each(["open", "closed", "competing"] as const)(
   },
 );
 
-it("uses the plan, uploads groups in order, reports totals, and refreshes once", async () => {
-  const selected = files();
-  const channel: PhotoImportTransport = {
-    planPhotoImport: vi.fn().mockResolvedValue({
-      import_id: "import-1",
-      groups: [[0, 1], [2]],
-      unsupported: [3],
-      skip_reasons: { 3: "Unsupported type" },
-    }),
-    uploadPhotoGroup: vi
-      .fn()
-      .mockImplementation(async (_importID, _groupIndex, group, _signal, progress) => {
-        progress("hashing", { processed: 0, total: 7 });
-        progress("uploading", { processed: 7, total: 7 });
-        return { status: group.length === 2 ? "added" : "skipped", asset_id: "photo-1" };
+it.each([false, true])(
+  "uses the plan, uploads groups in order, reports totals, and refreshes once: skipped=%s",
+  async (skipped) => {
+    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const selected = files();
+    const channel: PhotoImportTransport = {
+      planPhotoImport: vi.fn().mockResolvedValue({
+        import_id: "import-1",
+        groups: [[0, 1], [2]],
+        unsupported: [3],
+        skip_reasons: { 3: "Unsupported type" },
       }),
-  };
-  const complete = vi.fn();
-  render(PhotoImportDrawer, {
-    vaultID: "vault-test",
-    session: "session",
-    channel,
-    onclose: vi.fn(),
-    oncomplete: complete,
-    onauthfailure: vi.fn(),
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
-      false,
-    ),
-  );
-  await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
-    target: { files: selected },
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
-  await waitFor(() => expect(complete).toHaveBeenCalledOnce());
-  expect(channel.planPhotoImport).toHaveBeenCalledWith(
-    selected,
-    "/",
-    expect.any(String),
-    expect.any(AbortSignal),
-    expect.any(Function),
-  );
-  expect(channel.uploadPhotoGroup).toHaveBeenNthCalledWith(
-    1,
-    "import-1",
-    0,
-    selected.slice(0, 2),
-    expect.any(AbortSignal),
-    expect.any(Function),
-    ["", ""],
-  );
-  expect(channel.uploadPhotoGroup).toHaveBeenNthCalledWith(
-    2,
-    "import-1",
-    1,
-    [selected[2]],
-    expect.any(AbortSignal),
-    expect.any(Function),
-    [""],
-  );
-  expect(screen.getByText("Added: 1")).toBeTruthy();
-  expect(screen.getByText("Already in vault: 1")).toBeTruthy();
-  expect(screen.getByText("Skipped: 1")).toBeTruthy();
-  expect(screen.getByText("Unsupported type")).toBeTruthy();
-  expect(screen.getByText("notes.txt")).toBeTruthy();
-});
+      uploadPhotoGroup: vi
+        .fn()
+        .mockImplementation(async (_importID, groupIndex, _group, _signal, progress) => {
+          progress("hashing", { processed: 0, total: 7 });
+          progress("uploading", { processed: 7, total: 7 });
+          return {
+            status: skipped || groupIndex === 1 ? "skipped" : "added",
+            asset_id: "photo-1",
+          };
+        }),
+    };
+    const complete = vi.fn();
+    render(PhotoImportDrawer, {
+      vaultID: "vault-test",
+      session: "session",
+      channel,
+      onclose: vi.fn(),
+      oncomplete: complete,
+      onauthfailure: vi.fn(),
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
+    await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
+      target: { files: selected },
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    if (skipped) {
+      expect(action).not.toHaveBeenCalled();
+      return;
+    }
+    expect(action).toHaveBeenCalledExactlyOnceWith("session", "document_added");
+    expect(channel.planPhotoImport).toHaveBeenCalledWith(
+      selected,
+      "/",
+      expect.any(String),
+      expect.any(AbortSignal),
+      expect.any(Function),
+    );
+    expect(channel.uploadPhotoGroup).toHaveBeenNthCalledWith(
+      1,
+      "import-1",
+      0,
+      selected.slice(0, 2),
+      expect.any(AbortSignal),
+      expect.any(Function),
+      ["", ""],
+    );
+    expect(channel.uploadPhotoGroup).toHaveBeenNthCalledWith(
+      2,
+      "import-1",
+      1,
+      [selected[2]],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [""],
+    );
+    expect(screen.getByText("Added: 1")).toBeTruthy();
+    expect(screen.getByText("Already in vault: 1")).toBeTruthy();
+    expect(screen.getByText("Skipped: 1")).toBeTruthy();
+    expect(screen.getByText("Unsupported type")).toBeTruthy();
+    expect(screen.getByText("notes.txt")).toBeTruthy();
+  },
+);
 
 it("starts a new shoot's first group after reading only that group's files", async () => {
   const selected = files();

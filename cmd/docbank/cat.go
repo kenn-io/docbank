@@ -47,6 +47,7 @@ files use "docbank rendition window"; for an older version use
 		if _, err := rc.CopyVerified(cmd.OutOrStdout()); err != nil {
 			return fmt.Errorf("streaming %q: %w", args[0], err)
 		}
+		reportAction(cmd, c, "document_opened", "", false)
 		return nil
 	},
 }

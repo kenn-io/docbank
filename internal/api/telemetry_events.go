@@ -12,14 +12,15 @@ const telemetryEventsPath = "/api/daemon/telemetry/events"
 
 // TelemetryEventRequest documents what interfaces post; the daemon's capture handler decodes it.
 type TelemetryEventRequest struct {
-	Properties *TelemetryEventProperties `json:"properties,omitempty" doc:"Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket."`
+	Properties *TelemetryEventProperties `json:"properties,omitempty" doc:"Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, and search_run requires search_type."`
 	Event      string                    `json:"event" minLength:"1" doc:"An event the daemon's telemetry allowlist names. Other events return 400."`
 }
 
 // TelemetryEventProperties lists the properties the telemetry allowlist sends.
 type TelemetryEventProperties struct {
+	SearchType     string `json:"search_type,omitempty" enum:"text,semantic,hybrid" doc:"The executed search mode. Required for search_run."`
 	Screen         string `json:"screen,omitempty" doc:"The screen shown. Other values return 400 for screen_viewed."`
-	Surface        string `json:"surface,omitempty" enum:"web,tui" doc:"The interface that sent the event."`
+	Surface        string `json:"surface,omitempty" enum:"web,tui,cli" doc:"The interface that sent the event."`
 	DurationBucket string `json:"duration_bucket,omitempty" doc:"How long a session_ended session lasted."`
 }
 

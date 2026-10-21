@@ -10,11 +10,14 @@ import (
 
 const (
 	// EnabledEnv set to "0" turns off docbank's anonymous usage telemetry.
-	EnabledEnv        = "DOCBANK_TELEMETRY_ENABLED"
-	EventDaemonActive = posthog.EventDaemonActive
-	EventAppOpened    = "app_opened"
-	EventScreenViewed = "screen_viewed"
-	EventSessionEnded = "session_ended"
+	EnabledEnv          = "DOCBANK_TELEMETRY_ENABLED"
+	EventDaemonActive   = posthog.EventDaemonActive
+	EventAppOpened      = "app_opened"
+	EventScreenViewed   = "screen_viewed"
+	EventSessionEnded   = "session_ended"
+	EventDocumentAdded  = "document_added"
+	EventSearchRun      = "search_run"
+	EventDocumentOpened = "document_opened"
 	// HeartbeatJobName is the supervised job that sends daemon_active.
 	HeartbeatJobName = "telemetry:heartbeat"
 
@@ -57,6 +60,7 @@ func New(opts Options) *Reporter {
 			return posthog.DisabledReporter()
 		}
 	}
+	surface := posthog.RequireProperty("surface", posthog.AllowStringValues("web", "tui", "cli"))
 	reporter, err := posthog.NewReporter(posthog.Options{
 		Logger:      logger,
 		APIKey:      postHogAPIKey,
@@ -71,6 +75,11 @@ func New(opts Options) *Reporter {
 	},
 		posthog.WithAllowedEvent(EventDaemonActive),
 		posthog.WithAllowedEvent(EventAppOpened),
+		posthog.WithAllowedEvent(EventDocumentAdded, surface),
+		posthog.WithAllowedEvent(EventDocumentOpened, surface),
+		posthog.WithAllowedEvent(EventSearchRun,
+			surface,
+			posthog.RequireProperty("search_type", posthog.AllowStringValues("text", "semantic", "hybrid"))),
 		posthog.WithAllowedEvent(EventScreenViewed,
 			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),
 			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui"))),
@@ -103,4 +112,12 @@ func DurationBucket(elapsed time.Duration) string {
 	default:
 		return durationOverThirtyMinutes
 	}
+}
+
+// SearchType names the executed search mode in anonymous action events.
+func SearchType(actualMode string) string {
+	if actualMode == "lexical" {
+		return "text"
+	}
+	return actualMode
 }

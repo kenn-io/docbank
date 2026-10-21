@@ -35,7 +35,7 @@
     onhelp,
     shortcuts,
     photoID = "",
-    onphotochange = () => {},
+    onphotochange = () => true,
     onconceal,
     access,
     photoActionError = "",
@@ -60,7 +60,7 @@
     onhelp?: () => void;
     shortcuts?: ShortcutManager;
     photoID?: string;
-    onphotochange?: (id: string, mode: "open" | "step" | "close") => void;
+    onphotochange?: (id: string, mode: "open" | "step" | "close") => boolean;
     onconceal?: (discarded: boolean) => void;
     access: HiddenAccess;
     photoActionError?: string;

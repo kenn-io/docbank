@@ -484,6 +484,16 @@ func (b *tuiDaemonBackend) ReportScreen(ctx context.Context, screen string) erro
 	})
 }
 
+func (b *tuiDaemonBackend) ReportAction(ctx context.Context, event, searchType string) error {
+	if !actionReportingAllowed(true, false) {
+		return nil
+	}
+	_, err := withTUIMutationClient(ctx, b, func(c *daemonconn.Connection) (struct{}, error) {
+		return struct{}{}, postAction(ctx, c, event, "tui", searchType)
+	})
+	return err
+}
+
 func init() {
 	rootCmd.AddCommand(tuiCmd)
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
@@ -81,7 +82,7 @@
     onactionerror,
     oninvalidate,
     photoID = "",
-    onphotochange = () => {},
+    onphotochange = () => true,
     onexport,
     onadd,
     uploadChannelError = "",
@@ -112,7 +113,7 @@
     onactionerror?: (error: string) => void;
     oninvalidate?: () => void | Promise<void>;
     photoID?: string;
-    onphotochange?: (id: string, mode: "open" | "step" | "close") => void;
+    onphotochange?: (id: string, mode: "open" | "step" | "close") => boolean;
     onexport?: (input: ExportInput) => void;
     onadd?: () => void;
     uploadChannelError?: string;
@@ -379,6 +380,9 @@
   let reloadedRow: Photos["items"][number] | undefined;
   let reloadRevision = $state(0);
   let detailController: AbortController | undefined;
+  // An explicit open counts once the viewer shows that photo. Stepping to another
+  // photo or closing the viewer first stays silent.
+  let openIntent = $state("");
   let visitController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
   const listed = $derived(photos.items.some((item) => item.asset_id === photoID));
@@ -518,7 +522,7 @@
   function open(id: string, element: HTMLElement) {
     if (!editor.canChangeTarget()) return;
     captureReturn(element);
-    onphotochange(id, "open");
+    if (onphotochange(id, "open")) openIntent = id;
   }
   async function move(direction: -1 | 1) {
     if (!editor.canChangeTarget()) return;
@@ -659,6 +663,14 @@
         : direct
       : undefined,
   );
+  $effect(() => {
+    if (!openIntent) return;
+    if (photoID && photoID !== openIntent) openIntent = "";
+    else if (current?.asset_id === openIntent && !detailLoading && !detailError) {
+      openIntent = "";
+      reportAction(photos.session, "document_opened");
+    }
+  });
   const exportSelection = $derived(photos.scope());
   const exportSelectionCount = $derived(exportSelection.asset_ids?.length ?? photos.total);
   function exportPhotos(selected = false): void {
@@ -1090,11 +1102,15 @@
               class="photo-search"
               onsubmit={(event) => {
                 event.preventDefault();
-                void photos.setQuery({
+                const text = search.trim();
+                const pending = photos.setQuery({
                   ...photos.baseQuery,
                   text: search,
                   syntax,
                   sort: photoSearchSort({ text: search, syntax }),
+                });
+                void pending?.then((accepted) => {
+                  if (accepted && text) reportAction(photos.session, "search_run", "text");
                 });
               }}
             >
@@ -1253,7 +1269,7 @@
                     onhidden={(id) => void setHidden(id)}
                     selectedIDs={photos.selectedIDs}
                     onselect={select}
-                    onopen={open}
+                    onopen={(id, element) => open(id, element)}
                     oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)}
                     onloadmore={() => {
                       if (!mapMode) void photos.loadMore(preserve);
@@ -1423,7 +1439,7 @@
               session={photos.session}
               onauthfailure={photos.onauthfailure}
               view={photos.mapView}
-              onopen={open}
+              onopen={(id, element) => open(id, element)}
               onvisible={(rows) => {
                 visible = rows;
               }}
@@ -1458,8 +1474,11 @@
       items={fromGrid ? ordered : []}
       canLoadMore={fromGrid && (!mapMode || photos.items.length < mapPhotoLimit) && !!photos.cursor}
       onmove={move}
-      onchoose={(id) => onphotochange(id, "step")}
-      onclose={() => onphotochange("", "close")}
+      onchoose={(id) => editor.canChangeTarget() && onphotochange(id, "step")}
+      onclose={() => {
+        openIntent = "";
+        onphotochange("", "close");
+      }}
     />{/if}
 </main>
 {#if modal && modalAlbum && albums}

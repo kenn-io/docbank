@@ -1206,6 +1206,8 @@ such as `app_opened` or `session_ended`, from a browser session or the API key. 
 400 for any event its allowlist omits and sends nothing when telemetry is off.
 `session_ended` accepts optional `surface` and `duration_bucket` properties; missing or invalid duration values are omitted from capture.
 `screen_viewed` requires a fixed `screen` name and `surface` of `web` or `tui`, and answers 400 for any other value. A daily duplicate returns the accepted receipt without capture. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
+Core actions `document_added`, `search_run`, and `document_opened` require `surface` of `web`, `tui`, or `cli`. `search_run` also requires `search_type` of `text`, `semantic`, or `hybrid`. Missing or unsupported required properties return 400, including when reporting is disabled. The daemon forwards each valid report without counting state; PostHog queries count installs per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs. CLI and TUI actions omit runs under `CLAUDECODE` or `CODEX_THREAD_ID`.
+Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
 See [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
 
 A hidden `GET /api/daemon/web-map-tiles/{z}/{x}/{y}` (not in the OpenAPI document) fetches one map tile from the configured provider, so the provider URL and key never reach the browser. It exists only with `[web] enabled` and `[web.map_tiles]` set, and takes a browser session or the API key. It answers 400 for coordinates outside the zoom range and 502 for any provider failure. See [photo map tiles](../configuration.md#photo-map-tiles).

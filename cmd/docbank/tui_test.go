@@ -334,6 +334,39 @@ func TestTUIBackendDoesNotReplayMutationAfterResponseIsLost(t *testing.T) {
 	assert.Equal(t, int32(1), acquires.Load())
 }
 
+func TestTUIBackendDoesNotReplayActionAfterResponseIsLost(t *testing.T) {
+	var accepted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		accepted = append(accepted, string(body))
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("test server does not support connection hijacking")
+			return
+		}
+		connection, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijacking test connection: %v", err)
+			return
+		}
+		if err := connection.Close(); err != nil {
+			t.Errorf("closing test connection: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, ""), nil
+	}}
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	err := backend.ReportAction(t.Context(), "search_run", "lexical")
+	require.Error(t, err)
+	assert.True(t, daemonconn.IsTransportError(err))
+	require.Len(t, accepted, 1)
+}
+
 func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

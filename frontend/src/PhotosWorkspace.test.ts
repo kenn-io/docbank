@@ -1,3 +1,4 @@
+import * as actions from "./action-events.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
@@ -58,6 +59,8 @@ vi.mock("./PhotoMap.svelte", () => ({
   },
 }));
 
+vi.mock("./action-events.js", () => ({ reportAction: vi.fn() }));
+
 const tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 };
 
 afterEach(() => {
@@ -66,6 +69,7 @@ afterEach(() => {
   map.props = undefined;
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
+  vi.mocked(actions.reportAction).mockClear();
   vi.restoreAllMocks();
   localStorage.clear();
   new Photos("scoped", vi.fn()).setDensity("comfortable");
@@ -283,6 +287,50 @@ it("restores applied search after a facet click and keeps empty-library guidance
     ),
   ).toBeTruthy();
   photos.dispose();
+  await cache.dispose();
+});
+
+it("reports completed photo searches while blank and canceled searches stay silent", async () => {
+  const action = vi.mocked(actions.reportAction);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] })));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const submit = vi.spyOn(photos, "setQuery");
+  render(PhotosWorkspace, { photos, cache });
+  const search = screen.getByRole("searchbox", { name: "Search photos" });
+  expect(action).not.toHaveBeenCalled();
+  await fireEvent.input(search, { target: { value: "   " } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(photos.loading).toBe(false));
+  expect(action).not.toHaveBeenCalled();
+  await fireEvent.input(search, { target: { value: "Nikon" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() =>
+    expect(action).toHaveBeenCalledExactlyOnceWith("scoped", "search_run", "text"),
+  );
+  action.mockClear();
+  fetcher.mockClear();
+  submit.mockClear();
+  fetcher.mockImplementation(() => new Promise<Response>((resolve) => (finish = resolve)));
+  await fireEvent.input(search, { target: { value: "river" } });
+  await fireEvent.submit(search.closest("form")!);
+  expect(fetcher).toHaveBeenCalledOnce();
+  photos.dispose();
+  await act(async () => {
+    finish(Response.json({ items: [], total: 0, facets: [] }));
+    await submit.mock.results[0].value;
+  });
+  expect(actions.reportAction).not.toHaveBeenCalled();
   await cache.dispose();
 });
 
@@ -1024,6 +1072,7 @@ it.each(["success", "grid", "removed", "pending"])(
     const onphotochange = vi.fn((id: string) => {
       history.replaceState(null, "", `/photos#photo=${id}`);
       void view.rerender({ photos, cache, photoID: id, onphotochange });
+      return true;
     });
     view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange });
     await fireEvent.keyDown(
@@ -1143,6 +1192,7 @@ it.each(["close", "photo", "unmount", "live"])(
     let view: ReturnType<typeof render>;
     const onphotochange = vi.fn((id: string) => {
       void view.rerender({ photos, cache, photoID: id, onphotochange });
+      return true;
     });
     view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange });
     await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 2.jpg" }), {
@@ -2005,8 +2055,7 @@ it("guards loupe navigation through the metadata editor", async () => {
   vi.spyOn(photos, "lookup").mockImplementation(async (id) =>
     photo(Number(id.slice("photo-".length))),
   );
-  const onphotochange = vi.fn();
-  const canChangeTarget = vi.spyOn(photos.authored, "canChangeTarget").mockReturnValue(false);
+  const onphotochange = vi.fn().mockReturnValue(false);
   photos.viewerReturn = {
     contextID: photos.contextID,
     assetID: "photo-1",
@@ -2021,11 +2070,23 @@ it("guards loupe navigation through the metadata editor", async () => {
     photoID: "photo-1",
   });
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  photos.authored.stage({ caption: "Draft caption" });
   await fireEvent.keyDown(viewer, { key: "ArrowRight" });
   expect(onphotochange).not.toHaveBeenCalled();
-  canChangeTarget.mockReturnValue(true);
-  await fireEvent.keyDown(viewer, { key: "ArrowRight" });
+  const filmstrip = within(viewer).getByRole("navigation", { name: "Photos in current result" });
+  await fireEvent.click(within(filmstrip).getByRole("button", { name: "Show Photo 2.jpg" }));
+  expect(onphotochange).not.toHaveBeenCalled();
+  expect(actions.reportAction).not.toHaveBeenCalled();
+  photos.authored.reset();
+  await fireEvent.click(within(filmstrip).getByRole("button", { name: "Show Photo 2.jpg" }));
   expect(onphotochange).toHaveBeenCalledWith("photo-2", "step");
+  expect(actions.reportAction).not.toHaveBeenCalled();
+  onphotochange.mockReturnValue(true);
+  onphotochange.mockClear();
+  await fireEvent.keyDown(viewer, { key: "ArrowRight" });
+  expect(onphotochange).toHaveBeenCalledOnce();
+  expect(onphotochange).toHaveBeenCalledWith("photo-2", "step");
+  expect(actions.reportAction).not.toHaveBeenCalled();
   view.unmount();
   photos.dispose();
 });
@@ -2230,6 +2291,43 @@ async function openMapViewer({ props, view }: ReturnType<typeof openMapViewerSet
   await view.rerender({ ...props, photoID: "photo-1" });
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
 }
+it.each(["success", "failure", "closed"] as const)(
+  "reports Map opens after the viewer's lookup succeeds, outcome=%s",
+  async (outcome) => {
+    const { photos, lookup, props, view } = openMapViewerSetup();
+    props.onphotochange.mockReturnValue(true);
+    let resolve!: (row: PhotoBrowseRow) => void;
+    let reject!: (cause: Error) => void;
+    lookup.mockImplementation(
+      () =>
+        new Promise((done, fail) => {
+          resolve = done;
+          reject = fail;
+        }),
+    );
+    await vi.dynamicImportSettled();
+    map.onvisible!([mapPhoto(1)]);
+    await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+    await view.rerender({ ...props, photoID: "photo-1" });
+    // The viewer's own lookup decides the report; opening adds no second lookup.
+    expect(lookup).toHaveBeenCalledExactlyOnceWith("photo-1", expect.any(AbortSignal));
+    expect(actions.reportAction).not.toHaveBeenCalled();
+    if (outcome === "closed") {
+      await fireEvent.click(await screen.findByRole("button", { name: "Close photo viewer" }));
+      await view.rerender({ ...props, photoID: "" });
+    }
+    await act(async () => {
+      if (outcome === "failure")
+        reject(new APIError("This photo is no longer in this view.", 404, "not_found"));
+      else resolve(photo(1));
+    });
+    if (outcome === "success")
+      expect(actions.reportAction).toHaveBeenCalledExactlyOnceWith("scoped", "document_opened");
+    else expect(actions.reportAction).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);
+
 it("disables viewer continuation at the Map ceiling while retaining its cursor", async () => {
   const setup = openMapViewerSetup();
   const { photos, lookup, props, view } = setup;
