@@ -224,9 +224,9 @@
   }
   async function reread(ids: string[]) {
     const owns = claim(ids);
-    const rows = new Map(
-      (await photos.lookupMany(ids, AbortSignal.timeout(60_000))).map((row) => [row.asset_id, row]),
-    );
+    const signal = AbortSignal.any([reloadController.signal, AbortSignal.timeout(60_000)]);
+    const rows = new Map((await photos.lookupMany(ids, signal)).map((row) => [row.asset_id, row]));
+    if (signal.aborted) return;
     ids = ids.filter(owns);
     neighbors = [
       ...neighbors.filter((row) => !ids.includes(row.asset_id)),
@@ -473,37 +473,43 @@
       checkingDecision = false;
     }
     const id = photo.asset_id;
-    const success = await editor.decideStack(
-      {
-        hidden: photos.hidden,
-        asset_ids: stack,
-        current_id: id,
-        decision,
-        selected_ids:
-          decision === "selected" ? selectedFrames.filter((id) => stack.includes(id)) : undefined,
-        burst_gap_seconds: cull.run!.burstGapSeconds!,
-      },
-      refresh,
-      {
-        observed: [
-          photo,
-          ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
-        ],
-        beforeWrite: () => cull.verifyDecision(),
-      },
-    );
-    if (!success) return;
-    announcement =
-      decision === "representative"
-        ? "Representative chosen"
-        : decision === "all"
-          ? "Stack kept"
-          : decision === "selected"
-            ? "Selected frames kept"
-            : "Current frame kept";
-    await tick();
-    if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
-      cull.moveStack(1);
+    writesInFlight++;
+    try {
+      const success = await editor.decideStack(
+        {
+          hidden: photos.hidden,
+          asset_ids: stack,
+          current_id: id,
+          decision,
+          selected_ids:
+            decision === "selected" ? selectedFrames.filter((id) => stack.includes(id)) : undefined,
+          burst_gap_seconds: cull.run!.burstGapSeconds!,
+        },
+        refresh,
+        {
+          observed: [
+            photo,
+            ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
+          ],
+          beforeWrite: () => cull.verifyDecision(),
+        },
+      );
+      if (!success) return;
+      announcement =
+        decision === "representative"
+          ? "Representative chosen"
+          : decision === "all"
+            ? "Stack kept"
+            : decision === "selected"
+              ? "Selected frames kept"
+              : "Current frame kept";
+      await tick();
+      if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
+        cull.moveStack(1);
+    } finally {
+      writesInFlight--;
+      await reconcileWriteChanges();
+    }
   }
   function close() {
     if (canChangeTarget()) onclose();

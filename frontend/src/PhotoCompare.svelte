@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
-  import { affectsPhoto, type PhotoChange } from "./photoEvents.js";
+  import { onDestroy, onMount, untrack } from "svelte";
+  import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { Button, Modal } from "@kenn-io/kit-ui";
@@ -30,6 +30,17 @@
     void restoreFocus();
   });
   let reading: AbortController | undefined;
+  let displayedReading: AbortController | undefined;
+  onDestroy(() => displayedReading?.abort());
+  async function revalidateDisplayed() {
+    displayedReading?.abort();
+    const controller = (displayedReading = new AbortController());
+    const members = selected;
+    const values = await photos.lookupMany(members, controller.signal);
+    if (controller.signal.aborted || members !== selected) return;
+    rows = values;
+    unavailable = members.length - values.length;
+  }
   async function load(members: string[], live = false) {
     reading?.abort();
     const controller = (reading = new AbortController());
@@ -68,11 +79,14 @@
   });
   // A live change reads the shown photos again, and the destination of a move in flight.
   $effect(() =>
-    photos.watch((change: PhotoChange) =>
-      [...selected, ...target].some((id) => affectsPhoto(change, id))
-        ? load(target, true)
-        : undefined,
-    ),
+    photos.watch((change: PhotoChange) => {
+      const shownChanged = selected.some((id) => affectsPhoto(change, id));
+      if (!shownChanged && !target.some((id) => affectsPhoto(change, id))) return;
+      return settleReads([
+        shownChanged && target !== selected ? revalidateDisplayed() : undefined,
+        load(target, true),
+      ]);
+    }),
   );
   async function move(direction: -1 | 1) {
     if (moving || photos.blocking) return;

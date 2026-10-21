@@ -1434,6 +1434,69 @@ it.each(["edit", "Undo"])(
   },
 );
 
+it("keeps newer Cull values after a delayed stack receipt", async () => {
+  const before = preparedPhoto(1);
+  let finish!: (receipt: PhotoAuthoredReceipt) => void;
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  const { cull, photos } = await reviewThree();
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  await fireEvent.click(await readyButton("Keep all"));
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  vi.mocked(photos.lookupMany).mockResolvedValue([{ ...photo(1), rating: 4 }, photo(2), photo(3)]);
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(
+    photoPreparation([
+      { ...before, revision: 3, values: { ...before.values, rating: 4 } },
+      preparedPhoto(2),
+    ]),
+  );
+  await act(() => photos.changed(photoChange("photo-1")));
+  await screen.findByText("Unflagged · 4 stars");
+  await act(() =>
+    finish({
+      receipt_id: "stack-decision",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick", rating: 5 } }],
+    }),
+  );
+  await readyButton("Keep all");
+  await screen.findByText("Unflagged · 4 stars");
+  photos.dispose();
+});
+
+it("leaves saved progress alone when a live lookup finishes after Exit", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const store = photoCullStorage("synthetic-vault");
+  const { cull, photos, onclose, unmount } = await reviewPhoto(photo(1), false, store);
+  await store.replace(cull.run!);
+  let finish!: (rows: PhotoBrowseRow[]) => void;
+  let signal!: AbortSignal;
+  vi.mocked(photos.lookupMany).mockImplementationOnce((_ids, active) => {
+    signal = active!;
+    return new Promise((resolve) => (finish = resolve));
+  });
+  const reading = photos.changed(photoChange("photo-1"));
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.click(await readyButton("Exit cull"));
+  expect(onclose).toHaveBeenCalledOnce();
+  await cull.flush();
+  unmount();
+  const progress = vi.spyOn(store, "checkpoint");
+  await act(async () => {
+    finish([]);
+    await reading;
+    await cull.flush();
+  });
+  expect(progress).not.toHaveBeenCalled();
+  expect(cull.run!.checkpoint.unavailable).toEqual([]);
+  expect(signal.aborted).toBe(true);
+  photos.dispose();
+});
+
 it.each(["updated", "removed"])(
   "drops an older conflict-recovery lookup after a live photo is %s",
   async (outcome) => {
