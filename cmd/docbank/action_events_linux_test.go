@@ -174,6 +174,11 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 			assert.Empty(t, events)
 		})
 	}
+	t.Run("add invalid progress", func(t *testing.T) {
+		err := execute(false, false, []string{"add", "synthetic.txt", "--progress", "invalid"})
+		require.ErrorContains(t, err, `invalid --progress value "invalid"`)
+		assert.Empty(t, events)
+	})
 	t.Run("cat digest failure", func(t *testing.T) {
 		badDigest = true
 		defer func() { badDigest = false }()
@@ -222,8 +227,21 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 }
 
 func TestActionReportingStandardStreams(t *testing.T) {
-	cmd, c, reports := actionReportingFixture(t)
-	terminal := cmd.InOrStdin()
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	terminal := actionTerminal(t)
+	reports := make(chan string, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		reports <- string(body)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"status":"queued"}`)
+	}))
+	t.Cleanup(server.Close)
+	c := daemonconn.New(server.URL, "synthetic-key")
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
 	for _, tc := range []struct {
 		stream string
 		want   int
@@ -247,27 +265,4 @@ func TestActionReportingStandardStreams(t *testing.T) {
 			assert.Empty(t, reports)
 		})
 	}
-}
-
-func actionReportingFixture(t *testing.T) (*cobra.Command, *daemonconn.Connection, chan string) {
-	t.Helper()
-	t.Setenv("CLAUDECODE", "")
-	t.Setenv("CODEX_THREAD_ID", "")
-	terminal := actionTerminal(t)
-	events := make(chan string, 10)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		assert.NoError(t, err)
-		events <- string(body)
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = io.WriteString(w, `{"status":"queued"}`)
-	}))
-	t.Cleanup(server.Close)
-	c := daemonconn.New(server.URL, "synthetic-key")
-	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
-	cmd.SetIn(terminal)
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-	return cmd, c, events
 }

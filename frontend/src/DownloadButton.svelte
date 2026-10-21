@@ -101,12 +101,12 @@
       outcome = `Verified ${formatBytes(prepared.size)}; browser save started.`;
     } catch (cause) {
       if (controller !== active) return;
-      reportFailure(activeSession, "open", cause);
       if (cause instanceof DOMException && cause.name === "AbortError") {
         outcome = "Download cancelled; no file was published.";
       } else if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
       } else {
+        reportFailure(activeSession, "open", cause);
         failed = true;
         outcome = cause instanceof Error ? cause.message : String(cause);
       }

@@ -72,17 +72,17 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
 			readme := fake.nodes["/README.txt"]
-			empty := api.DocumentSearchReport{ActualMode: "lexical"}
 			nonempty := naturalSearchReport(readme.ID, readme.CurrentVersionID, "excerpt")
-			fake.naturalSearch, fake.naturalRerankSearch = nonempty, empty
+			fake.naturalSearch, fake.naturalRerankSearch = nonempty, nonempty
 			wantRows := 0
 			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
 			if baseEmpty {
-				fake.naturalSearch, fake.naturalRerankSearch = empty, nonempty
+				readme.TrashedAt = "2026-10-20T12:00:00Z"
+				fake.nodes["/README.txt"] = readme
 				wantRows = 1
 				want = []actionCall{{event: "search_run", searchType: "lexical"}}
 			}
-			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied"}
+			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
@@ -91,6 +91,14 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			base := model.loadNaturalSearch("report", model.requestID)()
 			model, cmd := updateModel(t, model, base)
 			require.True(t, model.naturalRerankPending)
+			if baseEmpty {
+				require.Empty(t, model.rows)
+				readme.TrashedAt = ""
+			} else {
+				require.Len(t, model.rows, 1)
+				readme.TrashedAt = "2026-10-20T12:00:00Z"
+			}
+			fake.nodes["/README.txt"] = readme
 			assert.Empty(t, fake.actions)
 			batch, ok := cmd().(tea.BatchMsg)
 			require.True(t, ok)

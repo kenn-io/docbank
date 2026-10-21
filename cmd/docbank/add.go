@@ -63,6 +63,14 @@ Exit 1 if any file failed (each failure is listed).`,
 		if addPreflight && addReplace {
 			return usageError(errors.New("--replace cannot be used with --preflight"))
 		}
+		var mode backupProgressMode
+		if !addJSON && !addPreflight {
+			var err error
+			mode, err = progressModeFromFlag("add", addProgress)
+			if err != nil {
+				return err
+			}
+		}
 		opts := daemonconn.IngestOptions{Include: addInclude, Exclude: addExclude, Replace: addReplace}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -98,10 +106,6 @@ Exit 1 if any file failed (each failure is listed).`,
 			}
 
 		} else {
-			mode, modeErr := progressModeFromFlag("add", addProgress)
-			if modeErr != nil {
-				return modeErr
-			}
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
 			rep, err = c.IngestStream(cmd.Context(), abs, addDest, opts, renderer.handle)

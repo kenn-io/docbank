@@ -3,6 +3,7 @@ import * as downloads from "./download.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import DownloadButton from "./DownloadButton.svelte";
+import { APIError } from "./api-transport.js";
 import type { SelectedSource } from "./selectedSource.js";
 
 afterEach(() => {
@@ -110,7 +111,23 @@ it.each([
     if (cancels) await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await screen.findByText(message);
     expect(action.mock.calls).toEqual(succeeds ? [["session", "document_opened"]] : []);
-    expect(failure.mock.calls).toEqual(succeeds ? [] : [["session", "open", cause]]);
+    expect(failure.mock.calls).toEqual(succeeds || cancels ? [] : [["session", "open", cause]]);
     expect(offer).toHaveBeenCalledTimes(succeeds ? 1 : 0);
   },
 );
+
+it("leaves sign-in failures to the authentication handler", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+  const cause = new APIError("Unauthorized", 401, "unauthorized");
+  vi.spyOn(downloads, "prepareExactDownload").mockRejectedValue(cause);
+  const onauthfailure = vi.fn();
+  render(DownloadButton, {
+    session: "session",
+    source: source("11111111-1111-4111-8111-111111111111", "a".repeat(64)),
+    onauthfailure,
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Download" }));
+  await waitFor(() => expect(onauthfailure).toHaveBeenCalledWith(cause));
+  expect(failure).not.toHaveBeenCalled();
+});
