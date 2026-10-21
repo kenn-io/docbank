@@ -149,7 +149,7 @@ func CombineStamped(ctx context.Context, groups [][]byte, labels []PageLabel, ou
 	for index, label := range labels {
 		outputLabels[index] = PageLabel{SourcePage: index + 1, Label: label.Label}
 	}
-	if err := verifyStampedLabels(staged.Bytes(), outputLabels); err != nil {
+	if err := verifyStampedLabels(ctx, staged.Bytes(), outputLabels); err != nil {
 		return zero, err
 	}
 	if err := writeSelectedOutput(output, staged.Bytes()); err != nil {
@@ -192,7 +192,7 @@ func VerifyStampedReader(ctx context.Context, source io.ReadSeeker, labels []Pag
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return zero, stampFailure("rewind retained Bates PDF", err)
 	}
-	if err := verifyStampedLabelsReader(source, outputLabels); err != nil {
+	if err := verifyStampedLabelsReader(ctx, source, outputLabels); err != nil {
 		return zero, err
 	}
 	if _, err := source.Seek(0, io.SeekStart); err != nil {

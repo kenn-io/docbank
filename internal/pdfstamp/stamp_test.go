@@ -187,7 +187,7 @@ func TestVerifyStampedLabelsRejectsASubstitutedOutputLabel(t *testing.T) {
 	_, err := Stamp(t.Context(), bytes.NewReader(source), []PageLabel{{SourcePage: 1, Label: "OUR000099"}}, recipe, &stamped)
 	require.NoError(t, err)
 
-	err = verifyStampedLabels(stamped.Bytes(), []PageLabel{{SourcePage: 1, Label: "OUR000041"}})
+	err = verifyStampedLabels(t.Context(), stamped.Bytes(), []PageLabel{{SourcePage: 1, Label: "OUR000041"}})
 
 	require.ErrorIs(t, err, ErrStampEngineFailure)
 }
@@ -239,4 +239,14 @@ func TestStampRejectsNilDestination(t *testing.T) {
 	_, err := Stamp(t.Context(), bytes.NewReader(syntheticPDF(t, 1, "Letter")),
 		[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), nil)
 	require.ErrorIs(t, err, ErrStampEngineFailure)
+}
+
+func TestStampSourceInspectionHonorsCancellation(t *testing.T) {
+	source := syntheticPDF(t, 1, "Letter")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, _, err := inspectSource(ctx, bytes.NewReader(source), false)
+
+	require.ErrorIs(t, err, context.Canceled)
 }
