@@ -141,6 +141,7 @@ func (s *Store) publishPhotoEvents(events []PhotoEvent) {
 }
 
 // Capture OLD and NEW asset IDs; definitions use the empty ID for a full refetch.
+// An update value of "-" skips UPDATE capture for immutable rows.
 // Triggers drain photo_timeline_pending into captured photo_timeline rows in the
 // same transaction. Photos reads use the captured person, alias, assertion, and
 // face rows, while person_identities and person_splits serve identity/split replay.
@@ -157,11 +158,11 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{"content_versions", `SELECT f.asset_id AS id FROM photo_files f JOIN nodes n ON n.id=f.node_id WHERE n.current_version_id=$row.version_id`, ""},
 	{"content_versions", photoCaptureDuplicateVersionIDs, ""},
 	{"node_tags", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, ""},
-	{"provenance", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, ""},
+	{"provenance", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, "-"},
 	{"source_metadata_heads", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.blob_hash=$row.source_sha256`, ""},
 	{"photo_technical_metadata", `SELECT f.asset_id AS id FROM source_metadata_heads h JOIN content_versions v ON v.blob_hash=h.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE h.generation_id=$row.generation_id`, ""},
 	{"visual_preview_heads", photoCaptureVersionIDs, ""},
-	{"visual_preview_generations", photoCaptureVersionIDs, ""},
+	{"visual_preview_generations", photoCaptureVersionIDs, "-"},
 	{"photo_quality_signals", photoCaptureVersionIDs, ""},
 	{"person_document_assertions", photoCaptureVersionIDs, ""},
 	{"photo_faces", `SELECT f.asset_id AS id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=$row.content_version_id`, ""},
@@ -200,6 +201,9 @@ var photoCaptureTriggers = sync.OnceValue(func() []photoCaptureTrigger {
 WHEN ` + photoCaptureActive + ` AND OLD.hidden_at IS NOT NEW.hidden_at BEGIN INSERT INTO photo_event_capture VALUES('',0) ON CONFLICT(id) DO NOTHING; END`}}
 	for i, dep := range photoCaptureDependencies {
 		for _, op := range []struct{ timing, action, row string }{{"AFTER", "INSERT", "NEW"}, {"BEFORE", "UPDATE", "OLD"}, {"AFTER", "UPDATE", "NEW"}, {"BEFORE", "DELETE", "OLD"}} {
+			if op.action == "UPDATE" && dep.update == "-" {
+				continue
+			}
 			when := " WHEN " + photoCaptureActive
 			if op.action == "UPDATE" && dep.update != "" {
 				when += " AND (" + dep.update + ")"

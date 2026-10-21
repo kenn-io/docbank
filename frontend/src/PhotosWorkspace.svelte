@@ -540,7 +540,7 @@
       return settleReads([
         photoID && affectsPhoto(change, photoID) ? revalidateDetail(photoID) : undefined,
         // The editor retains changes until the user clears a draft.
-        (photoID ? loupeMetadata : editing) ? editor.invalidate(change) : undefined,
+        editor.invalidate(change),
       ]);
     }),
   );
@@ -1437,7 +1437,7 @@
                 {#if selectedStack}
                   <Button
                     size="sm"
-                    disabled={photos.loading ||
+                    disabled={photos.blocking ||
                       editor.busy ||
                       editor.loading ||
                       editor.stackLoading ||
@@ -1446,7 +1446,7 @@
                   >
                   <Button
                     size="sm"
-                    disabled={photos.loading ||
+                    disabled={photos.blocking ||
                       editor.busy ||
                       editor.loading ||
                       editor.stackLoading ||
@@ -1455,7 +1455,7 @@
                   >
                   {#if photos.selectedIDs.size === 1}<Button
                       size="sm"
-                      disabled={photos.loading ||
+                      disabled={photos.blocking ||
                         editor.busy ||
                         editor.loading ||
                         editor.stackLoading ||

@@ -102,6 +102,59 @@ func TestPhotoEventsCaptureAcrossConnectionsAndUnreadCommits(t *testing.T) {
 	})
 }
 
+func TestPhotoEventsCaptureSetupFailure(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
+	// Installation sees the table, but arming fails without its companion.
+	_, err := s.writeDB.ExecContext(t.Context(), `CREATE TEMP TABLE photo_event_capture (id TEXT PRIMARY KEY, hidden_only INTEGER NOT NULL); INSERT INTO photo_event_capture VALUES('setup-marker',0)`)
+	require.NoError(t, err)
+	events := watchPhotoChanges(t, s)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		var id string
+		// The failed setup's DELETE must have rolled back to the savepoint.
+		require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT id FROM temp.photo_event_capture`).Scan(&id))
+		require.Equal(t, "setup-marker", id)
+		_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Committed after setup failure' WHERE node_id=?`, node.ID)
+		return err
+	}))
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	var caption string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT caption FROM photo_files WHERE node_id=?`, node.ID).Scan(&caption))
+	require.Equal(t, "Committed after setup failure", caption)
+}
+
+func TestPhotoEventsCaptureDisarmFailure(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
+	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	events := watchPhotoChanges(t, s)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Committed before disarm failure' WHERE node_id=?`, node.ID)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(t.Context(), `CREATE TEMP TABLE disarm_connection_marker (id INTEGER); DROP TABLE temp.photo_event_capture_active`)
+		return err
+	}))
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
+	var caption string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT caption FROM photo_files WHERE node_id=?`, node.ID).Scan(&caption))
+	require.Equal(t, "Committed before disarm failure", caption)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		var markers int
+		require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_temp_master WHERE name='disarm_connection_marker'`).Scan(&markers))
+		require.Zero(t, markers, "the armed connection was discarded")
+		_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Committed on replacement connection' WHERE node_id=?`, node.ID)
+		return err
+	}))
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT caption FROM photo_files WHERE node_id=?`, node.ID).Scan(&caption))
+	require.Equal(t, "Committed on replacement connection", caption)
+}
+
 func TestPhotoEventsNonPhotoFiltering(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

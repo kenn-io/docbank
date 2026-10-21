@@ -3225,6 +3225,74 @@ it("keeps rating shortcuts working while a live refresh is in flight", async () 
   photos.dispose();
 });
 
+it("trashes with the refreshed revision after a shortcut prepared targets with Metadata closed", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.authored.targets = [];
+  photos.selectLoaded();
+  let revision = 1;
+  const target = () => preparedPhoto(1, { asset_revision: revision, revision });
+  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () =>
+    photoPreparation([target()]),
+  );
+  vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
+    const before = target();
+    revision = 2;
+    return { receipt_id: "rated", before: [before], after: [target()] };
+  });
+  const trash = vi
+    .spyOn(api, "trashPhotoAsset")
+    .mockResolvedValue({ ...photoPreparation([target()]).assets[0]!, revision: 4 });
+  stubPhotoFetch(async () => Response.json({ items: [{ ...photo(1), revision }], total: 1 }));
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    shortcuts,
+  });
+  await tick();
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "4", cancelable: true }));
+  await waitFor(() => expect(photos.authored.targets[0]?.revision).toBe(2));
+  await waitFor(() => expect(photos.authored.busy || photos.loading).toBe(false));
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+  revision = 3;
+  await act(async () => {
+    await photos.refresh(undefined, true);
+    await photos.changed(photoChange("photo-1"));
+  });
+  expect(photos.items[0]?.revision).toBe(3);
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
+  await waitFor(() => expect(trash).toHaveBeenCalledOnce());
+  expect(trash.mock.calls[0]?.[1]).toEqual({ "If-Match": "3" });
+  photos.dispose();
+});
+
+it("keeps stack decisions available during a background refresh", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const row = {
+    ...photo(1),
+    stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" },
+  };
+  photos.items = [row];
+  photos.selectLoaded();
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(photos.loading).toBe(true));
+  for (const name of ["Keep all", "Keep selected", "Choose representative"]) {
+    expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+  }
+  finish(Response.json({ items: [row], total: 1 }));
+  await refreshing;
+  photos.dispose();
+});
+
 it("keeps a rotation edit when an older live detail response arrives", async () => {
   const before = preparedPhoto(1);
   const photos = workspaceWithPreparedPhoto(before);
