@@ -18189,6 +18189,7 @@ components:
         backup_interval_seconds:
           description: Omit to keep the override.
           format: int64
+          maximum: 9223372036
           minimum: 0
           type: integer
         backup_keep_last:

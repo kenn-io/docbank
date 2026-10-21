@@ -45,7 +45,7 @@ func startBackupSchedule(d Deps) error {
 	err := d.Jobs.Start("backup:scheduled", func(ctx context.Context) error {
 		return RunBackupSchedule(ctx, d)
 	})
-	if errors.Is(err, jobs.ErrDuplicate) {
+	if errors.Is(err, jobs.ErrDuplicate) || errors.Is(err, jobs.ErrClosed) {
 		return nil
 	}
 	return err
@@ -66,16 +66,33 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 	}()
 	captureDue := false
 	lastFailure := ""
+	reportFailure := func(err error, retry time.Duration) {
+		jobs.ReportError(ctx, err)
+		if failure := err.Error(); failure != lastFailure {
+			logger.Error("scheduled backup failed", "error", err, "retry_in", retry)
+			lastFailure = failure
+		}
+	}
 	schedule := backupSchedule{}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		settings, err := d.Store.PhotoSettings(ctx)
-		if err != nil {
-			return err
-		}
 		cfg := effectiveBackupConfig(d.Cfg.Backup, settings)
+		if err == nil {
+			err = cfg.ValidateSchedule()
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			reportFailure(err, time.Minute)
+			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
+				return err
+			}
+			continue
+		}
 		interval := cfg.Interval.Std()
 		if interval <= 0 {
 			if holding && d.Tracker != nil {
@@ -83,7 +100,7 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			}
 			holding, captureDue, lastFailure = false, false, ""
 			jobs.ReportError(ctx, nil)
-			if err := jobs.Wait(ctx, time.Minute); err != nil {
+			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
 				return err
 			}
 			continue
@@ -101,22 +118,26 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			if schedule.stale {
 				err = fmt.Errorf("%w; newest scheduled backup is stale", err)
 			}
-			jobs.ReportError(ctx, err)
-			if failure := err.Error(); failure != lastFailure {
-				logger.Error("scheduled backup failed", "error", err, "retry_in", retry)
-				lastFailure = failure
-			}
+			reportFailure(err, retry)
 			delay = retry
 		} else {
+			captureDue = false
 			lastFailure = ""
 		}
 		changed := false
-		if waitErr := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now, func() bool {
+		if waitErr := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now, d.BackupScheduleWake, func() (bool, error) {
 			next, readErr := d.Store.PhotoSettings(ctx)
-			changed = readErr != nil || effectiveBackupConfig(d.Cfg.Backup, next) != cfg
-			return changed
+			changed = effectiveBackupConfig(d.Cfg.Backup, next) != cfg
+			return changed, readErr
 		}); waitErr != nil {
-			return waitErr
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			reportFailure(waitErr, time.Minute)
+			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
+				return err
+			}
+			continue
 		}
 		if changed {
 			captureDue = false
@@ -128,7 +149,7 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 	}
 }
 
-func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time.Time, changed func() bool) error {
+func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time.Time, wake <-chan struct{}, changed func() (bool, error)) error {
 	// Wall time counts suspension, while timer clocks can stop during sleep.
 	// Read settings at each minute wake so runtime changes recompute the deadline.
 	wallDeadline := deadline.Round(0)
@@ -136,17 +157,32 @@ func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if changed != nil && changed() {
-			return nil
+		if changed != nil {
+			if changed, err := changed(); changed || err != nil {
+				return err
+			}
 		}
 		// The original monotonic deadline also bounds waits when wall time moves back.
 		remaining := min(time.Until(deadline), wallDeadline.Sub(now().Round(0)))
 		if remaining <= 0 {
 			return nil
 		}
-		if err := jobs.Wait(ctx, min(remaining, time.Minute)); err != nil {
+		if err := waitBackupSchedule(ctx, min(remaining, time.Minute), wake); err != nil {
 			return err
 		}
+	}
+}
+
+func waitBackupSchedule(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-wake:
+		return nil
+	case <-timer.C:
+		return nil
 	}
 }
 

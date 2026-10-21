@@ -239,6 +239,12 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
+			if update.BackupIntervalSeconds != nil || update.ResetBackupInterval || update.BackupKeepLast != nil || update.ResetBackupKeepLast {
+				select {
+				case d.BackupScheduleWake <- struct{}{}:
+				default:
+				}
+			}
 			if effectiveBackupConfig(d.Cfg.Backup, settings).Interval.Std() > 0 {
 				if err := startBackupSchedule(d); err != nil {
 					return err

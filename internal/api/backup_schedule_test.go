@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -46,6 +47,7 @@ func scheduledDeps(t *testing.T) Deps {
 	cfg := config.Default()
 	cfg.Backup = config.BackupConfig{Repo: filepath.Join(t.TempDir(), "repo"), Interval: config.Duration(time.Hour), KeepLast: 1}
 	d.Cfg = cfg
+	d.BackupScheduleWake = make(chan struct{}, 1)
 	return d
 }
 
@@ -70,7 +72,7 @@ func TestBackupScheduleDeadlineAfterResume(t *testing.T) {
 					finished <- waitBackupDeadline(t.Context(), deadline, func() time.Time {
 						// Adjust wall time independently of timer time for sleep or clock correction.
 						return time.Now().Add(time.Duration(suspended.Load()))
-					}, nil)
+					}, nil, nil)
 				}()
 				synctest.Wait()
 				suspended.Store(int64(tc.suspend))
@@ -295,7 +297,8 @@ func TestBackupScheduleRuntimeOverrides(t *testing.T) {
 		_, err = repo.LoadManifest(manual.SnapshotID)
 		require.NoError(t, err)
 		put(`"3"`, `{"reset_backup_interval":true}`)
-		time.Sleep(time.Minute + time.Second)
+		synctest.Wait()
+		time.Sleep(time.Second)
 		synctest.Wait()
 		require.Positive(t, d.Tracker.IdleFor())
 		time.Sleep(3 * time.Hour)
@@ -303,5 +306,113 @@ func TestBackupScheduleRuntimeOverrides(t *testing.T) {
 		unchanged, err = repo.ListSnapshots()
 		require.NoError(t, err)
 		require.Equal(t, points, unchanged)
+		put(`"4"`, `{"backup_interval_seconds":7200}`)
+		synctest.Wait()
+		time.Sleep(time.Second)
+		require.Zero(t, d.Tracker.IdleFor(), "re-enabled schedule must hold the daemon during its disabled wait")
 	})
+}
+
+func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		d.Cfg.Backup.Interval, d.Cfg.Backup.KeepLast = 0, 0
+		// Metadata restore validates overrides independently of this daemon's config.
+		_, err := d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(3600))})
+		require.NoError(t, err)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		var logs bytes.Buffer
+		d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		synctest.Wait()
+		require.Contains(t, d.Jobs.Snapshot()[0].Error, "positive keep_last")
+		require.Contains(t, logs.String(), "positive keep_last")
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Empty(t, points, "invalid retention must prevent capture")
+		_, err = d.Store.SetPhotoSettings(t.Context(), 2, store.PhotoSettingsUpdate{BackupKeepLast: new(1)})
+		require.NoError(t, err)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		require.Empty(t, d.Jobs.Snapshot()[0].Error)
+	})
+}
+
+func TestBackupScheduleSettingsReadRetry(t *testing.T) {
+	t.Parallel()
+	for _, duringWait := range []bool{false, true} {
+		name := "initial read"
+		if duringWait {
+			name = "deadline read"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				d := scheduledDeps(t)
+				repo, err := backup.Init(d.Cfg.Backup.Repo)
+				require.NoError(t, err)
+				db, err := d.Store.SQLiteDriver().Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, db.Close()) }()
+				d.Jobs = jobs.New(t.Context(), d.Logger)
+				defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+				if duringWait {
+					require.NoError(t, startBackupSchedule(d))
+					synctest.Wait()
+					time.Sleep(time.Hour)
+					synctest.Wait()
+				}
+				before, err := repo.ListSnapshots()
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), `ALTER TABLE photo_library_settings RENAME TO unavailable_settings`)
+				require.NoError(t, err)
+				if !duringWait {
+					require.NoError(t, startBackupSchedule(d))
+				} else {
+					time.Sleep(time.Minute)
+				}
+				synctest.Wait()
+				status := d.Jobs.Snapshot()[0]
+				require.Equal(t, jobs.StatusRunning, status.Status)
+				require.NotEmpty(t, status.Error)
+				_, err = db.ExecContext(t.Context(), `ALTER TABLE unavailable_settings RENAME TO photo_library_settings`)
+				require.NoError(t, err)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				require.Empty(t, d.Jobs.Snapshot()[0].Error)
+				points, err := repo.ListSnapshots()
+				require.NoError(t, err)
+				require.Len(t, points, 1)
+				if duringWait {
+					require.Equal(t, before, points, "a read retry must preserve the successful capture's deadline")
+				}
+			})
+		})
+	}
+}
+
+func TestBackupScheduleSettingsDuringShutdown(t *testing.T) {
+	t.Parallel()
+	d := scheduledDeps(t)
+	d.Cfg.Server.APIKey = "synthetic-key"
+	d.Jobs = jobs.New(t.Context(), d.Logger)
+	require.NoError(t, d.Jobs.Shutdown(t.Context()))
+	server := NewServer(d)
+	defer server.Close()
+	req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/v1/photos/settings", strings.NewReader(`{"backup_interval_seconds":7200}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", d.Cfg.Server.APIKey)
+	req.Header.Set("If-Match", `"1"`)
+	res := httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+	require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+	settings, err := d.Store.PhotoSettings(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, new(int64(7200)), settings.BackupIntervalSeconds)
 }

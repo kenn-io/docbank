@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
@@ -475,8 +477,8 @@ func ValidatePhotoSettings(settings PhotoSettings) error {
 	if !photoPreferenceValid(settings.Preference) {
 		return fmt.Errorf("%w: invalid preference", ErrInvalidPhotoAsset)
 	}
-	if v := settings.BackupIntervalSeconds; v != nil && *v < 0 {
-		return fmt.Errorf("%w: backup interval must not be negative", ErrInvalidPhotoAsset)
+	if v := settings.BackupIntervalSeconds; v != nil && (*v < 0 || *v > math.MaxInt64/int64(time.Second)) {
+		return fmt.Errorf("%w: backup interval must be between 0 and %d seconds", ErrInvalidPhotoAsset, math.MaxInt64/int64(time.Second))
 	}
 	if v := settings.BackupKeepLast; v != nil && *v < 1 {
 		return fmt.Errorf("%w: backup keep_last must be positive", ErrInvalidPhotoAsset)

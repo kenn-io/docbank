@@ -511,7 +511,8 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
-	if err := api.StartBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger, Jobs: jobSupervisor, Tracker: tracker}); err != nil {
+	backupScheduleWake := make(chan struct{}, 1)
+	if err := api.StartBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger, Jobs: jobSupervisor, Tracker: tracker, BackupScheduleWake: backupScheduleWake}); err != nil {
 		return fmt.Errorf("starting scheduled backups: %w", err)
 	}
 
@@ -540,7 +541,8 @@ func runServe(ctx context.Context) (retErr error) {
 		RequestEmailPDF:           requestEmailPDF,
 		EmailPDFUnavailableReason: emailPDFUnavailableReason,
 		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
+		BackupScheduleWake: backupScheduleWake,
+		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,

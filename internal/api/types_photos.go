@@ -78,7 +78,7 @@ type SetPhotoSettingsRequest struct {
 	BurstGapSeconds             *int    `json:"burst_gap_seconds,omitzero" minimum:"1" maximum:"30" doc:"Omit to keep the burst gap."`
 	Preference                  *string `json:"preference,omitzero" enum:"raw,image" doc:"Omit to keep the preference when updating other fields, or reset it for an empty update."`
 	ResetPreference             bool    `json:"reset_preference,omitzero" doc:"Reset preference to its default. Conflicts with preference."`
-	BackupIntervalSeconds       *int64  `json:"backup_interval_seconds,omitzero" nullable:"false" minimum:"0" doc:"Omit to keep the override."`
+	BackupIntervalSeconds       *int64  `json:"backup_interval_seconds,omitzero" nullable:"false" minimum:"0" maximum:"9223372036" doc:"Omit to keep the override."`
 	ResetBackupInterval         bool    `json:"reset_backup_interval,omitzero" doc:"Reset the backup interval to config inheritance."`
 	BackupKeepLast              *int    `json:"backup_keep_last,omitzero" nullable:"false" minimum:"1" doc:"Omit to keep the override."`
 	ResetBackupKeepLast         bool    `json:"reset_backup_keep_last,omitzero" doc:"Reset retention to config inheritance."`

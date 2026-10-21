@@ -7710,6 +7710,7 @@ export interface SetPhotoSettingsRequest {
   /**
      * Omit to keep the override.
      * @minimum 0
+     * @maximum 9223372036
      */
   backup_interval_seconds?: number;
   /**
