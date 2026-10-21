@@ -708,14 +708,8 @@ func (c Config) Validate() error {
 	if c.Backup.ZstdLevel != 0 && (c.Backup.ZstdLevel < 1 || c.Backup.ZstdLevel > 19) {
 		return fmt.Errorf("[backup] zstd_level %d: want 0 or 1-19", c.Backup.ZstdLevel)
 	}
-	if c.Backup.Interval.Std() < 0 || c.Backup.KeepLast < 0 {
-		return errors.New("[backup] interval and keep_last must not be negative")
-	}
-	if c.Backup.Interval.Std() > 0 && c.Backup.Interval.Std() < time.Minute {
-		return errors.New("[backup] interval must be at least one minute when enabled")
-	}
-	if c.Backup.Interval.Std() > 0 && (c.Backup.Repo == "" || c.Backup.KeepLast == 0) {
-		return errors.New("[backup] repo and positive keep_last are required when interval is enabled")
+	if err := c.Backup.ValidateSchedule(); err != nil {
+		return err
 	}
 	if c.Storage.PackMaxBytes < 0 {
 		return errors.New("[storage] pack_max_bytes must not be negative")
@@ -1595,4 +1589,18 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// ValidateSchedule checks the interval and whether an enabled schedule can run.
+func (c BackupConfig) ValidateSchedule() error {
+	if c.Interval.Std() < 0 || c.KeepLast < 0 {
+		return errors.New("[backup] interval and keep_last must not be negative")
+	}
+	if c.Interval.Std() > 0 && c.Interval.Std() < time.Minute {
+		return errors.New("[backup] interval must be at least one minute when enabled")
+	}
+	if c.Interval.Std() > 0 && (c.Repo == "" || c.KeepLast < 1) {
+		return errors.New("[backup] repo and positive keep_last are required when interval is enabled")
+	}
+	return nil
 }

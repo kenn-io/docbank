@@ -80,6 +80,20 @@ computer wakes. An enabled schedule keeps the background daemon running through
 idle periods. The repository must already be initialized. Capture failures
 retry after the shorter of the interval and five minutes.
 
+Operators can override the interval and retention without restarting:
+
+```sh
+docbank photos settings set backup.interval 1h
+docbank photos settings set backup.keep_last 5
+docbank photos settings reset backup.interval
+```
+
+Changes apply within one minute. Reset inherits `config.toml`. An in-flight
+capture finishes with the retention count it started with. Overrides use the
+settings revision and travel with backup and restore; a restored vault's
+schedule applies after `docbank backup claim`. Paths and credentials, including
+`backup.repo`, stay in `config.toml`.
+
 After capture, retention keeps the newest `keep_last` scheduled points,
 including the new one, forgets older points, and prunes unused storage. Manual
 snapshots stay available. Cleanup failures leave the new point available and

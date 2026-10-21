@@ -44,10 +44,14 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	BurstGapSeconds int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
-	Preference      *string `json:"preference,omitzero" enum:"raw,image"`
-	Revision        int64   `json:"revision" minimum:"1"`
-	UpdatedAt       string  `json:"updated_at,omitzero" format:"date-time"`
+	BurstGapSeconds             int    `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	BackupIntervalSeconds       *int64 `json:"backup_interval_seconds,omitzero"`
+	BackupKeepLast              *int   `json:"backup_keep_last,omitzero"`
+	HiddenUnlockLifetimeSeconds *int64 `json:"hidden_unlock_lifetime_seconds,omitzero"`
+
+	Preference *string `json:"preference,omitzero" enum:"raw,image"`
+	Revision   int64   `json:"revision" minimum:"1"`
+	UpdatedAt  string  `json:"updated_at,omitzero" format:"date-time"`
 }
 
 type CreatePhotoAssetRequest struct {
@@ -71,10 +75,17 @@ type SetPhotoExcludedRequest struct {
 }
 
 type SetPhotoSettingsRequest struct {
-	ResetPreference bool    `json:"reset_preference,omitzero" doc:"Reset the display preference, including when changing the burst gap. Conflicts with preference."`
-	Preference      *string `json:"preference,omitzero" enum:"raw,image" doc:"Omit to keep the display preference when changing the burst gap, or reset it otherwise."`
-	BurstGapSeconds *int    `json:"burst_gap_seconds,omitzero" minimum:"1" maximum:"30" doc:"Omit to keep the burst gap."`
-	preferenceNull  bool
+	BurstGapSeconds             *int    `json:"burst_gap_seconds,omitzero" minimum:"1" maximum:"30" doc:"Omit to keep the burst gap."`
+	Preference                  *string `json:"preference,omitzero" enum:"raw,image" doc:"Omit to keep the preference when updating other fields, or reset it for an empty update."`
+	ResetPreference             bool    `json:"reset_preference,omitzero" doc:"Reset preference to its default. Conflicts with preference."`
+	BackupIntervalSeconds       *int64  `json:"backup_interval_seconds,omitzero" nullable:"false" minimum:"0" doc:"Omit to keep the override."`
+	ResetBackupInterval         bool    `json:"reset_backup_interval,omitzero" doc:"Reset the backup interval to config inheritance."`
+	BackupKeepLast              *int    `json:"backup_keep_last,omitzero" nullable:"false" minimum:"1" doc:"Omit to keep the override."`
+	ResetBackupKeepLast         bool    `json:"reset_backup_keep_last,omitzero" doc:"Reset retention to config inheritance."`
+	HiddenUnlockLifetimeSeconds *int64  `json:"hidden_unlock_lifetime_seconds,omitzero" nullable:"false" minimum:"1" maximum:"86400" doc:"Omit to keep the override."`
+	ResetHiddenUnlockLifetime   bool    `json:"reset_hidden_unlock_lifetime,omitzero" doc:"Reset Hidden unlock lifetime to five minutes."`
+	runtimeNull                 bool
+	preferenceNull              bool
 }
 
 func (in *SetPhotoSettingsRequest) UnmarshalJSON(raw []byte) error {
@@ -89,6 +100,11 @@ func (in *SetPhotoSettingsRequest) UnmarshalJSON(raw []byte) error {
 	}
 	*in = SetPhotoSettingsRequest(decoded)
 	in.preferenceNull = string(members["preference"]) == "null"
+	for _, key := range []string{"backup_interval_seconds", "backup_keep_last", "hidden_unlock_lifetime_seconds"} {
+		if string(members[key]) == "null" {
+			in.runtimeNull = true
+		}
+	}
 	return nil
 }
 
@@ -115,7 +131,7 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 }
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
-	return PhotoSettings{BurstGapSeconds: settings.BurstGapSeconds, Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+	return PhotoSettings{BackupIntervalSeconds: settings.BackupIntervalSeconds, BackupKeepLast: settings.BackupKeepLast, HiddenUnlockLifetimeSeconds: settings.HiddenUnlockLifetimeSeconds, BurstGapSeconds: settings.BurstGapSeconds, Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
 }
 
 // GroupPhotoStacksRequest names photos to regroup. The store rejects repeated

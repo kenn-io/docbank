@@ -14530,11 +14530,26 @@ components:
           format: uri
           readOnly: true
           type: string
+        backup_interval_seconds:
+          format: int64
+          type:
+            - integer
+            - "null"
+        backup_keep_last:
+          format: int64
+          type:
+            - integer
+            - "null"
         burst_gap_seconds:
           format: int64
           maximum: 30
           minimum: 1
           type: integer
+        hidden_unlock_lifetime_seconds:
+          format: int64
+          type:
+            - integer
+            - "null"
         preference:
           enum:
             - raw
@@ -18171,6 +18186,16 @@ components:
           format: uri
           readOnly: true
           type: string
+        backup_interval_seconds:
+          description: Omit to keep the override.
+          format: int64
+          minimum: 0
+          type: integer
+        backup_keep_last:
+          description: Omit to keep the override.
+          format: int64
+          minimum: 1
+          type: integer
         burst_gap_seconds:
           description: Omit to keep the burst gap.
           format: int64
@@ -18179,16 +18204,31 @@ components:
           type:
             - integer
             - "null"
+        hidden_unlock_lifetime_seconds:
+          description: Omit to keep the override.
+          format: int64
+          maximum: 86400
+          minimum: 1
+          type: integer
         preference:
-          description: Omit to keep the display preference when changing the burst gap, or reset it otherwise.
+          description: Omit to keep the preference when updating other fields, or reset it for an empty update.
           enum:
             - raw
             - image
           type:
             - string
             - "null"
+        reset_backup_interval:
+          description: Reset the backup interval to config inheritance.
+          type: boolean
+        reset_backup_keep_last:
+          description: Reset retention to config inheritance.
+          type: boolean
+        reset_hidden_unlock_lifetime:
+          description: Reset Hidden unlock lifetime to five minutes.
+          type: boolean
         reset_preference:
-          description: Reset the display preference, including when changing the burst gap. Conflicts with preference.
+          description: Reset preference to its default. Conflicts with preference.
           type: boolean
       type: object
       x-go-type: api.SetPhotoSettingsRequest

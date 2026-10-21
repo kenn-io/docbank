@@ -246,3 +246,30 @@ func TestPhotosCLIBurstGap(t *testing.T) {
 	require.Equal(t, exitUsage, commandExitCode(err, true))
 	require.ErrorContains(t, err, "burst gap must be 1 to 30 seconds")
 }
+
+func TestPhotosCLISettingsOverrides(t *testing.T) {
+	_ = setupVaultHome(t)
+	_, err := runCLI(t, "photos", "settings", "set", "image")
+	require.NoError(t, err)
+	_, err = runCLI(t, "photos", "settings", "set", "backup.repo", "/synthetic")
+	require.ErrorContains(t, err, "config.toml")
+	require.Equal(t, exitUsage, commandExitCode(err, true))
+	out, err := runCLI(t, "photos", "settings", "set", "backup.keep_last", "5")
+	require.NoError(t, err)
+	var settings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(out), &settings))
+	require.Equal(t, new(5), settings.BackupKeepLast)
+	require.Equal(t, new("image"), settings.Preference)
+	require.Equal(t, int64(3), settings.Revision)
+	out, err = runCLI(t, "photos", "settings", "reset", "backup.keep_last")
+	require.NoError(t, err)
+	settings = api.PhotoSettings{}
+	require.NoError(t, json.Unmarshal([]byte(out), &settings))
+	require.Nil(t, settings.BackupKeepLast)
+	require.Equal(t, new("image"), settings.Preference)
+	out, err = runCLI(t, "photos", "settings", "reset", "backup.interval")
+	require.NoError(t, err)
+	settings = api.PhotoSettings{}
+	require.NoError(t, json.Unmarshal([]byte(out), &settings))
+	require.Equal(t, new("image"), settings.Preference)
+}

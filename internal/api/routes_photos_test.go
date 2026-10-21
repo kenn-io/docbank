@@ -232,17 +232,34 @@ func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"reset_preference": true, "burst_gap_seconds": 5})
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"hidden_unlock_lifetime_seconds": 900})
+	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+	for _, payload := range []map[string]any{
+		{"backup_repo": "/synthetic"}, {"backup_interval_seconds": nil},
+		{"backup_interval_seconds": 3600, "backup_keep_last": 1},
+	} {
+		res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, payload)
+		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
+		settings, err := s.PhotoSettings(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, int64(2), settings.Revision)
+	}
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"hidden_unlock_lifetime_seconds": 900})
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	require.Contains(t, body, `"hidden_unlock_lifetime_seconds":900`)
+	headers["If-Match"] = `"3"`
+
 	stale, staleBody := do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"1"`}, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, http.StatusPreconditionFailed, stale.StatusCode, staleBody)
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	require.Equal(t, `"3"`, res.Header.Get("ETag"))
+	require.Equal(t, `"4"`, res.Header.Get("ETag"))
 	// A preference change inside an audited tree reports the audit conflict.
 	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "api", nil)
 	require.NoError(t, err)
 	_, err = s.EnableInitialAudit(t.Context(), plan)
 	require.NoError(t, err)
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"3"`}, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"4"`}, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
 	require.Equal(t, http.StatusConflict, res.StatusCode, body)
 	require.Equal(t, "audit_mutation_unsupported", decodeProblem(t, body).Code)
 }

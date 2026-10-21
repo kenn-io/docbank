@@ -510,19 +510,15 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
-	if cfg.Backup.Interval.Std() > 0 {
-		if err := jobSupervisor.Start("backup:scheduled", func(ctx context.Context) error {
-			return api.RunBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger})
-		}); err != nil {
-			return fmt.Errorf("starting scheduled backups: %w", err)
-		}
+	tracker := api.NewActivityTracker()
+	if err := api.StartBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger, Jobs: jobSupervisor, Tracker: tracker}); err != nil {
+		return fmt.Errorf("starting scheduled backups: %w", err)
 	}
 
 	var stopOnce sync.Once
 	stopCh := make(chan struct{})
 	stop := func() { stopOnce.Do(func() { close(stopCh) }) }
 
-	tracker := api.NewActivityTracker()
 	photoImports := api.NewPhotoImportRunner(api.Deps{Store: s, Blobs: blobs, Gate: operationGate, Tracker: tracker})
 	if err := photoImports.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
@@ -576,7 +572,7 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 
 	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
-		cfg.Storage.PackInterval.Std() == 0 && cfg.Backup.Interval.Std() == 0 {
+		cfg.Storage.PackInterval.Std() == 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
 			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
 			return nil

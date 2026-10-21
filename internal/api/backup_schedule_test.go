@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,7 +70,7 @@ func TestBackupScheduleDeadlineAfterResume(t *testing.T) {
 					finished <- waitBackupDeadline(t.Context(), deadline, func() time.Time {
 						// Adjust wall time independently of timer time for sleep or clock correction.
 						return time.Now().Add(time.Duration(suspended.Load()))
-					})
+					}, nil)
 				}()
 				synctest.Wait()
 				suspended.Store(int64(tc.suspend))
@@ -112,7 +114,7 @@ func TestBackupScheduleCaptureAndRetention(t *testing.T) {
 		require.NoError(t, err)
 		time.Sleep(time.Second)
 		schedule := backupSchedule{}
-		_, _, err = schedule.capture(t.Context(), d, d.Logger, false)
+		_, _, err = schedule.capture(t.Context(), d, d.Logger, d.Cfg.Backup, false)
 		require.NoError(t, err)
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
@@ -121,7 +123,7 @@ func TestBackupScheduleCaptureAndRetention(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 		firstScheduled := points[0].SnapshotID
 		time.Sleep(time.Hour)
-		_, _, err = schedule.capture(t.Context(), d, d.Logger, false)
+		_, _, err = schedule.capture(t.Context(), d, d.Logger, d.Cfg.Backup, false)
 		require.NoError(t, err)
 		points, err = repo.ListSnapshots()
 		require.NoError(t, err)
@@ -241,4 +243,65 @@ func TestBackupScheduleLogsUnchangedFailuresOnce(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestBackupScheduleRuntimeOverrides(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		d.Cfg.Backup.Interval, d.Cfg.Backup.KeepLast = 0, 0
+		d.Cfg.Server.APIKey = "synthetic-key"
+		d.Tracker = NewActivityTracker()
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		manual, err := backupapp.Create(t.Context(), repo, "test", d.Store, d.Blobs, backup.CreateOptions{Tag: "manual"})
+		require.NoError(t, err)
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		require.Empty(t, d.Jobs.Snapshot())
+		time.Sleep(time.Second)
+		server := NewServer(d)
+		defer server.Close()
+		put := func(revision string, body string) {
+			req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/v1/photos/settings", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Api-Key", d.Cfg.Server.APIKey)
+			req.Header.Set("If-Match", revision)
+			res := httptest.NewRecorder()
+			server.Handler().ServeHTTP(res, req)
+			require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+		}
+		put(`"1"`, `{"backup_interval_seconds":3600,"backup_keep_last":1}`)
+		synctest.Wait()
+		require.Len(t, d.Jobs.Snapshot(), 1)
+		require.Zero(t, d.Tracker.IdleFor())
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2)
+		time.Sleep(30 * time.Minute)
+		put(`"2"`, `{"backup_interval_seconds":7200}`)
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		unchanged, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Equal(t, points, unchanged)
+		time.Sleep(30 * time.Minute)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2)
+		require.NotEqual(t, unchanged, points)
+		_, err = repo.LoadManifest(manual.SnapshotID)
+		require.NoError(t, err)
+		put(`"3"`, `{"reset_backup_interval":true}`)
+		time.Sleep(time.Minute + time.Second)
+		synctest.Wait()
+		require.Positive(t, d.Tracker.IdleFor())
+		time.Sleep(3 * time.Hour)
+		synctest.Wait()
+		unchanged, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Equal(t, points, unchanged)
+	})
 }
