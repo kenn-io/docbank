@@ -50,7 +50,7 @@ func TestRecipeRejectsUnsupportedStampBehavior(t *testing.T) {
 		"opacity":          func(r *Recipe) { r.Opacity = .5 },
 		"units":            func(r *Recipe) { r.Units = "inch" },
 		"rotation":         func(r *Recipe) { r.RotationPolicy = "fixed" },
-		"engine version":   func(r *Recipe) { r.EngineIdentity.Version = "v0.14.0" },
+		"engine version":   func(r *Recipe) { r.EngineIdentity.Version = "v0.15.0" },
 		"engine options":   func(r *Recipe) { r.EngineIdentity.Options = []string{"update=true"} },
 		"control in label": func(r *Recipe) { r.Prefix = "OUR\n" },
 	}
@@ -192,16 +192,30 @@ func TestVerifyStampedLabelsRejectsASubstitutedOutputLabel(t *testing.T) {
 	require.ErrorIs(t, err, ErrStampEngineFailure)
 }
 
-func TestStampHonorsCanceledContextBeforeReading(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	var output bytes.Buffer
+func TestStampHonorsCancellation(t *testing.T) {
+	t.Run("before reading", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		var output bytes.Buffer
 
-	_, err := Stamp(ctx, bytes.NewReader(syntheticPDF(t, 1, "Letter")),
-		[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
+		_, err := Stamp(ctx, bytes.NewReader(syntheticPDF(t, 1, "Letter")),
+			[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
 
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Zero(t, output.Len())
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Zero(t, output.Len())
+	})
+	t.Run("during PDF parsing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
+		var output bytes.Buffer
+
+		_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Zero(t, output.Len())
+		assert.False(t, source.readAfterCancel, "pdfcpu must stop reading after cancellation")
+	})
 }
 
 func TestLimitedStampWriterPublishesNoOversizedChunk(t *testing.T) {
@@ -239,22 +253,6 @@ func TestStampRejectsNilDestination(t *testing.T) {
 	_, err := Stamp(t.Context(), bytes.NewReader(syntheticPDF(t, 1, "Letter")),
 		[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), nil)
 	require.ErrorIs(t, err, ErrStampEngineFailure)
-}
-
-func TestStampCancelsPdfcpuSourceParsing(t *testing.T) {
-	previousWorker := configuredWorker()
-	ConfigureWorker("")
-	t.Cleanup(func() { ConfigureWorker(previousWorker) })
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
-	var output bytes.Buffer
-
-	_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
-
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Zero(t, output.Len())
-	assert.False(t, source.readAfterCancel, "pdfcpu must stop reading after cancellation")
 }
 
 type cancelOnReadSeeker struct {
