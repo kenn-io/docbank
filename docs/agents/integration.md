@@ -447,8 +447,8 @@ nodes keep their Trash label and metadata but must be restored before their
 versions can be downloaded. Docbank does not substitute the current version.
 Links survive reload and browser back and forward navigation. After session
 expiry, signing in with an API key in the same tab preserves the selection.
-Running `docbank web` opens a new session URL without the node/version fragment;
-reopen the link after signing in. Credential-fragment cleanup preserves the selection.
+Running `docbank web` opens a new session URL without the node/version
+fragment; reopen the link after signing in.
 
 Invalid links, missing or purged records, and versions belonging to another
 node show an unavailable selection. Query and photo links continue to work

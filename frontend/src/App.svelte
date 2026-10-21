@@ -103,9 +103,9 @@
   import QueryBar from "./QueryBar.svelte";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
-  import { canonicalQuery, parseQuery, type Query } from "./query.js";
+  import { parseQuery, type Query } from "./query.js";
   import { readQueryHighlights } from "./queryHighlights.js";
-  import { queryFromFragment } from "./queryURL.js";
+  import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
   import TagLabel from "./TagLabel.svelte";
   import TagPicker from "./TagPicker.svelte";
@@ -268,6 +268,12 @@
   let webSession = $state("");
   let nodeVersionHash = $state(location.hash);
   const nodeVersionSelection = $derived(parseNodeVersionLink(nodeVersionHash));
+  const nodeVersionKey = $derived(
+    nodeVersionSelection &&
+      ("error" in nodeVersionSelection
+        ? "invalid"
+        : JSON.stringify([nodeVersionSelection.nodeId, nodeVersionSelection.versionId])),
+  );
   const invalidNodeVersionLink =
     "Invalid node/version link. Use a positive node ID and a version UUID.";
   let nodeVersionError = $state("");
@@ -275,8 +281,9 @@
 
   $effect(() => {
     const session = webSession;
-    const selection = nodeVersionSelection;
+    void nodeVersionKey;
     return untrack(() => {
+      const selection = nodeVersionSelection;
       const panel = activePanel?.kind === "versions" ? activePanel : null;
       nodeVersionError = "";
       nodeVersionLoading = false;
@@ -323,12 +330,6 @@
     });
   });
 
-  function closeLinkedVersion(panel: Panel): void {
-    if (activePanel !== panel) return;
-    photoNavigation.replace(history.state, nodeVersionURL());
-    nodeVersionHash = location.hash;
-    closePanel(panel)();
-  }
   const photoUndo = $derived.by(() => {
     void webSession;
     return new PhotoUndoState();
@@ -2878,12 +2879,7 @@
   }
 
   function replaceQueryURL(query: Query | null): void {
-    const url = new URL(location.href);
-    const params = new URLSearchParams(url.hash.slice(1));
-    if (query) params.set("query", canonicalQuery(query));
-    else params.delete("query");
-    url.hash = params.toString();
-    history.replaceState(history.state, "", url.href);
+    writeQueryURL(query);
     nodeVersionHash = location.hash;
   }
 
@@ -2929,6 +2925,10 @@
   function closePanel(panel: Panel | null): () => void {
     return () => {
       if (activePanel === panel) {
+        if (panel?.kind === "versions") {
+          photoNavigation.replace(history.state, nodeVersionURL());
+          nodeVersionHash = location.hash;
+        }
         activePanel = null;
         if (photoID)
           void tick().then(() => document.querySelector<HTMLElement>(".photo-loupe")?.focus());
@@ -4563,7 +4563,7 @@
       {/if}
       {#if panel.kind === "versions"}
         {#if panel.fromLink && !panel.linked && (nodeVersionLoading || nodeVersionError)}
-          <Modal title="Linked content version" onclose={() => closeLinkedVersion(panel)}>
+          <Modal title="Linked content version" onclose={closePanel(panel)}>
             {#if nodeVersionError}<p role="alert">{nodeVersionError}</p>
             {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
           </Modal>
@@ -4579,7 +4579,7 @@
             resolving={panel.fromLink && nodeVersionLoading}
             unavailable={panel.fromLink ? nodeVersionError : ""}
             onselect={selectLinkedVersion}
-            onclose={() => closeLinkedVersion(panel)}
+            onclose={closePanel(panel)}
             onauthfailure={handleFailure}
           />
         {/if}

@@ -368,37 +368,79 @@ it("replaces an ordinary version drawer when a linked version opens in the same 
   expect(within(screen.getByRole("dialog")).getByText(oldID)).toBeTruthy();
 });
 
-it("keeps the linked drawer when query editing updates or discards the draft", async () => {
+it("keeps the linked drawer when URL navigation adds or removes a query", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  api();
+  const fetchMock = api();
   render(App);
   await screen.findByText(oldID);
-  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  await screen.findByRole("region", { name: "Query editor" });
+  await screen.findByText("1001 retained versions");
+  const drawer = screen.getByRole("dialog");
+  fetchMock.mockClear();
+  await act(() => {
+    location.hash = `${link()}&query=%7B%7D`;
+  });
+  await waitFor(() => expect(location.hash).toContain("query="));
+  expect(screen.getByRole("dialog")).toBe(drawer);
   expect(screen.getByText(oldID)).toBeTruthy();
-  expect(location.hash).toContain("query=");
-  expect(new URLSearchParams(location.hash.slice(1)).get("node")).toBe("42");
-  expect(new URLSearchParams(location.hash.slice(1)).get("version")).toBe(oldID);
-  await fireEvent.click(screen.getByRole("button", { name: "Discard query draft" }));
-  expect(location.hash).toBe(link());
+  await act(() => {
+    location.hash = link();
+  });
+  await waitFor(() => expect(location.hash).toBe(link()));
   expect(screen.getByText(oldID)).toBeTruthy();
+  expect(fetchMock.mock.calls).toHaveLength(0);
 });
 
-it.each(["Lock web session", "Sign out"])(
-  "%s clears a combined query fragment while preserving the version link",
-  async (action) => {
+it("keeps a pending resolve when URL navigation edits the query", async () => {
+  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
+  let release!: (response: Response) => void;
+  let signal: AbortSignal | null | undefined;
+  const fetchMock = api((url, init) => {
+    if (url === `/api/v1/versions/${oldID}`) {
+      signal = init?.signal;
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    }
+    return undefined;
+  });
+  render(App);
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  await act(() => {
+    history.replaceState(history.state, "", `/${link()}&query=%7B%7D`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  expect(signal?.aborted).toBe(false);
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input) === "/api/v1/nodes/42"),
+  ).toHaveLength(1);
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input) === `/api/v1/versions/${oldID}`),
+  ).toHaveLength(1);
+  await act(() => release(Response.json(oldVersion)));
+  expect(await screen.findByText(oldID)).toBeTruthy();
+  expect(location.hash).toBe(`${link()}&query=%7B%7D`);
+});
+
+it.each(["browser session", "API key session"])(
+  "a download 401 clears the query and preserves the version link for a %s",
+  async (session) => {
     history.replaceState(
       null,
       "",
-      `/#${action === "Lock web session" ? credentials : ""}${link().slice(1)}&query=%7B%7D`,
+      `/#${session === "browser session" ? credentials : ""}${link().slice(1)}&query=%7B%7D`,
     );
-    api();
+    api((url) =>
+      url === "/api/daemon/web-download"
+        ? Response.json({ detail: "expired" }, { status: 401 })
+        : undefined,
+    );
     render(App);
-    if (action === "Sign out") await signIn();
+    if (session === "API key session") await signIn();
     await screen.findByText(oldID);
-    await fireEvent.click(screen.getByRole("button", { name: action }));
+    await fireEvent.click(screen.getByRole("button", { name: "Download this version" }));
     await screen.findByText("Open your Docbank");
     expect(location.hash).toBe(link());
+    expect(screen.queryByRole("dialog")).toBeNull();
   },
 );
 
@@ -463,22 +505,7 @@ it("returns focus to the photo viewer after closing linked history", async () =>
   await waitFor(() => expect(document.activeElement).toBe(viewer));
 });
 
-it("ignores an old drawer close after another panel takes ownership", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  api();
-  render(App);
-  await screen.findByText(oldID);
-  const close = screen.getByRole("button", { name: "Close version history" });
-  const storage = screen.getByRole("button", { name: "Storage status" });
-  await act(() => {
-    storage.click();
-    close.click();
-  });
-  expect(await screen.findByRole("dialog", { name: "Physical storage status" })).toBeTruthy();
-  expect(location.hash).toBe(link());
-});
-
-it("discards a delayed linked version when another versions drawer replaces it", async () => {
+it("discards a delayed linked version after closing it and opening another versions drawer", async () => {
   history.replaceState(null, "", `/#${credentials}`);
   const otherNode = { ...node, id: 99, name: "other.txt", path: "/other.txt" };
   const otherVersion = { ...currentVersion, node_id: 99 };
@@ -511,6 +538,12 @@ it("discards a delayed linked version when another versions drawer replaces it",
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   await waitFor(() => expect(release).toBeTypeOf("function"));
+  await fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Linked content version" })).getByRole("button", {
+      name: "Close",
+    }),
+  );
+  expect(location.hash).toBe("");
   await fireEvent.click(screen.getByRole("button", { name: "Version history" }));
   await waitFor(() => expect(releaseHistory).toBeTypeOf("function"));
   await act(() => release(Response.json(oldVersion)));
