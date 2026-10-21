@@ -501,9 +501,14 @@ export class Photos {
     return { status: "boundary" };
   }
 
+  authHandled(cause: unknown) {
+    return (
+      cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403))
+    );
+  }
+
   private authFailure(cause: unknown) {
-    const expired =
-      cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403));
+    const expired = this.authHandled(cause);
     if (expired) this.onauthfailure(cause);
     return expired;
   }

@@ -684,7 +684,7 @@
     if (photoID && photoID !== openIntent) openIntent = "";
     else if (photoID === openIntent && !detailLoading && detailError) {
       openIntent = "";
-      reportFailure(photos.session, "open", detailCause);
+      if (!photos.authHandled(detailCause)) reportFailure(photos.session, "open", detailCause);
     } else if (current?.asset_id === openIntent && !detailLoading && !detailError) {
       openIntent = "";
       reportAction(photos.session, "document_opened");

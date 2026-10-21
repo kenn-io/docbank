@@ -186,7 +186,11 @@ describe("upload documents drawer", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
     await waitFor(() => expect(channel.uploadFile).toHaveBeenCalledTimes(2));
-    expect(failure).toHaveBeenCalledExactlyOnceWith("session", "add");
+    expect(failure).toHaveBeenCalledExactlyOnceWith(
+      "session",
+      "add",
+      expect.objectContaining({ status: 422, code: "validation" }),
+    );
   });
 
   it("reports hashing cancellation without claiming an upload began", async () => {

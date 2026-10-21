@@ -110,7 +110,7 @@
     running = true;
     let refreshNeeded = false;
     let added = false;
-    let failed = false;
+    let failedCause: unknown;
     let authFailed = false;
 
     for (const queued of items) {
@@ -177,20 +177,20 @@
             error:
               "Upload outcome is unconfirmed. Refreshing the folder; retry this file after running `docbank web` again.",
           });
-          failed = true;
+          failedCause ??= cause;
           break;
         }
         updateItem(queued.id, {
           state: "failed",
           error: cause instanceof Error ? cause.message : String(cause),
         });
-        failed = true;
+        failedCause ??= cause;
         if (cause instanceof UploadChannelError) break;
       }
     }
 
     if (added) reportAction(session, "document_added");
-    if (failed) reportFailure(session, "add");
+    if (failedCause) reportFailure(session, "add", failedCause);
     if (controller === active) {
       controller = null;
       running = false;

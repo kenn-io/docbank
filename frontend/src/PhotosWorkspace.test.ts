@@ -2002,7 +2002,7 @@ it("reopens the map where it was after a remount", async () => {
   photos.dispose();
 });
 
-function openMapViewerSetup(mapMode = true) {
+function openMapViewerSetup(mapMode = true, hidden = false) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -2012,7 +2012,7 @@ function openMapViewerSetup(mapMode = true) {
   );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+  const photos = new Photos("scoped", vi.fn(), hidden, photoQuery, {
     projection: mapMode ? "map" : undefined,
   });
   photos.items = mapMode ? [mapPhoto(1), mapPhoto(2)] : [photo(1), photo(2)];
@@ -2043,6 +2043,43 @@ async function openMapViewer({ props, view }: ReturnType<typeof openMapViewerSet
   await view.rerender({ ...props, photoID: "photo-1" });
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
 }
+it.each([true, false])(
+  "reports an open denied access only outside Hidden, hidden=%s",
+  async (hidden) => {
+    const { photos, lookup, props, view } = openMapViewerSetup(true, hidden);
+    lookup.mockRestore();
+    const onauth = vi.spyOn(photos, "onauthfailure");
+    stubPhotoFetch(
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { code: hidden ? "hidden_locked" : "forbidden", detail: "Access denied" },
+            { status: 403 },
+          ),
+        ),
+    );
+    props.onphotochange.mockReturnValue(true);
+    await vi.dynamicImportSettled();
+    map.onvisible!([mapPhoto(1)]);
+    await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+    await view.rerender({ ...props, photoID: "photo-1" });
+    await screen.findByText("Access denied");
+    if (hidden) {
+      expect(onauth).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 403 }));
+      expect(actions.reportFailure).not.toHaveBeenCalled();
+    } else {
+      expect(onauth).not.toHaveBeenCalled();
+      expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+        "scoped",
+        "open",
+        expect.objectContaining({ status: 403 }),
+      );
+    }
+    expect(actions.reportAction).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);
 it.each(
   [false, true].flatMap((mapMode) =>
     ["success", "failure", "closed", "stepped"].map((outcome) => ({ mapMode, outcome })),
