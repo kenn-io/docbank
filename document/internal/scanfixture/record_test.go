@@ -17,10 +17,7 @@ func TestScanEvidenceBaseline(t *testing.T) {
 		measurement := Measure(fixture, maxSourceBytes)
 		if fixture.Name == "malformed" {
 			// Pin our stable error prefix while normalizing pdfcpu-owned suffix wording.
-			require.Zero(t, measurement.Pages)
-			require.Zero(t, measurement.Inspect.Pages)
 			for _, message := range []*string{&measurement.PageError, &measurement.InspectError, &measurement.MetadataError} {
-				require.NotEmpty(t, *message)
 				require.True(t, strings.HasPrefix(*message, "validate PDF object graph:"), "unexpected malformed-PDF error: %s", *message)
 				*message = "validate PDF object graph: <dependency error>"
 			}

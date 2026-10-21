@@ -98,7 +98,17 @@ The web application imports a ZIP of the same layout through
 
 ## docbank bates
 
-After upgrading to the pdfcpu v0.16.3 engine, regenerate saved Bates recipe files tied to pdfcpu v0.15.0 with `docbank bates plan` before reserving numbers or exporting.
+Before upgrading to pdfcpu v0.16.3, publish any Bates reservations you still need. After upgrading, `docbank bates reserve` and `docbank bates export run` reject recipes tied to pdfcpu v0.15.0. Old unpublished reservations cannot be published or released, and their numbers remain consumed. Inspect them with `docbank bates show <allocation-id>`.
+
+Published artifacts remain available through `docbank bates export status`, `docbank bates export history`, and `docbank bates export download`. Exact `docbank bates export run` retries with the old recipe fail.
+
+To continue numbering, generate a new recipe:
+
+```text
+docbank bates plan <snapshot-id> --namespace <namespace-uuid> --recipe-out r.json
+```
+
+The default namespace cursor skips numbers consumed by old reservations.
 
 ## docbank labels
 
