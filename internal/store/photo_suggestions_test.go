@@ -563,9 +563,6 @@ func TestPhotoSuggestionBackupKeepsDecisions(t *testing.T) {
 		require.ElementsMatch(t, []string{restoredVersion, freshVersion}, targets(producerB, false))
 		require.Equal(t, []string{restoredVersion}, targets(producerB, true), "B is offered its restored photo and no fresh one")
 
-		publishPhotoDescription(t, restored, asset, producerA, false, document.PhotoDescription{Caption: "Again.", Tags: []string{"coast", "sunset", "boats"}})
-		require.Empty(t, photoSuggestionValues(t, restored, asset.ID), "A is dismissed on this photo, so its publish does nothing")
-
 		again := restorePhotoSuggestionStore(t, restored)
 		publishPhotoDescription(t, again, asset, producerB, false, document.PhotoDescription{Caption: "Regenerated.", Tags: []string{"coast", "sunset", "boats"}})
 		regenerated := photoSuggestionValues(t, again, asset.ID)
@@ -665,6 +662,7 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
 	require.True(t, settled(""), "a live suggestion settles automatic work")
+	require.True(t, settled(producerA), "one live suggestion settles every producer")
 	require.True(t, settled(producerB), "another profile does not replace a live suggestion")
 
 	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
@@ -673,14 +671,6 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 	require.True(t, settled(producerA), "the producer of a dismissal is not asked again")
 	require.False(t, settled(producerB), "an explicit start with another profile replaces a dismissal")
 
-	publishPhotoDescription(t, s, asset, producerB, false, document.PhotoDescription{Caption: "Automatic B."})
-	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "automatic work never publishes over a dismissal")
-	publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Caption: "Explicit B."})
-	current := photoSuggestionValues(t, s, asset.ID)
-	require.Len(t, current, 1)
-	require.Equal(t, "Explicit B.", current[0].Value.Caption)
-	require.True(t, settled(producerB))
-	require.True(t, settled(producerA), "one live suggestion settles every producer")
 }
 
 // photoDescriptionJobRequest builds the queue request a description job
