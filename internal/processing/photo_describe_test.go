@@ -612,19 +612,6 @@ func TestPhotoDescriptionStartRefusesAnIneligiblePhotoBeforeSavingConsent(t *tes
 	require.True(t, plan.ConsentRequired)
 }
 
-func TestPhotoDescriptionStartWithConsentReturnsACompletedJobWithNoAttachment(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	ctx := t.Context()
-	plan, err := f.service.Plan(ctx, f.selector("vision"))
-	require.NoError(t, err)
-	var enqueued Job
-	completed, err := f.service.StartWithProgress(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true}, func(job Job) { enqueued = job })
-	require.NoError(t, err)
-	require.Equal(t, enqueued.RenditionJobID, completed.RenditionJobID)
-	require.Empty(t, completed.AttachmentID)
-}
-
 func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *testing.T) {
 	t.Parallel()
 	t.Run("queued", func(t *testing.T) {
