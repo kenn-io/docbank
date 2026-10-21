@@ -11,11 +11,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/docbank/internal/config"
 	wire "go.kenn.io/kata/pkg/client/generated"
 )
@@ -27,6 +27,7 @@ const (
 )
 
 type Issue struct {
+	UpdatedAt    time.Time                 `json:"-"`
 	UID          string                    `json:"uid"`
 	ShortID      string                    `json:"short_id"`
 	Title        string                    `json:"title"`
@@ -57,62 +58,43 @@ func IsGuardConflict(err error) bool {
 // Client uses only the explicitly resolved Docbank connection.
 type Client struct {
 	project       string
-	endpoint      string
-	key           string
+	api           *wire.Client
 	http          *http.Client
 	projects      map[string]int64
 	schemaChecked bool
 }
 
 func New(cfg config.KataConnection) *Client {
-	return &Client{project: cfg.Project, endpoint: cfg.Endpoint, key: cfg.APIKey,
-		projects: make(map[string]int64),
+	c := &Client{project: cfg.Project, projects: make(map[string]int64),
 		http: &http.Client{Timeout: operationTimeout, Transport: boundedTransport{base: http.DefaultTransport},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	c.api, _ = wire.NewDefaultClient(cfg.Endpoint, runtime.WithHTTPClient(httpDoer{c.http}), runtime.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		// Unknown write outcomes belong to evidence reconciliation, not HTTP retries.
+		req.GetBody = nil
+		return nil
+	}))
+	return c
 }
 
-// doJSON owns transport policy; generated Kata types own the wire contract.
-func (c *Client) doJSON(ctx context.Context, method, path, key string, body, target any) error {
-	var data []byte
-	var err error
-	if body != nil {
-		data, err = json.Marshal(body)
-		if err != nil || len(data) > maxRequestBytes {
-			return &Error{Code: "request_too_large"}
-		}
+type httpDoer struct{ *http.Client }
+
+func (d httpDoer) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	return d.Client.Do(req.WithContext(ctx)) // #nosec G704 -- Generated Kata routes use the operator-configured endpoint.
+}
+
+func requestError(ctx context.Context, err error) error {
+	if own, ok := errors.AsType[*Error](err); ok {
+		return own
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.endpoint+path, bytes.NewReader(data))
-	if err != nil {
-		return &Error{Code: "invalid_connection"}
+	failure := &Error{Code: "request_failed", cause: safeCause(ctx, err)}
+	if status, ok := errors.AsType[*runtime.ClientAPIError](err); ok {
+		failure.Status = status.StatusCode()
 	}
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("Content-Type", "application/json")
-	if key != "" {
-		req.Header.Set("Idempotency-Key", key)
+	if envelope, ok := errors.AsType[wire.ErrorEnvelope](err); ok && envelope.ErrorData.Code == "metadata_guard_failed" {
+		failure.Code = "metadata_guard_failed"
 	}
-	// Unknown write outcomes belong to evidence reconciliation, not HTTP retries.
-	req.GetBody = nil
-	resp, err := c.http.Do(req)
-	if err != nil {
-		if own, ok := errors.AsType[*Error](err); ok {
-			return own
-		}
-		return &Error{Code: "request_failed", cause: safeCause(ctx, err)}
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return &Error{Code: "response_read_failed", cause: safeCause(ctx, err)}
-	}
-	if resp.StatusCode != http.StatusOK {
-		code := "request_failed"
-		var envelope wire.ErrorEnvelope
-		if json.Unmarshal(data, &envelope) == nil && envelope.ErrorData.Code == "metadata_guard_failed" {
-			code = "metadata_guard_failed"
-		}
-		return &Error{Status: resp.StatusCode, Code: code}
-	}
-	return decodeResponseNumbers(data, target)
+	return failure
 }
 
 // CheckProject applies the configured write scope before replay reconciliation.
@@ -126,7 +108,11 @@ func (c *Client) ensureSchema(ctx context.Context) error {
 		return nil
 	}
 	var response wire.HealthResponseBody
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/health", "", nil, &response); err != nil {
+	raw, err := c.api.HealthWithResponse(ctx)
+	if err != nil {
+		return requestError(ctx, err)
+	}
+	if err := decodeResponseNumbers(raw.Body, &response); err != nil {
 		return err
 	}
 	if response.APISchemaVersion == nil || !supportedSchema(*response.APISchemaVersion) {
@@ -144,7 +130,11 @@ func (c *Client) projectID(ctx context.Context, project string) (int64, error) {
 		return id, nil
 	}
 	var response wire.ListProjectsResponseBody
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/projects", "", nil, &response); err != nil {
+	raw, err := c.api.ListProjectsWithResponse(ctx, &wire.ListProjectsRequestOptions{})
+	if err != nil {
+		return 0, requestError(ctx, err)
+	}
+	if err := decodeResponseNumbers(raw.Body, &response); err != nil {
 		return 0, err
 	}
 	for _, p := range response.Projects {
@@ -176,23 +166,22 @@ func (c *Client) get(ctx context.Context, project, id string) (Issue, error) {
 	}
 	// Depth zero returns only the source issue, without its discussion or neighbors.
 	var response wire.ReachableGraphResponseBody
-	path := issuePath(projectID, id) + "/graph?depth=0"
-	if err := c.doJSON(ctx, http.MethodGet, path, "", nil, &response); err != nil {
+	raw, err := c.api.ReachableIssueGraphWithResponse(ctx, &wire.ReachableIssueGraphRequestOptions{PathParams: &wire.ReachableIssueGraphPath{ProjectID: projectID, Ref: id}, Query: &wire.ReachableIssueGraphQuery{Depth: new("0")}})
+	if err != nil {
+		return Issue{}, requestError(ctx, err)
+	}
+	if err := decodeResponseNumbers(raw.Body, &response); err != nil {
 		return Issue{}, err
 	}
 	if len(response.Nodes) != 1 || response.Nodes[0].UID != response.SourceUID {
 		return Issue{}, &Error{Code: "invalid_response"}
 	}
 	node := response.Nodes[0]
-	return fromIssue(wire.ShowIssueOut{UID: node.UID, ShortID: node.ShortID, Title: node.Title, Body: node.Body, Metadata: node.Metadata}, project)
-}
-
-func issuePath(projectID int64, id string) string {
-	return "/api/v1/projects/" + strconv.FormatInt(projectID, 10) + "/issues/" + id
+	return fromIssue(wire.ShowIssueOut{UID: node.UID, ShortID: node.ShortID, Title: node.Title, Body: node.Body, Metadata: node.Metadata, UpdatedAt: node.UpdatedAt}, project)
 }
 
 func fromIssue(source wire.ShowIssueOut, project string) (Issue, error) {
-	issue := Issue{UID: source.UID, ShortID: source.ShortID, Title: source.Title, Body: source.Body, Metadata: make(map[string]jsontext.Value, len(source.Metadata))}
+	issue := Issue{UpdatedAt: source.UpdatedAt, UID: source.UID, ShortID: source.ShortID, Title: source.Title, Body: source.Body, Metadata: make(map[string]jsontext.Value, len(source.Metadata))}
 	if !validID(issue.UID) || !validID(issue.ShortID) {
 		return Issue{}, &Error{Code: "invalid_response"}
 	}
@@ -226,9 +215,11 @@ func (c *Client) Create(ctx context.Context, key, title, body string, metadata m
 		values[key] = value
 	}
 	var response wire.MutationResponseBody
-	err = c.doJSON(ctx, http.MethodPost, "/api/v1/projects/"+strconv.FormatInt(projectID, 10)+"/issues", key,
-		wire.CreateIssueBody{Actor: new("docbank"), ForceNew: new(true), Title: title, Body: &body, Metadata: values}, &response)
+	raw, err := c.api.CreateIssueWithResponse(ctx, &wire.CreateIssueRequestOptions{PathParams: &wire.CreateIssuePath{ProjectID: strconv.FormatInt(projectID, 10)}, Header: &wire.CreateIssueHeaders{IdempotencyKey: &key}, Body: &wire.CreateIssueBody{Actor: new("docbank"), ForceNew: new(true), Title: title, Body: &body, Metadata: values}})
 	if err != nil {
+		return Issue{}, requestError(ctx, err)
+	}
+	if err := decodeResponseNumbers(raw.Body, &response); err != nil {
 		return Issue{}, err
 	}
 	return c.get(ctx, c.project, response.Issue.UID)
@@ -244,17 +235,24 @@ func (c *Client) FindMarker(ctx context.Context, marker string) (*Issue, error) 
 	if err := c.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
-	path := "/api/v1/issues?meta=" + url.QueryEscape("docbank.action="+marker) + "&sort=oldest&limit=1"
-	var response wire.ListAllIssuesResponseBody
-	err := c.doJSON(ctx, http.MethodGet, path, "", nil, &response)
-	if failure, ok := errors.AsType[*Error](err); ok && (failure.Status == 401 || failure.Status == 403 || failure.Status == 404) {
-		id, projectErr := c.projectID(ctx, c.project)
-		if projectErr != nil {
-			return nil, projectErr
+	query := &wire.ListAllIssuesQuery{Meta: []string{"docbank.action=" + marker}, Sort: new(wire.ListAllIssuesQuerySort("oldest")), Limit: new(int64(1))}
+	raw, err := c.api.ListAllIssuesWithResponse(ctx, &wire.ListAllIssuesRequestOptions{Query: query})
+	if err != nil {
+		failure, ok := errors.AsType[*runtime.ClientAPIError](err)
+		if ok && (failure.StatusCode() == 401 || failure.StatusCode() == 403 || failure.StatusCode() == 404) {
+			id, projectErr := c.projectID(ctx, c.project)
+			if projectErr != nil {
+				return nil, projectErr
+			}
+			query.ProjectID = &id
+			raw, err = c.api.ListAllIssuesWithResponse(ctx, &wire.ListAllIssuesRequestOptions{Query: query})
 		}
-		err = c.doJSON(ctx, http.MethodGet, path+"&project_id="+strconv.FormatInt(id, 10), "", nil, &response)
 	}
 	if err != nil {
+		return nil, requestError(ctx, err)
+	}
+	var response wire.ListAllIssuesResponseBody
+	if err := decodeResponseNumbers(raw.Body, &response); err != nil {
 		return nil, err
 	}
 	if len(response.Issues) == 0 {
@@ -289,12 +287,15 @@ func (c *Client) Patch(ctx context.Context, ref, key string, previous, value jso
 		return Issue{}, err
 	}
 	var response wire.PatchIssueMetadataResponseBody
-	err = c.doJSON(ctx, http.MethodPost, issuePath(projectID, id)+"/metadata", "",
-		wire.PatchIssueMetadataBody{Actor: new("docbank"), Patch: map[string]any{key: value}, Guard: &wire.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}}, &response)
+	raw, err := c.api.PatchIssueMetadataWithResponse(ctx, &wire.PatchIssueMetadataRequestOptions{PathParams: &wire.PatchIssueMetadataPath{ProjectID: projectID, Ref: id}, Body: &wire.PatchIssueMetadataBody{Actor: new("docbank"), Patch: map[string]any{key: value}, Guard: &wire.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}}})
 	if err != nil {
+		return Issue{}, requestError(ctx, err)
+	}
+	if err := decodeResponseNumbers(raw.Body, &response); err != nil {
 		return Issue{}, err
 	}
-	return c.get(ctx, project, response.Issue.UID)
+	saved := response.Issue
+	return fromIssue(wire.ShowIssueOut{UID: saved.UID, ShortID: saved.ShortID, Title: saved.Title, Body: saved.Body, Metadata: saved.Metadata, UpdatedAt: saved.UpdatedAt}, project)
 }
 
 func (c *Client) Comment(ctx context.Context, ref, key, body string) error {
@@ -311,9 +312,11 @@ func (c *Client) Comment(ctx context.Context, ref, key, body string) error {
 	if err != nil {
 		return err
 	}
-	var response wire.CommentResponseBody
-	return c.doJSON(ctx, http.MethodPost, issuePath(projectID, id)+"/comments", key,
-		wire.CreateCommentBody{Actor: new("docbank"), Body: body}, &response)
+	_, err = c.api.CreateCommentWithResponse(ctx, &wire.CreateCommentRequestOptions{PathParams: &wire.CreateCommentPath{ProjectID: strconv.FormatInt(projectID, 10), Ref: id}, Header: &wire.CreateCommentHeaders{IdempotencyKey: &key}, Body: &wire.CreateCommentBody{Actor: new("docbank"), Body: body}})
+	if err != nil {
+		return requestError(ctx, err)
+	}
+	return nil
 }
 
 // HasComment scans durable comment events in pages. Each reply stays bounded
@@ -333,12 +336,16 @@ func (c *Client) HasComment(ctx context.Context, ref, uid, body string) (bool, e
 	pageSize := 8
 	for {
 		var page wire.PollEventsBody
-		path := "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/events?limit=" + strconv.Itoa(pageSize) + "&after_id=" + strconv.FormatInt(cursor, 10)
-		if err := c.doJSON(ctx, http.MethodGet, path, "", nil, &page); err != nil {
+		raw, err := c.api.PollProjectEventsWithResponse(ctx, &wire.PollProjectEventsRequestOptions{PathParams: &wire.PollProjectEventsPath{ProjectID: id}, Query: &wire.PollProjectEventsQuery{Limit: new(int64(pageSize)), AfterID: &cursor}})
+		if err != nil {
+			err = requestError(ctx, err)
 			if failure, ok := errors.AsType[*Error](err); ok && failure.Code == "response_too_large" && pageSize > 1 {
 				pageSize /= 2
 				continue
 			}
+			return false, err
+		}
+		if err := decodeResponseNumbers(raw.Body, &page); err != nil {
 			return false, err
 		}
 		if page.ResetRequired {

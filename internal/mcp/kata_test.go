@@ -155,7 +155,8 @@ func TestKataReadToolIsInDefaultCatalog(t *testing.T) {
 	tools := catalogMap(toolCatalog(ServerOptions{}))
 	require.Contains(t, tools, "get_kata_context")
 	require.NotContains(t, tools, "cite_kata_evidence")
-	assertSchemaAccepts(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": 320})
+	assertSchemaAccepts(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset})
+	assertSchemaRejects(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset + 1})
 }
 
 func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {

@@ -14,6 +14,11 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const (
+	kataCitePath    = "/api/v1/kata/cite"
+	kataContextPath = "/api/v1/kata/context"
+)
+
 func kataService(d Deps, g *OperationGate) (kataevidence.Service, error) {
 	cfg, err := d.Cfg.Integrations.Kata.Resolve(d.VaultRoot)
 	if err != nil {
@@ -27,7 +32,7 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 		CacheControl string `header:"Cache-Control"`
 		Body         kataclient.Issue
 	}
-	huma.Register(api, huma.Operation{OperationID: "citeKataEvidence", Method: http.MethodPost, Path: "/api/v1/kata/cite",
+	huma.Register(api, huma.Operation{OperationID: "citeKataEvidence", Method: http.MethodPost, Path: kataCitePath,
 		Summary: "Quote a verified document passage into a new or existing Kata issue", MaxBodyBytes: 32 << 10,
 		Errors: []int{400, 401, 403, 404, 409, 413, 422, 502, 503, 504}}, func(ctx context.Context, in *struct {
 		Body    kataevidence.CiteRequest
@@ -60,7 +65,7 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 		CacheControl string `header:"Cache-Control"`
 		Body         kataevidence.Context
 	}
-	huma.Register(api, huma.Operation{OperationID: "getKataContext", Method: http.MethodPost, Path: "/api/v1/kata/context",
+	huma.Register(api, huma.Operation{OperationID: "getKataContext", Method: http.MethodPost, Path: kataContextPath,
 		Summary: "Read Docbank evidence and its current state from a Kata issue", MaxBodyBytes: 4096,
 		Errors: []int{400, 401, 403, 404, 409, 413, 422, 502, 503, 504}}, func(ctx context.Context, in *struct {
 		Body    kataevidence.ContextRequest

@@ -14,7 +14,7 @@ import (
 )
 
 func newKataCommand() *cobra.Command {
-	command := &cobra.Command{Use: "kata", Short: "Quote Kata evidence", Long: "Create or append verified document passages with cite.\nUse context to read saved quotes and check their current source state.\nEnable [integrations.kata] before using these commands.", GroupID: groupInterfaces}
+	command := &cobra.Command{Use: "kata", Short: "Cite", Long: "Create or append verified document passages with cite.\nUse context to read saved quotes and check their current source state.\nEnable [integrations.kata] before using these commands.", GroupID: groupInterfaces}
 	var start, end, offset int
 	var title, brief, issue, key, quote, citationFile, expectedVersion string
 	var asJSON bool
@@ -22,27 +22,9 @@ func newKataCommand() *cobra.Command {
 		Example: "  docbank kata cite /notes.txt --start 0 --end 20 --title 'Follow up' --idempotency-key follow-up-1\n  docbank kata cite id:12 --citation citation.json --issue docbank#abcd",
 		Long:    "Quote at most 1,000 Unicode code points. --start is included; --end is excluded.\nOriginals must be UTF-8 text/JSON of at most 16 MiB. For a retained rendition,\npass its saved TextCitation JSON with --citation.\nNo processing is started.\nCreate with --title and --idempotency-key, or append with --issue.\nEnable [integrations.kata]; credentials use an env or file source.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			selector, err := parseNodeSelector(args[0])
+			selection, err := kataCiteSelector(cmd, args[0], kataevidence.Selector{StartRune: start, EndRune: end, Quote: quote, ExpectedVersion: expectedVersion}, citationFile)
 			if err != nil {
 				return err
-			}
-			selection := kataevidence.Selector{NodeID: selector.id, Path: selector.path, StartRune: start, EndRune: end, Quote: quote, ExpectedVersion: expectedVersion}
-			if citationFile != "" {
-				if cmd.Flags().Changed("start") || cmd.Flags().Changed("end") {
-					return usageError(errors.New("--citation supplies the range; omit --start and --end"))
-				}
-				citation, err := readKataCitation(citationFile)
-				if err != nil {
-					return err
-				}
-				selection.Citation = &citation
-				if selection.ExpectedVersion == "" {
-					selection.ExpectedVersion = citation.ContentVersionID.String()
-				}
-				selection.StartRune = citation.Start
-				selection.EndRune = citation.End
-			} else if !cmd.Flags().Changed("end") {
-				return usageError(errors.New("range requires --end"))
 			}
 			// Keep caller input stable: the daemon resolves paths after replay reconciliation.
 			request := kataevidence.CiteRequest{Selector: selection, Title: title, Brief: brief, Issue: issue, IdempotencyKey: key}
@@ -97,6 +79,31 @@ func newKataCommand() *cobra.Command {
 	contextCmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	command.AddCommand(cite, contextCmd)
 	return command
+}
+
+func kataCiteSelector(cmd *cobra.Command, arg string, selection kataevidence.Selector, citationFile string) (kataevidence.Selector, error) {
+	selector, err := parseNodeSelector(arg)
+	if err != nil {
+		return selection, err
+	}
+	selection.NodeID, selection.Path = selector.id, selector.path
+	if citationFile != "" {
+		if cmd.Flags().Changed("start") || cmd.Flags().Changed("end") {
+			return selection, usageError(errors.New("--citation supplies the range; omit --start and --end"))
+		}
+		citation, err := readKataCitation(citationFile)
+		if err != nil {
+			return selection, err
+		}
+		selection.Citation = &citation
+		if selection.ExpectedVersion == "" {
+			selection.ExpectedVersion = citation.ContentVersionID.String()
+		}
+		selection.StartRune, selection.EndRune = citation.Start, citation.End
+	} else if !cmd.Flags().Changed("end") {
+		return selection, usageError(errors.New("range requires --end"))
+	}
+	return selection, nil
 }
 
 func readKataCitation(path string) (document.TextCitation, error) {

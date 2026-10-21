@@ -330,8 +330,11 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := r.Context()
-		if r.Method == http.MethodPost && (r.URL.Path == processingPlansPath || r.URL.Path == "/api/v1/kata/cite" || r.URL.Path == "/api/v1/kata/context") {
-			ctx = context.WithValue(ctx, responseControllerContextKey{}, http.NewResponseController(w))
+		if r.Method == http.MethodPost {
+			switch r.URL.Path {
+			case processingPlansPath, kataCitePath, kataContextPath:
+				ctx = context.WithValue(ctx, responseControllerContextKey{}, http.NewResponseController(w))
+			}
 			if r.URL.Path == processingPlansPath {
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

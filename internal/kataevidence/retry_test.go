@@ -23,7 +23,7 @@ func TestAppendLateRetryRecognizesCommittedComment(t *testing.T) {
 	require.NoError(t, err)
 	client := kataclient.New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
 	ref := nativeReference()
-	entry, err := json.Marshal(Entry{ID: ID(ref), Passage: PassageID(ref, "hello"), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{Quote: "hello", Label: "notes.txt"}})
+	entry, err := json.Marshal(Entry{ID: ID(ref), Passage: PassageID(ref, "hello"), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{}})
 	require.NoError(t, err)
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
@@ -49,7 +49,7 @@ func TestAppendReplayRejectsMovedIssue(t *testing.T) {
 	require.NoError(t, err)
 	client := kataclient.New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
 	ref := nativeReference()
-	entry, err := json.Marshal(Entry{ID: ID(ref), Passage: PassageID(ref, "hello"), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{Quote: "hello", Label: "notes.txt"}})
+	entry, err := json.Marshal(Entry{ID: ID(ref), Passage: PassageID(ref, "hello"), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{}})
 	require.NoError(t, err)
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
@@ -120,7 +120,7 @@ func TestDiscussionGrowthKeepsContextAndPendingAppendReadable(t *testing.T) {
 		Entries []Entry `json:"entries"`
 	}
 	require.NoError(t, json.Unmarshal(page.Issue.Metadata[MetadataKey], &env))
-	env.Entries[0].Pending = &Pending{Quote: "hello", Label: "notes.txt"}
+	env.Entries[0].Pending = &Pending{SavedAt: page.Issue.UpdatedAt}
 	pending, err := json.Marshal(env)
 	require.NoError(t, err)
 	_, err = client.Patch(t.Context(), issue.QualifiedRef, MetadataKey, page.Issue.Metadata[MetadataKey], pending)

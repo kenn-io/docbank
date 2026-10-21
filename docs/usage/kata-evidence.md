@@ -180,13 +180,12 @@ Kata stores native entries under `docbank.evidence`. Renditions add
 `rendition_attachment_id`, `build_id` and `rendition_sha256` inside `docbank`.
 The body or comment contains `Evidence: <filename>`, a blank line, and the
 quoted words as Markdown blockquote lines. Entries keep `quote` and `label`;
-`pending: {quote, label}` remains until the comment posts. IDs use SHA-256 over
+`pending` records the Kata save time until the comment posts. IDs use SHA-256 over
 length-prefixed fields in `docbank.kata.*.v1` domains.
 
 Docbank reads and writes only `docbank.evidence`. It does not read msgvault
 entries. Writes preserve other metadata keys, including `msgvault.evidence`.
-The pending marker uses msgvault's `{quote, label}` shape. Native Docbank
-entries keep their saved words after delivery.
+Native Docbank entries keep their saved words after delivery.
 
 The CLI and MCP provide citation and readback. Web citation controls, reverse
 document-to-issue lookup and issue-state synchronization are not included.

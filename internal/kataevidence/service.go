@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -37,8 +38,7 @@ type Entry struct {
 	Pending   *Pending  `json:"pending,omitzero"`
 }
 type Pending struct {
-	Quote string `json:"quote"`
-	Label string `json:"label"`
+	SavedAt time.Time `json:"saved_at"`
 }
 
 // envelope retains unknown entries and fields verbatim, including future source kinds.
@@ -87,9 +87,6 @@ func parseNative(data jsontext.Value) (Entry, bool) {
 		return e, false
 	}
 	if !bounded(e.Quote, MaxChars) || !bounded(e.Label, 512) || PassageID(e.Reference, e.Quote) != e.Passage {
-		return e, false
-	}
-	if e.Pending != nil && (e.Pending.Quote != e.Quote || e.Pending.Label != e.Label) {
 		return e, false
 	}
 	return e, true
@@ -178,9 +175,6 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 	if err != nil {
 		return kataclient.Issue{}, err
 	}
-	if err = validateEvidence(evidence); err != nil {
-		return kataclient.Issue{}, err
-	}
 	entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label})
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
@@ -194,14 +188,6 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 		body = r.Brief + "\n\n" + body
 	}
 	return s.Kata.Create(ctx, marker, r.Title, body, map[string]jsontext.Value{MetadataKey: data, "docbank.action": markerJSON, "docbank.request": requestJSON})
-}
-
-func validateEvidence(e Evidence) error {
-	if ValidateReference(e.Reference) != nil || e.ID != ID(e.Reference) || e.Passage != PassageID(e.Reference, e.Excerpt) ||
-		!bounded(e.Label, 512) || !bounded(e.Excerpt, MaxChars) || utf8.RuneCountInString(e.Excerpt) != e.Reference.Docbank.EndRune-e.Reference.Docbank.StartRune {
-		return ErrInvalid
-	}
-	return nil
 }
 
 func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, error) {
@@ -229,9 +215,6 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 	if err != nil {
 		return kataclient.Issue{}, err
 	}
-	if err = validateEvidence(evidence); err != nil {
-		return kataclient.Issue{}, err
-	}
 	for range 3 {
 		issue, err := s.Kata.Get(ctx, r.Issue)
 		if err != nil {
@@ -252,7 +235,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 			if len(env.entries) >= MaxEntries {
 				return kataclient.Issue{}, fmt.Errorf("Kata issue already has %d Docbank evidence entries: %w", MaxEntries, ErrUnsupported)
 			}
-			entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{Quote: evidence.Excerpt, Label: evidence.Label}})
+			entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{}})
 			env.entries = append(env.entries, entry)
 			data, err := env.encode()
 			if err != nil {
@@ -300,13 +283,44 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 		if err != nil {
 			return kataclient.Issue{}, err
 		}
+		unstamped := false
+		for i, raw := range env.entries {
+			entry, valid := parseNative(raw)
+			if valid && entry.Pending != nil && entry.Pending.SavedAt.IsZero() {
+				var fields map[string]jsontext.Value
+				if json.Unmarshal(raw, &fields) != nil {
+					return kataclient.Issue{}, ErrUnsupported
+				}
+				fields["pending"], _ = json.Marshal(Pending{SavedAt: issue.UpdatedAt})
+				env.entries[i], _ = json.Marshal(fields)
+				unstamped = true
+			}
+		}
+		if unstamped {
+			data, err := env.encode()
+			if err != nil {
+				return kataclient.Issue{}, err
+			}
+			updated, err := s.Kata.Patch(ctx, ref, MetadataKey, issue.Metadata[MetadataKey], data)
+			if kataclient.IsGuardConflict(err) {
+				issue, err = s.Kata.Get(ctx, ref)
+				if err != nil {
+					return kataclient.Issue{}, err
+				}
+				continue
+			}
+			if err != nil {
+				return kataclient.Issue{}, err
+			}
+			issue = updated
+		}
 		changed := false
 		for i, raw := range env.entries {
 			entry, valid := parseNative(raw)
 			if !valid || entry.Pending == nil {
 				continue
 			}
-			body := renderQuote(entry.Pending.Label, entry.Pending.Quote)
+			body := renderQuote(entry.Label, entry.Quote)
 			key := commentKey(issue.UID, entry.Passage, body)
 			posted, err := s.Kata.HasComment(ctx, ref, issue.UID, body)
 			if err != nil {

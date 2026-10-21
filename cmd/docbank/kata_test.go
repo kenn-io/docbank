@@ -3,11 +3,59 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
+
+func TestKataCiteValidatesBeforeDaemon(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	for _, tc := range []struct {
+		args    []string
+		message string
+	}{
+		{[]string{"kata", "cite", "id:42", "--title", "Follow up", "--idempotency-key", "follow-up"}, "range requires --end"},
+		{[]string{"kata", "cite", "id:42", "--citation", "unused.json", "--start", "0"}, "--citation supplies the range"},
+		{[]string{"kata", "cite", "id:42", "--citation", "unused.json", "--end", "5"}, "--citation supplies the range"},
+	} {
+		_, err := runCLI(t, tc.args...)
+		require.ErrorContains(t, err, tc.message)
+	}
+}
+
+func TestKataCiteCitationSelector(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "citation.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"vault_uid":"11111111-1111-4111-8111-111111111111","node_id":42,"content_version_id":"22222222-2222-4222-8222-222222222222","content_sha256":"`+strings.Repeat("d", 64)+`","rendition_attachment_id":"`+strings.Repeat("a", 64)+`","build_id":"`+strings.Repeat("b", 64)+`","rendition_sha256":"`+strings.Repeat("c", 64)+`","start":6,"end":11}`), 0o600))
+	command, _, err := newKataCommand().Find([]string{"cite"})
+	require.NoError(t, err)
+	require.NoError(t, command.ParseFlags([]string{"--citation", path, "--issue", "docbank#abcd"}))
+	selection, err := kataCiteSelector(command, "id:42", kataevidence.Selector{Quote: "hello"}, path)
+	require.NoError(t, err)
+	require.EqualValues(t, 42, selection.NodeID)
+	require.Equal(t, 6, selection.StartRune)
+	require.Equal(t, 11, selection.EndRune)
+	require.Equal(t, "22222222-2222-4222-8222-222222222222", selection.ExpectedVersion)
+	require.Equal(t, "hello", selection.Quote)
+	require.NotNil(t, selection.Citation)
+	require.Equal(t, strings.Repeat("a", 64), selection.Citation.RenditionAttachmentID)
+	selection, err = kataCiteSelector(command, "/notes.txt", kataevidence.Selector{ExpectedVersion: "33333333-3333-4333-8333-333333333333"}, path)
+	require.NoError(t, err)
+	require.Equal(t, "/notes.txt", selection.Path)
+	require.Equal(t, "33333333-3333-4333-8333-333333333333", selection.ExpectedVersion)
+}
+
+func TestKataCitationRejectsMalformedAndOversizedFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "citation.json")
+	for _, body := range []string{`{"unknown":true}`, `{} {}`, strings.Repeat(" ", 16<<10+1)} {
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		_, err := readKataCitation(path)
+		require.Error(t, err)
+	}
+}
 
 func TestKataCLIRequiresRange(t *testing.T) {
 	_, err := runCLI(t, "kata", "cite", "id:2", "--title", "Follow up", "--idempotency-key", "test")

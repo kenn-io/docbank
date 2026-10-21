@@ -4,90 +4,104 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
-	"slices"
+	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/kata/pkg/client"
+	"go.kenn.io/kata/pkg/client/generated"
+	"go.kenn.io/kata/pkg/katatest"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/kataclient"
 )
 
-type memoryKata struct {
-	issue             kataclient.Issue
-	created, comments int
-	commentFails      bool
-	conflictOnce      bool
-	concurrentEntry   jsontext.Value
-	commentBodies     []string
-	markers           map[string]bool
+// testKata runs real Kata storage and guards. The HTTP faults model an
+// interrupted comment request and a competing writer, which katatest doesn't schedule.
+type testKata struct {
+	*kataclient.Client
+
+	t               *testing.T
+	api             *client.Client
+	projectID       int64
+	ref             string
+	commentFails    bool
+	conflictOnce    bool
+	concurrentEntry jsontext.Value
 }
 
-func (*memoryKata) CheckProject(ref string) error {
-	if project, _, qualified := strings.Cut(ref, "#"); qualified && project != "docbank" {
-		return &kataclient.Error{Code: "wrong_project"}
+func newTestKata(t *testing.T, metadata map[string]jsontext.Value, body string) *testKata {
+	t.Helper()
+	backend := katatest.New(t, katatest.WithToken("synthetic-key"))
+	api := backend.Client(t)
+	project, err := api.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
+	require.NoError(t, err)
+	k := &testKata{t: t, api: api, projectID: project.Project.ID}
+	direct := kataclient.New(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments") && k.commentFails {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/metadata") && k.conflictOnce {
+			k.conflictOnce = false
+			issue, err := direct.Get(r.Context(), k.ref)
+			if !assert.NoError(t, err) {
+				http.Error(w, "synthetic competing write failed", http.StatusInternalServerError)
+				return
+			}
+			env, err := parseEnvelope(issue.Metadata[MetadataKey])
+			if !assert.NoError(t, err) {
+				http.Error(w, "synthetic competing write failed", http.StatusInternalServerError)
+				return
+			}
+			env.entries = append(env.entries, k.concurrentEntry)
+			data, err := env.encode()
+			if !assert.NoError(t, err) {
+				http.Error(w, "synthetic competing write failed", http.StatusInternalServerError)
+				return
+			}
+			_, err = direct.Patch(r.Context(), k.ref, MetadataKey, issue.Metadata[MetadataKey], data)
+			if !assert.NoError(t, err) {
+				http.Error(w, "synthetic competing write failed", http.StatusInternalServerError)
+				return
+			}
+			_, err = direct.Patch(r.Context(), k.ref, "unrelated", nil, jsontext.Value(`"preserved"`))
+			if !assert.NoError(t, err) {
+				http.Error(w, "synthetic competing write failed", http.StatusInternalServerError)
+				return
+			}
+		}
+		backend.Service.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	k.Client = kataclient.New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+	if metadata != nil {
+		issue, err := direct.Create(t.Context(), "seed", "Synthetic issue", body, metadata)
+		require.NoError(t, err)
+		k.ref = issue.QualifiedRef
 	}
-	return nil
+	return k
 }
 
-func (k *memoryKata) snapshot() kataclient.Issue {
-	issue := k.issue
-	issue.Metadata = make(map[string]jsontext.Value, len(k.issue.Metadata))
-	for key, value := range k.issue.Metadata {
-		issue.Metadata[key] = value.Clone()
-	}
+func (k *testKata) snapshot() kataclient.Issue {
+	issue, err := k.Get(k.t.Context(), k.ref)
+	require.NoError(k.t, err)
 	return issue
 }
 
-func (k *memoryKata) Get(context.Context, string) (kataclient.Issue, error) { return k.snapshot(), nil }
-func (k *memoryKata) FindMarker(_ context.Context, key string) (*kataclient.Issue, error) {
-	if k.markers[key] {
-		issue := k.snapshot()
-		return &issue, nil
-	}
-	return nil, nil //nolint:nilnil // A missing marker is a successful lookup.
+func (k *testKata) commentCount() int {
+	issue, err := k.api.ShowIssue(k.t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: k.projectID, Ref: k.ref}})
+	require.NoError(k.t, err)
+	return len(issue.Comments)
 }
-func (k *memoryKata) Create(_ context.Context, key, title, body string, metadata map[string]jsontext.Value) (kataclient.Issue, error) {
-	k.created++
-	k.markers = map[string]bool{key: true}
-	k.issue = kataclient.Issue{UID: "synthetic-uid", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: title, Body: body, Metadata: metadata}
-	return k.snapshot(), nil
-}
-func (k *memoryKata) Patch(_ context.Context, _, key string, previous, value jsontext.Value) (kataclient.Issue, error) {
-	if k.conflictOnce {
-		k.conflictOnce = false
-		env, err := parseEnvelope(k.issue.Metadata[key])
-		if err != nil {
-			return kataclient.Issue{}, err
-		}
-		env.entries = append(env.entries, k.concurrentEntry.Clone())
-		data, err := env.encode()
-		if err != nil {
-			return kataclient.Issue{}, err
-		}
-		k.issue.Metadata[key] = data
-		k.issue.Metadata["unrelated"] = jsontext.Value(`"preserved"`)
-		return kataclient.Issue{}, &kataclient.Error{Status: 409, Code: "metadata_guard_failed"}
-	}
-	if string(previous) != string(k.issue.Metadata[key]) {
-		return kataclient.Issue{}, errors.New("wrong guard")
-	}
-	k.issue.Metadata[key] = value.Clone()
-	return k.snapshot(), nil
-}
-func (k *memoryKata) HasComment(_ context.Context, _, _, body string) (bool, error) {
-	if slices.Contains(k.commentBodies, body) {
-		return true, nil
-	}
-	return false, nil
-}
-func (k *memoryKata) Comment(_ context.Context, _, _, body string) error {
-	if k.commentFails {
-		return errors.New("synthetic outage")
-	}
-	k.comments++
-	k.commentBodies = append(k.commentBodies, body)
-	return nil
+
+func (k *testKata) createdCount() int {
+	issues, err := k.api.ListAllIssues(k.t.Context(), &generated.ListAllIssuesRequestOptions{})
+	require.NoError(k.t, err)
+	return len(issues.Issues)
 }
 
 type memoryArchive struct {
@@ -110,7 +124,7 @@ func (a *memoryArchive) Prepare(context.Context, Selector) (Evidence, error) {
 }
 
 func TestCreateReplaySurvivesUnavailableSource(t *testing.T) {
-	k := &memoryKata{}
+	k := newTestKata(t, nil, "")
 	a := &memoryArchive{state: "available"}
 	s := Service{Kata: k, Archive: a}
 	r := CiteRequest{Selector: Selector{NodeID: 2, EndRune: 5}, Title: "Follow up", IdempotencyKey: "create-1"}
@@ -119,7 +133,7 @@ func TestCreateReplaySurvivesUnavailableSource(t *testing.T) {
 	a.prepareErr = ErrUnavailable
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
-	require.Equal(t, 1, k.created)
+	require.Equal(t, 1, k.createdCount())
 }
 func (a *memoryArchive) Resolve(_ context.Context, ref Reference) (Resolution, error) {
 	a.reads++
@@ -127,7 +141,7 @@ func (a *memoryArchive) Resolve(_ context.Context, ref Reference) (Resolution, e
 }
 
 func TestCiteCreateAndReplay(t *testing.T) {
-	k := &memoryKata{}
+	k := newTestKata(t, nil, "")
 	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
 	r := CiteRequest{Selector: Selector{NodeID: 2, EndRune: 5}, Title: "Follow up", Brief: "Review this.", IdempotencyKey: "create-1"}
 	issue, err := s.Cite(t.Context(), r)
@@ -146,7 +160,7 @@ func TestCiteCreateAndReplay(t *testing.T) {
 	require.Equal(t, "notes.txt", envelope.Entries[0].Label)
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
-	require.Equal(t, 1, k.created)
+	require.Equal(t, 1, k.createdCount())
 	r.Title = "Different request"
 	_, err = s.Cite(t.Context(), r)
 	require.ErrorContains(t, err, "idempotency")
@@ -154,29 +168,30 @@ func TestCiteCreateAndReplay(t *testing.T) {
 
 func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
 	foreign := jsontext.Value(`{"version":1,"entries":[{"id":"old","passage":"old","reference":{"kind":"future","version":9},"future":"keep"}],"future":"keep"}`)
-	k := &memoryKata{issue: kataclient.Issue{UID: "synthetic-uid", Metadata: map[string]jsontext.Value{MetadataKey: foreign, "msgvault.evidence": jsontext.Value(`{"foreign":true}`)}}, commentFails: true, conflictOnce: true}
+	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: foreign, "msgvault.evidence": jsontext.Value(`{"foreign":true}`)}, "")
+	k.commentFails, k.conflictOnce = true, true
 	concurrent := nativeReference()
 	concurrent.Docbank.NodeID = 3
 	var err error
 	k.concurrentEntry, err = json.Marshal(Entry{ID: ID(concurrent), Passage: PassageID(concurrent, "other"), Reference: concurrent, Quote: "other", Label: "other.txt"})
 	require.NoError(t, err)
 	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
-	r := CiteRequest{Issue: "abcd", Selector: Selector{NodeID: 2, EndRune: 5}}
+	r := CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5}}
 	_, err = s.Cite(t.Context(), r)
-	require.ErrorContains(t, err, "synthetic outage")
-	require.Contains(t, string(k.issue.Metadata[MetadataKey]), `"pending"`)
+	require.ErrorContains(t, err, "status 503")
+	require.Contains(t, string(k.snapshot().Metadata[MetadataKey]), `"pending"`)
 	k.commentFails = false
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
-	require.Equal(t, 1, k.comments)
-	require.NotContains(t, string(k.issue.Metadata[MetadataKey]), `"pending"`)
-	require.Contains(t, string(k.issue.Metadata[MetadataKey]), `"future":"keep"`)
-	require.JSONEq(t, `{"foreign":true}`, string(k.issue.Metadata["msgvault.evidence"]))
-	require.Equal(t, `"preserved"`, string(k.issue.Metadata["unrelated"]))
+	require.Equal(t, 1, k.commentCount())
+	require.NotContains(t, string(k.snapshot().Metadata[MetadataKey]), `"pending"`)
+	require.Contains(t, string(k.snapshot().Metadata[MetadataKey]), `"future":"keep"`)
+	require.JSONEq(t, `{"foreign":true}`, string(k.snapshot().Metadata["msgvault.evidence"]))
+	require.Equal(t, `"preserved"`, string(k.snapshot().Metadata["unrelated"]))
 	var envelope struct {
 		Entries []Entry `json:"entries"`
 	}
-	require.NoError(t, json.Unmarshal(k.issue.Metadata[MetadataKey], &envelope))
+	require.NoError(t, json.Unmarshal(k.snapshot().Metadata[MetadataKey], &envelope))
 	require.Len(t, envelope.Entries, 3)
 	require.EqualValues(t, 3, envelope.Entries[1].Reference.Docbank.NodeID, "preserve the concurrent citation")
 	require.EqualValues(t, 2, envelope.Entries[2].Reference.Docbank.NodeID, "append the requested citation")
@@ -184,21 +199,31 @@ func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
 	require.Equal(t, "notes.txt", envelope.Entries[2].Label)
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
-	require.Equal(t, 1, k.comments)
+	require.Equal(t, 1, k.commentCount())
 }
 
 func TestAppendRetryFinishesPendingAfterSourceDisappears(t *testing.T) {
-	k := &memoryKata{issue: kataclient.Issue{UID: "synthetic-uid", Metadata: map[string]jsontext.Value{}}, commentFails: true}
+	k := newTestKata(t, map[string]jsontext.Value{}, "")
+	k.commentFails = true
 	a := &memoryArchive{state: "available"}
 	s := Service{Kata: k, Archive: a}
-	r := CiteRequest{Issue: "abcd", Selector: Selector{NodeID: 2, EndRune: 5, ExpectedVersion: nativeReference().Docbank.ContentVersionID}}
+	r := CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5, ExpectedVersion: nativeReference().Docbank.ContentVersionID}}
 	_, err := s.Cite(t.Context(), r)
 	require.Error(t, err)
+	saved := k.snapshot()
+	var pending struct {
+		Entries []Entry `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(saved.Metadata[MetadataKey], &pending))
+	require.Len(t, pending.Entries, 1)
+	require.NotNil(t, pending.Entries[0].Pending)
+	require.False(t, pending.Entries[0].Pending.SavedAt.IsZero())
+	require.False(t, pending.Entries[0].Pending.SavedAt.After(saved.UpdatedAt))
 	k.commentFails = false
 	a.prepareErr = ErrUnavailable
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
-	require.Equal(t, 1, k.comments)
+	require.Equal(t, 1, k.commentCount())
 }
 
 func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.T) {
@@ -209,12 +234,13 @@ func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.
 	citation, err := ref.Docbank.TextCitation()
 	require.NoError(t, err)
 	evidence := NewEvidence(ref, "hello", "notes.txt")
-	k := &memoryKata{issue: kataclient.Issue{UID: "synthetic-uid", Metadata: map[string]jsontext.Value{}}, commentFails: true}
+	k := newTestKata(t, map[string]jsontext.Value{}, "")
+	k.commentFails = true
 	a := &memoryArchive{evidence: &evidence}
 	s := Service{Kata: k, Archive: a}
-	r := CiteRequest{Issue: "abcd", Selector: Selector{NodeID: 2, EndRune: 5, Citation: &citation}}
+	r := CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5, Citation: &citation}}
 	_, err = s.Cite(t.Context(), r)
-	require.ErrorContains(t, err, "synthetic outage")
+	require.ErrorContains(t, err, "status 503")
 	k.commentFails = false
 	a.prepareErr = ErrUnavailable
 	for _, field := range []string{"vault", "version"} {
@@ -229,30 +255,31 @@ func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.
 		conflicting.Selector.Citation = &altered
 		_, err = s.Cite(t.Context(), conflicting)
 		require.ErrorIs(t, err, ErrUnavailable, "different citation %s must not finish the pending comment", field)
-		require.Zero(t, k.comments)
+		require.Zero(t, k.commentCount())
 	}
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
-	require.Equal(t, 1, k.comments)
-	require.NotContains(t, string(k.issue.Metadata[MetadataKey]), `"pending"`)
+	require.Equal(t, 1, k.commentCount())
+	require.NotContains(t, string(k.snapshot().Metadata[MetadataKey]), `"pending"`)
 }
 
 func TestContextFreshChangedUnavailableAndUnreachable(t *testing.T) {
-	k := &memoryKata{}
+	k := newTestKata(t, nil, "")
 	a := &memoryArchive{state: "available"}
 	s := Service{Kata: k, Archive: a}
-	_, err := s.Cite(t.Context(), CiteRequest{Title: "Follow up", IdempotencyKey: "create-1", Selector: Selector{NodeID: 2, EndRune: 5}})
+	created, err := s.Cite(t.Context(), CiteRequest{Title: "Follow up", IdempotencyKey: "create-1", Selector: Selector{NodeID: 2, EndRune: 5}})
 	require.NoError(t, err)
+	k.ref = created.QualifiedRef
 	for _, state := range []string{"available", "changed", "unavailable", "unreachable"} {
 		a.state = state
-		page, err := s.Context(t.Context(), ContextRequest{Issue: "abcd"})
+		page, err := s.Context(t.Context(), ContextRequest{Issue: k.ref})
 		require.NoError(t, err)
 		require.Len(t, page.Passages, 1)
 		require.Equal(t, state, page.Passages[0].State)
 		require.Equal(t, "hello", page.Passages[0].SavedQuote)
 	}
 	s.Archive = nil
-	page, err := s.Context(t.Context(), ContextRequest{Issue: "abcd"})
+	page, err := s.Context(t.Context(), ContextRequest{Issue: k.ref})
 	require.NoError(t, err)
 	require.Equal(t, "unreachable", page.Passages[0].State)
 	require.Equal(t, "hello", page.Passages[0].SavedQuote)
@@ -261,12 +288,12 @@ func TestContextFreshChangedUnavailableAndUnreachable(t *testing.T) {
 func TestAppendRefusesEnvelopeThatWouldExceedReadLimit(t *testing.T) {
 	previous, err := json.Marshal(map[string]any{"version": 1, "entries": []any{}, "future": strings.Repeat("x", (512<<10)-200)})
 	require.NoError(t, err)
-	k := &memoryKata{issue: kataclient.Issue{UID: "synthetic-uid", Metadata: map[string]jsontext.Value{MetadataKey: previous}}}
+	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: previous}, "")
 	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
-	_, err = s.Cite(t.Context(), CiteRequest{Issue: "abcd", Selector: Selector{NodeID: 2, EndRune: 5}})
+	_, err = s.Cite(t.Context(), CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5}})
 	require.Error(t, err)
-	require.Equal(t, jsontext.Value(previous), k.issue.Metadata[MetadataKey], "refuse oversized metadata before changing Kata")
-	require.Zero(t, k.comments)
+	require.JSONEq(t, string(previous), string(k.snapshot().Metadata[MetadataKey]), "refuse oversized metadata before changing Kata")
+	require.Zero(t, k.commentCount())
 }
 
 func TestAppendRejectsFullEnvelopeAsPermanentUnsupported(t *testing.T) {
@@ -276,16 +303,16 @@ func TestAppendRejectsFullEnvelopeAsPermanentUnsupported(t *testing.T) {
 	}
 	previous, err := json.Marshal(map[string]any{"version": 1, "entries": entries})
 	require.NoError(t, err)
-	k := &memoryKata{issue: kataclient.Issue{UID: "synthetic-uid", Metadata: map[string]jsontext.Value{MetadataKey: previous}}}
+	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: previous}, "")
 	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
 
-	_, err = s.Cite(t.Context(), CiteRequest{Issue: "abcd", Selector: Selector{NodeID: 2, EndRune: 5}})
+	_, err = s.Cite(t.Context(), CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5}})
 
 	require.ErrorIs(t, err, ErrUnsupported)
 	require.ErrorContains(t, err, "already has 64 Docbank evidence entries")
 	require.NotContains(t, strings.ToLower(err.Error()), "retry")
-	require.Equal(t, jsontext.Value(previous), k.issue.Metadata[MetadataKey])
-	require.Zero(t, k.comments)
+	require.JSONEq(t, string(previous), string(k.snapshot().Metadata[MetadataKey]))
+	require.Zero(t, k.commentCount())
 }
 
 func TestContextUnsupportedNativeDoesNotHideOtherPassages(t *testing.T) {
@@ -297,9 +324,9 @@ func TestContextUnsupportedNativeDoesNotHideOtherPassages(t *testing.T) {
 	}
 	data, err := json.Marshal(map[string]any{"version": 1, "entries": entries})
 	require.NoError(t, err)
-	k := &memoryKata{issue: kataclient.Issue{Body: "Evidence: notes.txt\n\n> hello\n", Metadata: map[string]jsontext.Value{MetadataKey: data}}}
+	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "Evidence: notes.txt\n\n> hello\n")
 	a := &memoryArchive{state: "available"}
-	page, err := (Service{Kata: k, Archive: a}).Context(t.Context(), ContextRequest{Issue: "abcd"})
+	page, err := (Service{Kata: k, Archive: a}).Context(t.Context(), ContextRequest{Issue: k.ref})
 	require.NoError(t, err)
 	require.Len(t, page.Passages, 2)
 	require.Equal(t, "unsupported", page.Passages[0].State)
@@ -318,9 +345,9 @@ func TestContextMalformedReferenceDoesNotHideOtherPassages(t *testing.T) {
 		require.NoError(t, err)
 		data, err := json.Marshal(map[string]any{"version": 1, "entries": []jsontext.Value{jsontext.Value(malformed), encoded}})
 		require.NoError(t, err)
-		k := &memoryKata{issue: kataclient.Issue{Body: "Evidence: notes.txt\n\n> hello\n", Metadata: map[string]jsontext.Value{MetadataKey: data}}}
+		k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "Evidence: notes.txt\n\n> hello\n")
 		a := &memoryArchive{state: "available"}
-		page, err := (Service{Kata: k, Archive: a}).Context(t.Context(), ContextRequest{Issue: "abcd"})
+		page, err := (Service{Kata: k, Archive: a}).Context(t.Context(), ContextRequest{Issue: k.ref})
 		require.NoError(t, err)
 		require.Len(t, page.Passages, 2)
 		require.Equal(t, "unsupported", page.Passages[0].State)
@@ -350,22 +377,22 @@ func TestContextUnknownKindsKeepPagination(t *testing.T) {
 	}
 	data, err := json.Marshal(map[string]any{"version": 1, "entries": entries})
 	require.NoError(t, err)
-	k := &memoryKata{issue: kataclient.Issue{Metadata: map[string]jsontext.Value{MetadataKey: data, "msgvault.evidence": jsontext.Value(`{"version":99}`)}}}
+	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data, "msgvault.evidence": jsontext.Value(`{"version":99}`)}, "")
 	s := Service{Kata: k}
-	page, err := s.Context(t.Context(), ContextRequest{Issue: "abcd"})
+	page, err := s.Context(t.Context(), ContextRequest{Issue: k.ref})
 	require.NoError(t, err)
 	require.Len(t, page.Passages, 10)
 	require.Equal(t, 10, page.NextOffset)
 	for _, entry := range page.Passages {
 		require.Equal(t, "unsupported", entry.State)
 	}
-	page, err = s.Context(t.Context(), ContextRequest{Issue: "abcd", Offset: page.NextOffset})
+	page, err = s.Context(t.Context(), ContextRequest{Issue: k.ref, Offset: page.NextOffset})
 	require.NoError(t, err)
 	require.Len(t, page.Passages, 1)
 	require.Zero(t, page.NextOffset)
 }
 
 func TestContextRejectsOtherProject(t *testing.T) {
-	_, err := (Service{Kata: &memoryKata{}}).Context(t.Context(), ContextRequest{Issue: "other#abcd"})
+	_, err := (Service{Kata: newTestKata(t, nil, "")}).Context(t.Context(), ContextRequest{Issue: "other#abcd"})
 	require.ErrorContains(t, err, "wrong_project")
 }
