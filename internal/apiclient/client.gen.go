@@ -28429,8 +28429,6 @@ type CollectionQualitySummary = api.CollectionQualitySummary
 
 type CollectionSnapshotRepresentation = store.CollectionSnapshotRepresentation
 
-type Comment = kataclient.Comment
-
 type ContentReference = api.ContentReference
 
 type ContentReferencePage = api.ContentReferencePage

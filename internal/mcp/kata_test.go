@@ -169,7 +169,7 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 		assert.Equal(t, kataevidence.ContextRequest{Issue: "docbank#abcd", Offset: 10}, request)
 		page := kataevidence.Context{
-			Issue:    kataclient.Issue{UID: "01TEST", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: "Synthetic issue", Body: strings.Repeat("large issue body", 10000), Comments: []kataclient.Comment{{Body: "private unrelated comment"}}},
+			Issue:    kataclient.Issue{UID: "01TEST", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: "Synthetic issue", Body: strings.Repeat("large issue body", 10000)},
 			Passages: []kataevidence.Resolution{{State: "changed", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(kataReferenceFixture(), "abc", "Synthetic text")}}, NextOffset: 11,
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -192,7 +192,6 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 	require.Equal(t, "abc", passage["saved_quote"])
 	require.Equal(t, "untrusted", objectField(t, passage, "evidence")["content_trust"])
 	require.NotContains(t, output, "body")
-	require.NotContains(t, receipt, "comments")
 	require.Equal(t, 1, calls)
 }
 

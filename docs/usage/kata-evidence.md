@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-21
 title: Cite documents in Kata
 description: Quote verified document passages into Kata issues and reopen their evidence with current source status.
 ---
@@ -32,7 +32,7 @@ Supply `DOCBANK_KATA_TOKEN` to the Docbank daemon through your process or
 secret manager. Alternatively, replace `api_key_env` with
 `api_key_file = "secrets/kata-token"`. Relative paths resolve inside
 `DOCBANK_HOME`. Choose exactly one credential source. Literal secrets in
-configuration are rejected. Key files must be regular files of at most
+configuration are rejected. Key files must be regular, private files owned by the daemon user and at most
 4,096 bytes; credentials are read when an operation runs.
 
 The endpoint accepts HTTPS or loopback HTTP. Remote plain HTTP, credentials
@@ -64,7 +64,8 @@ the end is excluded. A passage contains at most 1,000 code points. `--quote`
 checks that the selected words still match. To bind an earlier version, pass
 `--expected-version` with the content version from `stat --json` and keep that
 value unchanged on retries. Original text must be UTF-8 text or JSON and at most
-16 MiB. Binary documents use a retained text rendition instead.
+16 MiB. An out-of-range `--end` or a mismatched `--quote` returns an input
+error that names the field. Binary documents use a retained text rendition instead.
 
 Keep the same idempotency key when retrying the same create request. Reusing
 the key with different input fails. Docbank records a durable create marker
@@ -77,11 +78,12 @@ Append another passage:
 docbank kata cite id:12 --start 28 --end 45 --issue docbank#abcd
 ```
 
-Appends stay inside `default_project`. They preserve other metadata and
+Appends and context reads stay inside `default_project`. They preserve other metadata and
 existing citations. Docbank records a pending quotation before posting its
 comment, so retrying the same pinned selection can finish an interrupted
-append. It checks existing comment bodies before posting, including after
-Kata's replay window expires. Use an `id:` selector and `--expected-version` when an original-text
+append. It checks durable comment events in bounded pages before posting, including after
+Kata's replay window expires. If Kata reports that event history was purged, the operation
+fails before posting another comment. Use an `id:` selector and `--expected-version` when an original-text
 append must be replayable after source deletion. Each issue supports at most 64 native Docbank evidence entries.
 
 Kata returns `401` for a rejected credential, `403` for denied permission, and
@@ -115,7 +117,10 @@ docbank kata context docbank#abcd --json
 
 Each page returns at most ten Docbank evidence entries. Pass `next_offset`
 as `--offset` to continue. Quotes from the issue remain available separately
-from the current source text.
+from the current source text. Readback takes saved words and labels from the
+evidence entries and reads issue fields without the discussion. CLI, HTTP, and
+MCP operations require the Docbank daemon; an unavailable daemon returns an
+operation error.
 
 | State | Meaning |
 | --- | --- |
@@ -152,6 +157,8 @@ Docbank mirrors msgvault's version-1 envelope and readable quotation format:
     {
       "id": "<reference digest>",
       "passage": "<passage digest>",
+      "quote": "We agreed to review pricing.",
+      "label": "meeting.txt",
       "reference": {
         "version": 1,
         "kind": "docbank",
@@ -172,20 +179,14 @@ Docbank mirrors msgvault's version-1 envelope and readable quotation format:
 Kata stores native entries under `docbank.evidence`. Renditions add
 `rendition_attachment_id`, `build_id` and `rendition_sha256` inside `docbank`.
 The body or comment contains `Evidence: <filename>`, a blank line, and the
-quoted words as Markdown blockquote lines. Interrupted appends retain
-`pending: {quote, label}` until their comment succeeds. IDs use SHA-256 over
+quoted words as Markdown blockquote lines. Entries keep `quote` and `label`;
+`pending: {quote, label}` remains until the comment posts. IDs use SHA-256 over
 length-prefixed fields in `docbank.kata.*.v1` domains.
 
-Docbank also reads msgvault's `docbank_rendition` references from
-`msgvault.evidence` and verifies them against its own retained content. Its
-readback normalizes these to Docbank references and identities. It preserves
-msgvault metadata when writing native evidence.
-
-Current msgvault readers require message and delivery provenance and do not
-discover `docbank.evidence`. A msgvault reader extension is needed to show
-native Docbank citations there. Keeping separate keys allows existing
-msgvault reads and appends to continue working on the same issue. Docbank
-does not invent a msgvault delivery record for independently ingested files.
+Docbank reads and writes only `docbank.evidence`. It does not read msgvault
+entries. Writes preserve other metadata keys, including `msgvault.evidence`.
+The pending marker uses msgvault's `{quote, label}` shape. Native Docbank
+entries keep their saved words after delivery.
 
 The CLI and MCP provide citation and readback. Web citation controls, reverse
 document-to-issue lookup and issue-state synchronization are not included.

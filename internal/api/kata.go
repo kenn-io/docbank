@@ -17,7 +17,7 @@ import (
 func kataService(d Deps, g *OperationGate) (kataevidence.Service, error) {
 	cfg, err := d.Cfg.Integrations.Kata.Resolve(d.VaultRoot)
 	if err != nil {
-		return kataevidence.Service{}, NewError(503, "kata_unconfigured", err.Error())
+		return kataevidence.Service{}, NewError(503, "kata_unconfigured", err.Error()+"; restart the daemon after changing [integrations.kata]")
 	}
 	return kataevidence.Service{Kata: kataclient.New(cfg), Archive: kataArchive{deps: d, gate: g}}, nil
 }
@@ -111,8 +111,12 @@ func kataProblem(err error) *Error {
 		}
 	}
 	switch {
+	case errors.Is(err, document.ErrInvalidTextCitation):
+		return NewError(422, "invalid_kata_evidence", "--citation is invalid")
 	case errors.Is(err, kataevidence.ErrIdempotencyConflict):
 		return NewError(409, "kata_idempotency_conflict", err.Error())
+	case errors.Is(err, document.ErrInvalidCitationRange):
+		return NewError(422, "invalid_kata_evidence", "--end or --start is outside the selected text")
 	case errors.Is(err, kataevidence.ErrInvalid):
 		return NewError(422, "invalid_kata_evidence", err.Error())
 	case errors.Is(err, kataevidence.ErrChanged), errors.Is(err, kataevidence.ErrConflict):

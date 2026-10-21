@@ -19,6 +19,7 @@ type memoryKata struct {
 	commentFails      bool
 	conflictOnce      bool
 	concurrentEntry   jsontext.Value
+	commentBodies     []string
 	markers           map[string]bool
 }
 
@@ -35,7 +36,6 @@ func (k *memoryKata) snapshot() kataclient.Issue {
 	for key, value := range k.issue.Metadata {
 		issue.Metadata[key] = value.Clone()
 	}
-	issue.Comments = slices.Clone(k.issue.Comments)
 	return issue
 }
 
@@ -75,12 +75,18 @@ func (k *memoryKata) Patch(_ context.Context, _, key string, previous, value jso
 	k.issue.Metadata[key] = value.Clone()
 	return k.snapshot(), nil
 }
+func (k *memoryKata) HasComment(_ context.Context, _, _, body string) (bool, error) {
+	if slices.Contains(k.commentBodies, body) {
+		return true, nil
+	}
+	return false, nil
+}
 func (k *memoryKata) Comment(_ context.Context, _, _, body string) error {
 	if k.commentFails {
 		return errors.New("synthetic outage")
 	}
 	k.comments++
-	k.issue.Comments = append(k.issue.Comments, kataclient.Comment{Body: body})
+	k.commentBodies = append(k.commentBodies, body)
 	return nil
 }
 
@@ -136,6 +142,8 @@ func TestCiteCreateAndReplay(t *testing.T) {
 	require.Len(t, envelope.Entries, 1)
 	require.Equal(t, "docbank", envelope.Entries[0].Reference.Kind)
 	require.Nil(t, envelope.Entries[0].Pending)
+	require.Equal(t, "hello", envelope.Entries[0].Quote)
+	require.Equal(t, "notes.txt", envelope.Entries[0].Label)
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
 	require.Equal(t, 1, k.created)
@@ -146,11 +154,11 @@ func TestCiteCreateAndReplay(t *testing.T) {
 
 func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
 	foreign := jsontext.Value(`{"version":1,"entries":[{"id":"old","passage":"old","reference":{"kind":"future","version":9},"future":"keep"}],"future":"keep"}`)
-	k := &memoryKata{issue: kataclient.Issue{UID: "synthetic-uid", Metadata: map[string]jsontext.Value{MetadataKey: foreign, MsgvaultMetadataKey: jsontext.Value(`{"foreign":true}`)}}, commentFails: true, conflictOnce: true}
+	k := &memoryKata{issue: kataclient.Issue{UID: "synthetic-uid", Metadata: map[string]jsontext.Value{MetadataKey: foreign, "msgvault.evidence": jsontext.Value(`{"foreign":true}`)}}, commentFails: true, conflictOnce: true}
 	concurrent := nativeReference()
 	concurrent.Docbank.NodeID = 3
 	var err error
-	k.concurrentEntry, err = json.Marshal(Entry{ID: ID(concurrent), Passage: PassageID(concurrent, "other"), Reference: concurrent})
+	k.concurrentEntry, err = json.Marshal(Entry{ID: ID(concurrent), Passage: PassageID(concurrent, "other"), Reference: concurrent, Quote: "other", Label: "other.txt"})
 	require.NoError(t, err)
 	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
 	r := CiteRequest{Issue: "abcd", Selector: Selector{NodeID: 2, EndRune: 5}}
@@ -163,7 +171,7 @@ func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
 	require.Equal(t, 1, k.comments)
 	require.NotContains(t, string(k.issue.Metadata[MetadataKey]), `"pending"`)
 	require.Contains(t, string(k.issue.Metadata[MetadataKey]), `"future":"keep"`)
-	require.JSONEq(t, `{"foreign":true}`, string(k.issue.Metadata[MsgvaultMetadataKey]))
+	require.JSONEq(t, `{"foreign":true}`, string(k.issue.Metadata["msgvault.evidence"]))
 	require.Equal(t, `"preserved"`, string(k.issue.Metadata["unrelated"]))
 	var envelope struct {
 		Entries []Entry `json:"entries"`
@@ -172,6 +180,8 @@ func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
 	require.Len(t, envelope.Entries, 3)
 	require.EqualValues(t, 3, envelope.Entries[1].Reference.Docbank.NodeID, "preserve the concurrent citation")
 	require.EqualValues(t, 2, envelope.Entries[2].Reference.Docbank.NodeID, "append the requested citation")
+	require.Equal(t, "hello", envelope.Entries[2].Quote)
+	require.Equal(t, "notes.txt", envelope.Entries[2].Label)
 	_, err = s.Cite(t.Context(), r)
 	require.NoError(t, err)
 	require.Equal(t, 1, k.comments)
@@ -248,41 +258,6 @@ func TestContextFreshChangedUnavailableAndUnreachable(t *testing.T) {
 	require.Equal(t, "hello", page.Passages[0].SavedQuote)
 }
 
-func TestContextMsgvaultLimitsAndSavedQuote(t *testing.T) {
-	ref := nativeReference()
-	ref.Docbank.RenditionAttachmentID = ref.Docbank.ContentSHA256
-	ref.Docbank.BuildID = ref.Docbank.ContentSHA256
-	ref.Docbank.RenditionSHA256 = ref.Docbank.ContentSHA256
-	legacy := map[string]any{"version": 1, "kind": "docbank_rendition", "archive_uid": "synthetic-archive", "message_id": int64(1), "source_type": "synthetic", "source_identifier": "synthetic-source", "source_message_id": "synthetic-message", "attachment_id": int64(1), "occurrence_key": "synthetic-occurrence", "docbank_rendition": ref.Docbank}
-	// Fixed v1 fixture, independently encoded from msgvault reference.go fields.
-	const legacyID = "7902404ab8f64c659f1ef1b785984a5f5ba90429f60ac3852e808aba419def30"
-	const passage = "0e2e44473c8cfb767eaf3e847eb4c2b57ab48e3a45c08f595653257cf5dbdcd3"
-	entries := []any{}
-	for range 65 {
-		entries = append(entries, map[string]any{"reference": map[string]any{"kind": "message"}})
-	}
-	entries = append(entries, map[string]any{"id": legacyID, "passage": passage, "reference": legacy})
-	data, err := json.Marshal(map[string]any{"version": 1, "entries": entries})
-	require.NoError(t, err)
-	k := &memoryKata{issue: kataclient.Issue{Body: "Evidence: notes.txt\n\n> hello\n", Metadata: map[string]jsontext.Value{MsgvaultMetadataKey: data}}}
-	s := Service{Kata: k}
-	page, err := s.Context(t.Context(), ContextRequest{Issue: "abcd"})
-	require.NoError(t, err)
-	require.Len(t, page.Passages, 1)
-	require.Equal(t, "hello", page.Passages[0].SavedQuote)
-	require.Equal(t, "b0421bfba268295362c896049bc30d08474e6fa7ee017af70199767025777562", page.Passages[0].Evidence.ID, "normalized reference must carry its own identity")
-	require.Equal(t, "a4b5f35889255faf592b2929f6876fe7198653092e4a7403a38ce7d17938bc3f", page.Passages[0].Evidence.Passage)
-	legacy["version"] = 2
-	entries[65] = map[string]any{"id": legacyID, "passage": passage, "reference": legacy}
-	data, err = json.Marshal(map[string]any{"version": 1, "entries": entries})
-	require.NoError(t, err)
-	k.issue.Metadata[MsgvaultMetadataKey] = data
-	s.Archive = &memoryArchive{state: "available"}
-	page, err = s.Context(t.Context(), ContextRequest{Issue: "abcd"})
-	require.NoError(t, err)
-	require.Equal(t, "unsupported", page.Passages[0].State)
-}
-
 func TestAppendRefusesEnvelopeThatWouldExceedReadLimit(t *testing.T) {
 	previous, err := json.Marshal(map[string]any{"version": 1, "entries": []any{}, "future": strings.Repeat("x", (512<<10)-200)})
 	require.NoError(t, err)
@@ -317,8 +292,8 @@ func TestContextUnsupportedNativeDoesNotHideOtherPassages(t *testing.T) {
 	future := nativeReference()
 	future.Version = 2
 	entries := []Entry{
-		{ID: ID(future), Passage: PassageID(future, "hello"), Reference: future},
-		{ID: ID(nativeReference()), Passage: PassageID(nativeReference(), "hello"), Reference: nativeReference()},
+		{ID: ID(future), Passage: PassageID(future, "hello"), Reference: future, Quote: "hello", Label: "notes.txt"},
+		{ID: ID(nativeReference()), Passage: PassageID(nativeReference(), "hello"), Reference: nativeReference(), Quote: "hello", Label: "notes.txt"},
 	}
 	data, err := json.Marshal(map[string]any{"version": 1, "entries": entries})
 	require.NoError(t, err)
@@ -336,10 +311,9 @@ func TestContextUnsupportedNativeDoesNotHideOtherPassages(t *testing.T) {
 func TestContextMalformedReferenceDoesNotHideOtherPassages(t *testing.T) {
 	for _, malformed := range []string{
 		`{"reference":{"kind":"docbank","docbank":[]}}`,
-		`{"reference":{"kind":"docbank_rendition","docbank_rendition":[]}}`,
 		`{"reference":[]}`,
 	} {
-		valid := Entry{ID: ID(nativeReference()), Passage: PassageID(nativeReference(), "hello"), Reference: nativeReference()}
+		valid := Entry{ID: ID(nativeReference()), Passage: PassageID(nativeReference(), "hello"), Reference: nativeReference(), Quote: "hello", Label: "notes.txt"}
 		encoded, err := json.Marshal(valid)
 		require.NoError(t, err)
 		data, err := json.Marshal(map[string]any{"version": 1, "entries": []jsontext.Value{jsontext.Value(malformed), encoded}})
@@ -367,4 +341,31 @@ func TestCiteRejectsInvalidRequests(t *testing.T) {
 		_, err := (Service{}).Cite(t.Context(), request)
 		require.ErrorIs(t, err, ErrInvalid)
 	}
+}
+
+func TestContextUnknownKindsKeepPagination(t *testing.T) {
+	entries := make([]jsontext.Value, ContextPageSize+1)
+	for i := range entries {
+		entries[i] = jsontext.Value(`{"id":"future","reference":{"kind":"future","version":2}}`)
+	}
+	data, err := json.Marshal(map[string]any{"version": 1, "entries": entries})
+	require.NoError(t, err)
+	k := &memoryKata{issue: kataclient.Issue{Metadata: map[string]jsontext.Value{MetadataKey: data, "msgvault.evidence": jsontext.Value(`{"version":99}`)}}}
+	s := Service{Kata: k}
+	page, err := s.Context(t.Context(), ContextRequest{Issue: "abcd"})
+	require.NoError(t, err)
+	require.Len(t, page.Passages, 10)
+	require.Equal(t, 10, page.NextOffset)
+	for _, entry := range page.Passages {
+		require.Equal(t, "unsupported", entry.State)
+	}
+	page, err = s.Context(t.Context(), ContextRequest{Issue: "abcd", Offset: page.NextOffset})
+	require.NoError(t, err)
+	require.Len(t, page.Passages, 1)
+	require.Zero(t, page.NextOffset)
+}
+
+func TestContextRejectsOtherProject(t *testing.T) {
+	_, err := (Service{Kata: &memoryKata{}}).Context(t.Context(), ContextRequest{Issue: "other#abcd"})
+	require.ErrorContains(t, err, "wrong_project")
 }

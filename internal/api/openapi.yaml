@@ -2816,18 +2816,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
-    Comment:
-      additionalProperties: false
-      properties:
-        body:
-          type: string
-      required:
-        - body
-      type: object
-      x-go-type: kataclient.Comment
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/kataclient
-        name: kataclient
     ContentReference:
       additionalProperties: false
       properties:
@@ -3127,7 +3115,7 @@ components:
           type: string
         offset:
           format: int64
-          maximum: 320
+          maximum: 64
           minimum: 0
           type: integer
       required:
@@ -8077,10 +8065,6 @@ components:
           type: string
         body:
           type: string
-        comments:
-          items:
-            $ref: "#/components/schemas/Comment"
-          type: array
         metadata:
           additionalProperties: {}
           type: object

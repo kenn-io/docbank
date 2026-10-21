@@ -17,12 +17,11 @@ import (
 )
 
 const (
-	MetadataKey         = "docbank.evidence"
-	MsgvaultMetadataKey = "msgvault.evidence"
-	MaxChars            = 1000
-	MaxEntries          = 64
-	ContextPageSize     = 10
-	MaxContextOffset    = MaxEntries + 256
+	MetadataKey      = "docbank.evidence"
+	MaxChars         = 1000
+	MaxEntries       = 64
+	ContextPageSize  = 10
+	MaxContextOffset = MaxEntries
 )
 
 var (
@@ -77,7 +76,7 @@ type CiteRequest struct {
 
 type ContextRequest struct {
 	Issue  string `json:"issue" minLength:"1" maxLength:"256"`
-	Offset int    `json:"offset" minimum:"0" maximum:"320"`
+	Offset int    `json:"offset" minimum:"0" maximum:"64"`
 }
 
 type Evidence struct {

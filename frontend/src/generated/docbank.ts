@@ -1466,10 +1466,6 @@ export interface CollectionSnapshotRepresentation {
   verified_page_count: number;
 }
 
-export interface Comment {
-  body: string;
-}
-
 export type ContentVersionTransitionKind = typeof ContentVersionTransitionKind[keyof typeof ContentVersionTransitionKind];
 
 
@@ -1575,7 +1571,6 @@ export interface Issue {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   body: string;
-  comments?: Comment[];
   metadata: IssueMetadata;
   qualified_ref: string;
   short_id: string;
@@ -1634,7 +1629,7 @@ export interface ContextRequest {
   issue: string;
   /**
      * @minimum 0
-     * @maximum 320
+     * @maximum 64
      */
   offset: number;
 }

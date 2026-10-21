@@ -2,33 +2,16 @@ package main
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
 
-func TestKataCLIOptInAndUsage(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOCBANK_HOME", root)
-	_, err := runCLI(t, "kata", "cite", "id:2", "--start", "0", "--end", "5", "--title", "Follow up", "--idempotency-key", "test")
-	require.ErrorContains(t, err, "kata integration is disabled")
-	_, err = runCLI(t, "kata", "context", "abcd")
-	require.ErrorContains(t, err, "kata integration is disabled")
-	_, err = os.Stat(filepath.Join(root, "docbank.db"))
-	require.True(t, os.IsNotExist(err), "disabled integration must not create a vault")
-	_, err = runCLI(t, "kata", "cite", "id:2", "--title", "Missing end", "--title", "Follow up", "--idempotency-key", "test")
-	require.ErrorContains(t, err, "range")
-}
-
-func TestKataCLILeavesEnvironmentCredentialToDaemon(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOCBANK_HOME", root)
-	t.Setenv("DKE_DAEMON_ONLY_KEY", "")
-	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[integrations.kata]\nenabled=true\nendpoint='http://127.0.0.1:7777'\napi_key_env='DKE_DAEMON_ONLY_KEY'\n"), 0600))
-	require.NoError(t, checkKataConfig(), "the daemon may have an environment credential that its CLI does not")
+func TestKataCLIRequiresRange(t *testing.T) {
+	_, err := runCLI(t, "kata", "cite", "id:2", "--title", "Follow up", "--idempotency-key", "test")
+	require.ErrorContains(t, err, "range requires --end")
 }
 
 func TestKataContextPrintsEveryStatus(t *testing.T) {
@@ -39,4 +22,28 @@ func TestKataContextPrintsEveryStatus(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	require.Contains(t, out.String(), "unsupported\nfailed\nSaved words\n")
+}
+
+type kataFailWriter struct {
+	writes int
+	failAt int
+}
+
+func (w *kataFailWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failAt {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+func TestKataContextPropagatesOutputErrors(t *testing.T) {
+	result := kataevidence.Context{Passages: []kataevidence.Resolution{
+		{State: "available", Evidence: kataevidence.Evidence{Reference: kataevidence.Reference{Docbank: &kataevidence.DocumentReference{NodeID: 2}}}, SavedQuote: "hello"},
+		{State: "unsupported"},
+	}, NextOffset: 10}
+	for failAt := 1; failAt <= 5; failAt++ {
+		err := writeKataContext(&kataFailWriter{failAt: failAt}, result)
+		require.ErrorIs(t, err, io.ErrClosedPipe, "write %d: %v", failAt, err)
+	}
 }

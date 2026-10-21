@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
@@ -44,4 +45,12 @@ func TestKataProblemClassifiesPermanentUpstreamFailures(t *testing.T) {
 		require.Equal(t, status, problem.Status)
 		require.NotContains(t, strings.ToLower(problem.Detail), "retry")
 	}
+}
+
+func TestKataProblemRejectsInvalidCitationRange(t *testing.T) {
+	t.Parallel()
+	problem := kataProblem(document.ErrInvalidCitationRange)
+	require.Equal(t, 422, problem.Status)
+	require.Contains(t, problem.Detail, "--end")
+	require.NotContains(t, problem.Detail, "retry")
 }

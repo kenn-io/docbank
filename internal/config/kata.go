@@ -2,12 +2,13 @@ package config
 
 import (
 	"errors"
-	"io"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"go.kenn.io/kit/secretref"
 )
 
 // IntegrationsConfig holds optional connections, validated only by their users.
@@ -90,33 +91,23 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 	if (k.APIKeyEnv == "") == (k.APIKeyFile == "") {
 		return KataConnection{}, errors.New("integrations.kata: select exactly one of api_key_env or api_key_file")
 	}
-	key := os.Getenv(k.APIKeyEnv)
-	if k.APIKeyFile != "" {
-		path := k.APIKeyFile
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(root, path)
+	// This config exposes only env/file sources; secretref itself also permits literals.
+	ref := secretref.Ref{Env: k.APIKeyEnv, File: k.APIKeyFile}
+	if ref.File != "" {
+		if !filepath.IsAbs(ref.File) {
+			ref.File = filepath.Join(root, ref.File)
 		}
-		// Inspect before opening: opening a FIFO can block before descriptor validation.
-		info, statErr := os.Stat(path)
-		if statErr != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+		// secretref reads whole files; retain this integration's credential size limit.
+		info, err := os.Stat(ref.File)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
 			return KataConnection{}, errors.New("integrations.kata: api_key_file must be a regular file of at most 4096 bytes")
 		}
-		// Bound credentials before reading, including special files.
-		file, openErr := os.Open(path)
-		if openErr != nil {
-			return KataConnection{}, errors.New("integrations.kata: cannot read api_key_file")
-		}
-		defer func() { _ = file.Close() }()
-		info, statErr = file.Stat()
-		if statErr != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
-			return KataConnection{}, errors.New("integrations.kata: api_key_file must be a regular file of at most 4096 bytes")
-		}
-		data, readErr := io.ReadAll(io.LimitReader(file, 4097))
-		if readErr != nil || len(data) > 4096 {
-			return KataConnection{}, errors.New("integrations.kata: cannot read api_key_file")
-		}
-		key = string(data)
 	}
+	secret, err := ref.Resolve()
+	if err != nil {
+		return KataConnection{}, errors.New("integrations.kata: credential is missing or invalid")
+	}
+	key := secret.Value
 	key = strings.TrimSpace(key)
 	if key == "" || len(key) > 4096 || strings.ContainsAny(key, "\r\n") {
 		return KataConnection{}, errors.New("integrations.kata: credential is missing or invalid")

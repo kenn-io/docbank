@@ -28,7 +28,7 @@ func realClient(t *testing.T) (*Client, *client.Client, int64) {
 }
 
 func TestCreateAndCommentReplay(t *testing.T) {
-	c, _, _ := realClient(t)
+	c, api, projectID := realClient(t)
 	issue, err := c.Create(t.Context(), "create-key", "Synthetic issue", "Details", map[string]jsontext.Value{"docbank.action": jsontext.Value(`"marker"`)})
 	require.NoError(t, err)
 	replay, err := c.Create(t.Context(), "create-key", "Synthetic issue", "Details", map[string]jsontext.Value{"docbank.action": jsontext.Value(`"marker"`)})
@@ -39,9 +39,10 @@ func TestCreateAndCommentReplay(t *testing.T) {
 	for range 2 {
 		require.NoError(t, c.Comment(t.Context(), issue.QualifiedRef, "comment-key", "Evidence added"))
 	}
-	got, err := c.Get(t.Context(), issue.QualifiedRef)
+	got, err := api.ShowIssue(t.Context(), &wire.ShowIssueRequestOptions{PathParams: &wire.ShowIssuePath{ProjectID: projectID, Ref: issue.UID}})
 	require.NoError(t, err)
-	require.Equal(t, []Comment{{Body: "Evidence added"}}, got.Comments)
+	require.Len(t, got.Comments, 1)
+	require.Equal(t, "Evidence added", got.Comments[0].Body)
 	marker, err := c.FindMarker(t.Context(), "marker")
 	require.NoError(t, err)
 	require.NotNil(t, marker)
@@ -174,7 +175,7 @@ func TestClientDoesNotRetryUnknownWriteOutcome(t *testing.T) {
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "127.0.0.1")
 	require.EqualValues(t, 1, writes.Load())
-	got, err := c.Get(t.Context(), issue.QualifiedRef)
+	posted, err := c.HasComment(t.Context(), issue.QualifiedRef, issue.UID, "Evidence added")
 	require.NoError(t, err)
-	require.Equal(t, []Comment{{Body: "Evidence added"}}, got.Comments)
+	require.True(t, posted)
 }

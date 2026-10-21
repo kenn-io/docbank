@@ -78,13 +78,14 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 		if !utf8.Valid(data) {
 			return fmt.Errorf("%w: document original is not UTF-8 text", kataevidence.ErrInvalid)
 		}
-		runes := []rune(string(data))
-		if selector.StartRune < 0 || selector.EndRune <= selector.StartRune || selector.EndRune > len(runes) || selector.EndRune-selector.StartRune > kataevidence.MaxChars {
-			return kataevidence.ErrInvalid
+		text := string(data)
+		runeCount := utf8.RuneCountInString(text)
+		if selector.StartRune < 0 || selector.EndRune <= selector.StartRune || selector.EndRune > runeCount || selector.EndRune-selector.StartRune > kataevidence.MaxChars {
+			return fmt.Errorf("%w: --end must be within the selected text and at most 1000 code points after --start", kataevidence.ErrInvalid)
 		}
-		quote := string(runes[selector.StartRune:selector.EndRune])
+		quote := sliceKataRunes(text, selector.StartRune, selector.EndRune)
 		if selector.Quote != "" && selector.Quote != quote {
-			return kataevidence.ErrChanged
+			return fmt.Errorf("%w: --quote does not match the selected range", kataevidence.ErrInvalid)
 		}
 		ref := kataevidence.Reference{Version: 1, Kind: "docbank", Docbank: &kataevidence.DocumentReference{
 			VaultUID: a.deps.Store.VaultID(), NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
@@ -97,7 +98,7 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 
 func (a kataArchive) prepareRendition(ctx context.Context, selector kataevidence.Selector) (kataevidence.Evidence, error) {
 	c := *selector.Citation
-	if document.ValidateTextCitation(c) != nil || c.NodeID != selector.NodeID || c.Start != selector.StartRune || c.End != selector.EndRune || c.End-c.Start > kataevidence.MaxChars {
+	if c.NodeID != selector.NodeID || c.Start != selector.StartRune || c.End != selector.EndRune || c.End-c.Start > kataevidence.MaxChars {
 		return kataevidence.Evidence{}, kataevidence.ErrInvalid
 	}
 	if a.deps.Processing == nil {
@@ -119,7 +120,7 @@ func (a kataArchive) prepareRendition(ctx context.Context, selector kataevidence
 		return kataevidence.Evidence{}, err
 	}
 	if selector.Quote != "" && selector.Quote != resolved.Text {
-		return kataevidence.Evidence{}, kataevidence.ErrChanged
+		return kataevidence.Evidence{}, fmt.Errorf("%w: --quote does not match the selected range", kataevidence.ErrInvalid)
 	}
 	// Retention alone does not make a historical rendition the current authority.
 	_, active, err := a.deps.Store.CurrentRenditionByAttachment(ctx, c.NodeID, c.ContentVersionID.String(), c.ContentSHA256, c.RenditionAttachmentID)
@@ -136,6 +137,22 @@ func (a kataArchive) prepareRendition(ctx context.Context, selector kataevidence
 		VaultUID: c.VaultUID.String(), NodeID: c.NodeID, ContentVersionID: c.ContentVersionID.String(), ContentSHA256: c.ContentSHA256,
 		RenditionAttachmentID: c.RenditionAttachmentID, BuildID: c.BuildID, RenditionSHA256: c.RenditionSHA256, StartRune: c.Start, EndRune: c.End}}
 	return kataevidence.NewEvidence(ref, resolved.Text, boundedKataLabel(node.Name)), nil
+}
+
+// sliceKataRunes locates byte boundaries without allocating a rune for every code point.
+// The caller validates UTF-8 and the range first.
+func sliceKataRunes(text string, start, end int) string {
+	startByte, offset := 0, 0
+	for i := range text {
+		if offset == start {
+			startByte = i
+		}
+		if offset == end {
+			return text[startByte:i]
+		}
+		offset++
+	}
+	return text[startByte:]
 }
 
 func boundedKataLabel(name string) string {

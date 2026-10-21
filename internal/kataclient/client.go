@@ -11,13 +11,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"go.kenn.io/docbank/internal/config"
-	kata "go.kenn.io/kata/pkg/client"
 	wire "go.kenn.io/kata/pkg/client/generated"
 )
 
@@ -33,12 +32,7 @@ type Issue struct {
 	Title        string                    `json:"title"`
 	Body         string                    `json:"body"`
 	Metadata     map[string]jsontext.Value `json:"metadata"`
-	Comments     []Comment                 `json:"comments,omitzero"`
 	QualifiedRef string                    `json:"qualified_ref"`
-}
-
-type Comment struct {
-	Body string `json:"body"`
 }
 
 // Error exposes only an HTTP status and a recognized machine code. Remote
@@ -63,22 +57,62 @@ func IsGuardConflict(err error) bool {
 // Client uses only the explicitly resolved Docbank connection.
 type Client struct {
 	project       string
+	endpoint      string
+	key           string
 	http          *http.Client
-	api           *kata.Client
-	initErr       error
-	schemaChecked atomic.Bool
+	projects      map[string]int64
+	schemaChecked bool
 }
 
 func New(cfg config.KataConnection) *Client {
-	c := &Client{project: cfg.Project, http: &http.Client{Timeout: operationTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
-	c.api, c.initErr = kata.NewWithHTTPClient(cfg.Endpoint, c.http, kata.WithRequestEditor(func(_ context.Context, req *http.Request) error {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-		// A write with an unknown outcome must be reconciled by the service.
-		req.GetBody = nil
-		return nil
-	}))
-	c.http.Transport = boundedTransport{base: http.DefaultTransport}
-	return c
+	return &Client{project: cfg.Project, endpoint: cfg.Endpoint, key: cfg.APIKey,
+		projects: make(map[string]int64),
+		http: &http.Client{Timeout: operationTimeout, Transport: boundedTransport{base: http.DefaultTransport},
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+
+// doJSON owns transport policy; generated Kata types own the wire contract.
+func (c *Client) doJSON(ctx context.Context, method, path, key string, body, target any) error {
+	var data []byte
+	var err error
+	if body != nil {
+		data, err = json.Marshal(body)
+		if err != nil || len(data) > maxRequestBytes {
+			return &Error{Code: "request_too_large"}
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.endpoint+path, bytes.NewReader(data))
+	if err != nil {
+		return &Error{Code: "invalid_connection"}
+	}
+	req.Header.Set("Authorization", "Bearer "+c.key)
+	req.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	// Unknown write outcomes belong to evidence reconciliation, not HTTP retries.
+	req.GetBody = nil
+	resp, err := c.http.Do(req)
+	if err != nil {
+		if own, ok := errors.AsType[*Error](err); ok {
+			return own
+		}
+		return &Error{Code: "request_failed", cause: safeCause(ctx, err)}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return &Error{Code: "response_read_failed", cause: safeCause(ctx, err)}
+	}
+	if resp.StatusCode != http.StatusOK {
+		code := "request_failed"
+		var envelope wire.ErrorEnvelope
+		if json.Unmarshal(data, &envelope) == nil && envelope.ErrorData.Code == "metadata_guard_failed" {
+			code = "metadata_guard_failed"
+		}
+		return &Error{Status: resp.StatusCode, Code: code}
+	}
+	return decodeResponseNumbers(data, target)
 }
 
 // CheckProject applies the configured write scope before replay reconciliation.
@@ -87,35 +121,18 @@ func (c *Client) CheckProject(ref string) error {
 	return err
 }
 
-func (c *Client) failure(ctx context.Context, err error) error {
-	if err == nil {
-		return nil
-	}
-	if own, ok := errors.AsType[*Error](err); ok {
-		return own
-	}
-	code := "request_failed"
-	if envelope, ok := errors.AsType[wire.ErrorEnvelope](err); ok && envelope.ErrorData.Code == "metadata_guard_failed" {
-		code = "metadata_guard_failed"
-	}
-	return &Error{Status: kata.StatusCode(err), Code: code, cause: safeCause(ctx, err)}
-}
-
 func (c *Client) ensureSchema(ctx context.Context) error {
-	if c.initErr != nil {
-		return &Error{Code: "invalid_connection"}
-	}
-	if c.schemaChecked.Load() {
+	if c.schemaChecked {
 		return nil
 	}
-	response, err := c.api.Health(ctx)
-	if err != nil {
-		return c.failure(ctx, err)
+	var response wire.HealthResponseBody
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/health", "", nil, &response); err != nil {
+		return err
 	}
 	if response.APISchemaVersion == nil || !supportedSchema(*response.APISchemaVersion) {
 		return &Error{Code: "incompatible_api"}
 	}
-	c.schemaChecked.Store(true)
+	c.schemaChecked = true
 	return nil
 }
 
@@ -123,12 +140,16 @@ func (c *Client) projectID(ctx context.Context, project string) (int64, error) {
 	if err := c.ensureSchema(ctx); err != nil {
 		return 0, err
 	}
-	response, err := c.api.ListProjects(ctx, &wire.ListProjectsRequestOptions{})
-	if err != nil {
-		return 0, c.failure(ctx, err)
+	if id := c.projects[project]; id != 0 {
+		return id, nil
+	}
+	var response wire.ListProjectsResponseBody
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/projects", "", nil, &response); err != nil {
+		return 0, err
 	}
 	for _, p := range response.Projects {
 		if p.Name == project && p.Active && p.ID > 0 && p.DeletedAt == nil {
+			c.projects[project] = p.ID
 			return p.ID, nil
 		}
 	}
@@ -153,21 +174,21 @@ func (c *Client) get(ctx context.Context, project, id string) (Issue, error) {
 	if err != nil {
 		return Issue{}, err
 	}
-	response, err := c.api.ShowIssueWithResponse(ctx, &wire.ShowIssueRequestOptions{PathParams: &wire.ShowIssuePath{ProjectID: projectID, Ref: id}})
-	if err != nil {
-		return Issue{}, c.failure(ctx, err)
-	}
-	if err := decodeResponseNumbers(response.Body, response.JSON200); err != nil {
+	// Depth zero returns only the source issue, without its discussion or neighbors.
+	var response wire.ReachableGraphResponseBody
+	path := issuePath(projectID, id) + "/graph?depth=0"
+	if err := c.doJSON(ctx, http.MethodGet, path, "", nil, &response); err != nil {
 		return Issue{}, err
 	}
-	issue, err := fromIssue(response.JSON200.Issue, project)
-	if err != nil {
-		return Issue{}, err
+	if len(response.Nodes) != 1 || response.Nodes[0].UID != response.SourceUID {
+		return Issue{}, &Error{Code: "invalid_response"}
 	}
-	for _, comment := range response.JSON200.Comments {
-		issue.Comments = append(issue.Comments, Comment{Body: comment.Body})
-	}
-	return issue, nil
+	node := response.Nodes[0]
+	return fromIssue(wire.ShowIssueOut{UID: node.UID, ShortID: node.ShortID, Title: node.Title, Body: node.Body, Metadata: node.Metadata}, project)
+}
+
+func issuePath(projectID int64, id string) string {
+	return "/api/v1/projects/" + strconv.FormatInt(projectID, 10) + "/issues/" + id
 }
 
 func fromIssue(source wire.ShowIssueOut, project string) (Issue, error) {
@@ -204,13 +225,11 @@ func (c *Client) Create(ctx context.Context, key, title, body string, metadata m
 	for key, value := range metadata {
 		values[key] = value
 	}
-	response, err := c.api.CreateIssue(ctx, &wire.CreateIssueRequestOptions{
-		PathParams: &wire.CreateIssuePath{ProjectID: strconv.FormatInt(projectID, 10)},
-		Body:       &wire.CreateIssueBody{Actor: new("docbank"), ForceNew: new(true), Title: title, Body: &body, Metadata: values},
-		Header:     &wire.CreateIssueHeaders{IdempotencyKey: &key},
-	})
+	var response wire.MutationResponseBody
+	err = c.doJSON(ctx, http.MethodPost, "/api/v1/projects/"+strconv.FormatInt(projectID, 10)+"/issues", key,
+		wire.CreateIssueBody{Actor: new("docbank"), ForceNew: new(true), Title: title, Body: &body, Metadata: values}, &response)
 	if err != nil {
-		return Issue{}, c.failure(ctx, err)
+		return Issue{}, err
 	}
 	return c.get(ctx, c.project, response.Issue.UID)
 }
@@ -225,26 +244,23 @@ func (c *Client) FindMarker(ctx context.Context, marker string) (*Issue, error) 
 	if err := c.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
-	query := &wire.ListAllIssuesQuery{Meta: []string{"docbank.action=" + marker}, Sort: new(wire.ListAllIssuesQuerySort("oldest")), Limit: new(int64(1))}
-	response, err := c.api.ListAllIssuesWithResponse(ctx, &wire.ListAllIssuesRequestOptions{Query: query})
-	if status := kata.StatusCode(err); status == 401 || status == 403 || status == 404 {
+	path := "/api/v1/issues?meta=" + url.QueryEscape("docbank.action="+marker) + "&sort=oldest&limit=1"
+	var response wire.ListAllIssuesResponseBody
+	err := c.doJSON(ctx, http.MethodGet, path, "", nil, &response)
+	if failure, ok := errors.AsType[*Error](err); ok && (failure.Status == 401 || failure.Status == 403 || failure.Status == 404) {
 		id, projectErr := c.projectID(ctx, c.project)
 		if projectErr != nil {
 			return nil, projectErr
 		}
-		query.ProjectID = &id
-		response, err = c.api.ListAllIssuesWithResponse(ctx, &wire.ListAllIssuesRequestOptions{Query: query})
+		err = c.doJSON(ctx, http.MethodGet, path+"&project_id="+strconv.FormatInt(id, 10), "", nil, &response)
 	}
 	if err != nil {
-		return nil, c.failure(ctx, err)
-	}
-	if err := decodeResponseNumbers(response.Body, response.JSON200); err != nil {
 		return nil, err
 	}
-	if len(response.JSON200.Issues) == 0 {
+	if len(response.Issues) == 0 {
 		return nil, nil //nolint:nilnil // A missing marker is a successful lookup.
 	}
-	found := response.JSON200.Issues[0]
+	found := response.Issues[0]
 	if !config.ValidKataProject(found.ProjectName) {
 		return nil, &Error{Code: "invalid_response"}
 	}
@@ -272,12 +288,11 @@ func (c *Client) Patch(ctx context.Context, ref, key string, previous, value jso
 	if err != nil {
 		return Issue{}, err
 	}
-	response, err := c.api.PatchIssueMetadata(ctx, &wire.PatchIssueMetadataRequestOptions{
-		PathParams: &wire.PatchIssueMetadataPath{ProjectID: projectID, Ref: id},
-		Body:       &wire.PatchIssueMetadataBody{Actor: new("docbank"), Patch: map[string]any{key: value}, Guard: &wire.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}},
-	})
+	var response wire.PatchIssueMetadataResponseBody
+	err = c.doJSON(ctx, http.MethodPost, issuePath(projectID, id)+"/metadata", "",
+		wire.PatchIssueMetadataBody{Actor: new("docbank"), Patch: map[string]any{key: value}, Guard: &wire.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}}, &response)
 	if err != nil {
-		return Issue{}, c.failure(ctx, err)
+		return Issue{}, err
 	}
 	return c.get(ctx, project, response.Issue.UID)
 }
@@ -296,12 +311,61 @@ func (c *Client) Comment(ctx context.Context, ref, key, body string) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.api.CreateComment(ctx, &wire.CreateCommentRequestOptions{
-		PathParams: &wire.CreateCommentPath{ProjectID: strconv.FormatInt(projectID, 10), Ref: id},
-		Body:       &wire.CreateCommentBody{Actor: new("docbank"), Body: body},
-		Header:     &wire.CreateCommentHeaders{IdempotencyKey: &key},
-	})
-	return c.failure(ctx, err)
+	var response wire.CommentResponseBody
+	return c.doJSON(ctx, http.MethodPost, issuePath(projectID, id)+"/comments", key,
+		wire.CreateCommentBody{Actor: new("docbank"), Body: body}, &response)
+}
+
+// HasComment scans durable comment events in pages. Each reply stays bounded
+// even when the discussion exceeds our response limit or the replay key expires.
+func (c *Client) HasComment(ctx context.Context, ref, uid, body string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	project, _, err := c.splitRef(ref, true)
+	if err != nil {
+		return false, err
+	}
+	id, err := c.projectID(ctx, project)
+	if err != nil {
+		return false, err
+	}
+	var cursor int64
+	pageSize := 8
+	for {
+		var page wire.PollEventsBody
+		path := "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/events?limit=" + strconv.Itoa(pageSize) + "&after_id=" + strconv.FormatInt(cursor, 10)
+		if err := c.doJSON(ctx, http.MethodGet, path, "", nil, &page); err != nil {
+			if failure, ok := errors.AsType[*Error](err); ok && failure.Code == "response_too_large" && pageSize > 1 {
+				pageSize /= 2
+				continue
+			}
+			return false, err
+		}
+		if page.ResetRequired {
+			return false, &Error{Code: "comment_history_unavailable"}
+		}
+		for _, event := range page.Events {
+			if event.Type != "issue.commented" || event.IssueUID == nil || *event.IssueUID != uid {
+				continue
+			}
+			var comment struct {
+				Body string `json:"body"`
+			}
+			if json.Unmarshal(event.Payload, &comment) != nil {
+				return false, &Error{Code: "invalid_response"}
+			}
+			if comment.Body == body {
+				return true, nil
+			}
+		}
+		if page.NextAfterID == cursor {
+			return false, nil
+		}
+		if page.NextAfterID < cursor {
+			return false, &Error{Code: "invalid_response"}
+		}
+		cursor = page.NextAfterID
+	}
 }
 
 // boundedTransport enforces Docbank's limits without owning Kata wire types.

@@ -5,7 +5,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -19,6 +18,7 @@ type Kata interface {
 	Create(ctx context.Context, key, title, body string, metadata map[string]jsontext.Value) (kataclient.Issue, error)
 	FindMarker(ctx context.Context, marker string) (*kataclient.Issue, error)
 	Patch(ctx context.Context, ref, key string, previous, value jsontext.Value) (kataclient.Issue, error)
+	HasComment(ctx context.Context, ref, uid, body string) (bool, error)
 	Comment(ctx context.Context, ref, key, body string) error
 }
 
@@ -27,11 +27,13 @@ type Service struct {
 	Archive Archive
 }
 
-// Entry and Pending mirror msgvault's version-1 evidence envelope.
+// Entry retains the selected words; Pending marks an undelivered comment.
 type Entry struct {
 	ID        string    `json:"id"`
 	Passage   string    `json:"passage"`
 	Reference Reference `json:"reference"`
+	Quote     string    `json:"quote"`
+	Label     string    `json:"label"`
 	Pending   *Pending  `json:"pending,omitzero"`
 }
 type Pending struct {
@@ -46,22 +48,18 @@ type envelope struct {
 }
 
 func parseEnvelope(data jsontext.Value) (envelope, error) {
-	return parseEnvelopeBound(data, MaxEntries, 512<<10)
-}
-
-func parseEnvelopeBound(data jsontext.Value, limit, maxBytes int) (envelope, error) {
 	e := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}}
 	if len(data) == 0 {
 		return e, nil
 	}
-	if len(data) > maxBytes || json.Unmarshal(data, &e.fields) != nil {
+	if len(data) > 512<<10 || json.Unmarshal(data, &e.fields) != nil {
 		return e, ErrUnsupported
 	}
 	var version int
 	if json.Unmarshal(e.fields["version"], &version) != nil || version != 1 {
 		return e, ErrUnsupported
 	}
-	if json.Unmarshal(e.fields["entries"], &e.entries) != nil || len(e.entries) > limit {
+	if json.Unmarshal(e.fields["entries"], &e.entries) != nil || len(e.entries) > MaxEntries {
 		return e, ErrUnsupported
 	}
 	return e, nil
@@ -88,7 +86,10 @@ func parseNative(data jsontext.Value) (Entry, bool) {
 		e.ID != ID(e.Reference) || !canonical.IsSHA256Hex(e.Passage) {
 		return e, false
 	}
-	if e.Pending != nil && (!bounded(e.Pending.Quote, MaxChars) || !bounded(e.Pending.Label, 512) || PassageID(e.Reference, e.Pending.Quote) != e.Passage) {
+	if !bounded(e.Quote, MaxChars) || !bounded(e.Label, 512) || PassageID(e.Reference, e.Quote) != e.Passage {
+		return e, false
+	}
+	if e.Pending != nil && (e.Pending.Quote != e.Quote || e.Pending.Label != e.Label) {
 		return e, false
 	}
 	return e, true
@@ -101,20 +102,45 @@ func bounded(text string, limit int) bool {
 func validateCiteRequest(r CiteRequest) error {
 	p := r.Selector
 	validNode := p.NodeID > 0 && p.Path == "" || p.NodeID == 0 && strings.HasPrefix(p.Path, "/") && len(p.Path) <= 4096 && utf8.ValidString(p.Path) && !strings.ContainsRune(p.Path, 0)
-	if !validNode || p.StartRune < 0 || p.EndRune <= p.StartRune || p.EndRune > 2147483647 || p.EndRune-p.StartRune > MaxChars ||
-		!bounded(p.Quote, MaxChars) || p.ExpectedVersion != "" && canonical.ValidateUUIDv4(p.ExpectedVersion) != nil ||
-		!bounded(r.Brief, 2000) || !bounded(r.Title, 512) || len(r.Issue) > 256 {
-		return ErrInvalid
+	if !validNode {
+		return fmt.Errorf("%w: selector requires a node ID or absolute path", ErrInvalid)
 	}
-	if p.Citation != nil && (documentCitationMismatch(p) || documentValidate(p) != nil) {
-		return ErrInvalid
+	if p.StartRune < 0 {
+		return fmt.Errorf("%w: --start must be nonnegative", ErrInvalid)
+	}
+	if p.EndRune <= p.StartRune || p.EndRune > 2147483647 || p.EndRune-p.StartRune > MaxChars {
+		return fmt.Errorf("%w: --end must follow --start by at most 1000 code points", ErrInvalid)
+	}
+	if !bounded(p.Quote, MaxChars) {
+		return fmt.Errorf("%w: --quote must contain at most 1000 UTF-8 code points", ErrInvalid)
+	}
+	if p.ExpectedVersion != "" && canonical.ValidateUUIDv4(p.ExpectedVersion) != nil {
+		return fmt.Errorf("%w: --expected-version requires a content version UUID", ErrInvalid)
+	}
+	if !bounded(r.Brief, 2000) {
+		return fmt.Errorf("%w: --brief exceeds 2000 code points", ErrInvalid)
+	}
+	if !bounded(r.Title, 512) {
+		return fmt.Errorf("%w: --title exceeds 512 code points", ErrInvalid)
+	}
+	if len(r.Issue) > 256 {
+		return fmt.Errorf("%w: --issue exceeds 256 bytes", ErrInvalid)
+	}
+	// ResolveTextCitation owns citation validation. Here we bind the selector to it.
+	if p.Citation != nil && documentCitationMismatch(p) {
+		return fmt.Errorf("%w: --citation does not match the selected node or range", ErrInvalid)
 	}
 	if r.Issue != "" {
 		if r.Title != "" || r.Brief != "" || r.IdempotencyKey != "" {
-			return ErrInvalid
+			return fmt.Errorf("%w: --issue cannot be combined with --title, --brief, or --idempotency-key", ErrInvalid)
 		}
-	} else if strings.TrimSpace(r.Title) == "" || strings.TrimSpace(r.IdempotencyKey) == "" || !utf8.ValidString(r.IdempotencyKey) || len(r.IdempotencyKey) > 128 || strings.ContainsAny(r.IdempotencyKey, "\r\n\x00") {
-		return ErrInvalid
+	} else {
+		if strings.TrimSpace(r.Title) == "" {
+			return fmt.Errorf("%w: --title is required", ErrInvalid)
+		}
+		if strings.TrimSpace(r.IdempotencyKey) == "" || !utf8.ValidString(r.IdempotencyKey) || len(r.IdempotencyKey) > 128 || strings.ContainsAny(r.IdempotencyKey, "\r\n\x00") {
+			return fmt.Errorf("%w: --idempotency-key requires 1 to 128 bytes without line breaks", ErrInvalid)
+		}
 	}
 	return nil
 }
@@ -134,10 +160,9 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 		return s.append(ctx, r)
 	}
 	// Persist a request marker in addition to Kata's replay window.
-	encoded, _ := json.Marshal(r)
-	requestHash := Digest("docbank.kata.request.v1", string(encoded))
+	requestHash := requestDigest(r)
 	// Lookup retries before reading source bytes: a filed issue survives source deletion.
-	marker := Digest("docbank.kata.create.v1", s.Archive.VaultUID(), r.IdempotencyKey)
+	marker := createMarker(s.Archive.VaultUID(), r.IdempotencyKey)
 	existing, err := s.Kata.FindMarker(ctx, marker)
 	if err != nil {
 		return kataclient.Issue{}, err
@@ -156,7 +181,7 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 	if err = validateEvidence(evidence); err != nil {
 		return kataclient.Issue{}, err
 	}
-	entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference})
+	entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label})
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
 	if err != nil {
@@ -227,7 +252,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 			if len(env.entries) >= MaxEntries {
 				return kataclient.Issue{}, fmt.Errorf("Kata issue already has %d Docbank evidence entries: %w", MaxEntries, ErrUnsupported)
 			}
-			entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Pending: &Pending{Quote: evidence.Excerpt, Label: evidence.Label}})
+			entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{Quote: evidence.Excerpt, Label: evidence.Label}})
 			env.entries = append(env.entries, entry)
 			data, err := env.encode()
 			if err != nil {
@@ -282,12 +307,15 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 				continue
 			}
 			body := renderQuote(entry.Pending.Label, entry.Pending.Quote)
-			key := Digest("docbank.kata.comment.v1", issue.UID, entry.Passage, body)
-			if !slices.ContainsFunc(issue.Comments, func(comment kataclient.Comment) bool { return comment.Body == body }) {
+			key := commentKey(issue.UID, entry.Passage, body)
+			posted, err := s.Kata.HasComment(ctx, ref, issue.UID, body)
+			if err != nil {
+				return kataclient.Issue{}, err
+			}
+			if !posted {
 				if err := s.Kata.Comment(ctx, ref, key, body); err != nil {
 					return kataclient.Issue{}, err
 				}
-				issue.Comments = append(issue.Comments, kataclient.Comment{Body: body})
 			}
 			// Clear only our field; preserve any future fields on the entry.
 			var fields map[string]jsontext.Value
@@ -322,4 +350,15 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 
 func renderQuote(label, words string) string {
 	return "Evidence: " + strings.NewReplacer("\n", " ", "\r", " ").Replace(label) + "\n\n> " + strings.ReplaceAll(words, "\n", "\n> ") + "\n"
+}
+
+func requestDigest(request CiteRequest) string {
+	encoded, _ := json.Marshal(request)
+	return Digest("docbank.kata.request.v1", string(encoded))
+}
+
+func createMarker(vault, key string) string { return Digest("docbank.kata.create.v1", vault, key) }
+
+func commentKey(uid, passage, body string) string {
+	return Digest("docbank.kata.comment.v1", uid, passage, body)
 }

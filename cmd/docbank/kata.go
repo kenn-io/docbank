@@ -9,9 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
 
@@ -48,9 +46,6 @@ func newKataCommand() *cobra.Command {
 			}
 			// Keep caller input stable: the daemon resolves paths after replay reconciliation.
 			request := kataevidence.CiteRequest{Selector: selection, Title: title, Brief: brief, Issue: issue, IdempotencyKey: key}
-			if err := checkKataConfig(); err != nil {
-				return err
-			}
 			connection, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
@@ -84,17 +79,11 @@ func newKataCommand() *cobra.Command {
 			if offset < 0 || offset > kataevidence.MaxContextOffset {
 				return usageError(errors.New("offset is out of range"))
 			}
-			if err := checkKataConfig(); err != nil {
-				return err
-			}
 			request := kataevidence.ContextRequest{Issue: args[0], Offset: offset}
 			connection, err := daemonconn.Ensure(cmd.Context())
 			var result kataevidence.Context
 			if err == nil {
 				result, err = connection.KataContext(cmd.Context(), request)
-			}
-			if err != nil && daemonconn.KataOfflineAllowed(err) {
-				result, err = daemonconn.ReadKataContextOffline(cmd.Context(), request)
 			}
 			if err != nil {
 				return err
@@ -108,23 +97,6 @@ func newKataCommand() *cobra.Command {
 	contextCmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	command.AddCommand(cite, contextCmd)
 	return command
-}
-
-func checkKataConfig() error {
-	layout, err := home.Resolve()
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load(layout.Root)
-	if err != nil {
-		return err
-	}
-	if !cfg.Integrations.Kata.Enabled {
-		_, err = cfg.Integrations.Kata.Resolve(layout.Root)
-		return err
-	}
-	// Environment credentials belong to the daemon's process, which can differ from this CLI.
-	return nil
 }
 
 func readKataCitation(path string) (document.TextCitation, error) {
@@ -147,20 +119,30 @@ func readKataCitation(path string) (document.TextCitation, error) {
 func init() { rootCmd.AddCommand(newKataCommand()) }
 
 func writeKataContext(out io.Writer, result kataevidence.Context) error {
-	_, _ = fmt.Fprintf(out, "%s %s\n", result.Issue.QualifiedRef, result.Issue.Title)
+	if _, err := fmt.Fprintf(out, "%s %s\n", result.Issue.QualifiedRef, result.Issue.Title); err != nil {
+		return fmt.Errorf("writing Kata context: %w", err)
+	}
 	for _, passage := range result.Passages {
 		p := passage.Evidence.Reference.Docbank
+		var err error
 		if p != nil {
-			_, _ = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", passage.State, p.NodeID, p.StartRune, p.EndRune, p.ContentVersionID)
+			_, err = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", passage.State, p.NodeID, p.StartRune, p.EndRune, p.ContentVersionID)
 		} else {
-			_, _ = fmt.Fprintln(out, passage.State)
+			_, err = fmt.Fprintln(out, passage.State)
+		}
+		if err != nil {
+			return fmt.Errorf("writing Kata passage: %w", err)
 		}
 		if passage.SavedQuote != "" {
-			_, _ = fmt.Fprintln(out, passage.SavedQuote)
+			if _, err := fmt.Fprintln(out, passage.SavedQuote); err != nil {
+				return fmt.Errorf("writing Kata quote: %w", err)
+			}
 		}
 	}
 	if result.NextOffset != 0 {
-		_, _ = fmt.Fprintf(out, "Continue with --offset %d\n", result.NextOffset)
+		if _, err := fmt.Fprintf(out, "Continue with --offset %d\n", result.NextOffset); err != nil {
+			return fmt.Errorf("writing Kata continuation: %w", err)
+		}
 	}
 	return nil
 }
