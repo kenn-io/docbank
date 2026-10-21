@@ -3115,6 +3115,30 @@ it("reads the open photo again on a live change and conceals its cached image on
   photos.dispose();
 });
 
+it.each([undefined, "map"] as const)(
+  "reuses a refreshed full row only outside projections, projection=%s",
+  async (projection) => {
+    const photos = workspaceWithPreparedPhoto(preparedPhoto(1), projection);
+    const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(photo(1));
+    viewerWithCachedImage(photos, lookup);
+    await screen.findByText("Fit preview");
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+    const refreshed = { ...photo(1), name: "Refreshed.jpg", stack };
+    lookup.mockResolvedValue({ ...photo(1), name: "Looked up.jpg" });
+    await act(async () => {
+      photos.items = [refreshed];
+      await photos.changed({ ...photoChange("photo-1"), listRefreshed: true });
+    });
+    await screen.findByRole("dialog", {
+      name: `Photo viewer, ${projection ? "Looked up.jpg" : "Refreshed.jpg"}`,
+    });
+    expect(lookup).toHaveBeenCalledTimes(projection ? 2 : 1);
+    expect(photos.items[0]).toEqual(refreshed);
+    expect(screen.getByText("Fit preview")).toBeTruthy();
+    photos.dispose();
+  },
+);
+
 it("ignores a live detail response after leaving and returning to Photos", async () => {
   const photos = workspaceWithPreparedPhoto();
   const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(photo(1));

@@ -8,7 +8,12 @@ import {
 export type PhotoEvent = { asset_id?: string };
 
 /** The photos changed since the last pass, or an ID-free change that could have touched any of them. */
-export type PhotoChange = { ids: ReadonlySet<string>; idFree: boolean; resume?: boolean };
+export type PhotoChange = {
+  ids: ReadonlySet<string>;
+  idFree: boolean;
+  resume?: boolean;
+  listRefreshed?: boolean;
+};
 
 export const affectsPhoto = (change: PhotoChange, id: string) =>
   change.idFree || change.ids.has(id);

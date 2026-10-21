@@ -15,6 +15,7 @@ import {
 import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
+import { APIError } from "./api-transport.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
@@ -4066,9 +4067,9 @@ it("reaches the first page when a change arrives before it lands, then refreshes
   expect(requests.tags).toBeGreaterThan(tags);
 });
 
-it.each([false, true])(
-  "reads the open photo after a delayed list refresh, list fails=%s",
-  async (fails) => {
+it.each(["listed", "absent", "failed"])(
+  "revalidates the open photo after a delayed list refresh, result=%s",
+  async (result) => {
     history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
     livePhotoStubs();
     const row = photo(1);
@@ -4090,18 +4091,28 @@ it.each([false, true])(
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     delay = true;
     const reads = lookup.mock.calls.length;
+    if (result === "absent")
+      lookup.mockRejectedValue(new APIError("This photo is no longer in this view.", 404, "x"));
     const pass = photoEventPass()(idFreeChange).catch(() => undefined);
     await waitFor(() => expect(finish).toBeDefined());
     expect(lookup.mock.calls.length).toBe(reads);
     await act(async () => {
       finish(
-        fails
+        result === "failed"
           ? Response.json({ detail: "List unavailable" }, { status: 503 })
-          : Response.json({ items: [row], total: 1 }),
+          : Response.json({
+              items: result === "listed" ? [row] : [],
+              total: result === "listed" ? 1 : 0,
+            }),
       );
       await pass;
     });
-    expect(lookup.mock.calls.length).toBeGreaterThan(reads);
+    if (result === "listed") expect(lookup.mock.calls.length).toBe(reads);
+    else expect(lookup.mock.calls.length).toBeGreaterThan(reads);
+    if (result === "absent") {
+      await screen.findByText("This photo is no longer in this view.");
+      expect(screen.getByText("No preview")).toBeTruthy();
+    }
   },
 );
 

@@ -793,15 +793,17 @@
     ].filter((photos): photos is Photos => !!(photos?.started || photos?.loading));
     if (lists.some((photos) => photos.loading)) return false;
     for (const photos of lists) photos.resumeStaged = !!change.resume;
+    let listRefreshed = false;
     try {
       await settleReads([
         photosChanged(undefined, undefined, true),
         hiddenWorkspace?.refresh(true),
         change.idFree ? refreshDefinitions() : undefined,
       ]);
+      listRefreshed = true;
     } finally {
       // A viewer's unavailable result must land after any older list rows.
-      await settleReads(lists.map((photos) => photos.changed(change)));
+      await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));
     }
   }
   async function refreshDefinitions() {

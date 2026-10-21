@@ -519,14 +519,21 @@
   }
   // Reads the open photo again, since a change can affect it without moving its revision.
   // It takes over from any detail read in flight, so an older answer never lands after it.
-  async function revalidateDetail(id: string) {
+  async function revalidateDetail(id: string, listRefreshed = false) {
     detailController?.abort();
     const controller = (detailController = new AbortController());
     try {
-      const photo = await photos.lookup(
-        id,
-        AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
-      );
+      const row =
+        listRefreshed && !photos.projection
+          ? photos.items.find((item) => item.asset_id === id)
+          : undefined;
+      const photo =
+        row && "content_version_id" in row
+          ? row
+          : await photos.lookup(
+              id,
+              AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+            );
       if (controller.signal.aborted) return;
       acceptDetail(id, photo);
     } catch (cause) {
@@ -541,7 +548,9 @@
     photos.watch((change: PhotoChange) => {
       if (editor.busy) changedDuringWrite = change;
       return settleReads([
-        photoID && affectsPhoto(change, photoID) ? revalidateDetail(photoID) : undefined,
+        photoID && affectsPhoto(change, photoID)
+          ? revalidateDetail(photoID, change.listRefreshed)
+          : undefined,
         // The editor retains changes until the user clears a draft.
         editor.invalidate(change),
       ]);
