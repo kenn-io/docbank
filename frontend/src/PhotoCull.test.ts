@@ -6,6 +6,7 @@ import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
+import { watchPhotoEvents } from "./photoEvents.js";
 import {
   idFreeChange,
   photo,
@@ -1246,6 +1247,65 @@ it("rates during a pending live read", async () => {
   });
   expect(screen.getByText("Unflagged · 5 stars")).toBeTruthy();
   photos.dispose();
+});
+
+it.each(["5", "p", "x"].flatMap((key) => [false, true].map((idFree) => ({ key, idFree }))))(
+  "allows $key during pending live grouping, idFree=$idFree",
+  async ({ key, idFree }) => {
+    const { photos, container } = await reviewPhoto();
+    await readyButton("Pick (P)");
+    let finish!: (value: api.GroupPhotoStacksResponse) => void;
+    vi.mocked(api.groupPhotoStacks).mockImplementationOnce(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+      receipt_id: "decision",
+      before: [],
+      after: [],
+    });
+    const reading = photos.changed(idFree ? idFreeChange : photoChange("photo-1"));
+    try {
+      await waitFor(() => expect(finish).toBeDefined());
+      await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key });
+      await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+      expect(edit.mock.calls[0]![0].patch).toEqual(
+        key === "5" ? { rating: 5 } : { flag: key === "p" ? "pick" : "reject" },
+      );
+    } finally {
+      await act(async () => {
+        finish({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+        await reading;
+      });
+    }
+  },
+);
+
+it("automatically retries a failed live grouping without blocking decisions", async () => {
+  const { cull, photos } = await reviewPhoto();
+  await readyButton("Pick (P)");
+  const group = vi.mocked(api.groupPhotoStacks);
+  group.mockClear();
+  group.mockRejectedValueOnce(new APIError("Grouping down", 503, "unavailable"));
+  group.mockResolvedValue({ groups: [], unavailable_ids: [], burst_gap_seconds: 7 });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(new ReadableStream())),
+  );
+  vi.useFakeTimers();
+  const watcher = watchPhotoEvents("session", (change) => photos.changed(change), vi.fn());
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(group).toHaveBeenCalledOnce();
+    const blocked = screen.getByRole("button", { name: "Pick (P)" }).matches(":disabled");
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(group).toHaveBeenCalledTimes(2);
+    expect(blocked).toBe(false);
+    expect(screen.queryByText("Grouping down")).toBeNull();
+    expect(cull.run?.burstGapSeconds).toBe(7);
+  } finally {
+    watcher.stop();
+    vi.useRealTimers();
+  }
 });
 
 it("swaps a changed photo in place and marks one that left the view unavailable", async () => {

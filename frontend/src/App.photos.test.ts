@@ -4023,6 +4023,38 @@ const livePhotoStubs = () => {
   storage();
 };
 
+it("updates and conceals a direct-link photo after initial paging fails", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+  );
+  livePhotoStubs();
+  let row = photo(1);
+  let deleted = false;
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) {
+      if (JSON.parse(String(init.body)).query.filters?.asset_ids)
+        return Response.json({ items: deleted ? [] : [row], total: deleted ? 0 : 1 });
+      return Response.json({ detail: "Paging down" }, { status: 503 });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer" });
+  await within(viewer).findByText("Photo 1.jpg");
+  await screen.findByText("Paging down");
+  row = { ...row, name: "Renamed.jpg" };
+  await act(() => photoEventPass()({ ids: new Set(["photo-1"]), idFree: false }));
+  await within(viewer).findByText("Renamed.jpg");
+  deleted = true;
+  await act(() => photoEventPass()({ ids: new Set(["photo-1"]), idFree: false }));
+  await within(viewer).findByText("This photo is no longer in this view.");
+  expect(within(viewer).queryByText("Renamed.jpg")).toBeNull();
+});
+
 it.each(["first page", "album list", "tag catalog", "staged retry"])(
   "routes a live pass through the %s case",
   async (mode) => {

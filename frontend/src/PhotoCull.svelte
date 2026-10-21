@@ -203,7 +203,7 @@
     const shown = shownIDs.filter((id) => affectsPhoto(change, id));
     await settleReads([
       shown.length ? reread(shown) : undefined,
-      relevant && !writesInFlight && !editor.busy ? cull.regroup() : undefined,
+      relevant && !writesInFlight && !editor.busy ? cull.regroup(true) : undefined,
       cull.complete ? revalidateRemainder() : undefined,
       // Prepared stack revisions are read again, so a decision checks the refreshed rows.
       editor.invalidate(change),
@@ -213,7 +213,7 @@
     const change = changedDuringWrite;
     if (!change || writesInFlight || reloadController.signal.aborted) return;
     try {
-      await settleReads([reread(shownIDs), cull.regroup()]);
+      await settleReads([reread(shownIDs), cull.regroup(true)]);
       if (changedDuringWrite === change) changedDuringWrite = undefined;
     } catch (cause) {
       if (!reloadController.signal.aborted) {

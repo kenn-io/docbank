@@ -790,9 +790,10 @@
       albumPhotos,
       mapPhotos,
       hiddenWorkspace?.activePhotos(),
-    ].filter((photos): photos is Photos => !!(photos?.started || photos?.loading));
+    ].filter((photos): photos is Photos => !!photos);
     if (lists.some((photos) => photos.loading)) return false;
-    for (const photos of lists) photos.resumeStaged = !!change.resume;
+    for (const photos of lists)
+      if (photos.started || photos.loading) photos.resumeStaged = !!change.resume;
     let listRefreshed = false;
     try {
       await settleReads([
