@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,7 +14,17 @@ func TestScanEvidenceBaseline(t *testing.T) {
 	const maxSourceBytes = 128 << 20
 	var rows []Measurement
 	for _, fixture := range Corpus() {
-		rows = append(rows, Measure(fixture, maxSourceBytes))
+		measurement := Measure(fixture, maxSourceBytes)
+		if fixture.Name == "malformed" {
+			require.Zero(t, measurement.Pages)
+			require.Zero(t, measurement.Inspect.Pages)
+			for _, message := range []*string{&measurement.PageError, &measurement.InspectError, &measurement.MetadataError} {
+				require.NotEmpty(t, *message)
+				require.True(t, strings.HasPrefix(*message, "validate PDF object graph:"), "unexpected malformed-PDF error: %s", *message)
+				*message = "validate PDF object graph: <dependency error>"
+			}
+		}
+		rows = append(rows, measurement)
 	}
 	encoded, err := json.Marshal(struct {
 		MaxSourceBytes int64

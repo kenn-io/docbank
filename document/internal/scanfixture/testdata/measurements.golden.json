@@ -79,7 +79,7 @@
     {
       "Name": "malformed",
       "Pages": 0,
-      "PageError": "validate PDF object graph: validation error (obj#:99): catalog: pages: page tree root: cannot dereference page node",
+      "PageError": "validate PDF object graph: <dependency error>",
       "Inspect": {
         "Pages": 0,
         "CompressedBytes": 0,
@@ -87,8 +87,8 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "validate PDF object graph: validation error (obj#:99): catalog: pages: page tree root: cannot dereference page node",
-      "MetadataError": "validate PDF object graph: catalog: pages: page tree root: cannot dereference page node",
+      "InspectError": "validate PDF object graph: <dependency error>",
+      "MetadataError": "validate PDF object graph: <dependency error>",
       "Unbounded": false
     },
     {
