@@ -222,3 +222,38 @@ it("reports Photos search outcomes for explicit submissions", async () => {
   expect(actions.reportSearch).not.toHaveBeenCalled();
   expect(actions.reportFailure).not.toHaveBeenCalled();
 });
+
+it.each([
+  { hidden: true, code: "hidden_locked", handled: true },
+  { hidden: false, code: "forbidden", handled: false },
+])(
+  "reports submitted search failures only when access cleanup does not handle them, hidden=$hidden",
+  async ({ hidden, code, handled }) => {
+    const onauth = vi.fn(() => photos.dispose());
+    const photos = new Photos("scoped", onauth, hidden);
+    photos.started = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ code, detail: "Access denied" }, { status: 403 })),
+    );
+    render(PhotoSearch, { photos });
+    const search = screen.getByRole("searchbox", { name: "Search photos" });
+    await fireEvent.input(search, { target: { value: "harbor" } });
+    await fireEvent.submit(search.closest("form")!);
+    if (handled) {
+      await waitFor(() => expect(onauth).toHaveBeenCalledOnce());
+      expect(actions.reportFailure).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() =>
+        expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+          "scoped",
+          "search",
+          expect.objectContaining({ status: 403, code }),
+        ),
+      );
+      expect(onauth).not.toHaveBeenCalled();
+    }
+    expect(actions.reportSearch).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);

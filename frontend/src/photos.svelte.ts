@@ -805,7 +805,7 @@ export class Photos {
       if (!controller.signal.aborted) return { accepted: true, empty: this.total === 0 };
     } catch (cause) {
       if (controller.signal.aborted) return;
-      this.authFailure(cause);
+      if (this.authFailure(cause)) return;
       this.expired =
         cause instanceof APIError &&
         ["cursor_expired", "invalid_photo_cursor"].includes(cause.code);

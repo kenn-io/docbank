@@ -114,29 +114,36 @@ func TestNaturalSearchReportsAcceptedModeAfterRerank(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		superseded bool
+		failed     bool
 		wantMode   string
 	}{
-		{name: "applied", wantMode: "lexical"},
+		{name: "applied", wantMode: "hybrid"},
 		{name: "superseded", superseded: true, wantMode: "lexical"},
+		{name: "failed", failed: true, wantMode: "lexical"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
 			readme := fake.nodes["/README.txt"]
 			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "base")
+			fake.naturalSearch.RequestedMode = "auto"
 			fake.naturalRerankSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "reranked")
-			fake.naturalRerankSearch.ActualMode = "lexical"
+			fake.naturalRerankSearch.RequestedMode = "auto"
+			fake.naturalRerankSearch.ActualMode = "hybrid"
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
-			model.naturalMode, model.naturalRerank = naturalLexical, true
+			model.naturalMode, model.naturalRerank = naturalAuto, true
 			model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
 			model, cmd := updateModel(t, model, model.loadNaturalSearch("report", model.requestID)())
 			require.True(t, model.naturalRerankPending)
 			assert.Empty(t, fake.actions)
 			if tc.superseded {
 				model.requestID++
+			}
+			if tc.failed {
+				fake.err = errors.New("provider unavailable")
 			}
 			batch, ok := cmd().(tea.BatchMsg)
 			require.True(t, ok)

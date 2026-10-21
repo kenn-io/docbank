@@ -2821,16 +2821,23 @@ it("recovers smart sets without stale identities", async () => {
   deleted.dispose();
 });
 
-it("rejects an unparseable smart set without remembering it", async () => {
+it("rejects a failed smart-set search without remembering it", async () => {
   const saved = await savedSmartSet();
-  saved.payload.text = "x".repeat(8193);
-  const fetcher = vi.fn();
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(Response.json({ detail: "Unavailable" }, { status: 503 }));
   stubPhotoFetch(fetcher);
   const photos = new Photos("session", vi.fn());
   expect(await photos.openSmartSet(saved)).toBe(false);
   expect(photos.smartSet).toBeUndefined();
   expect(localStorage.length).toBe(0);
-  expect(fetcher).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).query).toMatchObject({
+    text: "rating:5",
+    syntax: "advanced",
+    filters: { kinds: ["photo", "video"] },
+  });
+  expect(photos.error).toBe("Unavailable");
   photos.dispose();
 });
 
