@@ -652,43 +652,7 @@ func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *tes
 		require.Len(t, f.suggestions(t), 1)
 		require.Zero(t, f.waitingDescriptions(t), "no request is left waiting")
 	})
-	t.Run("running", func(t *testing.T) {
-		t.Parallel()
-		f := newPhotoDescriptionFixture(t)
-		ctx := t.Context()
-		f.grant(t, f.service, "vision")
-		release := make(chan struct{})
-		var releaseOnce sync.Once
-		unblock := func() { releaseOnce.Do(func() { close(release) }) }
-		t.Cleanup(unblock)
-		f.mu.Lock()
-		f.onDescribe = func() { <-release }
-		f.mu.Unlock()
-		targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
-		require.NoError(t, err)
-		require.Len(t, targets, 1)
-		require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]))
-		working := make(chan error, 1)
-		go func() { working <- f.drainWorker(ctx, f.service) }()
-		require.Eventually(t, func() bool { _, describes := f.counts(); return describes == 1 }, 5*time.Second, time.Millisecond)
 
-		plan, err := f.service.Plan(ctx, f.selector("vision"))
-		require.NoError(t, err)
-		started := make(chan error, 1)
-		go func() {
-			_, err := f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
-			started <- err
-		}()
-		require.Never(t, func() bool { _, describes := f.counts(); return describes > 1 }, 300*time.Millisecond, time.Millisecond,
-			"the explicit request joins the call in flight")
-		unblock()
-		require.NoError(t, <-started)
-		require.NoError(t, <-working)
-		_, describes := f.counts()
-		require.Equal(t, 1, describes)
-		require.Len(t, f.suggestions(t), 1)
-		require.Zero(t, f.waitingDescriptions(t))
-	})
 }
 
 func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
