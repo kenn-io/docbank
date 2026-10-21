@@ -266,59 +266,53 @@ it("reads the shown photos again after a change that names them or after ID-free
   photos.dispose();
 });
 
-it("revalidates a pending destination and drops the read it replaces", async () => {
-  const rows = [photo(1), photo(2), photo(3), photo(4)];
-  const { photos, dialog } = compare(rows);
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-  const lookup = vi.mocked(photos.lookupMany);
-  let stale!: (rows: ReturnType<typeof photo>[]) => void;
-  lookup.mockImplementationOnce(() => new Promise((done) => (stale = done)));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
-  lookup.mockResolvedValueOnce([rows[1]!, { ...rows[2]!, name: "Replaced.jpg" }]);
-  await photos.changed(photoChange("photo-3"));
-  expect(lookup.mock.calls[2]![0]).toEqual(["photo-2", "photo-3"]);
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Replaced.jpg"]));
-  stale([rows[1]!, rows[2]!]);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(names(dialog)).toEqual(["Photo 2.jpg", "Replaced.jpg"]);
-  photos.dispose();
-});
-
-it("conceals an excluded displayed photo when a pending destination fails", async () => {
-  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue(undefined);
-  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:cached-photo");
-  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  const rows = [photo(1), photo(2), photo(3), photo(4)];
-  for (const row of rows) row.previews.grid = { state: "ready", generation_id: "grid-1" };
-  const { photos, dialog } = compare(rows, ["photo-1", "photo-2"], {
-    get: vi.fn(async () => new Blob(["synthetic-photo"])),
-  } as unknown as PhotoPreviewCache);
-  await within(dialog).findByRole("img", { name: "Photo 1.jpg" });
-  const survivor = within(dialog).getByRole("region", { name: "Photo 2.jpg" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "1:1 (Z)" }));
-  const zoom = photos.compareView;
-  const lookup = vi.mocked(photos.lookupMany);
-  let stale!: (rows: ReturnType<typeof photo>[]) => void;
-  lookup.mockImplementationOnce(() => new Promise((done) => (stale = done)));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
-  lookup.mockImplementation(async (ids) => {
-    if (ids.includes("photo-3")) throw new APIError("Service unavailable", 503, "unavailable");
-    return [rows[1]!];
-  });
-  await expect(photos.changed(photoChange("photo-1"))).rejects.toThrow("Service unavailable");
-  await within(dialog).findByText("1 selected photo is unavailable.");
-  expect(within(dialog).queryByRole("img", { name: "Photo 1.jpg" })).toBeNull();
-  expect(within(dialog).getByRole("region", { name: "Photo 2.jpg" })).toBe(survivor);
-  expect(photos.compareView).toEqual(zoom);
-  stale(rows.slice(1, 3));
-  await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
-  await within(dialog).findByText("Service unavailable");
-  expect(lookup.mock.calls.at(-1)![0]).toEqual(["photo-2", "photo-3"]);
-  expect(names(dialog)).toEqual(["Photo 2.jpg"]);
-  photos.dispose();
-});
+it.each(["replacement", "failure"])(
+  "revalidates a pending destination after a change, %s",
+  async (mode) => {
+    HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:cached-photo");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const rows = [photo(1), photo(2), photo(3), photo(4)];
+    for (const row of rows) row.previews.grid = { state: "ready", generation_id: "grid-1" };
+    const { photos, dialog } = compare(rows, ["photo-1", "photo-2"], {
+      get: vi.fn(async () => new Blob(["synthetic-photo"])),
+    } as unknown as PhotoPreviewCache);
+    await within(dialog).findByRole("img", { name: "Photo 1.jpg" });
+    const survivor = within(dialog).getByRole("region", { name: "Photo 2.jpg" });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "1:1 (Z)" }));
+    const zoom = photos.compareView;
+    const lookup = vi.mocked(photos.lookupMany);
+    let stale!: (rows: ReturnType<typeof photo>[]) => void;
+    lookup.mockImplementationOnce(() => new Promise((done) => (stale = done)));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+    if (mode === "replacement") {
+      lookup.mockResolvedValueOnce([rows[1]!, { ...rows[2]!, name: "Replaced.jpg" }]);
+      await photos.changed(photoChange("photo-3"));
+      expect(lookup.mock.calls[2]![0]).toEqual(["photo-2", "photo-3"]);
+      await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Replaced.jpg"]));
+      stale(rows.slice(1, 3));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(names(dialog)).toEqual(["Photo 2.jpg", "Replaced.jpg"]);
+    } else {
+      lookup.mockImplementation(async (ids) => {
+        if (ids.includes("photo-3")) throw new APIError("Service unavailable", 503, "unavailable");
+        return [rows[1]!];
+      });
+      await expect(photos.changed(photoChange("photo-1"))).rejects.toThrow("Service unavailable");
+      await within(dialog).findByText("1 selected photo is unavailable.");
+      expect(within(dialog).queryByRole("img", { name: "Photo 1.jpg" })).toBeNull();
+      expect(within(dialog).getByRole("region", { name: "Photo 2.jpg" })).toBe(survivor);
+      expect(photos.compareView).toEqual(zoom);
+      stale(rows.slice(1, 3));
+      await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
+      await within(dialog).findByText("Service unavailable");
+      expect(lookup.mock.calls.at(-1)![0]).toEqual(["photo-2", "photo-3"]);
+      expect(names(dialog)).toEqual(["Photo 2.jpg"]);
+    }
+    photos.dispose();
+  },
+);
 
 it("keeps Next usable while a live list refresh is in flight", async () => {
   const rows = [photo(1), photo(2), photo(3)];

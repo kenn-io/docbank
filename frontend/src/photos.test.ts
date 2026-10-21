@@ -3,16 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
-import {
-  Photos,
-  lookupPhotoRows,
-  loadDensity,
-  photoQuery,
-  mapPhotoLimit,
-  type PhotoRow,
-} from "./photos.svelte.js";
+import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
 import {
   photo,
+  photoChange,
+  idFreeChange,
   preparedPhoto,
   mapPhoto,
   savedSmartSet as savedSmartSetFixture,
@@ -176,6 +171,47 @@ it("resumes a failed live refresh from its staged pages when nothing new has arr
   expect(cursors).toEqual([undefined, "p2", "p2"]);
   photos.dispose();
 });
+
+it.each(["identified", "ID-free"])(
+  "rereads page one after an %s event is deferred behind a failed foreground refresh",
+  async (event) => {
+    let renamed = false;
+    let finish!: (response: Response) => void;
+    const cursors: (string | undefined)[] = [];
+    stubPhotoFetch(async (_url, init) => {
+      const { cursor } = JSON.parse(String(init.body));
+      cursors.push(cursor);
+      if (cursor && !finish) return new Promise<Response>((resolve) => (finish = resolve));
+      return Response.json(
+        cursor
+          ? { items: [photo(2)], total: 2 }
+          : {
+              items: [{ ...photo(1), name: renamed ? "Renamed.jpg" : "Photo 1.jpg" }],
+              total: 2,
+              next_cursor: "page-two",
+            },
+      );
+    });
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    const foreground = photos.refresh();
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(cursors).toEqual([undefined, "page-two"]);
+    renamed = true;
+    const change = event === "identified" ? photoChange("photo-1") : idFreeChange;
+    await photos.changed(change);
+    expect(photos.loading).toBe(true);
+    expect(cursors).toEqual([undefined, "page-two"]);
+    finish(Response.json({ detail: "Page unavailable" }, { status: 503 }));
+    expect(await foreground).toBe(false);
+    expect(await photos.refresh(undefined, true)).toBe(true);
+    await photos.changed(change);
+    expect(cursors).toEqual([undefined, "page-two", undefined, "page-two"]);
+    expect(photos.items.map((row) => row.name)).toEqual(["Renamed.jpg", "Photo 2.jpg"]);
+    photos.dispose();
+  },
+);
 
 it.each(["replacement", "stalled continuation"])(
   "reports a missing compare member after %s",
@@ -3231,7 +3267,9 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
         .map((id) => ({ ...photo(1), asset_id: id })),
     );
   });
-  const result = lookupPhotoRows("session", ids);
+  const access = new HiddenAccess("session", vi.fn());
+  const photos = new Photos("session", vi.fn(), false, undefined, { hiddenAccess: access });
+  const result = photos.lookupMany(ids, new AbortController().signal);
   await waitFor(() => expect(waiting).toHaveLength(4));
   waiting.splice(0).forEach((resolve) => resolve());
   await waitFor(() => expect(waiting).toHaveLength(2));
@@ -3239,6 +3277,7 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
   expect((await result).map((row) => row.asset_id)).toEqual(ids);
   expect(peak).toBe(4);
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
+  photos.dispose();
 });
 
 it("uses refreshed revisions after saving Hidden setup before the hide batch", async () => {

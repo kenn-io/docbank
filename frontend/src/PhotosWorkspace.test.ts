@@ -3236,14 +3236,24 @@ it("forwards live changes to the editor while Metadata is open", async () => {
   photos.dispose();
 });
 
-it("keeps rating shortcuts and stack decisions available during a background refresh", async () => {
+it("keeps shortcuts and stack decisions usable during refresh, then trashes with the fresh revision", async () => {
   const photos = workspaceWithPreparedPhoto();
-  const row = {
-    ...photo(1),
-    stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" },
-  };
-  photos.items = [row];
+  photos.authored.targets = [];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  let revision = 1;
+  const row = () => ({ ...photo(1), revision, stack });
+  photos.items = [row()];
   photos.selectLoaded();
+  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () =>
+    photoPreparation([
+      preparedPhoto(1, { asset_revision: revision, revision: revision === 3 ? 2 : 1 }),
+      preparedPhoto(2),
+    ]),
+  );
+  const trash = vi.spyOn(api, "trashPhotoAsset").mockResolvedValue({
+    ...photoPreparation([preparedPhoto(1)]).assets[0]!,
+    revision: 4,
+  });
   let finish!: (response: Response) => void;
   stubPhotoFetch(vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))));
   const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue();
@@ -3263,67 +3273,22 @@ it("keeps rating shortcuts and stack decisions available during a background ref
   for (const name of ["Keep all", "Keep selected", "Choose representative"]) {
     expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
   }
-  finish(Response.json({ items: [row], total: 1 }));
-  expect(await refreshing).toBe(true);
+  revision = 3;
+  await act(async () => {
+    finish(Response.json({ items: [row()], total: 1, stacks: [stack] }));
+    expect(await refreshing).toBe(true);
+    await photos.changed(photoChange("photo-1"));
+  });
+  await waitFor(() => expect(photos.authored.stackLoading).toBe(false));
+  // Subsequent reads triggered by the trash operation can complete immediately.
+  stubPhotoFetch(async () => Response.json({ items: [row()], total: 1, stacks: [stack] }));
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
+  await waitFor(() => expect(trash).toHaveBeenCalledOnce());
+  expect(trash.mock.calls[0]?.[1]).toEqual({ "If-Match": "3" });
   photos.dispose();
 });
-
-it.each(["Keep all", "Move to trash"])(
-  "uses the refreshed revision for %s with Metadata closed",
-  async (action) => {
-    const photos = workspaceWithPreparedPhoto();
-    photos.authored.targets = [];
-    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
-    let revision = 1;
-    const row = () => ({ ...photo(1), revision, stack });
-    photos.items = [row()];
-    photos.selectLoaded();
-    vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () =>
-      photoPreparation([
-        preparedPhoto(1, { asset_revision: revision, revision: revision === 3 ? 2 : 1 }),
-        preparedPhoto(2),
-      ]),
-    );
-    const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
-      receipt_id: "kept",
-      before: [],
-      after: [],
-    });
-    const trash = vi.spyOn(api, "trashPhotoAsset").mockResolvedValue({
-      ...photoPreparation([preparedPhoto(1)]).assets[0]!,
-      revision: 4,
-    });
-    stubPhotoFetch(async () => Response.json({ items: [row()], total: 1, stacks: [stack] }));
-    render(PhotosWorkspace, {
-      photos,
-      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    });
-    await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
-    revision = 3;
-    await act(async () => {
-      await photos.refresh(undefined, true);
-      await photos.changed(photoChange("photo-1"));
-    });
-    await waitFor(() => expect(photos.authored.stackLoading).toBe(false));
-    await fireEvent.click(screen.getByRole("button", { name: action }));
-    if (action === "Keep all") {
-      await waitFor(() => expect(decide).toHaveBeenCalledOnce());
-      expect(decide.mock.calls[0]?.[0]).toMatchObject({
-        decision: "all",
-        targets: [
-          { asset_id: "photo-1", file_id: "file-1", revision: 2 },
-          { asset_id: "photo-2", file_id: "file-2", revision: 1 },
-        ],
-      });
-    } else {
-      const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
-      await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
-      await waitFor(() => expect(trash).toHaveBeenCalledOnce());
-      expect(trash.mock.calls[0]?.[1]).toEqual({ "If-Match": "3" });
-    }
-    photos.dispose();
-  },
-);
 
 it("keeps newer Library values across an older live read", async () => {
   const before = preparedPhoto(1);

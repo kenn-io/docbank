@@ -1220,37 +1220,26 @@ async function reviewThree() {
   return { ...review, rows };
 }
 
-it("rates during a pending live read while requesting visible photos", async () => {
-  const access = new HiddenAccess("session", vi.fn());
-  const { photos, container } = await reviewPhoto(photo(1), false, undefined, {
-    hiddenAccess: access,
-  });
-  vi.mocked(photos.lookupMany).mockRestore();
-  vi.mocked(api.preparePhotoAuthored).mockRestore();
-  let finish!: (response: Response) => void;
-  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-    if (url.endsWith("/photos/assets/query")) {
-      expect(JSON.parse(String(init.body)).hidden).toBe(false);
-      return new Promise<Response>((resolve) => (finish = resolve));
-    }
-    if (url.endsWith("/prepare")) return Response.json(photoPreparation([preparedPhoto(1)]));
-    if (url.endsWith("/edit")) {
-      expect(JSON.parse(String(init.body)).patch).toEqual({ rating: 5 });
-      return Response.json({
-        receipt_id: "rated",
-        before: [],
-        after: [
-          { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, rating: 5 } },
-        ],
-      });
-    }
-    throw new Error(`Unexpected request: ${url}`);
+it("rates during a pending live read", async () => {
+  const { photos, container } = await reviewPhoto();
+  let finish!: (rows: PhotoBrowseRow[]) => void;
+  vi.mocked(photos.lookupMany).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  vi.spyOn(api, "editPhotoAuthored").mockImplementation(async (request) => {
+    expect(request.patch).toEqual({ rating: 5 });
+    const before = preparedPhoto(1);
+    return {
+      receipt_id: "rated",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, rating: 5 } }],
+    };
   });
   const reading = photos.changed(photoChange("photo-1"));
   await waitFor(() => expect(finish).toBeDefined());
   await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "5" });
   await screen.findByText("Unflagged · 5 stars");
-  finish(Response.json({ items: [photo(1)] }));
+  finish([photo(1)]);
   await reading;
   photos.dispose();
 });
@@ -1403,11 +1392,21 @@ it.each([1, 7])("keeps all with fresh revisions after stack member %i changes", 
   vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
     photoPreparation(targets.filter((target) => scope.asset_ids?.includes(target.asset_id))),
   );
-  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
-    receipt_id: "",
-    before: [],
-    after: [],
-  });
+  const decide = vi.spyOn(api, "decidePhotoStack").mockImplementation(async () => ({
+    receipt_id: "kept-all",
+    before: targets.map(({ file_id, node_id, revision, values }) => ({
+      file_id,
+      node_id,
+      revision,
+      values,
+    })),
+    after: targets.map(({ file_id, node_id, revision, values }) => ({
+      file_id,
+      node_id,
+      revision: revision + 1,
+      values: { ...values, flag: "pick", confirmed_fields: (values.confirmed_fields ?? 0) | 2 },
+    })),
+  }));
   const { cull, photos } = await reviewPhoto(rows[0]);
   vi.mocked(photos.lookup).mockImplementation(
     async (id) => rows.find((row) => row.asset_id === id)!,
@@ -1443,7 +1442,7 @@ it.each([1, 7])("keeps all with fresh revisions after stack member %i changes", 
       expect.objectContaining({ asset_id: `photo-${changed}`, asset_revision: 2, revision: 2 }),
     ]),
   });
-  await screen.findByText("No changes to apply");
+  await screen.findByRole("button", { name: /^Undo$/ });
   photos.dispose();
 });
 

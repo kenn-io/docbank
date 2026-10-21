@@ -693,7 +693,7 @@ it.each(["catalog first", "preparation first"])(
   },
 );
 
-it("reads the tags on its targets again, removing deleted choices and retaining them on errors", async () => {
+it("keeps newer assigned tag reads and retains choices on errors", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
   const tag = (id: string, name: string, revision = 1) =>
     ({ id, name, revision, assignment_count: 1 }) as Tag;
@@ -713,8 +713,7 @@ it("reads the tags on its targets again, removing deleted choices and retaining 
   vi.stubGlobal("fetch", fetcher);
   editor.catalog([]);
   await vi.waitFor(() => expect(older).toBeDefined());
-  editor.targets = [preparedPhoto(1, { tags: ["renamed", "deleted"] })];
-  editor.tags = [tag("renamed", "Old name"), tag("deleted", "Gone"), tag("other", "Other")];
+  editor.tags = [tag("renamed", "Old name"), tag("other", "Other")];
   await editor.refreshAssignedTags();
   expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
   older();

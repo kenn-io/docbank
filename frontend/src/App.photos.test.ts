@@ -4023,20 +4023,25 @@ const livePhotoStubs = () => {
   storage();
 };
 
-it("reaches the first page when a change arrives before it lands, then refreshes the rest", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  livePhotoStubs();
-  let finishFirstPage!: (response: Response) => void;
-  let firstPage: AbortSignal | undefined;
-  const requests = { lists: 0, tags: 0 };
-  stubPhotoFetch(
-    vi.fn(async (url: string, init: RequestInit) => {
+it.each(["first page", "album list", "tag catalog", "staged retry"])(
+  "routes a live pass through the %s case",
+  async (mode) => {
+    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+    livePhotoStubs();
+    let finishFirstPage!: (response: Response) => void;
+    let firstPage: AbortSignal | undefined;
+    let failing = false;
+    const path = mode === "album list" ? "/photos/albums" : "/tags";
+    const requests = { lists: 0, tags: 0 };
+    stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (failing && new URL(url, "https://example.test").pathname.endsWith(path))
+        return Response.json({ detail: "Down" }, { status: 503 });
       if (
         url.endsWith("/photos/assets/query") &&
         !JSON.parse(String(init.body)).query.filters?.asset_ids
       ) {
-        if (++requests.lists === 1) {
+        if (++requests.lists === 1 && mode === "first page") {
           firstPage = init.signal ?? undefined;
           return new Promise<Response>((resolve) => (finishFirstPage = resolve));
         }
@@ -4044,96 +4049,43 @@ it("reaches the first page when a change arrives before it lands, then refreshes
       }
       if (url.includes("/tags")) requests.tags++;
       if (url.endsWith("/photos/albums")) return Response.json([]);
-      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
-    }),
-  );
-  render(App);
-  await waitFor(() => expect(finishFirstPage).toBeDefined());
-  // Changes keep arriving while an import runs: the pass waits instead of aborting the page.
-  expect(await photoEventPass()({ ids: new Set(), idFree: true })).toBe(false);
-  expect(await photoEventPass()({ ids: new Set(["photo-1"]), idFree: false })).toBe(false);
-  expect(firstPage?.aborted).toBe(false);
-  expect(requests.lists).toBe(1);
-  finishFirstPage(Response.json({ items: [photo(1)], total: 1 }));
-  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
-  // A change that names photos reloads the list; only an ID-free one reloads definitions.
-  const tags = requests.tags;
-  await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false });
-  await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
-  expect(requests.lists).toBe(2);
-  expect(requests.tags).toBe(tags);
-  await photoEventPass()({ ids: new Set(), idFree: true });
-  expect(requests.lists).toBe(3);
-  expect(requests.tags).toBeGreaterThan(tags);
-});
-
-it.each(["identified", "ID-free"])(
-  "rereads page one after an %s event is deferred behind a failed foreground refresh",
-  async (event) => {
-    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-    livePhotoStubs();
-    const refresh = vi.spyOn(Photos.prototype, "refresh");
-    let paged = false;
-    let renamed = false;
-    let finish!: (response: Response) => void;
-    let send!: (frame: string) => void;
-    const cursors: (string | undefined)[] = [];
-    stubPhotoFetch(async (url, init) => {
-      if (url.endsWith("/photos/events"))
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              send = (frame) => controller.enqueue(new TextEncoder().encode(frame));
-            },
-          }),
-        );
-      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-      if (url.endsWith("/photos/albums")) return Response.json([]);
-      if (url.endsWith("/photos/assets/query")) {
-        if (!paged) return Response.json({ items: [photo(1), photo(2)], total: 2 });
-        const { cursor } = JSON.parse(String(init.body));
-        cursors.push(cursor);
-        if (cursor && !finish) return new Promise<Response>((resolve) => (finish = resolve));
-        return Response.json(
-          cursor
-            ? { items: [photo(2)], total: 2 }
-            : {
-                items: [{ ...photo(1), name: renamed ? "Renamed.jpg" : "Photo 1.jpg" }],
-                total: 2,
-                next_cursor: "page-two",
-              },
-        );
-      }
-      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+      return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+    });
+    const seen: boolean[] = [];
+    const refresh = Photos.prototype.refresh;
+    vi.spyOn(Photos.prototype, "refresh").mockImplementation(function (this: Photos, ...args) {
+      if (args[1]) seen.push(this.resumeStaged);
+      return refresh.apply(this, args);
     });
     render(App);
-    await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
-    const pass = photoEventPass();
-    vi.mocked(photoEvents.watchPhotoEvents).mockRestore();
-    vi.useFakeTimers();
-    const watcher = photoEvents.watchPhotoEvents("synthetic", pass, vi.fn());
-    try {
-      await act(() => vi.advanceTimersByTimeAsync(0));
-      const photos = refresh.mock.contexts.at(-1) as Photos;
-      paged = true;
-      const foreground = photos.refresh();
-      await act(() => vi.advanceTimersByTimeAsync(0));
-      expect(cursors).toEqual([undefined, "page-two"]);
-      renamed = true;
-      send(`data: ${event === "identified" ? '{"asset_id":"photo-1"}' : "{}"}\n\n`);
-      await act(() => vi.advanceTimersByTimeAsync(1000));
-      expect(photos.loading).toBe(true);
-      expect(cursors).toEqual([undefined, "page-two"]);
-      await act(async () => {
-        finish(Response.json({ detail: "Page unavailable" }, { status: 503 }));
-        expect(await foreground).toBe(false);
-      });
-      await act(() => vi.advanceTimersByTimeAsync(1000));
-      expect(cursors).toEqual([undefined, "page-two", undefined, "page-two"]);
-      expect(screen.getByRole("checkbox", { name: "Select photo Renamed.jpg" })).toBeTruthy();
-    } finally {
-      watcher.stop();
-      vi.useRealTimers();
+    if (mode === "first page") {
+      await waitFor(() => expect(finishFirstPage).toBeDefined());
+      // Import events wait for the first page instead of aborting it.
+      expect(await photoEventPass()({ ids: new Set(), idFree: true })).toBe(false);
+      expect(await photoEventPass()({ ids: new Set(["photo-1"]), idFree: false })).toBe(false);
+      expect(firstPage?.aborted).toBe(false);
+      expect(requests.lists).toBe(1);
+      finishFirstPage(Response.json({ items: [photo(1)], total: 1 }));
+    }
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    if (mode === "first page") {
+      const tags = requests.tags;
+      await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false });
+      await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
+      expect(requests.lists).toBe(2);
+      expect(requests.tags).toBe(tags);
+      await photoEventPass()(idFreeChange);
+      expect(requests.lists).toBe(3);
+      expect(requests.tags).toBeGreaterThan(tags);
+    } else if (mode === "staged retry") {
+      await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: true });
+      await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: false });
+      expect(seen).toEqual([true, false]);
+    } else {
+      failing = true;
+      await expect(photoEventPass()(idFreeChange)).rejects.toThrow("Down");
+      failing = false;
+      await expect(photoEventPass()(idFreeChange)).resolves.toBeUndefined();
     }
   },
 );
@@ -4196,58 +4148,4 @@ it("clears the live update alert once the event stream opens again", async () =>
   expect(screen.queryByText("Failed to fetch")).toBeNull();
   await act(() => failed(new Error("Failed to fetch")));
   expect(screen.queryByText("Failed to fetch")).toBeNull();
-});
-
-it.each([
-  ["album list", "/photos/albums"],
-  ["tag catalog", "/tags"],
-])(
-  "fails a live pass when the %s refresh fails, so the watcher retries it",
-  async (_name, path) => {
-    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-    livePhotoStubs();
-    let failing = false;
-    stubPhotoFetch(
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-        if (failing && new URL(url, "https://example.test").pathname.endsWith(path))
-          return Response.json({ detail: "Down" }, { status: 503 });
-        if (url.endsWith("/photos/assets/query"))
-          return Response.json({ items: [photo(1)], total: 1 });
-        if (url.endsWith("/photos/albums")) return Response.json([]);
-        return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
-      }),
-    );
-    render(App);
-    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
-    failing = true;
-    await expect(photoEventPass()(idFreeChange)).rejects.toThrow("Down");
-    failing = false;
-    await expect(photoEventPass()(idFreeChange)).resolves.toBeUndefined();
-  },
-);
-
-it("lets a list keep its staged pages only on a pass that retries a failed one", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  livePhotoStubs();
-  stubPhotoFetch(
-    vi.fn(async (url: string) => {
-      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-      if (url.endsWith("/photos/albums")) return Response.json([]);
-      if (url.endsWith("/photos/assets/query"))
-        return Response.json({ items: [photo(1)], total: 1 });
-      return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
-    }),
-  );
-  const seen: boolean[] = [];
-  const refresh = Photos.prototype.refresh;
-  vi.spyOn(Photos.prototype, "refresh").mockImplementation(function (this: Photos, ...args) {
-    if (args[1]) seen.push(this.resumeStaged);
-    return refresh.apply(this, args);
-  });
-  render(App);
-  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
-  await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: true });
-  await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: false });
-  expect(seen).toEqual([true, false]);
 });
