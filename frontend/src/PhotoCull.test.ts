@@ -1221,7 +1221,7 @@ async function reviewThree() {
 }
 
 it("rates during a pending live read", async () => {
-  const { photos, container } = await reviewPhoto();
+  const { cull, photos, container } = await reviewPhoto();
   let finish!: (rows: PhotoBrowseRow[]) => void;
   vi.mocked(photos.lookupMany).mockImplementationOnce(
     () => new Promise((resolve) => (finish = resolve)),
@@ -1237,10 +1237,14 @@ it("rates during a pending live read", async () => {
   });
   const reading = photos.changed(photoChange("photo-1"));
   await waitFor(() => expect(finish).toBeDefined());
+  await waitFor(() => expect(cull.stackLoading).toBe(false));
   await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "5" });
   await screen.findByText("Unflagged · 5 stars");
-  finish([photo(1)]);
-  await reading;
+  await act(async () => {
+    finish([photo(1)]);
+    await reading;
+  });
+  expect(screen.getByText("Unflagged · 5 stars")).toBeTruthy();
   photos.dispose();
 });
 
@@ -1385,10 +1389,57 @@ it("commits the next pass when a live event arrives during its flag lookup", asy
   photos.dispose();
 });
 
+it.each(["burst gap", "grouping metadata"])(
+  "keeps all with fresh groups after an external %s change",
+  async (kind) => {
+    const { cull, photos } = await reviewThree();
+    await act(() => {
+      cull.run = {
+        ...cull.run!,
+        groups: [["photo-1", "photo-2"]],
+        burstGapSeconds: 2,
+        checkpoint: { ...cull.run!.checkpoint, position: 1, visited: ["photo-1"] },
+      };
+    });
+    await readyButton("Keep all");
+    const checkpoint = JSON.parse(JSON.stringify(cull.run!.checkpoint));
+    const groups = kind === "burst gap" ? [["photo-1", "photo-2"]] : [["photo-2", "photo-3"]];
+    const gap = kind === "burst gap" ? 1 : 2;
+    vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+      groups,
+      unavailable_ids: [],
+      burst_gap_seconds: gap,
+    });
+    vi.mocked(api.getPhotoSettings).mockResolvedValue({ revision: 2, burst_gap_seconds: gap });
+    const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+      receipt_id: "kept",
+      before: [],
+      after: [],
+    });
+    await act(() => photos.changed(kind === "burst gap" ? idFreeChange : photoChange("photo-3")));
+    expect(cull.run!.checkpoint).toEqual(checkpoint);
+    expect(cull.currentID).toBe("photo-2");
+    await fireEvent.click(await readyButton("Keep all"));
+    await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+    expect(decide.mock.calls[0]![0]).toMatchObject({
+      asset_ids: groups[0],
+      current_id: "photo-2",
+      decision: "all",
+      burst_gap_seconds: gap,
+    });
+    photos.dispose();
+  },
+);
+
 it.each([1, 7])("keeps all with fresh revisions after stack member %i changes", async (changed) => {
   const rows = Array.from({ length: 7 }, (_, index) => photo(index + 1));
   const stack = rows.map((row) => row.asset_id);
   const targets = rows.map((_, index) => preparedPhoto(index + 1));
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [stack],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
   vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
     photoPreparation(targets.filter((target) => scope.asset_ids?.includes(target.asset_id))),
   );
@@ -1458,6 +1509,14 @@ it("keeps newer Cull values after a delayed stack receipt", async () => {
   });
   await fireEvent.click(await readyButton("Keep all"));
   await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  const group = vi
+    .mocked(api.groupPhotoStacks)
+    .mockClear()
+    .mockResolvedValue({
+      groups: [["photo-1", "photo-3"]],
+      unavailable_ids: [],
+      burst_gap_seconds: 1,
+    });
   vi.mocked(photos.lookupMany).mockResolvedValue([{ ...photo(1), rating: 4 }, photo(2), photo(3)]);
   vi.mocked(api.preparePhotoAuthored).mockResolvedValue(
     photoPreparation([
@@ -1467,6 +1526,11 @@ it("keeps newer Cull values after a delayed stack receipt", async () => {
   );
   await act(() => photos.changed(photoChange("photo-1")));
   await screen.findByText("Unflagged · 4 stars");
+  expect(group).not.toHaveBeenCalled();
+  expect(decide.mock.calls[0]![0]).toMatchObject({
+    asset_ids: ["photo-1", "photo-2"],
+    burst_gap_seconds: 2,
+  });
   await act(() =>
     finish({
       receipt_id: "stack-decision",
@@ -1476,6 +1540,8 @@ it("keeps newer Cull values after a delayed stack receipt", async () => {
   );
   await readyButton("Keep all");
   await screen.findByText("Unflagged · 4 stars");
+  expect(cull.currentStack).toEqual(["photo-1", "photo-3"]);
+  expect(cull.run!.burstGapSeconds).toBe(1);
   photos.dispose();
 });
 

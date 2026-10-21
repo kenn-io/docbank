@@ -156,7 +156,6 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	// Duplicate status follows version and trash changes.
 	{photoCaptureNodes, photoCaptureDuplicateNodeIDs, "OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at"},
 	{"content_versions", photoCaptureDuplicateVersionIDs, ""},
-	{"node_tags", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, ""},
 	{"provenance", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, "-"},
 	{"source_metadata_heads", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.blob_hash=$row.source_sha256`, ""},
 	{"photo_technical_metadata", `SELECT f.asset_id AS id FROM source_metadata_heads h JOIN content_versions v ON v.blob_hash=h.source_sha256 JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE h.generation_id=$row.generation_id`, ""},

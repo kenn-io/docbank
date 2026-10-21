@@ -296,8 +296,6 @@ func TestPhotoEventsFileAndNodeOwnership(t *testing.T) {
 	require.NoError(t, err)
 	tag, err := s.CreateTag(t.Context(), "Location")
 	require.NoError(t, err)
-	_, err = s.AssignTag(t.Context(), tag.ID, first.ID, UnconditionalRev)
-	require.NoError(t, err)
 	observation, err := s.AppendNodeProvenance(t.Context(), ProvenanceAppendInput{NodeID: first.ID, IfRevision: UnconditionalRev, SourceKind: "agent", SourceDescription: "Source observation", OriginalPath: "/synthetic/first.jpg"})
 	require.NoError(t, err)
 	identity, err := provenanceIdentity(metadataProvenance{NodeID: second.ID, IngestID: observation.Fact.IngestID, OriginalPath: "/synthetic/second.jpg"})
@@ -312,7 +310,15 @@ func TestPhotoEventsFileAndNodeOwnership(t *testing.T) {
 	photoCaptureWrite(t, s, events, one, `DELETE FROM photo_set_members WHERE set_id=?`, set.ID)
 	photoCaptureWrite(t, s, events, one, `INSERT OR REPLACE INTO photo_timeline(file_id,sort_key,day) SELECT file_id,'2026-01-02','2026-01-02' FROM photo_files WHERE node_id=?`, first.ID)
 	photoCaptureWrite(t, s, events, one, `UPDATE nodes SET name='renamed.jpg' WHERE id=?`, first.ID)
-	photoCaptureWrite(t, s, events, one, `DELETE FROM node_tags WHERE node_id=?`, first.ID)
+	_, err = s.AssignTag(t.Context(), tag.ID, first.ID, UnconditionalRev)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	_, err = s.BatchTags(t.Context(), BatchTagRequest{
+		OperationID: uuid.NewString(), TagID: tag.ID, Assign: true,
+		Nodes: []BatchTagTarget{{NodeID: second.ID, Revision: second.Revision}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
 	photoCaptureWrite(t, s, events, []PhotoEvent{{AssetID: b.ID}}, `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, identity, second.ID, observation.Fact.IngestID, "/synthetic/second.jpg")
 	// Text eligibility is reachable on an attached sidecar with a supported text MIME.
 	photoCaptureWrite(t, s, events, one, `DELETE FROM text_searchable_versions WHERE version_id=?`, sidecar.CurrentVersionID)

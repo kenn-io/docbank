@@ -4079,7 +4079,7 @@ it.each(["first page", "album list", "tag catalog", "staged retry"])(
       expect(requests.tags).toBeGreaterThan(tags);
     } else if (mode === "staged retry") {
       await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: true });
-      await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: false });
+      await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: undefined });
       expect(seen).toEqual([true, false]);
     } else {
       failing = true;

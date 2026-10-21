@@ -747,11 +747,11 @@ it("retries a live keyword read outside the catalog before consuming the pending
       "Keywords unavailable",
     );
     expect(editor.tags.map((tag) => tag.id)).toEqual(["catalog"]);
-    // An empty retry must still consume the retained asset change.
-    await editor.invalidate({ ids: new Set(), idFree: false });
+    // The watcher retries the same identified change after a failed read.
+    await editor.invalidate({ ids: new Set(["asset"]), idFree: false });
     expect(editor.tags).toContainEqual(keyword);
     expect(reads).toBe(2);
-    await editor.invalidate({ ids: new Set(), idFree: false });
+    await editor.invalidate({ ids: new Set(["other-asset"]), idFree: false });
     expect(prepares).toBe(2);
   } finally {
     editor.dispose();
