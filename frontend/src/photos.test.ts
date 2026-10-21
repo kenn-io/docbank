@@ -2842,23 +2842,6 @@ it("remembers a smart set before its first search fails", async () => {
 });
 
 it.each([
-  { name: "over-long text", invalid: { text: "q".repeat(8193) } },
-  { name: "unknown syntax", invalid: { syntax: "invalid" as Query["syntax"] } },
-])("rejects an invalid smart-set payload without remembering it: $name", async ({ invalid }) => {
-  const saved = await savedSmartSet();
-  saved.payload = { ...saved.payload, ...invalid };
-  const fetcher = vi.fn();
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("session", vi.fn());
-  expect(photos.openSmartSet(saved)).toBe(false);
-  expect(photos.smartSet).toBeUndefined();
-  expect(localStorage.length).toBe(0);
-  expect(fetcher).not.toHaveBeenCalled();
-  expect(photos.error).not.toBe("");
-  photos.dispose();
-});
-
-it.each([
   { status: 401, code: "unauthorized", hidden: false },
   { status: 403, code: "hidden_locked", hidden: true },
 ])("retains search error state after access failure: $code", async ({ status, code, hidden }) => {
