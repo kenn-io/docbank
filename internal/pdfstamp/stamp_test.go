@@ -242,11 +242,12 @@ func TestStampRejectsNilDestination(t *testing.T) {
 }
 
 func TestStampSourceInspectionHonorsCancellation(t *testing.T) {
+	ConfigureWorker("")
 	source := syntheticPDF(t, 1, "Letter")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, _, err := inspectSource(ctx, bytes.NewReader(source), false)
+	_, err := InspectSupervised(ctx, bytes.NewReader(source))
 
 	require.ErrorIs(t, err, context.Canceled)
 }

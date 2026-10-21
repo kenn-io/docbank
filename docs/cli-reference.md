@@ -96,6 +96,10 @@ The web application imports a ZIP of the same layout through
 **Import load files**. See the
 [web application guide](usage/web.md#import-load-files).
 
+## docbank bates
+
+After upgrading to the pdfcpu v0.16.3 engine, regenerate saved Bates recipe files tied to pdfcpu v0.15.0 with `docbank bates plan` before reserving numbers or exporting.
+
 ## docbank labels
 
 ```text

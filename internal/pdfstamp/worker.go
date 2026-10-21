@@ -112,7 +112,7 @@ func CombineStampedSupervised(ctx context.Context, groups [][]byte, labels []Pag
 // source the stamper would refuse never consumes a range.
 func InspectSupervised(ctx context.Context, source io.ReadSeeker) (int, error) {
 	if configuredWorker() == "" {
-		return Inspect(source)
+		return Inspect(ctx, source)
 	}
 	data, err := readWorkerSource(source)
 	if err != nil {
@@ -226,7 +226,7 @@ func RunWorker(ctx context.Context, input io.Reader, output io.Writer) error {
 		result, err = CombineStamped(ctx, sources, request.Labels, &staged)
 		pageCount = result.PageCount
 	case "inspect":
-		pageCount, err = Inspect(bytes.NewReader(sources[0]))
+		pageCount, err = Inspect(ctx, bytes.NewReader(sources[0]))
 	default:
 		return stampFailure("decode worker request", fmt.Errorf("unknown operation %q", request.Operation))
 	}

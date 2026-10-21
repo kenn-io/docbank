@@ -383,8 +383,8 @@ func verifyStampedLabelsReader(ctx context.Context, source io.ReadSeeker, labels
 
 // Inspect applies the same source checks a Bates stamp applies and returns
 // the page count. It never restamps, matching Bates publication.
-func Inspect(source io.ReadSeeker) (int, error) {
-	pdfContext, _, err := inspectSource(context.Background(), source, false)
+func Inspect(ctx context.Context, source io.ReadSeeker) (int, error) {
+	pdfContext, _, err := inspectSource(ctx, source, false)
 	if err != nil {
 		return 0, err
 	}

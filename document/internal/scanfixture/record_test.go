@@ -16,6 +16,7 @@ func TestScanEvidenceBaseline(t *testing.T) {
 	for _, fixture := range Corpus() {
 		measurement := Measure(fixture, maxSourceBytes)
 		if fixture.Name == "malformed" {
+			// Pin our stable error prefix while normalizing pdfcpu-owned suffix wording.
 			require.Zero(t, measurement.Pages)
 			require.Zero(t, measurement.Inspect.Pages)
 			for _, message := range []*string{&measurement.PageError, &measurement.InspectError, &measurement.MetadataError} {
