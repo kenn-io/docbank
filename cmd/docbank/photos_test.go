@@ -259,7 +259,7 @@ func TestPhotosCLISettingsPreferenceRejectsExtraArgument(t *testing.T) {
 }
 
 func TestPhotosCLISettingsOverrides(t *testing.T) {
-	_ = setupVaultHome(t)
+	setupPhotoSettingsHome(t)
 	_, err := runCLI(t, "photos", "settings", "set", "image")
 	require.NoError(t, err)
 	_, err = runCLI(t, "photos", "settings", "set", "backup.repo", "/synthetic")
@@ -272,15 +272,64 @@ func TestPhotosCLISettingsOverrides(t *testing.T) {
 	require.Equal(t, new(5), settings.BackupKeepLast)
 	require.Equal(t, new("image"), settings.Preference)
 	require.Equal(t, int64(3), settings.Revision)
+	checkPhotoDurationOverrides(t)
 	out, err = runCLI(t, "photos", "settings", "reset", "backup.keep_last")
 	require.NoError(t, err)
 	settings = api.PhotoSettings{}
 	require.NoError(t, json.Unmarshal([]byte(out), &settings))
 	require.Nil(t, settings.BackupKeepLast)
 	require.Equal(t, new("image"), settings.Preference)
-	out, err = runCLI(t, "photos", "settings", "reset", "backup.interval")
+}
+
+func setupPhotoSettingsHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("DOCBANK_HOME", home)
+	config := fmt.Sprintf("[backup]\nrepo = %q\nkeep_last = 5\n", filepath.ToSlash(filepath.Join(t.TempDir(), "repo")))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600))
+	startTestDaemon(t, home)
+}
+
+func checkPhotoDurationOverrides(t *testing.T) {
+	t.Helper()
+	client, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	settings = api.PhotoSettings{}
-	require.NoError(t, json.Unmarshal([]byte(out), &settings))
-	require.Equal(t, new("image"), settings.Preference)
+	for _, step := range []struct {
+		args     []string
+		interval *int64
+		lifetime *int64
+		wantErr  string
+	}{
+		{[]string{"set", "backup.interval", "1h"}, new(int64(3600)), nil, ""},
+		{[]string{"set", "photos.hidden_unlock_lifetime", "15m"}, new(int64(3600)), new(int64(900)), ""},
+		{[]string{"set", "backup.interval", "1.5s"}, new(int64(3600)), new(int64(900)), "whole-second duration"},
+		{[]string{"set", "backup.interval", "--", "-1h"}, new(int64(3600)), new(int64(900)), "422 validation"},
+		{[]string{"set", "backup.interval", "0"}, new(int64(0)), new(int64(900)), ""},
+		{[]string{"reset", "backup.interval"}, nil, new(int64(900)), ""},
+		{[]string{"reset", "photos.hidden_unlock_lifetime"}, nil, nil, ""},
+	} {
+		t.Run(fmt.Sprint(step.args), func(t *testing.T) {
+			_, err := runCLI(t, append([]string{"photos", "settings"}, step.args...)...)
+			if step.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, step.wantErr)
+				require.Equal(t, exitUsage, commandExitCode(err, true))
+			}
+			settings, err := client.PhotoSettings(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, step.interval, settings.BackupIntervalSeconds)
+			require.Equal(t, step.lifetime, settings.HiddenUnlockLifetimeSeconds)
+			require.Equal(t, new(5), settings.BackupKeepLast)
+			require.Equal(t, new("image"), settings.Preference)
+		})
+	}
+}
+
+func TestPhotosCLISettingsResetUnknownKey(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	_, err := runCLI(t, "photos", "settings", "reset", "foo")
+	require.ErrorContains(t, err, "accepted keys: backup.interval, backup.keep_last, photos.hidden_unlock_lifetime")
+	require.ErrorContains(t, err, "configure paths and credentials in config.toml")
+	require.Equal(t, exitUsage, commandExitCode(err, true))
 }

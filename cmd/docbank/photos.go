@@ -461,7 +461,7 @@ func writePhotoOverride(cmd *cobra.Command, key string, value *string) error {
 		return usageError(errors.New("a setting key cannot be combined with --burst-gap-seconds"))
 	}
 	if key != "backup.interval" && key != "backup.keep_last" && key != "photos.hidden_unlock_lifetime" {
-		return usageError(errors.New("unknown setting; configure paths and credentials in config.toml"))
+		return usageError(errors.New("unknown setting; accepted keys: backup.interval, backup.keep_last, photos.hidden_unlock_lifetime; configure paths and credentials in config.toml"))
 	}
 	var seconds *int64
 	var keep *int

@@ -291,8 +291,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	preference := "image"
-	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, store.PhotoSettingsUpdate{Preference: &preference})
+	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, store.PhotoSettingsUpdate{Preference: new("image"), BackupIntervalSeconds: new(int64(3600)), BackupKeepLast: new(5), HiddenUnlockLifetimeSeconds: new(int64(900))})
 	require.NoError(t, err)
 
 	album, err := fixture.metadata.CreatePhotoSet(ctx, "Recovered album")
@@ -342,8 +341,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	assert.NotNil(t, restoredNode.TrashedAt)
 	settings, err := restored.PhotoSettings(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, settings.Preference)
-	assert.Equal(t, "image", *settings.Preference)
+	assertRestoredPhotoSettings(t, settings)
 	restoredAlbum, err := restored.PhotoSet(ctx, album.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "Recovered album", restoredAlbum.Name)
@@ -367,6 +365,14 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 		}
 	}
 	assert.True(t, foundMember, "restored album contains the asset")
+}
+
+func assertRestoredPhotoSettings(t *testing.T, settings store.PhotoSettings) {
+	t.Helper()
+	assert.Equal(t, new("image"), settings.Preference)
+	assert.Equal(t, new(int64(3600)), settings.BackupIntervalSeconds)
+	assert.Equal(t, new(5), settings.BackupKeepLast)
+	assert.Equal(t, new(int64(900)), settings.HiddenUnlockLifetimeSeconds)
 }
 
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
