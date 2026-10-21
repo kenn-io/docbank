@@ -302,7 +302,7 @@ func TestGetStagingFailureReportsOpen(t *testing.T) {
 	terminal := actionTerminal(t)
 	events := make(chan string, 10)
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
 		events <- string(body)
