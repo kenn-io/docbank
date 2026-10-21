@@ -88,7 +88,7 @@ docbank photos settings set backup.keep_last 5
 docbank photos settings reset backup.interval
 ```
 
-Changes apply within one minute. Reset inherits `config.toml`. An in-flight
+Interval changes apply immediately; `keep_last` applies at the next capture's retention. Reset inherits `config.toml`. An in-flight
 capture finishes with the retention count it started with. Overrides use the
 settings revision and travel with backup and restore; a restored vault's
 schedule applies after `docbank backup claim`. Paths and credentials, including
