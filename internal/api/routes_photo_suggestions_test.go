@@ -3,16 +3,21 @@ package api_test
 import (
 	"bytes"
 	"image/color"
+	"io"
 	"net/http"
-	"strings"
+	"net/http/httptest"
 	"testing"
-	"uuid"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/vision"
+	"go.kenn.io/docbank/document/vision/visiontest"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/sqlite"
 )
 
 func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
@@ -25,10 +30,38 @@ func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	db, err := s.SQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		reply := `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAYSIDE"}`
+		if visiontest.IsProbe(body) {
+			reply = "red,blue"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(visiontest.Completion(reply))
+	}))
+	t.Cleanup(endpoint.Close)
+	provider, err := vision.New(vision.Profile{Origin: endpoint.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, endpoint.Client())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,created_at) VALUES(?,?,?,?,?,?,'2026-01-01T00:00:00Z')`, uuid.New().String(), node.CurrentVersionID, strings.Repeat("a", 64), "A harbor.", `["coast"]`, "QUAYSIDE")
+	profile := processingTestProfile(provider.Descriptor())
+	profile.Rendition.AdapterContract = vision.AdapterContract
+	profile.Rendition.DiscloseFilename = false
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	service, err := processing.NewService(processing.ServiceConfig{Catalog: s.Store, Blobs: s.Blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx,
+		Profiles: map[string]processing.ProfileConfig{"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: processing.RuntimeDisclosure{Endpoint: endpoint.URL}}}})
+	require.NoError(t, err)
+	recipe, err := processing.VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	_, err = processing.EnsureVisualPreview(ctx, s.Store, s.Blobs, node.CurrentVersionID, recipe)
+	require.NoError(t, err)
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
+	plan, err := service.Plan(ctx, selector)
+	require.NoError(t, err)
+	_, err = service.Start(ctx, processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err)
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	require.NoError(t, err)
@@ -39,6 +72,9 @@ func TestPhotoSuggestionRoutesPassHiddenCookie(t *testing.T) {
 	require.NoError(t, err)
 	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(ctx, "unlock", "synthetic-passcode", "")
 	require.NoError(t, err)
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", map[string]string{"Cookie": cookie}, store.PhotoSuggestionResponse{AssetID: prepared.Suggestions[0].AssetID, AssetRevision: hidden.Revision, SourceRevision: prepared.Suggestions[0].SourceRevision, NodeRevision: prepared.Suggestions[0].NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}})
+	request := store.PhotoSuggestionResponse{AssetID: prepared.Suggestions[0].AssetID, AssetRevision: hidden.Revision, SourceRevision: prepared.Suggestions[0].SourceRevision, NodeRevision: prepared.Suggestions[0].NodeRevision, Response: "accepted", Caption: true, Tags: []string{"coast"}}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", nil, request)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", map[string]string{"Cookie": cookie}, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
