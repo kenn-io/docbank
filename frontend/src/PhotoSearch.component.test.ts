@@ -163,7 +163,7 @@ it("applies the draft when the search mode changes", async () => {
   photos.dispose();
 });
 
-it("reports a Photos search only when it ran", async () => {
+it("reports Photos search outcomes for explicit submissions", async () => {
   const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
@@ -200,7 +200,14 @@ it("reports a Photos search only when it ran", async () => {
   expect(photos.error).toContain("8192");
   expect(fetcher).not.toHaveBeenCalled();
   expect(actions.reportSearch).not.toHaveBeenCalled();
-  expect(actions.reportFailure).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+      "scoped",
+      "search",
+      expect.objectContaining({ message: expect.stringContaining("8192") }),
+    ),
+  );
+  vi.mocked(actions.reportFailure).mockClear();
 
   fetcher.mockImplementationOnce(
     (_url: string, init: RequestInit) =>

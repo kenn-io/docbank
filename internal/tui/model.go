@@ -2506,7 +2506,8 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.Model, tea.Cmd) {
 	// A settled rerank reports its accepted search even when a later request superseded it.
 	var report tea.Cmd
-	if pending := m.rerankReport; pending.requestID == msg.requestID && pending.searchID == msg.searchID {
+	pending := m.rerankReport
+	if pending.requestID == msg.requestID && pending.searchID == msg.searchID {
 		m.rerankReport = deferredSearchReport{}
 		report = m.reportSearch(pending.searchType, pending.empty)
 	}
@@ -2531,6 +2532,9 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 		m.naturalResultMode = msg.naturalMode
 		m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
+		if report != nil {
+			report = m.reportSearch(pending.searchType, len(m.rows) == 0)
+		}
 	}
 	return m, report
 }

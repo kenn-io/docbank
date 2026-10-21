@@ -695,7 +695,7 @@ export class Photos {
       next = parseQuery(canonicalQuery(query));
     } catch (cause) {
       this.error = cause instanceof Error ? cause.message : String(cause);
-      return;
+      return Promise.resolve({ accepted: false as const, cause });
     }
     this.baseQuery = next;
     this.query = next;

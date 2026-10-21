@@ -66,6 +66,42 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 	}
 }
 
+func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
+	for _, baseEmpty := range []bool{true, false} {
+		t.Run(map[bool]string{true: "empty base gains rows", false: "nonempty base loses rows"}[baseEmpty], func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			readme := fake.nodes["/README.txt"]
+			empty := api.DocumentSearchReport{ActualMode: "lexical"}
+			nonempty := naturalSearchReport(readme.ID, readme.CurrentVersionID, "excerpt")
+			fake.naturalSearch, fake.naturalRerankSearch = nonempty, empty
+			wantRows := 0
+			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
+			if baseEmpty {
+				fake.naturalSearch, fake.naturalRerankSearch = empty, nonempty
+				wantRows = 1
+				want = []actionCall{{event: "search_run", searchType: "lexical"}}
+			}
+			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied"}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode, model.naturalRerank = naturalLexical, true
+			model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
+			base := model.loadNaturalSearch("report", model.requestID)()
+			model, cmd := updateModel(t, model, base)
+			require.True(t, model.naturalRerankPending)
+			assert.Empty(t, fake.actions)
+			batch, ok := cmd().(tea.BatchMsg)
+			require.True(t, ok)
+			model, cmd = updateModel(t, model, batch[0]())
+			runModelCommand(t, model, cmd)
+			assert.Len(t, model.rows, wantRows)
+			assert.Equal(t, want, fake.actions)
+		})
+	}
+}
+
 func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	fake := newFakeBackend()
 	readme := fake.nodes["/README.txt"]
