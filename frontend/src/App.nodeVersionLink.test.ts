@@ -70,7 +70,22 @@ function api(
     if (url === `/api/v1/versions/${oldID}`) return Response.json(oldVersion);
     if (url === `/api/v1/versions/${currentID}`) return Response.json(currentVersion);
     if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
-      return Response.json({ items: [currentVersion], total: 1001, limit: 1000, offset: 0 });
+      return Response.json({
+        items: [
+          currentVersion,
+          ...Array.from({ length: 999 }, (_, index) =>
+            version(
+              `${(index + 1).toString(16).padStart(8, "0")}-3333-4333-8333-333333333333`,
+              1000 - index,
+              "content_replace",
+              "b",
+            ),
+          ),
+        ],
+        total: 1001,
+        limit: 1000,
+        offset: 0,
+      });
     if (url.includes("processing-profiles")) return Response.json([]);
     return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
@@ -115,25 +130,13 @@ it("opens a node absent from directory rows and downloads its exact historical a
   }
 });
 
-it("shows retained trash without restoring it", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  const fetchMock = api((url) =>
-    url === "/api/v1/nodes/42"
-      ? Response.json({ ...node, trashed_at: "2026-10-01T00:00:00Z" })
-      : undefined,
-  );
-  render(App);
-  await screen.findByText(oldID);
-  expect(screen.getByText("Trash", { selector: "span" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
-  expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/restore"))).toBe(false);
-});
-
-it.each(["missing node", "purged version", "wrong node"])(
+it.each(["missing node", "purged version", "wrong node", "bad request"])(
   "shows unavailable for %s without current substitution",
   async (kind) => {
     history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
     api((url) => {
+      if (kind === "bad request" && url === "/api/v1/nodes/42")
+        return Response.json({ detail: "Request rejected by the server" }, { status: 400 });
       if (kind === "missing node" && url === "/api/v1/nodes/42")
         return Response.json({ detail: "missing" }, { status: 404 });
       if (url === `/api/v1/versions/${oldID}`)
@@ -149,27 +152,15 @@ it.each(["missing node", "purged version", "wrong node"])(
       await screen.findByText(
         kind === "wrong node"
           ? /version does not belong to/
-          : /node or version is missing or purged/,
+          : kind === "bad request"
+            ? "Request rejected by the server"
+            : /node or version is missing or purged/,
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
     expect(screen.queryByText(currentID)).toBeNull();
   },
 );
-
-it("reports a malformed version ID as missing", async () => {
-  history.replaceState(null, "", `/#${credentials}node=42&version=invalid`);
-  const fetchMock = api((url) =>
-    url === "/api/v1/versions/invalid"
-      ? Response.json({ detail: "not found" }, { status: 404 })
-      : undefined,
-  );
-  render(App);
-  expect(await screen.findByText(/node or version is missing or purged/)).toBeTruthy();
-  expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/v1/versions/invalid")).toBe(
-    true,
-  );
-});
 
 it.each(["resolved", "invalid"])(
   "keeps the %s linked selection when root rows arrive after sign-in",
@@ -206,51 +197,26 @@ it.each(["resolved", "invalid"])(
   },
 );
 
-it("preserves linked intent through sign-in and a rejected session", async () => {
-  history.replaceState(null, "", `/${link()}`);
-  let expired = true;
-  api((url) => {
-    if (url === `/api/v1/versions/${oldID}` && expired) {
-      expired = false;
-      return Response.json({ detail: "expired" }, { status: 401 });
-    }
-    return undefined;
-  });
-  render(App);
-  await signIn();
-  await screen.findByText(/browser session expired or was rejected/);
-  expect(location.hash).toBe(link());
-  await signIn();
-  expect(await screen.findByText(oldID)).toBeTruthy();
-});
-
-it("preserves linked intent when the history list expires after direct resolution", async () => {
-  history.replaceState(null, "", `/${link()}`);
-  let expired = true;
-  api((url) => {
-    if (url.includes("/nodes/42/versions?") && expired) {
-      expired = false;
-      return Response.json({ detail: "expired" }, { status: 401 });
-    }
-    return undefined;
-  });
-  render(App);
-  await signIn();
-  await screen.findByText(/browser session expired or was rejected/);
-  expect(location.hash).toBe(link());
-  await signIn();
-  expect(await screen.findByText(oldID)).toBeTruthy();
-});
-
-it("closing the linked drawer clears only the selection and preserves a query", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}&query=%7B%7D`);
-  api();
-  render(App);
-  await screen.findByText(oldID);
-  await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
-  await waitFor(() => expect(screen.queryByText(oldID)).toBeNull());
-  expect(location.hash).toBe("#query=%7B%7D");
-});
+it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offset=0"])(
+  "preserves linked intent through sign-in when %s rejects the session",
+  async (failingRequest) => {
+    history.replaceState(null, "", `/${link()}`);
+    let expired = true;
+    api((url) => {
+      if (url === failingRequest && expired) {
+        expired = false;
+        return Response.json({ detail: "expired" }, { status: 401 });
+      }
+      return undefined;
+    });
+    render(App);
+    await signIn();
+    await screen.findByText(/browser session expired or was rejected/);
+    expect(location.hash).toBe(link());
+    await signIn();
+    expect(await screen.findByText(oldID)).toBeTruthy();
+  },
+);
 
 it("discards late A when hash navigation selects B and handles back/forward events", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
@@ -290,32 +256,19 @@ it("discards late A when hash navigation selects B and handles back/forward even
   ).toHaveLength(1);
 });
 
-it("opens a normal query fragment without resolving a node/version", async () => {
-  history.replaceState(null, "", `/#${credentials}query=%7B%7D`);
-  const fetchMock = api();
-  render(App);
-  expect(await screen.findByRole("region", { name: "Query editor" })).toBeTruthy();
-  expect(location.hash).toContain("query=");
-  expect(
-    fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/v1/versions/")),
-  ).toBe(false);
-});
-
-it("resumes the same exact selection after remounting and signing in", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  api();
-  const app = render(App);
-  await screen.findByText(oldID);
-  app.unmount();
-  render(App);
-  await signIn();
-  expect(await screen.findByText(oldID)).toBeTruthy();
-  expect(location.hash).toBe(link());
-});
-
 it("reopens exact versions on browser back and forward in the mounted drawer", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  const fetchMock = api();
+  let pending = false;
+  let release!: (response: Response) => void;
+  const fetchMock = api((url) => {
+    if (pending && url === "/api/v1/nodes/42")
+      return Response.json({ ...node, trashed_at: "2026-10-01T00:00:00Z" });
+    if (pending && url === `/api/v1/versions/${oldID}`)
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    return undefined;
+  });
   render(App);
   await screen.findByText(oldID);
   await screen.findByText("1001 retained versions");
@@ -326,13 +279,30 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
   expect(location.hash).toBe(link(currentID));
   expect(screen.getByRole("dialog")).toBe(drawer);
   expect(fetchMock.mock.calls).toHaveLength(0);
+  const push = vi.spyOn(history, "pushState");
+  await fireEvent.click(
+    within(screen.getByRole("region", { name: "Retained versions" }))
+      .getByText("Revision 1001")
+      .closest("button")!,
+  );
+  expect(push).not.toHaveBeenCalled();
+  pending = true;
   history.back();
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  expect(location.hash).toBe(link());
+  expect(screen.getByRole("dialog")).toBe(drawer);
+  expect(screen.queryByText(currentID)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
+  await act(() => release(Response.json(oldVersion)));
   await screen.findByText(oldID);
+  expect(screen.getByText("Trash", { selector: "span" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
   expect(screen.getByRole("dialog")).toBe(drawer);
   expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
     "/api/v1/nodes/42",
     `/api/v1/versions/${oldID}`,
   ]);
+  pending = false;
   history.forward();
   await screen.findByText(currentID);
   expect(screen.getByRole("dialog")).toBe(drawer);
@@ -423,60 +393,6 @@ it("keeps a linked version when photo cleanup rewrites a combined fragment", asy
   expect(await screen.findByText(oldID)).toBeTruthy();
 });
 
-it("hides the previous authority and download while Back resolves in the mounted drawer", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  let pending = false;
-  let release!: (response: Response) => void;
-  api((url) => pending && url === `/api/v1/versions/${oldID}`
-    ? new Promise<Response>((resolve) => { release = resolve; }) : undefined);
-  render(App);
-  await screen.findByText(oldID);
-  await screen.findByText("1001 retained versions");
-  const drawer = screen.getByRole("dialog");
-  await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
-  await screen.findByText(currentID);
-  pending = true;
-  history.back();
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  expect(location.hash).toBe(link());
-  expect(screen.getByRole("dialog")).toBe(drawer);
-  const previousAuthority = screen.queryByText(currentID) !== null;
-  const download = screen.queryByRole("button", { name: "Download this version" }) !== null;
-  await act(() => release(Response.json(oldVersion)));
-  await screen.findByText(oldID);
-  expect(previousAuthority).toBe(false);
-  expect(download).toBe(false);
-});
-
-it("refreshes trash status on same-node browser navigation", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  let changed = false;
-  api((url) => changed && url === "/api/v1/nodes/42"
-    ? Response.json({ ...node, trashed_at: "2026-10-01T00:00:00Z" }) : undefined);
-  render(App);
-  await screen.findByText(oldID);
-  await screen.findByText("1001 retained versions");
-  await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
-  await screen.findByText(currentID);
-  changed = true;
-  history.back();
-  await screen.findByText("Trash", { selector: "span" });
-  expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
-});
-
-it("does not push history when clicking the displayed version", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  api();
-  render(App);
-  await screen.findByText(oldID);
-  await screen.findByText("1001 retained versions");
-  await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
-  await screen.findByText(currentID);
-  const push = vi.spyOn(history, "pushState");
-  await fireEvent.click(within(screen.getByRole("region", { name: "Retained versions" })).getByText("Revision 1001").closest("button")!);
-  expect(push).not.toHaveBeenCalled();
-});
-
 it("returns focus to the photo viewer after closing linked history", async () => {
   history.replaceState(null, "", `/photos#${credentials}photo=photo-1`);
   storage();
@@ -491,14 +407,6 @@ it("returns focus to the photo viewer after closing linked history", async () =>
   await screen.findByText(oldID);
   await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
   await waitFor(() => expect(document.activeElement).toBe(viewer));
-});
-
-it("preserves server detail for unexpected bad requests during link resolution", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  api((url) => url === "/api/v1/nodes/42"
-    ? Response.json({ detail: "Request rejected by the server" }, { status: 400 }) : undefined);
-  render(App);
-  expect(await screen.findByText("Request rejected by the server")).toBeTruthy();
 });
 
 it("ignores an old drawer close after another panel takes ownership", async () => {

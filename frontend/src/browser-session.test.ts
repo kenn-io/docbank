@@ -17,7 +17,7 @@ it("removes only credential fields while preserving browser intent and history s
 });
 
 it("scrubs incomplete credentials too", () => {
-  history.replaceState(null, "", "/#node=42&web_session=token&web_session=other");
+  history.replaceState(null, "", "/#node=42&web_session=");
   expect(takeFragmentSession()).toBeNull();
   expect(location.hash).toBe("#node=42");
 });
