@@ -185,17 +185,18 @@ func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference, qu
 		result.State = "changed"
 		return result, nil
 	}
-	if p.RenditionAttachmentID == "" { // The matching hash already proves the saved original quote.
-		return kataevidence.Resolution{State: "available", Evidence: kataevidence.NewEvidence(ref, quote, boundedKataLabel(node.Name))}, nil
+	selector := kataevidence.Selector{NodeID: p.NodeID, ExpectedVersion: p.ContentVersionID, StartRune: p.StartRune, EndRune: p.EndRune}
+	if p.RenditionAttachmentID != "" {
+		citation, err := p.TextCitation()
+		if err != nil {
+			result.State = "unsupported"
+			return result, nil //nolint:nilerr // Unsupported citations remain readable alongside other evidence.
+		}
+		selector.Citation = &citation
 	}
-	citation, err := p.TextCitation()
-	if err != nil {
-		result.State = "unsupported"
-		return result, nil //nolint:nilerr // Unsupported citations remain readable alongside other evidence.
-	}
-	evidence, err := a.Prepare(ctx, kataevidence.Selector{NodeID: p.NodeID, ExpectedVersion: p.ContentVersionID, StartRune: p.StartRune, EndRune: p.EndRune, Citation: &citation})
+	evidence, err := a.Prepare(ctx, selector)
 	switch {
-	case err == nil:
+	case err == nil && evidence.Excerpt == quote:
 		result.State = "available"
 		result.Evidence = evidence
 	case errors.Is(err, kataevidence.ErrChanged):

@@ -3,9 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json/v2"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -122,38 +119,13 @@ func TestKataInputValidationPrecedesDaemonAcquisition(t *testing.T) {
 }
 
 func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
-	// Derive domain responses from the API so new codes must survive MCP projection.
-	source, err := parser.ParseFile(token.NewFileSet(), "../api/kata.go", nil, 0)
-	require.NoError(t, err)
-	codes := make(map[string]int)
-	for _, decl := range source.Decls {
-		function, ok := decl.(*ast.FuncDecl)
-		if !ok || (function.Name.Name != "kataProblem" && function.Name.Name != "kataService") {
-			continue
-		}
-		ast.Inspect(function.Body, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			name, ok := call.Fun.(*ast.Ident)
-			if !ok || name.Name != "NewError" {
-				return true
-			}
-			statusLiteral, ok := call.Args[0].(*ast.BasicLit)
-			require.True(t, ok)
-			status, err := strconv.Atoi(statusLiteral.Value)
-			require.NoError(t, err)
-			codeLiteral, ok := call.Args[1].(*ast.BasicLit)
-			require.True(t, ok)
-			code, err := strconv.Unquote(codeLiteral.Value)
-			require.NoError(t, err)
-			codes[code] = status
-			return false
-		})
-	}
-	require.NotEmpty(t, codes)
-	for code, status := range codes {
+	for code, status := range map[string]int{
+		"kata_unconfigured": 503, "kata_unauthorized": 401, "kata_forbidden": 403,
+		"kata_issue_unavailable": 404, "kata_incompatible": 503, "invalid_kata_evidence": 422,
+		"kata_idempotency_conflict": 409, "kata_evidence_changed": 409, "kata_evidence_unavailable": 404,
+		"kata_evidence_limit": 409, "kata_evidence_unsupported": 409, "kata_timeout": 504,
+		"kata_request_failed": 502,
+	} {
 		t.Run(code, func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/problem+json")

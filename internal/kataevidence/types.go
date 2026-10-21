@@ -98,7 +98,7 @@ type Resolution struct {
 type Archive interface {
 	VaultUID() string
 	Prepare(ctx context.Context, selector Selector) (Evidence, error)
-	// Resolve receives the saved quote so an unchanged original needs no blob read.
+	// Resolve compares the saved quote with the verified source passage.
 	Resolve(ctx context.Context, reference Reference, quote string) (Resolution, error)
 }
 

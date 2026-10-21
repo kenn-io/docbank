@@ -331,7 +331,8 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 			if !valid || entry.ID != entryID || entry.Pending == nil {
 				continue
 			}
-			body := renderQuote(entry.Label, entry.Quote)
+			marker := "<!-- docbank-evidence:" + entry.ID + " -->"
+			body := renderQuote(entry.Label, entry.Quote) + "\n" + marker + "\n"
 			key := commentKey(issue.UID, entry.ID, body)
 			posted := false
 			// Leave a day of margin inside Kata's seven-day replay window.
@@ -346,7 +347,9 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 					}
 					commentsRead = true
 				}
-				posted = slices.Contains(comments, body)
+				posted = slices.ContainsFunc(comments, func(comment string) bool {
+					return slices.Contains(strings.Split(comment, "\n"), marker)
+				})
 			}
 			if !posted {
 				if err := s.Kata.Comment(ctx, ref, key, body); err != nil {

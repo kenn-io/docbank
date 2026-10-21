@@ -84,7 +84,7 @@ comment, so retrying the same pinned selection can finish an interrupted
 append. Each append delivers only the requested quotation; other pending quotes wait for their own retry.
 Pending quotes less than six days old replay the same comment request without
 reading the discussion. At six days, Docbank reads the issue's comments once and skips
-posting if the exact quotation is already present. If the discussion exceeds the read
+posting if a comment contains that evidence entry's marker. If the discussion exceeds the read
 limit, the stale pending quote stays pending and the operation returns a permanent error.
 Pending quotes with an unknown or future save time use the same replay request. Use an `id:` selector and `--expected-version` when an original-text
 append must be replayable after source deletion. Each issue supports at most 64 native Docbank evidence entries.
@@ -182,7 +182,10 @@ Docbank mirrors msgvault's version-1 envelope and readable quotation format:
 Kata stores native entries under `docbank.evidence`. Renditions add
 `rendition_attachment_id`, `build_id` and `rendition_sha256` inside `docbank`.
 The body or comment contains `Evidence: <filename>`, a blank line, and the
-quoted words as Markdown blockquote lines. Entries keep `quote` and `label`;
+quoted words as Markdown blockquote lines. Each appended comment ends with
+`<!-- docbank-evidence:<entry id> -->` on its own line. This marker is invisible
+in rendered Markdown and distinguishes citations that quote identical words.
+Entries keep `quote` and `label`;
 `pending` records the Kata save time until the comment posts. IDs use SHA-256 over
 length-prefixed fields in `docbank.kata.*.v1` domains.
 

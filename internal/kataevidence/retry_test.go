@@ -25,6 +25,7 @@ func TestAppendPendingReconciliation(t *testing.T) {
 		age       time.Duration
 		zero      bool
 		existing  bool
+		edited    bool
 		oversized bool
 		wantReads int
 		wantPosts int
@@ -33,6 +34,7 @@ func TestAppendPendingReconciliation(t *testing.T) {
 		{name: "zero_save_time", age: 7 * 24 * time.Hour, zero: true, existing: true, wantPosts: 1},
 		{name: "future_save_time", age: -time.Hour, existing: true, wantPosts: 1},
 		{name: "stale_exact_comment", age: 6 * 24 * time.Hour, existing: true, wantReads: 1},
+		{name: "stale_edited_comment", age: 6 * 24 * time.Hour, existing: true, edited: true, wantReads: 1},
 		{name: "stale_absent_comment", age: 7 * 24 * time.Hour, wantReads: 1, wantPosts: 1},
 		{name: "stale_oversized_discussion", age: 7 * 24 * time.Hour, oversized: true, wantReads: 1},
 	} {
@@ -69,11 +71,15 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			_, err = client.Patch(t.Context(), issue.QualifiedRef, MetadataKey, nil, data)
 			require.NoError(t, err)
 			if tc.existing {
-				key := commentKey(issue.UID, ID(ref), "Evidence: notes.txt\n\n> hello\n")
+				body := "Evidence: notes.txt\n\n> hello\n\n<!-- docbank-evidence:" + ID(ref) + " -->\n"
+				key := commentKey(issue.UID, ID(ref), body)
 				if tc.wantReads > 0 {
 					key = "expired-key"
 				}
-				require.NoError(t, client.Comment(t.Context(), issue.QualifiedRef, key, "Evidence: notes.txt\n\n> hello\n"))
+				if tc.edited {
+					body = "Edited discussion text.\n\n<!-- docbank-evidence:" + ID(ref) + " -->\n"
+				}
+				require.NoError(t, client.Comment(t.Context(), issue.QualifiedRef, key, body))
 			} else {
 				// Similar words under a different label aren't an exact match.
 				require.NoError(t, client.Comment(t.Context(), issue.QualifiedRef, "other", "Evidence: other.txt\n\n> hello\n"))
@@ -151,7 +157,7 @@ func TestDiscussionGrowthAndUnrelatedPurgeKeepFreshAppendReadable(t *testing.T) 
 	data, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
 	require.NoError(t, err)
 	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "")
-	body := "Evidence: notes.txt\n\n> hello\n"
+	body := "Evidence: notes.txt\n\n> hello\n\n<!-- docbank-evidence:" + entry.ID + " -->\n"
 	require.NoError(t, k.Comment(t.Context(), k.ref, commentKey(k.snapshot().UID, entry.ID, body), body))
 	addLargeDiscussion(t, k.api, k.projectID, k.ref)
 	neighbor, err := k.Create(t.Context(), "neighbor", "Neighbor", strings.Repeat("x", 900<<10), nil)
