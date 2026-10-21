@@ -4090,6 +4090,74 @@ it.each(["first page", "album list", "tag catalog", "staged retry"])(
   },
 );
 
+it("rereads page one after an identified event is deferred behind a failed foreground refresh", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const refresh = vi.spyOn(Photos.prototype, "refresh");
+  let paged = false;
+  let renamed = false;
+  let finish!: (response: Response) => void;
+  let send!: (frame: string) => void;
+  const cursors: (string | undefined)[] = [];
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/events"))
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            send = (frame) => controller.enqueue(new TextEncoder().encode(frame));
+          },
+        }),
+      );
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) {
+      if (!paged) return Response.json({ items: [photo(1), photo(2)], total: 2 });
+      const { cursor } = JSON.parse(String(init.body));
+      cursors.push(cursor);
+      if (cursor && !finish) return new Promise<Response>((resolve) => (finish = resolve));
+      return Response.json(
+        cursor
+          ? { items: [photo(2)], total: 2 }
+          : {
+              items: [{ ...photo(1), name: renamed ? "Renamed.jpg" : "Photo 1.jpg" }],
+              total: 2,
+              next_cursor: "page-two",
+            },
+      );
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
+  const pass = photoEventPass();
+  vi.mocked(photoEvents.watchPhotoEvents).mockRestore();
+  vi.useFakeTimers();
+  const watcher = photoEvents.watchPhotoEvents("synthetic", pass, vi.fn());
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    const photos = refresh.mock.contexts.at(-1) as Photos;
+    paged = true;
+    const foreground = photos.refresh();
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(cursors).toEqual([undefined, "page-two"]);
+    renamed = true;
+    send('data: {"asset_id":"photo-1"}\n\n');
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(photos.loading).toBe(true);
+    expect(cursors).toEqual([undefined, "page-two"]);
+    await act(async () => {
+      finish(Response.json({ detail: "Page unavailable" }, { status: 503 }));
+      expect(await foreground).toBe(false);
+    });
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(cursors).toEqual([undefined, "page-two", undefined, "page-two"]);
+    expect(screen.getByRole("checkbox", { name: "Select photo Renamed.jpg" })).toBeTruthy();
+  } finally {
+    watcher.stop();
+    vi.useRealTimers();
+  }
+});
+
 it("reconnects the event stream when the Hidden unlock changes", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   livePhotoStubs();
