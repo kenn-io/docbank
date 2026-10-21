@@ -314,19 +314,47 @@ func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	require.NoError(t, f.service.admitPhotoDescription(t.Context(), targets[0]))
-	for {
-		processed, err := worker.RunOne(t.Context())
-		require.NoError(t, err)
-		if !processed {
-			break
+	require.Eventually(t, func() bool {
+		for {
+			processed, err := worker.RunOne(t.Context())
+			require.NoError(t, err)
+			if !processed {
+				break
+			}
 		}
-	}
+		return logs.Len() > 0
+	}, 10*time.Second, 100*time.Millisecond)
+	_, describes := f.counts()
+	require.Equal(t, 3, describes, "unparseable replies stop after three provider attempts")
 
 	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), logs.String())
-	for _, want := range []string{"job=", "version=" + f.node.CurrentVersionID, "class=failed", "malformed evidence"} {
+	for _, want := range []string{"job=", "version=" + f.node.CurrentVersionID, "class=failed", "failed temporarily"} {
 		require.Contains(t, logs.String(), want)
 	}
 	require.Empty(t, f.suggestions(t))
+}
+
+func TestPhotoDescriptionUnparseableReplyRetriesToSuggestion(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	f.mu.Lock()
+	f.reply = "A harbor at dusk."
+	f.mu.Unlock()
+	require.Equal(t, 1, f.backfill(t, f.service))
+	require.Empty(t, f.suggestions(t))
+	f.mu.Lock()
+	f.reply = `{"caption":"A harbor at dusk.","tags":["harbor"]}`
+	f.mu.Unlock()
+	require.Eventually(t, func() bool {
+		require.NoError(t, f.drainWorker(t.Context(), f.service))
+		return len(f.suggestions(t)) == 1
+	}, 10*time.Second, 100*time.Millisecond)
+	suggestions := f.suggestions(t)
+	require.Len(t, suggestions, 1)
+	require.Equal(t, "A harbor at dusk.", suggestions[0].Value.Caption)
+	_, describes := f.counts()
+	require.Equal(t, 2, describes)
 }
 
 func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {

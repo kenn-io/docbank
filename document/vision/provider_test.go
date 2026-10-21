@@ -84,9 +84,15 @@ func TestParseDescription(t *testing.T) {
 
 func TestRenderSendsImageBytesOnce(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, reply, want string }{
-		{"valid reply", `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`, `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`},
-		{"reply that is not JSON", `A dog.`, ""},
+	for _, tc := range []struct {
+		name, reply, want, finish string
+		code                      document.RenditionErrorCode
+	}{
+		{name: "valid reply", reply: `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`, want: `{"caption":"A dog.","tags":["dog"],"visible_text":"HELLO"}`},
+		{name: "reply that is not JSON", reply: `A dog.`, code: document.RenditionErrorTransient},
+		{name: "empty reply", code: document.RenditionErrorTransient},
+		{name: "truncated reply", reply: `{"caption":"A dog.`, finish: "length", code: document.RenditionErrorTransient},
+		{name: "policy refusal", finish: "content_filter", code: document.RenditionErrorPolicyRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -122,7 +128,11 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 				assert.Equal(t, data, actual)
 				w.Header().Set("Content-Type", "application/json")
 				calls.Add(1)
-				_, _ = w.Write(visiontest.Completion(tc.reply))
+				completion := visiontest.Completion(tc.reply)
+				if tc.finish != "" {
+					completion = bytes.Replace(completion, []byte(`"finish_reason":"stop"`), []byte(`"finish_reason":"`+tc.finish+`"`), 1)
+				}
+				_, _ = w.Write(completion)
 			}))
 			defer server.Close()
 			p, err := New(Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
@@ -132,7 +142,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 			if tc.want == "" {
 				classified, ok := errors.AsType[*document.RenditionProviderError](err)
 				require.True(t, ok)
-				require.Equal(t, document.RenditionErrorMalformedEvidence, classified.Code())
+				require.Equal(t, tc.code, classified.Code())
 				require.Empty(t, result.Artifacts)
 				return
 			}

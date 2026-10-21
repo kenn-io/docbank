@@ -21,6 +21,7 @@ import (
 	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
@@ -890,6 +891,10 @@ func (worker *RenditionWorker) classifyProviderError(
 		return worker.endProvider(ctx, claim, work, err, true)
 	}
 	if document.IsRenditionProviderErrorRetryable(err) {
+		if work.ExecutionIdentity.Authorization.ProviderID == vision.ProviderID &&
+			providerError.Code() == document.RenditionErrorTransient && providerAttempt >= 3 {
+			return worker.endProvider(ctx, claim, work, err, false)
+		}
 		now := worker.clock().UTC()
 		delay := providerError.RetryAfter()
 		if delay <= 0 {

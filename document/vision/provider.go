@@ -175,10 +175,13 @@ func (p *Provider) describe(ctx context.Context, data []byte, text string, token
 	raw := res.Body
 	var decoded response
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, provider.Malformed("invalid vision response", err)
+		return nil, provider.Classified(document.RenditionErrorTransient, "invalid vision response", err)
+	}
+	if len(decoded.Choices) == 1 && decoded.Choices[0].FinishReason == "content_filter" {
+		return nil, provider.Classified(document.RenditionErrorPolicyRejected, "vision response was filtered", nil)
 	}
 	if len(decoded.Choices) != 1 || decoded.Choices[0].FinishReason == "length" {
-		return nil, provider.Malformed("vision response is incomplete", nil)
+		return nil, provider.Classified(document.RenditionErrorTransient, "vision response is incomplete", nil)
 	}
 	return []byte(decoded.Choices[0].Message.Content), nil
 }
@@ -269,7 +272,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	}
 	description, err := Parse(raw)
 	if err != nil {
-		return document.RenditionResult{}, provider.Malformed("invalid photo description", err)
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "invalid photo description", err)
 	}
 	payload, err := json.Marshal(description)
 	if err != nil {
