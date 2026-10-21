@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -340,6 +341,38 @@ func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
 	require.ErrorIs(t, f.service.PhotoDescriptionBackfill(drain, nil, 1), context.Canceled)
 	f.runWorker(t, f.service)
 	require.Len(t, f.suggestions(t), 1)
+}
+
+func TestPhotoDescriptionEmptyScanPause(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	synctest.Test(t, func(t *testing.T) {
+		profile := f.service.profiles["vision"]
+		// Fresh photos are absent from a scan for restored suggestions.
+		targets, err := f.catalog.PhotoDescriptionTargets(t.Context(), profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, "", 1, false)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		for _, after := range []string{targets[0].ID, ""} {
+			calls := 0
+			now := time.Now()
+			f.service.clock = func() time.Time {
+				calls++
+				if calls >= 3 {
+					return now.Add(2 * time.Second)
+				}
+				return now
+			}
+			started := time.Now()
+			source, err := f.service.photoDescriptionProfileTargets(t.Context(), "vision", true, after, 1, 1)
+			require.NoError(t, err)
+			require.Empty(t, source.targets)
+			if after == "" {
+				require.Equal(t, 200*time.Second, time.Since(started))
+			} else {
+				require.Zero(t, time.Since(started), "only an empty scan from the start pauses")
+			}
+		}
+	})
 }
 
 func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T) {

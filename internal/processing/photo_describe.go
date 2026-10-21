@@ -300,9 +300,16 @@ func (service *Service) photoDescriptionProfileTargets(ctx context.Context, name
 		}
 	}
 	room := min(limit, workers-waiting)
+	started := service.clock()
 	versions, err := service.catalog.PhotoDescriptionTargets(ctx, profile.record.Fingerprint, profile.record.RenditionRequestFingerprint, after, room, restoredOnly)
+	duration := service.clock().Sub(started)
 	if err != nil {
 		return photoDescriptionSource{}, err
+	}
+	if len(versions) == 0 && after == "" {
+		if err := jobs.Wait(ctx, 100*duration); err != nil {
+			return photoDescriptionSource{}, err
+		}
 	}
 	out := make([]photoDescriptionTarget, len(versions))
 	for i, version := range versions {
