@@ -622,26 +622,23 @@ func TestPhotoDescriptionStartRefusesAnIneligiblePhotoBeforeSavingConsent(t *tes
 
 func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *testing.T) {
 	t.Parallel()
-	t.Run("queued", func(t *testing.T) {
-		t.Parallel()
-		f := newPhotoDescriptionFixture(t)
-		ctx := t.Context()
-		f.grant(t, f.service, "vision")
-		targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
-		require.NoError(t, err)
-		require.Len(t, targets, 1)
-		require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "an automatic request is waiting")
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	f.grant(t, f.service, "vision")
+	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "an automatic request is waiting")
 
-		plan, err := f.service.Plan(ctx, f.selector("vision"))
-		require.NoError(t, err)
-		_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
-		require.NoError(t, err)
-		f.runWorker(t, f.service)
-		_, describes := f.counts()
-		require.Equal(t, 1, describes, "one provider call serves both requests")
-		require.Len(t, f.suggestions(t), 1)
-		require.Zero(t, f.waitingDescriptions(t), "no request is left waiting")
-	})
+	plan, err := f.service.Plan(ctx, f.selector("vision"))
+	require.NoError(t, err)
+	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	f.runWorker(t, f.service)
+	_, describes := f.counts()
+	require.Equal(t, 1, describes, "one provider call serves both requests")
+	require.Len(t, f.suggestions(t), 1)
+	require.Zero(t, f.waitingDescriptions(t), "no request is left waiting")
 }
 
 func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
