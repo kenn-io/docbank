@@ -110,6 +110,48 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 	}
 }
 
+func TestNaturalSearchReportsAcceptedModeAfterRerank(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		failed     bool
+		superseded bool
+		wantMode   string
+	}{
+		{name: "applied", wantMode: "hybrid"},
+		{name: "failed", failed: true, wantMode: "lexical"},
+		{name: "superseded", superseded: true, wantMode: "lexical"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			readme := fake.nodes["/README.txt"]
+			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "base")
+			fake.naturalRerankSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "reranked")
+			fake.naturalRerankSearch.ActualMode = "hybrid"
+			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode, model.naturalRerank = naturalLexical, true
+			model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
+			model, cmd := updateModel(t, model, model.loadNaturalSearch("report", model.requestID)())
+			require.True(t, model.naturalRerankPending)
+			assert.Empty(t, fake.actions)
+			if tc.failed {
+				fake.err = errors.New("synthetic rerank failure")
+			}
+			if tc.superseded {
+				model.requestID++
+			}
+			batch, ok := cmd().(tea.BatchMsg)
+			require.True(t, ok)
+			model, cmd = updateModel(t, model, batch[0]())
+			runModelCommand(t, model, cmd)
+			assert.Equal(t, []actionCall{{event: "search_run", searchType: tc.wantMode}}, fake.actions)
+		})
+	}
+}
+
 func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	fake := newFakeBackend()
 	readme := fake.nodes["/README.txt"]

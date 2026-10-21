@@ -217,6 +217,28 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 			assert.Empty(t, events)
 		})
 	}
+	for _, tc := range []struct {
+		name   string
+		cause  error
+		report bool
+	}{
+		{name: "search closed pipe", cause: io.ErrClosedPipe},
+		{name: "search EPIPE", cause: syscall.EPIPE},
+		{name: "search other write failure", cause: errors.New("synthetic write failure"), report: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetFlags(rootCmd)
+			rootCmd.SetErr(terminal)
+			rootCmd.SetOut(reportTestWriter(func([]byte) (int, error) { return 0, tc.cause }))
+			rootCmd.SetArgs([]string{"search", "synthetic", "--mode", "lexical", "--json"})
+			require.ErrorIs(t, rootCmd.ExecuteContext(context.Background()), tc.cause)
+			if tc.report {
+				require.Len(t, events, 1)
+				assert.JSONEq(t, fmt.Sprintf(shown, "search"), <-events)
+			}
+			assert.Empty(t, events)
+		})
+	}
 	t.Run("get concurrent destination", func(t *testing.T) {
 		concurrentDestination = filepath.Join(t.TempDir(), "download.txt")
 		defer func() { concurrentDestination = "" }()

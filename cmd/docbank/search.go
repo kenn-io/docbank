@@ -166,7 +166,11 @@ See docs/usage/search.md.`,
 		if err != nil {
 			return err
 		}
-		defer func() { reportFailure(cmd, c, "search", retErr, searchAgent) }()
+		defer func() {
+			if !isClosedOutputPipe(retErr) {
+				reportFailure(cmd, c, "search", retErr, searchAgent)
+			}
+		}()
 		opts := daemonconn.SearchOptions{
 			Fuzzy:    searchFuzzy,
 			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
@@ -298,7 +302,11 @@ func documentSearchFlagsChanged(cmd *cobra.Command) bool {
 }
 
 func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nodeSelector, version string, options documentSearchCLIOptions) (retErr error) {
-	defer func() { reportFailure(cmd, c, "search", retErr, searchAgent) }()
+	defer func() {
+		if !isClosedOutputPipe(retErr) {
+			reportFailure(cmd, c, "search", retErr, searchAgent)
+		}
+	}()
 	node, err := selector.resolve(cmd.Context(), c)
 	if err != nil {
 		return err
@@ -374,7 +382,11 @@ func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarRepo
 }
 
 func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query string, options documentSearchCLIOptions) (retErr error) {
-	defer func() { reportFailure(cmd, c, "search", retErr, searchAgent) }()
+	defer func() {
+		if !isClosedOutputPipe(retErr) {
+			reportFailure(cmd, c, "search", retErr, searchAgent)
+		}
+	}()
 	if err := validateDocumentSearchOptions(query, options); err != nil {
 		return err
 	}

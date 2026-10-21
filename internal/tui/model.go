@@ -314,6 +314,8 @@ var errDetailNodeChanged = errors.New(
 	"document changed while loading tags; close and inspect it again",
 )
 
+var errProcessingPlanUnavailable = errors.New("processing plan is unavailable")
+
 // ErrMutationUnconfirmed marks a mutation whose request was sent but whose
 // terminal receipt did not arrive intact. Callers must reacquire authority
 // rather than treating the operation as failed or replaying it.
@@ -788,6 +790,9 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.processingSearchReport = &msg.report
 			return m, m.reportSearch(msg.report.ActualMode, len(msg.report.Results) == 0)
+		}
+		if errors.Is(msg.err, errProcessingPlanUnavailable) {
+			return m, nil
 		}
 		return m, m.reportAction("error_shown", "", "search")
 	case processingStartedMsg:
@@ -1891,7 +1896,7 @@ func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
 	searchID := m.processingSearchID
 	return func() tea.Msg {
 		if plan == nil {
-			return processingSearchLoadedMsg{requestID: requestID, searchID: searchID, err: errors.New("processing plan is unavailable")}
+			return processingSearchLoadedMsg{requestID: requestID, searchID: searchID, err: errProcessingPlanUnavailable}
 		}
 		report, err := backend.SearchDocuments(ctx, api.DocumentSearchRequest{
 			Query: query, Mode: "auto", Limit: maxProcessingSearchItems, Profile: plan.Selector.Profile,
@@ -2533,7 +2538,7 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 		m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		if report != nil {
-			report = m.reportSearch(pending.searchType, len(m.rows) == 0)
+			report = m.reportSearch(msg.report.ActualMode, len(m.rows) == 0)
 		}
 	}
 	return m, report
