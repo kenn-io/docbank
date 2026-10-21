@@ -350,27 +350,49 @@ func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
 
 func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 	t.Parallel()
-	for _, duringWait := range []bool{false, true} {
-		name := "initial read"
-		if duringWait {
-			name = "deadline read"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		duringWait     bool
+		futureSnapshot bool
+	}{
+		{name: "initial read"},
+		{name: "deadline read", duringWait: true},
+		{name: "future snapshot deadline read", duringWait: true, futureSnapshot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				driver := &backupReadContentionDriver{Driver: store.DefaultSQLiteDriver()}
 				d := scheduledDeps(t, driver)
 				repo, err := backup.Init(d.Cfg.Backup.Repo)
 				require.NoError(t, err)
+				if tc.futureSnapshot {
+					d.Cfg.Backup.Interval = config.Duration(24 * time.Hour)
+					_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+					require.NoError(t, err)
+					points, err := repo.ListSnapshots()
+					require.NoError(t, err)
+					require.Len(t, points, 1)
+					_, err = backup.Forget(t.Context(), repo, backup.ForgetOptions{SnapshotIDs: []string{points[0].SnapshotID}, AllowEmpty: true})
+					require.NoError(t, err)
+					// Model a backward clock correction without moving synctest's timer clock.
+					points[0].CreatedAt = time.Now().Add(48 * time.Hour).Format(time.RFC3339)
+					_, err = repo.WriteManifest(points[0])
+					require.NoError(t, err)
+				}
 				db, err := driver.Driver.Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate, BusyTimeout: time.Millisecond})
 				require.NoError(t, err)
 				defer func() { require.NoError(t, db.Close()) }()
 				db.SetMaxOpenConns(1)
 				d.Jobs = jobs.New(t.Context(), d.Logger)
 				defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
-				if duringWait {
+				if tc.duringWait {
 					require.NoError(t, startBackupSchedule(d))
 					synctest.Wait()
-					time.Sleep(time.Hour)
+					if tc.futureSnapshot {
+						time.Sleep(24*time.Hour - 2*time.Minute)
+					} else {
+						time.Sleep(time.Hour)
+					}
 					synctest.Wait()
 				}
 				before, err := repo.ListSnapshots()
@@ -385,7 +407,7 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 				tx, err := db.BeginTx(t.Context(), nil)
 				require.NoError(t, err)
 				defer func() { _ = tx.Rollback() }()
-				if !duringWait {
+				if !tc.duringWait {
 					require.NoError(t, startBackupSchedule(d))
 				} else {
 					time.Sleep(time.Minute)
@@ -405,7 +427,9 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 				points, err := repo.ListSnapshots()
 				require.NoError(t, err)
 				require.Len(t, points, 1)
-				if duringWait {
+				if tc.futureSnapshot {
+					require.NotEqual(t, before[0].SnapshotID, points[0].SnapshotID, "a read retry must capture at the original deadline despite the future timestamp")
+				} else if tc.duringWait {
 					require.Equal(t, before, points, "a read retry must preserve the successful capture's deadline")
 				}
 			})

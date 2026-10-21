@@ -127,8 +127,16 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 		changed := false
 		if waitErr := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now, d.BackupScheduleWake, func() (bool, error) {
 			next, readErr := d.Store.PhotoSettings(ctx)
+			if readErr != nil {
+				reportFailure(readErr, time.Minute)
+				return false, nil
+			}
+			if err == nil && lastFailure != "" {
+				jobs.ReportError(ctx, nil)
+				lastFailure = ""
+			}
 			changed = effectiveBackupConfig(d.Cfg.Backup, next) != cfg
-			return changed, readErr
+			return changed, nil
 		}); waitErr != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
