@@ -423,7 +423,7 @@
     const id = photoID;
     if (!id) {
       direct = undefined;
-      detailError = "";
+      [detailError, detailCause] = ["", undefined];
       if (fromGrid) void restoreGrid();
       return;
     }
@@ -446,7 +446,7 @@
     }
     if (!explicit) {
       if (!photos.projection || untrack(() => direct?.asset_id) !== id) direct = undefined;
-      detailError = "";
+      [detailError, detailCause] = ["", undefined];
     }
     if (!explicit && fromGrid && listedDetail) {
       detailLoading = false;
@@ -466,7 +466,7 @@
                 : item,
             );
           direct = photo;
-          detailError = "";
+          [detailError, detailCause] = ["", undefined];
           if (explicit) {
             if (!photos.projection || photo.content_version_id === version) reloadRevision++;
             reloadedRow = untrack(() => listedRow);

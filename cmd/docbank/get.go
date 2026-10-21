@@ -56,6 +56,13 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	mode := backupProgressAuto
+	if !getJSON {
+		mode, err = progressModeFromFlag("get", getProgress)
+		if err != nil {
+			return err
+		}
+	}
 	c, err := daemonconn.Ensure(cmd.Context())
 	if err != nil {
 		return err
@@ -66,13 +73,6 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 			reportFailure(cmd, c, "open", retErr, false)
 		}
 	}()
-	mode := backupProgressAuto
-	if !getJSON {
-		mode, err = progressModeFromFlag("get", getProgress)
-		if err != nil {
-			return err
-		}
-	}
 	progressOutput := cmd.ErrOrStderr()
 	if getJSON {
 		progressOutput = io.Discard

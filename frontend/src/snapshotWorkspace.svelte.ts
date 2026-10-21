@@ -49,15 +49,15 @@ export class SnapshotWorkspace {
   async run(
     query: Query,
     options: SnapshotOptions,
-  ): Promise<"text" | { type: "failed"; cause: Error } | undefined> {
+  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
     this.invalidateActions();
     const epoch = this.epoch;
     const session = this.getSession();
     await this.snapshotSession().run(query, options);
     if (epoch !== this.epoch || session !== this.getSession()) return;
-    // A 401 signs the person out and resets this state, so it never reads as failed.
-    if (this.state.error) return { type: "failed", cause: this.state.error };
-    if (this.state.status === "ready") return "text";
+    const { error, status, page } = this.state;
+    if (error) return { type: "failed", cause: error };
+    if (status === "ready") return { type: "text", empty: page?.rows.length === 0 };
   }
 
   private invalidateActions(): void {

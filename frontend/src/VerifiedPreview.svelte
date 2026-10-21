@@ -99,17 +99,16 @@
   }
   async function openRelated(target: AttachmentIdentity): Promise<void> {
     cancelNavigation();
-    if (relatedSources.length >= 32) {
-      navigationError =
-        "Navigation depth limit reached. Return to an earlier document to continue.";
-      return;
-    }
     const pending = new AbortController();
     navigationController = pending;
     const request = navigationEpoch;
     navigationPending = true;
     navigationError = "";
     try {
+      if (relatedSources.length >= 32)
+        throw new Error(
+          "Navigation depth limit reached. Return to an earlier document to continue.",
+        );
       const next = await readRelatedSource(session, target, pending.signal);
       if (request !== navigationEpoch || pending.signal.aborted) return;
       relatedSources = [...relatedSources, next];

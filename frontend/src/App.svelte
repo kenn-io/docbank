@@ -2520,7 +2520,7 @@
   async function runSnapshot(
     query: Query,
     options: SnapshotOptions,
-  ): Promise<"text" | { type: "failed"; cause: Error } | undefined> {
+  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
     if (batchTagsContext === "snapshot") batchTagsTargets = null;
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -2533,9 +2533,9 @@
   }
 
   async function submitSnapshot(query: Query, options: SnapshotOptions): Promise<void> {
-    const type = await runSnapshot(query, options);
-    if (typeof type === "object") reportFailure(webSession, "search", type.cause);
-    else if (type) reportSearch(webSession, type, snapshot.state.page?.rows.length === 0);
+    const outcome = await runSnapshot(query, options);
+    if (outcome?.type === "failed") reportFailure(webSession, "search", outcome.cause);
+    else if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
   }
 
   function runSnapshotAgain(): void {

@@ -366,3 +366,53 @@ func TestActionReportingStandardStreams(t *testing.T) {
 		})
 	}
 }
+
+func TestGetInvalidProgressDoesNotContactDaemon(t *testing.T) {
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	terminal := actionTerminal(t)
+	vault := t.TempDir()
+	t.Setenv("DOCBANK_HOME", vault)
+	requests := make(chan string, 10)
+	record := daemonconn.NewRecord("", "synthetic-key", "synthetic-proof", "")
+	handler := fakeDaemonHandler(t, &record, "synthetic-proof", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"status":"queued"}`)
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.URL.Path
+		handler(w, r)
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", "synthetic-proof", ""))
+	require.NoError(t, err)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); rootCmd.SetArgs(nil); resetFlags(rootCmd) })
+	resetFlags(rootCmd)
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(terminal)
+	rootCmd.SetArgs([]string{"get", "id:42", filepath.Join(t.TempDir(), "out"), "--progress", "bogus"})
+	require.ErrorContains(t, rootCmd.ExecuteContext(context.Background()), "invalid --progress value")
+	assert.Empty(t, requests)
+}
+
+func TestFailureReportingIgnoresCancellation(t *testing.T) {
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	reports := make(chan string, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reports <- r.URL.Path
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"status":"queued"}`)
+	}))
+	t.Cleanup(server.Close)
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.SetOut(actionTerminal(t))
+	connection := daemonconn.New(server.URL, "synthetic-key")
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		reportFailure(cmd, connection, "open", fmt.Errorf("download: %w", cause), false)
+		assert.Empty(t, reports)
+	}
+	reportFailure(cmd, connection, "open", errors.New("download failed"), false)
+	assert.Len(t, reports, 1)
+}

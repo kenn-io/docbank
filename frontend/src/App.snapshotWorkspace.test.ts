@@ -802,3 +802,30 @@ it("reports a submitted frozen run that finds nothing or fails", async () => {
   await screen.findByText(/session expired or was rejected/);
   expect(failure).toHaveBeenCalledOnce();
 });
+
+it("keeps each frozen run's empty outcome after a newer run supersedes it", async () => {
+  const { SnapshotWorkspace } = await import("./snapshotWorkspace.svelte.js");
+  const workspace = new SnapshotWorkspace(() => "synthetic", vi.fn(), vi.fn());
+  const options = {
+    facets: snapshot(initialQuery, [], {}, 0).facets.map((facet) => facet.dimension),
+  };
+  let resolveOld!: (value: Response) => void;
+  let runs = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    if (++runs === 1)
+      return new Promise<Response>((resolve) => {
+        resolveOld = resolve;
+      });
+    return Response.json(
+      snapshot(initialQuery, runs === 2 ? [] : [row(2)], {}, runs === 2 ? 0 : 1),
+    );
+  });
+  const old = workspace.run(initialQuery, options);
+  const accepted = await workspace.run(initialQuery, options);
+  const newer = workspace.run(initialQuery, options);
+  resolveOld(Response.json(snapshot(initialQuery, [row(1)], {}, 1)));
+  expect(await old).toBeUndefined();
+  expect(accepted).toEqual({ type: "text", empty: true });
+  expect(await newer).toEqual({ type: "text", empty: false });
+  workspace.reset();
+});
