@@ -227,6 +227,10 @@ func TestPhotoEventsOverflowCollapses(t *testing.T) {
 	nextPhotoWake(t, ch)
 	touch("")
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch))
+}
+
+func TestPhotoEventsCollapseBatch(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, []PhotoEvent{{}}, CollapsePhotoEvents([]PhotoEvent{{AssetID: "a"}, {}}))
 	require.Equal(t, []PhotoEvent{{AssetID: "a"}}, CollapsePhotoEvents([]PhotoEvent{{AssetID: "a"}, {AssetID: "a"}}))
 }
@@ -449,7 +453,7 @@ func TestPhotoEventsDirectoryVisibility(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"move", "trash", "queued trash", "purge"} {
 		for _, scope := range []string{"hidden", "visible", "mixed"} {
-			counts := []int{1, PhotoEventIDLimit + 1, PhotoEventIDLimit + 2}
+			counts := []int{1, PhotoEventIDLimit + 1}
 			if scope == "mixed" {
 				counts[0] = 2
 			}

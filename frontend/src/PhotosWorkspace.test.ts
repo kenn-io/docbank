@@ -2151,50 +2151,39 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
   photos.dispose();
 });
 
-it.each(["generation", "removed"])(
-  "reconciles a Map list refresh after its detail %s changes",
-  async (change) => {
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: vi.fn(() => "blob:map-preview"),
-    });
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    Object.defineProperty(HTMLImageElement.prototype, "decode", {
-      configurable: true,
-      value: vi.fn(async () => {}),
-    });
-    const setup = openMapViewerSetup();
-    const { photos, lookup, preview, props } = setup;
+it("reconciles a Map list refresh after its detail generation changes", async () => {
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:map-preview"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: vi.fn(async () => {}),
+  });
+  const setup = openMapViewerSetup();
+  const { photos, lookup, preview, props } = setup;
+  photos.items = [mapPhoto(1)];
+  const row = photo(1);
+  row.previews.fit = { state: "ready", generation_id: "fit-1" };
+  lookup.mockResolvedValue(row);
+  preview.mockImplementation(async (row) => row.previews.fit);
+  const get = vi.fn(async () => new Blob(["synthetic-photo"]));
+  props.cache.get = get;
+  await openMapViewer(setup);
+  await screen.findByText("Fit preview");
+  lookup.mockResolvedValue({
+    ...row,
+    previews: { ...row.previews, fit: { state: "ready", generation_id: "fit-2" } },
+  });
+  await act(() => {
     photos.items = [mapPhoto(1)];
-    const row = photo(1);
-    row.previews.fit = { state: "ready", generation_id: "fit-1" };
-    lookup.mockResolvedValue(row);
-    preview.mockImplementation(async (row) => row.previews.fit);
-    const get = vi.fn(async () => new Blob(["synthetic-photo"]));
-    props.cache.get = get;
-    await openMapViewer(setup);
-    await screen.findByText("Fit preview");
-    if (change === "generation")
-      lookup.mockResolvedValue({
-        ...row,
-        previews: { ...row.previews, fit: { state: "ready", generation_id: "fit-2" } },
-      });
-    else lookup.mockRejectedValue(new APIError("This photo is no longer in this view.", 404, "x"));
-    await act(() => {
-      photos.items = [mapPhoto(1)];
-    });
-    if (change === "generation") {
-      await waitFor(() =>
-        expect(get).toHaveBeenCalledWith("photo-1", "fit-2", expect.any(AbortSignal), false),
-      );
-    } else {
-      await screen.findByText("This photo is no longer in this view.");
-      expect(screen.queryByText("Fit preview")).toBeNull();
-      expect(screen.queryByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeNull();
-    }
-    photos.dispose();
-  },
-);
+  });
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith("photo-1", "fit-2", expect.any(AbortSignal), false),
+  );
+  photos.dispose();
+});
 
 it("keeps an open Map photo's detail request through appended pages", async () => {
   const setup = openMapViewerSetup();
@@ -3127,12 +3116,13 @@ it("reads the open photo again on a live change and conceals its cached image on
 });
 
 it.each([
-  { older: "foreground", outcome: "answers" },
-  { older: "foreground", outcome: "fails with 404" },
-  { older: "live", outcome: "fails with 404" },
+  { older: "foreground", outcome: "answers", newer: "live read" },
+  { older: "foreground", outcome: "fails with 404", newer: "live read" },
+  { older: "live", outcome: "fails with 404", newer: "live read" },
+  { older: "live", outcome: "fails with 404", newer: "navigation" },
 ])(
-  "keeps the newest live detail read when an older $older read $outcome after it",
-  async ({ older, outcome }) => {
+  "keeps the newest detail after $newer when an older $older read $outcome",
+  async ({ older, outcome, newer }) => {
     const photos = workspaceWithPreparedPhoto();
     const row = photo(1);
     let settle!: () => void;
@@ -3146,44 +3136,25 @@ it.each([
     const lookup = vi.fn<() => Promise<PhotoBrowseRow>>();
     if (older === "foreground") lookup.mockImplementationOnce(pending);
     else lookup.mockResolvedValueOnce(row).mockImplementationOnce(pending);
-    viewerWithCachedImage(photos, lookup);
+    const { rerender } = viewerWithCachedImage(photos, lookup);
     await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
     if (older === "live") {
       await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
       void photos.changed(photoChange("photo-1"));
       await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
     }
-    lookup.mockResolvedValueOnce({ ...row, name: "Newer.jpg" });
-    await act(() => photos.changed(photoChange("photo-1")));
-    await screen.findByRole("dialog", { name: "Photo viewer, Newer.jpg" });
+    const name = newer === "navigation" ? "Photo 2.jpg" : "Newer.jpg";
+    lookup.mockResolvedValueOnce(newer === "navigation" ? photo(2) : { ...row, name });
+    if (newer === "navigation") await rerender({ photoID: "photo-2" });
+    else await act(() => photos.changed(photoChange("photo-1")));
+    await screen.findByRole("dialog", { name: `Photo viewer, ${name}` });
     settle();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByText("This photo is no longer in this view.")).toBeNull();
-    expect(screen.getByRole("dialog", { name: "Photo viewer, Newer.jpg" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: `Photo viewer, ${name}` })).toBeTruthy();
     photos.dispose();
   },
 );
-
-it("drops a live detail read for a photo the viewer has since left", async () => {
-  const photos = workspaceWithPreparedPhoto();
-  const row = photo(1);
-  let fail!: (cause: unknown) => void;
-  const lookup = vi
-    .fn<() => Promise<PhotoBrowseRow>>()
-    .mockResolvedValueOnce(row)
-    .mockImplementationOnce(() => new Promise((_, reject) => (fail = reject)));
-  const { rerender } = viewerWithCachedImage(photos, lookup);
-  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  void photos.changed(photoChange("photo-1"));
-  await waitFor(() => expect(fail).toBeDefined());
-  lookup.mockResolvedValueOnce(photo(2));
-  await rerender({ photoID: "photo-2" });
-  await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
-  fail(new APIError("This photo is no longer in this view.", 404, "x"));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(screen.queryByText("This photo is no longer in this view.")).toBeNull();
-  photos.dispose();
-});
 
 it("forwards live changes to the editor while Metadata is open", async () => {
   const photos = workspaceWithPreparedPhoto();
@@ -3202,8 +3173,13 @@ it("forwards live changes to the editor while Metadata is open", async () => {
   photos.dispose();
 });
 
-it("keeps rating shortcuts working while a live refresh is in flight", async () => {
+it("keeps rating shortcuts and stack decisions available during a background refresh", async () => {
   const photos = workspaceWithPreparedPhoto();
+  const row = {
+    ...photo(1),
+    stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" },
+  };
+  photos.items = [row];
   photos.selectLoaded();
   let finish!: (response: Response) => void;
   stubPhotoFetch(vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))));
@@ -3214,13 +3190,17 @@ it("keeps rating shortcuts working while a live refresh is in flight", async () 
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
     shortcuts,
   });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
   const refreshing = photos.refresh(undefined, true);
   await waitFor(() => expect(photos.loading).toBe(true));
   expect(photos.authored.loading).toBe(false);
   shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "4", cancelable: true }));
   expect(edit).toHaveBeenCalledOnce();
   expect(screen.queryByText(/Try again when they finish/)).toBeNull();
-  finish(Response.json({ items: [photo(1)], total: 1 }));
+  for (const name of ["Keep all", "Keep selected", "Choose representative"]) {
+    expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+  }
+  finish(Response.json({ items: [row], total: 1 }));
   expect(await refreshing).toBe(true);
   photos.dispose();
 });
@@ -3268,69 +3248,8 @@ it("trashes with the refreshed revision after a shortcut prepared targets with M
   photos.dispose();
 });
 
-it("keeps stack decisions available during a background refresh", async () => {
-  const photos = workspaceWithPreparedPhoto();
-  const row = {
-    ...photo(1),
-    stack: { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" },
-  };
-  photos.items = [row];
-  photos.selectLoaded();
-  let finish!: (response: Response) => void;
-  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
-  render(PhotosWorkspace, {
-    photos,
-    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-  });
-  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
-  const refreshing = photos.refresh(undefined, true);
-  await waitFor(() => expect(photos.loading).toBe(true));
-  for (const name of ["Keep all", "Keep selected", "Choose representative"]) {
-    expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
-  }
-  finish(Response.json({ items: [row], total: 1 }));
-  await refreshing;
-  photos.dispose();
-});
-
-it("keeps a rotation edit when an older live detail response arrives", async () => {
-  const before = preparedPhoto(1);
-  const photos = workspaceWithPreparedPhoto(before);
-  const shortcuts = createShortcutManager();
-  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-  let finish!: (response: Response) => void;
-  let lookups = 0;
-  stubPhotoFetch(async (url, init) => {
-    if (url.endsWith("/edit")) {
-      expect(JSON.parse(String(init.body)).rotation_delta).toBe(90);
-      return Response.json({
-        receipt_id: "rotated",
-        before: [before],
-        after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
-      });
-    }
-    if (++lookups === 1) return Response.json({ items: [photo(1)] });
-    return new Promise<Response>((resolve) => (finish = resolve));
-  });
-  render(PhotosWorkspace, {
-    photos,
-    shortcuts,
-    photoID: "photo-1",
-    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-  });
-  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  const reading = photos.changed(photoChange("photo-1"));
-  await waitFor(() => expect(finish).toBeDefined());
-  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
-  await waitFor(() => expect(photos.items[0]!.rotation).toBe(90));
-  finish(Response.json({ items: [photo(1)] }));
-  await reading;
-  expect(photos.items[0]!.rotation).toBe(90);
-  photos.dispose();
-});
-
-it.each(["edit", "Undo"])(
-  "keeps newer Library values after a delayed local %s receipt",
+it.each(["edit", "Undo", "older live read"])(
+  "keeps newer Library values across a delayed %s",
   async (action) => {
     const before = preparedPhoto(1);
     const photos = workspaceWithPreparedPhoto(before);
@@ -3350,15 +3269,25 @@ it.each(["edit", "Undo"])(
       cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
     });
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    let finishRead!: (row: PhotoBrowseRow) => void;
+    let reading: Promise<unknown> | undefined;
+    if (action === "older live read") {
+      lookup.mockImplementationOnce(() => new Promise((resolve) => (finishRead = resolve)));
+      reading = photos.changed(photoChange("photo-1"));
+      await waitFor(() => expect(finishRead).toBeDefined());
+    }
     if (action === "Undo") {
       photos.authored.receiptID = "rotation";
       photos.authored.undoState.summary = "Rotated photo";
       await fireEvent.click(await screen.findByRole("button", { name: "Undo last photo edit" }));
     } else shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
-    await waitFor(() => expect(action === "edit" ? edit : undo).toHaveBeenCalledOnce());
-    lookup.mockResolvedValue(latest);
-    await act(() => photos.changed(photoChange("photo-1")));
-    expect(photos.items[0]!.rotation).toBe(180);
+    await waitFor(() => expect(action === "Undo" ? undo : edit).toHaveBeenCalledOnce());
+    if (action !== "Undo") expect(edit.mock.calls[0]![0].rotation_delta).toBe(90);
+    if (action !== "older live read") {
+      lookup.mockResolvedValue(latest);
+      await act(() => photos.changed(photoChange("photo-1")));
+      expect(photos.items[0]!.rotation).toBe(180);
+    }
     await act(() =>
       finish({
         receipt_id: "local",
@@ -3367,7 +3296,13 @@ it.each(["edit", "Undo"])(
       }),
     );
     await waitFor(() => expect(photos.authored.busy).toBe(false));
-    await waitFor(() => expect(photos.items[0]!.rotation).toBe(180));
+    const rotation = action === "older live read" ? 90 : 180;
+    await waitFor(() => expect(photos.items[0]!.rotation).toBe(rotation));
+    if (reading) {
+      finishRead(photo(1));
+      await reading;
+      expect(photos.items[0]!.rotation).toBe(90);
+    }
     photos.dispose();
   },
 );

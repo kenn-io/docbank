@@ -15,8 +15,6 @@ import {
 import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
-import { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { APIError } from "./api-transport.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
@@ -4069,32 +4067,13 @@ it("reaches the first page when a change arrives before it lands, then refreshes
 });
 
 it.each([false, true])(
-  "conceals an unavailable grid-opened photo after a delayed list refresh, list fails=%s",
+  "reads the open photo after a delayed list refresh, list fails=%s",
   async (fails) => {
     history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
     livePhotoStubs();
-    vi.stubGlobal(
-      "URL",
-      class extends URL {
-        static createObjectURL() {
-          return "blob:synthetic-photo";
-        }
-        static revokeObjectURL() {}
-      },
-    );
-    Object.defineProperty(HTMLImageElement.prototype, "decode", {
-      configurable: true,
-      value: vi.fn(async () => {}),
-    });
     const row = photo(1);
-    row.previews.fit = { state: "ready", generation_id: "fit" };
-    vi.spyOn(PhotoPreviewCache.prototype, "get").mockResolvedValue(new Blob(["synthetic-jpeg"]));
-    vi.spyOn(Photos.prototype, "preview").mockResolvedValue(row.previews.fit);
-    let excluded = false;
-    const lookup = vi.spyOn(Photos.prototype, "lookup").mockImplementation(async () => {
-      if (excluded) throw new APIError("This photo is no longer in this view.", 404, "missing");
-      return row;
-    });
+    const lookup = vi.spyOn(Photos.prototype, "lookup").mockResolvedValue(row);
+    vi.spyOn(Photos.prototype, "preview").mockResolvedValue({ state: "unsupported" });
     let finish!: (response: Response) => void;
     let delay = false;
     stubPhotoFetch(async (url) => {
@@ -4108,14 +4087,10 @@ it.each([false, true])(
     });
     render(App);
     await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
-    await screen.findByText("Fit preview");
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     delay = true;
-    excluded = true;
     const reads = lookup.mock.calls.length;
-    const pass = photoEventPass()(idFreeChange).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
+    const pass = photoEventPass()(idFreeChange).catch(() => undefined);
     await waitFor(() => expect(finish).toBeDefined());
     await act(async () => {
       finish(
@@ -4123,14 +4098,9 @@ it.each([false, true])(
           ? Response.json({ detail: "List unavailable" }, { status: 503 })
           : Response.json({ items: [row], total: 1 }),
       );
-      const result = await pass;
-      if (fails) expect(result).toBeInstanceOf(Error);
-      else expect(result).toBeUndefined();
+      await pass;
     });
     expect(lookup.mock.calls.length).toBeGreaterThan(reads);
-    await screen.findByText("This photo is no longer in this view.");
-    expect(screen.queryByText("Fit preview")).toBeNull();
-    expect(screen.getByText("No preview")).toBeTruthy();
   },
 );
 

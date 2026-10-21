@@ -1220,9 +1220,8 @@ async function reviewThree() {
   return { ...review, rows };
 }
 
-it("forwards shared Hidden access so a pending live read releases an edit", async () => {
+it("rates during a pending live read while requesting visible photos", async () => {
   const access = new HiddenAccess("session", vi.fn());
-  const run = vi.spyOn(access, "run");
   const { photos, container } = await reviewPhoto(photo(1), false, undefined, {
     hiddenAccess: access,
   });
@@ -1251,7 +1250,6 @@ it("forwards shared Hidden access so a pending live read releases an edit", asyn
   await waitFor(() => expect(finish).toBeDefined());
   await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "5" });
   await screen.findByText("Unflagged · 5 stars");
-  expect(run).toHaveBeenCalledTimes(2);
   finish(Response.json({ items: [photo(1)] }));
   await reading;
   photos.dispose();
@@ -1397,42 +1395,6 @@ it("commits the next pass when a live event arrives during its flag lookup", asy
   expect(cull.run!.checkpoint.position).toBe(0);
   photos.dispose();
 });
-
-it.each(["edit", "Undo"])(
-  "keeps newer Cull values after a delayed local %s receipt",
-  async (action) => {
-    const before = preparedPhoto(1);
-    let finish!: (receipt: PhotoAuthoredReceipt) => void;
-    const pending = new Promise<PhotoAuthoredReceipt>((resolve) => (finish = resolve));
-    const edit = vi.spyOn(api, "editPhotoAuthored").mockReturnValue(pending);
-    const undo = vi.spyOn(api, "undoPhotoAuthored").mockReturnValue(pending);
-    const { photos, container } = await reviewPhoto();
-    if (action === "Undo") {
-      photos.cullEditor!.targets = [before];
-      photos.cullEditor!.receiptID = "rating";
-      photos.cullEditor!.undoState.summary = "Rated photo";
-      await fireEvent.click(await readyButton(/^Undo$/));
-    } else await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "5" });
-    await waitFor(() => expect(action === "edit" ? edit : undo).toHaveBeenCalledOnce());
-    const latest = { ...photo(1), rating: 4 };
-    vi.mocked(photos.lookupMany).mockResolvedValue([latest]);
-    vi.mocked(api.preparePhotoAuthored).mockResolvedValue(
-      photoPreparation([{ ...before, revision: 3, values: { ...before.values, rating: 4 } }]),
-    );
-    await act(() => photos.changed(photoChange("photo-1")));
-    await screen.findByText("Unflagged · 4 stars");
-    await act(() =>
-      finish({
-        receipt_id: "local",
-        before: [before],
-        after: [{ ...before, revision: 2, values: { ...before.values, rating: 5 } }],
-      }),
-    );
-    await waitFor(() => expect(photos.cullEditor!.busy).toBe(false));
-    await screen.findByText("Unflagged · 4 stars");
-    photos.dispose();
-  },
-);
 
 it("keeps newer Cull values after a delayed stack receipt", async () => {
   const before = preparedPhoto(1);

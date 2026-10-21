@@ -98,28 +98,36 @@ export class PhotoAuthoredEditor {
     ];
     void this.resolveAssignedTags();
   }
-  private pendingTags = new Map<string, Promise<void>>();
-  private async resolveAssignedTags() {
+  private pendingTags = new Map<string, Promise<api.Tag | undefined>>();
+  private readTag(id: string, refresh = false) {
+    if (refresh) this.pendingTags.delete(id);
+    const pending = this.pendingTags.get(id);
+    if (pending) return pending;
+    const request = this.request(() => api.getTag(id, this.options()))
+      .then((tag) => {
+        if (this.pendingTags.get(id) !== request || this.controller.signal.aborted) return;
+        this.reconcile(tag);
+        return tag;
+      })
+      .finally(() => {
+        if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
+      });
+    this.pendingTags.set(id, request);
+    return request;
+  }
+  private async resolveAssignedTags(required = false) {
     const known = new Set(this.tags.map((tag) => tag.id));
     const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
-      (id) => !known.has(id) && !this.pendingTags.has(id),
+      (id) => !known.has(id),
     );
-    for (const id of missing) {
-      const request = this.request(() => api.getTag(id, this.options()))
-        .then((tag) => {
-          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
-            this.reconcile(tag);
-        })
-        .catch((cause) => {
-          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
-            this.tagsError = this.failure(cause);
-        })
-        .finally(() => {
-          if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
-        });
-      this.pendingTags.set(id, request);
-    }
-    await Promise.all(this.pendingTags.values());
+    await Promise.all(
+      missing.map((id) =>
+        this.readTag(id).catch((cause) => {
+          if (required) throw cause;
+          if (!this.controller.signal.aborted) this.tagsError = this.failure(cause);
+        }),
+      ),
+    );
   }
   /** Puts a freshly read tag in the catalog: renamed in place, or added when a target uses it. */
   private reconcile(tag: api.Tag) {
@@ -131,32 +139,22 @@ export class PhotoAuthoredEditor {
   /** Reads the tags on the prepared targets again: a rename can sit outside the catalog page. */
   async refreshAssignedTags() {
     const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
-    for (const id of ids) this.pendingTags.delete(id);
-    const fetched = await Promise.all(
+    await Promise.all(
       ids.map((id) =>
-        this.request(() => api.getTag(id, this.options())).catch((cause) => {
+        this.readTag(id, true).catch((cause) => {
           if (!(cause instanceof APIError && cause.status === 404)) throw cause;
         }),
       ),
     );
-    if (this.controller.signal.aborted) return;
-    for (const tag of fetched) if (tag) this.reconcile(tag);
   }
   private async refreshKeywords(receipt: api.PhotoAuthoredReceipt) {
     const changed = new Set(receipt.keywords?.map((change) => change.tag_id));
-    if (!changed.size) return [];
-    for (const id of changed) this.pendingTags.delete(id);
     const refreshed = await Promise.all(
-      [...changed].map(async (id) => {
-        try {
-          const tag = await this.request(() => api.getTag(id, this.options()));
-          if (this.controller.signal.aborted) return;
-          this.reconcile(tag);
-          return tag;
-        } catch (cause) {
+      [...changed].map((id) =>
+        this.readTag(id, true).catch((cause) => {
           if (!this.controller.signal.aborted) this.tagsError = this.failure(cause);
-        }
-      }),
+        }),
+      ),
     );
     return refreshed.filter((tag): tag is api.Tag => !!tag);
   }
@@ -288,9 +286,7 @@ export class PhotoAuthoredEditor {
         this.membershipChanged = true;
         if (!prepared.targets.some((target) => target.file_id === this.fileID)) this.fileID = "";
       }
-      this.targets = previous
-        ? prepared.targets.filter((target) => previous.has(target.file_id))
-        : prepared.targets;
+      this.targets = prepared.targets.filter((target) => !previous || previous.has(target.file_id));
       const asset = prepared.assets.length === 1 ? prepared.assets[0] : undefined;
       this.asset = asset
         ? {
@@ -301,7 +297,8 @@ export class PhotoAuthoredEditor {
           }
         : undefined;
       this.conflict = this.membershipChanged;
-      void this.resolveAssignedTags();
+      if (quiet) await this.resolveAssignedTags(true);
+      else void this.resolveAssignedTags();
       if (!this.tags.length && !this.tagsLoading && !this.tagsError)
         void this.loadTags?.().catch((cause) => {
           if (!signal.aborted) this.tagsError = this.failure(cause);

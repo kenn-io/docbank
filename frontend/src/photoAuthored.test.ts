@@ -693,6 +693,39 @@ it("reads the tags on its targets again, keeping the ones a delete or an error l
   editor.dispose();
 });
 
+it("retries a live keyword read outside the catalog before consuming the pending change", async () => {
+  const editor = editorWithTargets();
+  editor.tags = [{ id: "catalog", name: "Catalog keyword" }] as Tag[];
+  const latest = targets.map((target) => ({ ...target, tags: ["external"] }));
+  const keyword = { id: "external", name: "External keyword" } as Tag;
+  let reads = 0;
+  let prepares = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/prepare")) {
+        prepares++;
+        return response({ assets: [asset], targets: latest });
+      }
+      return ++reads === 1 ? response({ detail: "Keywords unavailable" }, 503) : response(keyword);
+    }),
+  );
+  try {
+    await expect(editor.invalidate({ ids: new Set(["asset"]), idFree: false })).rejects.toThrow(
+      "Keywords unavailable",
+    );
+    expect(editor.tags.map((tag) => tag.id)).toEqual(["catalog"]);
+    // An empty retry must still consume the retained asset change.
+    await editor.invalidate({ ids: new Set(), idFree: false });
+    expect(editor.tags).toContainEqual(keyword);
+    expect(reads).toBe(2);
+    await editor.invalidate({ ids: new Set(), idFree: false });
+    expect(prepares).toBe(2);
+  } finally {
+    editor.dispose();
+  }
+});
+
 it.each([false, true])(
   "refreshes after Clear edits when a draft discarded a live response, failed=%s",
   async (failed) => {
