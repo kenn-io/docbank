@@ -3133,7 +3133,9 @@ it.each([undefined, "map"] as const)(
     viewerWithCachedImage(photos, lookup);
     await screen.findByText("Fit preview");
     const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
-    const refreshed = { ...photo(1), name: "Refreshed.jpg", stack };
+    const refreshed = projection
+      ? { ...mapPhoto(1), name: "Refreshed.jpg" }
+      : { ...photo(1), name: "Refreshed.jpg", stack };
     lookup.mockResolvedValue({ ...photo(1), name: "Looked up.jpg" });
     await act(async () => {
       photos.items = [refreshed];

@@ -118,16 +118,14 @@ export class PhotoCull {
     }
   }
   /** Regroup the current pass's IDs, so a stack never holds a frame the pass doesn't show. */
-  async regroup(quiet = false) {
+  async regroup() {
     const run = this.run;
     if (!run || this.stale) return;
     const controller = new AbortController();
     this.stackRead?.abort();
     this.stackRead = controller;
-    if (!quiet) {
-      this.stackLoading = true;
-      this.stackError = "";
-    }
+    this.stackLoading = true;
+    this.stackError = "";
     const current = () =>
       !controller.signal.aborted &&
       this.run?.checkpoint.runID === run.checkpoint.runID &&
@@ -147,10 +145,7 @@ export class PhotoCull {
           burstGapSeconds: regrouped.burst_gap_seconds,
         };
     } catch (cause) {
-      if (current()) {
-        if (quiet) throw cause;
-        this.stackError = this.sessionFailure(cause);
-      }
+      if (current()) this.stackError = this.sessionFailure(cause);
     } finally {
       if (this.stackRead === controller) this.stackLoading = false;
     }
