@@ -236,7 +236,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 		}
 		if !found {
 			if len(env.entries) >= MaxEntries {
-				return kataclient.Issue{}, fmt.Errorf("Kata issue already has %d Docbank evidence entries: %w", MaxEntries, ErrUnsupported)
+				return kataclient.Issue{}, ErrEntryLimit
 			}
 			entry, _ := json.Marshal(Entry{ID: evidence.ID, Passage: evidence.Passage, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{}})
 			env.entries = append(env.entries, entry)

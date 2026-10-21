@@ -128,9 +128,9 @@ func kataProblem(err error) *Error {
 		return NewError(409, "kata_evidence_changed", err.Error())
 	case errors.Is(err, kataevidence.ErrUnavailable), errors.Is(err, store.ErrNotFound), errors.Is(err, document.ErrCitationUnavailable):
 		return NewError(404, "kata_evidence_unavailable", "selected document passage is unavailable")
-	case errors.Is(err, kataevidence.ErrUnsupported):
-		return NewError(409, "kata_evidence_unsupported", err.Error())
-	case errors.Is(err, kataevidence.ErrUnsupportedSource):
+	case errors.Is(err, kataevidence.ErrEntryLimit):
+		return NewError(409, "kata_evidence_limit", err.Error())
+	case errors.Is(err, kataevidence.ErrUnsupported), errors.Is(err, kataevidence.ErrUnsupportedSource):
 		return NewError(409, "kata_evidence_unsupported", err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
 		return NewError(504, "kata_timeout", "Kata evidence operation timed out; retry creates with the same key")

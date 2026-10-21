@@ -160,7 +160,7 @@ func boundedKataLabel(name string) string {
 	return string(runes[:min(len(runes), 512)])
 }
 
-func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference) (kataevidence.Resolution, error) {
+func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference, quote string) (kataevidence.Resolution, error) {
 	result := kataevidence.Resolution{State: "unavailable", Evidence: kataevidence.Evidence{Reference: ref, ContentTrust: "untrusted"}}
 	if kataevidence.ValidateReference(ref) != nil {
 		result.State = "unsupported"
@@ -185,16 +185,15 @@ func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference) (k
 		result.State = "changed"
 		return result, nil
 	}
-	selector := kataevidence.Selector{NodeID: p.NodeID, ExpectedVersion: p.ContentVersionID, StartRune: p.StartRune, EndRune: p.EndRune}
-	if p.RenditionAttachmentID != "" {
-		citation, err := p.TextCitation()
-		if err != nil {
-			result.State = "unsupported"
-			return result, nil //nolint:nilerr // Unsupported citations remain readable alongside other evidence.
-		}
-		selector.Citation = &citation
+	if p.RenditionAttachmentID == "" { // The matching hash already proves the saved original quote.
+		return kataevidence.Resolution{State: "available", Evidence: kataevidence.NewEvidence(ref, quote, boundedKataLabel(node.Name))}, nil
 	}
-	evidence, err := a.Prepare(ctx, selector)
+	citation, err := p.TextCitation()
+	if err != nil {
+		result.State = "unsupported"
+		return result, nil //nolint:nilerr // Unsupported citations remain readable alongside other evidence.
+	}
+	evidence, err := a.Prepare(ctx, kataevidence.Selector{NodeID: p.NodeID, ExpectedVersion: p.ContentVersionID, StartRune: p.StartRune, EndRune: p.EndRune, Citation: &citation})
 	switch {
 	case err == nil:
 		result.State = "available"

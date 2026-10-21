@@ -135,7 +135,7 @@ func TestCreateReplaySurvivesUnavailableSource(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, k.createdCount())
 }
-func (a *memoryArchive) Resolve(_ context.Context, ref Reference) (Resolution, error) {
+func (a *memoryArchive) Resolve(_ context.Context, ref Reference, _ string) (Resolution, error) {
 	a.reads++
 	return Resolution{State: a.state, Evidence: NewEvidence(ref, "hello", "notes.txt")}, nil
 }
@@ -296,7 +296,7 @@ func TestAppendRefusesEnvelopeThatWouldExceedReadLimit(t *testing.T) {
 	require.Zero(t, k.commentCount())
 }
 
-func TestAppendRejectsFullEnvelopeAsPermanentUnsupported(t *testing.T) {
+func TestAppendRejectsFullEnvelopeAtQuoteLimit(t *testing.T) {
 	entries := make([]jsontext.Value, MaxEntries)
 	for i := range entries {
 		entries[i] = jsontext.Value(`{"reference":{"kind":"future"}}`)
@@ -308,8 +308,8 @@ func TestAppendRejectsFullEnvelopeAsPermanentUnsupported(t *testing.T) {
 
 	_, err = s.Cite(t.Context(), CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5}})
 
-	require.ErrorIs(t, err, ErrUnsupported)
-	require.ErrorContains(t, err, "already has 64 Docbank evidence entries")
+	require.ErrorIs(t, err, ErrEntryLimit)
+	require.ErrorContains(t, err, "already holds the maximum of 64 Docbank quotes")
 	require.NotContains(t, strings.ToLower(err.Error()), "retry")
 	require.JSONEq(t, string(previous), string(k.snapshot().Metadata[MetadataKey]))
 	require.Zero(t, k.commentCount())

@@ -37,7 +37,7 @@ func (s Service) Context(ctx context.Context, r ContextRequest) (Context, error)
 		if valid {
 			resolution.State = "unreachable"
 			if s.Archive != nil {
-				resolution, err = s.Archive.Resolve(ctx, entry.Reference)
+				resolution, err = s.Archive.Resolve(ctx, entry.Reference, entry.Quote)
 				if err != nil {
 					return Context{}, err
 				}

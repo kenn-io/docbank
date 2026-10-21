@@ -28,6 +28,7 @@ var (
 	ErrInvalid             = errors.New("invalid Kata evidence request")
 	ErrUnsupported         = errors.New("unsupported Kata evidence metadata")
 	ErrUnsupportedSource   = errors.New("unsupported Kata evidence source")
+	ErrEntryLimit          = fmt.Errorf("Kata issue already holds the maximum of %d Docbank quotes", MaxEntries)
 	ErrChanged             = errors.New("selected document passage changed; select it again")
 	ErrUnavailable         = errors.New("selected document passage is unavailable")
 	ErrConflict            = errors.New("Kata evidence kept changing; retry the same request")
@@ -97,7 +98,8 @@ type Resolution struct {
 type Archive interface {
 	VaultUID() string
 	Prepare(ctx context.Context, selector Selector) (Evidence, error)
-	Resolve(ctx context.Context, reference Reference) (Resolution, error)
+	// Resolve receives the saved quote so an unchanged original needs no blob read.
+	Resolve(ctx context.Context, reference Reference, quote string) (Resolution, error)
 }
 
 func ValidateReference(ref Reference) error {
