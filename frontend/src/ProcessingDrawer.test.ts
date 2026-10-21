@@ -853,7 +853,12 @@ describe("document processing drawer", () => {
                 deployment: "d".repeat(64),
                 model: "synthetic",
                 model_revision: "v1",
-                metadata_classes: ["derived_jpeg", "byte_length", "content_hash", "detected_media_type"],
+                metadata_classes: [
+                  "derived_jpeg",
+                  "byte_length",
+                  "content_hash",
+                  "detected_media_type",
+                ],
                 retained_artifact_roles: [],
               },
             },
