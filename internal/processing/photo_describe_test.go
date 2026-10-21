@@ -551,7 +551,6 @@ func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *tes
 	require.Len(t, prepared.Suggestions, 1)
 	probes, _ = f.counts()
 	require.Equal(t, 3, probes, "the failed description invalidates the first provider's passing probe")
-
 }
 
 func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
