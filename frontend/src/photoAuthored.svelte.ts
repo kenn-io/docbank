@@ -430,7 +430,7 @@ export class PhotoAuthoredEditor {
     this.noticeTone = "warning";
     this.notice = message;
   }
-  private accept(receipt: api.PhotoAuthoredReceipt) {
+  private acceptTargets(receipt: api.PhotoAuthoredReceipt) {
     this.noticeTone = "success";
     for (const target of this.accepted(this.prepared, receipt)) this.held[target.file_id] = target;
   }
@@ -459,6 +459,9 @@ export class PhotoAuthoredEditor {
         tags: [...tags],
       };
     });
+  }
+  private accept(receipt: api.PhotoAuthoredReceipt) {
+    this.acceptTargets(receipt);
     this.suggestions = this.suggestions.map((suggestion) => {
       const target = this.targets.find((target) => target.file_id === suggestion.target);
       if (!target) return suggestion;
