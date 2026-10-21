@@ -133,6 +133,24 @@ it.each(["timeline", "counts"])(
   },
 );
 
+it("keeps a refused query error after a successful live refresh", async () => {
+  const fetcher = vi
+    .fn()
+    .mockImplementation(async () => Response.json({ items: [photo(1)], total: 1 }));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.setQuery({ ...photoQuery, text: "river" });
+  fetcher.mockClear();
+  await photos.setQuery({ ...photoQuery, text: "x".repeat(8193) });
+  expect(photos.error).toBe("query text exceeds 8192 Unicode scalars");
+  expect(fetcher).not.toHaveBeenCalled();
+  await expect(photos.refresh(undefined, true)).resolves.toBe(true);
+  expect(JSON.parse(fetcher.mock.calls[0]![1].body).query.text).toBe("river");
+  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1"]);
+  expect(photos.error).toBe("query text exceeds 8192 Unicode scalars");
+  photos.dispose();
+});
+
 it("resumes a failed live refresh from its staged pages when nothing new has arrived", async () => {
   const cursors: (string | undefined)[] = [];
   let failNext = true;

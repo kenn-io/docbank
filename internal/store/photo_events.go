@@ -155,24 +155,24 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{photoCaptureNodes, `WITH RECURSIVE descendants(id) AS (SELECT $row.id UNION ALL SELECT n.id FROM nodes n JOIN descendants d ON n.parent_id=d.id) SELECT f.asset_id AS id FROM photo_files f JOIN descendants d ON d.id=f.node_id WHERE $row.kind='dir'`, "OLD.name IS NOT NEW.name OR OLD.parent_id IS NOT NEW.parent_id OR OLD.trashed_at IS NOT NEW.trashed_at"},
 	// Duplicate status follows version and trash changes.
 	{photoCaptureNodes, photoCaptureDuplicateNodeIDs, "OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at"},
-	{"content_versions", `SELECT f.asset_id AS id FROM photo_files f JOIN nodes n ON n.id=f.node_id WHERE n.current_version_id=$row.version_id`, ""},
+	{"content_versions", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.version_id`, ""},
 	{"content_versions", photoCaptureDuplicateVersionIDs, ""},
 	{"node_tags", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, ""},
 	{"provenance", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, "-"},
-	{"source_metadata_heads", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.blob_hash=$row.source_sha256`, ""},
-	{"photo_technical_metadata", `SELECT f.asset_id AS id FROM source_metadata_heads h JOIN content_versions v ON v.blob_hash=h.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE h.generation_id=$row.generation_id`, ""},
+	{"source_metadata_heads", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.blob_hash=$row.source_sha256`, ""},
+	{"photo_technical_metadata", `SELECT f.asset_id AS id FROM source_metadata_heads h JOIN content_versions v ON v.blob_hash=h.source_sha256 JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE h.generation_id=$row.generation_id`, ""},
 	{"visual_preview_heads", photoCaptureVersionIDs, ""},
 	{"visual_preview_generations", photoCaptureVersionIDs, "-"},
 	{"photo_quality_signals", photoCaptureVersionIDs, ""},
 	{"person_document_assertions", photoCaptureVersionIDs, ""},
 	{"photo_faces", `SELECT f.asset_id AS id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=$row.content_version_id`, ""},
 	{"person_candidate_faces", photoCaptureVersionIDs, ""},
-	{"person_match_candidates", `SELECT f.asset_id AS id FROM person_candidate_faces c JOIN nodes n ON n.current_version_id=c.content_version_id JOIN photo_files f ON f.node_id=n.id WHERE c.candidate_id=$row.candidate_id`, ""},
+	{"person_match_candidates", `SELECT f.asset_id AS id FROM person_candidate_faces c JOIN content_versions v ON v.version_id=c.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE c.candidate_id=$row.candidate_id`, ""},
 	{"rendition_heads", photoCaptureVersionIDs, ""},
 	{"rendition_job_waiters", photoCaptureVersionIDs, ""},
-	{"rendition_jobs", `SELECT f.asset_id AS id FROM rendition_job_waiters w JOIN nodes n ON n.current_version_id=w.content_version_id JOIN photo_files f ON f.node_id=n.id WHERE w.job_id=$row.job_id`, "OLD.state IS NOT NEW.state OR OLD.phase IS NOT NEW.phase OR OLD.failure_code IS NOT NEW.failure_code"},
-	{"text_searchable_versions", `SELECT f.asset_id AS id FROM nodes n JOIN photo_files f ON f.node_id=n.id WHERE n.current_version_id=$row.version_id`, ""},
-	{"extracted_text", `SELECT f.asset_id AS id FROM nodes n JOIN content_versions v ON v.version_id=n.current_version_id JOIN photo_files f ON f.node_id=n.id WHERE v.blob_hash=$row.blob_hash`, ""},
+	{"rendition_jobs", `SELECT f.asset_id AS id FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE w.job_id=$row.job_id`, "OLD.state IS NOT NEW.state OR OLD.phase IS NOT NEW.phase OR OLD.failure_code IS NOT NEW.failure_code"},
+	{"text_searchable_versions", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.version_id`, ""},
+	{"extracted_text", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.blob_hash=$row.blob_hash`, ""},
 	{"photo_sets", `SELECT '' AS id`, ""},
 	{"photo_library_settings", `SELECT '' AS id`, ""},
 	{"photo_hidden_credentials", `SELECT '' AS id`, ""},
@@ -188,7 +188,7 @@ const photoCaptureDuplicateNodeIDs = `SELECT f.asset_id AS id FROM content_versi
 const photoCaptureDuplicateVersionIDs = `SELECT '' AS id WHERE EXISTS(SELECT 1 FROM content_versions pv JOIN nodes n ON n.id=pv.node_id AND n.current_version_id=pv.version_id JOIN photo_files f ON f.node_id=n.id WHERE pv.blob_hash=$row.blob_hash AND pv.size=$row.size)`
 
 const photoCaptureNodes = "nodes"
-const photoCaptureVersionIDs = `SELECT f.asset_id AS id FROM nodes n JOIN photo_files f ON f.node_id=n.id WHERE n.current_version_id=$row.content_version_id`
+const photoCaptureVersionIDs = `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.content_version_id`
 
 // Capture triggers run only while a subscribed transaction holds this flag.
 const photoCaptureActive = `EXISTS(SELECT 1 FROM temp.photo_event_capture_active) AND NOT EXISTS(SELECT 1 FROM temp.photo_event_capture WHERE id='')`

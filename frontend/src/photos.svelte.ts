@@ -392,6 +392,7 @@ export class Photos {
   trashError = $state("");
   trashTargets = $state<PhotoTarget[]>([]);
   error = $state("");
+  private refusedQueryError = "";
   scrollTop = $state(0);
   // Map remounts after every access check, so its position lives with the list, like scrollTop.
   mapView: MapView | undefined;
@@ -716,6 +717,7 @@ export class Photos {
       next = parseQuery(canonicalQuery(query));
     } catch (cause) {
       this.error = cause instanceof Error ? cause.message : String(cause);
+      this.refusedQueryError = this.error;
       return;
     }
     this.baseQuery = next;
@@ -1283,7 +1285,7 @@ export class Photos {
     this.backgroundRefresh = live;
     const query = mode === "date" ? captureDateQuery(this.baseQuery, date) : this.query;
     this.loading = true;
-    this.error = "";
+    if (!live || this.error !== this.refusedQueryError) this.error = "";
     const count = this.items.length;
     const tail = this.items.at(-1)?.asset_id;
     const staged = (this.staged =
