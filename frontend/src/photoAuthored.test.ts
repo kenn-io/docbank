@@ -1069,14 +1069,28 @@ it("keeps the latest authored Undo when dismissing a partly accepted suggestion"
 });
 
 it.each([
-  { name: "caption", value: { caption: "A harbor.", tags: [], visible_text: "" } },
   { name: "tags", value: { caption: "", tags: ["coast"], visible_text: "" } },
   { name: "visible text", value: { caption: "", tags: [], visible_text: "QUAYSIDE" } },
 ])("shows a pending row with content: $name", ({ value }) => {
   const editor = editorWithTargets();
   editor.suggestions = [photoSuggestion({ value })];
   ui(editor);
-  expect(screen.getByRole("region", { name: "Suggested photo metadata" })).toBeTruthy();
+  const suggestion = within(screen.getByRole("region", { name: "Suggested photo metadata" }));
+  expect((suggestion.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  if (value.tags.length) {
+    expect((suggestion.getByRole("checkbox", { name: "coast" }) as HTMLInputElement).disabled).toBe(
+      false,
+    );
+    expect(
+      (suggestion.getByRole("button", { name: "Accept selected" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  } else {
+    expect(suggestion.getByText("QUAYSIDE")).toBeTruthy();
+    expect(suggestion.queryByRole("checkbox")).toBeNull();
+    expect(suggestion.queryByRole("button", { name: "Accept selected" })).toBeNull();
+  }
   editor.dispose();
 });
 

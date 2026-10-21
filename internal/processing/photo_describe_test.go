@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -351,6 +352,7 @@ func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
 func TestPhotoDescriptionEmptyScanPause(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
+	clock := f.service.clock
 	synctest.Test(t, func(t *testing.T) {
 		profile := f.service.profiles["vision"]
 		// Fresh photos are absent from a scan for restored suggestions.
@@ -377,6 +379,34 @@ func TestPhotoDescriptionEmptyScanPause(t *testing.T) {
 				require.Zero(t, time.Since(started), "only an empty scan from the start pauses")
 			}
 		}
+	})
+	f.service.clock = clock
+	f.grant(t, f.service, "vision")
+	version, err := f.catalog.ContentVersionByID(t.Context(), f.node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, f.service.admitPhotoDescription(t.Context(), photoDescriptionTarget{profile: "vision", version: version}))
+	require.Equal(t, 1, f.waitingDescriptions(t))
+	now := clock()
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		f.service.clock = func() time.Time { return now.Add(time.Since(started)) }
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+		defer cancel()
+		claimed := make(chan error, 1)
+		go func() {
+			time.Sleep(2 * time.Minute)
+			_, ok, err := f.catalog.ClaimNextRenditionJob(ctx, "synthetic-worker", f.service.clock(), time.Hour)
+			if err == nil && !ok {
+				err = errors.New("no photo description job was ready to claim")
+			}
+			claimed <- err
+		}()
+		source, err := f.service.photoDescriptionProfileTargets(ctx, "vision", false, "", 1, 1)
+		require.NoError(t, err)
+		require.NoError(t, <-claimed)
+		require.Empty(t, source.targets)
+		require.GreaterOrEqual(t, time.Since(started), 2*time.Minute)
+		require.LessOrEqual(t, time.Since(started), 2*time.Minute+time.Second, "only the capacity poll can delay the empty scan")
 	})
 }
 

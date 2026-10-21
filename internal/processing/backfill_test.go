@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/jobs"
 )
 
 type fakeBackfillCatalog struct {
@@ -199,44 +198,6 @@ func TestBackfillRejectsIncompleteConfiguration(t *testing.T) {
 	t.Parallel()
 	backfill := &Backfill[string]{Page: 1, IdleDelay: time.Millisecond}
 	require.Error(t, backfill.Run(t.Context()))
-}
-
-func TestBackfillCapacityWaitDoesNotDelayNextScan(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		backfill := newTestBackfill(newFakeBackfillCatalog(), 1, false)
-		backfill.IdleDelay = time.Second
-		backfill.Now = time.Now
-		calls := 0
-		var capacityOpened time.Time
-		backfill.List = func(ctx context.Context, after string, _ int) ([]string, error) {
-			calls++
-			switch calls {
-			case 1:
-				return []string{"a"}, nil
-			case 2:
-				require.Equal(t, "a", after, "capacity waits keep the cursor")
-				if err := jobs.Wait(ctx, 2*time.Minute); err != nil {
-					return nil, err
-				}
-				capacityOpened = time.Now()
-				return nil, nil
-			default:
-				require.Empty(t, after)
-				assert.Equal(t, time.Second, time.Since(capacityOpened), "a fresh photo is scanned promptly after capacity opens")
-				return []string{"b"}, nil
-			}
-		}
-		backfill.Process = func(_ context.Context, key string) error {
-			if key == "b" {
-				cancel()
-			}
-			return nil
-		}
-		require.ErrorIs(t, backfill.Run(ctx), context.Canceled)
-	})
 }
 
 func TestBackfillRetrySetDropsTargetsAbsentFromCompletedScan(t *testing.T) {

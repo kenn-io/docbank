@@ -254,10 +254,22 @@ func TestPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t *testing.T) {
 			_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, file.NodeID, "", nil)
 			require.NoError(t, err)
 
-			_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, response(proposal, kind))
+			prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{target.ID}})
+			require.NoError(t, err)
+			index := slices.IndexFunc(prepared.Targets, func(target PhotoPreparedTarget) bool { return target.NodeID == file.NodeID })
+			require.NotEqual(t, -1, index)
+			current := prepared.Targets[index]
+			request := response(proposal, kind)
+			request.AssetRevision, request.SourceRevision, request.NodeRevision = current.AssetRevision, current.Revision, current.NodeRevision
+			require.Equal(t, target.ID, current.AssetID)
+			require.NotEqual(t, current.AssetID, request.AssetID)
+			require.Equal(t, current.AssetRevision, request.AssetRevision)
+			require.Equal(t, current.Revision, request.SourceRevision)
+			require.Equal(t, current.NodeRevision, request.NodeRevision)
+			_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, request)
 			require.ErrorIs(t, err, ErrPhotoSuggestionConflict, "the owner reviewed the file under another photo")
 			require.False(t, dismissed(s, proposal), "the pending text stays")
-			prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{target.ID}})
+			prepared, err = s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{target.ID}})
 			require.NoError(t, err)
 			for _, moved := range prepared.Targets {
 				require.Empty(t, moved.Values.Caption, "the photo that now holds the file gained nothing")
