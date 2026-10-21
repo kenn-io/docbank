@@ -14,7 +14,7 @@ import (
 )
 
 func newKataCommand() *cobra.Command {
-	command := &cobra.Command{Use: "kata", Short: "Cite", Long: "Create or append verified document passages with cite.\nUse context to read saved quotes and check their current source state.\nEnable [integrations.kata] before using these commands.", GroupID: groupInterfaces}
+	command := &cobra.Command{Use: "kata", Short: "Quote document passages into Kata issues", Long: "Create or append verified document passages with cite.\nUse context to read saved quotes and check their current source state.\nEnable [integrations.kata] before using these commands.", GroupID: groupInterfaces}
 	var start, end, offset int
 	var title, brief, issue, key, quote, citationFile, expectedVersion string
 	var asJSON bool

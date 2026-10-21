@@ -211,7 +211,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 		entry, valid := parseNative(raw)
 		if valid && matchesSelection(entry.Reference, r.Selector, s.Archive.VaultUID()) &&
 			(r.Selector.Quote == "" || PassageID(entry.Reference, r.Selector.Quote) == entry.Passage) {
-			return s.finishPending(ctx, r.Issue, current)
+			return s.finishPending(ctx, r.Issue, current, entry.ID)
 		}
 	}
 	evidence, err := s.Archive.Prepare(ctx, r.Selector)
@@ -252,7 +252,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 				return kataclient.Issue{}, err
 			}
 		}
-		return s.finishPending(ctx, r.Issue, issue)
+		return s.finishPending(ctx, r.Issue, issue, evidence.ID)
 	}
 	return kataclient.Issue{}, ErrConflict
 }
@@ -280,7 +280,7 @@ func matchesSelection(ref Reference, p Selector, vault string) bool {
 	return err == nil && citation == *p.Citation
 }
 
-func (s Service) finishPending(ctx context.Context, ref string, issue kataclient.Issue) (kataclient.Issue, error) {
+func (s Service) finishPending(ctx context.Context, ref string, issue kataclient.Issue, entryID string) (kataclient.Issue, error) {
 	now := time.Now
 	if s.Now != nil {
 		now = s.Now
@@ -296,7 +296,7 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 		unstampedEntries := make(map[string]bool)
 		for i, raw := range env.entries {
 			entry, valid := parseNative(raw)
-			if valid && entry.Pending != nil && entry.Pending.SavedAt.IsZero() {
+			if valid && entry.ID == entryID && entry.Pending != nil && entry.Pending.SavedAt.IsZero() {
 				var fields map[string]jsontext.Value
 				if json.Unmarshal(raw, &fields) != nil {
 					return kataclient.Issue{}, ErrUnsupported
@@ -328,11 +328,11 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 		changed := false
 		for i, raw := range env.entries {
 			entry, valid := parseNative(raw)
-			if !valid || entry.Pending == nil {
+			if !valid || entry.ID != entryID || entry.Pending == nil {
 				continue
 			}
 			body := renderQuote(entry.Label, entry.Quote)
-			key := commentKey(issue.UID, entry.Passage, body)
+			key := commentKey(issue.UID, entry.ID, body)
 			posted := false
 			// Leave a day of margin inside Kata's seven-day replay window.
 			if !unstampedEntries[entry.ID] && !entry.Pending.SavedAt.IsZero() && now().Sub(entry.Pending.SavedAt) >= 6*24*time.Hour {
@@ -395,6 +395,6 @@ func requestDigest(request CiteRequest) string {
 
 func createMarker(vault, key string) string { return Digest("docbank.kata.create.v1", vault, key) }
 
-func commentKey(uid, passage, body string) string {
-	return Digest("docbank.kata.comment.v1", uid, passage, body)
+func commentKey(uid, entryID, body string) string {
+	return Digest("docbank.kata.comment.v1", uid, entryID, body)
 }

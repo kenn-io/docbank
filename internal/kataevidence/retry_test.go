@@ -68,7 +68,7 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			_, err = client.Patch(t.Context(), issue.QualifiedRef, MetadataKey, nil, data)
 			require.NoError(t, err)
 			if tc.existing {
-				key := commentKey(issue.UID, PassageID(ref, "hello"), "Evidence: notes.txt\n\n> hello\n")
+				key := commentKey(issue.UID, ID(ref), "Evidence: notes.txt\n\n> hello\n")
 				if tc.wantReads > 0 {
 					key = "expired-key"
 				}

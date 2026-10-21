@@ -42,7 +42,7 @@ func TestReplayDigestGoldens(t *testing.T) {
 	r := CiteRequest{Selector: Selector{NodeID: 2, EndRune: 5, ExpectedVersion: "22222222-2222-4222-8222-222222222222", Quote: "hello"}, Title: "Follow up", Brief: "Review this.", IdempotencyKey: "create-1"}
 	require.Equal(t, "8690c8c09dd46f5b993d07a35df65e63663fa3ef8ad54228f36fa243b4de0283", requestDigest(r))
 	require.Equal(t, "af373bbaadf75db7f653a67f03a7b9d6fe16d047571cf39b76a95d99ca466e73", createMarker("11111111-1111-4111-8111-111111111111", "create-1"))
-	require.Equal(t, "4e63d936039ece9d6a0b1e09c9c34bbc1a770a1809894a324f8fba100a5bef98", commentKey("synthetic-uid", "138fdacd9800c859e71486d8f2566c79892b984f827ac951bc1b27468d7706d8", renderQuote("notes.txt", "hello")))
+	require.Equal(t, "b6ab5f491254d5d7ceffe1a34e7ab6da64ada8931ce00aac0f63bbc3c8298295", commentKey("synthetic-uid", "f53f934a8ef26d2ef3678198fb3d8cd0af94ce1c640a386fa1a2b691261e2f6b", renderQuote("notes.txt", "hello")))
 	r.Selector.NodeID, r.Selector.Path = 0, "/notes.txt"
 	require.Equal(t, "58c0b31dc1809463cd2eea236fc693dee9e9b241a48a48bfaae912e62a9b169f", requestDigest(r))
 	ref := nativeReference()

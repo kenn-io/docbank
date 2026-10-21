@@ -205,6 +205,12 @@ resource links, is capped at 1 MiB.
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. Returns the selected display source, `total_files`, `file_offset`, and a page of complete file decisions. Pass `next_file_offset` as `file_offset` to continue. Pages are live; restart if the asset revision or a member's file revision changes. |
 
+Starting the server with `--allow-kata-writes` adds this write tool:
+
+| Tool | Contract and important bounds |
+| --- | --- |
+| `cite_kata_evidence` | Quotes up to 1,000 Unicode code points from a verified document passage into a new or existing [Kata issue](kata-evidence.md). |
+
 Starting the server with `--allow-photo-edits` adds these write tools:
 
 | Tool | Contract and important bounds |

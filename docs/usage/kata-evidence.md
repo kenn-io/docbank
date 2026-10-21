@@ -81,7 +81,8 @@ docbank kata cite id:12 --start 28 --end 45 --issue docbank#abcd
 Appends and context reads stay inside `default_project`. They preserve other metadata and
 existing citations. Docbank records a pending quotation before posting its
 comment, so retrying the same pinned selection can finish an interrupted
-append. Pending quotes less than six days old replay the same comment request without
+append. Each append delivers only the requested quotation; other pending quotes wait for their own retry.
+Pending quotes less than six days old replay the same comment request without
 reading the discussion. At six days, Docbank reads the issue's comments once and skips
 posting if the exact quotation is already present. If the discussion exceeds the read
 limit, the stale pending quote stays pending and the operation returns a permanent error.

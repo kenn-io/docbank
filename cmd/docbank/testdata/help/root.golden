@@ -85,7 +85,7 @@ Vault operations:
   version  Print the installed Docbank version
 
 Interfaces:
-  kata  Cite
+  kata  Quote document passages into Kata issues
   mcp  Serve the local vault over Model Context Protocol
   openapi  Print the HTTP API's OpenAPI YAML document (no daemon needed)
   tui  Browse and search the vault interactively

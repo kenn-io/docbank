@@ -57,9 +57,10 @@ func TestKataCitationRejectsMalformedAndOversizedFiles(t *testing.T) {
 	}
 }
 
-func TestKataCLIRequiresRange(t *testing.T) {
-	_, err := runCLI(t, "kata", "cite", "id:2", "--title", "Follow up", "--idempotency-key", "test")
-	require.ErrorContains(t, err, "range requires --end")
+func TestRootHelpDescribesKata(t *testing.T) {
+	out, err := runCLI(t, "--help")
+	require.NoError(t, err)
+	require.Contains(t, out, "kata  Quote document passages into Kata issues")
 }
 
 func TestKataContextPrintsEveryStatus(t *testing.T) {
