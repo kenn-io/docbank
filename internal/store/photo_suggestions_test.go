@@ -416,66 +416,61 @@ func TestPhotoSnapshotSearchKeepsItsRowsWhenASuggestionIsDecidedBetweenPages(t *
 
 func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "owned.jpg")
-	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
-
-	tag, err := s.CreateTag(ctx, "Coast")
-	require.NoError(t, err)
-	_, err = s.AssignTag(ctx, tag.ID, asset.Files[0].NodeID, UnconditionalRev)
-	require.NoError(t, err)
-	offered := photoSuggestionValues(t, s, asset.ID)
-	require.Len(t, offered, 1)
-	require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"sunset"}}, offered[0].Value, "a tag assigned by hand is no longer offered")
-
-	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}})
-	require.NoError(t, err)
-	offered = photoSuggestionValues(t, s, asset.ID)
-	require.Len(t, offered, 1)
-	require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}}, offered[0].Value, "a caption typed identically is no longer offered")
-
-	acceptPhotoSuggestion(t, s, proposal, false, "sunset")
-	require.Empty(t, photoSuggestionValues(t, s, asset.ID), "nothing left to offer")
-
-	// The same holds when the owner authored the values before the description arrived.
-	early := albumAsset(t, s, "authored-first.jpg")
-	_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{early.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}, Keywords: []PhotoKeywordEdit{{TagID: tag.ID, Assign: true}}})
-	require.NoError(t, err)
-	publishPhotoDescription(t, s, early, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
-	// Reading filters owned values again, so check what publication stored.
-	var caption, tags string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions WHERE content_version_id=(SELECT current_version_id FROM nodes WHERE id=?)`, early.Files[0].NodeID).Scan(&caption, &tags))
-	require.Empty(t, caption, "publication leaves out the authored caption")
-	require.JSONEq(t, `["sunset"]`, tags, "publication leaves out the assigned tag")
-}
-
-func TestPhotoSuggestionKeepsTagsThatDifferInCase(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct{ owned, suggested string }{{"US", "us"}, {"CAFÉ", "café"}} {
+	for _, tc := range []struct {
+		owned, suggested string
+		tags, offered    []string
+	}{
+		{"Coast", "Coast", []string{"Coast", "sunset"}, []string{"sunset"}},
+		{"US", "us", []string{"us"}, []string{"us"}},
+		{"CAFÉ", "café", []string{"café"}, []string{"café"}},
+	} {
 		t.Run(tc.owned, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
 			ctx := t.Context()
-			asset := albumAsset(t, s, "cased.jpg")
-			owned, err := s.CreateTag(ctx, tc.owned)
+			asset := albumAsset(t, s, "owned.jpg")
+			proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: tc.tags})
+
+			tag, err := s.CreateTag(ctx, tc.owned)
 			require.NoError(t, err)
-			proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Tags: []string{tc.suggested}})
-			_, err = s.AssignTag(ctx, owned.ID, asset.Files[0].NodeID, UnconditionalRev)
+			_, err = s.AssignTag(ctx, tag.ID, asset.Files[0].NodeID, UnconditionalRev)
 			require.NoError(t, err)
 			offered := photoSuggestionValues(t, s, asset.ID)
 			require.Len(t, offered, 1)
-			require.Equal(t, []string{tc.suggested}, offered[0].Value.Tags, "a case variant of an assigned tag is still offered")
+			require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: tc.offered}, offered[0].Value)
 
-			accepted := acceptPhotoSuggestion(t, s, proposal, false, tc.suggested)
-			require.NotNil(t, accepted.AuthoredReceipt)
-			_, total, err := s.Tags(ctx, 10, 0)
+			if tc.owned != tc.suggested {
+				accepted := acceptPhotoSuggestion(t, s, proposal, false, tc.suggested)
+				require.NotNil(t, accepted.AuthoredReceipt)
+				_, total, err := s.Tags(ctx, 10, 0)
+				require.NoError(t, err)
+				require.Equal(t, 2, total, "the case variant is its own tag")
+				assigned, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+				require.NoError(t, err)
+				require.Len(t, assigned.Targets[0].Tags, 2)
+				require.Contains(t, assigned.Targets[0].Tags, tag.ID)
+				return
+			}
+
+			_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}})
 			require.NoError(t, err)
-			require.Equal(t, 2, total, "the case variant is its own tag")
-			assigned, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			offered = photoSuggestionValues(t, s, asset.ID)
+			require.Len(t, offered, 1)
+			require.Equal(t, document.PhotoDescription{Tags: []string{"sunset"}}, offered[0].Value, "a caption typed identically is no longer offered")
+
+			acceptPhotoSuggestion(t, s, proposal, false, "sunset")
+			require.Empty(t, photoSuggestionValues(t, s, asset.ID), "nothing left to offer")
+
+			// The same holds when the owner authored the values before the description arrived.
+			early := albumAsset(t, s, "authored-first.jpg")
+			_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{early.ID}}), Patch: PhotoAuthoredPatch{Caption: new("A harbor.")}, Keywords: []PhotoKeywordEdit{{TagID: tag.ID, Assign: true}}})
 			require.NoError(t, err)
-			require.Len(t, assigned.Targets[0].Tags, 2)
-			require.Contains(t, assigned.Targets[0].Tags, owned.ID)
+			publishPhotoDescription(t, s, early, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
+			// Reading filters owned values again, so check what publication stored.
+			var caption, tags string
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions WHERE content_version_id=(SELECT current_version_id FROM nodes WHERE id=?)`, early.Files[0].NodeID).Scan(&caption, &tags))
+			require.Empty(t, caption, "publication leaves out the authored caption")
+			require.JSONEq(t, `["sunset"]`, tags, "publication leaves out the assigned tag")
 		})
 	}
 }
