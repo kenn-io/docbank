@@ -290,10 +290,6 @@ func TestPhotoEventsFileAndNodeOwnership(t *testing.T) {
 	require.NoError(t, err)
 	b, err := s.PhotoAssetForNode(t.Context(), second.ID)
 	require.NoError(t, err)
-	set, err := s.CreatePhotoSet(t.Context(), "Review")
-	require.NoError(t, err)
-	_, err = s.ChangePhotoSetMembers(t.Context(), set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID}})
-	require.NoError(t, err)
 	tag, err := s.CreateTag(t.Context(), "Location")
 	require.NoError(t, err)
 	observation, err := s.AppendNodeProvenance(t.Context(), ProvenanceAppendInput{NodeID: first.ID, IfRevision: UnconditionalRev, SourceKind: "agent", SourceDescription: "Source observation", OriginalPath: "/synthetic/first.jpg"})
@@ -307,7 +303,6 @@ func TestPhotoEventsFileAndNodeOwnership(t *testing.T) {
 	events := watchPhotoChanges(t, s)
 	one := []PhotoEvent{{AssetID: a.ID}}
 	photoCaptureWrite(t, s, events, one, `UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, a.ID)
-	photoCaptureWrite(t, s, events, one, `DELETE FROM photo_set_members WHERE set_id=?`, set.ID)
 	photoCaptureWrite(t, s, events, one, `INSERT OR REPLACE INTO photo_timeline(file_id,sort_key,day) SELECT file_id,'2026-01-02','2026-01-02' FROM photo_files WHERE node_id=?`, first.ID)
 	photoCaptureWrite(t, s, events, one, `UPDATE nodes SET name='renamed.jpg' WHERE id=?`, first.ID)
 	_, err = s.AssignTag(t.Context(), tag.ID, first.ID, UnconditionalRev)
@@ -327,6 +322,28 @@ func TestPhotoEventsFileAndNodeOwnership(t *testing.T) {
 	require.Equal(t, one, nextPhotoWake(t, events))
 	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: sidecar.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "River"}))
 	require.Equal(t, one, nextPhotoWake(t, events))
+}
+
+func TestPhotoEventsAlbumMembership(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "album.jpg")
+	set, err := s.CreatePhotoSet(ctx, "Album")
+	require.NoError(t, err)
+	events := watchPhotoChanges(t, s)
+	selection := PhotoSetSelection{AssetIDs: []string{asset.ID}}
+	for _, add := range []bool{true, false, true} {
+		set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, add, selection)
+		require.NoError(t, err)
+		require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	}
+	duplicate, err := s.DuplicatePhotoSet(ctx, set.ID, set.Revision, "Copy")
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	_, err = s.DeletePhotoSet(ctx, duplicate.ID, duplicate.Revision)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
 }
 
 func TestPhotoEventsGlobalDefinitions(t *testing.T) {
@@ -375,9 +392,23 @@ func TestPhotoEventsGlobalDefinitions(t *testing.T) {
 	_, err = s.RetirePerson(ctx, other.PersonID, other.Revision)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
-	photoCaptureWrite(t, s, events, []PhotoEvent{{}}, `UPDATE person_aliases SET surviving_person_id=? WHERE surviving_person_id=?`, person.PersonID, aliasTarget.PersonID)
-	_, err = s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: person.PersonID,
+	merge, err := s.MergePersons(ctx, person.PersonID, aliasTarget.PersonID, uuid.NewString(), person.Revision, aliasTarget.Revision+1)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	person.Revision = merge.SurvivorRevisionAfter
+	identity, err := s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: person.PersonID,
 		System: "msgvault", ArchiveID: "synthetic", UID: "uid-1", UIDKind: "vcard_uid", UIDState: "current"}, person.Revision)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	identity.DisplayNameSnapshot = "Updated name"
+	_, err = s.LinkExternalIdentity(ctx, identity, person.Revision+1)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	require.NoError(t, s.RecordExternalUIDAliases(ctx, identity.System, identity.ArchiveID, "uid-2", []string{identity.UID}))
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	require.NoError(t, s.UnlinkExternalIdentity(ctx, identity.System, identity.ArchiveID, identity.UID, person.Revision+3))
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+	_, err = s.RetirePerson(ctx, person.PersonID, person.Revision+4)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
 }

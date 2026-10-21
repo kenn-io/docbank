@@ -143,13 +143,14 @@ func (s *Store) publishPhotoEvents(events []PhotoEvent) {
 // Capture OLD and NEW asset IDs; definitions use the empty ID for a full refetch.
 // An update value of "-" skips UPDATE capture for immutable rows.
 // Triggers drain photo_timeline_pending into captured photo_timeline rows in the
-// same transaction. Photos reads use the captured person, alias, assertion, and
+// same transaction. Photos reads use the captured person, assertion, and
 // face rows, while person_identities and person_splits serve identity/split replay.
+// Album membership and person aliases/external identities update photo_sets or
+// persons in the same transaction, which supplies their notification.
 // photo_change_receipts records history alongside captured authority changes.
 var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{"photo_assets", `SELECT $row.asset_id AS id`, ""},
 	{"photo_files", `SELECT $row.asset_id AS id`, ""},
-	{"photo_set_members", `SELECT $row.asset_id AS id`, ""},
 	{"photo_timeline", `SELECT asset_id AS id FROM photo_files WHERE file_id=$row.file_id`, ""},
 	{photoCaptureNodes, `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.id`, ""},
 	{photoCaptureNodes, `WITH RECURSIVE descendants(id) AS (SELECT $row.id UNION ALL SELECT n.id FROM nodes n JOIN descendants d ON n.parent_id=d.id) SELECT f.asset_id AS id FROM photo_files f JOIN descendants d ON d.id=f.node_id WHERE $row.kind='dir'`, "OLD.name IS NOT NEW.name OR OLD.parent_id IS NOT NEW.parent_id OR OLD.trashed_at IS NOT NEW.trashed_at"},
@@ -176,8 +177,6 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{"photo_hidden_credentials", `SELECT '' AS id`, ""},
 	{"tags", `SELECT '' AS id`, "OLD.name IS NOT NEW.name OR OLD.revision IS NOT NEW.revision"},
 	{"persons", `SELECT '' AS id`, ""},
-	{"person_aliases", `SELECT '' AS id`, ""},
-	{"person_external_identities", `SELECT '' AS id`, ""},
 	{"saved_queries", `SELECT '' AS id`, ""},
 	{"collection_labels", `SELECT '' AS id`, ""},
 }
