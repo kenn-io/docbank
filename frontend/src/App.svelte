@@ -3448,7 +3448,11 @@
                 onnavigate={navigatePhotos}
                 smartDisabled={photoState.photos.hiding || photoState.photos.trashing}
                 onopensmart={async (saved) => {
-                  if (saved.kind === "query" && photoState && (await photoState.photos.openSmartSet(saved)))
+                  if (
+                    saved.kind === "query" &&
+                    photoState &&
+                    (await photoState.photos.openSmartSet(saved))
+                  )
                     navigatePhotos("/photos");
                 }}
               />{/if}
