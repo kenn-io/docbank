@@ -396,7 +396,15 @@ it("keeps a linked version when photo cleanup rewrites a combined fragment", asy
 it("returns focus to the photo viewer after closing linked history", async () => {
   history.replaceState(null, "", `/photos#${credentials}photo=photo-1`);
   storage();
-  api((url, init) => photoMetadataResponse(url, init) ?? (url.endsWith("/photos/hidden") ? Response.json({ configured: false }) : url.endsWith("/photos/assets/query") ? Response.json({ items: [photo(1)], total: 1 }) : undefined));
+  api(
+    (url, init) =>
+      photoMetadataResponse(url, init) ??
+      (url.endsWith("/photos/hidden")
+        ? Response.json({ configured: false })
+        : url.endsWith("/photos/assets/query")
+          ? Response.json({ items: [photo(1)], total: 1 })
+          : undefined),
+  );
   render(App);
   const viewer = await screen.findByRole("dialog", { name: /Photo viewer/ });
   screen.getByRole("button", { name: "Close photo viewer" }).focus();

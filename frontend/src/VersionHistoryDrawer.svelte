@@ -33,7 +33,17 @@
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { session, node, path, pinnedVersion, resolving = false, unavailable = "", onselect, onclose, onauthfailure }: Props = $props();
+  let {
+    session,
+    node,
+    path,
+    pinnedVersion,
+    resolving = false,
+    unavailable = "",
+    onselect,
+    onclose,
+    onauthfailure,
+  }: Props = $props();
 
   let page = $state<ContentVersionPage | null>(null);
   let loading = $state(true);

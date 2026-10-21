@@ -268,7 +268,8 @@
   let webSession = $state("");
   let nodeVersionHash = $state(location.hash);
   const nodeVersionSelection = $derived(parseNodeVersionLink(nodeVersionHash));
-  const invalidNodeVersionLink = "Invalid node/version link. Use a positive node ID and a version UUID.";
+  const invalidNodeVersionLink =
+    "Invalid node/version link. Use a positive node ID and a version UUID.";
   let nodeVersionError = $state("");
   let nodeVersionLoading = $state(false);
 
@@ -2897,7 +2898,8 @@
 
   function selectLinkedVersion(version: generated.ContentVersion): void {
     if (activePanel?.kind !== "versions") return;
-    if (activePanel.linked?.version.id === version.id && !nodeVersionLoading && !nodeVersionError) return;
+    if (activePanel.linked?.version.id === version.id && !nodeVersionLoading && !nodeVersionError)
+      return;
     const node = activePanel.linked?.node ?? selected?.node;
     if (!node || node.id !== version.node_id) return;
     const initial = !activePanel.linked;
