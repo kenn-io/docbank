@@ -14,6 +14,7 @@ import (
 	modernsqlite "modernc.org/sqlite"
 
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/sqlitetest"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -78,6 +79,9 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 	}
 	if opts.Access != docsqlite.ReadOnlyImmutable {
 		query.Set("_txlock", string(opts.TransactionMode))
+		if sqlitetest.DisableSync.Load() {
+			query.Add("_pragma", "synchronous(OFF)")
+		}
 	}
 	return sql.Open("sqlite", sqliteURI(path, query))
 }

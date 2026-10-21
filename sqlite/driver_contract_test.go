@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/sqlitetest"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
 )
@@ -53,6 +54,37 @@ type driverObservations struct {
 func TestModerncDriverContract(t *testing.T) {
 	observations := exerciseDriverContract(t, modernc.Driver{})
 	assertDriverContract(t, observations)
+}
+
+func TestModerncDriverSynchronous(t *testing.T) {
+	assertDriverSynchronous(t, modernc.Driver{})
+}
+
+func assertDriverSynchronous(t *testing.T, driver docsqlite.Driver) {
+	t.Helper()
+	defer sqlitetest.DisableSync.Store(false)
+	databasePath := filepath.Join(t.TempDir(), "synchronous.db")
+	var baseline int
+	for _, disabled := range []bool{false, true} {
+		sqlitetest.DisableSync.Store(disabled)
+		for _, access := range []docsqlite.AccessMode{docsqlite.Create, docsqlite.ReadWriteExisting} {
+			db := openAndPing(t, driver, databasePath, docsqlite.OpenOptions{Access: access, TransactionMode: docsqlite.Deferred})
+			// Hold both connections so the second query must open a fresh one.
+			for range 2 {
+				conn, err := db.Conn(t.Context())
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, conn.Close()) })
+				var synchronous int
+				require.NoError(t, conn.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
+				if disabled {
+					require.Zero(t, synchronous)
+					require.NotEqual(t, baseline, synchronous)
+				} else {
+					baseline = synchronous
+				}
+			}
+		}
+	}
 }
 
 func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObservations {
