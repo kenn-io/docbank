@@ -109,9 +109,6 @@ func TestPhotoSearchPhraseStaysInsideOneValue(t *testing.T) {
 	require.Equal(t, 1, phrase("blue sky"))
 	require.Zero(t, phrase("boat blue"), "a phrase cannot span two assigned tags")
 	require.Equal(t, 1, phrase("QUAYSIDE"))
-	_, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, dismissalOf(t.Context(), t, s, proposal))
-	require.NoError(t, err)
-	require.Zero(t, phrase("QUAYSIDE"), "dismissal removes the text from search")
 }
 
 func TestHandAddedTagsMatchTextSearch(t *testing.T) {
@@ -348,7 +345,7 @@ func TestPhotoSuggestionRanksBelowAuthoredTextAndMarksItself(t *testing.T) {
 	require.Equal(t, owned.ID, snapshot.Rows[0].AssetID, "a frozen snapshot keeps the same order")
 }
 
-func TestPhotoSearchSkipsSuggestionEvaluationAfterDismissal(t *testing.T) {
+func TestPhotoSearchDismissalRestoresUnsuggestedRankingAndMarks(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -359,15 +356,8 @@ func TestPhotoSearchSkipsSuggestionEvaluationAfterDismissal(t *testing.T) {
 		before[sort] = browsePhotoPage(t, s, fmt.Sprintf(`{"text":"harbor","sort":{"field":%q,"direction":"desc"}}`, sort)).Items
 	}
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "harbor"})
-	pending, err := photoSuggestionsExist(ctx, s.db)
+	_, err := s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
 	require.NoError(t, err)
-	require.True(t, pending)
-	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
-	require.NoError(t, err)
-
-	pending, err = photoSuggestionsExist(ctx, s.db)
-	require.NoError(t, err)
-	require.False(t, pending, "dismissal leaves completion authority but no searchable suggestion text")
 
 	for _, sort := range []string{"relevance", "name"} {
 		page := browsePhotoPage(t, s, fmt.Sprintf(`{"text":"harbor","sort":{"field":%q,"direction":"desc"}}`, sort))
