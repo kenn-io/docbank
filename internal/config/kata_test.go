@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/kit/safefileio"
 )
 
 func TestKataConfigIsScoped(t *testing.T) {
@@ -42,7 +44,11 @@ func TestKataCredentials(t *testing.T) {
 	require.Equal(t, "synthetic-token", got.APIKey)
 	require.Equal(t, "docbank", got.Project)
 	cfg.APIKeyEnv, cfg.APIKeyFile = "", "kata-key"
-	require.NoError(t, os.WriteFile(filepath.Join(root, "kata-key"), []byte("synthetic-file-token\n"), 0600))
+	keyFile := filepath.Join(root, "kata-key")
+	file, err := safefileio.CreatePrivateFile(keyFile)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	require.NoError(t, os.WriteFile(keyFile, []byte("synthetic-file-token\n"), 0600))
 	got, err = cfg.Resolve(root)
 	require.NoError(t, err)
 	require.Equal(t, "synthetic-file-token", got.APIKey)
