@@ -478,20 +478,6 @@ func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlotAndRetriesAfterAHeal(t *te
 	}, 10*time.Second, 100*time.Millisecond, "the retry produces the suggestion once the endpoint answers")
 }
 
-func TestPhotoDescriptionFreshPhotosGoToTheFirstReadyProfileOnly(t *testing.T) {
-	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	service := f.newServiceWith(t, map[string]string{"alpha": "model-a", "beta": "model-b"})
-	f.grant(t, service, "alpha")
-	f.grant(t, service, "beta")
-	require.Equal(t, 1, f.backfill(t, service), "one target for a fresh photo")
-	_, describes := f.counts()
-	require.Equal(t, 1, describes, "one provider describes it")
-	require.Zero(t, f.backfill(t, service))
-	_, describes = f.counts()
-	require.Equal(t, 1, describes, "the other ready profile never describes it too")
-}
-
 func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
@@ -499,17 +485,26 @@ func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *tes
 	service := f.newServiceWith(t, map[string]string{"alpha": "model-a", "beta": "model-b"})
 	f.grant(t, service, "alpha")
 	f.grant(t, service, "beta")
+
+	require.Equal(t, 1, f.backfill(t, service), "one target for a fresh photo")
+	_, describes := f.counts()
+	require.Equal(t, 1, describes, "one provider describes it")
+	require.Zero(t, f.backfill(t, service))
+	_, describes = f.counts()
+	require.Equal(t, 1, describes, "the other ready profile never describes it too")
+	suggestions := f.suggestions(t)
 	ready, err := service.photoDescriptionProfiles(ctx, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "beta"}, ready)
 	probes, _ := f.counts()
 	require.Equal(t, 2, probes)
 
+	f.addPhoto(t, "provider-failure.jpg", 600)
 	f.mu.Lock()
 	f.failModel = "model-a"
 	f.mu.Unlock()
 	require.Equal(t, 1, f.backfill(t, service))
-	require.Empty(t, f.suggestions(t), "the first provider's authentication failure produces no suggestion")
+	require.Equal(t, suggestions, f.suggestions(t), "the first provider's authentication failure adds no suggestion")
 	fresh := f.addPhoto(t, "fresh.jpg", 700)
 	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
 	require.NoError(t, err)
