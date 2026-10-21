@@ -163,7 +163,7 @@ func (s *redactionPageSequence) Next(context.Context) (pdfproduction.PageArtifac
 
 func assertRedactionPixels(t *testing.T, pdf []byte, original image.Image, fixture redactionFixture) {
 	t.Helper()
-	pages, err := pdfapi.ExtractImagesRaw(bytes.NewReader(pdf), nil, redactionPDFConfig())
+	pages, err := pdfapi.ExtractImagesRaw(t.Context(), bytes.NewReader(pdf), nil, redactionPDFConfig())
 	require.NoError(t, err)
 	require.Len(t, pages, 1)
 	for _, images := range pages {

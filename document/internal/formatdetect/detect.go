@@ -567,33 +567,33 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 
 func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
-	context, err := api.ReadContext(bytes.NewReader(data), configuration)
+	pdfContext, err := api.ReadContext(context.Background(), bytes.NewReader(data), configuration)
 	if err != nil {
 		return nil, fmt.Errorf("read PDF object graph: %w", err)
 	}
-	if context.Encrypt != nil {
+	if pdfContext.Encrypt != nil {
 		return nil, ErrPDFEncrypted
 	}
-	if context.RootDict == nil {
+	if pdfContext.RootDict == nil {
 		return nil, errors.New("PDF catalog is missing")
 	}
-	info := context.Info
-	context.Info = nil
-	metadata, hasMetadata := context.RootDict.Find("Metadata")
+	info := pdfContext.Info
+	pdfContext.Info = nil
+	metadata, hasMetadata := pdfContext.RootDict.Find("Metadata")
 	if hasMetadata {
-		context.RootDict.Delete("Metadata")
+		pdfContext.RootDict.Delete("Metadata")
 	}
-	err = api.ValidateContext(context)
+	err = api.ValidateContext(context.Background(), pdfContext)
 	if err == nil {
 		var external bool
-		external, err = pdfHasExternalReference(context)
+		external, err = pdfHasExternalReference(pdfContext)
 		if external {
 			err = ErrPDFExternalReference
 		}
 	}
-	context.Info = info
+	pdfContext.Info = info
 	if hasMetadata {
-		context.RootDict.Insert("Metadata", metadata)
+		pdfContext.RootDict.Insert("Metadata", metadata)
 	}
 	if err != nil {
 		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
@@ -601,7 +601,7 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	return context, nil
+	return pdfContext, nil
 }
 
 func pdfConfiguration(sourceBytes int, limits PDFLimits) *model.Configuration {
@@ -623,14 +623,14 @@ func pdfConfiguration(sourceBytes int, limits PDFLimits) *model.Configuration {
 
 func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
-	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
+	pdfContext, err := api.ReadAndValidate(context.Background(), bytes.NewReader(data), configuration)
 	if err != nil {
 		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
 			return nil, ErrPDFExpandedBytes
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	return checkPDFReferences(context)
+	return checkPDFReferences(pdfContext)
 }
 
 func checkPDFReferences(context *model.Context) (*model.Context, error) {

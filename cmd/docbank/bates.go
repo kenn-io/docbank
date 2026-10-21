@@ -167,7 +167,7 @@ func batesRecipeForPlan(plan api.BatesPlan, position string, margin int) pdfstam
 		Prefix: plan.Namespace.Prefix, Suffix: plan.Namespace.Suffix, Padding: plan.Namespace.Padding,
 		StartAt: int(plan.StartSequence), Position: position, MarginPoints: margin, FontName: "Helvetica",
 		FontSizePoints: 9, Color: "#000000", Opacity: 1, Units: "point", RotationPolicy: "follow_page",
-		EngineIdentity: pdfstamp.EngineIdentity{Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap",
+		EngineIdentity: pdfstamp.EngineIdentity{Name: "pdfcpu", Version: "v0.16.3", API: "AddWatermarksMap",
 			Options: []string{"onTop=true", "update=restamp"}}}
 }
 

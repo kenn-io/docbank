@@ -86,9 +86,9 @@ func (r Recipe) Validate() error {
 		return errors.New("bates-stamp/v1 requires the follow_page rotation policy")
 	}
 	wantOptions := []string{"onTop=true", "update=restamp"}
-	if r.EngineIdentity.Name != "pdfcpu" || r.EngineIdentity.Version != "v0.15.0" ||
+	if r.EngineIdentity.Name != "pdfcpu" || r.EngineIdentity.Version != "v0.16.3" ||
 		r.EngineIdentity.API != "AddWatermarksMap" || !slices.Equal(r.EngineIdentity.Options, wantOptions) {
-		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.15.0 engine")
+		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.16.3 engine")
 	}
 	return nil
 }

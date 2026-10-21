@@ -30,7 +30,7 @@ it("hashes a recipe to the same digest as the Go stamp engine", async () => {
 
   // Golden digest from internal/pdfstamp/stamp_test.go validRecipe.
   expect(await batesRecipeSHA256(recipe)).toBe(
-    "f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787",
+    "bf113c1f5c51f7d55c9d214c822a231d47404f07eae61542ba18cbdf0f5f6923",
   );
 });
 
@@ -50,7 +50,7 @@ it("hashes a recipe when SubtleCrypto is unavailable", async () => {
   );
 
   await expect(batesRecipeSHA256(recipe)).resolves.toBe(
-    "f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787",
+    "bf113c1f5c51f7d55c9d214c822a231d47404f07eae61542ba18cbdf0f5f6923",
   );
 });
 

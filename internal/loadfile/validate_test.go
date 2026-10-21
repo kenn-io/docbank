@@ -17,7 +17,8 @@ import (
 )
 
 func TestValidateCountsCapturedPDFWhenSourceChanges(t *testing.T) {
-	pdfapi.DisableConfigDir()
+	configuration, err := pdfapi.LoadConfiguration(pdfapi.ConfigurationOptions{Mode: pdfapi.ConfigurationModeStateless})
+	require.NoError(t, err)
 	for _, change := range []string{"overwrite", "remove"} {
 		t.Run(change, func(t *testing.T) {
 			root := t.TempDir()
@@ -42,7 +43,7 @@ func TestValidateCountsCapturedPDFWhenSourceChanges(t *testing.T) {
 					} else {
 						require.NoError(t, os.Remove(path))
 					}
-					pages, countErr := pdfapi.PageCount(file, nil)
+					pages, countErr := pdfapi.PageCount(t.Context(), file, configuration)
 					require.NoError(t, countErr)
 					assert.Equal(t, 1, pages)
 					return pages, nil

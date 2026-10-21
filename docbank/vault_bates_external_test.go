@@ -121,7 +121,7 @@ func TestEmbeddedBatesPlanningAndReservationAPI(t *testing.T) {
 	recipe := docbank.BatesRecipe{Contract: docbank.BatesRecipeContractV1, NamespaceID: namespace.NamespaceID,
 		Prefix: "API", Padding: 6, StartAt: 41, Position: "bottom-right", MarginPoints: 24, FontName: "Helvetica",
 		FontSizePoints: 9, Color: "#000000", Opacity: 1, Units: "point", RotationPolicy: "follow_page",
-		EngineIdentity: docbank.BatesStampEngine{Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap",
+		EngineIdentity: docbank.BatesStampEngine{Name: "pdfcpu", Version: "v0.16.3", API: "AddWatermarksMap",
 			Options: []string{"onTop=true", "update=restamp"}}}
 	recipeSHA, err := recipe.SHA256()
 	require.NoError(t, err)

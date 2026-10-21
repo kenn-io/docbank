@@ -20,7 +20,7 @@ func validRecipe(t *testing.T) Recipe {
 		FontName: "Helvetica", FontSizePoints: 9, Color: "#000000", Opacity: 1,
 		Units: "point", RotationPolicy: "follow_page",
 		EngineIdentity: EngineIdentity{
-			Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap",
+			Name: "pdfcpu", Version: "v0.16.3", API: "AddWatermarksMap",
 			Options: []string{"onTop=true", "update=restamp"},
 		},
 	}
@@ -33,7 +33,7 @@ func TestRecipeSHA256UsesTheCanonicalNormalizedRecipe(t *testing.T) {
 	digest, err := recipe.SHA256()
 
 	require.NoError(t, err)
-	assert.Equal(t, "f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787", digest)
+	assert.Equal(t, "bf113c1f5c51f7d55c9d214c822a231d47404f07eae61542ba18cbdf0f5f6923", digest)
 }
 
 func TestRecipeRejectsUnsupportedStampBehavior(t *testing.T) {

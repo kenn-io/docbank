@@ -200,7 +200,7 @@ The proof has two parts:
    ink. Any nonzero alpha is ink. A single inked alias makes that object's
    whitespace unproven, even if the alias is unused on the page.
 
-The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.15.0`
+The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.16.3`
 and one required `simple_fonts_only` boolean per page. Native inspection accepts
 these facts only for the exact staged source identity and ordered frames.
 Rebuild an older inspector and update its configured executable SHA-256 pin;

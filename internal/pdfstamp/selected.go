@@ -48,7 +48,7 @@ func SelectPages(ctx context.Context, source io.ReadSeeker, pages []int, output 
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return zero, stampFailure("rewind source", err)
 	}
-	pageCount, err := api.PageCount(source, stampConfiguration())
+	pageCount, err := api.PageCount(ctx, source, stampConfiguration())
 	if err != nil {
 		return zero, stampFailure("read source page count", err)
 	}
@@ -68,13 +68,13 @@ func SelectPages(ctx context.Context, source io.ReadSeeker, pages []int, output 
 	}
 	var staged bytes.Buffer
 	bounded := &limitedStampWriter{Writer: &staged, Remaining: MaxOutputBytes}
-	if err := api.Collect(source, bounded, selection, stampConfiguration()); err != nil {
+	if err := api.Collect(ctx, source, bounded, selection, stampConfiguration()); err != nil {
 		return zero, stampFailure("collect selected pages", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
-	verifiedCount, err := api.PageCount(bytes.NewReader(staged.Bytes()), stampConfiguration())
+	verifiedCount, err := api.PageCount(ctx, bytes.NewReader(staged.Bytes()), stampConfiguration())
 	if err != nil {
 		return zero, stampFailure("verify selected page count", err)
 	}
@@ -135,13 +135,13 @@ func CombineStamped(ctx context.Context, groups [][]byte, labels []PageLabel, ou
 	}
 	var staged bytes.Buffer
 	bounded := &limitedStampWriter{Writer: &staged, Remaining: MaxOutputBytes}
-	if err := api.MergeRaw(readers, bounded, false, stampConfiguration()); err != nil {
+	if err := api.MergeRaw(ctx, readers, bounded, false, stampConfiguration()); err != nil {
 		return zero, stampFailure("merge stamped PDFs", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
-	pageCount, err := api.PageCount(bytes.NewReader(staged.Bytes()), stampConfiguration())
+	pageCount, err := api.PageCount(ctx, bytes.NewReader(staged.Bytes()), stampConfiguration())
 	if err != nil || pageCount != len(labels) {
 		return zero, stampFailure("verify combined page count", errors.Join(err, fmt.Errorf("got %d pages, want %d", pageCount, len(labels))))
 	}
@@ -181,7 +181,7 @@ func VerifyStampedReader(ctx context.Context, source io.ReadSeeker, labels []Pag
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return zero, stampFailure("rewind retained Bates PDF", err)
 	}
-	pageCount, err := api.PageCount(source, stampConfiguration())
+	pageCount, err := api.PageCount(ctx, source, stampConfiguration())
 	if err != nil || pageCount != len(labels) {
 		return zero, stampFailure("verify retained page count", errors.Join(err, fmt.Errorf("got %d pages, want %d", pageCount, len(labels))))
 	}

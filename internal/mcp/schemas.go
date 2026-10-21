@@ -452,7 +452,7 @@ func batesRecipeSchema() schema {
 		"opacity": schema{"type": "number", jsonSchemaConst: 1}, "units": schema{"type": "string", jsonSchemaConst: "point"},
 		"rotation_policy": schema{"type": "string", jsonSchemaConst: "follow_page"}, "restamp": schema{"type": "boolean", jsonSchemaConst: false},
 		"engine_identity": objectSchema(schema{
-			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.15.0"},
+			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.16.3"},
 			"api":     schema{"type": "string", jsonSchemaConst: "AddWatermarksMap"},
 			"options": schema{"type": "array", jsonSchemaConst: []string{"onTop=true", "update=restamp"}},
 		}, "name", "version", "api", "options"),

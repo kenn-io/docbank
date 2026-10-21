@@ -47,13 +47,13 @@ func rewritePDF(t *testing.T, source []byte, edit func(*model.Context, types.Dic
 	t.Helper()
 	conf := &model.Configuration{Reader15: true, ValidationMode: model.ValidationRelaxed,
 		Offline: true, Eol: types.EolLF, Limits: model.DefaultResourceLimits()}
-	ctx, err := api.ReadAndValidate(bytes.NewReader(source), conf)
+	ctx, err := api.ReadAndValidate(t.Context(), bytes.NewReader(source), conf)
 	require.NoError(t, err)
-	page, _, _, err := ctx.PageDict(1, false)
+	page, _, _, err := ctx.PageDict(t.Context(), 1, false)
 	require.NoError(t, err)
 	edit(ctx, page)
 	var output bytes.Buffer
-	require.NoError(t, api.WriteContext(ctx, &output))
+	require.NoError(t, api.WriteContext(t.Context(), ctx, &output))
 	return output.Bytes()
 }
 
@@ -93,9 +93,9 @@ func TestStampSameLabelRestamp(t *testing.T) {
 	recipe.Restamp = true
 	_, err = Stamp(t.Context(), bytes.NewReader(first.Bytes()), labels, recipe, &second)
 	require.NoError(t, err)
-	pdfContext, err := api.ReadAndValidate(bytes.NewReader(second.Bytes()), stampConfiguration())
+	pdfContext, err := api.ReadAndValidate(t.Context(), bytes.NewReader(second.Bytes()), stampConfiguration())
 	require.NoError(t, err)
-	page, _, _, err := pdfContext.PageDict(1, false)
+	page, _, _, err := pdfContext.PageDict(t.Context(), 1, false)
 	require.NoError(t, err)
 	content, err := pdfContext.PageContent(page, 1)
 	require.NoError(t, err)
@@ -263,7 +263,7 @@ func TestStampPagesSharingSourceContentAndResources(t *testing.T) {
 				require.NoError(t, err)
 			}
 			source := rewritePDF(t, original, func(ctx *model.Context, page types.Dict) {
-				second, _, _, err := ctx.PageDict(2, false)
+				second, _, _, err := ctx.PageDict(t.Context(), 2, false)
 				require.NoError(t, err)
 				second.Update("Contents", page["Contents"])
 				resources, err := ctx.DereferenceDict(page["Resources"])
@@ -389,7 +389,7 @@ func TestStampRejectsAnnotationsBeforePublishing(t *testing.T) {
 func TestStampRejectsTaggedSourcesBeforePublishing(t *testing.T) {
 	for _, marked := range []bool{false, true} {
 		source := rewritePDF(t, syntheticPDF(t, 1, "Letter"), func(ctx *model.Context, page types.Dict) {
-			_, pageRef, _, err := ctx.PageDict(1, false)
+			_, pageRef, _, err := ctx.PageDict(t.Context(), 1, false)
 			require.NoError(t, err)
 			tree := types.Dict{"Type": types.Name("StructTreeRoot")}
 			treeRef, err := ctx.IndRefForNewObject(tree)

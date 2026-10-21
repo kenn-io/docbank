@@ -234,7 +234,7 @@ func batesTestRecipe(namespace api.BatesNamespace, start int) pdfstamp.Recipe {
 		Prefix: namespace.Prefix, Suffix: namespace.Suffix, Padding: namespace.Padding, StartAt: start,
 		Position: "bottom-right", MarginPoints: 24, FontName: "Helvetica", FontSizePoints: 9, Color: "#000000",
 		Opacity: 1, Units: "point", RotationPolicy: "follow_page", EngineIdentity: pdfstamp.EngineIdentity{
-			Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
+			Name: "pdfcpu", Version: "v0.16.3", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
 }
 
 func decodeBatesAllocation(t *testing.T, body []byte) api.BatesAllocation {

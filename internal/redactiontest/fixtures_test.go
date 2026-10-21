@@ -12,7 +12,7 @@ import (
 func TestPDFProducesIndependentlyValidSyntheticDocument(t *testing.T) {
 	encoded := PDF(t, []string{"Synthetic first line", "Synthetic second line"}, "Synthetic fixture subject")
 	require.True(t, bytes.HasPrefix(encoded, []byte("%PDF-")))
-	require.NoError(t, pdfapi.Validate(bytes.NewReader(encoded), nil))
+	require.NoError(t, pdfapi.Validate(t.Context(), bytes.NewReader(encoded), nil, nil))
 }
 
 func TestMapProducesOneASCIIAtomPerByte(t *testing.T) {

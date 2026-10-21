@@ -2,6 +2,7 @@ package formatdetect
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -23,14 +24,14 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 		return nil, errors.New("PDF geometry exceeds source/page limits")
 	}
 	limits := PDFLimits{MaxExpandedBytes: 256 << 20, MaxEntryBytes: 64 << 20, MaxEntries: 100000}
-	ctx, err := api.ReadContext(bytes.NewReader(data), pdfConfiguration(len(data), limits))
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(data), pdfConfiguration(len(data), limits))
 	if err != nil {
 		return nil, fmt.Errorf("read PDF geometry: %w", err)
 	}
 	// Validation may repair a missing font by substituting a different resource.
 	// Classify the original parsed dictionaries before those repairs occur.
 	domains := unvalidatedPageFontDomains(ctx, maxPages)
-	if err := api.ValidateContext(ctx); err != nil {
+	if err := api.ValidateContext(context.Background(), ctx); err != nil {
 		return nil, fmt.Errorf("validate PDF geometry: %w", err)
 	}
 	if _, err := checkPDFReferences(ctx); err != nil {
@@ -41,7 +42,7 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 	}
 	frames := make([]PDFPageGeometry, ctx.PageCount)
 	for page := 1; page <= ctx.PageCount; page++ {
-		dict, _, attrs, err := ctx.PageDict(page, false)
+		dict, _, attrs, err := ctx.PageDict(context.Background(), page, false)
 		if err != nil {
 			return nil, fmt.Errorf("reading PDF page geometry: %w", err)
 		}

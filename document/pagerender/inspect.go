@@ -17,7 +17,7 @@ import (
 
 const Protocol = "docbank-page-inspect/v2"
 
-const ParserIdentity = "pdfcpu/v0.15.0"
+const ParserIdentity = "pdfcpu/v0.16.3"
 
 // VerifyPNG verifies the entire bounded image against its retained receipt.
 // Publication, HTTP reads and portable restore use the same decoder.

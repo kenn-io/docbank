@@ -95,7 +95,7 @@ func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) { //nolint:pa
 			}
 			require.NotEmpty(t, output)
 			var contents []string
-			err = pdfapi.ExtractContent(bytes.NewReader(output), nil, func(reader io.Reader, _ int) error {
+			err = pdfapi.ExtractContent(t.Context(), bytes.NewReader(output), nil, func(reader io.Reader, _ int) error {
 				content, err := io.ReadAll(reader)
 				contents = append(contents, string(content))
 				return err

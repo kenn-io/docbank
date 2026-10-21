@@ -251,7 +251,7 @@ func syntheticBatesRecipe() pdfstamp.Recipe {
 		Prefix: "OUR", Padding: 6, StartAt: 41, Position: "bottom-right", MarginPoints: 24,
 		FontName: "Helvetica", FontSizePoints: 9, Color: "#000000", Opacity: 1,
 		Units: "point", RotationPolicy: "follow_page", EngineIdentity: pdfstamp.EngineIdentity{
-			Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap",
+			Name: "pdfcpu", Version: "v0.16.3", API: "AddWatermarksMap",
 			Options: []string{"onTop=true", "update=restamp"},
 		},
 	}

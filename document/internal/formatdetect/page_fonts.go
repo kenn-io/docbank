@@ -1,6 +1,7 @@
 package formatdetect
 
 import (
+	"context"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -63,7 +64,7 @@ func unvalidatedPageFontDomains(ctx *model.Context, maxPages int) []bool {
 	}
 	domains := make([]bool, ctx.PageCount)
 	for page := 1; page <= ctx.PageCount; page++ {
-		_, _, attrs, err := ctx.PageDict(page, false)
+		_, _, attrs, err := ctx.PageDict(context.Background(), page, false)
 		if err == nil {
 			domains[page-1] = pageSimpleFontsOnly(ctx, attrs.Resources)
 		}
