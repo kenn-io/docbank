@@ -634,7 +634,6 @@ func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *tes
 		require.Len(t, f.suggestions(t), 1)
 		require.Zero(t, f.waitingDescriptions(t), "no request is left waiting")
 	})
-
 }
 
 func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {

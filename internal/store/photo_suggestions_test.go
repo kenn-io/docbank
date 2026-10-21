@@ -660,7 +660,6 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 	require.True(t, settled(""), "a changed default profile never re-describes a dismissal")
 	require.True(t, settled(producerA), "the producer of a dismissal is not asked again")
 	require.False(t, settled(producerB), "an explicit start with another profile replaces a dismissal")
-
 }
 
 // photoDescriptionJobRequest builds the queue request a description job
