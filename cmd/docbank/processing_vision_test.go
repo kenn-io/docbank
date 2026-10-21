@@ -37,14 +37,18 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--deployment-fingerprint", deployment}},
 		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com/v1", "--deployment-fingerprint", deployment}},
 		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "http://vision.example.com", "--deployment-fingerprint", deployment}},
+		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com:0", "--deployment-fingerprint", deployment}},
+		{"--endpoint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com:65536", "--deployment-fingerprint", deployment}},
 		{"--model", []string{"--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment}},
 		{"--deployment-fingerprint", []string{"--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", "invalid"}},
 	} {
-		output, err := runCLI(t, append([]string{"processing", "vision-fingerprints"}, tc.args...)...)
-		require.Error(t, err)
-		require.ErrorContains(t, err, tc.flag)
-		require.Equal(t, exitUsage, commandExitCode(err, true))
-		require.Empty(t, output)
-		require.NoDirExists(t, home)
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			output, err := runCLI(t, append([]string{"processing", "vision-fingerprints"}, tc.args...)...)
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.flag)
+			require.Equal(t, exitUsage, commandExitCode(err, true))
+			require.Empty(t, output)
+			require.NoDirExists(t, home)
+		})
 	}
 }
