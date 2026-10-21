@@ -594,7 +594,7 @@ func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
 	require.Equal(t, 1, probes)
 }
 
-func TestPhotoDescriptionStartRefusesAnIneligiblePhotoBeforeSavingConsent(t *testing.T) {
+func TestPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent(t *testing.T) {
 	t.Parallel()
 	hidden := newPhotoDescriptionFixture(t)
 	require.NoError(t, hidden.catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
@@ -705,14 +705,20 @@ func TestPhotoDescriptionLimitUsesFinalUpload(t *testing.T) {
 				} else {
 					require.Empty(t, plan.RenditionIneligibleReason)
 				}
-				f.grant(t, f.service, "vision")
 				if automatic {
+					f.grant(t, f.service, "vision")
 					err = f.service.admitPhotoDescription(ctx, photoDescriptionTarget{profile: "vision", version: version})
 				} else {
-					_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
+					_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true})
 				}
 				if oversized {
 					require.ErrorIs(t, err, ErrSourceIneligible)
+					if !automatic {
+						require.NotErrorIs(t, err, ErrConsentSaved, "an ineligible photo is refused before consent is saved")
+						plan, err = f.service.Plan(ctx, f.selector("vision"))
+						require.NoError(t, err)
+						require.True(t, plan.ConsentRequired)
+					}
 					_, describes := f.counts()
 					require.Zero(t, describes)
 				} else {
