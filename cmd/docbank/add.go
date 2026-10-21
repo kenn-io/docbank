@@ -78,13 +78,11 @@ Exit 1 if any file failed (each failure is listed).`,
 		}
 		if addPreflight {
 			rep, err := c.API().PreflightIngest(cmd.Context(), &apiclient.PreflightIngestRequestOptions{Body: &apiclient.PreflightIngestBody{Paths: abs, Include: addInclude, Exclude: addExclude}})
-
 			if err != nil {
 				return err
 			}
 			if addJSON {
-				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
-				if err := json.MarshalEncode(enc, rep); err != nil {
+				if err := json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  ")), rep); err != nil {
 					return fmt.Errorf("encoding preflight report: %w", err)
 				}
 			} else {
@@ -96,7 +94,11 @@ Exit 1 if any file failed (each failure is listed).`,
 			}
 			return nil
 		}
-		defer func() { reportFailure(cmd, c, "add", retErr, false) }()
+		defer func() {
+			if !isClosedOutputPipe(retErr) {
+				reportFailure(cmd, c, "add", retErr, false)
+			}
+		}()
 		var rep api.IngestReport
 		if addJSON {
 			response, requestErr := c.API().Ingest(cmd.Context(), &apiclient.IngestRequestOptions{Body: &apiclient.IngestBody{Paths: abs, Dest: addDest, Include: opts.Include, Exclude: opts.Exclude, Replace: opts.Replace, CollectionLabel: opts.CollectionLabel}})
@@ -104,7 +106,6 @@ Exit 1 if any file failed (each failure is listed).`,
 			if err == nil {
 				rep = *response
 			}
-
 		} else {
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
@@ -113,9 +114,11 @@ Exit 1 if any file failed (each failure is listed).`,
 		if err != nil {
 			return err
 		}
+		if rep.Added > 0 {
+			reportAction(cmd, c, "document_added", "", "", false)
+		}
 		if addJSON {
-			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
-			if err := json.MarshalEncode(enc, rep); err != nil {
+			if err := json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  ")), rep); err != nil {
 				return fmt.Errorf("encoding ingest report: %w", err)
 			}
 		} else {
@@ -124,9 +127,6 @@ Exit 1 if any file failed (each failure is listed).`,
 			for _, f := range rep.Failed {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
 			}
-		}
-		if rep.Added > 0 {
-			reportAction(cmd, c, "document_added", "", "", false)
 		}
 		if len(rep.Failed) > 0 {
 			return fmt.Errorf("%d file(s) failed to import", len(rep.Failed))

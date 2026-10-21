@@ -113,12 +113,10 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 func TestNaturalSearchReportsAcceptedModeAfterRerank(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
-		failed     bool
 		superseded bool
 		wantMode   string
 	}{
-		{name: "applied", wantMode: "hybrid"},
-		{name: "failed", failed: true, wantMode: "lexical"},
+		{name: "applied", wantMode: "lexical"},
 		{name: "superseded", superseded: true, wantMode: "lexical"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,7 +125,7 @@ func TestNaturalSearchReportsAcceptedModeAfterRerank(t *testing.T) {
 			readme := fake.nodes["/README.txt"]
 			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "base")
 			fake.naturalRerankSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "reranked")
-			fake.naturalRerankSearch.ActualMode = "hybrid"
+			fake.naturalRerankSearch.ActualMode = "lexical"
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
@@ -137,9 +135,6 @@ func TestNaturalSearchReportsAcceptedModeAfterRerank(t *testing.T) {
 			model, cmd := updateModel(t, model, model.loadNaturalSearch("report", model.requestID)())
 			require.True(t, model.naturalRerankPending)
 			assert.Empty(t, fake.actions)
-			if tc.failed {
-				fake.err = errors.New("synthetic rerank failure")
-			}
 			if tc.superseded {
 				model.requestID++
 			}

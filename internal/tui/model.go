@@ -314,8 +314,6 @@ var errDetailNodeChanged = errors.New(
 	"document changed while loading tags; close and inspect it again",
 )
 
-var errProcessingPlanUnavailable = errors.New("processing plan is unavailable")
-
 // ErrMutationUnconfirmed marks a mutation whose request was sent but whose
 // terminal receipt did not arrive intact. Callers must reacquire authority
 // rather than treating the operation as failed or replaying it.
@@ -790,9 +788,6 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.processingSearchReport = &msg.report
 			return m, m.reportSearch(msg.report.ActualMode, len(msg.report.Results) == 0)
-		}
-		if errors.Is(msg.err, errProcessingPlanUnavailable) {
-			return m, nil
 		}
 		return m, m.reportAction("error_shown", "", "search")
 	case processingStartedMsg:
@@ -1896,7 +1891,7 @@ func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
 	searchID := m.processingSearchID
 	return func() tea.Msg {
 		if plan == nil {
-			return processingSearchLoadedMsg{requestID: requestID, searchID: searchID, err: errProcessingPlanUnavailable}
+			return processingSearchLoadedMsg{requestID: requestID, searchID: searchID, err: errors.New("processing plan is unavailable")}
 		}
 		report, err := backend.SearchDocuments(ctx, api.DocumentSearchRequest{
 			Query: query, Mode: "auto", Limit: maxProcessingSearchItems, Profile: plan.Selector.Profile,

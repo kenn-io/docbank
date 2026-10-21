@@ -2804,7 +2804,7 @@ it("opens a smart set through the Albums app route", async () => {
     '{"syntax":"advanced","text":"rating:5","filters":{"kinds":["photo"]},"sort":{"field":"size","direction":"desc"}}',
   );
   const saved = savedSmartSet(payload, await queryFingerprint(payload), { revision: 2 });
-  const open = vi.spyOn(Photos.prototype, "openSmartSet").mockReturnValue(true);
+  const open = vi.spyOn(Photos.prototype, "openSmartSet").mockResolvedValue(true);
   stubPhotoFetch(
     vi.fn(async (url: string) => {
       if (url.includes("/saved-queries?"))

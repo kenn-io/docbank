@@ -2793,7 +2793,7 @@ it("recovers smart sets without stale identities", async () => {
   const selection = new Photos("session", vi.fn());
   selection.rememberSmartSet(old);
   const pending = selection.recoverSmartSet();
-  selection.openSmartSet(opened);
+  await selection.openSmartSet(opened);
   finishPending(savedSmartSetResponse(old));
   await pending;
   expect(selection.smartSet?.id).toBe(opened.id);
@@ -2821,6 +2821,19 @@ it("recovers smart sets without stale identities", async () => {
   deleted.dispose();
 });
 
+it("rejects an unparseable smart set without remembering it", async () => {
+  const saved = await savedSmartSet();
+  saved.payload.text = "x".repeat(8193);
+  const fetcher = vi.fn();
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("session", vi.fn());
+  expect(await photos.openSmartSet(saved)).toBe(false);
+  expect(photos.smartSet).toBeUndefined();
+  expect(localStorage.length).toBe(0);
+  expect(fetcher).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
 it.each(["hiding", "trashing"] as const)(
   "rejects smart-set opening during %s",
   async (mutation) => {
@@ -2829,11 +2842,11 @@ it.each(["hiding", "trashing"] as const)(
     stubPhotoFetch(fetcher);
     const photos = new Photos("session", vi.fn());
     photos[mutation] = true;
-    expect(photos.openSmartSet(saved)).toBe(false);
+    expect(await photos.openSmartSet(saved)).toBe(false);
     expect(photos.smartSet).toBeUndefined();
     expect(fetcher).not.toHaveBeenCalled();
     photos[mutation] = false;
-    expect(photos.openSmartSet(saved)).toBe(true);
+    expect(await photos.openSmartSet(saved)).toBe(true);
     expect(photos.smartSet?.id).toBe(saved.id);
     expect(JSON.parse(fetcher.mock.calls[0][1].body).query).toMatchObject({
       text: "rating:5",

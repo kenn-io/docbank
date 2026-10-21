@@ -106,7 +106,7 @@
       } else if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
       } else {
-        reportFailure(activeSession, "open", cause);
+        reportFailure(activeSession, "open");
         failed = true;
         outcome = cause instanceof Error ? cause.message : String(cause);
       }

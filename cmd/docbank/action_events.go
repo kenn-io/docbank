@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
@@ -48,7 +49,7 @@ func actionReportingAllowed(terminal, agent bool) bool { return terminal && !age
 
 // reportFailure sends error_shown for a command that ended in err.
 func reportFailure(cmd *cobra.Command, c *daemonconn.Connection, kind string, err error, agent bool) {
-	if err != nil {
+	if classified, ok := errors.AsType[*exitError](err); err != nil && (!ok || classified.code != exitUsage) {
 		reportAction(cmd, c, "error_shown", "", kind, agent)
 	}
 }

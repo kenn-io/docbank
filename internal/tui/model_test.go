@@ -3082,15 +3082,3 @@ func TestProcessingSearchReportsOutcome(t *testing.T) {
 		})
 	}
 }
-
-func TestProcessingSearchWithoutPlanStaysSilent(t *testing.T) {
-	backend := newFakeBackend()
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model.processingOpen = true
-	model.processingRequestID, model.processingSearchID = 5, 2
-	model, cmd := updateModel(t, model, model.loadProcessingSearch(5, "report")())
-	assert.Nil(t, cmd)
-	require.ErrorContains(t, model.processingSearchErr, "processing plan is unavailable")
-	assert.Empty(t, backend.actions)
-}

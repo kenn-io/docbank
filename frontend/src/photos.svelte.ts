@@ -288,10 +288,10 @@ export class Photos {
       } else if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
     }
   }
-  openSmartSet(saved: SavedQuery) {
+  async openSmartSet(saved: SavedQuery) {
     if (saved.kind !== "query" || this.disposed || this.hiding || this.trashing) return false;
-    const applied = this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) });
-    if (!applied) return false;
+    const applied = await this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) });
+    if (!applied?.accepted) return false;
     this.rememberSmartSet(saved);
     return true;
   }

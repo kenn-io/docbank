@@ -179,6 +179,34 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 		require.ErrorContains(t, err, `invalid --progress value "invalid"`)
 		assert.Empty(t, events)
 	})
+	for _, cause := range []error{io.ErrClosedPipe, syscall.EPIPE} {
+		t.Run("add closed pipe "+cause.Error(), func(t *testing.T) {
+			added = 3
+			resetFlags(rootCmd)
+			rootCmd.SetErr(terminal)
+			rootCmd.SetOut(reportTestWriter(func([]byte) (int, error) { return 0, cause }))
+			rootCmd.SetArgs([]string{"add", "synthetic.txt", "--json"})
+			require.ErrorIs(t, rootCmd.ExecuteContext(context.Background()), cause)
+			require.Len(t, events, 1)
+			assert.JSONEq(t, `{"event":"document_added","properties":{"surface":"cli"}}`, <-events)
+			assert.Empty(t, events)
+		})
+	}
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		message string
+	}{
+		{name: "document search usage", args: []string{"search", "synthetic", "--mode", "hybrid", "--profile", "missing", "--source-version", version}, message: "not executable"},
+		{name: "similar search usage", args: []string{"search", "--similar-to", "id:42", "--profile", "private", "--source-version", "22222222-2222-4222-8222-222222222222", "--version", "22222222-2222-4222-8222-222222222222"}, message: "current live file version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := execute(false, false, tc.args)
+			require.ErrorContains(t, err, tc.message)
+			assert.Equal(t, exitUsage, commandExitCode(err, true))
+			assert.Empty(t, events)
+		})
+	}
 	t.Run("cat digest failure", func(t *testing.T) {
 		badDigest = true
 		defer func() { badDigest = false }()

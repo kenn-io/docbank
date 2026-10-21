@@ -111,7 +111,7 @@ it.each([
     if (cancels) await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await screen.findByText(message);
     expect(action.mock.calls).toEqual(succeeds ? [["session", "document_opened"]] : []);
-    expect(failure.mock.calls).toEqual(succeeds || cancels ? [] : [["session", "open", cause]]);
+    expect(failure.mock.calls).toEqual(succeeds || cancels ? [] : [["session", "open"]]);
     expect(offer).toHaveBeenCalledTimes(succeeds ? 1 : 0);
   },
 );
