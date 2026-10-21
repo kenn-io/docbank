@@ -319,60 +319,31 @@ func (c *Client) Comment(ctx context.Context, ref, key, body string) error {
 	return nil
 }
 
-// HasComment scans durable comment events in pages. Each reply stays bounded
-// even when the discussion exceeds our response limit or the replay key expires.
-func (c *Client) HasComment(ctx context.Context, ref, uid, body string) (bool, error) {
+// GetComments reads the issue discussion once, within the response limit.
+func (c *Client) GetComments(ctx context.Context, ref string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
-	project, _, err := c.splitRef(ref, true)
+	project, id, err := c.splitRef(ref, true)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	id, err := c.projectID(ctx, project)
+	projectID, err := c.projectID(ctx, project)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	var cursor int64
-	pageSize := 8
-	for {
-		var page wire.PollEventsBody
-		raw, err := c.api.PollProjectEventsWithResponse(ctx, &wire.PollProjectEventsRequestOptions{PathParams: &wire.PollProjectEventsPath{ProjectID: id}, Query: &wire.PollProjectEventsQuery{Limit: new(int64(pageSize)), AfterID: &cursor}})
-		if err != nil {
-			err = requestError(ctx, err)
-			if failure, ok := errors.AsType[*Error](err); ok && failure.Code == "response_too_large" && pageSize > 1 {
-				pageSize /= 2
-				continue
-			}
-			return false, err
-		}
-		if err := decodeResponseNumbers(raw.Body, &page); err != nil {
-			return false, err
-		}
-		if page.ResetRequired {
-			return false, &Error{Code: "comment_history_unavailable"}
-		}
-		for _, event := range page.Events {
-			if event.Type != "issue.commented" || event.IssueUID == nil || *event.IssueUID != uid {
-				continue
-			}
-			var comment struct {
-				Body string `json:"body"`
-			}
-			if json.Unmarshal(event.Payload, &comment) != nil {
-				return false, &Error{Code: "invalid_response"}
-			}
-			if comment.Body == body {
-				return true, nil
-			}
-		}
-		if page.NextAfterID == cursor {
-			return false, nil
-		}
-		if page.NextAfterID < cursor {
-			return false, &Error{Code: "invalid_response"}
-		}
-		cursor = page.NextAfterID
+	raw, err := c.api.ShowIssueWithResponse(ctx, &wire.ShowIssueRequestOptions{PathParams: &wire.ShowIssuePath{ProjectID: projectID, Ref: id}})
+	if err != nil {
+		return nil, requestError(ctx, err)
 	}
+	var response wire.ShowIssueResponseBody
+	if err := decodeResponseNumbers(raw.Body, &response); err != nil {
+		return nil, err
+	}
+	comments := make([]string, 0, len(response.Comments))
+	for _, comment := range response.Comments {
+		comments = append(comments, comment.Body)
+	}
+	return comments, nil
 }
 
 // boundedTransport enforces Docbank's limits without owning Kata wire types.

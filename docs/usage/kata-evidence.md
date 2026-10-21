@@ -81,9 +81,11 @@ docbank kata cite id:12 --start 28 --end 45 --issue docbank#abcd
 Appends and context reads stay inside `default_project`. They preserve other metadata and
 existing citations. Docbank records a pending quotation before posting its
 comment, so retrying the same pinned selection can finish an interrupted
-append. It checks durable comment events in bounded pages before posting, including after
-Kata's replay window expires. If Kata reports that event history was purged, the operation
-fails before posting another comment. Use an `id:` selector and `--expected-version` when an original-text
+append. Pending quotes less than six days old replay the same comment request without
+reading the discussion. At six days, Docbank reads the issue's comments once and skips
+posting if the exact quotation is already present. If the discussion exceeds the read
+limit, the stale pending quote stays pending and the operation returns a permanent error.
+Pending quotes with an unknown or future save time use the same replay request. Use an `id:` selector and `--expected-version` when an original-text
 append must be replayable after source deletion. Each issue supports at most 64 native Docbank evidence entries.
 
 Kata returns `401` for a rejected credential, `403` for denied permission, and

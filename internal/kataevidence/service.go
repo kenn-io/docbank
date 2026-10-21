@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,13 +21,14 @@ type Kata interface {
 	Create(ctx context.Context, key, title, body string, metadata map[string]jsontext.Value) (kataclient.Issue, error)
 	FindMarker(ctx context.Context, marker string) (*kataclient.Issue, error)
 	Patch(ctx context.Context, ref, key string, previous, value jsontext.Value) (kataclient.Issue, error)
-	HasComment(ctx context.Context, ref, uid, body string) (bool, error)
+	GetComments(ctx context.Context, ref string) ([]string, error)
 	Comment(ctx context.Context, ref, key, body string) error
 }
 
 type Service struct {
 	Kata    Kata
 	Archive Archive
+	Now     func() time.Time
 }
 
 // Entry retains the selected words; Pending marks an undelivered comment.
@@ -278,12 +281,19 @@ func matchesSelection(ref Reference, p Selector, vault string) bool {
 }
 
 func (s Service) finishPending(ctx context.Context, ref string, issue kataclient.Issue) (kataclient.Issue, error) {
+	now := time.Now
+	if s.Now != nil {
+		now = s.Now
+	}
+	var comments []string
+	commentsRead := false
 	for range 3 {
 		env, err := parseEnvelope(issue.Metadata[MetadataKey])
 		if err != nil {
 			return kataclient.Issue{}, err
 		}
 		unstamped := false
+		unstampedEntries := make(map[string]bool)
 		for i, raw := range env.entries {
 			entry, valid := parseNative(raw)
 			if valid && entry.Pending != nil && entry.Pending.SavedAt.IsZero() {
@@ -294,6 +304,7 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 				fields["pending"], _ = json.Marshal(Pending{SavedAt: issue.UpdatedAt})
 				env.entries[i], _ = json.Marshal(fields)
 				unstamped = true
+				unstampedEntries[entry.ID] = true
 			}
 		}
 		if unstamped {
@@ -322,9 +333,20 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 			}
 			body := renderQuote(entry.Label, entry.Quote)
 			key := commentKey(issue.UID, entry.Passage, body)
-			posted, err := s.Kata.HasComment(ctx, ref, issue.UID, body)
-			if err != nil {
-				return kataclient.Issue{}, err
+			posted := false
+			// Leave a day of margin inside Kata's seven-day replay window.
+			if !unstampedEntries[entry.ID] && !entry.Pending.SavedAt.IsZero() && now().Sub(entry.Pending.SavedAt) >= 6*24*time.Hour {
+				if !commentsRead {
+					comments, err = s.Kata.GetComments(ctx, ref)
+					if failure, ok := errors.AsType[*kataclient.Error](err); ok && failure.Code == "response_too_large" {
+						return kataclient.Issue{}, fmt.Errorf("stale pending quote can't be verified against the discussion: %w", ErrUnsupported)
+					}
+					if err != nil {
+						return kataclient.Issue{}, err
+					}
+					commentsRead = true
+				}
+				posted = slices.Contains(comments, body)
 			}
 			if !posted {
 				if err := s.Kata.Comment(ctx, ref, key, body); err != nil {

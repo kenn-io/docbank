@@ -175,7 +175,7 @@ func TestClientDoesNotRetryUnknownWriteOutcome(t *testing.T) {
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "127.0.0.1")
 	require.EqualValues(t, 1, writes.Load())
-	posted, err := c.HasComment(t.Context(), issue.QualifiedRef, issue.UID, "Evidence added")
+	posted, err := c.GetComments(t.Context(), issue.QualifiedRef)
 	require.NoError(t, err)
-	require.True(t, posted)
+	require.Equal(t, []string{"Evidence added"}, posted)
 }
