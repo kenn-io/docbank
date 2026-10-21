@@ -832,7 +832,7 @@ describe("document processing drawer", () => {
       const path = String(input);
       if (path === "/api/v1/processing/profiles")
         return Response.json([
-          { name: "vision", fingerprint, rendition: false, embedding_bindings: [] },
+          { name: "vision", fingerprint, rendition: true, embedding_bindings: [] },
         ]);
       if (path === "/api/v1/processing/plans")
         return Response.json({
@@ -842,18 +842,18 @@ describe("document processing drawer", () => {
           profile_fingerprint: fingerprint,
           flow: [
             {
-              capability: "describe",
-              provider_id: "vision-local",
-              trust_boundary: "local_process",
+              capability: "rendition",
+              provider_id: "compatible-vision.describe-v1",
+              trust_boundary: "hosted_provider",
               input_classes: ["derived_upload"],
               runtime_disclosure: {
-                immediate_processor: "vision-local",
-                ultimate_processor: "vision-local",
-                endpoint: "in-process",
+                immediate_processor: "compatible-vision.describe-v1",
+                ultimate_processor: "compatible-vision.describe-v1",
+                endpoint: "https://vision.example.com",
                 deployment: "d".repeat(64),
                 model: "synthetic",
                 model_revision: "v1",
-                metadata_classes: [],
+                metadata_classes: ["derived_jpeg", "byte_length", "content_hash", "detected_media_type"],
                 retained_artifact_roles: [],
               },
             },
@@ -868,17 +868,18 @@ describe("document processing drawer", () => {
           },
           consent_required: true,
           consent_state: "required",
-          backup_consequence: "none",
+          backup_consequence:
+            "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups.",
         });
       if (path.startsWith("/api/v1/coverage?"))
         return Response.json({
           vault_uid: versionID,
           profile_fingerprint: fingerprint,
-          state: "missing",
+          state: "complete",
           renditions: {
             name: "rendition",
             required: false,
-            state: "missing",
+            state: "not_required",
             complete: 0,
             unavailable: 0,
             stale: 0,
