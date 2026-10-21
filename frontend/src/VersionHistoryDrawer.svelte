@@ -26,20 +26,21 @@
     node: Node;
     path: string;
     pinnedVersion?: ContentVersion;
-    onselect?: (version: ContentVersion) => void;
+    resolving?: boolean;
+    unavailable?: string;
+    onselect: (version: ContentVersion) => void;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
 
-  let { session, node, path, pinnedVersion, onselect, onclose, onauthfailure }: Props = $props();
+  let { session, node, path, pinnedVersion, resolving = false, unavailable = "", onselect, onclose, onauthfailure }: Props = $props();
 
   let page = $state<ContentVersionPage | null>(null);
-  let localVersion = $state<ContentVersion>();
   let loading = $state(true);
   let error = $state("");
   let generation = 0;
 
-  const selectedVersion = $derived(pinnedVersion ?? localVersion);
+  const selectedVersion = $derived(resolving || unavailable ? undefined : pinnedVersion);
 
   onMount(() => {
     void load();
@@ -60,10 +61,7 @@
       );
       if (request !== generation) return;
       page = next;
-      if (!pinnedVersion && next.items[0]) {
-        localVersion = next.items[0];
-        onselect?.(next.items[0]);
-      }
+      if (!pinnedVersion && next.items[0]) onselect(next.items[0]);
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -145,10 +143,7 @@
                 level="default"
                 padding="sm"
                 selected={version.id === selectedVersion?.id}
-                onclick={() => {
-                  if (onselect) onselect(version);
-                  else localVersion = version;
-                }}
+                onclick={() => onselect(version)}
                 ariaLabel={`${transitionLabel(version.transition_kind)} at ${formatDate(version.recorded_at)}`}
                 eyebrow={transitionLabel(version.transition_kind)}
                 meta={formatDate(version.recorded_at)}
@@ -174,7 +169,11 @@
     </section>
 
     <section class="version-detail" aria-label="Complete version authority">
-      {#if selectedVersion}
+      {#if resolving}
+        <p class="loading"><Spinner size={16} /> Loading linked version…</p>
+      {:else if unavailable}
+        <p class="error" role="alert">{unavailable}</p>
+      {:else if selectedVersion}
         <Card
           level="inset"
           eyebrow={transitionLabel(selectedVersion.transition_kind)}

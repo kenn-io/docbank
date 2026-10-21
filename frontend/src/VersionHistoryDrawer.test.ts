@@ -35,6 +35,7 @@ describe("version history drawer", () => {
       },
       path: "/Reports/quarterly-report.txt",
       pinnedVersion: version(createdVersionID, 1, "content_create", "a"),
+      onselect: vi.fn(),
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
     });
@@ -74,6 +75,7 @@ describe("version history drawer", () => {
       },
       path: "/Reports/message.eml",
       pinnedVersion: emailVersion,
+      onselect: vi.fn(),
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
     });
@@ -105,10 +107,12 @@ describe("version history drawer", () => {
     );
     const close = vi.fn();
 
-    render(VersionHistoryDrawer, {
+    const drawer = render(VersionHistoryDrawer, {
       session: "short-lived",
+      pinnedVersion: versions[0],
       node: { ...node, current_version_id: replacedVersionID },
       path: "/Reports/quarterly-report.txt",
+      onselect: vi.fn(),
       onclose: close,
       onauthfailure: vi.fn(),
     });
@@ -127,6 +131,7 @@ describe("version history drawer", () => {
     const createdButton = createdHeading.closest("button");
     expect(createdButton).toBeTruthy();
     await fireEvent.click(createdButton!);
+    await drawer.rerender({ pinnedVersion: versions[2] });
 
     expect(screen.getByText("a".repeat(64))).toBeTruthy();
     expect(screen.queryByText("Revert source")).toBeNull();
@@ -165,10 +170,12 @@ describe("version history drawer", () => {
         });
       });
 
-    render(VersionHistoryDrawer, {
+    const drawer = render(VersionHistoryDrawer, {
       session: "short-lived",
+      pinnedVersion: versions[0],
       node,
       path: "/Reports/quarterly-report.txt",
+      onselect: vi.fn(),
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
     });
@@ -178,7 +185,26 @@ describe("version history drawer", () => {
     await vi.waitFor(() => expect(downloadSignal).toBeTruthy());
 
     await fireEvent.click(screen.getByText("Created").closest("button")!);
+    await drawer.rerender({ pinnedVersion: versions[1] });
 
     await vi.waitFor(() => expect(downloadSignal?.aborted).toBe(true));
   });
+});
+
+it("waits for the parent to accept the newest version and later clicks", async () => {
+  const newest = version(currentVersionID, 3, "content_replace", "c");
+  const older = version(createdVersionID, 1, "content_create", "a");
+  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ items: [newest, older], total: 2, limit: 1000, offset: 0 }));
+  const onselect = vi.fn();
+  const drawer = render(VersionHistoryDrawer, { session: "short-lived", node, path: "/Reports/example.txt", onselect, onclose: vi.fn(), onauthfailure: vi.fn() });
+  await screen.findByText("2 retained versions");
+  expect(onselect).toHaveBeenCalledWith(newest);
+  expect(screen.queryByText(currentVersionID)).toBeNull();
+  await drawer.rerender({ pinnedVersion: newest });
+  expect(screen.getByText(currentVersionID)).toBeTruthy();
+  await fireEvent.click(screen.getByText("Created").closest("button")!);
+  expect(onselect).toHaveBeenLastCalledWith(older);
+  expect(screen.queryByText(createdVersionID)).toBeNull();
+  await drawer.rerender({ pinnedVersion: older });
+  expect(screen.getByText(createdVersionID)).toBeTruthy();
 });
