@@ -79,6 +79,8 @@
   let railError = $state("");
   let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
+  // The current photo and its rail, each once.
+  const shownIDs = $derived([...new Set([currentID, ...rail])].filter((id): id is string => !!id));
   const complete = $derived(cull.complete);
   let selectedFrames = $state<string[]>([]);
   let selectionRun: string | undefined;
@@ -197,19 +199,19 @@
     const ids = cull.run!.ids;
     if (runIDs?.ids !== ids) runIDs = { ids, set: new Set(ids) };
     if (change.idFree || [...change.ids].some((id) => runIDs!.set.has(id))) cull.flagsChanged();
-    const shown = [...new Set([currentID, ...rail])].filter(
-      (id): id is string => !!id && affectsPhoto(change, id),
-    );
+    const shown = shownIDs.filter((id) => affectsPhoto(change, id));
     await settleReads([
       shown.length ? reread(shown) : undefined,
       cull.complete ? revalidateRemainder() : undefined,
+      // Prepared stack revisions are read again, so a decision checks the refreshed rows.
+      editor.invalidate(change),
     ]);
   }
   async function reconcileWriteChanges() {
     const change = changedDuringWrite;
     if (!change || writesInFlight || reloadController.signal.aborted) return;
     try {
-      await reread([...new Set([currentID, ...rail])].filter((id): id is string => !!id));
+      await reread(shownIDs);
       if (changedDuringWrite === change) changedDuringWrite = undefined;
     } catch (cause) {
       if (!reloadController.signal.aborted) {
@@ -401,7 +403,7 @@
       await applyDecision(photo, { ...editor.patch }, true);
       return;
     }
-    editor.loading = true;
+    checkingDecision = true;
     const id = photo.asset_id;
     const ids = cull.currentStack ?? [id];
     const owns = claim(ids);
@@ -426,7 +428,7 @@
       if (!reloadController.signal.aborted && owns(id) && currentID === id)
         editor.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      editor.loading = false;
+      checkingDecision = false;
     }
   }
   // Hold every member's revisions once a stack is current, so its decision checks what was shown.

@@ -155,7 +155,6 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{photoCaptureNodes, `WITH RECURSIVE descendants(id) AS (SELECT $row.id UNION ALL SELECT n.id FROM nodes n JOIN descendants d ON n.parent_id=d.id) SELECT f.asset_id AS id FROM photo_files f JOIN descendants d ON d.id=f.node_id WHERE $row.kind='dir'`, "OLD.name IS NOT NEW.name OR OLD.parent_id IS NOT NEW.parent_id OR OLD.trashed_at IS NOT NEW.trashed_at"},
 	// Duplicate status follows version and trash changes.
 	{photoCaptureNodes, photoCaptureDuplicateNodeIDs, "OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at"},
-	{"content_versions", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.version_id`, ""},
 	{"content_versions", photoCaptureDuplicateVersionIDs, ""},
 	{"node_tags", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, ""},
 	{"provenance", `SELECT asset_id AS id FROM photo_files WHERE node_id=$row.node_id`, "-"},

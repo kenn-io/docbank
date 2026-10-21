@@ -376,6 +376,15 @@ func TestPhotoEventsGlobalDefinitions(t *testing.T) {
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
 }
 
+func TestPhotoEventsCurrentContentVersionWrite(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
+	events := watchPhotoChanges(t, s)
+	photoCaptureWrite(t, s, events, []PhotoEvent{{}}, `UPDATE content_versions SET mime_type='image/png' WHERE version_id=?`, node.CurrentVersionID)
+	photoCaptureWrite(t, s, events, []PhotoEvent{{}}, `UPDATE content_versions SET size=size+1 WHERE version_id=?`, node.CurrentVersionID)
+}
+
 func TestPhotoEventsCurrentVersionSources(t *testing.T) {
 	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)

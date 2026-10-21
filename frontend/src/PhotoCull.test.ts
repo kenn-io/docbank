@@ -1396,6 +1396,57 @@ it("commits the next pass when a live event arrives during its flag lookup", asy
   photos.dispose();
 });
 
+it.each([1, 7])("keeps all with fresh revisions after stack member %i changes", async (changed) => {
+  const rows = Array.from({ length: 7 }, (_, index) => photo(index + 1));
+  const stack = rows.map((row) => row.asset_id);
+  const targets = rows.map((_, index) => preparedPhoto(index + 1));
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+    photoPreparation(targets.filter((target) => scope.asset_ids?.includes(target.asset_id))),
+  );
+  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "",
+    before: [],
+    after: [],
+  });
+  const { cull, photos } = await reviewPhoto(rows[0]);
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: stack,
+      groups: [stack],
+      burstGapSeconds: 2,
+      checkpoint: { ...cull.run!.checkpoint, pass: stack },
+    };
+  });
+  await readyButton("Keep all");
+  expect(screen.queryByRole("button", { name: "Show Photo 7.jpg" })).toBeNull();
+  rows[changed - 1] = { ...rows[changed - 1]!, revision: 2, rating: 4 };
+  targets[changed - 1] = preparedPhoto(changed, {
+    asset_revision: 2,
+    revision: 2,
+    values: { ...preparedPhoto(changed).values, rating: 4 },
+  });
+  await act(() => photos.changed(photoChange(`photo-${changed}`)));
+  if (changed === 1) await screen.findByText("Unflagged · 4 stars");
+  await fireEvent.click(await readyButton("Keep all"));
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  expect(decide.mock.calls[0]![0]).toMatchObject({
+    decision: "all",
+    asset_ids: stack,
+    targets: expect.arrayContaining([
+      expect.objectContaining({ asset_id: `photo-${changed}`, asset_revision: 2, revision: 2 }),
+    ]),
+  });
+  await screen.findByText("No changes to apply");
+  photos.dispose();
+});
+
 it("keeps newer Cull values after a delayed stack receipt", async () => {
   const before = preparedPhoto(1);
   let finish!: (receipt: PhotoAuthoredReceipt) => void;
