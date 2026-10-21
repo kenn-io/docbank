@@ -171,6 +171,7 @@ A background-spawned daemon (started via auto-start, `daemon start`, or
 minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
 `docbank daemon run` never idles out. It runs until signaled or stopped.
+An open photo event stream counts as an in-flight request, so a visible Photos tab keeps a background daemon from reaching its idle timeout.
 
 ## Background tasks
 

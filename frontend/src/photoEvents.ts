@@ -162,8 +162,10 @@ export function watchPhotoEvents(
     const began = Date.now();
     let delay = passSpacing;
     try {
-      if ((await refresh(change)) === false) requeue(change);
-      else {
+      if ((await refresh(change)) === false) {
+        queue(change);
+        resumable = false;
+      } else {
         failures = 0;
         resumable = false;
       }

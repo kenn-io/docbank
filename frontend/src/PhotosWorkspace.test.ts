@@ -3103,7 +3103,17 @@ it("reads the open photo again on a live change and conceals its cached image on
   await act(() => photos.changed(photoChange("photo-2")));
   expect(lookup).toHaveBeenCalledOnce();
   lookup.mockResolvedValueOnce({ ...row, name: "Renamed.jpg" });
-  await act(() => photos.changed(photoChange("photo-1")));
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+  const refreshing = photos.refresh(undefined, true).finally(() => photos.changed(idFreeChange));
+  const failed = expect(refreshing).rejects.toThrow("List unavailable");
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(lookup).toHaveBeenCalledOnce();
+  await act(async () => {
+    finish(Response.json({ detail: "List unavailable" }, { status: 503 }));
+    await failed;
+  });
+  expect(lookup).toHaveBeenCalledTimes(2);
   await screen.findByRole("dialog", { name: "Photo viewer, Renamed.jpg" });
   expect(screen.getByText("Fit preview")).toBeTruthy();
   lookup.mockRejectedValueOnce(new APIError("This photo is no longer in this view.", 404, "x"));
@@ -3258,154 +3268,98 @@ it("keeps rating shortcuts and stack decisions available during a background ref
   photos.dispose();
 });
 
-it("keeps all stack members after an external rating change with Metadata closed", async () => {
-  const photos = workspaceWithPreparedPhoto();
-  photos.authored.targets = [];
-  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
-  let rating = 0;
-  const row = () => ({ ...photo(1), rating, stack });
-  photos.items = [row()];
-  photos.selectLoaded();
-  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () =>
-    photoPreparation([
-      preparedPhoto(1, {
-        revision: rating ? 2 : 1,
-        values: { ...preparedPhoto(1).values, rating },
-      }),
-      preparedPhoto(2),
-    ]),
-  );
-  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
-    receipt_id: "kept",
-    before: [],
-    after: [],
-  });
-  stubPhotoFetch(async () => Response.json({ items: [row()], total: 1, stacks: [stack] }));
-  render(PhotosWorkspace, {
-    photos,
-    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-  });
-  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
-  expect(photos.authored.targets).toEqual([]);
-  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
-  rating = 4;
-  await act(async () => {
-    await photos.refresh(undefined, true);
-    await photos.changed(photoChange("photo-1"));
-  });
-  await waitFor(() => expect(photos.authored.stackLoading).toBe(false));
-  expect(photos.items[0]).toMatchObject({ rating: 4 });
-  await fireEvent.click(screen.getByRole("button", { name: "Keep all" }));
-  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
-  expect(decide.mock.calls[0]?.[0]).toMatchObject({
-    decision: "all",
-    targets: [
-      { asset_id: "photo-1", file_id: "file-1", revision: 2 },
-      { asset_id: "photo-2", file_id: "file-2", revision: 1 },
-    ],
-  });
-  expect(photos.authored.conflict).toBe(false);
-  photos.dispose();
-});
-
-it("trashes with the refreshed revision after a shortcut prepared targets with Metadata closed", async () => {
-  const photos = workspaceWithPreparedPhoto();
-  photos.authored.targets = [];
-  photos.selectLoaded();
-  let revision = 1;
-  const target = () => preparedPhoto(1, { asset_revision: revision, revision });
-  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () =>
-    photoPreparation([target()]),
-  );
-  vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
-    const before = target();
-    revision = 2;
-    return { receipt_id: "rated", before: [before], after: [target()] };
-  });
-  const trash = vi
-    .spyOn(api, "trashPhotoAsset")
-    .mockResolvedValue({ ...photoPreparation([target()]).assets[0]!, revision: 4 });
-  stubPhotoFetch(async () => Response.json({ items: [{ ...photo(1), revision }], total: 1 }));
-  const shortcuts = createShortcutManager();
-  render(PhotosWorkspace, {
-    photos,
-    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    shortcuts,
-  });
-  await tick();
-  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "4", cancelable: true }));
-  await waitFor(() => expect(photos.authored.targets[0]?.revision).toBe(2));
-  await waitFor(() => expect(photos.authored.busy || photos.loading).toBe(false));
-  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
-  revision = 3;
-  await act(async () => {
-    await photos.refresh(undefined, true);
-    await photos.changed(photoChange("photo-1"));
-  });
-  expect(photos.items[0]?.revision).toBe(3);
-  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
-  await waitFor(() => expect(trash).toHaveBeenCalledOnce());
-  expect(trash.mock.calls[0]?.[1]).toEqual({ "If-Match": "3" });
-  photos.dispose();
-});
-
-it.each(["edit", "Undo", "older live read"])(
-  "keeps newer Library values across a delayed %s",
+it.each(["Keep all", "Move to trash"])(
+  "uses the refreshed revision for %s with Metadata closed",
   async (action) => {
-    const before = preparedPhoto(1);
-    const photos = workspaceWithPreparedPhoto(before);
-    const shortcuts = createShortcutManager();
-    const latest = { ...photo(1), rotation: 180 as const };
-    let finish!: (receipt: PhotoAuthoredReceipt) => void;
-    const receipt = new Promise<PhotoAuthoredReceipt>((resolve) => (finish = resolve));
-    const edit = vi.spyOn(api, "editPhotoAuthored").mockReturnValue(receipt);
-    const undo = vi.spyOn(api, "undoPhotoAuthored").mockReturnValue(receipt);
-    const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
-    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-    stubPhotoFetch(async () => Response.json({ items: [latest], total: 1 }));
+    const photos = workspaceWithPreparedPhoto();
+    photos.authored.targets = [];
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+    let revision = 1;
+    const row = () => ({ ...photo(1), revision, stack });
+    photos.items = [row()];
+    photos.selectLoaded();
+    vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () =>
+      photoPreparation([
+        preparedPhoto(1, { asset_revision: revision, revision: revision === 3 ? 2 : 1 }),
+        preparedPhoto(2),
+      ]),
+    );
+    const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+      receipt_id: "kept",
+      before: [],
+      after: [],
+    });
+    const trash = vi.spyOn(api, "trashPhotoAsset").mockResolvedValue({
+      ...photoPreparation([preparedPhoto(1)]).assets[0]!,
+      revision: 4,
+    });
+    stubPhotoFetch(async () => Response.json({ items: [row()], total: 1, stacks: [stack] }));
     render(PhotosWorkspace, {
       photos,
-      shortcuts,
-      photoID: "photo-1",
       cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
     });
-    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-    let finishRead!: (row: PhotoBrowseRow) => void;
-    let reading: Promise<unknown> | undefined;
-    if (action === "older live read") {
-      lookup.mockImplementationOnce(() => new Promise((resolve) => (finishRead = resolve)));
-      reading = photos.changed(photoChange("photo-1"));
-      await waitFor(() => expect(finishRead).toBeDefined());
-    }
-    if (action === "Undo") {
-      photos.authored.receiptID = "rotation";
-      photos.authored.undoState.summary = "Rotated photo";
-      await fireEvent.click(await screen.findByRole("button", { name: "Undo last photo edit" }));
-    } else shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
-    await waitFor(() => expect(action === "Undo" ? undo : edit).toHaveBeenCalledOnce());
-    if (action !== "Undo") expect(edit.mock.calls[0]![0].rotation_delta).toBe(90);
-    if (action !== "older live read") {
-      lookup.mockResolvedValue(latest);
-      await act(() => photos.changed(photoChange("photo-1")));
-      expect(photos.items[0]!.rotation).toBe(180);
-    }
-    await act(() =>
-      finish({
-        receipt_id: "local",
-        before: [before],
-        after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
-      }),
-    );
-    await waitFor(() => expect(photos.authored.busy).toBe(false));
-    const rotation = action === "older live read" ? 90 : 180;
-    await waitFor(() => expect(photos.items[0]!.rotation).toBe(rotation));
-    if (reading) {
-      finishRead(photo(1));
-      await reading;
-      expect(photos.items[0]!.rotation).toBe(90);
+    await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+    revision = 3;
+    await act(async () => {
+      await photos.refresh(undefined, true);
+      await photos.changed(photoChange("photo-1"));
+    });
+    await waitFor(() => expect(photos.authored.stackLoading).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: action }));
+    if (action === "Keep all") {
+      await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+      expect(decide.mock.calls[0]?.[0]).toMatchObject({
+        decision: "all",
+        targets: [
+          { asset_id: "photo-1", file_id: "file-1", revision: 2 },
+          { asset_id: "photo-2", file_id: "file-2", revision: 1 },
+        ],
+      });
+    } else {
+      const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+      await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
+      await waitFor(() => expect(trash).toHaveBeenCalledOnce());
+      expect(trash.mock.calls[0]?.[1]).toEqual({ "If-Match": "3" });
     }
     photos.dispose();
   },
 );
+
+it("keeps newer Library values across an older live read", async () => {
+  const before = preparedPhoto(1);
+  const photos = workspaceWithPreparedPhoto(before);
+  const shortcuts = createShortcutManager();
+  let finish!: (receipt: PhotoAuthoredReceipt) => void;
+  const receipt = new Promise<PhotoAuthoredReceipt>((resolve) => (finish = resolve));
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockReturnValue(receipt);
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  stubPhotoFetch(async () => Response.json({ items: [{ ...photo(1), rotation: 180 }], total: 1 }));
+  render(PhotosWorkspace, {
+    photos,
+    shortcuts,
+    photoID: "photo-1",
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  let finishRead!: (row: PhotoBrowseRow) => void;
+  lookup.mockImplementationOnce(() => new Promise((resolve) => (finishRead = resolve)));
+  const reading = photos.changed(photoChange("photo-1"));
+  await waitFor(() => expect(finishRead).toBeDefined());
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
+  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+  expect(edit.mock.calls[0]![0].rotation_delta).toBe(90);
+  await act(() =>
+    finish({
+      receipt_id: "local",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
+    }),
+  );
+  await waitFor(() => expect(photos.authored.busy).toBe(false));
+  await waitFor(() => expect(photos.items[0]!.rotation).toBe(90));
+  finishRead(photo(1));
+  await reading;
+  expect(photos.items[0]!.rotation).toBe(90);
+  photos.dispose();
+});

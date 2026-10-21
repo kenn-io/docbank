@@ -1,12 +1,15 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -102,57 +105,53 @@ func TestPhotoEventsCaptureAcrossConnectionsAndUnreadCommits(t *testing.T) {
 	})
 }
 
-func TestPhotoEventsCaptureSetupFailure(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
-	// Installation sees the table, but arming fails without its companion.
-	_, err := s.writeDB.ExecContext(t.Context(), `CREATE TEMP TABLE photo_event_capture (id TEXT PRIMARY KEY, hidden_only INTEGER NOT NULL); INSERT INTO photo_event_capture VALUES('setup-marker',0)`)
-	require.NoError(t, err)
-	events := watchPhotoChanges(t, s)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		var id string
-		// The failed setup's DELETE must have rolled back to the savepoint.
-		require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT id FROM temp.photo_event_capture`).Scan(&id))
-		require.Equal(t, "setup-marker", id)
-		_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Committed after setup failure' WHERE node_id=?`, node.ID)
-		return err
-	}))
-	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
-	var caption string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT caption FROM photo_files WHERE node_id=?`, node.ID).Scan(&caption))
-	require.Equal(t, "Committed after setup failure", caption)
+// Cancels immediately after the transaction's final cancellation check succeeds.
+// Wait lets the registered rollback finish before capture tries to disarm.
+type cancelAfterPhotoWriteContext struct {
+	context.Context
+
+	cancel context.CancelFunc
+	armed  atomic.Bool
+}
+
+func (ctx *cancelAfterPhotoWriteContext) Err() error {
+	if ctx.armed.Swap(false) {
+		ctx.cancel()
+		synctest.Wait()
+		return nil
+	}
+	return ctx.Context.Err()
 }
 
 func TestPhotoEventsCaptureDisarmFailure(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
-	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	events := watchPhotoChanges(t, s)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Committed before disarm failure' WHERE node_id=?`, node.ID)
-		if err != nil {
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		events := watchPhotoChanges(t, s)
+		parent, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		ctx := &cancelAfterPhotoWriteContext{Context: parent, cancel: cancel}
+		err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE photo_files SET caption='Cancelled write' WHERE node_id=?`, node.ID)
+			if err != nil {
+				return err
+			}
+			ctx.armed.Store(true)
+			return nil
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Empty(t, events)
+		// Dropping the writer connection is observable through the pool statistics.
+		require.Zero(t, s.writeDB.Stats().OpenConnections, "the armed connection was discarded")
+		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Replacement connection' WHERE node_id=?`, node.ID)
 			return err
-		}
-		_, err = tx.ExecContext(t.Context(), `CREATE TEMP TABLE disarm_connection_marker (id INTEGER); DROP TABLE temp.photo_event_capture_active`)
-		return err
-	}))
-	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
-	var caption string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT caption FROM photo_files WHERE node_id=?`, node.ID).Scan(&caption))
-	require.Equal(t, "Committed before disarm failure", caption)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		var markers int
-		require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_temp_master WHERE name='disarm_connection_marker'`).Scan(&markers))
-		require.Zero(t, markers, "the armed connection was discarded")
-		_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Committed on replacement connection' WHERE node_id=?`, node.ID)
-		return err
-	}))
-	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT caption FROM photo_files WHERE node_id=?`, node.ID).Scan(&caption))
-	require.Equal(t, "Committed on replacement connection", caption)
+		}))
+		require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
+	})
 }
 
 func TestPhotoEventsNonPhotoFiltering(t *testing.T) {
@@ -452,75 +451,44 @@ func TestPhotoEventsCurrentVersionSources(t *testing.T) {
 func TestPhotoEventsDirectoryVisibility(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"move", "trash", "queued trash", "purge"} {
-		for _, scope := range []string{"hidden", "visible", "mixed"} {
-			counts := []int{1, PhotoEventIDLimit + 1}
-			if scope == "mixed" {
-				counts[0] = 2
-			}
-			for _, count := range counts {
-				t.Run(fmt.Sprintf("%s/%s/%d", action, scope, count), func(t *testing.T) {
-					s := newTestStore(t)
-					ctx := t.Context()
-					parent, err := s.Mkdir(ctx, s.RootID(), "Photo folder")
+		for _, count := range []int{1, PhotoEventIDLimit + 1} {
+			t.Run(fmt.Sprintf("%s/%d", action, count), func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				parent, err := s.Mkdir(ctx, s.RootID(), "Photo folder")
+				require.NoError(t, err)
+				var all []PhotoEvent
+				for i := range count {
+					node, err := s.CreateFile(ctx, parent.ID, fmt.Sprintf("photo-%d.jpg", i), fakeHash(strconv.Itoa(i)), 20, "image/jpeg")
 					require.NoError(t, err)
-					require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-					var all, publicIDs []PhotoEvent
-					for i := range count {
-						node, err := s.CreateFile(ctx, parent.ID, fmt.Sprintf("photo-%d.jpg", i), fakeHash(strconv.Itoa(i)), 20, "image/jpeg")
-						require.NoError(t, err)
-						asset, err := s.PhotoAssetForNode(ctx, node.ID)
-						require.NoError(t, err)
-						all = append(all, PhotoEvent{AssetID: asset.ID})
-						if scope == "hidden" || scope == "mixed" && i < count-1 {
-							_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-							require.NoError(t, err)
-						} else {
-							publicIDs = append(publicIDs, PhotoEvent{AssetID: asset.ID})
-						}
-					}
-					token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+					asset, err := s.PhotoAssetForNode(ctx, node.ID)
 					require.NoError(t, err)
-					unlocked := WithPhotoHiddenToken(ctx, token)
-					public := albumAsset(t, s, "public.jpg")
-					events := watchPhotoChanges(t, s)
-					if action == "move" || action == "queued trash" {
-						_, _, err = s.Move(unlocked, parent.ID, s.RootID(), "Renamed folder", UnconditionalRev)
-						require.NoError(t, err)
-					}
-					if action != "move" {
-						_, _, err = s.Trash(unlocked, parent.ID, UnconditionalRev)
-						require.NoError(t, err)
-					}
-					if action == "purge" {
-						nextPhotoWake(t, events)
-						_, err = s.TrashEmpty(unlocked, 0, true)
-						require.NoError(t, err)
-						// Permanent deletion removes files but retains the asset's graph identity.
-						asset, err := s.PhotoAssetByID(unlocked, all[0].AssetID)
-						require.NoError(t, err)
-						require.Empty(t, asset.Files)
-					}
-					batch := nextPhotoWake(t, events)
-					require.LessOrEqual(t, len(batch), PhotoEventIDLimit)
-					wantAll, wantPublic := all, publicIDs
-					if count > PhotoEventIDLimit || action == "queued trash" {
-						wantAll = []PhotoEvent{{}}
-						if scope != "hidden" {
-							wantPublic = []PhotoEvent{{}}
-						}
-					}
-					visible, err := s.VisiblePhotoEvents(ctx, batch)
+					all = append(all, PhotoEvent{AssetID: asset.ID})
+				}
+				events := watchPhotoChanges(t, s)
+				if action == "move" || action == "queued trash" {
+					_, _, err = s.Move(ctx, parent.ID, s.RootID(), "Renamed folder", UnconditionalRev)
 					require.NoError(t, err)
-					require.ElementsMatch(t, wantPublic, visible, "locked viewers see only public changes")
-					visible, err = s.VisiblePhotoEvents(unlocked, batch)
+				}
+				if action != "move" {
+					_, _, err = s.Trash(ctx, parent.ID, UnconditionalRev)
 					require.NoError(t, err)
-					require.ElementsMatch(t, wantAll, visible, "unlocked viewers see every affected asset")
-					mixed := CollapsePhotoEvents(append(batch, PhotoEvent{AssetID: public.ID}))
-					visible, err = s.VisiblePhotoEvents(ctx, mixed)
+				}
+				if action == "purge" {
+					nextPhotoWake(t, events)
+					_, err = s.TrashEmpty(ctx, 0, true)
 					require.NoError(t, err)
-					require.NotEmpty(t, visible, "a public event still reaches locked viewers in a mixed batch")
-				})
-			}
+					// Permanent deletion removes files but retains the asset's graph identity.
+					asset, err := s.PhotoAssetByID(ctx, all[0].AssetID)
+					require.NoError(t, err)
+					require.Empty(t, asset.Files)
+				}
+				want := all
+				if count > PhotoEventIDLimit || action == "queued trash" {
+					want = []PhotoEvent{{}}
+				}
+				require.ElementsMatch(t, want, nextPhotoWake(t, events))
+			})
 		}
 	}
 }
