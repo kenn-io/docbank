@@ -445,8 +445,10 @@ drawer shows that exact version's metadata, including versions older than the
 newest 1,000 entries. Live nodes offer the existing verified download. Trashed
 nodes keep their Trash label and metadata but must be restored before their
 versions can be downloaded. Docbank does not substitute the current version.
-Links survive reload, session expiry, and browser back and forward navigation.
-Credential-fragment cleanup preserves the selection.
+Links survive reload and browser back and forward navigation. After session
+expiry, signing in with an API key in the same tab preserves the selection.
+Running `docbank web` opens a new session URL without the node/version fragment;
+reopen the link after signing in. Credential-fragment cleanup preserves the selection.
 
 Invalid links, missing or purged records, and versions belonging to another
 node show an unavailable selection. Query and photo links continue to work

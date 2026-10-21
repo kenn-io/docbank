@@ -200,7 +200,7 @@ it.each(["resolved", "invalid"])(
 it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offset=0"])(
   "preserves linked intent through sign-in when %s rejects the session",
   async (failingRequest) => {
-    history.replaceState(null, "", `/${link()}`);
+    history.replaceState(null, "", `/${link()}&query=%7B%7D`);
     let expired = true;
     api((url) => {
       if (url === failingRequest && expired) {
@@ -368,16 +368,62 @@ it("replaces an ordinary version drawer when a linked version opens in the same 
   expect(within(screen.getByRole("dialog")).getByText(oldID)).toBeTruthy();
 });
 
-it("clears the linked drawer when query editing replaces the hash", async () => {
+it("keeps the linked drawer when query editing updates or discards the draft", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
   api();
   render(App);
   await screen.findByText(oldID);
   await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
   await screen.findByRole("region", { name: "Query editor" });
-  await waitFor(() => expect(screen.queryByText(oldID)).toBeNull());
+  expect(screen.getByText(oldID)).toBeTruthy();
   expect(location.hash).toContain("query=");
-  expect(location.hash).not.toContain("node=");
+  expect(new URLSearchParams(location.hash.slice(1)).get("node")).toBe("42");
+  expect(new URLSearchParams(location.hash.slice(1)).get("version")).toBe(oldID);
+  await fireEvent.click(screen.getByRole("button", { name: "Discard query draft" }));
+  expect(location.hash).toBe(link());
+  expect(screen.getByText(oldID)).toBeTruthy();
+});
+
+it.each(["Lock web session", "Sign out"])(
+  "%s clears a combined query fragment while preserving the version link",
+  async (action) => {
+    history.replaceState(
+      null,
+      "",
+      `/#${action === "Lock web session" ? credentials : ""}${link().slice(1)}&query=%7B%7D`,
+    );
+    api();
+    render(App);
+    if (action === "Sign out") await signIn();
+    await screen.findByText(oldID);
+    await fireEvent.click(screen.getByRole("button", { name: action }));
+    await screen.findByText("Open your Docbank");
+    expect(location.hash).toBe(link());
+  },
+);
+
+it("keeps the folder row path after auto-selecting a version without a node path", async () => {
+  history.replaceState(null, "", `/#${credentials}`);
+  api((url) => {
+    if (url === "/api/v1/nodes/42") return Response.json({ ...node, path: undefined });
+    if (url.includes("/children"))
+      return Response.json({
+        directory: { ...root, path: "/Reports" },
+        items: [{ ...node, path: undefined }],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      });
+    return undefined;
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Version history" }));
+  await screen.findByText(currentID);
+  await act(() => {});
+  expect(
+    screen.getByRole("dialog", { name: "Immutable version history for /Reports/example.txt" }),
+  ).toBeTruthy();
 });
 
 it("keeps a linked version when photo cleanup rewrites a combined fragment", async () => {

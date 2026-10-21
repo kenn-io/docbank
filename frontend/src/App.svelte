@@ -103,9 +103,9 @@
   import QueryBar from "./QueryBar.svelte";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
-  import { parseQuery, type Query } from "./query.js";
+  import { canonicalQuery, parseQuery, type Query } from "./query.js";
   import { readQueryHighlights } from "./queryHighlights.js";
-  import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
+  import { queryFromFragment } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
   import TagLabel from "./TagLabel.svelte";
   import TagPicker from "./TagPicker.svelte";
@@ -1534,7 +1534,7 @@
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
-    if (!nodeVersionSelection) replaceQueryURL(null);
+    replaceQueryURL(null);
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;
@@ -2878,7 +2878,12 @@
   }
 
   function replaceQueryURL(query: Query | null): void {
-    writeQueryURL(query);
+    const url = new URL(location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    if (query) params.set("query", canonicalQuery(query));
+    else params.delete("query");
+    url.hash = params.toString();
+    history.replaceState(history.state, "", url.href);
     nodeVersionHash = location.hash;
   }
 
@@ -4567,7 +4572,9 @@
           <VersionHistoryDrawer
             session={webSession}
             {node}
-            path={panel.linked ? (node.path ?? node.name) : selected!.path}
+            path={panel.linked
+              ? (node.path ?? (selected?.node.id === node.id ? selected.path : node.name))
+              : selected!.path}
             pinnedVersion={panel.linked?.version}
             resolving={panel.fromLink && nodeVersionLoading}
             unavailable={panel.fromLink ? nodeVersionError : ""}
