@@ -250,6 +250,57 @@ func TestBackupScheduleLogsUnchangedFailuresOnce(t *testing.T) {
 
 func TestBackupScheduleRuntimeOverrides(t *testing.T) {
 	t.Parallel()
+	t.Run("interval", testBackupScheduleRuntimeIntervalOverrides)
+	t.Run("retention preserves deadline", testBackupScheduleRuntimeRetentionOverride)
+}
+
+func testBackupScheduleRuntimeRetentionOverride(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		d.Cfg.Backup.Interval = config.Duration(24 * time.Hour)
+		d.Cfg.Server.APIKey = "synthetic-key"
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+		require.NoError(t, err)
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		_, err = backup.Forget(t.Context(), repo, backup.ForgetOptions{SnapshotIDs: []string{points[0].SnapshotID}, AllowEmpty: true})
+		require.NoError(t, err)
+		// Model a backward clock correction without moving synctest's timer clock.
+		points[0].CreatedAt = time.Now().Add(48 * time.Hour).Format(time.RFC3339)
+		_, err = repo.WriteManifest(points[0])
+		require.NoError(t, err)
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		synctest.Wait()
+		time.Sleep(23 * time.Hour)
+		server := NewServer(d)
+		defer server.Close()
+		req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/v1/photos/settings", strings.NewReader(`{"backup_keep_last":2}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", d.Cfg.Server.APIKey)
+		req.Header.Set("If-Match", `"1"`)
+		res := httptest.NewRecorder()
+		server.Handler().ServeHTTP(res, req)
+		require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+		synctest.Wait()
+		unchanged, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Equal(t, points, unchanged, "retention changes wait for the next capture")
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2, "capture at the original deadline must use the updated retention")
+	})
+}
+
+func testBackupScheduleRuntimeIntervalOverrides(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		d := scheduledDeps(t)
 		d.Cfg.Backup.Interval, d.Cfg.Backup.KeepLast = 0, 0

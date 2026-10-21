@@ -137,7 +137,7 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 				jobs.ReportError(ctx, nil)
 				lastFailure = ""
 			}
-			changed = effectiveBackupConfig(d.Cfg.Backup, next) != cfg
+			changed = effectiveBackupConfig(d.Cfg.Backup, next).Interval != cfg.Interval
 			return changed, nil
 		}); waitErr != nil {
 			return waitErr
