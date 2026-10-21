@@ -299,6 +299,8 @@ func checkPhotoDurationOverrides(t *testing.T) {
 	}{
 		{[]string{"set", "backup.interval", "1h"}, new(int64(3600)), nil, ""},
 		{[]string{"set", "photos.hidden_unlock_lifetime", "15m"}, new(int64(3600)), new(int64(900)), ""},
+		{[]string{"set", "photos.hidden_unlock_lifetime", "48h"}, new(int64(3600)), new(int64(900)), "expected number <= 86400 (body.hidden_unlock_lifetime_seconds:"},
+		{[]string{"set", "backup.keep_last", "0"}, new(int64(3600)), new(int64(900)), "expected number >= 1 (body.backup_keep_last:"},
 		{[]string{"set", "backup.interval", "1.5s"}, new(int64(3600)), new(int64(900)), "whole-second duration"},
 		{[]string{"set", "backup.interval", "--", "-1h"}, new(int64(3600)), new(int64(900)), "422 validation"},
 		{[]string{"set", "backup.interval", "0"}, new(int64(0)), new(int64(900)), ""},

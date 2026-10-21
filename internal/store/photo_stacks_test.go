@@ -1198,6 +1198,7 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	legacySettings := strings.ReplaceAll(exported.String(), `,"burst_gap_seconds":4`, "")
 	v1 := strings.ReplaceAll(strings.ReplaceAll(legacySettings, `,"representative_sequence":null`, ""), `"version":2`, `"version":1`)
 	v1 = strings.ReplaceAll(v1, `"flag_owner":"",`, "")
+	v1 = strings.NewReplacer(`"backup_interval_seconds":3600,`, "", `"backup_keep_last":5,`, "", `"hidden_unlock_lifetime_seconds":900,`, "").Replace(v1)
 	require.Contains(t, strings.SplitN(v1, "\n", 2)[0], `"version":1`)
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(v1)))
@@ -1208,6 +1209,9 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, new("image"), settings.Preference)
 	require.Equal(t, 2, settings.BurstGapSeconds)
+	require.Nil(t, settings.BackupIntervalSeconds)
+	require.Nil(t, settings.BackupKeepLast)
+	require.Nil(t, settings.HiddenUnlockLifetimeSeconds)
 	for _, sequence := range []struct {
 		name string
 		wire string
