@@ -25,6 +25,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 	kitlogging "go.kenn.io/kit/logging"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/emailpdf"
@@ -515,7 +516,7 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	if telemetryReporter.Enabled() {
 		if err := jobSupervisor.Start(telemetry.HeartbeatJobName, func(ctx context.Context) error {
-			telemetry.RunHeartbeat(ctx, telemetryReporter, logger)
+			posthog.RunHeartbeat(ctx, telemetryReporter, logger)
 			return nil
 		}); err != nil {
 			logger.Warn("telemetry heartbeat not started", "error", err)

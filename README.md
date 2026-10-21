@@ -129,10 +129,9 @@ trash, maintenance, and restore.
 
 Docbank sends anonymous usage events by default:
 
-- `daemon_started` and `daemon_active` each time the daemon starts.
-- `daemon_active` once a day while the daemon runs.
-- `app_opened` when the web app opens, about once a day per browser and daemon
-  run.
+- `daemon_active` at startup and once per later UTC day while running.
+- `app_opened` when the web app opens, about once per UTC day per browser and
+  daemon run.
 - `screen_viewed` with a fixed screen name, once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
 - `session_ended` once when a tab closes or stays hidden for 30 minutes, or the
   terminal browser exits, with duration grouped into four buckets. Browser

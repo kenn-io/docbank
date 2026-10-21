@@ -1,22 +1,32 @@
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vite-plus/test";
+import type { BrowserTelemetryReporter } from "@kenn-io/kit-ui/utils/browser-telemetry";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { startSessionReporting } from "./session-duration.js";
 
 describe("session_ended reporting", () => {
+  const reportVisit = vi.fn<BrowserTelemetryReporter["reportVisit"]>();
+  let quietChange: Parameters<BrowserTelemetryReporter["onQuietChange"]>[0];
+  const reporter: Pick<BrowserTelemetryReporter, "reportVisit" | "onQuietChange"> = {
+    reportVisit,
+    onQuietChange: (listener) => {
+      quietChange = listener;
+      listener(false, "enabled");
+      return () => {
+        quietChange = () => undefined;
+      };
+    },
+  };
   let reporting: ReturnType<typeof startSessionReporting> | undefined;
   let now: number;
   let hidden: boolean;
-  let fetchMock: MockInstance<typeof fetch>;
 
   beforeEach(() => {
+    reportVisit.mockClear();
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     now = 0;
     hidden = false;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
     vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
-    fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
   });
 
   afterEach(() => {
@@ -26,20 +36,17 @@ describe("session_ended reporting", () => {
     vi.restoreAllMocks();
   });
 
-  const sessionReports = () =>
-    fetchMock.mock.calls.filter(
-      ([, init]) => JSON.parse(String(init?.body)).event === "session_ended",
-    );
+  const sessionReports = () => reportVisit.mock.calls.map(([event]) => event);
   const expectBucket = (bucket: string) => {
-    expect(sessionReports()).toHaveLength(1);
-    const [url, init] = sessionReports()[0] ?? [];
-    expect(url).toBe("/api/daemon/telemetry/events");
-    expect(init?.keepalive).toBe(true);
-    expect(new Headers(init?.headers).get("X-Docbank-Web-Session")).toBe("secret");
-    expect(JSON.parse(String(init?.body))).toEqual({
-      event: "session_ended",
-      properties: { surface: "web", duration_bucket: bucket },
-    });
+    expect(reportVisit.mock.calls).toEqual([
+      [
+        {
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: bucket },
+        },
+        { keepalive: true },
+      ],
+    ]);
   };
   const visibility = (value: boolean) => {
     hidden = value;
@@ -48,7 +55,7 @@ describe("session_ended reporting", () => {
 
   it("reports nothing for a hidden-only page", async () => {
     hidden = true;
-    reporting = startSessionReporting("secret");
+    reporting = startSessionReporting(reporter);
     now = 3_600_000;
     await vi.advanceTimersByTimeAsync(3_600_000);
     window.dispatchEvent(new Event("pagehide"));
@@ -57,7 +64,7 @@ describe("session_ended reporting", () => {
   });
 
   it("sums twenty one-minute visible stretches into one session", async () => {
-    reporting = startSessionReporting("secret");
+    reporting = startSessionReporting(reporter);
     for (let i = 0; i < 20; i++) {
       now += 60_000;
       visibility(true);
@@ -72,7 +79,7 @@ describe("session_ended reporting", () => {
   });
 
   it("ends the session after thirty hidden minutes without a second pagehide report", async () => {
-    reporting = startSessionReporting("secret");
+    reporting = startSessionReporting(reporter);
     now = 120_000;
     visibility(true);
     now += 1_800_000;
@@ -93,8 +100,8 @@ describe("session_ended reporting", () => {
     [300_000, "5_to_30m"],
     [1_800_000, "5_to_30m"],
     [1_800_001, "over_30m"],
-  ])("buckets %i visible milliseconds as %s", async (elapsed, bucket) => {
-    reporting = startSessionReporting("secret");
+  ])("buckets %i visible milliseconds as %s", (elapsed, bucket) => {
+    reporting = startSessionReporting(reporter);
     now = Number(elapsed);
     window.dispatchEvent(new Event("pagehide"));
     reporting.stop();
@@ -105,8 +112,8 @@ describe("session_ended reporting", () => {
     ["bfcache restore", 30_000, "under_1m"],
     ["visibilitychange with a suspended timer", 240_000, "1_to_5m"],
     ["pageshow with a suspended timer", 240_000, "1_to_5m"],
-  ])("starts a fresh session on %s", async (resume, elapsed, bucket) => {
-    reporting = startSessionReporting("secret");
+  ])("starts a fresh session on %s", (resume, elapsed, bucket) => {
+    reporting = startSessionReporting(reporter);
     now = 120_000;
     if (resume === "bfcache restore") window.dispatchEvent(new Event("pagehide"));
     else visibility(true);
@@ -120,13 +127,14 @@ describe("session_ended reporting", () => {
     now += Number(elapsed);
     window.dispatchEvent(new Event("pagehide"));
     reporting.stop();
-    expect(
-      sessionReports().map(([, init]) => JSON.parse(String(init?.body)).properties.duration_bucket),
-    ).toEqual(["1_to_5m", bucket]);
+    expect(sessionReports().map((event) => event.properties.duration_bucket)).toEqual([
+      "1_to_5m",
+      bucket,
+    ]);
   });
 
   it("takes the final bucket once without sending it", () => {
-    reporting = startSessionReporting("secret");
+    reporting = startSessionReporting(reporter);
     now = 120_000;
     visibility(true);
     expect(reporting.take()).toBe("1_to_5m");
@@ -134,19 +142,20 @@ describe("session_ended reporting", () => {
     expect(sessionReports()).toHaveLength(0);
   });
 
-  it("removes listeners when stopping after a failed send", async () => {
-    reporting = startSessionReporting("secret");
-    let reject!: (cause: Error) => void;
-    fetchMock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((_, no) => {
-          reject = no;
-        }),
-    );
-    now = 120_000;
-    reporting.stop();
+  it("stops duration work when disabled, resumes when enabled, and removes listeners on stop", async () => {
+    reporting = startSessionReporting(reporter);
+    now = 200_000;
+    quietChange(true, "disabled");
+    visibility(true);
+    expect(vi.getTimerCount()).toBe(0);
+    window.dispatchEvent(new Event("pagehide"));
+    expect(sessionReports()).toHaveLength(0);
+    hidden = false;
+    quietChange(false, "enabled");
+    now += 200_000;
+    window.dispatchEvent(new Event("pagehide"));
     expectBucket("1_to_5m");
-    reject(new Error("offline"));
+    reporting.stop();
     visibility(false);
     window.dispatchEvent(new Event("pageshow"));
     now += 120_000;

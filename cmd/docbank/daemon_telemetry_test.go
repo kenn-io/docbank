@@ -76,16 +76,6 @@ func (d telemetryTestDaemon) requireNoHeartbeatOrInstallFile(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(d.root, posthog.InstallFileName))
 }
 
-func TestSendTUISessionEndedAcceptedByRunningDaemon(t *testing.T) {
-	t.Setenv(telemetry.EnabledEnv, "0")
-	startTelemetryTestDaemon(t)
-	c, running, err := daemonconn.Running(t.Context())
-	require.NoError(t, err)
-	require.True(t, running)
-	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
-}
-
 func TestServeAcceptsAppOpenedWhenTelemetryOptedOut(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
 	t.Setenv(posthog.GenericEnabledEnv, "1")

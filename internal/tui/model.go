@@ -304,7 +304,7 @@ type mutationCompletedMsg struct {
 
 type spinnerTickMsg struct{}
 
-type screenReportFailedMsg struct{}
+type screenReportFailedMsg struct{ retryAt time.Time }
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -342,8 +342,18 @@ func NewMutationUnconfirmedError(action string, cause error) error {
 
 const spinnerInterval = 80 * time.Millisecond
 
-// screenRetryDelay spaces key-press retries of a failed screen report.
-const screenRetryDelay = 30 * time.Second
+// ScreenRetryDelay spaces retries of a failed screen report.
+const ScreenRetryDelay = 30 * time.Second
+
+// ScreenRetryError carries the backend's deadline for retrying a failed screen report.
+type ScreenRetryError struct {
+	Err error
+	At  time.Time
+}
+
+func (e *ScreenRetryError) Error() string { return e.Err.Error() }
+
+func (e *ScreenRetryError) Unwrap() error { return e.Err }
 
 // Model is a virtual-tree, search, audited-history, and recoverable-trash
 // browser. Update uses a value receiver because Bubble Tea treats models as
@@ -541,8 +551,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	now := time.Now()
 	screen, day := next.visibleScreen(), now.UTC().Format(time.DateOnly)
 	_, input := message.(tea.KeyPressMsg)
-	retry := input && next.reportedDay != day && !now.Before(next.screenRetryAt)
-	if !next.quitting && (screen != m.visibleScreen() || retry) {
+	retry := input && next.reportedDay != day
+	if !next.quitting && !now.Before(next.screenRetryAt) && (screen != m.visibleScreen() || retry) {
 		next.reportedDay = day
 		cmd = tea.Batch(cmd, next.reportScreen(screen))
 	}
@@ -553,7 +563,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case screenReportFailedMsg:
 		m.reportedDay = ""
-		m.screenRetryAt = time.Now().Add(screenRetryDelay)
+		m.screenRetryAt = msg.retryAt
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -3060,7 +3070,10 @@ func (m Model) reportScreen(screen string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(m.ctx, 3*time.Second)
 		defer cancel()
 		if err := m.backend.ReportScreen(ctx, screen); err != nil {
-			return screenReportFailedMsg{}
+			if retry, ok := errors.AsType[*ScreenRetryError](err); ok {
+				return screenReportFailedMsg{retryAt: retry.At}
+			}
+			return screenReportFailedMsg{retryAt: time.Now().Add(ScreenRetryDelay)}
 		}
 		return nil
 	}

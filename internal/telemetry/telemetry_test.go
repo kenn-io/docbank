@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"io"
 	"log/slog"
@@ -89,7 +88,7 @@ func TestNewOptedOut(t *testing.T) {
 			dir := t.TempDir()
 			reporter := New(Options{Dir: dir, Version: "v1.2.3", Logger: discardLogger()})
 			assert.False(t, reporter.Enabled())
-			for _, event := range []string{EventAppOpened, EventDaemonStarted, EventDaemonActive} {
+			for _, event := range []string{EventAppOpened, EventDaemonActive} {
 				assert.True(t, reporter.EventAllowed(event), event)
 			}
 			assert.False(t, reporter.EventAllowed("search_run"))
@@ -193,40 +192,4 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 	assert.Contains(t, logs.String(), "synthetic ingest rejection")
 	assert.Contains(t, logs.String(), `"daemon":"synthetic"`)
 	assert.Contains(t, logs.String(), `"component":"posthog"`)
-}
-
-type recordingClient struct {
-	mu     sync.Mutex
-	events []string
-}
-
-func (c *recordingClient) Capture(event string, _ map[string]any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.events = append(c.events, event)
-	return nil
-}
-
-func (c *recordingClient) Close() error  { return nil }
-func (c *recordingClient) Enabled() bool { return true }
-
-func (c *recordingClient) captured() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]string(nil), c.events...)
-}
-
-// Background daemons exit after idle_timeout, so each start must send both events at once.
-func TestHeartbeatSendsStartedAndActiveAtStart(t *testing.T) {
-	client := &recordingClient{}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		RunHeartbeat(ctx, client, discardLogger())
-	}()
-	require.Eventually(t, func() bool { return len(client.captured()) == 2 }, 5*time.Second, 5*time.Millisecond)
-	cancel()
-	<-done
-	assert.Equal(t, []string{EventDaemonStarted, EventDaemonActive}, client.captured())
 }

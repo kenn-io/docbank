@@ -2785,16 +2785,24 @@ func requireBrowseReportOnly(t *testing.T, backend *fakeBackend, cmd tea.Cmd) {
 
 func TestScreenReportingFollowsNavigationAndIgnoresPolling(t *testing.T) {
 	backend := newFakeBackend()
-	backend.screenErr = errors.New("synthetic telemetry rejection")
+	retryAt := time.Now().Add(time.Minute)
+	backend.screenErr = &ScreenRetryError{Err: errors.New("synthetic telemetry rejection"), At: retryAt}
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
 	model = runModelCommand(t, model, model.Init())
 	expectedScreens := []string{"browse"}
 	assert.Equal(t, expectedScreens, backend.screens)
 	assert.Empty(t, model.reportedDay)
+	assert.Equal(t, retryAt, model.screenRetryAt)
 	backend.screenErr = nil
 	model, cmd := updateModel(t, model, runeKey('j'))
 	assert.Nil(t, cmd, "a key press within the retry delay must not resend")
+	assert.Equal(t, expectedScreens, backend.screens)
+	model, cmd = updateModel(t, model, runeKey('?'))
+	assert.Nil(t, cmd, "navigation during backoff must not resend")
+	assert.True(t, model.helpOpen)
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	assert.Nil(t, cmd)
 	assert.Equal(t, expectedScreens, backend.screens)
 	model.screenRetryAt = time.Now().Add(-time.Second)
 	model, cmd = updateModel(t, model, runeKey('j'))
@@ -2820,8 +2828,11 @@ func TestScreenReportingFollowsNavigationAndIgnoresPolling(t *testing.T) {
 	model.reportedDay = "2000-01-01"
 	model, _ = updateModel(t, model, spinnerTickMsg{})
 	assert.Equal(t, expectedScreens, backend.screens)
+	backend.screenErr = errors.New("synthetic telemetry rejection")
+	beforeRetry := time.Now()
 	model, cmd = updateModel(t, model, runeKey('s'))
-	_ = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, cmd)
+	assert.WithinRange(t, model.screenRetryAt, beforeRetry.Add(ScreenRetryDelay), time.Now().Add(ScreenRetryDelay))
 	assert.Equal(t, append(expectedScreens, "browse"), backend.screens)
 }
 

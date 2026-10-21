@@ -55,6 +55,7 @@ The directory layout is created on first use:
 ├── web-downloads/       # private, temporary verified browser downloads
 ├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created unless telemetry is turned off, kept if it is later turned off
 ├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
+├── telemetry-tui-state.json # daily TUI receipt and accepted screens; with its .lock
 ├── config.toml          # optional; see below
 ├── lane-controls.json   # local job pause and concurrency settings
 ├── vault.lock           # advisory lock, held by a daemon or target restore
@@ -1009,15 +1010,13 @@ event to its own daemon, which sends it.
 
 Docbank sends these events:
 
-- `daemon_started` and `daemon_active` at each daemon start, then
-  `daemon_active` on the first hourly check of each later UTC day. Days when
-  the machine sleeps are not backfilled. A background daemon exits
-  after `idle_timeout` (30 minutes by default) and starts again on the next
-  command, so most of these go out at a daemon start, and `daemon_started`
-  counts starts rather than installs.
+- `daemon_active` at startup and on the first hourly check of each later UTC
+  day. Days when the machine sleeps are not backfilled.
 - `app_opened` when the web app loads, and again on the first window focus of
-  a later UTC day. The browser remembers the day for the daemon's address, so
-  it sends about one per UTC day until the daemon restarts on a new address.
+  a later UTC day. Claims use `docbank.web.telemetry.v1` in browser storage,
+  retain the latest 35 claimed dates, and apply per browser origin. The default
+  loopback origin changes at each daemon start, so a new daemon run checks
+  again. A fixed `[web] public_origin` keeps claims across restarts.
 - `session_ended` once when a browser tab closes or stays hidden for 30 minutes,
   or the terminal browser exits, including when its terminal closes. Browser
   visible time adds up across tab switches. Hidden time is excluded. The
@@ -1040,6 +1039,23 @@ The daemon remembers which screen events it has queued today in memory and in
 `telemetry-screen-views.json` beside the install ID. If it cannot queue an
 event, that screen remains eligible for another attempt. Remote delivery is
 best effort.
+
+Browser reports share a daily gate. Disabled receipts stop reports and duration
+listeners until a later day's load or focus, or a load from a new origin. Failures back off and stop after
+six attempts. Hidden tabs report their latest screen when visible. Screen visibility
+listeners stop while disabled or unavailable; focus can check on a later day.
+Session reports use the shared gate's in-memory queue while it checks permission.
+
+TUI reports use a running daemon and lock `telemetry-tui-state.json` while checking.
+The private v1 JSON file stores the UTC day, disabled receipt, and accepted
+screen names. Restarts reuse today's state, including opaque screen names.
+Missing or unsupported versions are refused without rewriting. Unknown fields
+in v1 are ignored and dropped only on a later rewrite. Malformed v1 state and
+other dates, including future dates after clock correction, are empty until a
+new receipt replaces them.
+Failures retry on input after 30 seconds, including after screen changes. Six
+failed attempts pause this process's reports until UTC rollover, covering file,
+lock, discovery, POST, and receipt errors. Data operations can start daemons.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 

@@ -1,23 +1,54 @@
-import { startAppOpenedReporting as startKitAppOpened } from "@kenn-io/kit-ui/utils/app-opened";
+import { startBrowserTelemetry } from "@kenn-io/kit-ui/utils/browser-telemetry";
 import { APIError, sessionResponse } from "./api-transport.js";
 import { getReportTelemetryEventUrl } from "./generated/docbank.js";
 
-/** Reports app_opened to the daemon with the browser session through kit-ui's daily gate; returns a cleanup. */
-export function startAppOpenedReporting(session: string): () => void {
-  return startKitAppOpened({
+export function startTelemetryReporting(session: string) {
+  const reporter = startBrowserTelemetry({
     route: getReportTelemetryEventUrl(),
     surface: "web",
-    storageKey: "docbank.web.app-opened.v1",
-    post: (route, { event }) =>
+    storageKey: "docbank.web.telemetry.v1",
+    post: (route, event, options) =>
       sessionResponse(route, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event }),
+        body: JSON.stringify(event),
         session,
-      }).then(
-        (response) => ({ status: response.status }),
-        (cause: unknown) =>
-          cause instanceof APIError ? { status: cause.status } : Promise.reject(cause),
-      ),
+        keepalive: options?.keepalive,
+        signal: AbortSignal.timeout(3000),
+      }).catch((cause: unknown) => {
+        if (cause instanceof APIError) return { status: cause.status, data: undefined };
+        throw cause;
+      }),
   });
+  let latestScreen: string | undefined;
+  let active = false;
+  const reportVisibleScreen = () => {
+    if (latestScreen !== undefined && document.visibilityState === "visible")
+      reporter.reportScreen(latestScreen);
+  };
+  const unsubscribe = reporter.onQuietChange((_quiet, reason) => {
+    const resume = reason === "checking" || reason === "enabled";
+    if (resume && !active) document.addEventListener("visibilitychange", reportVisibleScreen);
+    if (!resume && active) document.removeEventListener("visibilitychange", reportVisibleScreen);
+    active = resume;
+    if (active) reportVisibleScreen();
+  });
+  // Update the current screen before kit-ui's focus handler rolls over the UTC day.
+  // Capture also sees element focus, which needs no report.
+  const windowFocus = (event: FocusEvent) => {
+    if (!(event.target instanceof Node)) reportVisibleScreen();
+  };
+  window.addEventListener("focus", windowFocus, true);
+  return {
+    ...reporter,
+    reportScreen(screen: string) {
+      latestScreen = screen;
+      reportVisibleScreen();
+    },
+    stop() {
+      window.removeEventListener("focus", windowFocus, true);
+      reporter.stop();
+      unsubscribe();
+    },
+  };
 }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
 afterEach(() => {
@@ -1484,7 +1485,7 @@ it("clears page selection across folder, Back, query, tag-filter, and session tr
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 });
 
-it("restores the tag view sort when returning from a tagged folder", async () => {
+it("restores tag navigation and sort after opening folders or All files", async () => {
   prepareSelectionApp();
   installSelectionBackend();
   render(App);
@@ -1507,6 +1508,14 @@ it("restores the tag view sort when returning from a tagged folder", async () =>
   expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe(
     "descending",
   );
+  const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
+  await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
+  await screen.findByRole("cell", { name: "Reports" });
+  await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  expect(screen.queryByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeNull();
 });
 
 it("returns to search results after opening All files", async () => {
@@ -1529,50 +1538,21 @@ it("returns to search results after opening All files", async () => {
   expect(search.value).toBe("alpha");
 });
 
-it("clears the tag filter when All files opens and restores it on Back", async () => {
+it("reports tag and query screens", async () => {
   prepareSelectionApp();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const { fetchMock } = installSelectionBackend();
-  const backend = fetchMock.getMockImplementation()!;
-  const reportedScreens: string[] = [];
-  fetchMock.mockImplementation(async (input, init) => {
-    if (String(input) === "/api/daemon/telemetry/events") {
-      const payload = JSON.parse(String(init?.body));
-      if (payload.event === "screen_viewed") reportedScreens.push(payload.properties.screen);
-      return new Response(null, { status: 202 });
-    }
-    return backend(input, init);
-  });
+  installSelectionBackend();
+  const telemetry = vi.spyOn(appOpened, "startTelemetryReporting");
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
+  const reportScreen = vi.spyOn(telemetry.mock.results[0]!.value, "reportScreen");
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
-  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
-  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
-
-  const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
-  await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
-  await screen.findByRole("cell", { name: "Reports" });
-  await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" });
-
-  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
-  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
-  expect(screen.queryByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeNull();
-  await waitFor(() => expect(reportedScreens.at(-1)).toBe("tags"));
+  await fireEvent.click(await screen.findByRole("option", { name: "tax (3)" }));
+  await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("tags"));
   await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  await screen.findByRole("region", { name: "Query editor" });
-  await waitFor(() => expect(reportedScreens.at(-1)).toBe("search"));
-  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
-  // A new UTC day clears the page's reported screens, so the retained-tag search must report again.
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(Date.now() + 86_400_000);
-  reportedScreens.length = 0;
-  const search = screen.getByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "alpha" } });
-  await fireEvent.submit(search.closest("form")!);
-  await screen.findByText("Search results");
-  await waitFor(() => expect(reportedScreens).toEqual(["search"]));
+  await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith("search"));
 });
 
 it("ignores a folder lookup that finishes after a newer navigation", async () => {
@@ -1712,19 +1692,8 @@ const keyboardReviewedTagID = "44444444-4444-4444-8444-444444444444";
 
 function prepareKeyboardApp(): Storage {
   prepareSelectionApp();
-  const entries = new Map<string, string>();
-  const storage: Storage = {
-    get length() {
-      return entries.size;
-    },
-    clear: () => entries.clear(),
-    getItem: (key) => entries.get(key) ?? null,
-    key: (index) => [...entries.keys()][index] ?? null,
-    removeItem: (key) => entries.delete(key),
-    setItem: (key, value) => entries.set(key, value),
-  };
-  vi.stubGlobal("localStorage", storage);
-  return storage;
+  localStorage.clear();
+  return localStorage;
 }
 
 function installKeyboardBackend(

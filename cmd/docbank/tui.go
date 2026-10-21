@@ -72,7 +72,7 @@ enrollment remain outside the TUI.`,
 		_, err = tea.NewProgram(model, opts...).Run()
 		if tuiProgramRan(err) {
 			// Usage reporting is best effort.
-			reportTUISessionEnded(time.Since(started))
+			reportTUISessionEnded(&backend.telemetry, time.Since(started))
 		}
 		if err != nil {
 			return fmt.Errorf("running docbank TUI: %w", err)
@@ -85,32 +85,16 @@ func tuiProgramRan(err error) bool {
 	return err == nil || errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled)
 }
 
-// reportTUISessionEnded sends session_ended only to an already-running daemon.
-// A report that doesn't finish within 50 ms may be lost.
-func reportTUISessionEnded(elapsed time.Duration) {
+// reportTUISessionEnded uses only a running daemon; unfinished reports may be lost after 50 ms.
+func reportTUISessionEnded(gate *tuiTelemetry, elapsed time.Duration) {
 	var sends posthog.SendGroup
 	defer sends.Wait(50 * time.Millisecond)
-	sends.Go(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		c, ok, err := daemonconn.Running(ctx)
-		if err != nil || !ok {
-			return
-		}
-		defer func() { _ = c.Close() }()
-		_ = sendTUISessionEnded(ctx, c, elapsed)
-	})
+	sends.Go(func() { _ = sendTUISessionEnded(context.Background(), gate, elapsed) })
 }
 
-func sendTUISessionEnded(ctx context.Context, c *daemonconn.Connection, elapsed time.Duration) error {
+func sendTUISessionEnded(ctx context.Context, gate *tuiTelemetry, elapsed time.Duration) error {
 	properties := &apiclient.TelemetryEventProperties{Surface: "tui", DurationBucket: telemetry.DurationBucket(elapsed)}
-	_, err := c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{
-		Body: &apiclient.ReportTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: properties},
-	})
-	if err != nil {
-		return fmt.Errorf("reporting TUI session_ended: %w", err)
-	}
-	return nil
+	return gate.report(ctx, &apiclient.ReportTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: properties})
 }
 
 func (b *tuiDaemonBackend) Close() error {
@@ -134,6 +118,8 @@ type tuiDaemonBackend struct {
 	mu      sync.Mutex
 	ensure  tuiClientFactory
 	initial *daemonconn.Connection
+
+	telemetry tuiTelemetry
 }
 
 func (b *tuiDaemonBackend) acquire(ctx context.Context) (*daemonconn.Connection, error) {
@@ -492,14 +478,10 @@ func (b *tuiDaemonBackend) AuditHistory(
 }
 
 func (b *tuiDaemonBackend) ReportScreen(ctx context.Context, screen string) error {
-	_, err := withTUIClient(ctx, b, func(c *daemonconn.Connection) (*apiclient.ReportTelemetryEventResponse, error) {
-		body := &apiclient.ReportTelemetryEventBody{
-			Event:      telemetry.EventScreenViewed,
-			Properties: &apiclient.TelemetryEventProperties{Screen: screen, Surface: "tui"},
-		}
-		return c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{Body: body})
+	return b.telemetry.report(ctx, &apiclient.ReportTelemetryEventBody{
+		Event:      telemetry.EventScreenViewed,
+		Properties: &apiclient.TelemetryEventProperties{Screen: screen, Surface: "tui"},
 	})
-	return err
 }
 
 func init() {

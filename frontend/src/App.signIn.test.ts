@@ -1,12 +1,12 @@
-import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
+import { beforeEach, afterEach, expect, it, type MockInstance, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 
-const store = { getItem: vi.fn(() => null), setItem: vi.fn(), removeItem: vi.fn() };
+let setItem: MockInstance<Storage["setItem"]>;
 beforeEach(() => {
-  store.setItem.mockClear();
-  vi.stubGlobal("localStorage", store);
-  vi.stubGlobal("sessionStorage", store);
+  localStorage.clear();
+  sessionStorage.clear();
+  setItem = vi.spyOn(Storage.prototype, "setItem");
 });
 
 afterEach(() => {
@@ -34,7 +34,7 @@ it("offers the API key and clears it after rejected sign-in", async () => {
     api_key: "synthetic-browser-credential-0123456789",
   });
   expect(
-    store.setItem.mock.calls.some((call) => String(call).includes("synthetic-browser-credential")),
+    setItem.mock.calls.some((call) => String(call).includes("synthetic-browser-credential")),
   ).toBe(false);
 });
 

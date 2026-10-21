@@ -9,12 +9,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -24,36 +27,13 @@ import (
 	doctui "go.kenn.io/docbank/internal/tui"
 )
 
-func TestSendTUISessionEnded(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
-		body, err := io.ReadAll(r.Body)
-		assert.NoError(t, err)
-		assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, err = w.Write([]byte(`{}`))
-		assert.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-	c := daemonconn.New(server.URL, "synthetic-api-key")
-	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
-	assert.Equal(t, int32(1), requests.Load())
-}
-
 func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	started := make(chan context.Context, 1)
 	release := make(chan struct{})
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/daemon/telemetry/events" {
-			var event struct {
-				Event string `json:"event"`
-			}
+			var event api.TelemetryEventRequest
 			assert.NoError(t, json.UnmarshalRead(r.Body, &event))
 			if event.Event == "session_ended" {
 				started <- r.Context()
@@ -75,6 +55,14 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	})
 	t.Cleanup(func() {
 		close(release)
+		// Wait for the detached exit report to release its lock before TempDir cleanup.
+		lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json.lock"))
+		defer func() { require.NoError(t, lock.Close()) }()
+		require.Eventually(t, func() bool {
+			locked, err := lock.TryLock()
+			require.NoError(t, err)
+			return locked
+		}, 2*time.Second, time.Millisecond)
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -364,24 +352,4 @@ func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
 	require.ErrorContains(t, err, "trash outcome is unconfirmed")
 	require.ErrorIs(t, err, doctui.ErrMutationUnconfirmed)
 	assert.Equal(t, int32(1), requests.Load())
-}
-
-func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
-		var request api.TelemetryEventRequest
-		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-		assert.Equal(t, "screen_viewed", request.Event)
-		assert.Equal(t, &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}, request.Properties)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"status":"queued"}`))
-	}))
-	defer server.Close()
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
-		return daemonconn.New(server.URL, "synthetic-key"), nil
-	}}
-	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
 }
