@@ -1,10 +1,8 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -53,7 +51,7 @@ files use "docbank rendition window"; for an older version use
 		defer func() { _ = rc.Close() }()
 		output := &catOutput{Writer: cmd.OutOrStdout()}
 		if _, err := rc.CopyVerified(output); err != nil {
-			if !errors.Is(output.err, io.ErrClosedPipe) && !errors.Is(output.err, syscall.EPIPE) {
+			if !isClosedOutputPipe(output.err) {
 				reportFailure(cmd, c, "open", err, false)
 			}
 			return fmt.Errorf("streaming %q: %w", args[0], err)

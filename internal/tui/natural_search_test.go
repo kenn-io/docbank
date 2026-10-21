@@ -29,6 +29,43 @@ func naturalSearchReport(nodeID int64, versionID, excerpt string) api.DocumentSe
 	}
 }
 
+func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reply", true: "replaced pending"}[replaced], func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			fake.naturalSearch = api.DocumentSearchReport{ActualMode: "lexical"}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode = naturalLexical
+			model.naturalRerank = true
+			model.requestID, model.reportSearchID = 7, 7
+			model.naturalSearchID = 3
+			base := model.loadNaturalSearch("missing", model.requestID)()
+			model, rerank := updateModel(t, model, base)
+			require.NotNil(t, rerank)
+			assert.Empty(t, fake.actions)
+			if replaced {
+				model.requestID, model.reportSearchID = 8, 8
+				model.naturalSearchID = 4
+				base = model.loadNaturalSearch("another", model.requestID)()
+				model, rerank = updateModel(t, model, base)
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				rerank = batch[0]
+			} else {
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				model, rerank = updateModel(t, model, batch[0]())
+			}
+			runModelCommand(t, model, rerank)
+			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
+			assert.Equal(t, want, fake.actions)
+		})
+	}
+}
+
 func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	fake := newFakeBackend()
 	readme := fake.nodes["/README.txt"]

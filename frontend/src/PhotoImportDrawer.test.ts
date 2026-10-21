@@ -59,6 +59,77 @@ beforeEach(() => {
   vi.stubGlobal("File", NodeFile);
 });
 
+it.each(["conflict", "auth", "abort", "after item failure"])(
+  "reports outer Add failures once with exclusions: %s",
+  async (outcome) => {
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+    const module = await import("./photoImportStorage.js");
+    const createStorage = module.photoImportStorage;
+    let rejectSaved = false;
+    vi.spyOn(module, "photoImportStorage").mockImplementation((id, session) => {
+      const storage = createStorage(id, session);
+      return {
+        ...storage,
+        async saved() {
+          if (rejectSaved)
+            throw outcome === "auth"
+              ? new APIError("Session expired", 401, "unauthorized")
+              : new DOMException("Canceled", "AbortError");
+          return storage.saved();
+        },
+      };
+    });
+    const channel: PhotoImportTransport = {
+      planPhotoImport: vi
+        .fn()
+        .mockResolvedValue({ import_id: "outer", groups: [[0], [1]], unsupported: [] }),
+      uploadPhotoGroup: vi.fn().mockRejectedValue(new APIError("Upload failed", 500, "internal")),
+    };
+    const auth = vi.fn();
+    render(PhotoImportDrawer, {
+      channel,
+      vaultID: "outer-failure",
+      session: "session",
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: auth,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+      target: { files: files().slice(0, 2) },
+    });
+    const add = await screen.findByRole("button", { name: "Add 2 groups" });
+    const storage = createStorage("outer-failure", "session");
+    if (outcome === "conflict" || outcome === "after item failure") {
+      const checkpoint = await storage.load();
+      const change = () => storage.replace({ ...checkpoint!, revision: "other-tab" }, checkpoint);
+      if (outcome === "conflict") await change();
+      else
+        vi.mocked(channel.uploadPhotoGroup).mockImplementationOnce(async () => {
+          await change();
+          throw new APIError("Upload failed", 500, "internal");
+        });
+    } else {
+      rejectSaved = true;
+    }
+    await fireEvent.click(add);
+    if (outcome === "auth") await waitFor(() => expect(auth).toHaveBeenCalledOnce());
+    else
+      await screen.findByText(
+        outcome === "abort"
+          ? /Canceled/
+          : "Import progress changed in another tab. Close and reopen Add photos.",
+      );
+    if (outcome === "auth" || outcome === "abort") expect(failure).not.toHaveBeenCalled();
+    else expect(failure).toHaveBeenCalledExactlyOnceWith("session", "add");
+  },
+);
+
 afterEach(() => {
   vi.unstubAllGlobals();
   cleanup();

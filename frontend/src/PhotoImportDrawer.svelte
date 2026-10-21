@@ -377,6 +377,10 @@
         checkpoint = undefined;
       }
     } catch (cause) {
+      failed ||=
+        !controller.signal.aborted &&
+        !(cause instanceof APIError && cause.status === 401) &&
+        !(cause instanceof DOMException && cause.name === "AbortError");
       showError(cause);
     } finally {
       if (added) reportAction(session, "document_added");

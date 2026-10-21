@@ -362,6 +362,7 @@ func (e *ScreenRetryError) Unwrap() error { return e.Err }
 type deferredSearchReport struct {
 	requestID, searchID uint64
 	searchType          string
+	empty               bool
 }
 
 // Model is a virtual-tree, search, audited-history, and recoverable-trash
@@ -2490,9 +2491,9 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.reportSearchID = 0
 		var earlier tea.Cmd
 		if m.rerankReport.requestID != 0 {
-			earlier = m.reportAction("search_run", m.rerankReport.searchType, "")
+			earlier = m.reportSearch(m.rerankReport.searchType, m.rerankReport.empty)
 		}
-		m.rerankReport = deferredSearchReport{msg.requestID, msg.searchID, msg.report.ActualMode}
+		m.rerankReport = deferredSearchReport{msg.requestID, msg.searchID, msg.report.ActualMode, len(m.rows) == 0}
 		return m, tea.Batch(earlier, rerank)
 	}
 	if m.reportSearchID == msg.requestID && msg.report.ActualMode != "" {
@@ -2507,7 +2508,7 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 	var report tea.Cmd
 	if pending := m.rerankReport; pending.requestID == msg.requestID && pending.searchID == msg.searchID {
 		m.rerankReport = deferredSearchReport{}
-		report = m.reportAction("search_run", pending.searchType, "")
+		report = m.reportSearch(pending.searchType, pending.empty)
 	}
 	if msg.requestID != m.requestID || msg.searchID != m.naturalSearchID {
 		return m, report
