@@ -59,7 +59,7 @@
       : page?.items.find((version) => version.id === selectedVersionID),
   );
 
-  const timelineKey = $derived(`${session}:${node.id}`);
+  const timelineKey = $derived(`${session}:${node.id}:${onselect ? node.current_version_id : ""}`);
 
   $effect(() => {
     void timelineKey;

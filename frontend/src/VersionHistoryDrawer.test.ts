@@ -176,6 +176,49 @@ describe("version history drawer", () => {
     expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
   });
 
+  it("refreshes linked history when the same node has a new current version", async () => {
+    const older = version(createdVersionID, 1, "content_create", "a");
+    const previous = version(replacedVersionID, 2, "content_replace", "b");
+    const newest = version(currentVersionID, 4, "content_replace", "c");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json({ items: [previous, older], total: 2, limit: 1000, offset: 0 }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ items: [newest, previous, older], total: 3, limit: 1000, offset: 0 }),
+      );
+    const onselect = vi.fn();
+    const drawer = render(VersionHistoryDrawer, {
+      session: "short-lived",
+      node: { ...node, current_version_id: previous.id, revision: 2 },
+      path: "/Reports/example.txt",
+      pinnedVersion: older,
+      onselect,
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await screen.findByText("2 retained versions");
+    expect(screen.getByText("Current").closest("button")?.textContent).toContain("Revision 2");
+
+    await drawer.rerender({
+      node: { ...node, current_version_id: previous.id, revision: 3 },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await drawer.rerender({
+      node: { ...node, current_version_id: newest.id, revision: 4 },
+    });
+    await screen.findByText("3 retained versions");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/v1/nodes/42/versions?limit=1000&offset=0");
+    expect(screen.getByText("Current").closest("button")?.textContent).toContain("Revision 4");
+    expect(screen.getByText("Revision 2").closest("button")?.textContent).not.toContain("Current");
+    expect(screen.getByRole("button", { pressed: true }).textContent).toContain("Created");
+    expect(screen.getByText(createdVersionID)).toBeTruthy();
+    expect(onselect).not.toHaveBeenCalled();
+  });
+
   it("keeps the pinned version until the parent accepts a linked selection", async () => {
     const newest = version(currentVersionID, 3, "content_replace", "c");
     const older = version(createdVersionID, 1, "content_create", "a");
