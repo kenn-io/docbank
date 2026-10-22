@@ -145,7 +145,9 @@
     </p>{/if}
   {#if people.writeError && !merge && !editing}<p role="alert">{people.writeError}</p>{/if}
   {#if people.selected.length}<div class="selection" role="region" aria-label="Selected people">
-      <span>{people.selected.map((person) => person.display_name).join(" and ")} selected</span>
+      <span
+        >{people.selected.map((person) => distinctLabel(person, people.selected)).join(" and ")} selected</span
+      >
       <Button
         disabled={people.busy || people.selected.length !== 2}
         onclick={() => people.startMerge()}>Merge</Button
@@ -182,7 +184,7 @@
             }}>Rename</Button
           ><Checkbox
             label="Select"
-            ariaLabel={`Select ${person.display_name}`}
+            ariaLabel={`Select ${distinctLabel(person, people.items)}`}
             checked={selected(person)}
             disabled={!!merge || (!selected(person) && people.selected.length >= 2)}
             onchange={() => people.toggle(person)}

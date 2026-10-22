@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-21
+last_edited: 2026-10-22
 title: People
 description: Browse people and their photos, rename or merge people, and manage canonical records through the API and CLI.
 ---
@@ -28,6 +28,8 @@ A merge can stop when a face assigned to one person was rejected for the other. 
 1. Read the face with `docbank photos faces list <content-version-id>`.
 2. Withdraw the rejection with `docbank photos faces withdraw-rejection <content-version-id> --face <face-id> --person <rejected-person-id> --revision <face-revision>`.
 3. Select both people again and retry the merge.
+
+A browser merge is refused while Hidden is locked if either person has Hidden photos. Unlock Hidden and retry the merge.
 
 Locked Hidden, excluded, or trashed conflicts return notices without face IDs. Unlock, reinclude, or restore the photo before reviewing its rejection. Locking Hidden clears the selection and dialog.
 
