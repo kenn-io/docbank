@@ -41,7 +41,7 @@ describe("exact version fragments", () => {
   });
 });
 
-it("rejects a linked version owned by another node without current substitution", async () => {
+it("rejects a linked version owned by another node", async () => {
   const oldVersion = contentVersion(version, 1, "content_create", "a");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (String(input) === "/api/v1/nodes/42") return Response.json(node);

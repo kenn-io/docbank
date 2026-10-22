@@ -38,7 +38,7 @@ describe("version history drawer", () => {
         mime_type: "message/rfc822",
         trashed_at: "2026-10-01T00:00:00Z",
       },
-      path: "/Reports/message.eml",
+      path: "message.eml",
       pinnedVersion: emailVersion,
       onselect: vi.fn(),
       onclose: vi.fn(),
