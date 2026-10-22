@@ -368,7 +368,7 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
   people.items = [
     { ...same, person_id: "alex-1" },
     { ...same, person_id: "alex-2" },
-    { ...same, person_id: "alex-3", identity_label: "alex@example.test" },
+    { ...same, person_id: "alex-3", identity_label: "alex@example.org" },
   ];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
@@ -392,12 +392,12 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   dialog = screen.getByRole("dialog", { name: "Merge people" });
   expect(within(dialog).getByRole("radio", { name: `Keep Alex · ${detail}` })).toBeTruthy();
-  expect(within(dialog).getByRole("radio", { name: "Keep Alex · alex@example.test" })).toBeTruthy();
+  expect(within(dialog).getByRole("radio", { name: "Keep Alex · alex@example.org" })).toBeTruthy();
   await act(() => {
     people.merge = { ...people.merge!, notice: "stale" };
   });
   expect(within(dialog).getByRole("status").textContent).toContain(
-    `Alex · ${detail} or Alex · alex@example.test changed.`,
+    `Alex · ${detail} or Alex · alex@example.org changed.`,
   );
   view.unmount();
   people.dispose();
