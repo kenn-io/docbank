@@ -11,10 +11,11 @@ import (
 
 // personEvidence starts from the requested people's indexed depicted
 // assertions, so the cost follows their evidence rather than the size of the
-// vault. It binds the requested person IDs as JSON.
+// vault. Pin the person index so the recency index can't turn each lookup into
+// a scan of all depicted assertions. It binds the requested person IDs as JSON.
 const personEvidence = ` FROM json_each(?1) requested
  CROSS JOIN persons person ON person.person_id=requested.value
- CROSS JOIN person_document_assertions assertion ON assertion.person_id=person.person_id AND assertion.action='assert' AND assertion.role='depicted'`
+ CROSS JOIN person_document_assertions assertion INDEXED BY person_document_assertions_person ON assertion.person_id=person.person_id AND assertion.action='assert' AND assertion.role='depicted'`
 
 // personPhotoSource reaches the live photo of version cv with the same
 // current-source predicate as face previews. Library photos qualify, and
@@ -28,7 +29,7 @@ func personPhotoSource(unlocked bool) (joins, where string) {
  CROSS JOIN photo_files member ON member.node_id=source_node.id
  CROSS JOIN photo_assets a ON a.asset_id=member.asset_id
  CROSS JOIN photo_files f ON f.file_id=a.display_file_id
- CROSS JOIN nodes n ON n.id=f.node_id`, ` WHERE n.current_version_id IS NOT NULL AND ` + photoBrowseLiveDisplay + ` AND ` + visible + `
+ CROSS JOIN nodes n ON n.id=f.node_id`, ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + visible + `
  AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id")
 }
 
