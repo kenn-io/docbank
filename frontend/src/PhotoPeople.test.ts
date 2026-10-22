@@ -976,3 +976,27 @@ it("lists a person once when a rank change repeats them on the next page", async
   expect(screen.getByRole("option", { name: "Ada" })).toBeTruthy();
   expect(screen.queryByRole("option", { name: "Ada · 2 people" })).toBeNull();
 });
+
+it("restarts the picker after a load-more cursor expires", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
+  const search = vi
+    .spyOn(api, "listPeople")
+    .mockResolvedValueOnce({
+      items: [personSummary("ada", { display_name: "Ada" })],
+      next_cursor: "stale",
+    })
+    .mockRejectedValueOnce(new APIError("People scope changed", 422, "people_cursor_expired"))
+    .mockResolvedValueOnce({ items: [personSummary("grace", { display_name: "Grace" })] });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Mark person in photo" }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
+  await screen.findByText("People scope changed");
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Retry" }));
+  await screen.findByRole("option", { name: "Grace" });
+  expect(search.mock.calls[1]![0]).toHaveProperty("cursor", "stale");
+  expect(search.mock.calls[2]![0]).not.toHaveProperty("cursor");
+  expect(screen.queryByRole("option", { name: "Ada" })).toBeNull();
+  faces.dispose();
+});

@@ -85,17 +85,21 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			}
 			binding += "\x01" + strconv.FormatBool(scope.Configured) + "\x01" + strconv.FormatBool(scope.ExpiresAt != nil) + "\x01" + scope.ChangeID
 		}
-		fingerprints, err := document.CurrentPhotoQualityFingerprints()
-		if err != nil {
-			writePackageError(w, err)
-			return
+		var gridRecipe string
+		if projection {
+			fingerprints, err := document.CurrentPhotoQualityFingerprints()
+			if err != nil {
+				writePackageError(w, err)
+				return
+			}
+			gridRecipe = fingerprints.GridRecipe
 		}
 		afterName, afterID, afterRecent, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
 		if err != nil {
-			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid people cursor"))
+			writeError(w, peopleCursorExpiredError())
 			return
 		}
-		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: fingerprints.GridRecipe})
+		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: gridRecipe})
 		if err != nil {
 			writePackageError(w, err)
 			return

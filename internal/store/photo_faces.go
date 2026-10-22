@@ -114,8 +114,8 @@ type PersonFacePreviewPage struct {
 
 const rejectedFaceMatchPredicate = `c.reason='face_match' AND c.state='rejected'`
 
-// personFaceCropOrder chooses a boxed, ready crop, then its area and stable IDs.
-const personFaceCropOrder = `(face.width IS NOT NULL) DESC,(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
+// personFaceCropOrder chooses a ready crop, then its area and stable IDs.
+const personFaceCropOrder = `(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
  face.width*face.height DESC,cv.version_id,face.face_id`
 
 func personFacePreviewsQuery(hidden bool) string {
@@ -142,7 +142,7 @@ func personFacePreviewsQuery(hidden bool) string {
  asset_page.sort_key,COALESCE(g.generation_id,'') generation_id,
  CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN 1 ELSE 0 END ready,
  ROW_NUMBER() OVER (PARTITION BY asset_page.asset_id ORDER BY
- ` + personFaceCropOrder + `) crop_rank
+ (face.width IS NOT NULL) DESC,` + personFaceCropOrder + `) crop_rank
  FROM asset_page CROSS JOIN photo_files member ON member.asset_id=asset_page.asset_id
  CROSS JOIN nodes source_node ON source_node.id=member.node_id
  CROSS JOIN content_versions cv ON cv.node_id=source_node.id AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id") + `
@@ -237,12 +237,16 @@ func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
 
 // assertDepictedPersonTx creates or reuses the shared depicted edge for an active person.
 // An existing suppressed edge requires an explicit assertion edit.
-func assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID string) (PersonDocumentAssertion, error) {
+func assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID string, newFace bool) (PersonDocumentAssertion, error) {
 	resolved, err := resolveActiveCandidatePersonTx(ctx, tx, personID)
 	if err != nil {
 		return PersonDocumentAssertion{}, err
 	}
 	assertion, changed, err := ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
+	if err == nil && !changed && newFace {
+		err = recordPersonNamingTx(ctx, tx, &assertion)
+		changed = err == nil
+	}
 	if err == nil && changed {
 		err = advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
 	}
@@ -297,7 +301,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 		}
 		face = PhotoFace{FaceID: faceID, ContentVersionID: versionID, Box: box, Revision: 1, CreatedAt: nowRFC3339()}
 		if personID != "" {
-			saved, err := assertDepictedPersonTx(ctx, tx, versionID, personID)
+			saved, err := assertDepictedPersonTx(ctx, tx, versionID, personID, true)
 			if err != nil {
 				return err
 			}
@@ -368,10 +372,12 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 			}
 		}
 		var err error
-		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID)
+		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID, false)
 		if err == nil && !assertion.PhotoMark {
-			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID)
+			now := nowRFC3339()
+			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,recorded_at=?,revision=revision+1 WHERE assertion_id=?`, now, assertion.AssertionID)
 			if err == nil {
+				assertion.RecordedAt = now
 				assertion.PhotoMark = true
 				assertion.Revision++
 				err = advancePersonBindingEpochForVersionTx(ctx, tx, versionID)

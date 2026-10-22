@@ -35,12 +35,12 @@ it("retries from the first page when a saved People cursor expires", async () =>
   const read = vi
     .spyOn(api, "listPeople")
     .mockResolvedValueOnce({ items: [ada], next_cursor: "stale" })
-    .mockRejectedValueOnce(new APIError("invalid people cursor", 422, "validation"))
+    .mockRejectedValueOnce(new APIError("People scope changed", 422, "people_cursor_expired"))
     .mockResolvedValueOnce({ items: [grace] });
   const people = new People("session", vi.fn());
   await people.load();
   await people.load(people.query, true);
-  expect(people.error).toBe("invalid people cursor");
+  expect(people.error).toBe("People scope changed");
   await people.retry();
   expect(people.items).toEqual([grace]);
   expect(read.mock.calls[2]![0]).not.toHaveProperty("cursor");

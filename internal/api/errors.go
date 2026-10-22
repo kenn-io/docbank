@@ -53,6 +53,10 @@ func (e *Error) ContentType(ct string) string {
 	return ct
 }
 
+func peopleCursorExpiredError() *Error {
+	return NewError(http.StatusUnprocessableEntity, "people_cursor_expired", "invalid people cursor")
+}
+
 func NewError(status int, code, detail string) *Error {
 	return &Error{Title: http.StatusText(status), Status: status, Code: code, Detail: detail}
 }

@@ -81,13 +81,13 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 	_, err = s.MarkPersonInPhoto(ctx, newer.CurrentVersionID, third.PersonID, "")
 	require.NoError(t, err)
 	for assertionID, recordedAt := range map[string]string{
-		keptAssertion.AssertionID:     "2026-01-01T00:00:00Z",
-		absorbedAssertion.AssertionID: "2026-03-01T00:00:00Z",
+		keptAssertion.AssertionID:     "2026-01-01T00:00:00.000000000Z",
+		absorbedAssertion.AssertionID: "2026-03-01T00:00:00.000000000Z",
 	} {
 		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE assertion_id=?`, recordedAt, assertionID)
 		require.NoError(t, err)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-02-01T00:00:00Z' WHERE person_id=?`, third.PersonID)
+	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-02-01T00:00:00.000000000Z' WHERE person_id=?`, third.PersonID)
 	require.NoError(t, err)
 	before, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 	require.NoError(t, err)
@@ -101,12 +101,12 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 	merged, err := s.DocumentPersonAssertions(ctx, duplicate.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, merged, 1)
-	require.Equal(t, "2026-01-01T00:00:00Z", merged[0].RecordedAt)
+	require.Equal(t, "2026-01-01T00:00:00.000000000Z", merged[0].RecordedAt)
 	after, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 	require.NoError(t, err)
 	require.Equal(t, third.PersonID, after[0].PersonID)
 	require.Equal(t, survivor.PersonID, after[1].PersonID)
-	require.Equal(t, "2026-01-01T00:00:00Z", after[1].RecentRank)
+	require.Equal(t, "2026-01-01T00:00:00.000000000Z", after[1].RecentRank)
 }
 
 func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {

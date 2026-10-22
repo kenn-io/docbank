@@ -136,10 +136,7 @@ export class People {
     } catch (cause) {
       if (!request.signal.aborted) {
         this.error = this.failure(cause);
-        this.cursorExpired =
-          cause instanceof APIError &&
-          cause.status === 422 &&
-          cause.message === "invalid people cursor";
+        this.cursorExpired = cause instanceof APIError && cause.code === "people_cursor_expired";
       }
     } finally {
       if (!request.signal.aborted) this.loading = false;

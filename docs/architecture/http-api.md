@@ -1165,7 +1165,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/photos`, `/photos/people`, `/photos/hidden`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1447,7 +1447,7 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 `photo_summary=true` adds each person's distinct `library_count`, a separate `hidden_count` while Hidden is unlocked, and an optional `face` with the exact current source version, normalized crop, rotation, and ready grid generation. Counts require a current, live, included source and count a paired RAW/JPEG asset once. The portrait uses a readable key face, including Hidden while unlocked, otherwise it prefers the newest assigned Library face. `face_hidden=true` identifies a Hidden portrait. The page lists only people with a visible photo: Library, or Hidden while unlocked. The browser serves this view at `/photos/people`.
 
-`recent_first=true` ranks name groups by their newest active, visible `depicted` assertion `recorded_at`, then by folded name and ID. Ranking and `photo_summary` start from the listed people's own assertions, so their cost follows those people's evidence rather than the number of photos in the vault. Namesakes share their group's rank and stay together. Reactivating a withdrawn assertion records a new naming time. Merges preserve times on moved and retained assertions. Locked Hidden evidence supplies no rank. People with no visible depicted evidence follow in name order. Cursors bind the query, projection, and order.
+`recent_first=true` ranks name groups by their newest active, visible `depicted` assertion `recorded_at`, then by folded name and ID. Ranking and `photo_summary` start from the listed people's own assertions, so their cost follows those people's evidence rather than the number of photos in the vault. Namesakes share their group's rank and stay together. Binding a new face, adding a whole-photo mark, or reactivating a withdrawn assertion advances its naming time and revision. Identical replays keep the time. Undo restores the saved time; a later naming on the shared assertion makes an earlier receipt stale. Merges preserve times on moved and retained assertions. Locked Hidden evidence supplies no rank. People with no visible depicted evidence follow in name order. Cursors bind the query, projection, order, and browser Hidden scope. A refused cursor returns `422 people_cursor_expired`; restart from the first page.
 
 Browser rename and merge apply the same visibility rule inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. A merge replay is answered from its saved receipt after the absorbed person retires. API-key writes keep their full scope.
 
@@ -2318,7 +2318,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, `/photos/people`, `/photos/hidden`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping
@@ -2348,6 +2348,7 @@ include a `position` span:
 | `audit_preview_stale` | 409 | the one-use enrollment preview expired, was consumed, came from another daemon, or no longer matches the vault |
 | `audit_acknowledgment_required` | 422 | enrollment execution omitted the permanent-retention acknowledgment |
 | `audit_not_enrolled` | 422 | the selected node exists but is outside every permanent audit scope |
+| `people_cursor_expired` | 422 | the people cursor is invalid or belongs to another query, ordering, projection, or Hidden scope; restart from the first page |
 | `invalid_audit_cursor` | 422 | the history cursor is malformed or belongs to another stable node or scope |
 | `invalid_batch_move` | 422 | a batch has no moves, too many moves, ambiguous selectors, or an invalid final-state plan |
 | `invalid_collection_label` | 422 | a collection label violates the canonical UTF-8, NFC, length, control-character, or non-whitespace policy |
