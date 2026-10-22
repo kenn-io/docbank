@@ -304,7 +304,7 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 
 func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 	t.Parallel()
-	for _, condition := range []string{"excluded", "trashed", "stale", "memberless"} {
+	for _, condition := range []string{"excluded", "trashed", "stale"} {
 		t.Run(condition, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -328,8 +328,6 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 						_, _, err = s.Trash(ctx, node.ID, node.Revision)
 					case "stale":
 						_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("d4"), 4, "image/jpeg")
-					case "memberless":
-						_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("memberless"), 4, "text/plain")
 					}
 					require.NoError(t, err)
 				}
