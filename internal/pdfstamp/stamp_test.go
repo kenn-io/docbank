@@ -193,16 +193,31 @@ func TestVerifyStampedLabelsRejectsASubstitutedOutputLabel(t *testing.T) {
 }
 
 func TestStampHonorsCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
-	var output bytes.Buffer
+	t.Run("before source inspection", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
+		var output bytes.Buffer
 
-	_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
+		_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
 
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Zero(t, output.Len())
-	assert.False(t, source.readAfterCancel, "pdfcpu must stop reading after cancellation")
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Zero(t, output.Len())
+		assert.Zero(t, source.seekCount, "an already-canceled request must not inspect its source")
+		assert.Zero(t, source.readCount, "an already-canceled request must not inspect its source")
+	})
+	t.Run("during source read", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
+		var output bytes.Buffer
+
+		_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Zero(t, output.Len())
+		assert.False(t, source.readAfterCancel, "pdfcpu must stop reading after cancellation")
+	})
 }
 
 func TestLimitedStampWriterPublishesNoOversizedChunk(t *testing.T) {
@@ -247,10 +262,13 @@ type cancelOnReadSeeker struct {
 
 	cancel          context.CancelFunc
 	canceled        bool
+	readCount       int
 	readAfterCancel bool
+	seekCount       int
 }
 
 func (r *cancelOnReadSeeker) Read(p []byte) (int, error) {
+	r.readCount++
 	if r.canceled {
 		r.readAfterCancel = true
 		return 0, io.ErrUnexpectedEOF
@@ -262,4 +280,9 @@ func (r *cancelOnReadSeeker) Read(p []byte) (int, error) {
 		r.cancel()
 	}
 	return n, err //nolint:wrapcheck // Preserve io.EOF and source errors for the Reader contract.
+}
+
+func (r *cancelOnReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	r.seekCount++
+	return r.Reader.Seek(offset, whence) //nolint:wrapcheck // Preserve the bytes.Reader seek result.
 }
