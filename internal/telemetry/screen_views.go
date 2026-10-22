@@ -61,10 +61,10 @@ type CaptureEndpoint interface {
 //
 // Responses: 202 {"status":"queued"} when the event is queued or was already
 // sent today; 202 {"status":"disabled"} when telemetry is off; 400 for a
-// malformed body, an event the allowlist omits, or a screen_viewed without an
-// allowed screen and surface; session_ended properties are optional.
-// 413 for a body over 64 KiB; 415 for a content
-// type other than application/json; 500 when Capture fails.
+// malformed body, an event the allowlist omits, or missing or unsupported required
+// properties, including surface and search_type; session_ended properties are
+// optional. 413 for a body over 64 KiB; 415 for a content type other than
+// application/json; 500 when reporting fails.
 func CaptureHandler(r *Reporter, dir string) CaptureEndpoint {
 	return &captureHandler{Reporter: r, dir: dir, now: time.Now}
 }
@@ -75,20 +75,21 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	event := strings.TrimSpace(request.Event)
-	if !h.EventAllowed(event) {
-		http.Error(w, posthog.ErrUnsupportedEvent.Error(), http.StatusBadRequest)
-		return
-	}
 	if event == EventScreenViewed {
 		h.serveScreen(w, request.Properties)
 		return
 	}
-	if !h.Enabled() {
-		writeCaptureStatus(w, "disabled")
+	status, err := h.Report(r.Context(), event, request.Properties)
+	if errors.Is(err, posthog.ErrUnsupportedEvent) || errors.Is(err, posthog.ErrInvalidProperty) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := h.Capture(event, request.Properties); err != nil {
+	if err != nil {
 		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
+		return
+	}
+	if status == posthog.StatusDisabled {
+		writeCaptureStatus(w, "disabled")
 		return
 	}
 	writeCaptureStatus(w, "queued")

@@ -57,6 +57,7 @@ const (
 // The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
 	ReportScreen(ctx context.Context, screen string) error
+	ReportAction(ctx context.Context, event, searchType string) error
 	Stat(ctx context.Context, path string) (api.Node, error)
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
@@ -355,6 +356,13 @@ func (e *ScreenRetryError) Error() string { return e.Err.Error() }
 
 func (e *ScreenRetryError) Unwrap() error { return e.Err }
 
+// deferredSearchReport holds an accepted base search until its rerank reply
+// arrives, so later requests cannot discard or relabel it.
+type deferredSearchReport struct {
+	requestID, searchID uint64
+	searchType          string
+}
+
 // Model is a virtual-tree, search, audited-history, and recoverable-trash
 // browser. Update uses a value receiver because Bubble Tea treats models as
 // immutable values; small helper methods mutate only the copied value before
@@ -382,6 +390,8 @@ type Model struct {
 	searching              bool
 	searchQuery            string
 	submittedSearchQuery   string
+	reportSearchID         uint64
+	rerankReport           deferredSearchReport
 	submittedSearchID      uint64
 	searchReturn           *location
 	naturalProfiles        []api.ProcessingProfileSummary
@@ -751,6 +761,9 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.processingSimilarBusy, m.processingSimilarErr = false, msg.err
 		if msg.err == nil {
 			m.processingSimilarReport = &msg.report
+			if msg.report.State != "unavailable" {
+				return m, m.reportAction("search_run", "semantic")
+			}
 		}
 		return m, nil
 	case processingCoverageLoadedMsg:
@@ -771,6 +784,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.processingSearchErr = msg.err
 		if msg.err == nil {
 			m.processingSearchReport = &msg.report
+			return m, m.reportAction("search_run", msg.report.ActualMode)
 		}
 		return m, nil
 	case processingStartedMsg:
@@ -999,7 +1013,9 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.searching = false
 		m.searchInput.Blur()
-		return m.startSearch(query)
+		m, cmd := m.startSearch(query)
+		m.reportSearchID = m.requestID
+		return m, cmd
 	default:
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
@@ -1756,9 +1772,13 @@ func (m Model) openDetail() (tea.Model, tea.Cmd) {
 	m.detailTagsLoading = true
 	m.detailTagsErr = nil
 	m.detailRequestID++
-	return m, m.loadDetailTags(
+	var action tea.Cmd
+	if selected.node.Kind == "file" {
+		action = m.reportAction("document_opened", "")
+	}
+	return m, tea.Batch(action, m.loadDetailTags(
 		selected.node.ID, selected.node.Revision, m.detailRequestID,
-	)
+	))
 }
 
 func (m Model) loadDetailTags(nodeID, revision int64, requestID uint64) tea.Cmd {
@@ -2060,9 +2080,14 @@ func (m Model) loadDirectory(
 	}
 }
 
-func (m Model) startSearch(query string) (tea.Model, tea.Cmd) {
+func (m Model) startSearch(query string) (Model, tea.Cmd) {
 	m.loading = true
 	m.err = nil
+	if m.reportSearchID != 0 && m.reportSearchID == m.requestID && query == m.submittedSearchQuery {
+		m.reportSearchID = m.requestID + 1
+	} else {
+		m.reportSearchID = 0
+	}
 	m.requestID++
 	m.naturalSearchID++
 	m.submittedSearchQuery, m.submittedSearchID = query, m.requestID
@@ -2377,6 +2402,7 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.naturalRerankPending = false
 	m.naturalResultMode = ""
 	if msg.err != nil {
+		m.reportSearchID = 0
 		m.err = msg.err
 		return m, nil
 	}
@@ -2407,6 +2433,10 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.err = nil
 	m.clampSelection()
+	if m.reportSearchID == msg.requestID {
+		m.reportSearchID = 0
+		return m, m.reportAction("search_run", "text")
+	}
 	return m, nil
 }
 
@@ -2427,6 +2457,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
 	m.naturalResultMode = msg.naturalMode
 	if len(msg.request.Fence.ContentVersionIDs) == 0 {
+		m.reportSearchID = 0
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		return m, nil
 	}
@@ -2434,18 +2465,38 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	profile := m.selectedNaturalProfile()
 	if m.naturalRerank && profile != nil && profile.RerankingAvailable {
 		m.naturalRerankPending = true
-		return m, m.loadNaturalRerank(msg.requestID, msg.searchID, msg.request, msg.naturalMode)
+		rerank := m.loadNaturalRerank(msg.requestID, msg.searchID, msg.request, msg.naturalMode)
+		if m.reportSearchID != msg.requestID || msg.report.ActualMode == "" {
+			return m, rerank
+		}
+		m.reportSearchID = 0
+		var earlier tea.Cmd
+		if m.rerankReport.requestID != 0 {
+			earlier = m.reportAction("search_run", m.rerankReport.searchType)
+		}
+		m.rerankReport = deferredSearchReport{msg.requestID, msg.searchID, msg.report.ActualMode}
+		return m, tea.Batch(earlier, rerank)
+	}
+	if m.reportSearchID == msg.requestID && msg.report.ActualMode != "" {
+		m.reportSearchID = 0
+		return m, m.reportAction("search_run", msg.report.ActualMode)
 	}
 	return m, nil
 }
 
 func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.Model, tea.Cmd) {
+	// A settled rerank reports its accepted search even when a later request superseded it.
+	var report tea.Cmd
+	if pending := m.rerankReport; pending.requestID == msg.requestID && pending.searchID == msg.searchID {
+		m.rerankReport = deferredSearchReport{}
+		report = m.reportAction("search_run", pending.searchType)
+	}
 	if msg.requestID != m.requestID || msg.searchID != m.naturalSearchID {
-		return m, nil
+		return m, report
 	}
 	m.naturalRerankPending = false
 	if !m.naturalRerank {
-		return m, nil
+		return m, report
 	}
 	if msg.err != nil {
 		cause := naturalSearchCause(msg.err.Error())
@@ -2453,20 +2504,16 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 			cause = "unknown cause"
 		}
 		m.naturalSearchNote = "Reranking unavailable (" + cause + "). Base results remain."
-		return m, nil
-	}
-	if msg.report.Reranking == nil {
+	} else if msg.report.Reranking == nil {
 		m.naturalSearchNote = naturalRerankNote("failed", "missing receipt")
-		return m, nil
-	}
-	if msg.report.Reranking.Outcome != "applied" {
+	} else if msg.report.Reranking.Outcome != "applied" {
 		m.naturalSearchNote = naturalRerankNote(msg.report.Reranking.Outcome, msg.report.Reranking.Cause)
-		return m, nil
+	} else {
+		m.naturalResultMode = msg.naturalMode
+		m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
+		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 	}
-	m.naturalResultMode = msg.naturalMode
-	m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
-	m.naturalSearchNote = naturalSearchReportNote(msg.report)
-	return m, nil
+	return m, report
 }
 
 func (m *Model) applyNaturalRows(query string, rows []row, truncated bool) {
@@ -3105,5 +3152,14 @@ func (m Model) visibleScreen() string {
 		return "search"
 	default:
 		return "browse"
+	}
+}
+
+func (m Model) reportAction(event, searchType string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.ctx, time.Second)
+		defer cancel()
+		_ = m.backend.ReportAction(ctx, event, searchType)
+		return nil
 	}
 }

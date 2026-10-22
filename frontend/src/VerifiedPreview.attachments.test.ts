@@ -1,3 +1,4 @@
+import * as actions from "./action-events.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import VerifiedPreview from "./VerifiedPreview.svelte";
@@ -69,6 +70,7 @@ afterEach(() => {
 });
 
 it("keeps nested exact contexts separate and returns to the frozen source and focus", async () => {
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   const original = JSON.stringify(selected);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const route = String(input);
@@ -105,6 +107,8 @@ it("keeps nested exact contexts separate and returns to the frozen source and fo
     await screen.findByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
   );
   expect(await screen.findByText(`Exact related version ${child.version_id}`)).toBeTruthy();
+  expect(action).toHaveBeenCalledExactlyOnceWith("session", "document_opened");
+  action.mockClear();
   expect(
     await screen.findByRole("button", { name: "Open parent of nested.eml, part 1.2" }),
   ).toBeTruthy();
@@ -112,15 +116,19 @@ it("keeps nested exact contexts separate and returns to the frozen source and fo
     screen.getByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
   );
   expect(await screen.findByText(`Exact related version ${nested.version_id}`)).toBeTruthy();
+  expect(action).toHaveBeenCalledExactlyOnceWith("session", "document_opened");
+  action.mockClear();
   await fireEvent.click(screen.getByRole("button", { name: "Back to previous document" }));
   expect(await screen.findByText(`Exact related version ${child.version_id}`)).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Return to frozen document" }));
   await waitFor(() => expect(onreturnfocus).toHaveBeenCalledOnce());
   expect(screen.getByRole("region", { name: "Verified content of root.eml" })).toBeTruthy();
   expect(JSON.stringify(selected)).toBe(original);
+  expect(action).not.toHaveBeenCalled();
 });
 
 it("cancels related version reads on source change and retains failed targets as visible occurrences", async () => {
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   let release!: (value: Response) => void;
   let signal: AbortSignal | null | undefined;
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -186,4 +194,5 @@ it("cancels related version reads on source change and retains failed targets as
   expect(
     within(screen.getByRole("region", { name: "Outgoing attachments" })).getAllByRole("listitem"),
   ).toHaveLength(1);
+  expect(action).not.toHaveBeenCalled();
 });

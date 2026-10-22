@@ -18899,11 +18899,19 @@ components:
             - packages
             - operations
           type: string
+        search_type:
+          description: The executed search mode. Required for search_run.
+          enum:
+            - text
+            - semantic
+            - hybrid
+          type: string
         surface:
           description: The interface that sent the event.
           enum:
             - web
             - tui
+            - cli
           type: string
       type: object
       x-go-type: api.TelemetryEventProperties
@@ -20499,7 +20507,7 @@ paths:
                   type: string
                 properties:
                   $ref: "#/components/schemas/TelemetryEventProperties"
-                  description: Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket.
+                  description: Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, and search_run requires search_type.
               required:
                 - event
               type: object
@@ -20522,7 +20530,7 @@ paths:
                 type: object
           description: Event queued, or dropped because telemetry is off
         "400":
-          description: Malformed body, an event the daemon does not allow, or a screen_viewed without an allowed screen and surface
+          description: Malformed body, unsupported event, missing or unsupported screen or surface, or search_run with missing or unsupported search_type
         "401":
           description: Missing or invalid API key or browser session
         "403":

@@ -119,6 +119,7 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 		}
 		return err
 	}
+	reportAction(cmd, c, "document_opened", "", false)
 	published = true
 
 	receipt := getReceipt{

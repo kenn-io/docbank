@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -1654,7 +1655,7 @@
   async function runSearch(
     preferredSelectedID = selectedID,
     queryOverride?: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
@@ -1694,7 +1695,7 @@
           session,
           controller.signal,
         );
-        return;
+        return accepted ? "text" : undefined;
       }
       const mapped = naturalSearchRequest(mode, profile);
       if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
@@ -1747,7 +1748,8 @@
           : "";
       loading = false;
       searchPending = false;
-      if (!naturalSearchRerank(profile, mode, naturalRerank)) return;
+      // The base results are accepted, so the search counts however reranking ends.
+      if (!naturalSearchRerank(profile, mode, naturalRerank)) return baseReport.actual_mode;
       naturalRerankPending = true;
       try {
         const reranked = await documentSearch(
@@ -1762,13 +1764,13 @@
           naturalSearchMode !== mode ||
           !naturalRerank
         )
-          return;
+          return baseReport.actual_mode;
         if (reranked.reranking?.outcome !== "applied") {
           naturalSearchNote = rerankingNote(
             reranked.reranking?.outcome ?? "failed",
             reranked.reranking?.cause,
           );
-          return;
+          return baseReport.actual_mode;
         }
         const rerankedRows = await hydrateProcessingRows(
           reranked,
@@ -1785,7 +1787,7 @@
           naturalSearchMode !== mode ||
           !naturalRerank
         )
-          return;
+          return baseReport.actual_mode;
         applySearchRows(
           rerankedRows,
           query,
@@ -1811,6 +1813,7 @@
           naturalSearchNote = `Reranking failed: ${cause instanceof Error ? cause.message : String(cause)}. Base results remain.`;
         }
       }
+      return baseReport.actual_mode;
     } catch (cause) {
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
@@ -1833,6 +1836,7 @@
             controller.signal,
             note,
           );
+          return accepted ? "text" : undefined;
         } catch (fallbackCause) {
           if (request === generation && session === webSession && !controller.signal.aborted)
             handleFailure(fallbackCause);
@@ -2084,10 +2088,14 @@
   }
 
   function activate(row: Row): void {
-    selectNode(row.node.id);
-    if (row.node.kind === "dir") {
-      void loadDirectory(row.node.id, true);
-    }
+    openDocument(row.node.id);
+    if (row.node.kind === "dir") void loadDirectory(row.node.id, true);
+  }
+
+  function openDocument(nodeID: number): void {
+    if (rows.some((row) => row.node.id === nodeID && row.node.kind === "file"))
+      reportAction(webSession, "document_opened");
+    selectNode(nodeID);
   }
 
   function selectNode(nodeID: number | undefined): void {
@@ -2392,7 +2400,7 @@
     }
   }
 
-  function runSnapshot(query: Query, options: SnapshotOptions): void {
+  async function runSnapshot(query: Query, options: SnapshotOptions): Promise<"text" | undefined> {
     if (batchTagsContext === "snapshot") batchTagsTargets = null;
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -2401,17 +2409,22 @@
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
     keepQueryDraft(query);
-    void snapshot.run(query, options);
+    return snapshot.run(query, options);
+  }
+
+  async function submitSnapshot(query: Query, options: SnapshotOptions): Promise<void> {
+    const type = await runSnapshot(query, options);
+    if (type) reportAction(webSession, "search_run", type);
   }
 
   function runSnapshotAgain(): void {
     if (!snapshot.state.query || !snapshot.state.options) return;
-    runSnapshot(snapshot.state.query, snapshot.state.options);
+    void submitSnapshot(snapshot.state.query, snapshot.state.options);
   }
 
   function changeSnapshotQuery(query: Query): void {
     if (!snapshot.state.options) return;
-    runSnapshot(query, snapshot.state.options);
+    void runSnapshot(query, snapshot.state.options);
   }
 
   function sortSnapshot(field: Query["sort"]["field"]): void {
@@ -3139,7 +3152,9 @@
                 class="search"
                 onsubmit={(event) => {
                   event.preventDefault();
-                  void runSearch();
+                  void runSearch().then((type) => {
+                    if (type) reportAction(webSession, "search_run", type);
+                  });
                 }}
               >
                 <SearchInput
@@ -3398,7 +3413,7 @@
             query={savedQueryDraft}
             profile={snapshot.state.options?.profile ?? ""}
             onchange={keepQueryDraft}
-            onrun={runSnapshot}
+            onrun={submitSnapshot}
             onsave={openSavedQueries}
             onclose={() => (queryBarOpen = false)}
             onauthfailure={handleFailure}
@@ -3511,9 +3526,15 @@
                               tabindex="0"
                               data-snapshot-node={row.node_id}
                               aria-selected={row.node_id === snapshot.selectedID}
-                              onclick={() => (snapshot.selectedID = row.node_id)}
+                              onclick={(event) => {
+                                snapshot.selectedID = row.node_id;
+                                if (event.detail < 2) reportAction(webSession, "document_opened");
+                              }}
                               onkeydown={(event) => {
-                                if (event.key === "Enter") snapshot.selectedID = row.node_id;
+                                if (event.key === "Enter") {
+                                  snapshot.selectedID = row.node_id;
+                                  reportAction(webSession, "document_opened");
+                                }
                               }}
                             >
                               <td
@@ -3808,8 +3829,8 @@
                         data-node-id={row.node.id}
                         tabindex="0"
                         aria-selected={row.node.id === selectedID}
-                        ondblclick={() => activate(row)}
-                        onclick={() => selectNode(row.node.id)}
+                        ondblclick={() => row.node.kind === "dir" && activate(row)}
+                        onclick={(event) => event.detail < 2 && openDocument(row.node.id)}
                         onkeydown={(event) => {
                           if (event.key === "Enter") {
                             event.preventDefault();
@@ -4562,14 +4583,15 @@
         >
           <div class="telemetry-note">
             <p>
-              Docbank reports when the daemon runs, the web app opens, and you open a screen so the
-              team can count vaults in use. It also reports how long a browser or terminal session
-              lasted, as a rough bucket. Reporting is on by default.
+              Docbank reports when the daemon runs, the web app opens, you open a screen, and you
+              add, search, or open documents so the team can count vaults in use. It also reports
+              how long a browser or terminal session lasted, as a rough bucket. Reporting is on by
+              default.
             </p>
             <p>
               Reports go to PostHog with a random ID for this vault, the app version, operating
               system, and install age. They never include document content, filenames, paths, tags,
-              or searches.
+              or search queries.
             </p>
             <p>
               To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment
@@ -4625,6 +4647,7 @@
       {/if}
       {#if panel.kind === "upload" && uploadChannel}
         <UploadDrawer
+          session={webSession}
           channel={uploadChannel}
           directory={panel.target}
           disabledReason={uploadChannelError}

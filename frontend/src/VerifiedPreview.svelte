@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -112,6 +113,7 @@
       const next = await readRelatedSource(session, target, pending.signal);
       if (request !== navigationEpoch || pending.signal.aborted) return;
       relatedSources = [...relatedSources, next];
+      reportAction(session, "document_opened");
       activeTab = parseMediaType(next.mimeType) === "message/rfc822" ? "attachments" : "preview";
     } catch (cause) {
       if (request !== navigationEpoch || pending.signal.aborted) return;
@@ -141,6 +143,7 @@
     cancelNavigation();
     relatedSources = [];
     duplicateSource = next;
+    reportAction(session, "document_opened");
     activeTab = "text";
   }
 

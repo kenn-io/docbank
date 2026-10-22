@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import { onDestroy } from "svelte";
   import FileUpIcon from "@lucide/svelte/icons/file-up";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -37,6 +38,7 @@
   }
 
   interface Props {
+    session: string;
     channel: UploadTransport;
     directory: Node;
     disabledReason?: string;
@@ -46,6 +48,7 @@
   }
 
   let {
+    session,
     channel,
     directory,
     disabledReason = "",
@@ -106,6 +109,7 @@
     controller = active;
     running = true;
     let refreshNeeded = false;
+    let added = false;
     let authFailed = false;
 
     for (const queued of items) {
@@ -138,6 +142,7 @@
             progressFor(queued.id, progress);
           },
         );
+        added ||= receipt.status === "added";
         updateItem(queued.id, {
           state: receipt.status,
           receipt,
@@ -181,6 +186,7 @@
       }
     }
 
+    if (added) reportAction(session, "document_added");
     if (controller === active) {
       controller = null;
       running = false;

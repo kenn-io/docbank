@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import { onDestroy } from "svelte";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, DetailDrawer, IconButton, TextInput } from "@kenn-io/kit-ui";
@@ -287,6 +288,7 @@
     stopping = false;
     controller = new AbortController();
     let refreshNeeded = false;
+    let added = false;
     try {
       for (const item of items) {
         if (stopping || disabledReason || controller.signal.aborted) break;
@@ -322,6 +324,7 @@
             },
             item.hashes,
           );
+          added ||= receipt.status === "added";
           setState(item, receipt.status);
           item.error =
             receipt.reason === "multiple_raw"
@@ -370,6 +373,7 @@
     } catch (cause) {
       showError(cause);
     } finally {
+      if (added) reportAction(session, "document_added");
       running = false;
       controller = null;
       if (refreshNeeded) {

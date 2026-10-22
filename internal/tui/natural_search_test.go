@@ -69,12 +69,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	rename := readme
 	rename.Path = "/renamed.txt"
 	fake.nodes["/README.txt"] = rename
-	reranked := rerank()
-	rerankedMessage, ok := reranked.(naturalSearchRerankLoadedMsg)
-	require.True(t, ok)
-	settled, _ := baseModel.applyNaturalSearchRerank(rerankedMessage)
-	settledModel, ok := settled.(Model)
-	require.True(t, ok)
+	settledModel := runModelCommand(t, baseModel, rerank)
 	assert.Equal(t, "reranked excerpt", settledModel.rows[0].excerpt)
 	assert.Equal(t, "/renamed.txt", settledModel.rows[0].path)
 	assert.False(t, settledModel.naturalRerankPending)
@@ -217,10 +212,11 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	readme := fake.nodes["/README.txt"]
 	model, err := New(t.Context(), fake)
 	require.NoError(t, err)
-	model.requestID = 4
-	model.naturalSearchID = 2
 	model.naturalMode = naturalHybrid
 	model.naturalProfiles = fake.profiles
+	model.searching = true
+	model.searchInput.SetValue("old")
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
 
 	updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
 		requestID: model.requestID, searchID: model.naturalSearchID, query: "old",
@@ -799,6 +795,7 @@ func TestNaturalSearchEmptyFenceDoesNotScheduleRerank(t *testing.T) {
 	model, err := New(t.Context(), fake)
 	require.NoError(t, err)
 	model.requestID = 4
+	model.reportSearchID = model.requestID
 	model.naturalSearchID = 2
 	model.naturalProfiles = fake.profiles
 	model.naturalMode = naturalLexical
@@ -810,8 +807,9 @@ func TestNaturalSearchEmptyFenceDoesNotScheduleRerank(t *testing.T) {
 	updated, rerank := model.applyNaturalSearchBase(baseMessage)
 	result, ok := updated.(Model)
 	require.True(t, ok)
-	assert.Nil(t, rerank)
+	require.Nil(t, rerank)
 	assert.False(t, result.naturalRerankPending)
+	assert.Zero(t, result.reportSearchID)
 	assert.Empty(t, fake.naturalSearchRequests)
 	assert.Equal(t, naturalLexical, result.naturalResultMode)
 }
@@ -854,6 +852,137 @@ func TestNaturalSearchRerankNotesPreserveReceiptOutcomeAndCause(t *testing.T) {
 			assert.Contains(t, next.naturalSearchNote, test.want)
 		})
 	}
+}
+
+func TestNaturalSearchReportsBaseModeWhenRerankSettles(t *testing.T) {
+	backend := newFakeBackend()
+	backend.profiles[0].RerankingAvailable = true
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.naturalProfiles = backend.profiles
+	model.naturalMode, model.naturalRerank = naturalAuto, true
+	model.searching = true
+	model.searchInput.SetValue("report")
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	base := naturalSearchBaseLoadedMsg{
+		requestID: model.requestID, searchID: model.naturalSearchID, query: "report", naturalMode: naturalAuto,
+		request: api.DocumentSearchRequest{Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"version"}}},
+		report:  api.DocumentSearchReport{ActualMode: "lexical"},
+		rows:    []row{{node: api.Node{ID: 3, Kind: "file"}, path: "/report"}},
+	}
+	model, cmd := updateModel(t, model, base)
+	require.True(t, model.naturalRerankPending)
+	require.NotNil(t, cmd)
+	// Run every base command, but hold its replies until the pending check.
+	commands := []tea.Cmd{cmd}
+	for len(commands) > 0 {
+		command := commands[0]
+		commands = commands[1:]
+		if command != nil {
+			if batch, ok := command().(tea.BatchMsg); ok {
+				commands = append(commands, batch...)
+			}
+		}
+	}
+	assert.Empty(t, backend.actions)
+	reply := naturalSearchRerankLoadedMsg{
+		requestID: model.requestID, searchID: model.naturalSearchID, naturalMode: naturalAuto,
+		err: errors.New("provider unavailable"),
+	}
+	model, cmd = updateModel(t, model, reply)
+	runModelCommand(t, model, cmd)
+	assert.Equal(t, []string{"search_run:lexical"}, backend.actions)
+}
+
+// deferRerankedSearch submits query and accepts its base results while the rerank stays pending.
+func deferRerankedSearch(t *testing.T, model Model, query, actualMode string) (Model, naturalSearchRerankLoadedMsg, tea.Cmd) {
+	t.Helper()
+	model.searching = true
+	model.searchInput.SetValue(query)
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	base := naturalSearchBaseLoadedMsg{
+		requestID: model.requestID, searchID: model.naturalSearchID, query: query, naturalMode: naturalAuto,
+		request: api.DocumentSearchRequest{Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"version"}}},
+		report:  api.DocumentSearchReport{ActualMode: actualMode},
+		rows:    []row{{node: api.Node{ID: 3, Kind: "file"}, path: "/report"}},
+	}
+	model, cmd := updateModel(t, model, base)
+	require.True(t, model.naturalRerankPending)
+	reply := naturalSearchRerankLoadedMsg{
+		requestID: base.requestID, searchID: base.searchID, naturalMode: naturalAuto,
+		err: errors.New("provider unavailable"),
+	}
+	return model, reply, cmd
+}
+
+func TestNaturalSearchReportsSupersededRerankOnce(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		supersede func(*testing.T, Model) Model
+	}{
+		{"new query", func(t *testing.T, model Model) Model {
+			t.Helper()
+			model.searching = true
+			model.searchInput.SetValue("another")
+			model, _ = updateModel(t, model, key(tea.KeyEnter))
+			return model
+		}},
+		{"history", func(t *testing.T, model Model) Model {
+			t.Helper()
+			model, _ = updateModel(t, model, runeKey('a'))
+			require.True(t, model.historyOpen)
+			return model
+		}},
+		{"mode change", func(t *testing.T, model Model) Model {
+			t.Helper()
+			model, _ = updateModel(t, model, key(tea.KeyTab))
+			require.NotEqual(t, naturalAuto, model.naturalMode)
+			return model
+		}},
+		{"rerank off", func(t *testing.T, model Model) Model {
+			t.Helper()
+			model, _ = updateModel(t, model, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+			require.False(t, model.naturalRerank)
+			return model
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.profiles[0].RerankingAvailable = true
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.naturalProfiles = backend.profiles
+			model.naturalMode, model.naturalRerank = naturalAuto, true
+			model, reply, _ := deferRerankedSearch(t, model, "report", "hybrid")
+			model = test.supersede(t, model)
+			require.NotEqual(t, reply.requestID, model.requestID)
+			assert.Empty(t, backend.actions)
+			model, cmd := updateModel(t, model, reply)
+			runModelCommand(t, model, cmd)
+			assert.Equal(t, []string{"search_run:hybrid"}, backend.actions)
+		})
+	}
+}
+
+func TestNaturalSearchReportsReplacedRerankedSearchOnce(t *testing.T) {
+	backend := newFakeBackend()
+	backend.profiles[0].RerankingAvailable = true
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.naturalProfiles = backend.profiles
+	model.naturalMode, model.naturalRerank = naturalAuto, true
+	model, first, _ := deferRerankedSearch(t, model, "first", "hybrid")
+	model, second, cmd := deferRerankedSearch(t, model, "second", "lexical")
+	// Replacing a pending search reports it now; its late reply adds nothing.
+	runModelCommand(t, model, cmd)
+	assert.Equal(t, []string{"search_run:hybrid"}, backend.actions)
+	model, cmd = updateModel(t, model, first)
+	if cmd != nil {
+		runModelCommand(t, model, cmd)
+	}
+	model, cmd = updateModel(t, model, second)
+	runModelCommand(t, model, cmd)
+	assert.Equal(t, []string{"search_run:hybrid", "search_run:lexical"}, backend.actions)
 }
 
 func TestNaturalSearchRefreshRestartsPendingQuery(t *testing.T) {

@@ -725,7 +725,7 @@ export class Photos {
     }
   }
 
-  async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
+  async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<boolean | void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
     if (this.projection && this.replacement) {
       await this.retry(preserve);
@@ -783,6 +783,7 @@ export class Photos {
         this.needsFacets = true;
         void this.retryFacets();
       }
+      return !controller.signal.aborted;
     } catch (cause) {
       if (controller.signal.aborted) return;
       this.authFailure(cause);

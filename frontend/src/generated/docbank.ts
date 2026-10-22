@@ -7890,6 +7890,18 @@ export const TelemetryEventPropertiesScreen = {
 } as const;
 
 /**
+ * The executed search mode. Required for search_run.
+ */
+export type TelemetryEventPropertiesSearchType = typeof TelemetryEventPropertiesSearchType[keyof typeof TelemetryEventPropertiesSearchType];
+
+
+export const TelemetryEventPropertiesSearchType = {
+  text: 'text',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+} as const;
+
+/**
  * The interface that sent the event.
  */
 export type TelemetryEventPropertiesSurface = typeof TelemetryEventPropertiesSurface[keyof typeof TelemetryEventPropertiesSurface];
@@ -7898,6 +7910,7 @@ export type TelemetryEventPropertiesSurface = typeof TelemetryEventPropertiesSur
 export const TelemetryEventPropertiesSurface = {
   web: 'web',
   tui: 'tui',
+  cli: 'cli',
 } as const;
 
 export interface TelemetryEventProperties {
@@ -7905,6 +7918,8 @@ export interface TelemetryEventProperties {
   duration_bucket?: TelemetryEventPropertiesDurationBucket;
   /** The screen shown. Other values return 400 for screen_viewed. */
   screen?: TelemetryEventPropertiesScreen;
+  /** The executed search mode. Required for search_run. */
+  search_type?: TelemetryEventPropertiesSearchType;
   /** The interface that sent the event. */
   surface?: TelemetryEventPropertiesSurface;
 }
@@ -8350,7 +8365,7 @@ export type ReportTelemetryEventBody = {
      * @minLength 1
      */
   event: string;
-  /** Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket. */
+  /** Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, and search_run requires search_type. */
   properties?: TelemetryEventProperties;
 };
 
