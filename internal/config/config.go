@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/httpboundary"
 	"go.kenn.io/docbank/internal/storenamespace"
@@ -469,19 +471,21 @@ func loadTOML(root string) (Config, error) {
 	if err := resolveWatches(&c); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
-	for name, profile := range c.EmbeddingProfiles {
-		if profile.Runtime == nil || profile.Runtime.CapabilityManifest == "" || filepath.IsAbs(profile.Runtime.CapabilityManifest) {
-			continue
+	var manifests []*string
+	for _, profile := range c.EmbeddingProfiles {
+		if profile.Runtime != nil {
+			manifests = append(manifests, &profile.Runtime.CapabilityManifest)
 		}
-		profile.Runtime.CapabilityManifest = filepath.Clean(filepath.Join(root, profile.Runtime.CapabilityManifest))
-		c.EmbeddingProfiles[name] = profile
 	}
-	for name, profile := range c.RenditionProfiles {
-		if profile.Runtime == nil || profile.Runtime.CapabilityManifest == "" || filepath.IsAbs(profile.Runtime.CapabilityManifest) {
-			continue
+	for _, profile := range c.RenditionProfiles {
+		if profile.Runtime != nil {
+			manifests = append(manifests, &profile.Runtime.CapabilityManifest)
 		}
-		profile.Runtime.CapabilityManifest = filepath.Clean(filepath.Join(root, profile.Runtime.CapabilityManifest))
-		c.RenditionProfiles[name] = profile
+	}
+	for _, path := range manifests {
+		if *path != "" && !filepath.IsAbs(*path) {
+			*path = filepath.Clean(filepath.Join(root, *path))
+		}
 	}
 
 	return c, nil
@@ -762,7 +766,7 @@ var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]
 var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 const (
-	MistralOCRAdapterContract      = "docbank-mistral-ocr/v1"
+	MistralOCRAdapterContract      = mistral.DocumentAdapterContract
 	DoclingASRAdapterContract      = "docbank-docling-asr/v1"
 	DoclingDocumentAdapterContract = "docbank-docling-document/v1"
 )
@@ -983,7 +987,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 	} else if runtime.CapabilityManifest != "" || runtime.Retention != "" || runtime.Training != "" {
 		return fmt.Errorf("%s capability_manifest, retention, and training are only supported for Mistral", prefix)
 	}
-	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
+	if profile.AdapterContract != MistralOCRAdapterContract && profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
 		return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
 	}
@@ -991,7 +995,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
 			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
 		}
-	} else {
+	} else if profile.AdapterContract == DoclingDocumentAdapterContract {
 		hasMarkdown := false
 		for _, role := range profile.RequestedArtifacts {
 			switch document.EvidenceArtifactRole(role) {
@@ -1025,8 +1029,21 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		return fmt.Errorf("%s runtime HTTP endpoint requires operator_network", prefix)
 	}
 	if profile.AdapterContract == MistralOCRAdapterContract {
-		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
-			return fmt.Errorf("%s Mistral runtime requires request_timeout and zero poll bounds", prefix)
+		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > mistral.MaxTimeout || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
+			return fmt.Errorf("%s Mistral runtime requires request_timeout > 0 and <= 30 minutes and zero poll bounds", prefix)
+		}
+		if runtime.Endpoint != "https://api.eu.mistral.ai" {
+			return fmt.Errorf("%s Mistral runtime endpoint must be https://api.eu.mistral.ai", prefix)
+		}
+		if !slices.Contains([]string{mistral.RetentionStandard, mistral.RetentionZDR}, runtime.Retention) {
+			return fmt.Errorf("%s Mistral retention must be standard or zdr", prefix)
+		}
+		if !slices.Contains([]string{mistral.TrainingDefaultOptOut, mistral.TrainingOptedOut}, runtime.Training) {
+			return fmt.Errorf("%s Mistral training must be default-opt-out or opted-out", prefix)
+		}
+		if profile.MaxDocumentBytes > mistral.MaxDocumentBytes || profile.MaxResponseBytes > mistral.MaxResponseBytes ||
+			profile.MaxUnits < mistral.MinUnits || profile.MaxUnits > mistral.MaxUnits {
+			return fmt.Errorf("%s Mistral processing bounds are invalid", prefix)
 		}
 		return nil
 	}

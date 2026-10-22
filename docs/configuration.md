@@ -449,7 +449,9 @@ response limits cannot exceed 500 MiB and 512 MiB, respectively.
 Startup reports the expected `descriptor_fingerprint` if the configured value
 differs. Copy that value, then compute `disclosure_fingerprint` with the
 [Python disclosure command](#supplied-audio-transcription), using your Mistral
-profile name. Retention, training, manifest format authority, and the pinned
+profile name. Go applications can use `mistral.DocumentDescriptor(policy, manifest)`
+and `mistral.DisclosureFingerprint(descriptor, endpoint, deployment)` from
+`go.kenn.io/docbank/document/mistral`. Retention, training, manifest format authority, and the pinned
 model affect the descriptor. A manifest probed under an older pinned model is
 rejected. Re-probe after a model re-pin and recompute both fingerprints.
 

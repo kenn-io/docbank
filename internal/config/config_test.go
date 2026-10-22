@@ -1187,6 +1187,17 @@ func TestMistralOCRRuntime(t *testing.T) {
 		{"poll interval", func(p *RenditionProfileConfig) { p.Runtime.PollInterval = Duration(time.Second) }, "zero poll bounds"},
 		{"poll attempts", func(p *RenditionProfileConfig) { p.Runtime.MaxPollAttempts = 1 }, "zero poll bounds"},
 		{"missing timeout", func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = 0 }, "requires request_timeout"},
+		{"timeout too long", func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = Duration(30*time.Minute + time.Nanosecond) }, "requires request_timeout"},
+		{"wrong origin", func(p *RenditionProfileConfig) { p.Runtime.Endpoint = "https://example.invalid" }, "endpoint must be https://api.eu.mistral.ai"},
+		{"origin trailing slash", func(p *RenditionProfileConfig) { p.Runtime.Endpoint += "/" }, "endpoint must be https://api.eu.mistral.ai"},
+		{"unknown retention", func(p *RenditionProfileConfig) { p.Runtime.Retention = "unknown" }, "retention must be"},
+		{"missing retention", func(p *RenditionProfileConfig) { p.Runtime.Retention = "" }, "retention must be"},
+		{"unknown training", func(p *RenditionProfileConfig) { p.Runtime.Training = "unknown" }, "training must be"},
+		{"missing training", func(p *RenditionProfileConfig) { p.Runtime.Training = "" }, "training must be"},
+		{"document bytes too large", func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 500<<20 + 1 }, "Mistral processing bounds"},
+		{"response bytes too large", func(p *RenditionProfileConfig) { p.MaxResponseBytes = 512<<20 + 1 }, "Mistral processing bounds"},
+		{"units too small", func(p *RenditionProfileConfig) { p.MaxUnits = 2 }, "Mistral processing bounds"},
+		{"units too large", func(p *RenditionProfileConfig) { p.MaxUnits = 5001 }, "Mistral processing bounds"},
 		{"transcript limit", func(p *RenditionProfileConfig) { p.MaxTranscriptChars = 1 }, "only supported for ASR"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1197,6 +1208,22 @@ func TestMistralOCRRuntime(t *testing.T) {
 			require.ErrorContains(t, c.Validate(), test.want)
 		})
 	}
+	t.Run("consumer bounds and privacy values", func(t *testing.T) {
+		for _, retention := range []string{"standard", "zdr"} {
+			for _, training := range []string{"default-opt-out", "opted-out"} {
+				for _, units := range []int{3, 5000} {
+					c := valid()
+					p := c.RenditionProfiles["primary"]
+					p.Runtime.RequestTimeout = Duration(30 * time.Minute)
+					p.Runtime.Retention, p.Runtime.Training = retention, training
+					p.MaxDocumentBytes, p.MaxResponseBytes, p.MaxUnits = 500<<20, 512<<20, units
+					c.RenditionProfiles["primary"] = p
+					require.NoError(t, c.Validate())
+				}
+			}
+		}
+	})
+
 	t.Run("missing credential", func(t *testing.T) {
 		c := valid()
 		c.CredentialBindings = nil

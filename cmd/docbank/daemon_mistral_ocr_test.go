@@ -2,11 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json/v2"
-
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +26,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 func mistralOCRProcessingConfig(t *testing.T) (config.Config, document.RenditionDescriptor) {
@@ -37,12 +45,7 @@ func mistralOCRProcessingConfig(t *testing.T) (config.Config, document.Rendition
 	require.NoError(t, mistral.EncodeCapabilityManifest(&encoded, manifest))
 	path := filepath.Join(t.TempDir(), "mistral.json")
 	require.NoError(t, os.WriteFile(path, encoded.Bytes(), 0600))
-	fingerprint, err := policy.Fingerprint(manifest)
-	require.NoError(t, err)
-	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{ID: "mistral.ocr-v1",
-		ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint,
-		TrustBoundary: document.RenditionTrustHostedProvider, ReturnsMarkdown: true, ReturnsStructured: true,
-		SupportedFormats: []document.RenditionFormatCapability{{MediaFamily: "pdf", MediaType: "application/pdf", InputKind: document.RenditionInputOriginalFile}}})
+	descriptor, err := mistral.DocumentDescriptor(policy, manifest)
 	require.NoError(t, err)
 	p := cfg.RenditionProfiles["documents"]
 	p.AdapterContract = config.MistralOCRAdapterContract
@@ -129,7 +132,7 @@ func TestMistralOCRRuntimeAuthority(t *testing.T) {
 		require.NoError(t, err)
 		p := cfg.RenditionProfiles["documents"]
 		p.DescriptorFingerprint = d.Fingerprint
-		p.DisclosureFingerprint = renditionDisclosureFingerprint(p.AdapterContract, d, p.Runtime.Endpoint, p.DeploymentFingerprint)
+		p.DisclosureFingerprint = mistral.DisclosureFingerprint(d, p.Runtime.Endpoint, p.DeploymentFingerprint)
 		cfg.RenditionProfiles["documents"] = p
 		_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 		require.ErrorContains(t, err, "no enforceable upload authority")
@@ -149,11 +152,22 @@ func TestMistralOCRRuntimeAuthority(t *testing.T) {
 		second.Rendition = "copy"
 		second.MaxDocumentChars--
 		cfg.ProcessingProfiles["copy"] = second
+		// Observation dates are evidence metadata, outside reusable execution identity.
+		p := cfg.RenditionProfiles["copy"]
+		p.Runtime = new(*p.Runtime)
+		original, err := configuredMistralProfile(p)
+		require.NoError(t, err)
+		manifest := original.CapabilityManifest
+		manifest.ObservedOn = "2026-01-02"
+		var encoded bytes.Buffer
+		require.NoError(t, mistral.EncodeCapabilityManifest(&encoded, manifest))
+		p.Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "reprobed.json")
+		require.NoError(t, os.WriteFile(p.Runtime.CapabilityManifest, encoded.Bytes(), 0600))
+		cfg.RenditionProfiles["copy"] = p
 		profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 		require.NoError(t, err)
 		require.Same(t, profiles["documents"].RenditionProvider, profiles["copy"].RenditionProvider)
-		p := cfg.RenditionProfiles["copy"]
-		p.Runtime = new(*p.Runtime)
+		p = cfg.RenditionProfiles["copy"]
 		p.Runtime.RequestTimeout = config.Duration(2 * time.Second)
 		cfg.RenditionProfiles["copy"] = p
 		_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
@@ -162,57 +176,172 @@ func TestMistralOCRRuntimeAuthority(t *testing.T) {
 }
 
 func TestDaemonMistralOCRProcessing(t *testing.T) {
-	cfg, _ := mistralOCRProcessingConfig(t)
-	cfg.Server.APIKey = "synthetic-mistral-daemon-key"
-	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "")
-	root := t.TempDir()
-	require.NoError(t, writeDaemonASRConfig(root, cfg))
-	t.Setenv("DOCBANK_HOME", root)
-	startServe(t)
-	runtime := waitForDaemon(t, root)
-	daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
-	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
-	output, err := runCLI(t, "processing", "profiles", "--json")
-	require.NoError(t, err)
-	var profiles []api.ProcessingProfileSummary
-	require.NoError(t, json.Unmarshal([]byte(output), &profiles))
-	var names []string
-	for _, profile := range profiles {
-		names = append(names, profile.Name)
+	for _, missingSecret := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing secret %t", missingSecret), func(t *testing.T) {
+			cfg, _ := mistralOCRProcessingConfig(t)
+			cfg.Server.APIKey = "synthetic-mistral-daemon-key"
+			secret := "synthetic-mistral-key"
+			if missingSecret {
+				secret = ""
+			}
+			t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", secret)
+			source := mistraltest.MinimalPDF("synthetic daemon OCR")
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, "/v1/ocr", r.URL.Path)
+				assert.Equal(t, "Bearer synthetic-mistral-key", r.Header.Get("Authorization"))
+				var wire struct {
+					Model    string `json:"model"`
+					Document struct {
+						URL string `json:"document_url"`
+					} `json:"document"`
+				}
+				if !assert.NoError(t, json.UnmarshalRead(r.Body, &wire)) {
+					return
+				}
+				assert.Equal(t, mistral.DefaultModel, wire.Model)
+				uploaded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+				assert.NoError(t, err)
+				assert.Equal(t, source, uploaded)
+				w.Header().Set("Content-Type", "application/json")
+				_, err = fmt.Fprintf(w, `{"model":%q,"pages":[{"index":0,"markdown":"# Synthetic needle report","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, mistral.DefaultModel, len(source))
+				assert.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+			renderErrors := make(chan error, 1)
+			root := t.TempDir()
+			require.NoError(t, writeDaemonASRConfig(root, cfg))
+			t.Setenv("DOCBANK_HOME", root)
+			startServeWithRunner(t, func(ctx context.Context) error {
+				return runServeWithProcessingProfiles(ctx, func(cfg config.Config, bundle embeddingRuntimeBundle) (map[string]processing.ProfileConfig, error) {
+					profiles, err := executableProcessingProfiles(cfg, bundle)
+					if err != nil {
+						return nil, err
+					}
+					profile, err := configuredMistralProfile(cfg.RenditionProfiles["documents"])
+					if err != nil {
+						return nil, err
+					}
+					secrets := environmentCredentialSecrets{variables: map[string]string{profile.SecretBinding: cfg.CredentialBindings[profile.SecretBinding].EnvironmentVariable}}
+					client, err := mistral.NewRenditionProvider(profile, secrets, &http.Client{Transport: mistralTestTransport{server: server}})
+					if err != nil {
+						return nil, err
+					}
+					bound := profiles["documents"].RenditionProvider.(*configuredRenditionProvider)
+					bound.RenditionProvider = client
+					supplied := profiles["documents"]
+					supplied.RenditionProvider = &observedMistralProvider{RenditionProvider: bound, errors: renderErrors}
+					profiles["documents"] = supplied
+					return profiles, nil
+				})
+			})
+			runtime := waitForDaemon(t, root)
+			daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
+			t.Cleanup(func() { require.NoError(t, daemon.Close()) })
+			output, err := runCLI(t, "processing", "profiles", "--json")
+			require.NoError(t, err)
+			var profiles []api.ProcessingProfileSummary
+			require.NoError(t, json.Unmarshal([]byte(output), &profiles))
+			var names []string
+			for _, profile := range profiles {
+				names = append(names, profile.Name)
+			}
+			require.Contains(t, names, "documents")
+			path := filepath.Join(t.TempDir(), "report.pdf")
+			require.NoError(t, os.WriteFile(path, source, 0600))
+			_, err = runCLI(t, "add", path, "--dest", "/documents")
+			require.NoError(t, err)
+			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/documents/report.pdf"}})
+			require.NoError(t, err)
+			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
+			plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+			require.NoError(t, err)
+			require.Len(t, plan.Flow, 1)
+			require.Equal(t, "hosted_provider", plan.Flow[0].TrustBoundary)
+			require.Equal(t, "https://api.eu.mistral.ai", plan.Flow[0].RuntimeDisclosure.Endpoint)
+			require.Equal(t, "docbank-mistral-ocr/v1", plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+			require.Equal(t, mistral.DefaultModel, plan.Flow[0].RuntimeDisclosure.Model)
+			require.True(t, plan.ConsentRequired)
+			_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
+			require.ErrorContains(t, err, "consent")
+			require.Zero(t, requests.Load(), "planning and builds without consent must not upload")
+			job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+			require.NoError(t, err)
+			var providerErr error
+			select {
+			case providerErr = <-renderErrors:
+			case <-time.After(10 * time.Second):
+				status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
+				require.NoError(t, statusErr)
+				t.Fatalf("Mistral Render was not called: %+v", status)
+			}
+
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
+				require.NoError(c, statusErr)
+				if missingSecret {
+					require.Equal(c, "failed", status.State)
+					require.Equal(c, "terminal", status.FailureCode)
+				} else {
+					require.Equal(c, "completed", status.State, "%+v", status)
+				}
+			}, 10*time.Second, 20*time.Millisecond)
+			original, err := daemon.VersionContent(t.Context(), selector.ContentVersionID)
+			require.NoError(t, err)
+			var data bytes.Buffer
+			_, err = original.CopyVerified(&data)
+			require.NoError(t, err)
+			require.NoError(t, original.Close())
+			require.Equal(t, source, data.Bytes())
+			rendition, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
+			if missingSecret {
+				require.Error(t, err)
+				require.Zero(t, requests.Load())
+				classified, ok := errors.AsType[*document.RenditionProviderError](providerErr)
+				require.True(t, ok, "%v", providerErr)
+				require.Equal(t, document.RenditionErrorAuthentication, classified.Code())
+				require.EqualError(t, classified.Unwrap(), "Mistral credential is unavailable: Mistral OCR credential is unavailable")
+				return
+			}
+			require.NoError(t, providerErr)
+			require.NoError(t, err)
+			var markdown bytes.Buffer
+			_, err = rendition.CopyVerified(&markdown)
+			require.NoError(t, err)
+			require.NoError(t, rendition.Close())
+			require.Contains(t, markdown.String(), "Synthetic needle report")
+			require.EqualValues(t, 1, requests.Load())
+			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Profile: "documents", Limit: 10,
+				Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}}})
+			require.NoError(t, err)
+			require.Len(t, search.Results, 1)
+			require.Equal(t, selector.ContentVersionID, search.Results[0].ContentVersionID)
+		})
 	}
-	require.Contains(t, names, "documents")
-	source := mistraltest.MinimalPDF("synthetic daemon OCR")
-	path := filepath.Join(t.TempDir(), "report.pdf")
-	require.NoError(t, os.WriteFile(path, source, 0600))
-	_, err = runCLI(t, "add", path, "--dest", "/documents")
-	require.NoError(t, err)
-	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/documents/report.pdf"}})
-	require.NoError(t, err)
-	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
-	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
-	require.NoError(t, err)
-	require.Len(t, plan.Flow, 1)
-	require.Equal(t, "hosted_provider", plan.Flow[0].TrustBoundary)
-	require.Equal(t, "https://api.eu.mistral.ai", plan.Flow[0].RuntimeDisclosure.Endpoint)
-	require.Equal(t, "docbank-mistral-ocr/v1", plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
-	require.Equal(t, mistral.DefaultModel, plan.Flow[0].RuntimeDisclosure.Model)
-	require.True(t, plan.ConsentRequired)
-	_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
-	require.Error(t, err)
-	job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
-	require.NoError(t, err)
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
-		require.NoError(c, statusErr)
-		require.Equal(c, "failed", status.State)
-		// The worker stores non-retryable provider errors as terminal.
-		require.Equal(c, "terminal", status.FailureCode)
-	}, 10*time.Second, 20*time.Millisecond)
-	original, err := daemon.VersionContent(t.Context(), selector.ContentVersionID)
-	require.NoError(t, err)
-	var data bytes.Buffer
-	_, err = original.CopyVerified(&data)
-	require.NoError(t, err)
-	require.NoError(t, original.Close())
-	require.Equal(t, source, data.Bytes())
+}
+
+// Only the HTTP destination changes; the real Mistral client still validates and maps OCR.
+type mistralTestTransport struct{ server *httptest.Server }
+
+func (transport mistralTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	forwarded := request.Clone(request.Context())
+	destination, err := url.Parse(transport.server.URL)
+	if err != nil {
+		return nil, err
+	}
+	forwarded.URL.Scheme, forwarded.URL.Host = destination.Scheme, destination.Host
+	return transport.server.Client().Transport.RoundTrip(forwarded)
+}
+
+type observedMistralProvider struct {
+	document.RenditionProvider
+	errors chan<- error
+}
+
+func (provider *observedMistralProvider) Render(ctx context.Context, upload document.AuthorizedUpload, auth document.RenditionAuthorization) (document.RenditionResult, error) {
+	result, err := provider.RenditionProvider.Render(ctx, upload, auth)
+	provider.errors <- err
+	return result, err
 }

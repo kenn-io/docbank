@@ -2,15 +2,13 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
@@ -28,11 +26,19 @@ const (
 )
 
 type renditionProviderInputs struct {
-	profile               any
+	profile               renditionExecutionInputs
 	adapterContract       string
 	maxTranscriptChars    int
 	egress                providerhttp.EgressPolicy
 	credentialEnvironment string
+}
+
+// Descriptor identity covers policy; these values control execution only.
+type renditionExecutionInputs struct {
+	secretBinding                              string
+	requestTimeout, totalTimeout, pollInterval time.Duration
+	maxPollAttempts                            int
+	maxDocumentBytes, maxResponseBytes         int64
 }
 
 type registeredRenditionProvider struct {
@@ -118,7 +124,6 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 	if err != nil || len(requestFingerprints) == 0 {
 		return nil, disclosure, err
 	}
-	var profile any
 	var mistralProfile mistral.Profile
 	var doclingProfile docling.Profile
 	var descriptor document.RenditionDescriptor
@@ -128,16 +133,24 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		if err != nil {
 			return nil, disclosure, err
 		}
-		profile, descriptor, secretBinding = mistralProfile, mistralProfile.Descriptor, mistralProfile.SecretBinding
+		descriptor, secretBinding = mistralProfile.Descriptor, mistralProfile.SecretBinding
 		model = mistral.DefaultModel
 	} else {
 		doclingProfile, err = configuredDoclingProfile(configured)
 		if err != nil {
 			return nil, disclosure, err
 		}
-		profile, descriptor, secretBinding = doclingProfile, doclingProfile.Descriptor, doclingProfile.SecretBinding
+		descriptor, secretBinding = doclingProfile.Descriptor, doclingProfile.SecretBinding
 	}
-	expectedDisclosure := renditionDisclosureFingerprint(configured.AdapterContract, descriptor, configured.Runtime.Endpoint, configured.DeploymentFingerprint)
+	var expectedDisclosure string
+	switch configured.AdapterContract {
+	case config.MistralOCRAdapterContract:
+		expectedDisclosure = mistral.DisclosureFingerprint(descriptor, configured.Runtime.Endpoint, configured.DeploymentFingerprint)
+	case config.DoclingASRAdapterContract:
+		expectedDisclosure = docling.ASRDisclosureFingerprint(descriptor, configured.Runtime.Endpoint, configured.DeploymentFingerprint)
+	default:
+		expectedDisclosure = docling.DocumentDisclosureFingerprint(descriptor, configured.Runtime.Endpoint, configured.DeploymentFingerprint)
+	}
 	if configured.DisclosureFingerprint != expectedDisclosure {
 		return nil, disclosure, errors.New("disclosure fingerprint does not bind the runtime endpoint")
 	}
@@ -146,7 +159,12 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, errors.New("rendition credential binding is not configured")
 	}
 	egress := providerEgressPolicy(configured.Runtime.ProviderEgressConfig)
-	inputs := renditionProviderInputs{profile: profile, adapterContract: configured.AdapterContract,
+	runtime := configured.Runtime
+	inputs := renditionProviderInputs{profile: renditionExecutionInputs{
+		secretBinding: secretBinding, requestTimeout: runtime.RequestTimeout.Std(), totalTimeout: runtime.TotalTimeout.Std(),
+		pollInterval: runtime.PollInterval.Std(), maxPollAttempts: runtime.MaxPollAttempts,
+		maxDocumentBytes: configured.MaxDocumentBytes, maxResponseBytes: configured.MaxResponseBytes,
+	}, adapterContract: configured.AdapterContract,
 		maxTranscriptChars: configured.MaxTranscriptChars, egress: egress, credentialEnvironment: environmentVariable}
 	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: configured.AdapterContract,
 		UltimateProcessor: descriptor.ID, Endpoint: configured.Runtime.Endpoint,
@@ -254,21 +272,11 @@ func configuredRenditionRequestFingerprints(cfg config.Config, renditionName str
 	return fingerprints, nil
 }
 
-func renditionDisclosureFingerprint(contract string, descriptor document.RenditionDescriptor, endpoint, deployment string) string {
-	digest := sha256.Sum256([]byte(strings.Join([]string{contract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment}, "\x00")))
-	return hex.EncodeToString(digest[:])
-}
-
 func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral.Profile, error) {
 	runtime := configured.Runtime
-	file, err := os.Open(runtime.CapabilityManifest)
+	manifest, err := loadCapabilityManifest(runtime.CapabilityManifest, "mistral", mistral.DecodeCapabilityManifest)
 	if err != nil {
-		return mistral.Profile{}, errors.New("mistral capability manifest is unavailable")
-	}
-	manifest, decodeErr := mistral.DecodeCapabilityManifest(file)
-	closeErr := file.Close()
-	if decodeErr != nil || closeErr != nil {
-		return mistral.Profile{}, errors.Join(decodeErr, closeErr)
+		return mistral.Profile{}, err
 	}
 	normalize, err := document.NewNormalizePolicy(25_000_000)
 	if err != nil {
@@ -284,16 +292,7 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 	if runtime.Endpoint != strings.TrimSuffix(policy.Values().Endpoint, "/v1/ocr") {
 		return mistral.Profile{}, errors.New("mistral runtime endpoint differs from policy origin")
 	}
-	fingerprint, err := policy.Fingerprint(manifest)
-	if err != nil {
-		return mistral.Profile{}, err
-	}
-	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
-		ID: "mistral.ocr-v1", ContractVersion: document.RenditionProviderContractVersion,
-		PolicyFingerprint: fingerprint, TrustBoundary: document.RenditionTrustHostedProvider,
-		SupportedFormats: []document.RenditionFormatCapability{{MediaFamily: "pdf", MediaType: "application/pdf", InputKind: document.RenditionInputOriginalFile}},
-		ReturnsMarkdown:  true, ReturnsStructured: true,
-	})
+	descriptor, err := mistral.DocumentDescriptor(policy, manifest)
 	if err != nil {
 		return mistral.Profile{}, err
 	}
