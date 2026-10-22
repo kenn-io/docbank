@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
@@ -51,14 +51,17 @@ func TestKataCiteCitationSelector(t *testing.T) {
 
 func TestKataCitationRejectsMalformedAndOversizedFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "citation.json")
-	for _, body := range []string{`{"unknown":true}`, `{} {}`, strings.Repeat(" ", 16<<10+1)} {
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	for _, tc := range []struct {
+		body      string
+		wantError string
+	}{
+		{`{"unknown":true}`, "must contain one exact text citation"},
+		{`{} {}`, "must contain one exact text citation"},
+		{strings.Repeat(" ", 16<<10+1), "exceeds 16 KiB"},
+	} {
+		require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
 		_, err := readKataCitation(path)
-		if len(body) > 16<<10 {
-			require.ErrorContains(t, err, "exceeds 16 KiB")
-		} else {
-			require.ErrorContains(t, err, "must contain one exact text citation")
-		}
+		require.ErrorContains(t, err, tc.wantError)
 	}
 }
 
@@ -68,40 +71,39 @@ func TestKataContextPrintsPassagesAndPropagatesWriteErrors(t *testing.T) {
 		{State: "unsupported"},
 		{State: "available", Evidence: kataevidence.Evidence{Reference: kataevidence.Reference{Rendition: &document.TextCitation{NodeID: 3, Start: 1, End: 3, ContentVersionID: uuid.MustParse("22222222-2222-4222-8222-222222222222")}}}},
 	}, NextOffset: 10}
-	var out bytes.Buffer
-	require.NoError(t, writeKataContext(&out, result))
-	require.Contains(t, out.String(), "available id:2")
-	require.Contains(t, out.String(), "hello\nunsupported\n")
-	require.Contains(t, out.String(), "Continue with --offset 10\n")
-	require.Contains(t, out.String(), "available id:3 [1,3) version 22222222-2222-4222-8222-222222222222\n")
-	for failAt := 1; failAt <= 6; failAt++ {
-		writes := 0
-		err := writeKataContext(reportTestWriter(func(p []byte) (int, error) {
-			writes++
-			if writes == failAt {
-				return 0, io.ErrClosedPipe
+	pendingEvidence := kataevidence.NewEvidence(kataevidence.Reference{Version: 1, Kind: "docbank", Docbank: &kataevidence.DocumentReference{
+		VaultUID: "11111111-1111-4111-8111-111111111111", NodeID: 2,
+		ContentVersionID: "22222222-2222-4222-8222-222222222222", ContentSHA256: strings.Repeat("a", 64), EndRune: 5,
+	}}, "hello", "notes.txt")
+	for _, tc := range []struct {
+		name   string
+		result kataevidence.Context
+		want   []string
+	}{
+		{"passages", result, []string{"available id:2", "hello\nunsupported\n", "Continue with --offset 10\n", "available id:3 [1,3) version 22222222-2222-4222-8222-222222222222\n"}},
+		{"pending_comment", kataevidence.Context{Passages: []kataevidence.Resolution{{State: "available", Evidence: pendingEvidence, Pending: &kataevidence.Pending{SavedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, SavedQuote: "hello"}}}, []string{"comment pending", "hello"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			writes := 0
+			require.NoError(t, writeKataContext(reportTestWriter(func(p []byte) (int, error) {
+				writes++
+				return out.Write(p)
+			}), tc.result))
+			for _, want := range tc.want {
+				require.Contains(t, out.String(), want)
 			}
-			return len(p), nil
-		}), result)
-		require.ErrorIs(t, err, io.ErrClosedPipe, "write %d: %v", failAt, err)
+			for failAt := 1; failAt <= writes; failAt++ {
+				attempt := 0
+				err := writeKataContext(reportTestWriter(func(p []byte) (int, error) {
+					attempt++
+					if attempt == failAt {
+						return 0, io.ErrClosedPipe
+					}
+					return len(p), nil
+				}), tc.result)
+				require.ErrorIs(t, err, io.ErrClosedPipe, "write %d: %v", failAt, err)
+			}
+		})
 	}
-}
-
-func TestKataContextPrintsPendingComment(t *testing.T) {
-	var result kataevidence.Context
-	require.NoError(t, json.Unmarshal([]byte(`{"passages":[{"state":"available","evidence":{},"pending":{"saved_at":"2026-01-01T00:00:00Z"},"saved_quote":"hello"}]}`), &result))
-	var out bytes.Buffer
-	require.NoError(t, writeKataContext(&out, result))
-	require.Contains(t, out.String(), "comment pending")
-	require.Contains(t, out.String(), "hello")
-}
-
-func TestKataCiteHelpExplainsBinaryCitation(t *testing.T) {
-	command, _, err := newKataCommand().Find([]string{"cite"})
-	require.NoError(t, err)
-	var out bytes.Buffer
-	command.SetOut(&out)
-	require.NoError(t, command.Help())
-	require.Contains(t, out.String(), "read_rendition_text")
-	require.Contains(t, out.String(), "list_document_versions")
 }

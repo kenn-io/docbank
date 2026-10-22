@@ -37,7 +37,7 @@ func TestAppendLeavesUnrelatedStalePendingInLargeDiscussion(t *testing.T) {
 	posted, err := k.api.ShowIssue(t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: k.projectID, Ref: k.ref}})
 	require.NoError(t, err)
 	require.Len(t, posted.Comments, 35)
-	require.Equal(t, "Evidence: notes.txt\n\n> hello\n\n<!-- docbank-evidence:f53f934a8ef26d2ef3678198fb3d8cd0af94ce1c640a386fa1a2b691261e2f6b -->\n", posted.Comments[34].Body)
+	require.Equal(t, "Evidence: notes.txt\n\n> hello\n\n<!-- docbank-evidence:"+ID(nativeReference())+" -->\n", posted.Comments[34].Body)
 }
 
 func TestAppendStaleRetryDistinguishesIdenticalQuotesFromDifferentVersions(t *testing.T) {

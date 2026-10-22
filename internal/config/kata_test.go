@@ -11,29 +11,30 @@ import (
 	"go.kenn.io/kit/safefileio"
 )
 
-func TestKataConfigIsScoped(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[integrations.kata]\nenabled=true\nendpoint='invalid'\napi_key_env='DKE_TEST_KATA_KEY'\n"), 0600))
-	cfg, err := Load(root)
-	require.NoError(t, err)
-	require.NoError(t, cfg.Validate())
-	cfg.Integrations.Kata.Enabled = false
-	_, err = cfg.Integrations.Kata.Resolve(root)
-	require.ErrorContains(t, err, "kata integration is disabled")
-}
-
-func TestKataMalformedSectionDoesNotBlockUnrelatedCommands(t *testing.T) {
+func TestKataConfigErrorsOnlyBlockIntegrationResolution(t *testing.T) {
 	t.Setenv("DKE_TEST_KATA_KEY", "synthetic-token")
-	for _, section := range []string{"enabled='yes'", "enabled=true\nsurprise='value'", "enabled=true\napi_key='literal-secret'"} {
-		root := t.TempDir()
-		text := "[integrations.kata]\nendpoint='http://127.0.0.1:7777'\napi_key_env='DKE_TEST_KATA_KEY'\n" + section + "\n"
-		require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(text), 0600))
-		cfg, err := Load(root)
-		require.NoError(t, err)
-		require.NoError(t, cfg.Validate())
-		_, err = cfg.Integrations.Kata.Resolve(root)
-		require.ErrorContains(t, err, "invalid field or type")
-		require.NotContains(t, err.Error(), "literal-secret")
+	for _, tc := range []struct {
+		name      string
+		section   string
+		wantError string
+	}{
+		{"invalid_endpoint", "enabled=true\nendpoint='invalid'", "invalid endpoint"},
+		{"disabled", "enabled=false\nendpoint='invalid'", "kata integration is disabled"},
+		{"invalid_type", "enabled='yes'", "invalid field or type"},
+		{"unknown_field", "enabled=true\nsurprise='value'", "invalid field or type"},
+		{"literal_key", "enabled=true\napi_key='literal-secret'", "invalid field or type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			text := "[integrations.kata]\napi_key_env='DKE_TEST_KATA_KEY'\n" + tc.section + "\n"
+			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(text), 0600))
+			cfg, err := Load(root)
+			require.NoError(t, err)
+			require.NoError(t, cfg.Validate())
+			_, err = cfg.Integrations.Kata.Resolve(root)
+			require.ErrorContains(t, err, tc.wantError)
+			require.NotContains(t, err.Error(), "literal-secret")
+		})
 	}
 }
 

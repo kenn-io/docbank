@@ -6,10 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 	"uuid"
 
@@ -163,27 +163,6 @@ func TestKataContextSchemaBoundsOffset(t *testing.T) {
 	assertSchemaRejects(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset + 1})
 }
 
-func TestKataContextExposesPendingComment(t *testing.T) {
-	ref := kataReferenceFixture()
-	evidence := kataevidence.NewEvidence(ref, "hello", "notes.txt")
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.MarshalWrite(w, map[string]any{
-			"issue":    kataclient.Issue{UID: "01TEST", QualifiedRef: "docbank#abcd", Title: "Synthetic issue"},
-			"passages": []any{map[string]any{"state": "available", "evidence": evidence, "pending": map[string]any{"saved_at": "2026-01-01T00:00:00Z"}}},
-		}))
-	}))
-	defer daemon.Close()
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
-	output := exportCall(t, server, "get_kata_context", map[string]any{"issue": "docbank#abcd"})
-	passages, ok := output["passages"].([]any)
-	require.True(t, ok)
-	require.Len(t, passages, 1)
-	passage, ok := passages[0].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "2026-01-01T00:00:00Z", objectField(t, passage, "pending")["saved_at"])
-}
-
 func TestKataCiteSchemaSeparatesCreateAndAppend(t *testing.T) {
 	tools := catalogMap(toolCatalog(ServerOptions{AllowKataWrites: true}))
 	input := tools["cite_kata_evidence"].InputSchema
@@ -216,6 +195,7 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 		passages   []kataevidence.Resolution
 		nextOffset int
 	}{
+		{"pending_comment", []kataevidence.Resolution{{State: "available", SavedQuote: "hello", Evidence: kataevidence.NewEvidence(kataReferenceFixture(), "hello", "notes.txt"), Pending: &kataevidence.Pending{SavedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}}, 11},
 		{"rendition", []kataevidence.Resolution{{State: "available", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(rendition, "abc", "Synthetic text")}}, 11},
 		{"unsupported_version", []kataevidence.Resolution{{State: "unsupported", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(future, "", "Synthetic text")}}, 11},
 		{"unsupported_reference", []kataevidence.Resolution{
@@ -253,6 +233,9 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 			for i, expected := range tc.passages {
 				passage, ok := passages[i].(map[string]any)
 				require.True(t, ok)
+				if tc.name == "pending_comment" {
+					require.Equal(t, "2026-01-01T00:00:00Z", objectField(t, passage, "pending")["saved_at"])
+				}
 				require.Equal(t, expected.State, passage["state"])
 				require.Equal(t, expected.SavedQuote, passage["saved_quote"])
 				if tc.name == "unsupported_reference" && i == 0 {
@@ -276,7 +259,7 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 
 func TestKataContextReturnsDaemonErrors(t *testing.T) {
 	for _, acquireFailure := range []bool{true, false} {
-		t.Run(strconv.FormatBool(acquireFailure), func(t *testing.T) {
+		t.Run(map[bool]string{true: "acquire_failure", false: "request_failure"}[acquireFailure], func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				connection, _, err := http.NewResponseController(w).Hijack()
 				if !assert.NoError(t, err) {

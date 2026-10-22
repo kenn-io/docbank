@@ -110,10 +110,17 @@ func TestInvalidReferencesAndCrossProjectWritesDoNotSendRequests(t *testing.T) {
 		_, err := c.Get(t.Context(), ref)
 		require.Error(t, err)
 	}
-	_, err := c.Patch(t.Context(), "context#abcd", "k", nil, jsontext.Value(`[]`))
-	require.Error(t, err)
-	require.Error(t, c.Comment(t.Context(), "context#abcd", "key", "body"))
-	_, err = c.Create(t.Context(), "", "title", "body", nil)
+	_, patchErr := c.Patch(t.Context(), "context#abcd", "k", nil, jsontext.Value(`[]`))
+	for _, err := range []error{
+		c.CheckProject("other#abcd"),
+		patchErr,
+		c.Comment(t.Context(), "context#abcd", "key", "body"),
+	} {
+		failure, ok := errors.AsType[*Error](err)
+		require.True(t, ok, "%v", err)
+		require.Equal(t, "wrong_project", failure.Code)
+	}
+	_, err := c.Create(t.Context(), "", "title", "body", nil)
 	require.Error(t, err)
 	require.Error(t, c.Comment(t.Context(), "abcd", "", "body"))
 	require.Zero(t, requests.Load())
@@ -136,12 +143,17 @@ func TestClientClassifiesKataAuthenticationAndMissingIssue(t *testing.T) {
 }
 
 func TestClientBoundsRequests(t *testing.T) {
-	c, api, _ := realClient(t)
+	c := New(config.KataConnection{Endpoint: "https://example.com", APIKey: "synthetic-key", Project: "docbank"})
+	c.schemaChecked = true
+	c.projects["docbank"] = 1
+	var requests atomic.Int32
+	c.http.Transport = boundedTransport{base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, errors.New("unexpected transport request")
+	})}
 	_, err := c.Create(t.Context(), "key", "title", strings.Repeat("x", 1<<20), nil)
 	require.Error(t, err)
-	list, err := api.ListAllIssues(t.Context(), &wire.ListAllIssuesRequestOptions{})
-	require.NoError(t, err)
-	require.Empty(t, list.Issues)
+	require.Zero(t, requests.Load())
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

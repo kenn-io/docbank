@@ -3,19 +3,14 @@ package kataevidence
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/kata/pkg/client"
 	"go.kenn.io/kata/pkg/client/generated"
-	"go.kenn.io/kata/pkg/katatest"
 )
 
 func TestAppendPendingReconciliation(t *testing.T) {
@@ -37,25 +32,6 @@ func TestAppendPendingReconciliation(t *testing.T) {
 		{name: "stale_oversized_discussion", age: 7 * 24 * time.Hour, oversized: true, wantReads: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			backend := katatest.New(t, katatest.WithToken("synthetic-key"))
-			api := backend.Client(t)
-			project, err := api.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
-			require.NoError(t, err)
-			reads, posts := 0, 0
-			var issue kataclient.Issue
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/"+issue.ShortID) {
-					reads++
-				}
-				if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments") {
-					posts++
-				}
-				backend.Service.Handler().ServeHTTP(w, r)
-			}))
-			t.Cleanup(server.Close)
-			client := kataclient.New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
-			issue, err = client.Create(t.Context(), "create", "Follow up", "", nil)
-			require.NoError(t, err)
 			savedAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 			ref := nativeReference()
 			entry, err := json.Marshal(Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{SavedAt: savedAt}})
@@ -63,8 +39,8 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 			data, err := env.encode()
 			require.NoError(t, err)
-			_, err = client.Patch(t.Context(), issue.QualifiedRef, MetadataKey, nil, data)
-			require.NoError(t, err)
+			k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "")
+			issue := k.snapshot()
 			if tc.existing {
 				body := "Evidence: notes.txt\n\n> hello\n\n<!-- docbank-evidence:" + ID(ref) + " -->\n"
 				key := commentKey(issue.UID, ID(ref), body)
@@ -74,18 +50,18 @@ func TestAppendPendingReconciliation(t *testing.T) {
 				if tc.edited {
 					body = "Edited discussion text.\n\n<!-- docbank-evidence:" + ID(ref) + " -->\n"
 				}
-				require.NoError(t, client.Comment(t.Context(), issue.QualifiedRef, key, body))
+				require.NoError(t, k.Comment(t.Context(), issue.QualifiedRef, key, body))
 			} else {
 				// Similar words under a different label aren't an exact match.
-				require.NoError(t, client.Comment(t.Context(), issue.QualifiedRef, "other", "Evidence: other.txt\n\n> hello\n"))
+				require.NoError(t, k.Comment(t.Context(), issue.QualifiedRef, "other", "Evidence: other.txt\n\n> hello\n"))
 			}
 			if tc.oversized {
-				addLargeDiscussion(t, api, project.Project.ID, issue.UID)
+				addLargeDiscussion(t, k.api, k.projectID, issue.UID)
 			}
-			before, err := api.ShowIssue(t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: project.Project.ID, Ref: issue.UID}})
+			before, err := k.api.ShowIssue(t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: k.projectID, Ref: issue.UID}})
 			require.NoError(t, err)
-			reads, posts = 0, 0
-			s := Service{Kata: client, Archive: &memoryArchive{prepareErr: ErrUnavailable}, Now: func() time.Time { return savedAt.Add(tc.age) }}
+			k.reads, k.posts = 0, 0
+			s := Service{Kata: k, Archive: &memoryArchive{prepareErr: ErrUnavailable}, Now: func() time.Time { return savedAt.Add(tc.age) }}
 			_, err = s.Cite(t.Context(), CiteRequest{Issue: issue.QualifiedRef, Selector: Selector{NodeID: 2, EndRune: 5, ExpectedVersion: ref.Docbank.ContentVersionID}})
 			if tc.oversized && tc.wantReads > 0 {
 				require.ErrorIs(t, err, ErrUnsupported)
@@ -93,16 +69,16 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			require.Equal(t, tc.wantReads, reads)
-			require.Equal(t, tc.wantPosts, posts)
-			after, err := api.ShowIssue(t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: project.Project.ID, Ref: issue.UID}})
+			require.Equal(t, tc.wantReads, k.reads)
+			require.Equal(t, tc.wantPosts, k.posts)
+			after, err := k.api.ShowIssue(t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: k.projectID, Ref: issue.UID}})
 			require.NoError(t, err)
 			wantComments := len(before.Comments)
 			if !tc.existing && !tc.oversized {
 				wantComments++
 			}
 			require.Len(t, after.Comments, wantComments)
-			saved, err := client.Get(t.Context(), issue.QualifiedRef)
+			saved, err := k.Get(t.Context(), issue.QualifiedRef)
 			require.NoError(t, err)
 			if tc.oversized && tc.wantReads > 0 {
 				require.JSONEq(t, string(data), string(saved.Metadata[MetadataKey]))

@@ -99,6 +99,9 @@ func TestKataOriginalPreparationFailures(t *testing.T) {
 		quote    string
 		detail   string
 	}{
+		{name: "yaml", mimeType: "application/yaml", content: []byte("hello"), end: 5},
+		{name: "ndjson", mimeType: "application/x-ndjson", content: []byte("hello"), end: 5},
+		{name: "json_charset", mimeType: "application/json; charset=utf-8", content: []byte("hello"), end: 5},
 		{name: "too_large", mimeType: "text/plain", content: []byte(strings.Repeat("x", kataOriginalMaxBytes+1)), end: 1, detail: "document exceeds"},
 		{name: "unsupported_media", mimeType: "application/pdf", content: []byte("synthetic PDF"), end: 1, detail: "retained text rendition"},
 		{name: "octet_stream_text", mimeType: "application/octet-stream", content: []byte("hello"), end: 5, detail: "retained text rendition"},
@@ -111,8 +114,13 @@ func TestKataOriginalPreparationFailures(t *testing.T) {
 			require.NoError(t, err)
 			node, err := s.CreateFile(t.Context(), s.RootID(), tc.name+".txt", hash, size, tc.mimeType)
 			require.NoError(t, err)
-			_, err = archive.Prepare(t.Context(), kataevidence.Selector{NodeID: node.ID, StartRune: tc.start, EndRune: tc.end, Quote: tc.quote})
-			require.ErrorContains(t, err, tc.detail)
+			evidence, err := archive.Prepare(t.Context(), kataevidence.Selector{NodeID: node.ID, StartRune: tc.start, EndRune: tc.end, Quote: tc.quote})
+			if tc.detail != "" {
+				require.ErrorContains(t, err, tc.detail)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "hello", evidence.Excerpt)
+			}
 		})
 	}
 }

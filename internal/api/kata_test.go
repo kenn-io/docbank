@@ -128,25 +128,6 @@ func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
 	require.Equal(t, "changed", page.Passages[0].State)
 }
 
-func TestKataHTTPTextExtractionMediaCites(t *testing.T) {
-	kata, issue := realKataForDocbank(t)
-	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
-	})
-	for _, media := range []string{"application/yaml", "application/x-ndjson", "application/json; charset=utf-8"} {
-		t.Run(media, func(t *testing.T) {
-			hash, size, err := s.Blobs.Write(strings.NewReader("hello"))
-			require.NoError(t, err)
-			node, err := s.CreateFile(t.Context(), s.RootID(), strings.TrimPrefix(media, "application/")+".txt", hash, size, media)
-			require.NoError(t, err)
-			response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{Title: "Review " + media, IdempotencyKey: media, Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5}})
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			require.Contains(t, issue().Issue.Body, "> hello")
-		})
-	}
-}
-
 func TestKataHTTPContextIdenticalRewriteAvailable(t *testing.T) {
 	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
@@ -196,36 +177,33 @@ func TestKataHTTPKeylessServerRejectsToken(t *testing.T) {
 	require.NotContains(t, body, "synthetic-kata-token")
 }
 
-func TestKataHTTPIntegrityFailureIsLocalAndPermanent(t *testing.T) {
-	kata, issue := realKataForDocbank(t)
-	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
-	})
-	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
-	require.NoError(t, os.WriteFile(filepath.Join(s.BlobsDir, node.BlobHash[:2], node.BlobHash), []byte("bad"), 0o600))
-	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{
-		Title: "Review", IdempotencyKey: "integrity", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5},
-	})
-	require.NotContains(t, strings.ToLower(body), "retry")
-	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
-	require.Contains(t, body, `"code":"kata_evidence_integrity"`)
-	require.Empty(t, issue().Issue.Body)
-}
-
-func TestKataHTTPMissingBlobIsLocalAndPermanent(t *testing.T) {
-	kata, issue := realKataForDocbank(t)
-	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
-	})
-	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
-	require.NoError(t, os.Remove(filepath.Join(s.BlobsDir, node.BlobHash[:2], node.BlobHash)))
-	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{Title: "Review", IdempotencyKey: "missing", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5}})
-	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
-	require.Contains(t, body, `"code":"content_missing"`)
-	require.NotContains(t, strings.ToLower(body), "retry")
-	require.Empty(t, issue().Issue.Body)
+func TestKataHTTPBlobFailuresAreLocalAndPermanent(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		damage func(string) error
+		status int
+		code   string
+	}{
+		{"integrity", func(path string) error { return os.WriteFile(path, []byte("bad"), 0o600) }, http.StatusInternalServerError, "kata_evidence_integrity"},
+		{"missing", os.Remove, http.StatusServiceUnavailable, "content_missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kata, issue := realKataForDocbank(t)
+			t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
+			ts, s := newTestServer(t, func(d *api.Deps) {
+				d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
+			})
+			node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
+			require.NoError(t, tc.damage(filepath.Join(s.BlobsDir, node.BlobHash[:2], node.BlobHash)))
+			response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{
+				Title: "Review", IdempotencyKey: tc.name, Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5},
+			})
+			require.Equal(t, tc.status, response.StatusCode, body)
+			require.Contains(t, body, `"code":"`+tc.code+`"`)
+			require.NotContains(t, strings.ToLower(body), "retry")
+			require.Empty(t, issue().Issue.Body)
+		})
+	}
 }
 
 func TestKataHTTPRejectsInvalidTitlePermanently(t *testing.T) {

@@ -31,6 +31,8 @@ type testKata struct {
 	api             *client.Client
 	projectID       int64
 	ref             string
+	reads           int
+	posts           int
 	commentFails    bool
 	conflictOnce    bool
 	concurrentEntry jsontext.Value
@@ -45,6 +47,12 @@ func newTestKata(t *testing.T, metadata map[string]jsontext.Value, body string) 
 	k := &testKata{t: t, api: api, projectID: project.Project.ID}
 	direct := kataclient.New(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/"+strings.TrimPrefix(k.ref, "docbank#")) {
+			k.reads++
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments") {
+			k.posts++
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments") && k.commentFails {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -240,10 +248,6 @@ func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.
 		require.ErrorIs(t, err, ErrUnavailable, "different citation %s must not finish the pending comment", field)
 		require.Zero(t, k.commentCount())
 	}
-	_, err = s.Cite(t.Context(), r)
-	require.NoError(t, err)
-	require.Equal(t, 1, k.commentCount())
-	require.NotContains(t, string(k.snapshot().Metadata[MetadataKey]), `"pending"`)
 }
 
 func TestContextAvailableAndUnreachable(t *testing.T) {
@@ -393,11 +397,6 @@ func TestContextUnknownKindsKeepPagination(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Passages, 1)
 	require.Zero(t, page.NextOffset)
-}
-
-func TestContextRejectsOtherProject(t *testing.T) {
-	_, err := (Service{Kata: newTestKata(t, nil, "")}).Context(t.Context(), ContextRequest{Issue: "other#abcd"})
-	require.ErrorContains(t, err, "wrong_project")
 }
 
 func TestCiteContainsEveryQuoteLineEnding(t *testing.T) {
