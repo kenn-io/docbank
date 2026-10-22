@@ -1543,7 +1543,13 @@
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
-    replaceQueryURL(null);
+    const url = new URL(location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    url.hash = new URLSearchParams(
+      [...params].filter(([key]) => key === "node" || key === "version"),
+    ).toString();
+    history.replaceState(history.state, "", url.href);
+    nodeVersionHash = location.hash;
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;

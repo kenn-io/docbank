@@ -2,21 +2,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { storage, photo, photoMetadataResponse } from "./photo-test-fixtures.js";
-import { node as fileNode, version } from "./version-test-fixtures.js";
+import { node as fileNode, root, version } from "./version-test-fixtures.js";
 import type { Node } from "./generated/docbank.js";
 
 const oldID = "11111111-1111-4111-8111-111111111111";
 const currentID = "22222222-2222-4222-8222-222222222222";
-const root: Node = {
-  id: 1,
-  name: "",
-  kind: "dir",
-  path: "/",
-  size: 0,
-  revision: 1,
-  created_at: "2026-01-01T00:00:00Z",
-  modified_at: "2026-01-01T00:00:00Z",
-};
 const node: Node = {
   ...fileNode,
   name: "example.txt",
@@ -74,14 +64,15 @@ function api(
       return Response.json({
         items: [
           currentVersion,
-          ...Array.from({ length: 999 }, (_, index) =>
-            version(
+          ...Array.from({ length: 999 }, (_, index) => ({
+            ...version(
               `${(index + 1).toString(16).padStart(8, "0")}-3333-4333-8333-333333333333`,
               1000 - index,
               "content_replace",
               "b",
             ),
-          ),
+            size: currentVersion.size,
+          })),
         ],
         total: 1001,
         limit: 1000,
@@ -125,15 +116,17 @@ it("opens a node absent from directory rows and downloads its exact historical a
   }
 });
 
-it.each(["purged version", "wrong node", "bad request"])(
+it.each(["purged version", "wrong node", "directory", "bad request"])(
   "shows unavailable for %s without current substitution",
   async (kind) => {
     history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
     api((url) => {
+      if (kind === "directory" && url === "/api/v1/nodes/42")
+        return Response.json({ ...root, id: 42 });
       if (kind === "bad request" && url === "/api/v1/nodes/42")
         return Response.json({ detail: "Request rejected by the server" }, { status: 400 });
       if (url === `/api/v1/versions/${oldID}`)
-        return kind === "wrong node"
+        return kind === "wrong node" || kind === "directory"
           ? Response.json({ ...oldVersion, node_id: 99 })
           : kind === "purged version"
             ? Response.json({ detail: "missing" }, { status: 404 })
@@ -145,9 +138,11 @@ it.each(["purged version", "wrong node", "bad request"])(
       await screen.findByText(
         kind === "wrong node"
           ? /version does not belong to/
-          : kind === "bad request"
-            ? "Request rejected by the server"
-            : /node or version is missing or purged/,
+          : kind === "directory"
+            ? "The linked node is a directory. Version links require a file."
+            : kind === "bad request"
+              ? "Request rejected by the server"
+              : /node or version is missing or purged/,
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
@@ -193,7 +188,7 @@ it.each(["resolved", "invalid"])(
 it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offset=0"])(
   "preserves linked intent through sign-in when %s rejects the session",
   async (failingRequest) => {
-    history.replaceState(null, "", `/${link()}&query=%7B%7D`);
+    history.replaceState(null, "", `/${link()}&query=%7B%7D&photo=example&other=value`);
     let expired = true;
     api((url) => {
       if (url === failingRequest && expired) {
@@ -210,6 +205,27 @@ it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offs
     expect(await screen.findByText(oldID)).toBeTruthy();
   },
 );
+
+it.each([
+  { action: "Lock web session", linked: true },
+  { action: "Lock web session", linked: false },
+  { action: "Sign out", linked: true },
+  { action: "Sign out", linked: false },
+])("clears other fragment intent on $action with linked=$linked", async ({ action, linked }) => {
+  const selection = linked ? link().slice(1) + "&" : "";
+  history.replaceState(
+    null,
+    "",
+    `/#${action === "Lock web session" ? credentials : ""}${selection}query=%7B%7D&photo=example&other=value`,
+  );
+  api();
+  render(App);
+  if (action === "Sign out") await signIn();
+  if (linked) await screen.findByText(oldID);
+  await fireEvent.click(await screen.findByRole("button", { name: action }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: action })).toBeNull());
+  expect(location.hash).toBe(linked ? link() : "");
+});
 
 it("discards late A when hash navigation selects B and handles back/forward events", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
@@ -296,6 +312,7 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
   ]);
   pending = false;
   history.forward();
+  await waitFor(() => expect(location.hash).toBe(link(currentID)));
   await screen.findByText(currentID);
   expect(screen.getByRole("dialog")).toBe(drawer);
   expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([

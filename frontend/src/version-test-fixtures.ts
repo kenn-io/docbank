@@ -1,5 +1,16 @@
 import type { ContentVersion, Node } from "./generated/docbank.js";
 
+export const root: Node = {
+  id: 1,
+  name: "",
+  kind: "dir",
+  path: "/",
+  size: 0,
+  revision: 1,
+  created_at: "2026-01-01T00:00:00Z",
+  modified_at: "2026-01-01T00:00:00Z",
+};
+
 export const node: Node = {
   id: 42,
   name: "quarterly-report.txt",
@@ -24,7 +35,7 @@ export function version(
     id,
     node_id: node.id,
     blob_hash: hash.repeat(64),
-    size: revision * 128,
+    size: 384,
     mime_type: "text/plain; charset=utf-8",
     recorded_at: new Date(Date.UTC(2026, 6, 21 + revision, 12)).toISOString(),
     node_revision: revision,
