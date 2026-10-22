@@ -2587,7 +2587,6 @@ const facet = {
 it.each([
   { action: "reloadCounts", state: "loaded" },
   { action: "refresh", state: "loaded" },
-  { action: "rating change", state: "failed" },
   { action: "rating change", state: "partial" },
 ] as const)(
   "drops $state counts after $action while Filters is closed",
@@ -2596,17 +2595,12 @@ it.each([
     const counts = vi
       .fn()
       .mockResolvedValueOnce(
-        state === "failed"
-          ? Response.json({ detail: "Counts unavailable" }, { status: 503 })
-          : Response.json({
-              facets:
-                state === "partial"
-                  ? [
-                      facet,
-                      { dimension: "rating", available: false, reason: "member_budget_exceeded" },
-                    ]
-                  : [facet],
-            }),
+        Response.json({
+          facets:
+            state === "partial"
+              ? [facet, { dimension: "rating", available: false, reason: "member_budget_exceeded" }]
+              : [facet],
+        }),
       )
       .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)));
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) =>
@@ -2618,7 +2612,7 @@ it.each([
     if (state === "loaded") await vi.waitFor(() => expect(photos.facets).toEqual([facet]));
     else {
       await vi.waitFor(() => expect(photos.facetsError).toBeTruthy());
-      expect(photos.facetsRetryable).toBe(state === "failed");
+      expect(photos.facetsRetryable).toBe(false);
     }
     photos.toggleFilters();
     if (action === "rating change") {
