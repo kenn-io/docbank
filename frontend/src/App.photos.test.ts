@@ -4516,7 +4516,7 @@ it.each([false, true])(
     const query = vi.spyOn(Photos.prototype, "setQuery");
     render(App);
     const card = await screen.findByRole("button", { name: "Ada 1 Library photo" });
-    const access = accessState.mock.contexts.at(-1)!;
+    const access = accessState.mock.contexts.at(-1) as HiddenAccess;
     navigationStarted = true;
     const navigating = fireEvent.click(card);
     access.acceptState(state(unlocked), Date.now() + 1);
@@ -4525,7 +4525,7 @@ it.each([false, true])(
     finishAccess(Response.json(state(unlocked)));
     await screen.findByText("Person: Ada");
     expect(location.pathname).toBe("/photos");
-    const filtered = query.mock.contexts.filter((photos) =>
+    const filtered = (query.mock.contexts as Photos[]).filter((photos) =>
       photos.query.filters.person_ids?.includes(ada.person_id),
     );
     expect(filtered.length).toBeGreaterThan(0);
