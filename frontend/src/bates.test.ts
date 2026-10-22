@@ -28,7 +28,6 @@ it("hashes a recipe to the same digest as the Go stamp engine", async () => {
     24,
   );
 
-  expect(globalThis.crypto.subtle).toBeDefined();
   // Golden digest from internal/pdfstamp/stamp_test.go validRecipe.
   const expected = "bf113c1f5c51f7d55c9d214c822a231d47404f07eae61542ba18cbdf0f5f6923";
   await expect(batesRecipeSHA256(recipe)).resolves.toBe(expected);

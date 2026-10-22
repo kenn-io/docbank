@@ -31,11 +31,12 @@ func TestMetadataQualificationSurvivesToolchainChanges(t *testing.T) {
 			recipe.GoVersion = test.version
 			assert.Equal(t, test.fingerprint,
 				fingerprintSourceMetadataExtractor(sourceMetadataExtractorDescriptor, recipe),
-				"stored metadata generations must retain their existing identity")
+				"parser fingerprint must stay pinned for this Go toolchain")
 			id := sourceMetadataImplementationID(sourceMetadataExtractorDescriptor, recipe)
 			record, err := internalformatcoverage.Compute(nil, id)
 			require.NoError(t, err)
-			assert.Equal(t, SourceMetadataImplementationID, record.GeneratedBy.ExtractorID)
+			assert.Equal(t, SourceMetadataImplementationID, record.GeneratedBy.ExtractorID,
+				"qualification identity must not change with the Go toolchain")
 			assert.Equal(t, document.CapabilityQualified,
 				processingFormatByID(t, record, "xlsx").Capabilities[document.CapabilityMetadata].State)
 		})
