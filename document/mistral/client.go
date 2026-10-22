@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/renderpdf"
 )
 
@@ -542,8 +543,8 @@ func (e *credentialError) Error() string { return "Mistral OCR credential is una
 func (e *credentialError) Unwrap() error { return e.cause }
 
 func isInvalidModelResponse(reader io.Reader) bool {
-	body, err := io.ReadAll(io.LimitReader(reader, 4097))
-	if err != nil || len(body) >= 4096 {
+	body, err := providerutil.ReadBounded(reader, 4096)
+	if err != nil {
 		return false
 	}
 	var response struct {
