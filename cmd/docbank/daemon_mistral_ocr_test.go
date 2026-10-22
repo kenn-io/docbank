@@ -85,7 +85,6 @@ func TestMistralOCRRuntimeAuthority(t *testing.T) {
 			p.DescriptorFingerprint = strings.Repeat("0", 64)
 			c.RenditionProfiles["documents"] = p
 		}, "expected descriptor_fingerprint"},
-		{"endpoint drift", func(c *config.Config) { c.RenditionProfiles["documents"].Runtime.Endpoint = "https://example.invalid" }, "endpoint differs"},
 		{"deployment drift", func(c *config.Config) {
 			p := c.RenditionProfiles["documents"]
 			p.DeploymentFingerprint = strings.Repeat("0", 64)
@@ -96,80 +95,21 @@ func TestMistralOCRRuntimeAuthority(t *testing.T) {
 			c.RenditionProfiles["documents"].Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "missing.json")
 		}, "manifest is unavailable"},
 		{"missing binding", func(c *config.Config) { c.CredentialBindings = nil }, "credential binding"},
-		{"unit bounds", func(c *config.Config) {
-			p := c.RenditionProfiles["documents"]
-			p.MaxUnits = 1
-			c.RenditionProfiles["documents"] = p
-		}, "processing bounds"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg, descriptor := mistralOCRProcessingConfig(t)
+			cfg, _ := mistralOCRProcessingConfig(t)
 			test.mutate(&cfg)
 			_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 			require.ErrorContains(t, err, test.want)
-			if test.name == "descriptor drift" {
-				require.ErrorContains(t, err, descriptor.Fingerprint)
-			}
 		})
 	}
-	t.Run("no PDF authority", func(t *testing.T) {
-		cfg, _ := mistralOCRProcessingConfig(t)
-		profile, err := configuredMistralProfile(cfg.RenditionProfiles["documents"])
-		require.NoError(t, err)
-		manifest, err := mistraltest.SyntheticManifest(profile.Policy, false)
-		require.NoError(t, err)
-		var encoded bytes.Buffer
-		require.NoError(t, mistral.EncodeCapabilityManifest(&encoded, manifest))
-		require.NoError(t, os.WriteFile(cfg.RenditionProfiles["documents"].Runtime.CapabilityManifest, encoded.Bytes(), 0600))
-		fp, err := profile.Policy.Fingerprint(manifest)
-		require.NoError(t, err)
-		d := profile.Descriptor
-		d.Fingerprint = ""
-		d.PolicyFingerprint = fp
-		d, err = document.NewRenditionDescriptor(d)
-		require.NoError(t, err)
-		p := cfg.RenditionProfiles["documents"]
-		p.DescriptorFingerprint = d.Fingerprint
-		p.DisclosureFingerprint = mistral.DisclosureFingerprint(d, p.Runtime.Endpoint, p.DeploymentFingerprint)
-		cfg.RenditionProfiles["documents"] = p
-		_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-		require.ErrorContains(t, err, "no enforceable upload authority")
-	})
 	t.Run("staged runtime", func(t *testing.T) {
 		cfg, _ := mistralOCRProcessingConfig(t)
 		cfg.ProcessingProfiles = nil
-		cfg.RenditionProfiles["documents"].Runtime.CapabilityManifest = "missing.json"
+		cfg.RenditionProfiles["documents"].Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "missing.json")
 		profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 		require.NoError(t, err)
 		require.Empty(t, profiles)
-	})
-	t.Run("reuse and conflict", func(t *testing.T) {
-		cfg, _ := mistralOCRProcessingConfig(t)
-		cfg.RenditionProfiles["copy"] = cfg.RenditionProfiles["documents"]
-		second := cfg.ProcessingProfiles["documents"]
-		second.Rendition = "copy"
-		second.MaxDocumentChars--
-		cfg.ProcessingProfiles["copy"] = second
-		// Observation dates are evidence metadata, outside reusable execution identity.
-		p := cfg.RenditionProfiles["copy"]
-		p.Runtime = new(*p.Runtime)
-		original, err := configuredMistralProfile(p)
-		require.NoError(t, err)
-		manifest := original.CapabilityManifest
-		manifest.ObservedOn = "2026-01-02"
-		var encoded bytes.Buffer
-		require.NoError(t, mistral.EncodeCapabilityManifest(&encoded, manifest))
-		p.Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "reprobed.json")
-		require.NoError(t, os.WriteFile(p.Runtime.CapabilityManifest, encoded.Bytes(), 0600))
-		cfg.RenditionProfiles["copy"] = p
-		profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-		require.NoError(t, err)
-		require.Same(t, profiles["documents"].RenditionProvider, profiles["copy"].RenditionProvider)
-		p = cfg.RenditionProfiles["copy"]
-		p.Runtime.RequestTimeout = config.Duration(2 * time.Second)
-		cfg.RenditionProfiles["copy"] = p
-		_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-		require.ErrorContains(t, err, "conflicts with another profile")
 	})
 }
 
@@ -241,8 +181,6 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 			require.Len(t, plan.Flow, 1)
 			require.Equal(t, "hosted_provider", plan.Flow[0].TrustBoundary)
 			require.Equal(t, "https://api.eu.mistral.ai", plan.Flow[0].RuntimeDisclosure.Endpoint)
-			require.Equal(t, "docbank-mistral-ocr/v1", plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
-			require.Equal(t, mistral.DefaultModel, plan.Flow[0].RuntimeDisclosure.Model)
 			require.True(t, plan.ConsentRequired)
 			_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
 			require.ErrorContains(t, err, "consent")

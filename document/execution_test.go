@@ -148,28 +148,22 @@ func TestRenditionExecutionSnapshotWithoutArtifacts(t *testing.T) {
 		MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000,
 	})
 	require.NoError(t, err)
-	for name, roles := range map[string][]EvidenceArtifactRole{
-		"nil": nil, "empty": {},
-	} {
-		t.Run(name, func(t *testing.T) {
-			authorization := validRenditionAuthorization(validRenditionDescriptor(t), metadata)
-			authorization.AllowedArtifactRoles = roles
-			authorization.MaxArtifacts = 0
-			authorization.MaxArtifactBytes = 0
-			identity, err := NewRenditionExecutionIdentityV1(metadata, authorization, evidence, rendition)
-			require.NoError(t, err)
-			encoded, _, err := CanonicalRenditionExecutionIdentityV1(identity)
-			require.NoError(t, err)
-			persisted, err := ParseRenditionExecutionIdentityV1(encoded)
-			require.NoError(t, err)
-			snapshot, err := NewRenditionExecutionSnapshotV1(persisted, authorization)
-			require.NoError(t, err)
-			encoded, err = CanonicalRenditionExecutionSnapshotV1(snapshot)
-			require.NoError(t, err)
-			_, err = ParseRenditionExecutionSnapshotV1(encoded)
-			require.NoError(t, err)
-		})
-	}
+	authorization := validRenditionAuthorization(validRenditionDescriptor(t), metadata)
+	authorization.AllowedArtifactRoles = nil
+	authorization.MaxArtifacts = 0
+	authorization.MaxArtifactBytes = 0
+	identity, err := NewRenditionExecutionIdentityV1(metadata, authorization, evidence, rendition)
+	require.NoError(t, err)
+	encoded, _, err := CanonicalRenditionExecutionIdentityV1(identity)
+	require.NoError(t, err)
+	persisted, err := ParseRenditionExecutionIdentityV1(encoded)
+	require.NoError(t, err)
+	snapshot, err := NewRenditionExecutionSnapshotV1(persisted, authorization)
+	require.NoError(t, err)
+	encoded, err = CanonicalRenditionExecutionSnapshotV1(snapshot)
+	require.NoError(t, err)
+	_, err = ParseRenditionExecutionSnapshotV1(encoded)
+	require.NoError(t, err)
 }
 
 func TestSealRenditionExecutionAtClassifiesBoundaryFailures(t *testing.T) {

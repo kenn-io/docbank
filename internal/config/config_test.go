@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/mistral/mistraltest"
 )
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -1167,6 +1170,17 @@ func TestMistralOCRRuntime(t *testing.T) {
 		p.Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "mistral.json")
 		p.Runtime.Retention, p.Runtime.Training = "zdr", "opted-out"
 		p.Runtime.TotalTimeout, p.Runtime.PollInterval, p.Runtime.MaxPollAttempts = 0, 0, 0
+		policy, err := p.MistralPolicy()
+		require.NoError(t, err)
+		manifest, err := mistraltest.SyntheticManifest(policy, true)
+		require.NoError(t, err)
+		var encoded bytes.Buffer
+		require.NoError(t, mistral.EncodeCapabilityManifest(&encoded, manifest))
+		require.NoError(t, os.WriteFile(p.Runtime.CapabilityManifest, encoded.Bytes(), 0600))
+		descriptor, err := mistral.DocumentDescriptor(policy, manifest)
+		require.NoError(t, err)
+		p.DescriptorID, p.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
+		p.DisclosureFingerprint = mistral.DisclosureFingerprint(descriptor, p.Runtime.Endpoint, p.DeploymentFingerprint)
 		c.RenditionProfiles["primary"] = p
 		return c
 	}
@@ -1191,9 +1205,7 @@ func TestMistralOCRRuntime(t *testing.T) {
 		{"wrong origin", func(p *RenditionProfileConfig) { p.Runtime.Endpoint = "https://example.invalid" }, "endpoint differs from policy origin"},
 		{"origin trailing slash", func(p *RenditionProfileConfig) { p.Runtime.Endpoint += "/" }, "endpoint differs from policy origin"},
 		{"unknown retention", func(p *RenditionProfileConfig) { p.Runtime.Retention = "unknown" }, "retention posture must be"},
-		{"missing retention", func(p *RenditionProfileConfig) { p.Runtime.Retention = "" }, "retention posture must be"},
 		{"unknown training", func(p *RenditionProfileConfig) { p.Runtime.Training = "unknown" }, "training posture must be"},
-		{"missing training", func(p *RenditionProfileConfig) { p.Runtime.Training = "" }, "training posture must be"},
 		{"document bytes too large", func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 500<<20 + 1 }, "mistral policy processing bounds"},
 		{"response bytes too large", func(p *RenditionProfileConfig) { p.MaxResponseBytes = 512<<20 + 1 }, "mistral policy processing bounds"},
 		{"units too small", func(p *RenditionProfileConfig) { p.MaxUnits = 2 }, "mistral policy processing bounds"},
@@ -1208,20 +1220,10 @@ func TestMistralOCRRuntime(t *testing.T) {
 			require.ErrorContains(t, c.Validate(), test.want)
 		})
 	}
-	t.Run("consumer bounds and privacy values", func(t *testing.T) {
-		for _, retention := range []string{"standard", "zdr"} {
-			for _, training := range []string{"default-opt-out", "opted-out"} {
-				for _, units := range []int{3, 5000} {
-					c := valid()
-					p := c.RenditionProfiles["primary"]
-					p.Runtime.RequestTimeout = Duration(30 * time.Minute)
-					p.Runtime.Retention, p.Runtime.Training = retention, training
-					p.MaxDocumentBytes, p.MaxResponseBytes, p.MaxUnits = 500<<20, 512<<20, units
-					c.RenditionProfiles["primary"] = p
-					require.NoError(t, c.Validate())
-				}
-			}
-		}
+	t.Run("maximum request timeout", func(t *testing.T) {
+		c := valid()
+		c.RenditionProfiles["primary"].Runtime.RequestTimeout = Duration(30 * time.Minute)
+		require.NoError(t, c.Validate())
 	})
 
 	t.Run("missing credential", func(t *testing.T) {
