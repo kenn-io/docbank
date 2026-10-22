@@ -753,7 +753,7 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_ids") || len(entries) != 1 {
+			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first" && key != "person_id") || len(entries) != 1 {
 				return false
 			}
 		}

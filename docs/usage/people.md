@@ -13,13 +13,17 @@ uses the revision returned by the preceding read.
 
 ## People in Photos
 
-Open **Photos → People** to browse everyone visible to your browser session. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. People with document evidence or no photo evidence still have a card, with a person icon when no readable assigned face is available.
+Open **Photos → People** to browse everyone visible to your browser session, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. People with document evidence or no photo evidence still have a card, with a person icon when no readable assigned face is available.
 
-Select a card to open that person's Library photos. While Hidden is unlocked, cards also show a separate **Hidden** photo count that opens the same person in Hidden. Hidden-only people and their counts clear when Hidden locks or expires. An available key face supplies the portrait; otherwise Docbank uses another readable assigned face.
+Select a card to open that person's Library photos. While Hidden is unlocked, cards also show a separate **Hidden** photo count that opens the same person in Hidden. If Hidden locks before that view opens, it opens without the person filter. Hidden-only people and their counts clear when Hidden locks or expires. A readable key face supplies the portrait; otherwise Docbank uses the newest readable assigned face, from Library first and then from unlocked Hidden.
 
-Use **Rename** to change the name. Use **Merge** to choose the person to keep, then confirm. The survivor keeps their name and receives the other person's records. Each choice includes its identity label or full person ID so you can distinguish namesakes. A rejected edit shows its validation, revision, conflict, or capacity error. If a merge result can't be confirmed, **Retry merge** reuses the operation ID to retrieve the saved result.
+Use **Rename** to change the name. The card updates in place, so the people you have already loaded stay on screen. Use **Merge** to choose the person to keep, then confirm. The survivor keeps their name and receives the other person's records; the other card disappears and the survivor's counts refresh.
 
-Face-name pickers put the people you named most recently in this signed-in browser session first. Namesakes stay together; the remaining names follow name order. This history keeps the last 20 choices, including newly created people and whole-photo marks, and resets on reload or sign-out.
+If someone else changed either person first, the dialog shows both current names and asks you to confirm again. If either person is no longer available, choose again. If a merge result can't be confirmed, **Retry merge** sends the same request to retrieve the saved result.
+
+A merge can stop because a face is named as one person and marked "not" the other. The dialog lists each such face you can open, including faces on older versions of a photo. Use **Clear name** on a face to remove its name, then confirm the merge again. Faces in locked Hidden photos or in excluded or trashed photos are reported but not listed.
+
+Name pickers, in the inspector and in **Merge**, list people with the newest face or photo evidence first, then by name. Namesakes stay together. This order comes from the vault, so it survives sign-in and follows people through merges. It reflects when evidence was added: naming a face that was already linked doesn't move the person up.
 
 ## List and search
 

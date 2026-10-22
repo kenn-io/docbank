@@ -412,8 +412,11 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 			require.Len(t, conflict.FaceIDs, test.visible)
 			require.Equal(t, test.more, conflict.More)
 			require.Equal(t, test.inaccessible, conflict.InaccessibleConflict)
+			require.Len(t, conflict.FaceVersionIDs, test.visible)
 			if test.visible == 1 {
 				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
+				// A retained conflict names the replaced version, not the current one.
+				require.Equal(t, []string{n.CurrentVersionID}, conflict.FaceVersionIDs)
 			}
 			if test.inaccessible {
 				require.NotContains(t, err.Error(), f.FaceID)
@@ -1181,7 +1184,7 @@ func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 			require.NoError(t, s.db.QueryRow(`SELECT state FROM persons WHERE person_id=?`, personID).Scan(&state))
 			if mode == "untouched" {
 				require.Equal(t, "retired", state)
-				people, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false)
+				people, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false, PeopleSearchOptions{})
 				require.NoError(t, err)
 				require.Empty(t, people)
 				_, err = s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)

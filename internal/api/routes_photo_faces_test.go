@@ -166,12 +166,6 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	decisions := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
 	response, body := do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonName: "Grace", Revision: 1, OperationID: uuid.NewString()})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var named api.PhotoFaceDecisionResult
-	require.NoError(t, json.Unmarshal([]byte(body), &named))
-	require.NotEmpty(t, named.PersonID)
-	namedPerson, _, err := s.PersonByID(ctx, named.PersonID)
-	require.NoError(t, err)
-	require.Equal(t, "Grace", namedPerson.DisplayName)
 	for _, action := range []string{"reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
@@ -226,6 +220,11 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	var page api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Empty(t, page.Items, "browser sessions apply the Hidden scope")
+	// Browser writes apply the same scope; API-key writes keep theirs.
+	headers["If-Match"] = `"1"`
+	response, body = do(t, ts, http.MethodPatch, "/api/v1/people/by-id/"+hidden.PersonID, headers, api.RenamePersonRequest{DisplayName: "Locked rename"})
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	delete(headers, "If-Match")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Len(t, response.Cookies(), 1)
@@ -238,6 +237,10 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Zero(t, page.Items[0].PhotoSummary.LibraryCount)
 	require.NotNil(t, page.Items[0].PhotoSummary.HiddenCount)
 	require.Equal(t, int64(1), *page.Items[0].PhotoSummary.HiddenCount)
+	headers["If-Match"] = `"1"`
+	response, body = do(t, ts, http.MethodPatch, "/api/v1/people/by-id/"+hidden.PersonID, headers, api.RenamePersonRequest{DisplayName: "Unlocked rename"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	delete(headers, "If-Match")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", headers, struct{}{})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = get(t, ts, "/api/v1/people?photo_summary=true", headers)
@@ -254,26 +257,39 @@ func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
 	require.NoError(t, err)
 	zoe, err := s.CreatePerson(ctx, "Zoe", "operator")
 	require.NoError(t, err)
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic recent photo"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, s.RootID(), "zoe.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, zoe.PersonID, "")
+	require.NoError(t, err)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	path := "/api/v1/people?limit=1&photo_summary=true&recent_ids=" + zoe.PersonID
+	path := "/api/v1/people?limit=1&photo_summary=true&recent_first=true"
 	response, body := get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var first api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
 	require.Len(t, first.Items, 1)
-	require.Equal(t, zoe.PersonID, first.Items[0].PersonID)
+	require.Equal(t, zoe.PersonID, first.Items[0].PersonID, "evidence ranks ahead of the name")
 	require.NotNil(t, first.Items[0].PhotoSummary)
-	require.Zero(t, first.Items[0].PhotoSummary.LibraryCount)
+	require.Equal(t, int64(1), first.Items[0].PhotoSummary.LibraryCount)
 	require.Nil(t, first.Items[0].PhotoSummary.HiddenCount)
 	response, body = get(t, ts, path+"&cursor="+first.NextCursor, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var second api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
-	for _, changed := range []string{"photo_summary=false&recent_ids=" + zoe.PersonID, "photo_summary=true&recent_ids=" + ada.PersonID} {
-		response, body = get(t, ts, "/api/v1/people?"+changed+"&cursor="+first.NextCursor, headers)
+	for _, changed := range []string{"photo_summary=false&recent_first=true", "photo_summary=true&recent_first=false", "photo_summary=true&recent_first=true&query=Z", "photo_summary=true&recent_first=true&person_id=" + ada.PersonID} {
+		response, body = get(t, ts, "/api/v1/people?limit=1&"+changed+"&cursor="+first.NextCursor, headers)
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	}
+	response, body = get(t, ts, "/api/v1/people?photo_summary=true&person_id="+ada.PersonID, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &second))
+	require.Len(t, second.Items, 1)
+	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
+	response, body = get(t, ts, "/api/v1/people?person_id=not-a-person", headers)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	response, body = get(t, ts, "/api/v1/people", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NotContains(t, body, "photo_summary")

@@ -18,11 +18,11 @@ func TestPersonNameSearchFollowsAuthority(t *testing.T) {
 	require.NoError(t, err)
 	person, err = s.UpdatePerson(ctx, person.PersonID, person.Revision, "Jo Brown")
 	require.NoError(t, err)
-	current, err := s.PeopleByDisplayName(ctx, "Brown", "", "", 10, true)
+	current, err := s.PeopleByDisplayName(ctx, "Brown", "", "", 10, true, PeopleSearchOptions{})
 	require.NoError(t, err)
 	require.Len(t, current, 1)
 	require.Equal(t, person.PersonID, current[0].PersonID)
-	old, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 10, true)
+	old, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 10, true, PeopleSearchOptions{})
 	require.NoError(t, err)
 	require.Empty(t, old)
 }
@@ -40,7 +40,7 @@ func BenchmarkPeopleByDisplayNameWordStart(b *testing.B) {
 	 'operator','curated',1,?,? FROM people`, nowRFC3339(), nowRFC3339())
 	require.NoError(b, err)
 	for b.Loop() {
-		people, err := s.PeopleByDisplayName(b.Context(), "Smith", "", "", 100, true)
+		people, err := s.PeopleByDisplayName(b.Context(), "Smith", "", "", 100, true, PeopleSearchOptions{})
 		require.NoError(b, err)
 		require.Len(b, people, 100)
 	}

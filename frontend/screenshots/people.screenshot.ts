@@ -49,7 +49,7 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     await page.goto(url.href);
     const people = page.getByRole("main", { name: "People", exact: true });
     await expect(people.getByRole("img")).toHaveCount(2);
-    await expect(people.getByRole("link", { name: "Morgan Lee 0 Library photos" })).toBeVisible();
+    await expect(people.getByRole("button", { name: "Morgan Lee 0 Library photos" })).toBeVisible();
     await mkdir(output!, { recursive: true });
     await captureThemes(page, output!, "after-people-cards");
     await people.getByRole("button", { name: "Rename", exact: true }).first().click();
@@ -65,12 +65,16 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     await captureThemes(page, output!, "after-people-merge");
     await merge.getByRole("button", { name: "Merge", exact: true }).click();
     await expect(merge).toBeHidden();
-    await expect(people.getByRole("link", { name: /Grace Hopper 2 Library photos/ })).toBeVisible();
-    await people.getByRole("link", { name: /Grace Hopper 2 Library photos/ }).click();
+    await expect(
+      people.getByRole("button", { name: /Grace Hopper 2 Library photos/ }),
+    ).toBeVisible();
+    await people.getByRole("button", { name: /Grace Hopper 2 Library photos/ }).click();
     await expect(page).toHaveURL(/\/photos(?:[?#]|$)/);
     await expect(page.getByText("Person: Grace Hopper", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "People", exact: true }).click();
-    await expect(people.getByRole("link", { name: /Grace Hopper 2 Library photos/ })).toBeVisible();
+    await expect(
+      people.getByRole("button", { name: /Grace Hopper 2 Library photos/ }),
+    ).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     await captureThemes(page, output!, "after-people-narrow");
   } finally {

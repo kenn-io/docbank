@@ -85,7 +85,7 @@
   import PhotoActionError from "./PhotoActionError.svelte";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
   import PeopleView from "./People.svelte";
-  import { People, clearRecentPeople } from "./people.svelte.js";
+  import { People } from "./people.svelte.js";
   import UserIcon from "@lucide/svelte/icons/user";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
   import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
@@ -665,14 +665,11 @@
   });
   $effect(() => {
     if (!webSession) return;
-    const people = new People(webSession, handleFailure, hiddenAccess, () =>
-      handlePhotoFacesChanged(false),
-    );
+    const people = new People(webSession, handleFailure, hiddenAccess, handlePhotoFacesChanged);
     peopleView = people;
     return () => {
       people.dispose();
       peopleView = undefined;
-      clearRecentPeople();
     };
   });
   $effect(() => {
@@ -818,7 +815,8 @@
     }
   }
 
-  let pendingPerson = $state<{ id: string; name: string }>();
+  // A Hidden person filter belongs to the access scope it was opened in.
+  let pendingPerson = $state<{ id: string; name: string; scope?: number }>();
   function applyPersonPhotos() {
     if (!pendingPerson) return false;
     const photos = hiddenMode
@@ -848,6 +846,11 @@
     return true;
   }
   $effect(() => {
+    const scope = hiddenAccess?.scope;
+    if (pendingPerson?.scope !== undefined && pendingPerson.scope !== scope)
+      pendingPerson = undefined;
+  });
+  $effect(() => {
     if (hiddenMode && hiddenWorkspace?.activePhotos() && pendingPerson) untrack(applyPersonPhotos);
   });
   function openPersonPhotos(personID: string, name: string, hidden?: boolean) {
@@ -860,7 +863,7 @@
       return;
     }
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
-    pendingPerson = { id: personID, name };
+    pendingPerson = { id: personID, name, ...(hidden ? { scope: hiddenAccess?.scope ?? 0 } : {}) };
     if (hidden && !hiddenMode) {
       navigatePhotos("/photos/hidden");
       return;
@@ -2533,8 +2536,7 @@
     }
   }
 
-  function handlePhotoFacesChanged(refreshPeople = true): void {
-    if (refreshPeople && photoPath === "/photos/people") void peopleView?.load();
+  function handlePhotoFacesChanged(): void {
     for (const photos of siblingPhotoLists()) if (photos.dependsOnPeople) void photos.refresh();
     queuePhotoDocumentsRefresh();
   }

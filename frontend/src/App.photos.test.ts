@@ -3994,6 +3994,63 @@ it.each([
   },
 );
 
+it("drops a Hidden person filter when Hidden locks between the People click and navigation", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const personID = "00000000-0000-4000-8000-000000000001";
+  let locked = false;
+  const hiddenQueries: unknown[] = [];
+  const unlocked = { configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 };
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden/unlock")) {
+      locked = false;
+      return Response.json(unlocked);
+    }
+    if (url.endsWith("/photos/hidden"))
+      return Response.json(locked ? { configured: true } : unlocked);
+    if (url.includes("/api/v1/people?"))
+      return Response.json({
+        items: [
+          {
+            person_id: personID,
+            display_name: "Ada",
+            display_name_folded: "ada",
+            revision: 1,
+            state: "curated",
+            created_at: "2026-01-01",
+            photo_summary: { library_count: 0, hidden_count: 1 },
+          },
+        ],
+      });
+    if (url.endsWith("/photos/assets/query")) {
+      const request = JSON.parse(String(init?.body));
+      if (request.hidden) hiddenQueries.push(request.query.filters ?? {});
+      return Response.json({ items: [photo(1)], total: 1, facets: [] });
+    }
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  const hiddenCount = await screen.findByRole("button", { name: "1 Hidden photo" });
+  locked = true;
+  await fireEvent.click(hiddenCount);
+  expect(location.pathname).toBe("/photos/hidden");
+  await fireEvent.input(await screen.findByLabelText("Passcode", { exact: true }), {
+    target: { value: "synthetic-passcode" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await waitFor(() => expect(hiddenQueries.length).toBeGreaterThan(0));
+  expect(hiddenQueries).not.toContainEqual(expect.objectContaining({ person_ids: [personID] }));
+  expect(screen.queryByText("Person: Ada")).toBeNull();
+});
+
 it("explains a refused person link while Hide is pending in the selected photo inspector", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();

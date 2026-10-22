@@ -31,6 +31,27 @@ it("binds authorization failures to the session that issued the request", async 
   expect(isCurrentSessionError(cause, "new-tab")).toBe(false);
 });
 
+it("pairs each merge-conflict face with its exact content version", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json(
+      {
+        detail: "review faces",
+        code: "person_merge_conflict",
+        face_ids: ["face-a", "face-b"],
+        face_version_ids: ["old-version", "current-version"],
+      },
+      { status: 409 },
+    ),
+  );
+  const cause = await sessionResponse("/api/v1/people/by-id/a/merge", {}).catch(
+    (error: unknown) => error,
+  );
+  expect((cause as APIError).faces).toEqual([
+    { face_id: "face-a", version: "old-version" },
+    { face_id: "face-b", version: "current-version" },
+  ]);
+});
+
 it("keeps manually-created API errors compatible with current-session handling", () => {
   expect(isCurrentSessionError(new APIError("expired", 401, "unauthorized"), "new-tab")).toBe(true);
 });

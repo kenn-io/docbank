@@ -3,7 +3,8 @@
   import UserIcon from "@lucide/svelte/icons/user";
   import { untrack } from "svelte";
   import { listPeople, preparePhotoPreview, type PersonSummary } from "./generated/docbank.js";
-  import { People } from "./people.svelte.js";
+  import type { People } from "./people.svelte.js";
+  import PeopleMergeConflict from "./PeopleMergeConflict.svelte";
   import { PhotoPreviewCache, previewObjectURL } from "./photoPreviewCache.js";
   import { photoFaceCropStyle } from "./photoRotation.js";
   let {
@@ -15,11 +16,8 @@
     cache: PhotoPreviewCache;
     onperson: (id: string, name: string, hidden?: boolean) => void;
   } = $props();
-  let query = $state("");
   let editing = $state.raw<PersonSummary>();
-  let merging = $state.raw<PersonSummary>();
   let name = $state("");
-  let survivor = $state.raw<PersonSummary>();
   let candidates = $state.raw<PersonSummary[]>([]);
   let searchQuery = $state("");
   let nextCursor = $state<string>();
@@ -27,103 +25,130 @@
   let searching = $state(false);
   let searchController: AbortController | undefined;
   let images = $state.raw<Record<string, { url: string; style: string }>>({});
-  let confirmed = $state(false);
+  const merge = $derived(people.merge);
+  const unlocked = $derived(!!people.access?.deadline);
   function close() {
     if (people.busy) return;
     editing = undefined;
-    merging = undefined;
-    survivor = undefined;
     candidates = [];
     searchController?.abort();
-    people.writeError = "";
-    confirmed = false;
+    people.closeMerge();
   }
   $effect(() => {
     void people.access?.scope;
     untrack(() => {
       searchController?.abort();
       editing = undefined;
-      merging = undefined;
-      survivor = undefined;
       candidates = [];
+      people.closeMerge();
     });
     return () => searchController?.abort();
   });
+  // Portraits load per face, so in-place card updates and Load more keep the
+  // images already shown. An access-scope change starts over.
+  type Portrait = { abort: AbortController; release?: () => void };
+  const portraits = new Map<string, Portrait>();
+  let hiddenCache: PhotoPreviewCache | undefined;
+  const portraitKey = (person: PersonSummary) => {
+    const face = person.photo_summary?.face;
+    return face
+      ? `${person.person_id}\0${JSON.stringify([face, !!person.photo_summary?.face_hidden])}`
+      : "";
+  };
+  function releasePortrait(key: string) {
+    const portrait = portraits.get(key);
+    portrait?.abort.abort();
+    portrait?.release?.();
+    portraits.delete(key);
+    const id = key.split("\0")[0]!;
+    if (images[id]) {
+      const next = { ...images };
+      delete next[id];
+      images = next;
+    }
+  }
+  function loadPortrait(key: string, person: PersonSummary) {
+    const face = person.photo_summary!.face!;
+    const hidden = !!person.photo_summary?.face_hidden;
+    const portrait: Portrait = { abort: new AbortController() };
+    const { signal } = portrait.abort;
+    portraits.set(key, portrait);
+    const load = async () => {
+      try {
+        signal.throwIfAborted();
+        let generation = face.generation_id;
+        if (!generation) {
+          const slot = await preparePhotoPreview(
+            face.asset_id,
+            {
+              content_version_id: face.content_version_id,
+              person_id: person.person_id,
+              size: "grid",
+              hidden,
+            },
+            { session: people.session, signal },
+          );
+          if (slot.state !== "ready" || !slot.generation_id) return;
+          generation = slot.generation_id;
+        }
+        signal.throwIfAborted();
+        hiddenCache ??= new PhotoPreviewCache(people.session, people.onauthfailure, true);
+        portrait.release = previewObjectURL(
+          hidden ? hiddenCache : cache,
+          face.asset_id,
+          generation,
+          async (url) => {
+            try {
+              const image = new Image();
+              image.src = url;
+              await image.decode();
+              if (!signal.aborted)
+                images = {
+                  ...images,
+                  [person.person_id]: {
+                    url,
+                    style: photoFaceCropStyle(
+                      face.box,
+                      image.naturalWidth,
+                      image.naturalHeight,
+                      face.rotation,
+                      128,
+                    ),
+                  },
+                };
+            } catch {
+              /* Keep the person placeholder when bytes cannot be decoded. */
+            }
+          },
+          (cause) => {
+            if (!signal.aborted) people.failure(cause);
+          },
+          false,
+          person.person_id,
+        );
+      } catch (cause) {
+        if (!signal.aborted) people.failure(cause);
+      }
+    };
+    void people.run(load);
+  }
+  function syncPortraits(rows: PersonSummary[]) {
+    const wanted = new Map(rows.map((person) => [portraitKey(person), person]));
+    for (const key of [...portraits.keys()]) if (!wanted.has(key)) releasePortrait(key);
+    for (const [key, person] of wanted) if (key && !portraits.has(key)) loadPortrait(key, person);
+  }
   $effect(() => {
     const rows = people.items;
+    untrack(() => syncPortraits(rows));
+  });
+  $effect(() => {
     void people.access?.scope;
-    const request = new AbortController();
-    const releases: (() => void)[] = [];
-    const hiddenCache = new PhotoPreviewCache(people.session, people.onauthfailure, true);
-    images = {};
-    for (const person of rows) {
-      const face = person.photo_summary?.face;
-      if (!face) continue;
-      const hidden = !!person.photo_summary?.face_hidden;
-      const load = async () => {
-        try {
-          request.signal.throwIfAborted();
-          let generation = face.generation_id;
-          if (!generation) {
-            const slot = await preparePhotoPreview(
-              face.asset_id,
-              {
-                content_version_id: face.content_version_id,
-                person_id: person.person_id,
-                size: "grid",
-                hidden,
-              },
-              { session: people.session, signal: request.signal },
-            );
-            if (slot.state !== "ready" || !slot.generation_id) return;
-            generation = slot.generation_id;
-          }
-          request.signal.throwIfAborted();
-          releases.push(
-            previewObjectURL(
-              hidden ? hiddenCache : cache,
-              face.asset_id,
-              generation,
-              async (url) => {
-                try {
-                  const image = new Image();
-                  image.src = url;
-                  await image.decode();
-                  if (!request.signal.aborted)
-                    images = {
-                      ...images,
-                      [person.person_id]: {
-                        url,
-                        style: photoFaceCropStyle(
-                          face.box,
-                          image.naturalWidth,
-                          image.naturalHeight,
-                          face.rotation,
-                          128,
-                        ),
-                      },
-                    };
-                } catch {
-                  /* Keep the person placeholder when bytes cannot be decoded. */
-                }
-              },
-              (cause) => {
-                if (!request.signal.aborted) people.failure(cause);
-              },
-              false,
-              person.person_id,
-            ),
-          );
-        } catch (cause) {
-          if (!request.signal.aborted) people.failure(cause);
-        }
-      };
-      void (people.access ? people.access.run(load) : load());
-    }
+    untrack(() => syncPortraits(people.items));
     return () => {
-      request.abort();
-      for (const release of releases) release();
-      void hiddenCache.dispose();
+      for (const key of [...portraits.keys()]) releasePortrait(key);
+      images = {};
+      void hiddenCache?.dispose();
+      hiddenCache = undefined;
     };
   });
   async function search(value: string, more = false) {
@@ -137,18 +162,22 @@
     searching = true;
     searchError = "";
     try {
-      const read = () => {
+      const page = await people.run(() => {
         request.signal.throwIfAborted();
         return listPeople(
-          { query: value, limit: 100, ...(more && nextCursor ? { cursor: nextCursor } : {}) },
+          {
+            query: value,
+            limit: 100,
+            recent_first: true,
+            ...(more && nextCursor ? { cursor: nextCursor } : {}),
+          },
           { session: people.session, signal: request.signal },
         );
-      };
-      const page = await (people.access ? people.access.run(read) : read());
+      });
       if (!request.signal.aborted) {
         candidates = [
           ...candidates,
-          ...page.items.filter((person) => person.person_id !== merging?.person_id),
+          ...page.items.filter((person) => person.person_id !== people.merge?.source.person_id),
         ];
         nextCursor = page.next_cursor;
       }
@@ -164,15 +193,15 @@
   <div class="browser-toolbar people-toolbar">
     <div>
       <h1>People</h1>
-      <span>Library and unlocked Hidden photos</span>
+      <span>{unlocked ? "Library and unlocked Hidden photos" : "Library photos"}</span>
     </div>
     <form
       onsubmit={(event) => {
         event.preventDefault();
-        void people.load(query);
+        void people.load(people.draft.trim());
       }}
     >
-      <TextInput ariaLabel="Find people" placeholder="Find people" bind:value={query} />
+      <TextInput ariaLabel="Find people" placeholder="Find people" bind:value={people.draft} />
       <Button type="submit" disabled={people.loading}>Search</Button>
     </form>
   </div>
@@ -190,14 +219,12 @@
       {@const image = images[person.person_id]}
       {@const summary = person.photo_summary}
       <li class="person-card">
-        <a
-          href={`/photos#person=${person.person_id}`}
-          onclick={(event) => {
-            event.preventDefault();
-            onperson(person.person_id, person.display_name);
-          }}
+        <button
+          type="button"
+          class="person-open"
+          onclick={() => onperson(person.person_id, person.display_name)}
         >
-          <div class="face-tile">
+          <span class="face-tile">
             <span class="face-crop"
               >{#if image}<img
                   src={image.url}
@@ -210,15 +237,15 @@
                   }}
                 />{:else}<UserIcon size="48" aria-hidden="true" />{/if}</span
             >
-          </div>
+          </span>
           <strong>{person.display_name}</strong>
           <span class="count"
             >{summary?.library_count ?? 0} Library {summary?.library_count === 1
               ? "photo"
               : "photos"}</span
           >
-        </a>
-        {#if summary?.hidden_count !== undefined}<button
+        </button>
+        {#if unlocked && summary?.hidden_count !== undefined}<button
             class="hidden-count"
             type="button"
             onclick={() => onperson(person.person_id, person.display_name, true)}
@@ -238,8 +265,7 @@
             disabled={people.busy}
             onclick={() => {
               close();
-              merging = person;
-              nextCursor = undefined;
+              people.startMerge(person);
               void search("");
             }}>Merge</Button
           >
@@ -277,8 +303,9 @@
     </form>
   </Modal>
 {/if}
-{#if merging}
-  <Modal title={`Merge ${merging.display_name}`} onclose={close}>
+{#if merge}
+  {@const { source, survivor } = merge}
+  <Modal title={`Merge ${source.display_name}`} onclose={close}>
     <Typeahead
       remote
       title="Keep person"
@@ -294,9 +321,9 @@
       error={searchError}
       onquery={(value) => search(value)}
       onselect={(value) => {
-        survivor = candidates.find((person) => person.person_id === value);
-        confirmed = false;
-        return !!survivor;
+        const chosen = candidates.find((person) => person.person_id === value);
+        people.chooseSurvivor(chosen);
+        return !!chosen;
       }}
     />
     {#if searchError}<Button
@@ -306,21 +333,39 @@
     {#if nextCursor}<Button disabled={searching} onclick={() => void search(searchQuery, true)}
         >Load more people</Button
       >{/if}
-    {#if survivor}<p>
-        Keep {survivor.display_name}. Move {merging.display_name}'s records into this person.
+    {#if merge.notice === "stale" && survivor}<p role="status">
+        {source.display_name} or {survivor.display_name} changed. Check the current names and confirm
+        again.
       </p>
-      <Checkbox label="Confirm merge" bind:checked={confirmed} disabled={people.busy} />{/if}
+    {:else if merge.notice === "reselect"}<p role="status">
+        The person to keep is no longer available. Choose another person.
+      </p>{/if}
+    {#if survivor}<p>
+        Keep {survivor.display_name}. Move {source.display_name}'s records into this person.
+      </p>
+      <Checkbox
+        label="Confirm merge"
+        checked={merge.confirmed}
+        onchange={(checked) => people.confirmMerge(checked)}
+        disabled={people.busy}
+      />{/if}
     {#if people.writeError}<p role="alert">{people.writeError}</p>{/if}
-    {#if people.uncertain}<p>
+    {#if merge.conflicts.length}<ul class="conflicts" aria-label="Faces to review">
+        {#each merge.conflicts as conflict (conflict.face_id)}<PeopleMergeConflict
+            {people}
+            {conflict}
+          />{/each}
+      </ul>{/if}
+    {#if merge.notice === "uncertain"}<p>
         The result couldn't be confirmed. Retry to check whether the merge completed.
       </p>{/if}
     <div class="modal-actions">
       <Button disabled={people.busy} onclick={close}>Cancel</Button><Button
-        disabled={people.busy || !survivor || !confirmed}
+        disabled={people.busy || !survivor || !merge.confirmed}
         onclick={() =>
-          void people.merge(merging!, survivor!).then((saved) => {
+          void people.submitMerge().then((saved) => {
             if (saved) close();
-          })}>{people.uncertain ? "Retry merge" : "Merge"}</Button
+          })}>{merge.notice === "uncertain" ? "Retry merge" : "Merge"}</Button
       >
     </div>
   </Modal>
@@ -371,7 +416,13 @@
     border-radius: var(--radius-md);
     overflow: hidden;
   }
-  a {
+  .person-open {
+    width: 100%;
+    font: inherit;
+    text-align: left;
+    background: none;
+    border: 0;
+    cursor: pointer;
     display: flex;
     flex-direction: column;
     color: var(--text-primary);
@@ -409,6 +460,14 @@
   }
   .card-actions {
     padding: 12px;
+  }
+  .conflicts {
+    padding-left: var(--space-4);
+  }
+  .conflicts :global(li) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
   .hidden-count {
     margin: 0 12px;

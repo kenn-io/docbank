@@ -9,7 +9,10 @@ import (
 )
 
 type PersonFaceMergeConflictError struct {
+	// FaceIDs and FaceVersionIDs pair each visible conflicting face with the
+	// exact content version it is on, which may be a retained older version.
 	FaceIDs              []string
+	FaceVersionIDs       []string
 	HiddenConflict       bool
 	InaccessibleConflict bool
 	More                 bool
@@ -65,6 +68,7 @@ func (s *Store) checkFaceMergeConflictsTx(ctx context.Context, tx *sql.Tx, a, b 
 		found = true
 		if len(conflict.FaceIDs) < 20 {
 			conflict.FaceIDs = append(conflict.FaceIDs, id)
+			conflict.FaceVersionIDs = append(conflict.FaceVersionIDs, version)
 		} else {
 			conflict.More = true
 		}
