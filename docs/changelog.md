@@ -17,10 +17,9 @@ later are within the
   their unspent numbers remain consumed. See the
   [Bates upgrade steps](cli-reference.md#docbank-bates).
 - pdfcpu v0.16.3 requires x/image v0.47.0, which changes each visual-preview
-  recipe identity. Existing generations remain stored. Docbank reprocesses and
-  stores a replacement when a source is next requested, so an archive's new
-  previews appear gradually as people revisit photos. The page-image parser
-  identity also changes.
+  recipe identity. Docbank automatically rebuilds grid previews and photo-quality
+  signals in the background. Fit and large previews regenerate on request.
+  Older generations remain retained. The page-image parser identity also changes.
 - Page-image deployments must rebuild the inspector from this revision and
   update its configured SHA-256 pin. The inspector identity changed and has no
   compatibility path; see [verified page images](architecture/page-images.md).

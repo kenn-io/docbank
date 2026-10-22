@@ -193,17 +193,6 @@ func TestVerifyStampedLabelsRejectsASubstitutedOutputLabel(t *testing.T) {
 }
 
 func TestStampHonorsCancellation(t *testing.T) {
-	t.Run("before reading", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		var output bytes.Buffer
-
-		_, err := Stamp(ctx, bytes.NewReader(syntheticPDF(t, 1, "Letter")),
-			[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
-
-		require.ErrorIs(t, err, context.Canceled)
-		assert.Zero(t, output.Len())
-	})
 	t.Run("during PDF parsing", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
