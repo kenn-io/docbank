@@ -83,7 +83,7 @@ func TestRenditionClientMapsExactMistralOCRResponse(t *testing.T) {
 			wire.Document.URL, "data:application/pdf;base64,",
 		))
 		require.NoError(t, err)
-		response := fmt.Sprintf(`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"# Synthetic","header":"Header","footer":"Footer","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(source))
+		response := fmt.Sprintf(`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"# Synthetic","header":"Header","footer":"Footer","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(source))
 		return &http.Response{
 			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(response)), Request: request,
@@ -403,7 +403,7 @@ func TestRenditionClientAcceptsTextWithMoreLinesThanPageLimit(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
-				Body: io.NopCloser(strings.NewReader(`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"Synthetic"}],"usage_info":{"pages_processed":1}}`)), Request: request,
+				Body: io.NopCloser(strings.NewReader(`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"Synthetic"}],"usage_info":{"pages_processed":1}}`)), Request: request,
 			}, nil
 		}))
 
@@ -599,7 +599,7 @@ func TestRenditionClientRejectsIncompletePDFResponse(t *testing.T) {
 			return &http.Response{
 				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
 				Body: io.NopCloser(strings.NewReader(
-					`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"}],"usage_info":{"pages_processed":1}}`,
+					`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"first"}],"usage_info":{"pages_processed":1}}`,
 				)), Request: request,
 			}, nil
 		}))
@@ -659,7 +659,7 @@ func TestRenditionClientResolvesNamedSecretForEveryEgress(t *testing.T) {
 			return &http.Response{
 				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
 				Body: io.NopCloser(strings.NewReader(
-					`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"safe"}],"usage_info":{"pages_processed":1}}`,
+					`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"safe"}],"usage_info":{"pages_processed":1}}`,
 				)), Request: request,
 			}, nil
 		}))
@@ -807,7 +807,7 @@ func TestMistralEvidenceMapsNaturalFamilies(t *testing.T) {
 
 func mistralRenditionResponse(markdown string) string {
 	return fmt.Sprintf(
-		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":%q}],"usage_info":{"pages_processed":1}}`,
+		`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":%q}],"usage_info":{"pages_processed":1}}`,
 		markdown,
 	)
 }
@@ -991,7 +991,7 @@ func pptxRenditionFixture(
 
 func pptxRenditionResponse(sourceBytes, processed int) string {
 	return fmt.Sprintf(
-		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"},{"index":2,"markdown":"third"}],"usage_info":{"pages_processed":%d,"doc_size_bytes":%d}}`,
+		`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"},{"index":2,"markdown":"third"}],"usage_info":{"pages_processed":%d,"doc_size_bytes":%d}}`,
 		processed, sourceBytes,
 	)
 }

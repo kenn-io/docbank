@@ -37,7 +37,7 @@ func TestProcessorSnapshotsCapabilityManifest(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 				Body: io.NopCloser(strings.NewReader(
-					`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"# Synthetic snapshot"}],"usage_info":{"pages_processed":1}}`,
+					`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"# Synthetic snapshot"}],"usage_info":{"pages_processed":1}}`,
 				)),
 			}, nil
 		})},

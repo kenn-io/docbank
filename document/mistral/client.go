@@ -438,7 +438,7 @@ func (c *Client) processOnce(
 		return Result{}, response.Header.Get("Retry-After"), true, latency, &transientError{status: response.StatusCode}
 	}
 	if response.StatusCode >= http.StatusBadRequest {
-		return Result{}, "", true, latency, &permanentResponseError{status: response.StatusCode}
+		return Result{}, "", true, latency, &permanentResponseError{status: response.StatusCode, invalidModel: isInvalidModelResponse(response.Body)}
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return Result{}, "", true, latency, fmt.Errorf("mistral OCR unexpected HTTP %d", response.StatusCode)
@@ -541,7 +541,21 @@ type credentialError struct{ cause error }
 func (e *credentialError) Error() string { return "Mistral OCR credential is unavailable" }
 func (e *credentialError) Unwrap() error { return e.cause }
 
-type permanentResponseError struct{ status int }
+func isInvalidModelResponse(reader io.Reader) bool {
+	body, err := io.ReadAll(io.LimitReader(reader, 4097))
+	if err != nil || len(body) >= 4096 {
+		return false
+	}
+	var response struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(body, &response) == nil && response.Type == "invalid_model"
+}
+
+type permanentResponseError struct {
+	status       int
+	invalidModel bool
+}
 
 func (e *permanentResponseError) Error() string {
 	return fmt.Sprintf("mistral OCR HTTP %d: %s", e.status, ErrPermanentResponse)

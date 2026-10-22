@@ -170,6 +170,9 @@ func observeUnitBound(
 }
 
 func classifyProbeError(err error) (ProbeStatus, string) {
+	if response, ok := errors.AsType[*permanentResponseError](err); ok && response.invalidModel {
+		return ProbeStatusRejected, reasonInvalidModel
+	}
 	switch {
 	case errors.Is(err, ErrPermanentResponse):
 		return ProbeStatusRejected, "provider_4xx"

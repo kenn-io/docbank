@@ -39,7 +39,7 @@ func TestClientProcessStreamsVerifiedDocumentAndReturnsNeutralEvidence(t *testin
 		assert.NoError(t, readErr)
 		assert.Equal(t, request.ContentLength, int64(len(requestBody)))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, writeErr := fmt.Fprintf(w, `{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"# Synthetic","header":"Header","footer":"Footer","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(content))
+		_, writeErr := fmt.Fprintf(w, `{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"# Synthetic","header":"Header","footer":"Footer","dimensions":{"dpi":144,"height":792,"width":612}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(content))
 		assert.NoError(t, writeErr)
 	}))
 	defer server.Close()
@@ -47,7 +47,7 @@ func TestClientProcessStreamsVerifiedDocumentAndReturnsNeutralEvidence(t *testin
 
 	result, err := client.Process(t.Context(), prepared, authorization)
 	require.NoError(t, err)
-	assert.Equal(t, "mistral-ocr-4-0", result.ReturnedModel)
+	assert.Equal(t, "mistral-ocr-4-1", result.ReturnedModel)
 	assert.Equal(t, 1, result.UnitsProcessed)
 	require.NotNil(t, result.ProviderBytes)
 	assert.Equal(t, int64(len(content)), *result.ProviderBytes)
@@ -160,12 +160,12 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 	}{
 		{name: "permanent", status: http.StatusBadRequest, response: "private response body", wantError: ErrPermanentResponse.Error()},
 		{name: "too large", status: http.StatusOK, response: strings.Repeat("x", 65), contentType: "application/json", maxBytes: 64, wantError: ErrResponseTooLarge.Error()},
-		{name: "empty pages", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "returned no pages"},
-		{name: "missing index", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid index"},
-		{name: "invalid dimensions", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"dimensions":{"dpi":-1}}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid dimensions"},
-		{name: "usage mismatch", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "processed 0 units but returned 1"},
-		{name: "duplicate usage", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":1},"usage_info":{}}`, contentType: "application/json", wantError: `duplicate JSON object key "usage_info"`},
-		{name: "duplicate page field", status: http.StatusOK, response: `{"model":"mistral-ocr-4-0","pages":[{"index":0,"index":1}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: `duplicate JSON object key "index"`},
+		{name: "empty pages", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "returned no pages"},
+		{name: "missing index", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[{}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid index"},
+		{name: "invalid dimensions", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[{"index":0,"dimensions":{"dpi":-1}}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid dimensions"},
+		{name: "usage mismatch", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[{"index":0}],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "processed 0 units but returned 1"},
+		{name: "duplicate usage", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[{"index":0}],"usage_info":{"pages_processed":1},"usage_info":{}}`, contentType: "application/json", wantError: `duplicate JSON object key "usage_info"`},
+		{name: "duplicate page field", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[{"index":0,"index":1}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: `duplicate JSON object key "index"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -491,8 +491,8 @@ func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "returned pages", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2},{"index":"not-decoded"}],"usage_info":{"pages_processed":4}}`},
-		{name: "reported usage", body: `{"model":"mistral-ocr-4-0","pages":[{"index":0},{"index":1},{"index":2}],"usage_info":{"pages_processed":4}}`},
+		{name: "returned pages", body: `{"model":"mistral-ocr-4-1","pages":[{"index":0},{"index":1},{"index":2},{"index":"not-decoded"}],"usage_info":{"pages_processed":4}}`},
+		{name: "reported usage", body: `{"model":"mistral-ocr-4-1","pages":[{"index":0},{"index":1},{"index":2}],"usage_info":{"pages_processed":4}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

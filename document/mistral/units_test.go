@@ -720,7 +720,7 @@ func TestRenditionClientAcceptsStrictPPTXWithHyperlink(t *testing.T) {
 	})
 	fixture := pptxRenditionFixture(t, descriptor, source)
 	var requests atomic.Int64
-	response := fmt.Sprintf(`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"strict"}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(source))
+	response := fmt.Sprintf(`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"strict"}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(source))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")

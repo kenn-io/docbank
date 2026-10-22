@@ -20,7 +20,7 @@ const (
 	// RegionEU is the supported Mistral processing region.
 	RegionEU = "eu"
 	// DefaultModel is the package-pinned Mistral OCR model.
-	DefaultModel = "mistral-ocr-4-0"
+	DefaultModel = "mistral-ocr-4-1"
 	// RetentionStandard identifies Mistral's standard retention posture.
 	RetentionStandard = "standard"
 	// RetentionZDR identifies Mistral's zero-data-retention posture.

@@ -619,7 +619,7 @@ func ocrResponse(pages, bytes int) string {
 	for index := range pageValues {
 		pageValues[index] = `{"index":` + itoa(index) + `,"markdown":"synthetic"}`
 	}
-	return `{"model":"mistral-ocr-4-0","pages":[` + strings.Join(pageValues, ",") + `],"usage_info":{"pages_processed":` + itoa(pages) + `,"doc_size_bytes":` + itoa(bytes) + `}}`
+	return `{"model":"mistral-ocr-4-1","pages":[` + strings.Join(pageValues, ",") + `],"usage_info":{"pages_processed":` + itoa(pages) + `,"doc_size_bytes":` + itoa(bytes) + `}}`
 }
 
 func itoa(value int) string {

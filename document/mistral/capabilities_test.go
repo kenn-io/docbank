@@ -116,7 +116,7 @@ func TestPolicyFingerprintExcludesObservationDate(t *testing.T) {
 
 	encoded, err := policy.CanonicalJSON(first)
 	require.NoError(t, err)
-	want := `{"version":1,"provider":"mistral","endpoint":"https://api.eu.mistral.ai/v1/ocr","region":"eu","model":"mistral-ocr-4-0","retention":"zdr","training":"opted-out","max_document_bytes":1048576,"max_response_bytes":1048576,"max_units":500,"extract_header":true,"extract_footer":true,"normalization":{"version":3,"max_document_chars":100000,"max_unit_chars":1000000,"max_source_unit_bytes":4000000,"max_metadata_source_bytes":65536,"max_link_chars":2048,"max_chunk_runes":4000,"chunk_overlap":200,"max_chunks":20000},"format_authorities":[{"format_id":"pdf","unit_bound_method":"provider_request","request_fingerprint":"c5121284012927f702b20c744152a3afab0df72b76f07a6c065a39bb8b846b38","fixture_digest":"c35b21d6ca39aa7c"}]}`
+	want := `{"version":1,"provider":"mistral","endpoint":"https://api.eu.mistral.ai/v1/ocr","region":"eu","model":"mistral-ocr-4-1","retention":"zdr","training":"opted-out","max_document_bytes":1048576,"max_response_bytes":1048576,"max_units":500,"extract_header":true,"extract_footer":true,"normalization":{"version":3,"max_document_chars":100000,"max_unit_chars":1000000,"max_source_unit_bytes":4000000,"max_metadata_source_bytes":65536,"max_link_chars":2048,"max_chunk_runes":4000,"chunk_overlap":200,"max_chunks":20000},"format_authorities":[{"format_id":"pdf","unit_bound_method":"provider_request","request_fingerprint":"ad2ef73d3ad848b676f8dd8bb7a5411ae614fef5518a10428efad609ca00e617","fixture_digest":"c35b21d6ca39aa7c"}]}`
 	assert.Equal(t, want, string(encoded), "canonical policy JSON changed")
 }
 
@@ -212,6 +212,13 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 		{name: "target mismatch", mutate: func(manifest *CapabilityManifest) { manifest.Endpoint = "https://example.invalid/v1/ocr" }, want: "not pinned"},
 		{name: "unit limit", mutate: func(manifest *CapabilityManifest) { manifest.MaxUnits = 1 }, want: "invalid unit limit"},
 		{name: "partial matrix", mutate: func(manifest *CapabilityManifest) { manifest.Results = manifest.Results[:len(manifest.Results)-1] }, want: "results"},
+		{name: "invalid model with returned model", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[1].Status = ProbeStatusRejected
+			manifest.Results[1].ReasonCode = reasonInvalidModel
+			manifest.Results[1].ReturnedModel = defaultModel
+			manifest.Results[1].UnitCount = 0
+			manifest.Results[1].UnitsProcessed = 0
+		}, want: "is not scrubbed"},
 		{name: "reordered matrix", mutate: func(manifest *CapabilityManifest) {
 			manifest.Results[0], manifest.Results[1] = manifest.Results[1], manifest.Results[0]
 		}, want: "does not match"},

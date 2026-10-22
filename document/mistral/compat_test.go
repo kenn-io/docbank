@@ -18,6 +18,7 @@ type requestFingerprintCompatibilityCase struct {
 
 func TestRequestFingerprintMatchesBaseline(t *testing.T) {
 	const baselineEndpoint = "https://api.mistral.ai/v1/ocr"
+	const baselineModel = "mistral-ocr-4-0"
 
 	bundle, _, err := compattest.Load()
 	require.NoError(t, err)
@@ -34,7 +35,7 @@ func TestRequestFingerprintMatchesBaseline(t *testing.T) {
 			require.True(t, found)
 			assert.Equal(t, testCase.Candidate, candidate)
 			assert.Equal(t, testCase.Fingerprint, requestFingerprintForTarget(
-				baselineEndpoint, defaultModel, testCase.Candidate, testCase.Options,
+				baselineEndpoint, baselineModel, testCase.Candidate, testCase.Options,
 			))
 		})
 	}
