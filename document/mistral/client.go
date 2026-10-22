@@ -192,8 +192,9 @@ func newClientWithCredential(
 }
 
 // Process verifies an opaque staged document and its capability authorization
-// before sending bytes. Direct formats hold one in-memory document copy per
-// attempt, up to PolicyValues.MaxDocumentBytes. Rendered conversion also holds source,
+// before sending bytes. Direct formats hold one document copy per attempt;
+// memory-backed documents also retain their prepared copy. Each copy is bounded
+// by PolicyValues.MaxDocumentBytes. Rendered conversion also holds source,
 // normalized, and PDF buffers within the render policy limits; uploads retain
 // the PDF plus one copy per attempt, each up to PolicyValues.MaxDocumentBytes.
 // Applications must bound concurrent calls according to their memory budget.
@@ -696,7 +697,7 @@ func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byt
 		}
 		snapshot.memory.mu.Lock()
 		defer snapshot.memory.mu.Unlock()
-		if snapshot.memory.released || int64(len(snapshot.memory.contents)) != snapshot.size {
+		if snapshot.memory.released {
 			return nil, errors.New("mistral OCR prepared document was released")
 		}
 		return bytes.Clone(snapshot.memory.contents), nil

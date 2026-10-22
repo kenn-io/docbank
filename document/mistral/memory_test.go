@@ -32,7 +32,6 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 	assert.Equal(t, staged.Format(), prepared.Format())
 	assert.Equal(t, staged.Size(), prepared.Size())
 	assert.Equal(t, staged.SHA256(), prepared.SHA256())
-	assert.Equal(t, staged.localUnits, prepared.localUnits)
 
 	var requests atomic.Int32
 	var requestBody []byte
@@ -41,12 +40,7 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 		var readErr error
 		requestBody, readErr = io.ReadAll(request.Body)
 		require.NoError(t, readErr)
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
-			Request:    request,
-		}, nil
+		return probeHTTPResponse(request, http.StatusOK, testSuccessfulResponse), nil
 	}))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
@@ -75,6 +69,49 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 	require.NoError(t, prepared.Release())
 }
 
+func TestPrepareMemoryCountsPPTXSlides(t *testing.T) {
+	content := pptxArchive(t, []pptxTestSlide{
+		{id: "256", relationshipID: "rId1", target: "slides/slide1.xml"},
+		{id: "257", relationshipID: "rId2", target: "slides/slide2.xml"},
+	})
+	candidate, ok := CandidateFormatByID("pptx")
+	require.True(t, ok)
+	prepared, err := PrepareMemory(t.Context(), content, testPolicy(t, 1<<20, 10), MemoryPrepareOptions{DeclaredMediaType: candidate.MediaType})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
+	assert.Equal(t, 2, prepared.localUnits)
+}
+
+func TestPrepareMemoryProcessesRenderedDOCX(t *testing.T) {
+	pdf := testMultipagePDF(1)
+	renderPolicy, runner := testRenderPDFPolicyAndRunner(t, pdf, nil)
+	policy := testPolicyWithRenderPDF(t, renderPolicy, 1<<20, 10)
+	candidate, ok := CandidateFormatByID("docx")
+	require.True(t, ok)
+	prepared, err := PrepareMemory(t.Context(), loadDOCXFixture(t, "explicit-breaks.docx"), policy, MemoryPrepareOptions{DeclaredMediaType: candidate.MediaType})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "docx")
+	require.NoError(t, err)
+
+	requests := 0
+	client := clientWithTransport(t, policy, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		body, readErr := io.ReadAll(request.Body)
+		require.NoError(t, readErr)
+		assert.Contains(t, string(body), "data:"+mediaTypePDF+";base64,"+base64.StdEncoding.EncodeToString(pdf))
+		return probeHTTPResponse(request, http.StatusOK, ocrResponse(1, len(pdf))), nil
+	}))
+	result, err := client.Process(t.Context(), prepared, authorization)
+	require.NoError(t, err)
+	assert.Equal(t, 1, requests)
+	assert.Len(t, runner.calls, 2)
+	assert.Equal(t, 1, result.UnitsProcessed)
+	require.NotNil(t, result.ConversionReceipt)
+	assert.Equal(t, prepared.SHA256(), result.ConversionReceipt.SourceSHA256)
+	assert.Equal(t, digestBytes(pdf), result.ConversionReceipt.PDFSHA256)
+}
+
 func TestPrepareMemoryReleaseDuringProcess(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusServiceUnavailable} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -93,12 +130,9 @@ func TestPrepareMemoryReleaseDuringProcess(t *testing.T) {
 				body, readErr := io.ReadAll(request.Body)
 				require.NoError(t, readErr)
 				assert.Contains(t, string(body), "data:"+mediaTypePDF+";base64,"+base64.StdEncoding.EncodeToString(content))
-				return &http.Response{
-					StatusCode: status,
-					Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"0"}},
-					Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
-					Request:    request,
-				}, nil
+				response := probeHTTPResponse(request, status, testSuccessfulResponse)
+				response.Header.Set("Retry-After", "0")
+				return response, nil
 			}))
 			result, err := client.Process(t.Context(), prepared, authorization)
 			if status == http.StatusOK {
