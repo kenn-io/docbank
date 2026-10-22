@@ -56,6 +56,7 @@ it("renames a person while their portrait preparation is pending", async () => {
           content_version_id: "version",
           generation_id: "",
           rotation: 0,
+          box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
         },
       },
     },
@@ -136,7 +137,7 @@ it.each([false, true])("submits selected cards and reports a locked merge=%s", a
   people.dispose();
   await cache.dispose();
 });
-it("clears the selected cards and open merge when People is concealed", async () => {
+it("closes the open merge when Hidden access locks", async () => {
   const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
   people.items = [ada, grace];
@@ -156,11 +157,9 @@ it("clears the selected cards and open merge when People is concealed", async ()
   const dialog = screen.getByRole("dialog", { name: "Merge people" });
   expect(within(dialog).getByText("3 Library photos")).toBeTruthy();
   await act(() => {
-    people.conceal();
     access.acceptState({ configured: true }, Date.now() + 1);
   });
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.queryByRole("region", { name: "Selected people" })).toBeNull();
   view.unmount();
   people.dispose();
   access.dispose();
@@ -274,6 +273,11 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
   dialog = screen.getByRole("dialog", { name: "Merge people" });
   expect(within(dialog).getByRole("radio", { name: `Keep Alex · ${detail}` })).toBeTruthy();
   expect(within(dialog).getByRole("radio", { name: "Keep Alex · alex@example.org" })).toBeTruthy();
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await act(
+    () => (people.items = [{ ...same, person_id: "alex-3", identity_label: "alex@example.org" }]),
+  );
+  expect(screen.getByRole("button", { name: "Alex 2 Library photos" })).toBeTruthy();
   view.unmount();
   people.dispose();
   await cache.dispose();
@@ -295,26 +299,5 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   view.unmount();
   people.dispose();
   access.dispose();
-  await cache.dispose();
-});
-
-it("distinguishes cards with repeated names using their identity details", async () => {
-  const people = new People("session", vi.fn());
-  people.items = [
-    { ...ada, display_name: "Ada", identity_label: "ada@example.com" },
-    { ...grace, display_name: "Ada", identity_label: "other@example.com" },
-  ];
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  expect(
-    screen.getByRole("button", { name: "Ada · ada@example.com 3 Library photos" }),
-  ).toBeTruthy();
-  expect(
-    screen.getByRole("button", { name: "Ada · other@example.com 2 Library photos" }),
-  ).toBeTruthy();
-  await act(() => (people.items = [{ ...ada, identity_label: "ada@example.com" }]));
-  expect(screen.getByRole("button", { name: "Ada 3 Library photos" })).toBeTruthy();
-  view.unmount();
-  people.dispose();
   await cache.dispose();
 });

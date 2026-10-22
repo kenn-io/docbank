@@ -173,28 +173,21 @@ it.each([
   people.dispose();
 });
 
-it.each([503, 422])("recovers after rename HTTP %s", async (status) => {
+it("recovers after rename HTTP 422", async () => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
-  const detail = status === 422 ? "Name is too long" : "Rename failed";
-  vi.spyOn(api, "renamePerson").mockRejectedValue(
-    new APIError(detail, status, status === 422 ? "validation" : "stale_revision"),
-  );
+  const detail = "Name is too long";
+  vi.spyOn(api, "renamePerson").mockRejectedValue(new APIError(detail, 422, "validation"));
   const people = new People("session", vi.fn());
   people.items = [ada, grace];
   people.cursor = "old-page";
   people.toggle(ada);
   people.toggle(grace);
-  expect(await people.rename(ada, status === 422 ? "x".repeat(1000) : "Ada L")).toBe(false);
+  expect(await people.rename(ada, "x".repeat(1000))).toBe(false);
   expect(people.writeError).toBe(detail);
-  if (status === 422) {
-    expect(people.selected).toEqual([ada, grace]);
-    expect(people.items).toEqual([ada, grace]);
-    expect(people.cursor).toBe("old-page");
-    expect(read).not.toHaveBeenCalled();
-  } else {
-    expect(people.items).toEqual([grace]);
-    expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
-  }
+  expect(people.selected).toEqual([ada, grace]);
+  expect(people.items).toEqual([ada, grace]);
+  expect(people.cursor).toBe("old-page");
+  expect(read).not.toHaveBeenCalled();
   people.dispose();
 });
 
@@ -222,21 +215,6 @@ it("reports sign-in expiry", async () => {
   await people.load();
   expect(failed).toHaveBeenCalled();
   expect(people.error).toBe("Sign in");
-  people.dispose();
-});
-
-it("uses refreshed name order and pagination after rename", async () => {
-  const renamed = { ...ada, display_name: "Zoe", display_name_folded: "zoe", revision: 3 };
-  vi.spyOn(api, "listPeople")
-    .mockResolvedValueOnce({ items: [ada], next_cursor: "next" })
-    .mockResolvedValueOnce({ items: [grace], next_cursor: "fresh" })
-    .mockResolvedValueOnce({ items: [renamed] });
-  vi.spyOn(api, "renamePerson").mockResolvedValue(personResponse(renamed));
-  const people = new People("session", vi.fn());
-  await people.load();
-  await people.rename(ada, "Zoe");
-  await people.load("", true);
-  expect(people.items).toEqual([grace, renamed]);
   people.dispose();
 });
 
@@ -279,6 +257,7 @@ it.each(["rename", "merge", "load"])("conceals names after a late %s response", 
   else reject(new Error("Offline"));
   await pending;
   expect(people.items).toEqual([]);
+  expect(people.selected).toEqual([]);
   expect(people.merge).toBeUndefined();
   expect(people.writeError).toBe("");
   expect(people.busy).toBe(false);

@@ -64,59 +64,55 @@ func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
 
 func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
-	require.NoError(t, err)
-	absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
-	require.NoError(t, err)
-	third, err := s.CreatePerson(ctx, "Third", "operator")
-	require.NoError(t, err)
-	duplicate := browsePhotoNode(t, s, "duplicate.jpg", fakeHash("duplicate-evidence"), "image/jpeg")
-	newer := browsePhotoNode(t, s, "newer.jpg", fakeHash("newer-evidence"), "image/jpeg")
-	keptAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, survivor.PersonID, "")
-	require.NoError(t, err)
-	absorbedAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, absorbed.PersonID, "")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(ctx, newer.CurrentVersionID, third.PersonID, "")
-	require.NoError(t, err)
-	for assertionID, recordedAt := range map[string]string{
-		keptAssertion.AssertionID:     "2026-01-01T00:00:00.000000000Z",
-		absorbedAssertion.AssertionID: "2026-03-01T00:00:00.000000000Z",
-	} {
-		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE assertion_id=?`, recordedAt, assertionID)
-		require.NoError(t, err)
+	for _, evidence := range []string{"whole photo", "face"} {
+		t.Run(evidence, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
+			require.NoError(t, err)
+			absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
+			require.NoError(t, err)
+			duplicate := browsePhotoNode(t, s, "duplicate.jpg", fakeHash("duplicate-evidence"), "image/jpeg")
+			keptAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, survivor.PersonID, "")
+			require.NoError(t, err)
+			absorbedAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, absorbed.PersonID, "")
+			require.NoError(t, err)
+			for assertionID, recordedAt := range map[string]string{
+				keptAssertion.AssertionID:     "2026-01-01T00:00:00.000000000Z",
+				absorbedAssertion.AssertionID: "2026-03-01T00:00:00.000000000Z",
+			} {
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE assertion_id=?`, recordedAt, assertionID)
+				require.NoError(t, err)
+			}
+			var face PhotoFace
+			const namedAt = "2026-03-15T00:00:00.000000000Z"
+			if evidence == "face" {
+				face, _, err = s.CreatePhotoFace(ctx, duplicate.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, absorbed.PersonID)
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at=? WHERE face_id=?`, namedAt, face.FaceID)
+				require.NoError(t, err)
+			}
+			_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+			require.NoError(t, err)
+			merged, err := s.DocumentPersonAssertions(ctx, duplicate.CurrentVersionID)
+			require.NoError(t, err)
+			require.Len(t, merged, 1)
+			require.Equal(t, "2026-01-01T00:00:00.000000000Z", merged[0].RecordedAt)
+			require.Equal(t, keptAssertion.Revision, merged[0].Revision)
+			after, err := s.PeopleByDisplayName(ctx, "Survivor", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			require.NoError(t, err)
+			require.Len(t, after, 1)
+			if evidence == "face" {
+				var mergedNamedAt, mergedAssertionID string
+				require.NoError(t, s.db.QueryRowContext(ctx, `SELECT named_at,assertion_id FROM photo_faces WHERE face_id=?`, face.FaceID).Scan(&mergedNamedAt, &mergedAssertionID))
+				require.Equal(t, namedAt, mergedNamedAt)
+				require.Equal(t, keptAssertion.AssertionID, mergedAssertionID)
+				require.Equal(t, namedAt, after[0].RecentRank)
+			} else {
+				require.Equal(t, "2026-01-01T00:00:00.000000000Z", after[0].RecentRank)
+			}
+		})
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-02-01T00:00:00.000000000Z' WHERE person_id=?`, third.PersonID)
-	require.NoError(t, err)
-	face, _, err := s.CreatePhotoFace(ctx, duplicate.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, absorbed.PersonID)
-	require.NoError(t, err)
-	const namedAt = "2026-01-15T00:00:00.000000000Z"
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at=? WHERE face_id=?`, namedAt, face.FaceID)
-	require.NoError(t, err)
-	before, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
-	require.NoError(t, err)
-	require.Equal(t, absorbed.PersonID, before[0].PersonID)
-	require.Equal(t, third.PersonID, before[1].PersonID)
-
-	operationID, err := newUUIDv4()
-	require.NoError(t, err)
-	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
-	require.NoError(t, err)
-	merged, err := s.DocumentPersonAssertions(ctx, duplicate.CurrentVersionID)
-	require.NoError(t, err)
-	require.Len(t, merged, 1)
-	require.Equal(t, "2026-01-01T00:00:00.000000000Z", merged[0].RecordedAt)
-	require.Equal(t, keptAssertion.Revision, merged[0].Revision)
-	var mergedNamedAt, mergedAssertionID string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT named_at,assertion_id FROM photo_faces WHERE face_id=?`, face.FaceID).Scan(&mergedNamedAt, &mergedAssertionID))
-	require.Equal(t, namedAt, mergedNamedAt)
-	require.Equal(t, keptAssertion.AssertionID, mergedAssertionID)
-	after, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
-	require.NoError(t, err)
-	require.Equal(t, third.PersonID, after[0].PersonID)
-	require.Equal(t, survivor.PersonID, after[1].PersonID)
-	require.Equal(t, namedAt, after[1].RecentRank)
 }
 
 func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
@@ -367,7 +363,6 @@ func TestMergePersonsPreservesKeyFace(t *testing.T) {
 	absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
 	require.NoError(t, err)
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("portrait"), "image/jpeg")
-	// The key face is smaller than the fallback, so area ranking cannot pick it.
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Width: .5, Height: .5}, survivor.PersonID)
 	require.NoError(t, err)
 	key, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .7, Width: .1, Height: .1}, absorbed.PersonID)

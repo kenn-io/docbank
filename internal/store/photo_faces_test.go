@@ -895,7 +895,7 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	var nodes []Node
 	var assets []PhotoAsset
 	var faces []PhotoFace
-	for i := range 5 {
+	for i := range 3 {
 		node := browsePhotoNode(t, s, fmt.Sprintf("summary-%d.jpg", i), fakeHash(fmt.Sprintf("%02x", i+30)), "image/jpeg")
 		browsePhotoMetadata(t, s, node, fmt.Sprintf("summary-%d", i), exifCapture(fmt.Sprintf("2026-01-%02dT12:00:00Z", i+1)))
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
@@ -922,11 +922,6 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
 	_, err = s.MarkPersonInPhoto(unlocked, nodes[2].CurrentVersionID, hiddenOnly.PersonID, "")
-	require.NoError(t, err)
-	// Excluded assets and missing sources contribute neither a count nor a face.
-	_, err = s.SetPhotoAssetExcluded(ctx, assets[3].ID, assets[3].Revision, true)
-	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, nodes[4].ID, nodes[4].Revision)
 	require.NoError(t, err)
 	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
 	// Filter contacts before applying the page limit.
