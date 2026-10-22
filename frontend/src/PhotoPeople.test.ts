@@ -5,6 +5,7 @@ import { PhotoFaces } from "./photoFaces.svelte.js";
 import PhotoPeople from "./PhotoPeople.svelte";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
+import { person as personSummary } from "./people-test-fixtures.js";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -955,17 +956,17 @@ it.each(["unauthorized", "generic"])(
 );
 it("lists a person once when a rank change repeats them on the next page", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
-  const person = (id: string, name: string) => ({
-    person_id: id,
-    display_name: name,
-    display_name_folded: name.toLowerCase(),
-    state: "curated",
-    revision: 1,
-    created_at: "2026-01-01T00:00:00Z",
-  });
   vi.spyOn(api, "listPeople")
-    .mockResolvedValueOnce({ items: [person("ada", "Ada")], next_cursor: "next" })
-    .mockResolvedValueOnce({ items: [person("ada", "Ada"), person("bob", "Bob")] });
+    .mockResolvedValueOnce({
+      items: [personSummary("ada", { display_name: "Ada" })],
+      next_cursor: "next",
+    })
+    .mockResolvedValueOnce({
+      items: [
+        personSummary("ada", { display_name: "Ada" }),
+        personSummary("bob", { display_name: "Bob" }),
+      ],
+    });
   const faces = new PhotoFaces("session", vi.fn());
   await faces.load("version-a");
   render(PhotoPeople, { faces, session: "session" });

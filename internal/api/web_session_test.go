@@ -21,6 +21,7 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111"},
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/retire"},
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/split"},
+		{http.MethodPost, "/api/v1/people/by-id/not-a-uuid/merge"},
 	}
 	for _, path := range paths {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(path.method, path.path, nil)), path.method+" "+path.path)
@@ -33,6 +34,8 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?extra=1"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false&hidden=true"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=%zz"},
+		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?content_version_id=invalid"},
+		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?content_version_id=22222222-2222-4222-8222-222222222222"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
 	}
@@ -51,6 +54,7 @@ func TestWebSessionAllowsPeopleAndPhotoRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/merge"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false"},
+		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?content_version_id=22222222-2222-4222-8222-222222222222&face_id=33333333-3333-4333-8333-333333333333"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
 	}

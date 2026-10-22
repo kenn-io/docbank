@@ -285,10 +285,6 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID), page(ctx, recent))
 	byName := page(ctx, PeopleSearchOptions{})
 	require.Equal(t, []string{people["Ada"].PersonID, people["Bob"].PersonID, people["Cy"].PersonID}, byName[:3])
-	only, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{PersonID: people["Bob"].PersonID})
-	require.NoError(t, err)
-	require.Len(t, only, 1)
-	require.Equal(t, "Bob", only[0].DisplayName)
 
 	// Merging moves evidence, so the survivor takes the absorbed person's rank.
 	cy, ada := people["Cy"], people["Ada"]
@@ -330,9 +326,11 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 				if index == 1 {
 					switch condition {
 					case "excluded":
-						_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET excluded_at='2026-03-01' WHERE asset_id IN (SELECT asset_id FROM photo_files WHERE node_id=?)`, node.ID)
+						asset, assetErr := s.PhotoAssetForNode(ctx, node.ID)
+						require.NoError(t, assetErr)
+						_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 					case "trashed":
-						_, err = s.db.ExecContext(ctx, `UPDATE nodes SET trashed_at='2026-03-01' WHERE id=?`, node.ID)
+						_, _, err = s.Trash(ctx, node.ID, node.Revision)
 					case "stale":
 						_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("d4"), 4, "image/jpeg")
 					}

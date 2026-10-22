@@ -10940,12 +10940,14 @@ func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNode
 	return responseParser(ctx, resp)
 }
 
-// ListPersonFacePreviews Read up to three linked source-version photos in timeline order
+// ListPersonFacePreviews Read linked source-version photos or one exact assigned face
 func (c *Client) ListPersonFacePreviews(ctx context.Context, options *ListPersonFacePreviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFacePreviewsResponse, error) {
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"hidden": {Style: "form", Explode: &[]bool{false}[0]},
+		"content_version_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"face_id":            {Style: "form", Explode: &[]bool{false}[0]},
+		"hidden":             {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/people/{person_id}/face-previews",
@@ -26770,6 +26772,12 @@ type UndoPhotoFaceDecisionQuery struct {
 
 type ListPersonFacePreviewsQuery struct {
 	Hidden *bool `json:"hidden,omitempty"`
+
+	// ContentVersionID Restrict results to one source version
+	ContentVersionID *uuid.UUID `json:"content_version_id,omitempty"`
+
+	// FaceID Restrict results to one assigned face
+	FaceID *uuid.UUID `json:"face_id,omitempty"`
 }
 
 type ListPushSourcesQuery struct {

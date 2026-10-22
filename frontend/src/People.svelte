@@ -147,9 +147,7 @@
     </form>
   </div>
   {#if people.error}<p role="alert">
-      {people.error}<Button onclick={() => void people.load(people.query, !!people.items.length)}
-        >Retry</Button
-      >
+      {people.error}<Button onclick={() => void people.retry()}>Retry</Button>
     </p>{/if}
   {#if people.loading && !people.items.length}<p role="status"><Spinner />Loading people…</p>
   {:else if !people.items.length && !people.error}<p>
@@ -278,6 +276,7 @@
         {#each merge.conflicts as conflict (conflict.face_id)}<PeopleMergeConflict
             {people}
             {conflict}
+            {cache}
           />{/each}
       </ul>{/if}
     {#if merge.notice === "uncertain"}<p>

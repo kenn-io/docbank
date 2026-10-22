@@ -53,11 +53,13 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 	if err != nil {
 		panic(err)
 	}
-	huma.Register(api, huma.Operation{OperationID: "listPersonFacePreviews", Method: http.MethodGet, Path: "/api/v1/photos/people/{person_id}/face-previews", Summary: "Read up to three linked source-version photos in timeline order"}, func(ctx context.Context, in *struct {
-		PersonID string `path:"person_id" format:"uuid"`
-		Hidden   bool   `query:"hidden"`
+	huma.Register(api, huma.Operation{OperationID: "listPersonFacePreviews", Method: http.MethodGet, Path: "/api/v1/photos/people/{person_id}/face-previews", Summary: "Read linked source-version photos or one exact assigned face"}, func(ctx context.Context, in *struct {
+		PersonID         string `path:"person_id" format:"uuid"`
+		Hidden           bool   `query:"hidden"`
+		ContentVersionID string `query:"content_version_id" format:"uuid" doc:"Restrict results to one source version"`
+		FaceID           string `query:"face_id" format:"uuid" doc:"Restrict results to one assigned face"`
 	}) (*struct{ Body store.PersonFacePreviewPage }, error) {
-		previews, err := d.Store.PersonFacePreviews(ctx, in.PersonID, fingerprints.GridRecipe, in.Hidden)
+		previews, err := d.Store.PersonFacePreviews(ctx, in.PersonID, fingerprints.GridRecipe, in.Hidden, in.ContentVersionID, in.FaceID)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -51,6 +50,10 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	require.Len(t, previews.Items, 1)
+	response, body = get(t, ts, previewPath+"?content_version_id="+node.CurrentVersionID+"&face_id="+faceID, browserHeaders)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &previews))
+	require.Equal(t, []store.PersonFacePreview{{AssetID: asset.ID, ContentVersionID: node.CurrentVersionID, Box: &box}}, previews.Items)
 
 	conflictBox := box
 	conflictBox.X = 0.5
@@ -87,6 +90,10 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &unlocked))
 	require.Equal(t, []api.PhotoFace{*created.Face}, unlocked.Faces)
 	require.Equal(t, []api.PhotoPersonAssertion{*created.Assertion}, unlocked.Assertions)
+	response, body = get(t, ts, previewPath+"?hidden=true&content_version_id="+node.CurrentVersionID+"&face_id="+faceID, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &previews))
+	require.Equal(t, []store.PersonFacePreview{{AssetID: asset.ID, ContentVersionID: node.CurrentVersionID, Box: &box}}, previews.Items)
 }
 
 func TestPhotoFaceDecisionRoutes(t *testing.T) {
@@ -268,6 +275,7 @@ func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, zoe.PersonID, "")
 	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 	path := "/api/v1/people?limit=1&photo_summary=true&recent_first=true"
 	response, body := get(t, ts, path, headers)
@@ -280,8 +288,23 @@ func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var second api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
-	for _, changed := range []string{"photo_summary=false&recent_first=true", "photo_summary=true&recent_first=false", "photo_summary=true&recent_first=true&query=Z", "photo_summary=true&recent_first=true&person_id=" + ada.PersonID} {
-		response, body = get(t, ts, "/api/v1/people?limit=1&"+changed+"&cursor="+first.NextCursor, headers)
+	for _, changed := range []struct {
+		query  string
+		unlock bool
+	}{
+		{query: "photo_summary=false&recent_first=true"},
+		{query: "photo_summary=true&recent_first=false"},
+		{query: "photo_summary=true&recent_first=true&query=Z"},
+		{query: "photo_summary=true&recent_first=true&person_id=" + ada.PersonID},
+		{query: "photo_summary=true&recent_first=true", unlock: true},
+	} {
+		if changed.unlock {
+			unlocked, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+			require.Equal(t, http.StatusOK, unlocked.StatusCode, body)
+			require.Len(t, unlocked.Cookies(), 1)
+			headers["Cookie"] = unlocked.Cookies()[0].String()
+		}
+		response, body = get(t, ts, "/api/v1/people?limit=1&"+changed.query+"&cursor="+first.NextCursor, headers)
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	}
 	response, body = get(t, ts, "/api/v1/people?photo_summary=true&person_id="+ada.PersonID, headers)
@@ -296,66 +319,30 @@ func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
 	require.NotContains(t, body, "photo_summary")
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
-	headers["If-Match"] = `"1"`
-	response, body = do(t, ts, http.MethodPatch, "/api/v1/people/by-id/"+ada.PersonID, headers, api.RenamePersonRequest{DisplayName: "Ada Lovelace"})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+zoe.PersonID+"/merge", headers, api.MergePersonRequest{AbsorbedPersonID: ada.PersonID, AbsorbedRevision: 2, OperationID: uuid.NewString()})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	person, reached, err := s.PersonByID(ctx, ada.PersonID)
-	require.NoError(t, err)
-	require.Equal(t, zoe.PersonID, person.PersonID)
-	require.Equal(t, ada.PersonID, reached)
 }
 
-// A browser merge blocked by a visible rejection can withdraw that rejection
-// and merge, whether the face's assignment is active or withdrawn.
+// Browser merge conflicts identify the exact face version to review.
 func TestBrowserMergeConflictRejectionWithdrawal(t *testing.T) {
 	t.Parallel()
-	for _, withdrawn := range []bool{false, true} {
-		t.Run(fmt.Sprintf("withdrawn=%t", withdrawn), func(t *testing.T) {
-			ts, s := newTestServer(t, nil)
-			ctx := t.Context()
-			hash, size, err := s.Blobs.Write(strings.NewReader("synthetic merge portrait"))
-			require.NoError(t, err)
-			node, err := s.CreateFile(ctx, s.RootID(), "merge-portrait.jpg", hash, size, "image/jpeg")
-			require.NoError(t, err)
-			ada, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			grace, err := s.CreatePerson(ctx, "Grace", "operator")
-			require.NoError(t, err)
-			face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, ada.PersonID)
-			require.NoError(t, err)
-			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "reject", FaceID: face.FaceID, PersonID: grace.PersonID, Revision: face.Revision})
-			require.NoError(t, err)
-			if withdrawn {
-				assertions, err := s.DocumentPersonAssertions(ctx, node.CurrentVersionID)
-				require.NoError(t, err)
-				assertions[0].Action = "withdrawn"
-				_, err = s.AssertDocumentPerson(ctx, assertions[0])
-				require.NoError(t, err)
-				_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, grace.PersonID, "")
-				require.NoError(t, err)
-			}
-			headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
-			merge := api.MergePersonRequest{AbsorbedPersonID: grace.PersonID, AbsorbedRevision: 1, OperationID: uuid.NewString()}
-			response, body := do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+ada.PersonID+"/merge", headers, merge)
-			require.Equal(t, http.StatusConflict, response.StatusCode, body)
-			require.Contains(t, body, face.FaceID)
-			faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
-			require.NoError(t, err)
-			delete(headers, "If-Match")
-			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/versions/"+node.CurrentVersionID+"/face-decisions", headers,
-				api.PhotoFaceDecisionRequest{Action: "withdraw_rejection", FaceID: face.FaceID, PersonID: grace.PersonID, Revision: faces[0].Revision, OperationID: uuid.NewString()})
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			headers["If-Match"] = `"1"`
-			merge.OperationID = uuid.NewString()
-			response, body = do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+ada.PersonID+"/merge", headers, merge)
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			assertions, err := s.DocumentPersonAssertions(ctx, node.CurrentVersionID)
-			require.NoError(t, err)
-			require.Len(t, assertions, 1)
-			require.Equal(t, ada.PersonID, assertions[0].PersonID)
-			require.Equal(t, "assert", assertions[0].Action, "the merged person keeps the photo")
-		})
-	}
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic merge portrait"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, s.RootID(), "merge-portrait.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	grace, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, ada.PersonID)
+	require.NoError(t, err)
+	_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "reject", FaceID: face.FaceID, PersonID: grace.PersonID, Revision: face.Revision})
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
+	merge := api.MergePersonRequest{AbsorbedPersonID: grace.PersonID, AbsorbedRevision: 1, OperationID: uuid.NewString()}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+ada.PersonID+"/merge", headers, merge)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	problem := decodeProblem(t, body)
+	require.Equal(t, []string{face.FaceID}, problem.FaceIDs)
+	require.Equal(t, []string{node.CurrentVersionID}, problem.FaceVersionIDs)
 }

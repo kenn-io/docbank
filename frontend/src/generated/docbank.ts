@@ -9356,6 +9356,14 @@ export type PromotePhotoNodeHeaders = {
 
 export type ListPersonFacePreviewsParams = {
 hidden?: boolean;
+/**
+ * Restrict results to one source version
+ */
+content_version_id?: string;
+/**
+ * Restrict results to one assigned face
+ */
+face_id?: string;
 };
 
 export type SetPhotoSettingsHeaders = {
@@ -17824,7 +17832,7 @@ export const getListPersonFacePreviewsUrl = (personId: string,
 }
 
 /**
- * @summary Read up to three linked source-version photos in timeline order
+ * @summary Read linked source-version photos or one exact assigned face
  */
 export const listPersonFacePreviews = async (personId: string,
     params?: ListPersonFacePreviewsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonFacePreviewPage> => {

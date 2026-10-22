@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { People, peoplePageSize } from "./people.svelte.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { ada, grace, person } from "./people-test-fixtures.js";
 
 afterEach(() => {
@@ -167,9 +168,12 @@ it("keeps two selections across searches and merges them", async () => {
 });
 
 it("keeps a card read from before Hidden locked out of the new cards", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
+  const unlockedAda = { ...ada, photo_summary: { library_count: 3, hidden_count: 1 } };
   let finish!: (page: api.PersonPage) => void;
   vi.spyOn(api, "renamePerson").mockResolvedValue({
-    ...ada,
+    ...unlockedAda,
     display_name: "Ada L",
     revision: 3,
     origin: "operator",
@@ -179,77 +183,65 @@ it("keeps a card read from before Hidden locked out of the new cards", async () 
     .spyOn(api, "listPeople")
     .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
     .mockResolvedValueOnce({ items: [{ ...ada, photo_summary: { library_count: 3 } }] });
-  const people = new People("session", vi.fn());
-  people.items = [ada];
-  people.toggle(ada);
-  const pending = people.rename(ada, "Ada L");
+  const people = new People("session", vi.fn(), access);
+  people.items = [unlockedAda];
+  people.toggle(unlockedAda);
+  const pending = people.rename(unlockedAda, "Ada L");
   await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
   // Hidden locks: the cards reload without the Hidden count.
   people.conceal();
-  await people.load();
-  finish({ items: [{ ...ada, display_name: "Ada L", revision: 3 }] });
-  await pending;
+  access.acceptState({ configured: true }, Date.now() + 1);
+  const reload = people.load();
+  finish({ items: [{ ...unlockedAda, display_name: "Ada L", revision: 3 }] });
+  await Promise.all([pending, reload]);
   expect(people.items).toEqual([{ ...ada, photo_summary: { library_count: 3 } }]);
   expect(people.selected).toEqual([]);
   people.dispose();
+  access.dispose();
 });
 
-it("shows both current names after a stale merge and asks for a fresh confirmation", async () => {
-  const source = { ...ada, display_name: "Ada L", revision: 3 };
-  const survivor = { ...grace, display_name: "Grace H", revision: 6 };
-  vi.spyOn(api, "listPeople").mockImplementation(byID([source, survivor]));
-  const merge = vi
-    .spyOn(api, "mergePerson")
-    .mockRejectedValueOnce(new APIError("Stale revision", 412, "stale_revision"))
-    .mockResolvedValue({} as api.PersonMergeReceipt);
-  const people = new People("session", vi.fn());
-  people.items = [ada, grace];
-  merging(people, ada, grace);
-  expect(await people.submitMerge()).toBe(false);
-  expect(people.merge).toMatchObject({
-    pair: [source, survivor],
-    keep: "grace",
-    confirmed: false,
-    notice: "stale",
-  });
-  expect(people.items[0]).toEqual(source);
-  expect(await people.submitMerge()).toBe(false);
-  expect(merge).toHaveBeenCalledOnce();
-  people.confirmMerge(true);
-  expect(await people.submitMerge()).toBe(true);
-  expect(merge.mock.calls[1]![1].absorbed_revision).toBe(3);
-  expect(merge.mock.calls[1]![2]).toEqual({ "If-Match": '"6"' });
-  expect(merge.mock.calls[1]![1].operation_id).not.toBe(merge.mock.calls[0]![1].operation_id);
-  people.dispose();
-});
-
-it("keeps the stale merge selection when the current names can't be read", async () => {
-  vi.spyOn(api, "listPeople").mockRejectedValue(new Error("Offline"));
-  vi.spyOn(api, "mergePerson").mockRejectedValue(new APIError("Stale", 412, "stale_revision"));
-  const people = new People("session", vi.fn());
-  people.items = [ada, grace];
-  merging(people, ada, grace);
-  expect(await people.submitMerge()).toBe(false);
-  expect(people.merge).toMatchObject({ pair: [ada, grace], confirmed: false, notice: "" });
-  expect(people.items).toEqual([ada, grace]);
-  expect(people.writeError).toBe("Stale");
-  people.dispose();
-});
-
-it.each(["survivor", "source"])(
-  "ends the merge when the stale merge %s is no longer visible",
-  async (gone) => {
-    const kept = gone === "source" ? grace : ada;
-    vi.spyOn(api, "listPeople").mockImplementation(byID([kept]));
-    vi.spyOn(api, "mergePerson").mockRejectedValue(new APIError("Stale", 412, "stale_revision"));
+it.each(["refreshed", "offline", "survivor missing", "source missing"])(
+  "reconciles a stale merge when its refresh is %s",
+  async (outcome) => {
+    const source = { ...ada, display_name: "Ada L", revision: 3 };
+    const survivor = { ...grace, display_name: "Grace H", revision: 6 };
+    const kept = outcome === "source missing" ? grace : ada;
+    const read = vi.spyOn(api, "listPeople");
+    if (outcome === "offline") read.mockRejectedValue(new Error("Offline"));
+    else read.mockImplementation(byID(outcome === "refreshed" ? [source, survivor] : [kept]));
+    const merge = vi
+      .spyOn(api, "mergePerson")
+      .mockRejectedValueOnce(new APIError("Stale revision", 412, "stale_revision"))
+      .mockResolvedValue({} as api.PersonMergeReceipt);
     const people = new People("session", vi.fn());
     people.items = [ada, grace];
     merging(people, ada, grace);
     expect(await people.submitMerge()).toBe(false);
-    expect(people.merge).toBeUndefined();
-    expect(people.items).toEqual([kept]);
-    expect(people.selected).toEqual([kept]);
-    expect(people.writeError).toContain("no longer available");
+    if (outcome === "refreshed") {
+      expect(people.merge).toMatchObject({
+        pair: [source, survivor],
+        keep: "grace",
+        confirmed: false,
+        notice: "stale",
+      });
+      expect(people.items[0]).toEqual(source);
+      expect(await people.submitMerge()).toBe(false);
+      expect(merge).toHaveBeenCalledOnce();
+      people.confirmMerge(true);
+      expect(await people.submitMerge()).toBe(true);
+      expect(merge.mock.calls[1]![1].absorbed_revision).toBe(3);
+      expect(merge.mock.calls[1]![2]).toEqual({ "If-Match": '"6"' });
+      expect(merge.mock.calls[1]![1].operation_id).not.toBe(merge.mock.calls[0]![1].operation_id);
+    } else if (outcome === "offline") {
+      expect(people.merge).toMatchObject({ pair: [ada, grace], confirmed: false, notice: "" });
+      expect(people.items).toEqual([ada, grace]);
+      expect(people.writeError).toBe("Stale revision");
+    } else {
+      expect(people.merge).toBeUndefined();
+      expect(people.items).toEqual([kept]);
+      expect(people.selected).toEqual([kept]);
+      expect(people.writeError).toContain("no longer available");
+    }
     people.dispose();
   },
 );
@@ -311,42 +303,36 @@ it("keeps renamed cards unique when they cross the saved cursor", async () => {
   people.dispose();
 });
 
-it("conceals merge names during a write and after its late failure", async () => {
-  let reject!: (cause: Error) => void;
-  vi.spyOn(api, "mergePerson").mockImplementation(
-    () =>
-      new Promise((_, fail) => {
-        reject = fail;
-      }),
-  );
-  const people = new People("session", vi.fn());
-  merging(people, ada, grace);
-  const pending = people.submitMerge();
-  people.conceal();
-  expect(people.merge).toBeUndefined();
-  reject(new Error("Offline"));
-  await pending;
-  expect(people.merge).toBeUndefined();
-  expect(people.busy).toBe(false);
-  people.dispose();
-});
-
-it("keeps names concealed when stale merge refreshes finish after a scope change", async () => {
-  const finish: ((page: api.PersonPage) => void)[] = [];
-  vi.spyOn(api, "mergePerson").mockRejectedValue(new APIError("Stale", 412, "stale_revision"));
-  vi.spyOn(api, "listPeople").mockImplementation(
-    () => new Promise((resolve) => finish.push(resolve)),
-  );
-  const people = new People("session", vi.fn());
-  merging(people, ada, grace);
-  const pending = people.submitMerge();
-  await Promise.resolve();
-  await Promise.resolve();
-  expect(finish).toHaveLength(2);
-  people.conceal();
-  finish[0]!({ items: [ada] });
-  finish[1]!({ items: [grace] });
-  await pending;
-  expect(people.merge).toBeUndefined();
-  people.dispose();
-});
+it.each(["write failure", "stale refresh"])(
+  "keeps merge names concealed after a late %s",
+  async (outcome) => {
+    let reject!: (cause: Error) => void;
+    const finish: ((page: api.PersonPage) => void)[] = [];
+    const merge = vi.spyOn(api, "mergePerson");
+    if (outcome === "write failure") {
+      merge.mockImplementation(() => new Promise((_, fail) => (reject = fail)));
+    } else {
+      merge.mockRejectedValue(new APIError("Stale", 412, "stale_revision"));
+      vi.spyOn(api, "listPeople").mockImplementation(
+        () => new Promise((resolve) => finish.push(resolve)),
+      );
+    }
+    const people = new People("session", vi.fn());
+    merging(people, ada, grace);
+    const pending = people.submitMerge();
+    if (outcome === "stale refresh") {
+      await vi.waitFor(() => expect(finish).toHaveLength(2));
+    }
+    people.conceal();
+    expect(people.merge).toBeUndefined();
+    if (outcome === "write failure") reject(new Error("Offline"));
+    else {
+      finish[0]!({ items: [ada] });
+      finish[1]!({ items: [grace] });
+    }
+    await pending;
+    expect(people.merge).toBeUndefined();
+    expect(people.busy).toBe(false);
+    people.dispose();
+  },
+);
