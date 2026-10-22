@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"reflect"
 	"slices"
@@ -25,13 +23,6 @@ const (
 	plaintextRenditionAdapter = "docbank-plaintext-rendition/v1"
 	epubRenditionAdapter      = "docbank-epub-rendition/v1"
 )
-
-// Only daemon tests set renditionTestEgress.
-var renditionTestEgress struct {
-	resolver    providerhttp.Resolver
-	roots       *x509.CertPool
-	dialContext func(context.Context, string, string) (net.Conn, error)
-}
 
 type renditionProviderInputs struct {
 	adapterContract                    string
@@ -163,9 +154,7 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		}
 		return existing.provider, disclosure, nil
 	}
-	egress.TLS.RootCAs = renditionTestEgress.roots
-	egress.DialContext = renditionTestEgress.dialContext
-	transport, err := providerhttp.NewTransport(egress, renditionTestEgress.resolver)
+	transport, err := providerhttp.NewTransport(egress, nil)
 	if err != nil {
 		return nil, disclosure, err
 	}

@@ -62,10 +62,7 @@ func NewTransport(policy EgressPolicy, resolver Resolver) (*http.Transport, erro
 	}
 	dialer := &policyDialer{
 		policy: validated, resolver: resolver,
-		dialContext: (&net.Dialer{Timeout: validated.connect, KeepAlive: validated.keepAlive}).DialContext,
-	}
-	if policy.DialContext != nil {
-		dialer.dialContext = policy.DialContext
+		dialer: net.Dialer{Timeout: validated.connect, KeepAlive: validated.keepAlive},
 	}
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -176,9 +173,9 @@ func parseAuthority(authority, scheme string) (string, uint16, error) {
 }
 
 type policyDialer struct {
-	policy      validatedPolicy
-	resolver    Resolver
-	dialContext func(context.Context, string, string) (net.Conn, error)
+	policy   validatedPolicy
+	resolver Resolver
+	dialer   net.Dialer
 }
 
 func (dialer *policyDialer) dial(
@@ -210,7 +207,7 @@ func (dialer *policyDialer) dial(
 		if selected.Is4() {
 			exactNetwork = "tcp4"
 		}
-		connection, dialErr := dialer.dialContext(
+		connection, dialErr := dialer.dialer.DialContext(
 			ctx, exactNetwork, net.JoinHostPort(selected.String(), port),
 		)
 		if dialErr == nil {
