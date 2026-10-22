@@ -175,6 +175,9 @@ func TestPersonPhotoPreviewSourceFollowsAssignment(t *testing.T) {
 	_, err = s.DecidePhotoFace(ctx, source.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, PersonID: person.PersonID, Revision: face.Revision + 2})
 	require.NoError(t, err)
 	require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
+	_, _, err = s.ReplaceContent(ctx, source.ID, source.Revision, fakeHash("stale-preview"), 4, "image/jpeg")
+	require.NoError(t, err)
+	require.ErrorIs(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID), ErrNotFound)
 }
 
 func TestWholePhotoMarkCreatesPersonAtomically(t *testing.T) {

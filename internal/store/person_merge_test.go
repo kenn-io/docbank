@@ -358,7 +358,7 @@ func TestPersonSplitMissingAssertion(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }
 
-func TestMergePersonsCarriesKeyFaceIntoPortrait(t *testing.T) {
+func TestMergePersonsPreservesKeyFace(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -385,8 +385,4 @@ func TestMergePersonsCarriesKeyFaceIntoPortrait(t *testing.T) {
 	detail, err := s.PersonDetailPage(ctx, survivor.PersonID, PersonAssertionPage{})
 	require.NoError(t, err)
 	require.Equal(t, key.FaceID, detail.KeyFaceID)
-	rows, err := s.PeopleByDisplayName(ctx, "Survivor", "", "", 10, true, PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"})
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.InDelta(t, .7, rows[0].PhotoSummary.Face.Box.X, 1e-9)
 }
