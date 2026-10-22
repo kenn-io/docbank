@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-22
 title: Embed in Go
 description: Run one or more Docbank vaults inside a Go application, each with its own root, using CGO or pure-Go SQLite.
 ---
@@ -13,6 +13,41 @@ checks, storage rules, and exclusive vault lock as standalone Docbank.
 
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
+
+## Reuse MCP tool definitions
+
+`go.kenn.io/docbank/mcp` lets a Go application reuse the native read-only MCP
+schemas without starting Docbank's daemon. Select a definition by name and
+register it with your own handler:
+
+```go
+import (
+    sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+    docbankmcp "go.kenn.io/docbank/mcp"
+)
+
+// listDocuments is the application's typed MCP handler.
+tool, err := docbankmcp.ReadTool("list_documents")
+if err != nil {
+    return err
+}
+sdkmcp.AddTool(server, tool, listDocuments)
+```
+
+`ReadTool` returns the selected tool's input and output schemas, annotations,
+and metadata. Unknown names and write operations return an error. Each call
+returns an independent copy, including nested schemas and metadata; schemas
+use `map[string]any`. Looking up a definition does not register any tools,
+open a vault, discover a daemon, or start a listener.
+
+The application supplies execution, authentication, authorization, and transport.
+It must implement the selected [MCP tool's contract](usage/mcp.md), including
+semantic validation, response bounds, and private-cache behavior. The SDK's
+generic `AddTool` function validates input and output schemas; its lower-level
+`server.AddTool` method leaves that validation to the caller. The definitions
+alone do not enforce access, source fences, or the extra checks performed by
+Docbank's native handlers. This package does not expose those handlers or adapt
+an embedded vault into an MCP server.
 
 ## Inspect format coverage
 
