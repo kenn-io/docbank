@@ -134,6 +134,9 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 			receipt = replayed
 			return err
 		}
+		if err := s.fenceVisiblePeopleTx(ctx, tx, survivorID, absorbedID); err != nil {
+			return err
+		}
 		if err := fencePersonTx(ctx, tx, survivorID, survivorRevision); err != nil {
 			return err
 		}

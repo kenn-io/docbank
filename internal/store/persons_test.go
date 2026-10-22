@@ -1,9 +1,12 @@
 package store
 
 import (
+	"context"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -239,29 +242,67 @@ func TestRetirePersonCutsOffInboundMergeAliases(t *testing.T) {
 	require.Equal(t, "deleted", reason)
 }
 
-func TestPeopleRecentNamesStayTogetherAcrossPages(t *testing.T) {
+func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	people := map[string]Person{}
+	for _, name := range []string{"Ada", "Bob", "Cy", "Zoe", "zoe"} {
+		person, err := s.CreatePerson(ctx, name, "operator")
+		require.NoError(t, err)
+		people[name] = person
+	}
+	nodes := map[string]Node{}
+	for name, recorded := range map[string]string{"Ada": "2026-01-01T00:00:00Z", "Bob": "2026-02-01T00:00:00Z", "Cy": "2026-01-15T00:00:00Z", "Zoe": "2026-03-01T00:00:00Z"} {
+		node := browsePhotoNode(t, s, name+".jpg", fakeHash("recent-"+name), "image/jpeg")
+		nodes[name] = node
+		_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, people[name].PersonID, "")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, recorded, people[name].PersonID)
+		require.NoError(t, err)
+	}
+	// A suppressed assertion is not depicted evidence.
+	_, err := s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-09-01T00:00:00Z',action='suppress' WHERE person_id=?`, people["Cy"].PersonID)
 	require.NoError(t, err)
-	zoe, err := s.CreatePerson(ctx, "Zoe", "operator")
+	page := func(ctx context.Context, options PeopleSearchOptions) []string {
+		var ids []string
+		afterName, afterID := "", ""
+		for {
+			rows, err := s.PeopleByDisplayName(ctx, "", afterName, afterID, 1, true, options)
+			require.NoError(t, err)
+			if len(rows) == 0 {
+				return ids
+			}
+			ids = append(ids, rows[0].PersonID)
+			afterName, afterID, options.AfterRecent = rows[0].DisplayNameFolded, rows[0].PersonID, rows[0].RecentRank
+		}
+	}
+	zoes := []string{people["Zoe"].PersonID, people["zoe"].PersonID}
+	slices.Sort(zoes)
+	// Namesakes share their group's newest evidence and stay adjacent across pages.
+	recent := PeopleSearchOptions{RecentFirst: true}
+	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID), page(ctx, recent))
+	byName := page(ctx, PeopleSearchOptions{})
+	require.Equal(t, []string{people["Ada"].PersonID, people["Bob"].PersonID, people["Cy"].PersonID}, byName[:3])
+	only, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{PersonID: people["Bob"].PersonID})
 	require.NoError(t, err)
-	other, err := s.CreatePerson(ctx, "Zoe", "operator")
+	require.Len(t, only, 1)
+	require.Equal(t, "Bob", only[0].DisplayName)
+
+	// Merging moves evidence, so the survivor takes the absorbed person's rank.
+	cy, ada := people["Cy"], people["Ada"]
+	_, err = s.MergePersons(ctx, cy.PersonID, ada.PersonID, uuid.NewString(), cy.Revision, ada.Revision)
 	require.NoError(t, err)
-	options := PeopleSearchOptions{RecentIDs: []string{zoe.PersonID}}
-	first, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
+	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, cy.PersonID), page(ctx, recent))
+
+	// Locked Hidden evidence neither ranks nor reveals its person.
+	asset, err := s.PhotoAssetForNode(ctx, nodes["Zoe"].ID)
 	require.NoError(t, err)
-	require.Equal(t, "Zoe", first[0].DisplayName)
-	second, err := s.PeopleByDisplayName(ctx, "", first[0].DisplayNameFolded, first[0].PersonID, 1, true, options)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	require.Equal(t, "Zoe", second[0].DisplayName)
-	require.NotEqual(t, first[0].PersonID, second[0].PersonID)
-	third, err := s.PeopleByDisplayName(ctx, "", second[0].DisplayNameFolded, second[0].PersonID, 1, true, options)
+	require.Equal(t, []string{people["Bob"].PersonID, cy.PersonID, people["zoe"].PersonID}, page(ctx, recent))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
-	require.Equal(t, ada.PersonID, third[0].PersonID)
-	plain, err := s.PeopleByDisplayName(ctx, "", "", "", 3, true)
-	require.NoError(t, err)
-	require.Equal(t, ada.PersonID, plain[0].PersonID)
-	require.ElementsMatch(t, []string{zoe.PersonID, other.PersonID}, []string{first[0].PersonID, second[0].PersonID})
+	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), recent)[:2])
 }

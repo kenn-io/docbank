@@ -115,16 +115,6 @@ type PersonFacePreviewPage struct {
 const rejectedFaceMatchPredicate = `c.reason='face_match' AND c.state='rejected'`
 
 func personFacePreviewsQuery(hidden bool) string {
-	return personFacePreviewsSQL(hidden, false)
-}
-
-func personFacePreviewsSQL(hidden, keyFirst bool) string {
-	keyAsset, keyCrop, keyColumn := "", "", ""
-	if keyFirst {
-		keyAsset = "is_key DESC,"
-		keyColumn = ",COALESCE(is_key,0)"
-		keyCrop = "(face.face_id=(SELECT key_face_id FROM persons WHERE person_id=?1)) DESC,"
-	}
 	return `WITH linked AS NOT MATERIALIZED (
  SELECT member.asset_id,boxed_face.face_id
  FROM person_document_assertions assertion
@@ -137,18 +127,18 @@ func personFacePreviewsSQL(hidden, keyFirst bool) string {
   AND boxed_face.content_version_id=assertion.content_version_id
  WHERE assertion.person_id=? AND assertion.role='depicted' AND assertion.action='assert'
  ), linked_assets AS MATERIALIZED (
- SELECT asset_id,MAX(face_id IS NOT NULL) has_box,MAX(face_id=(SELECT key_face_id FROM persons WHERE person_id=?1)) is_key FROM linked GROUP BY asset_id
+ SELECT asset_id,MAX(face_id IS NOT NULL) has_box FROM linked GROUP BY asset_id
  ), asset_page AS MATERIALIZED (
- SELECT a.asset_id,COALESCE(pl.sort_key,'') sort_key,linked_assets.is_key
+ SELECT a.asset_id,COALESCE(pl.sort_key,'') sort_key
  FROM linked_assets CROSS JOIN ` + photoBrowseDisplayFrom + `
  WHERE a.asset_id=linked_assets.asset_id AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(hidden) + `
- ORDER BY ` + keyAsset + ` linked_assets.has_box DESC,COALESCE(pl.sort_key,'') DESC,a.asset_id ASC LIMIT 3
+ ORDER BY linked_assets.has_box DESC,COALESCE(pl.sort_key,'') DESC,a.asset_id ASC LIMIT 3
  ), candidates AS (
  SELECT asset_page.asset_id,cv.version_id,member.rotation,face.x,face.y,face.width,face.height,
- asset_page.sort_key,asset_page.is_key,COALESCE(g.generation_id,'') generation_id,
+ asset_page.sort_key,COALESCE(g.generation_id,'') generation_id,
  CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN 1 ELSE 0 END ready,
  ROW_NUMBER() OVER (PARTITION BY asset_page.asset_id ORDER BY
- ` + keyCrop + `(face.width IS NOT NULL) DESC,(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
+ (face.width IS NOT NULL) DESC,(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
  face.width*face.height DESC,cv.version_id,face.face_id) crop_rank
  FROM asset_page CROSS JOIN photo_files member ON member.asset_id=asset_page.asset_id
  CROSS JOIN nodes source_node ON source_node.id=member.node_id
@@ -158,8 +148,8 @@ func personFacePreviewsSQL(hidden, keyFirst bool) string {
  LEFT JOIN photo_faces face ON face.assertion_id=assertion.assertion_id AND face.content_version_id=cv.version_id
  LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=?2
  )
- SELECT asset_id,version_id,rotation,x,y,width,height,CASE WHEN ready=1 THEN generation_id ELSE '' END` + keyColumn + `
- FROM candidates WHERE crop_rank=1 ORDER BY ` + keyAsset + `sort_key DESC,asset_id ASC`
+ SELECT asset_id,version_id,rotation,x,y,width,height,CASE WHEN ready=1 THEN generation_id ELSE '' END
+ FROM candidates WHERE crop_rank=1 ORDER BY sort_key DESC,asset_id ASC`
 }
 
 // PersonFacePreviews returns up to three exact source versions in timeline order.

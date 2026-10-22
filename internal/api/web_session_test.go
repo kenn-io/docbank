@@ -46,7 +46,7 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/photos/versions/11111111-1111-4111-8111-111111111111/faces"},
 		{http.MethodPost, "/api/v1/photos/versions/11111111-1111-4111-8111-111111111111/face-decisions"},
 		{http.MethodGet, "/api/v1/people?query=Ada&limit=100&cursor=next"},
-		{http.MethodGet, "/api/v1/people?photo_summary=true&recent_ids=11111111-1111-4111-8111-111111111111"},
+		{http.MethodGet, "/api/v1/people?photo_summary=true&recent_first=true&person_id=11111111-1111-4111-8111-111111111111"},
 		{http.MethodPatch, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111"},
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/merge"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews"},

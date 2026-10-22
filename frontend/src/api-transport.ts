@@ -5,7 +5,14 @@ export interface Problem {
   title?: string;
   position?: unknown;
   errors?: unknown;
+  face_ids?: unknown;
+  face_version_ids?: unknown;
 }
+
+// A person merge conflict names each visible face with its exact version.
+export type ProblemFace = { face_id: string; version: string };
+const strings = (value: unknown) =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 
 export class APIError extends Error {
   constructor(
@@ -14,6 +21,7 @@ export class APIError extends Error {
     readonly code: string,
     readonly position?: unknown,
     readonly errors: string[] = [],
+    readonly faces: ProblemFace[] = [],
   ) {
     super(message);
     this.name = "APIError";
@@ -94,15 +102,18 @@ async function send(
     } catch {
       /* An empty error still carries its HTTP status. */
     }
-    const errors = Array.isArray(problem.errors)
-      ? problem.errors.filter((entry): entry is string => typeof entry === "string")
-      : [];
+    const errors = strings(problem.errors);
+    const versions = strings(problem.face_version_ids);
+    const faces = strings(problem.face_ids)
+      .map((face_id, index) => ({ face_id, version: versions[index] ?? "" }))
+      .filter((face) => face.version);
     const error = new APIError(
       problem.detail || problem.title || `HTTP ${response.status}`,
       response.status,
       problem.code ?? "",
       problem.position,
       errors,
+      faces,
     );
     requestSessionByError.set(error, session);
     throw error;

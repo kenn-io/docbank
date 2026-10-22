@@ -640,6 +640,11 @@ export interface Error {
   errors?: string[];
   /** @maxItems 20 */
   face_ids?: string[];
+  /**
+     * The content version of each face in face_ids, in the same order.
+     * @maxItems 20
+     */
+  face_version_ids?: string[];
   hidden_face_conflict?: boolean;
   inaccessible_face_conflict?: boolean;
   more?: boolean;
@@ -6219,7 +6224,6 @@ export interface PhotoFaceDecisionRequest {
 export interface PhotoFaceDecisionResult {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  person_id?: string;
   receipt_id: string;
 }
 
@@ -8932,6 +8936,11 @@ export type GetExportJobEventsDefault = {
   errors?: string[];
   /** @maxItems 20 */
   face_ids?: string[];
+  /**
+     * The content version of each face in face_ids, in the same order.
+     * @maxItems 20
+     */
+  face_version_ids?: string[];
   hidden_face_conflict?: boolean;
   inaccessible_face_conflict?: boolean;
   more?: boolean;
@@ -9319,11 +9328,18 @@ query?: string;
  */
 limit?: number;
 cursor?: string;
+/**
+ * Add Library photo counts, Hidden counts while unlocked, and one card portrait.
+ */
 photo_summary?: boolean;
 /**
- * Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.
+ * Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
  */
-recent_ids?: string;
+recent_first?: boolean;
+/**
+ * Return only this person when it is visible.
+ */
+person_id?: string;
 };
 
 export type GetPersonParams = {

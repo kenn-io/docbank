@@ -380,7 +380,7 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 				require.NoError(t, err)
 				_, err = s.AssertDocumentPerson(unlocked, PersonDocumentAssertion{ContentVersionID: tc.version, PersonID: person.PersonID, Role: tc.role, Action: "suppress", Revision: 1})
 				require.NoError(t, err)
-				people, err := s.PeopleByDisplayName(ctx, tc.name, "", "", 10, true)
+				people, err := s.PeopleByDisplayName(ctx, tc.name, "", "", 10, true, PeopleSearchOptions{})
 				require.NoError(t, err)
 				if !tc.visible {
 					require.Empty(t, people)
@@ -416,13 +416,13 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 		}
 		afterName, afterID := "", ""
 		for _, id := range visibleIDs {
-			page, err := s.PeopleByDisplayName(ctx, "Alex", afterName, afterID, 1, true)
+			page, err := s.PeopleByDisplayName(ctx, "Alex", afterName, afterID, 1, true, PeopleSearchOptions{})
 			require.NoError(t, err)
 			require.Len(t, page, 1)
 			require.Equal(t, id, page[0].PersonID)
 			afterName, afterID = page[0].DisplayNameFolded, page[0].PersonID
 		}
-		withHiddenPhoto, err := s.PeopleByDisplayName(unlocked, "Alex", "", "", 1, true)
+		withHiddenPhoto, err := s.PeopleByDisplayName(unlocked, "Alex", "", "", 1, true, PeopleSearchOptions{})
 		require.NoError(t, err)
 		require.Len(t, withHiddenPhoto, 1)
 		require.Equal(t, hiddenOnlyID, withHiddenPhoto[0].PersonID)
@@ -442,7 +442,7 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 		derivedVersion := seedDocumentPeopleEvent(t, s, "visible-person-author.txt", "d9", nil)
 		derived := publishLifecycleDocumentPeople(t, s, derivedVersion.ID)
 		require.Equal(t, retainedHidden.PersonID, derived.PersonID)
-		locked, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, true)
+		locked, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, true, PeopleSearchOptions{})
 		require.NoError(t, err)
 		personIDs := func(people []PersonSearchResult) []string {
 			ids := make([]string, 0, len(people))
@@ -452,17 +452,17 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 			return ids
 		}
 		require.Equal(t, []string{retainedHidden.PersonID}, personIDs(locked))
-		all, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, false)
+		all, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, false, PeopleSearchOptions{})
 		require.NoError(t, err)
 		require.Equal(t, []string{retainedHidden.PersonID}, personIDs(all))
-		withAccess, err := s.PeopleByDisplayName(unlocked, "Hidden Ada", "", "", 100, true)
+		withAccess, err := s.PeopleByDisplayName(unlocked, "Hidden Ada", "", "", 100, true, PeopleSearchOptions{})
 		require.NoError(t, err)
 		require.Equal(t, personIDs(locked), personIDs(withAccess))
 		for _, action := range []string{"suppress", "withdrawn"} {
 			mark.Action = action
 			mark, err = s.AssertDocumentPerson(unlocked, mark)
 			require.NoError(t, err)
-			visibleDerived, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
+			visibleDerived, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true, PeopleSearchOptions{})
 			require.NoError(t, err)
 			require.Len(t, visibleDerived, 1)
 			require.Equal(t, retainedHidden.PersonID, visibleDerived[0].PersonID)
@@ -484,10 +484,10 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 			var retained int
 			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM document_people WHERE person_id=?`, person.PersonID).Scan(&retained))
 			require.Positive(t, retained)
-			all, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, false)
+			all, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, false, PeopleSearchOptions{})
 			require.NoError(t, err)
 			require.Len(t, all, 1)
-			retainedVisible, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
+			retainedVisible, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true, PeopleSearchOptions{})
 			require.NoError(t, err)
 			require.Equal(t, all, retainedVisible)
 		})
@@ -530,10 +530,10 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 				}
 			}
 			t.Run(stage, func(t *testing.T) {
-				global, err := s.PeopleByDisplayName(ctx, "Published", "", "", 10, false)
+				global, err := s.PeopleByDisplayName(ctx, "Published", "", "", 10, false, PeopleSearchOptions{})
 				require.NoError(t, err)
 				require.Len(t, global, 2)
-				browser, err := s.PeopleByDisplayName(ctx, "Published", "", "", 10, true)
+				browser, err := s.PeopleByDisplayName(ctx, "Published", "", "", 10, true, PeopleSearchOptions{})
 				require.NoError(t, err)
 				if stage != "published" {
 					require.Empty(t, browser)
@@ -565,7 +565,7 @@ func TestPeopleByDisplayNameOperatorCandidateAcceptance(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, assertions, 1)
 	require.Equal(t, "author", assertions[0].Role)
-	browser, err := s.PeopleByDisplayName(ctx, "Alex Sensitive", "", "", 10, true)
+	browser, err := s.PeopleByDisplayName(ctx, "Alex Sensitive", "", "", 10, true, PeopleSearchOptions{})
 	require.NoError(t, err)
 	require.Len(t, browser, 1)
 	require.Equal(t, decided.DecidedPersonID, browser[0].PersonID)
@@ -579,21 +579,21 @@ func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
 		_, err := s.CreatePerson(ctx, name, "operator")
 		require.NoError(t, err)
 	}
-	page, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 1, false)
+	page, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 1, false, PeopleSearchOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "Alice Smith", page[0].DisplayName)
-	next, err := s.PeopleByDisplayName(ctx, "Smith", page[0].DisplayNameFolded, page[0].PersonID, 10, false)
+	next, err := s.PeopleByDisplayName(ctx, "Smith", page[0].DisplayNameFolded, page[0].PersonID, 10, false, PeopleSearchOptions{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"John Smith", "Smith Jones"}, []string{next[0].DisplayName, next[1].DisplayName})
-	literal, err := s.PeopleByDisplayName(ctx, "%_", "", "", 10, false)
+	literal, err := s.PeopleByDisplayName(ctx, "%_", "", "", 10, false, PeopleSearchOptions{})
 	require.NoError(t, err)
 	require.Len(t, literal, 1)
 	require.Equal(t, "Rate %_One", literal[0].DisplayName)
 	for _, query := range []string{"grace", "strasse"} {
-		first, err := s.PeopleByDisplayName(ctx, query, "", "", 1, false)
+		first, err := s.PeopleByDisplayName(ctx, query, "", "", 1, false, PeopleSearchOptions{})
 		require.NoError(t, err)
 		require.Len(t, first, 1)
-		second, err := s.PeopleByDisplayName(ctx, query, first[0].DisplayNameFolded, first[0].PersonID, 10, false)
+		second, err := s.PeopleByDisplayName(ctx, query, first[0].DisplayNameFolded, first[0].PersonID, 10, false, PeopleSearchOptions{})
 		require.NoError(t, err)
 		require.Len(t, second, 1)
 		if query == "grace" {
@@ -683,12 +683,12 @@ func TestPeopleSearchIdentityLabelsRespectEvidenceVisibility(t *testing.T) {
 				_, err = s.PublishDocumentPeople(ctx, publication)
 				require.NoError(t, err)
 			}
-			page, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
+			page, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true, PeopleSearchOptions{})
 			require.NoError(t, err)
 			require.Len(t, page, 1)
 			require.Equal(t, test.expected, page[0].IdentityLabel)
 			if test.hidden {
-				page, err = s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), person.DisplayName, "", "", 10, true)
+				page, err = s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), person.DisplayName, "", "", 10, true, PeopleSearchOptions{})
 				require.NoError(t, err)
 				require.Equal(t, test.value, page[0].IdentityLabel)
 			}

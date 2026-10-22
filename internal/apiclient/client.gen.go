@@ -26920,13 +26920,18 @@ type ResolvePathQuery struct {
 }
 
 type ListPeopleQuery struct {
-	Query        *string `json:"query,omitempty"`
-	Limit        *int    `json:"limit,omitempty"`
-	Cursor       *string `json:"cursor,omitempty"`
-	PhotoSummary *bool   `json:"photo_summary,omitempty"`
+	Query  *string `json:"query,omitempty"`
+	Limit  *int    `json:"limit,omitempty"`
+	Cursor *string `json:"cursor,omitempty"`
 
-	// RecentIds Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.
-	RecentIds *string `json:"recent_ids,omitempty"`
+	// PhotoSummary Add Library photo counts, Hidden counts while unlocked, and one card portrait.
+	PhotoSummary *bool `json:"photo_summary,omitempty"`
+
+	// RecentFirst Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
+	RecentFirst *bool `json:"recent_first,omitempty"`
+
+	// PersonID Return only this person when it is visible.
+	PersonID *string `json:"person_id,omitempty"`
 }
 
 type GetPersonQuery struct {
@@ -27338,12 +27343,14 @@ type DownloadExportArchiveErrorResponse = Error
 type GetExportJobEventsResponse = []byte
 
 type GetExportJobEventsErrorResponse struct {
-	BackupForget             *BackupForgetReport  `json:"backup_forget,omitempty"`
-	BackupPrune              *BackupPruneReport   `json:"backup_prune,omitempty"`
-	Code                     *string              `json:"code,omitempty"`
-	Detail                   *string              `json:"detail,omitempty"`
-	Errors                   []string             `json:"errors,omitempty"`
-	FaceIds                  []string             `json:"face_ids,omitempty"`
+	BackupForget *BackupForgetReport `json:"backup_forget,omitempty"`
+	BackupPrune  *BackupPruneReport  `json:"backup_prune,omitempty"`
+	Code         *string             `json:"code,omitempty"`
+	Detail       *string             `json:"detail,omitempty"`
+	Errors       []string            `json:"errors,omitempty"`
+	FaceIds      []string            `json:"face_ids,omitempty"`
+	// FaceVersionIds The content version of each face in face_ids, in the same order.
+	FaceVersionIds           []string             `json:"face_version_ids,omitempty"`
 	HiddenFaceConflict       *bool                `json:"hidden_face_conflict,omitempty"`
 	InaccessibleFaceConflict *bool                `json:"inaccessible_face_conflict,omitempty"`
 	More                     *bool                `json:"more,omitempty"`

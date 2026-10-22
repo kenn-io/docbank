@@ -5,24 +5,10 @@ import { People } from "./people.svelte.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import * as api from "./generated/docbank.js";
+import { APIError } from "./api-transport.js";
+import { ada, grace } from "./people-test-fixtures.js";
+import { photoFace, photoPersonAssertion } from "./photo-test-fixtures.js";
 
-const ada: api.PersonSummary = {
-  person_id: "ada",
-  display_name: "Ada",
-  display_name_folded: "ada",
-  revision: 2,
-  state: "curated",
-  created_at: "2026-01-01",
-  photo_summary: { library_count: 3, hidden_count: 1 },
-};
-const grace: api.PersonSummary = {
-  ...ada,
-  person_id: "grace",
-  display_name: "Grace",
-  display_name_folded: "grace",
-  revision: 4,
-  photo_summary: { library_count: 0 },
-};
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -38,19 +24,50 @@ beforeEach(() => {
     },
   );
 });
-it("opens Library and Hidden counts, including cards without photo evidence", async () => {
-  const people = new People("session", vi.fn());
+const unlockedAccess = () => {
+  const access = new HiddenAccess("session", vi.fn());
+  access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
+  return access;
+};
+it("opens Library and unlocked Hidden counts, including cards without photo evidence", async () => {
+  const access = unlockedAccess();
+  const people = new People("session", vi.fn(), access);
   people.items = [ada, grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const open = vi.fn();
   const view = render(PeopleView, { people, cache, onperson: open });
-  await fireEvent.click(screen.getByRole("link", { name: "Ada 3 Library photos" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Ada 3 Library photos" }));
   expect(open).toHaveBeenCalledWith("ada", "Ada");
   await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
   expect(open).toHaveBeenCalledWith("ada", "Ada", true);
-  expect(screen.getByRole("link", { name: "Grace 0 Library photos" })).toBeTruthy();
-  await fireEvent.click(screen.getAllByRole("button", { name: "Rename" })[1]!);
-  expect(screen.getByRole("dialog", { name: "Rename Grace" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Grace 0 Library photos" })).toBeTruthy();
+  await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+  expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
+  view.unmount();
+  people.dispose();
+  access.dispose();
+  await cache.dispose();
+});
+it("keeps the search text with the applied query when the view returns", async () => {
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const people = new People("session", vi.fn());
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const open = vi.fn();
+  let view = render(PeopleView, { people, cache, onperson: open });
+  await fireEvent.input(screen.getByRole("textbox", { name: "Find people" }), {
+    target: { value: "Ad" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Ada 3 Library photos" }));
+  expect(open).toHaveBeenCalledWith("ada", "Ada");
+  view.unmount();
+  people.conceal();
+  view = render(PeopleView, { people, cache, onperson: open });
+  await people.load();
+  expect(read.mock.calls.at(-1)![0]).toMatchObject({ query: "Ad" });
+  expect((screen.getByRole("textbox", { name: "Find people" }) as HTMLInputElement).value).toBe(
+    "Ad",
+  );
   view.unmount();
   people.dispose();
   await cache.dispose();
@@ -59,9 +76,15 @@ it("renames a zero-photo person using the current revision", async () => {
   const people = new People("session", vi.fn());
   people.items = [grace];
   vi.spyOn(api, "listPeople").mockResolvedValue({
-    items: [{ ...grace, display_name: "Grace Hopper" }],
+    items: [{ ...grace, display_name: "Grace Hopper", revision: 5 }],
   });
-  const rename = vi.spyOn(api, "renamePerson").mockResolvedValue({} as api.Person);
+  const rename = vi.spyOn(api, "renamePerson").mockResolvedValue({
+    ...grace,
+    display_name: "Grace Hopper",
+    revision: 5,
+    origin: "operator",
+    updated_at: "2026-01-02",
+  });
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
@@ -77,7 +100,7 @@ it("renames a zero-photo person using the current revision", async () => {
     { "If-Match": '"4"' },
     expect.anything(),
   );
-  expect(screen.getByRole("link", { name: "Grace Hopper 0 Library photos" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Grace Hopper 0 Library photos" })).toBeTruthy();
   view.unmount();
   people.dispose();
   await cache.dispose();
@@ -85,7 +108,7 @@ it("renames a zero-photo person using the current revision", async () => {
 it("chooses the merge survivor by ID and requires confirmation", async () => {
   const people = new People("session", vi.fn());
   people.items = [ada];
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada, grace] });
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada, grace] });
   const merge = vi.spyOn(api, "mergePerson").mockResolvedValue({} as api.PersonMergeReceipt);
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
@@ -93,6 +116,7 @@ it("chooses the merge survivor by ID and requires confirmation", async () => {
   const dialog = screen.getByRole("dialog", { name: "Merge Ada" });
   await fireEvent.click(within(dialog).getByRole("button", { name: /Find the person to keep/ }));
   await waitFor(() => expect(screen.getByRole("option", { name: "Grace · grace" })).toBeTruthy());
+  expect(read.mock.calls[0]![0]).toEqual({ query: "", limit: 100, recent_first: true });
   await fireEvent.mouseDown(screen.getByRole("option", { name: "Grace · grace" }));
   const confirm = within(dialog).getByRole("button", { name: "Merge" });
   expect(confirm.hasAttribute("disabled")).toBe(true);
@@ -105,9 +129,78 @@ it("chooses the merge survivor by ID and requires confirmation", async () => {
   people.dispose();
   await cache.dispose();
 });
+it("clears the exact retained face in a merge conflict, then asks for a fresh confirmation", async () => {
+  const people = new People("session", vi.fn());
+  people.items = [ada, grace];
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  const faces = vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    faces: [
+      photoFace({
+        face_id: "conflict",
+        content_version_id: "old-version",
+        rejected_person_ids: ["ada"],
+      }),
+    ],
+    assertions: [photoPersonAssertion({ content_version_id: "old-version", person_id: "grace" })],
+    people: [
+      { person_id: "grace", display_name: "Grace", state: "curated" },
+      { person_id: "ada", display_name: "Ada", state: "curated" },
+    ],
+  });
+  const decide = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockRejectedValueOnce(
+      new APIError(
+        "Review faces",
+        409,
+        "person_merge_conflict",
+        undefined,
+        [],
+        [{ face_id: "conflict", version: "old-version" }],
+      ),
+    )
+    .mockResolvedValue({} as api.PersonMergeReceipt);
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  await fireEvent.click(screen.getAllByRole("button", { name: "Merge" })[0]!);
+  const dialog = screen.getByRole("dialog", { name: "Merge Ada" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: /Find the person to keep/ }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Grace · grace" }));
+  await fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm merge" }));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+  const faceRow = await within(dialog).findByText("Face 1 · Grace · marked not Ada");
+  expect(faces).toHaveBeenCalledWith("old-version", expect.anything());
+  await fireEvent.click(within(faceRow.parentElement!).getByRole("button", { name: "Clear name" }));
+  await fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Clear the name Grace from Face 1?" })).getByRole(
+      "button",
+      { name: "Clear name" },
+    ),
+  );
+  await waitFor(() =>
+    expect(within(dialog).queryByRole("list", { name: "Faces to review" })).toBeNull(),
+  );
+  expect(decide).toHaveBeenCalledWith(
+    "old-version",
+    expect.objectContaining({ action: "retract", face_id: "conflict", revision: 7 }),
+    expect.anything(),
+  );
+  const confirm = within(dialog).getByRole("checkbox", {
+    name: "Confirm merge",
+  }) as HTMLInputElement;
+  expect(confirm.checked).toBe(false);
+  expect(within(dialog).getByRole("button", { name: "Merge" }).hasAttribute("disabled")).toBe(true);
+  await fireEvent.click(confirm);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(merge).toHaveBeenCalledTimes(2);
+  view.unmount();
+  people.dispose();
+  await cache.dispose();
+});
 it("clears an open merge search and its late response when Hidden locks", async () => {
-  const access = new HiddenAccess("session", vi.fn());
-  access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
+  const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
   people.items = [ada];
   let finish!: (page: api.PersonPage) => void;
@@ -132,7 +225,7 @@ it("clears an open merge search and its late response when Hidden locks", async 
   access.dispose();
   await cache.dispose();
 });
-it("releases person-scoped preview URLs when cards clear", async () => {
+it("keeps portraits through in-place updates and releases them when cards clear", async () => {
   vi.stubGlobal(
     "Image",
     class {
@@ -169,6 +262,10 @@ it("releases person-scoped preview URLs when cards clear", async () => {
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await waitFor(() => expect(screen.getByRole("img", { name: "Face of Ada" })).toBeTruthy());
   expect(get.mock.calls[0]![4]).toBe("ada");
+  // An in-place card update with the same face keeps its portrait.
+  await act(() => (people.items = [{ ...people.items[0]!, display_name: "Ada L", revision: 3 }]));
+  expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy();
+  expect(get).toHaveBeenCalledOnce();
   await act(() => people.conceal());
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:person");
   view.unmount();

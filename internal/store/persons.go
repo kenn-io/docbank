@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -108,6 +107,9 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 	}
 	var updated Person
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		if err := s.fenceVisiblePeopleTx(ctx, tx, id); err != nil {
+			return err
+		}
 		if err := fencePersonTx(ctx, tx, id, revision); err != nil {
 			return err
 		}
@@ -234,23 +236,39 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
+// personVisibleSQL is the browser's person visibility rule. It binds
+// visibleOnly, then hideLocked twice. Browser rename and merge use it inside
+// their write transactions, so a person that Hidden locking or sensitivity
+// conceals from the list cannot be edited by ID.
+func personVisibleSQL(person string) string {
+	return `(?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
+		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
+		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
+			AND i.origin='derived' AND i.confidence='exact_identifier')) OR EXISTS(
+		SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `
+		AND a.role<>'blind_copy' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
+		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
+		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))`
+}
+
+// personRecentSQL ranks a name group by its newest visible depicted evidence,
+// so namesakes stay adjacent for paging and the pickers' same-name groups. It
+// binds hideLocked once. The Hidden version set is read once per query rather
+// than probed for each assertion.
+const personRecentSQL = `COALESCE((SELECT MAX(a.recorded_at) FROM persons namesake
+	JOIN person_document_assertions a ON a.person_id=namesake.person_id
+	WHERE namesake.display_name_folded=persons.display_name_folded AND namesake.state<>'retired'
+	AND a.role='depicted' AND a.action='assert' AND (?=0 OR a.content_version_id NOT IN (
+		SELECT v.version_id FROM photo_assets hidden JOIN photo_files f ON f.asset_id=hidden.asset_id
+		JOIN content_versions v ON v.node_id=f.node_id WHERE hidden.hidden_at IS NOT NULL))),'')`
+
 // Materialize the bounded matches before reading their visible identity labels.
-var peopleByDisplayNameSQL = `WITH recent_names AS MATERIALIZED (
- SELECT p.display_name_folded,MIN(CAST(j.key AS INTEGER)) rank
- FROM json_each(?) j JOIN persons p ON p.person_id=j.value GROUP BY p.display_name_folded
- ), matches AS MATERIALIZED (
- SELECT persons.*,COALESCE(recent.rank,20) recent_rank FROM persons
- LEFT JOIN recent_names recent USING(display_name_folded) WHERE %s state<>'retired'
-	AND (?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
-		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
-		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=persons.person_id
-			AND i.origin='derived' AND i.confidence='exact_identifier')) OR e.visible OR EXISTS(
-		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
-		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))
-	AND (?='' OR (COALESCE(recent.rank,20),display_name_folded,person_id) >
- (COALESCE((SELECT rank FROM recent_names WHERE display_name_folded=?),20),?,?))
- ORDER BY recent_rank,display_name_folded,person_id LIMIT ?)
-SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,
+var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
+ SELECT persons.*,%s recent_rank FROM persons WHERE %s state<>'retired' AND (?='' OR person_id=?)
+	AND ` + personVisibleSQL("persons.person_id") + `
+	AND (?='' OR recent_rank<? OR (recent_rank=? AND (display_name_folded>? OR (display_name_folded=? AND person_id>?))))
+	ORDER BY recent_rank DESC,display_name_folded,person_id LIMIT ?)
+SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,recent_rank,
 	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
 		FROM person_identities i WHERE i.person_id=persons.person_id
 		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
@@ -258,13 +276,16 @@ SELECT person_id,display_name,display_name_folded,origin,state,revision,created_
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
 			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
- FROM matches persons ORDER BY recent_rank,display_name_folded,person_id`
+ FROM matches persons ORDER BY recent_rank DESC,display_name_folded,person_id`
 
 type PersonSearchResult struct {
 	Person
 
 	IdentityLabel string
-	PhotoSummary  *PersonPhotoSummary
+	// RecentRank is the name group's newest visible depicted evidence time
+	// when ranked recent-first, and empty otherwise. Cursors carry it.
+	RecentRank   string
+	PhotoSummary *PersonPhotoSummary
 }
 
 type PersonPhotoSummary struct {
@@ -275,52 +296,49 @@ type PersonPhotoSummary struct {
 }
 
 type PeopleSearchOptions struct {
-	RecentIDs    []string
+	// RecentFirst orders name groups by their newest visible depicted
+	// evidence, then by folded name and ID. AfterRecent continues that order.
+	RecentFirst bool
+	AfterRecent string
+	// PersonID returns only that person when it is visible, to refresh a card.
+	PersonID     string
 	PhotoSummary bool
 	GridRecipe   string
 }
 
-// PeopleByDisplayName returns active people in stable folded-name order.
-func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options ...PeopleSearchOptions) ([]PersonSearchResult, error) {
-	var option PeopleSearchOptions
-	if len(options) > 0 {
-		option = options[0]
-	}
-	if len(option.RecentIDs) > 20 {
-		return nil, ErrInvalidPerson
-	}
-	for _, id := range option.RecentIDs {
-		if validateUUIDv4(id) != nil {
-			return nil, ErrInvalidPerson
-		}
-	}
-	recent, err := json.Marshal(option.RecentIDs)
-	if err != nil {
-		return nil, err
-	}
+// PeopleByDisplayName returns active people in stable folded-name order, or
+// recent-first when requested.
+func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options PeopleSearchOptions) ([]PersonSearchResult, error) {
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
-		(afterName == "") != (afterID == "") {
+		(afterName == "") != (afterID == "") || (!options.RecentFirst && options.AfterRecent != "") ||
+		(options.PersonID != "" && validateUUIDv4(options.PersonID) != nil) {
 		return nil, ErrInvalidPerson
 	}
 	people := []PersonSearchResult{}
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		hideLocked := false
-		if visibleOnly || option.PhotoSummary {
+		if visibleOnly || options.PhotoSummary {
 			_, err := s.hiddenSession(ctx, tx)
 			if err != nil && !errors.Is(err, ErrHiddenLocked) {
 				return err
 			}
 			hideLocked = errors.Is(err, ErrHiddenLocked)
 		}
+		rank := `''`
+		args := []any{}
+		if options.RecentFirst {
+			rank = personRecentSQL
+			args = append(args, hideLocked)
+		}
 		prefix := document.FoldPersonName(query)
 		candidates := ""
-		args := []any{string(recent)}
 		if prefix != "" {
 			candidates = `instr(display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(display_name_folded, ?) AND`
 			args = append(args, prefix, prefix)
 		}
-		args = append(args, visibleOnly, hideLocked, afterName, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, candidates), args...)
+		args = append(args, options.PersonID, options.PersonID, visibleOnly, hideLocked, hideLocked,
+			afterName, options.AfterRecent, options.AfterRecent, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, rank, candidates), args...)
 		if err != nil {
 			return err
 		}
@@ -328,29 +346,52 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		for rows.Next() {
 			var person PersonSearchResult
 			if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
-				&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.IdentityLabel); err != nil {
+				&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.RecentRank, &person.IdentityLabel); err != nil {
 				return err
 			}
 			people = append(people, person)
 		}
-		if err := rows.Err(); err != nil {
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err
 		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		if option.PhotoSummary {
-			for i := range people {
-				summary, err := s.personPhotoSummary(ctx, tx, people[i].PersonID, option.GridRecipe, !hideLocked)
-				if err != nil {
-					return err
-				}
-				people[i].PhotoSummary = &summary
-			}
+		if options.PhotoSummary {
+			return s.personPhotoSummaries(ctx, tx, people, options.GridRecipe, !hideLocked)
 		}
 		return nil
 	})
 	return people, err
+}
+
+// visiblePersonContextKey marks browser writes, which may only change people
+// the browser can list.
+type visiblePersonContextKey struct{}
+
+func WithVisiblePeopleOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, visiblePersonContextKey{}, true)
+}
+
+// fenceVisiblePeopleTx reports a person concealed from a browser write as not
+// found. API-key writes keep their full scope.
+func (s *Store) fenceVisiblePeopleTx(ctx context.Context, tx *sql.Tx, ids ...string) error {
+	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
+		return nil
+	}
+	_, err := s.hiddenSession(ctx, tx)
+	if err != nil && !errors.Is(err, ErrHiddenLocked) {
+		return err
+	}
+	hideLocked := errors.Is(err, ErrHiddenLocked)
+	for _, id := range ids {
+		var found bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=? AND `+personVisibleSQL("persons.person_id")+`)`,
+			id, true, hideLocked, hideLocked).Scan(&found); err != nil {
+			return err
+		}
+		if !found {
+			return ErrNotFound
+		}
+	}
+	return nil
 }
 
 func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision int64, identity PersonIdentity) (PersonIdentity, error) {

@@ -6616,6 +6616,12 @@ components:
             type: string
           maxItems: 20
           type: array
+        face_version_ids:
+          description: The content version of each face in face_ids, in the same order.
+          items:
+            type: string
+          maxItems: 20
+          type: array
         hidden_face_conflict:
           type: boolean
         inaccessible_face_conflict:
@@ -13758,9 +13764,6 @@ components:
             - https://example.com/schemas/PhotoFaceDecisionResult.json
           format: uri
           readOnly: true
-          type: string
-        person_id:
-          format: uuid
           type: string
         receipt_id:
           format: uuid
@@ -23181,6 +23184,12 @@ paths:
                       type: string
                     maxItems: 20
                     type: array
+                  face_version_ids:
+                    description: The content version of each face in face_ids, in the same order.
+                    items:
+                      type: string
+                    maxItems: 20
+                    type: array
                   hidden_face_conflict:
                     type: boolean
                   inaccessible_face_conflict:
@@ -26523,13 +26532,19 @@ paths:
           name: cursor
           schema:
             type: string
-        - in: query
+        - description: Add Library photo counts, Hidden counts while unlocked, and one card portrait.
+          in: query
           name: photo_summary
           schema:
             type: boolean
-        - description: Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.
+        - description: Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
           in: query
-          name: recent_ids
+          name: recent_first
+          schema:
+            type: boolean
+        - description: Return only this person when it is visible.
+          in: query
+          name: person_id
           schema:
             type: string
       responses:

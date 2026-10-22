@@ -29,6 +29,7 @@ type Error struct {
 	Errors                   []string            `json:"errors,omitempty"`
 	ObservedScopeCount       int                 `json:"observed_scope_count,omitzero"`
 	FaceIDs                  []string            `json:"face_ids,omitzero" maxItems:"20"`
+	FaceVersionIDs           []string            `json:"face_version_ids,omitzero" maxItems:"20" doc:"The content version of each face in face_ids, in the same order."`
 	More                     bool                `json:"more,omitzero"`
 	InaccessibleFaceConflict bool                `json:"inaccessible_face_conflict,omitzero"`
 	HiddenFaceConflict       bool                `json:"hidden_face_conflict,omitzero"`
@@ -211,6 +212,7 @@ func FromStoreError(err error) error {
 	if conflict, ok := errors.AsType[*store.PersonFaceMergeConflictError](err); ok {
 		out := NewError(http.StatusConflict, "person_merge_conflict", conflict.Error())
 		out.FaceIDs = conflict.FaceIDs
+		out.FaceVersionIDs = conflict.FaceVersionIDs
 		out.HiddenFaceConflict = conflict.HiddenConflict
 		out.More = conflict.More
 		out.InaccessibleFaceConflict = conflict.InaccessibleConflict

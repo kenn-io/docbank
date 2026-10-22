@@ -35,8 +35,9 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 	operations := []*huma.Operation{
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",
 			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor,
-				{Name: "photo_summary", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "boolean"}},
-				{Name: "recent_ids", In: openAPIQueryLocation, Description: "Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.", Schema: &huma.Schema{Type: openAPIStringType}}},
+				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Add Library photo counts, Hidden counts while unlocked, and one card portrait.", Schema: &huma.Schema{Type: "boolean"}},
+				{Name: "recent_first", In: openAPIQueryLocation, Description: "Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.", Schema: &huma.Schema{Type: "boolean"}},
+				{Name: "person_id", In: openAPIQueryLocation, Description: "Return only this person when it is visible.", Schema: &huma.Schema{Type: openAPIStringType}}},
 			Responses: map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
 		{OperationID: "listPackageCustodians", Method: http.MethodGet, Path: "/api/v1/packages/by-id/{package_id}/custodians",
 			Summary: "List active package custodian claims", Parameters: []*huma.Param{packageID,
@@ -70,28 +71,25 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		query := r.URL.Query().Get("query")
-		projection, err := strconv.ParseBool(defaultQuery(r, "photo_summary", "false"))
-		recentRaw := r.URL.Query().Get("recent_ids")
-		recent := []string{}
-		if recentRaw != "" {
-			recent = strings.Split(recentRaw, ",")
-		}
-		if err != nil || len(recent) > 20 {
-			writeError(w, NewError(422, "validation", "invalid people projection or recent IDs"))
+		projection, projectionErr := strconv.ParseBool(defaultQuery(r, "photo_summary", "false"))
+		recentFirst, recentErr := strconv.ParseBool(defaultQuery(r, "recent_first", "false"))
+		if projectionErr != nil || recentErr != nil {
+			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "photo_summary and recent_first must be booleans"))
 			return
 		}
-		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + recentRaw
+		personID := r.URL.Query().Get("person_id")
+		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst) + "\x01" + personID
 		fingerprints, err := document.CurrentPhotoQualityFingerprints()
 		if err != nil {
 			writePackageError(w, err)
 			return
 		}
-		afterName, afterID, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
+		afterName, afterID, afterRecent, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
 		if err != nil {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid people cursor"))
 			return
 		}
-		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentIDs: recent, PhotoSummary: projection, GridRecipe: fingerprints.GridRecipe})
+		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PersonID: personID, PhotoSummary: projection, GridRecipe: fingerprints.GridRecipe})
 		if err != nil {
 			writePackageError(w, err)
 			return
@@ -105,7 +103,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		if len(people) > limit {
 			last := people[limit-1]
 			out.SameNameContinues = last.DisplayNameFolded == people[limit].DisplayNameFolded
-			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, binding)
+			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, last.RecentRank, binding)
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
@@ -236,20 +234,21 @@ func defaultQuery(r *http.Request, key, fallback string) string {
 	return fallback
 }
 
-func encodePeopleCursor(name, id, query string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(name + "\x00" + id + "\x00" + query))
+// People cursors bind the query, projection, order, and person filter.
+func encodePeopleCursor(name, id, recent, binding string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(name + "\x00" + id + "\x00" + recent + "\x00" + binding))
 }
 
-func decodePeopleCursor(cursor, query string) (string, string, error) {
+func decodePeopleCursor(cursor, binding string) (string, string, string, error) {
 	if cursor == "" {
-		return "", "", nil
+		return "", "", "", nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
-	parts := strings.SplitN(string(raw), "\x00", 3)
-	if err != nil || len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] != query {
-		return "", "", errors.New("invalid cursor")
+	parts := strings.SplitN(string(raw), "\x00", 4)
+	if err != nil || len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[3] != binding {
+		return "", "", "", errors.New("invalid cursor")
 	}
-	return parts[0], parts[1], nil
+	return parts[0], parts[1], parts[2], nil
 }
 
 func encodeCustodianCursor(packageID, rowID string, unresolvedOnly bool, offset int) string {
