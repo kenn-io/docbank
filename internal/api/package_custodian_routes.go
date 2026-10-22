@@ -35,7 +35,7 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 	operations := []*huma.Operation{
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",
 			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor,
-				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Add Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.", Schema: &huma.Schema{Type: "boolean"}},
+				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.", Schema: &huma.Schema{Type: "boolean"}},
 				{Name: "recent_first", In: openAPIQueryLocation, Description: "Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.", Schema: &huma.Schema{Type: "boolean"}}},
 			Responses: map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
 		{OperationID: "listPackageCustodians", Method: http.MethodGet, Path: "/api/v1/packages/by-id/{package_id}/custodians",
