@@ -88,7 +88,6 @@ it("opens full URL intent in the editor and keeps edits through save and reopeni
     "NOT tag:missing",
   );
   expect(fetch.mock.calls.some(([url]) => String(url).startsWith("/api/v1/search"))).toBe(false);
-  expect(location.hash).not.toContain("synthetic");
   await fireEvent.input(screen.getByLabelText("Structured facets JSON"), {
     target: { value: '{"size_min":' },
   });

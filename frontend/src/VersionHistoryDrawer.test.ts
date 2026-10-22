@@ -175,23 +175,26 @@ describe("version history drawer", () => {
       "/api/v1/nodes/42/versions?limit=1000&offset=0",
     ]);
 
-    const onselect = vi.fn();
-    await drawer.rerender({ onselect, pinnedVersion: newest });
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    await screen.findByText("Revision 1");
+    drawer.unmount();
     fetchMock.mockClear();
-    await fireEvent.click(screen.getByText("Revision 1").closest("button")!);
-    expect(onselect).toHaveBeenCalledExactlyOnceWith(older);
-    await drawer.rerender({ pinnedVersion: older });
-    expect(screen.getByText(createdVersionID)).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    const linkedDrawer = render(VersionHistoryDrawer, {
+      session: "short-lived",
+      node,
+      path: "/Reports/example.txt",
+      onselect: vi.fn(),
+      pinnedVersion: newest,
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await screen.findByText("2 retained versions");
+    fetchMock.mockClear();
 
     const replacementID = "44444444-4444-4444-8444-444444444444";
     const replacement = version(replacementID, 5, "content_replace", "d");
     fetchMock.mockResolvedValue(
       Response.json({ items: [replacement, newest, older], total: 3, limit: 1000, offset: 0 }),
     );
-    await drawer.rerender({
+    await linkedDrawer.rerender({
       node: {
         ...node,
         revision: 5,
@@ -211,7 +214,7 @@ describe("version history drawer", () => {
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       "/api/v1/nodes/42/versions?limit=1000&offset=0",
     ]);
-    await drawer.rerender({ resolving: false, unavailable: "Version lookup unavailable" });
+    await linkedDrawer.rerender({ resolving: false, unavailable: "Version lookup unavailable" });
     expect(screen.getByText("Version lookup unavailable")).toBeTruthy();
     expect(screen.queryByText(currentVersionID)).toBeNull();
     expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
@@ -220,9 +223,11 @@ describe("version history drawer", () => {
   it("keeps the pinned version until the parent accepts a linked selection", async () => {
     const newest = version(currentVersionID, 3, "content_replace", "c");
     const older = version(createdVersionID, 1, "content_create", "a");
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      Response.json({ items: [newest, older], total: 2, limit: 1000, offset: 0 }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json({ items: [newest, older], total: 2, limit: 1000, offset: 0 }),
+      );
     const onselect = vi.fn();
     const drawer = render(VersionHistoryDrawer, {
       session: "short-lived",
@@ -241,8 +246,10 @@ describe("version history drawer", () => {
     expect(onselect).toHaveBeenCalledExactlyOnceWith(newest);
     expect(screen.getByText(createdVersionID)).toBeTruthy();
     expect(screen.queryByText(currentVersionID)).toBeNull();
+    fetchMock.mockClear();
     await drawer.rerender({ pinnedVersion: newest });
     expect(screen.getByText(currentVersionID)).toBeTruthy();
     expect(screen.queryByText(createdVersionID)).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
