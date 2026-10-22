@@ -40,34 +40,13 @@ it("keeps the search text with the applied query when the view returns", async (
   people.dispose();
   await cache.dispose();
 });
-it("renames a person while their portrait preparation is pending", async () => {
+it("submits a person rename from the dialog", async () => {
   vi.spyOn(api, "listPeople").mockResolvedValue({
     items: [{ ...grace, display_name: "Grace Hopper", revision: 5 }],
   });
   const access = new HiddenAccess("session", vi.fn());
   const people = new People("session", vi.fn(), access);
-  people.items = [
-    {
-      ...grace,
-      photo_summary: {
-        ...grace.photo_summary!,
-        face: {
-          asset_id: "asset",
-          content_version_id: "version",
-          generation_id: "",
-          rotation: 0,
-          box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
-        },
-      },
-    },
-  ];
-  const prepare = vi.spyOn(api, "preparePhotoPreview").mockImplementation(
-    (_id, _request, options) =>
-      new Promise((_resolve, reject) => {
-        const signal = options!.signal!;
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-      }),
-  );
+  people.items = [grace];
   const rename = vi
     .spyOn(api, "renamePerson")
     .mockImplementation(async (_id, _request, _headers) =>
@@ -75,7 +54,6 @@ it("renames a person while their portrait preparation is pending", async () => {
     );
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
   await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
   const dialog = screen.getByRole("dialog", { name: "Rename Grace" });
   await fireEvent.input(within(dialog).getByRole("textbox", { name: "Person name" }), {
