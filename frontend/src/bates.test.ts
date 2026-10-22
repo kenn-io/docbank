@@ -176,7 +176,7 @@ it("pages through eligible packages until pagination ends", async () => {
   });
 });
 
-async function verifiedPublicationFixture() {
+it("starts, reads, lists, and downloads a verified publication", async () => {
   const namespace = {
     namespace_id: "11111111-1111-4111-8111-111111111111",
     prefix: "CASE",
@@ -227,64 +227,31 @@ async function verifiedPublicationFixture() {
       },
     ],
   };
-  return { recipe, allocation, published };
-}
-
-it("starts a verified export for its reservation", async () => {
-  const { allocation, recipe, published } = await verifiedPublicationFixture();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-    expect(init).toMatchObject({ method: "POST" });
-    expect(JSON.parse(String(init?.body))).toEqual({
-      allocation_id: allocation.allocation_id,
-      recipe,
-    });
-    return new Response(JSON.stringify(published), {
-      headers: { "Content-Type": "application/json" },
-    });
-  });
-
-  await expect(startBatesExport("session", allocation, recipe)).resolves.toMatchObject({
-    state: "verified",
-  });
-});
-
-it("reads a Bates export by allocation ID", async () => {
-  const { allocation, published } = await verifiedPublicationFixture();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input) === `/api/v1/bates/exports/${allocation.allocation_id}`) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/bates/exports") {
+      expect(init).toMatchObject({ method: "POST" });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        allocation_id: allocation.allocation_id,
+        recipe,
+      });
       return new Response(JSON.stringify(published), {
         headers: { "Content-Type": "application/json" },
       });
     }
-    throw new Error(`unexpected request ${String(input)}`);
-  });
-
-  await expect(readBatesExport("session", allocation.allocation_id)).resolves.toMatchObject({
-    allocation_id: allocation.allocation_id,
-  });
-});
-
-it("lists Bates exports with artifact metadata", async () => {
-  const { published } = await verifiedPublicationFixture();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input).includes("?limit=50")) {
+    if (url === `/api/v1/bates/exports/${allocation.allocation_id}`) {
+      expect(init).toMatchObject({ method: "GET" });
+      return new Response(JSON.stringify(published), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/v1/bates/exports?limit=50") {
+      expect(init).toMatchObject({ method: "GET" });
       return new Response(JSON.stringify({ items: [published], total: 1 }), {
         headers: { "Content-Type": "application/json" },
       });
     }
-    throw new Error(`unexpected request ${String(input)}`);
-  });
-
-  await expect(listBatesExports("session")).resolves.toMatchObject({
-    total: 1,
-    items: [{ artifact_id: published.artifact_id }],
-  });
-});
-
-it("downloads a verified Bates export with its one-use ticket", async () => {
-  const { allocation, published } = await verifiedPublicationFixture();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (String(input).endsWith("/download")) {
+    if (url === `/api/v1/bates/exports/${allocation.allocation_id}/download`) {
       expect(init).toMatchObject({ method: "POST", body: "{}" });
       expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
       return new Response(
@@ -298,7 +265,18 @@ it("downloads a verified Bates export with its one-use ticket", async () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }
-    throw new Error(`unexpected request ${String(input)}`);
+    throw new Error(`unexpected request ${url}`);
+  });
+
+  await expect(startBatesExport("session", allocation, recipe)).resolves.toMatchObject({
+    state: "verified",
+  });
+  await expect(readBatesExport("session", allocation.allocation_id)).resolves.toMatchObject({
+    allocation_id: allocation.allocation_id,
+  });
+  await expect(listBatesExports("session")).resolves.toMatchObject({
+    total: 1,
+    items: [{ artifact_id: published.artifact_id }],
   });
 
   const clicked: { href: string; download: string }[] = [];
