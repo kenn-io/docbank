@@ -312,22 +312,22 @@ func peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []an
 }
 
 // PeopleByDisplayName returns active people in stable folded-name order, or
-// recent-first when requested.
-func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options PeopleSearchOptions) ([]PersonSearchResult, error) {
+// recent-first when requested. It also returns the Hidden scope the page used,
+// or nil when the page doesn't depend on it.
+func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options PeopleSearchOptions) ([]PersonSearchResult, *PhotoHiddenState, error) {
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
 		(afterName == "") != (afterID == "") || (!options.RecentFirst && options.AfterRecent != "") {
-		return nil, ErrInvalidPerson
+		return nil, nil, ErrInvalidPerson
 	}
 	people := []PersonSearchResult{}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
-		hideLocked := false
+	var scope *PhotoHiddenState
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) (err error) {
 		if visibleOnly || options.PhotoSummary || options.RecentFirst {
-			_, err := s.hiddenSession(ctx, tx)
-			if err != nil && !errors.Is(err, ErrHiddenLocked) {
+			if scope, err = s.photoHiddenStateTx(ctx, tx); err != nil {
 				return err
 			}
-			hideLocked = errors.Is(err, ErrHiddenLocked)
 		}
+		hideLocked := scope != nil && scope.ExpiresAt == nil
 		candidates, args := peopleCandidatesSQL(document.FoldPersonName(query), options.PhotoSummary, !hideLocked)
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
@@ -335,7 +335,6 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			candidates += personVisibleSQL("persons.person_id") + " AND "
 			args = append(args, true, hideLocked, hideLocked)
 		}
-		var err error
 		if options.RecentFirst {
 			people, err = peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked)
 		} else {
@@ -349,7 +348,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		}
 		return nil
 	})
-	return people, err
+	return people, scope, err
 }
 
 // peopleByDisplayNameTx bounds the name matches before reading identity labels.

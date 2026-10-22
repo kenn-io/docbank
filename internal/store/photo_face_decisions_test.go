@@ -1192,7 +1192,7 @@ func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 			require.NoError(t, s.db.QueryRow(`SELECT state FROM persons WHERE person_id=?`, personID).Scan(&state))
 			if mode == "untouched" {
 				require.Equal(t, "retired", state)
-				people, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false, PeopleSearchOptions{})
+				people, _, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false, PeopleSearchOptions{})
 				require.NoError(t, err)
 				require.Empty(t, people)
 				_, err = s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)

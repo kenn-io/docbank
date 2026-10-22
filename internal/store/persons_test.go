@@ -270,7 +270,7 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 		var ids []string
 		afterName, afterID := "", ""
 		for {
-			rows, err := s.PeopleByDisplayName(ctx, "", afterName, afterID, limit, true, options)
+			rows, _, err := s.PeopleByDisplayName(ctx, "", afterName, afterID, limit, true, options)
 			require.NoError(t, err)
 			if len(rows) == 0 {
 				return ids
@@ -297,7 +297,7 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	require.Equal(t, []string{people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID, people["zoe"].PersonID}, page(ctx, recent, 1))
-	full, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false, recent)
+	full, _, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false, recent)
 	require.NoError(t, err)
 	require.Equal(t, people["Bob"].PersonID, full[0].PersonID)
 	require.Equal(t, people["Ada"].PersonID, full[1].PersonID)
@@ -345,10 +345,10 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			rows, _, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
-			cards, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{PhotoSummary: true})
+			cards, _, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{PhotoSummary: true})
 			require.NoError(t, err)
 			require.Len(t, cards, 1)
 			require.Equal(t, ada.PersonID, cards[0].PersonID)
@@ -359,7 +359,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2025-12-01T00:00:00.000000000Z' WHERE content_version_id=?`, older.CurrentVersionID)
 			require.NoError(t, err)
-			rows, err = s.PeopleByDisplayName(ctx, "Bo", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			rows, _, err = s.PeopleByDisplayName(ctx, "Bo", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Equal(t, bob.PersonID, rows[0].PersonID)
 			require.Equal(t, "2025-12-01T00:00:00.000000000Z", rows[0].RecentRank)
@@ -386,7 +386,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				require.NoError(t, err)
 			}
 			recent := PeopleSearchOptions{RecentFirst: true}
-			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, recent)
+			rows, _, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, recent)
 			require.NoError(t, err)
 			require.Equal(t, grace.PersonID, rows[0].PersonID)
 
@@ -410,7 +410,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				}
 			}
 			require.NoError(t, err)
-			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, recent)
+			rows, _, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, recent)
 			require.NoError(t, err)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
 			assertions, err := s.DocumentPersonAssertions(ctx, node.CurrentVersionID)
@@ -440,7 +440,7 @@ func TestPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T) {
 		require.NoError(t, err)
 	}
 	options := PeopleSearchOptions{RecentFirst: true}
-	first, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
+	first, _, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
 	require.NoError(t, err)
 	require.Len(t, first, 1)
 	require.Equal(t, people[0].PersonID, first[0].PersonID)
@@ -449,13 +449,13 @@ func TestPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T) {
 	_, err = s.MarkPersonInPhoto(ctx, newPhoto.CurrentVersionID, people[1].PersonID, "")
 	require.NoError(t, err)
 	options.AfterRecent = first[0].RecentRank
-	rest, err := s.PeopleByDisplayName(ctx, "", first[0].DisplayNameFolded, first[0].PersonID, 10, true, options)
+	rest, _, err := s.PeopleByDisplayName(ctx, "", first[0].DisplayNameFolded, first[0].PersonID, 10, true, options)
 	require.NoError(t, err)
 	require.Len(t, rest, 1)
 	require.Equal(t, people[3].PersonID, rest[0].PersonID)
 	// Bob's older assertion cannot bring either namesake back after the cursor.
 	options.AfterRecent = ""
-	restarted, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, options)
+	restarted, _, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, options)
 	require.NoError(t, err)
 	require.Len(t, restarted, 4)
 	bobIDs := []string{people[1].PersonID, people[2].PersonID}
