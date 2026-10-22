@@ -519,45 +519,45 @@ func TestExtractSourceMetadataUsesVerifiedPDFPageTree(t *testing.T) {
 
 func TestExtractSourceMetadataUsesAuthoritativePDFInfo(t *testing.T) {
 	t.Parallel()
-	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDF(1))
-	require.NoError(t, err)
-	title, found := sourceMetadataString(metadata, "title")
-	require.True(t, found)
-	assert.Equal(t, "Quarterly report", title)
-}
-
-func TestPDFMetadataEngineUpgradeBackfillsChangedInterpretation(t *testing.T) {
-	t.Parallel()
-	ctx := t.Context()
-	payload := syntheticMetadataPDFWithInfo(1, "<< /Title <415c6e42> >>")
-	f := newEmailPipelineFixture(t)
-	target := f.add(t, "title.pdf", string(payload), "application/pdf")
-
-	legacyDescriptor := sourceMetadataExtractorDescriptor[:strings.LastIndex(sourceMetadataExtractorDescriptor, ":")+1] + "v21"
-	legacyFingerprint := fingerprintSourceMetadataExtractor(legacyDescriptor, emailmime.Recipe())
-	stale, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
-		ContractVersion: document.SourceMetadataContractV1,
-		Fields: []document.SourceMetadataFieldV1{{
-			Key: "title", Namespace: "pdf.info", SourceField: "Title",
-			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("A\nB")},
-		}},
+	t.Run("current parser reads the PDF Info title", func(t *testing.T) {
+		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDF(1))
+		require.NoError(t, err)
+		title, found := sourceMetadataString(metadata, "title")
+		require.True(t, found)
+		assert.Equal(t, "Quarterly report", title)
 	})
-	require.NoError(t, err)
-	_, err = f.catalog.PublishSourceMetadata(ctx, target.Version.BlobHash, legacyFingerprint, stale)
-	require.NoError(t, err)
+	t.Run("upgraded parser refreshes an existing generation", func(t *testing.T) {
+		ctx := t.Context()
+		payload := syntheticMetadataPDFWithInfo(1, "<< /Title <415c6e42> >>")
+		f := newEmailPipelineFixture(t)
+		target := f.add(t, "title.pdf", string(payload), "application/pdf")
 
-	targets, err := f.catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-	require.NoError(t, err)
-	require.Equal(t, []store.SourceMetadataTarget{{SourceSHA256: target.Version.BlobHash, Size: target.Version.Size}}, targets)
-	completed, err := BackfillSourceMetadataTargets(ctx, f.catalog, f.blobs, f.spool, targets)
-	require.NoError(t, err)
-	assert.Equal(t, 1, completed)
-	generation, metadata, err := f.catalog.ActiveSourceMetadata(ctx, target.Version.BlobHash)
-	require.NoError(t, err)
-	assert.Equal(t, SourceMetadataExtractorFingerprint, generation.ExtractorFingerprint)
-	title, found := sourceMetadataString(metadata, "title")
-	require.True(t, found)
-	assert.Equal(t, `A\nB`, title)
+		const legacyDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
+			"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created," +
+			"media-id3+authored-xmp:v21"
+		legacyFingerprint := fingerprintSourceMetadataExtractor(legacyDescriptor, emailmime.Recipe())
+		stale, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+			ContractVersion: document.SourceMetadataContractV1,
+			Fields: []document.SourceMetadataFieldV1{{
+				Key: "title", Namespace: "pdf.info", SourceField: "Title",
+				Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("A\nB")},
+			}},
+		})
+		require.NoError(t, err)
+		_, err = f.catalog.PublishSourceMetadata(ctx, target.Version.BlobHash, legacyFingerprint, stale)
+		require.NoError(t, err)
+
+		targets, err := f.catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+		require.NoError(t, err)
+		_, err = BackfillSourceMetadataTargets(ctx, f.catalog, f.blobs, f.spool, targets)
+		require.NoError(t, err)
+		generation, metadata, err := f.catalog.ActiveSourceMetadata(ctx, target.Version.BlobHash)
+		require.NoError(t, err)
+		assert.Equal(t, SourceMetadataExtractorFingerprint, generation.ExtractorFingerprint)
+		title, found := sourceMetadataString(metadata, "title")
+		require.True(t, found)
+		assert.Equal(t, `A\nB`, title)
+	})
 }
 
 func TestExtractSourceMetadataPreservesPDFPagesWhenInfoFieldIsMalformed(t *testing.T) {

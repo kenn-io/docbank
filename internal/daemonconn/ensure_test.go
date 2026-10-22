@@ -154,6 +154,9 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 }
 
 func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
+	currentProtocol, err := strconv.Atoi(daemonProtocolVersion)
+	require.NoError(t, err)
+	olderProtocol := strconv.Itoa(currentProtocol - 1)
 	root, rec := startUnresponsiveRuntime(t)
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"
@@ -198,8 +201,8 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	rec.Metadata[metaProtocolVersion] = "87"
-	_, err := RuntimeStore(root).Write(rec)
+	rec.Metadata[metaProtocolVersion] = olderProtocol
+	_, err = RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
@@ -208,7 +211,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
 	require.NoError(t, err)
-	require.True(t, started.Load(), "protocol 87 uses the previous Bates recipe engine")
+	require.True(t, started.Load(), "protocol %s uses the previous Bates recipe engine", olderProtocol)
 	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	outline, err := client.GetTextOutline(t.Context(), request)

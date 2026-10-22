@@ -193,18 +193,16 @@ func TestVerifyStampedLabelsRejectsASubstitutedOutputLabel(t *testing.T) {
 }
 
 func TestStampHonorsCancellation(t *testing.T) {
-	t.Run("during PDF parsing", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
-		var output bytes.Buffer
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
+	var output bytes.Buffer
 
-		_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
+	_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
 
-		require.ErrorIs(t, err, context.Canceled)
-		assert.Zero(t, output.Len())
-		assert.False(t, source.readAfterCancel, "pdfcpu must stop reading after cancellation")
-	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, output.Len())
+	assert.False(t, source.readAfterCancel, "pdfcpu must stop reading after cancellation")
 }
 
 func TestLimitedStampWriterPublishesNoOversizedChunk(t *testing.T) {
