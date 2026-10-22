@@ -24,6 +24,8 @@ it("round-trips the full query and preserves other fragment keys and history sta
   expect(params.get("node")).toBe("42");
   expect(params.get("version")).toBe("11111111-1111-4111-8111-111111111111");
   expect(params.get("photo")).toBe("photo-1");
+  replaceQueryURL(null);
+  expect(location.hash).toBe("#node=42&version=11111111-1111-4111-8111-111111111111&photo=photo-1");
 });
 
 it("rejects ambiguous, oversized and unknown query state", () => {
@@ -37,14 +39,4 @@ it("removes the draft URL explicitly", () => {
   replaceQueryURL(query);
   replaceQueryURL(null);
   expect(location.hash).toBe("");
-});
-
-it("removes only the query when other fragment keys are present", () => {
-  history.replaceState(
-    null,
-    "",
-    "/#node=42&version=11111111-1111-4111-8111-111111111111&photo=photo-1&query=%7B%7D",
-  );
-  replaceQueryURL(null);
-  expect(location.hash).toBe("#node=42&version=11111111-1111-4111-8111-111111111111&photo=photo-1");
 });

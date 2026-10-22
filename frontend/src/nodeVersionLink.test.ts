@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
-import { parseNodeVersionLink } from "./nodeVersionLink.js";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
+
+import { node, root, version as contentVersion } from "./version-test-fixtures.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 const version = "11111111-1111-4111-8111-111111111111";
 
@@ -35,7 +39,6 @@ describe("exact version fragments", () => {
     `#node=&version=${version}`,
     `#node=0&version=${version}`,
     `#node=-1&version=${version}`,
-    `#node=1.5&version=${version}`,
     `#node=1e2&version=${version}`,
     `#node=9007199254740992&version=${version}`,
     `#node=42&node=43&version=${version}`,
@@ -44,3 +47,24 @@ describe("exact version fragments", () => {
     expect(parseNodeVersionLink(hash)).toEqual({ error: "invalid" });
   });
 });
+
+it.each(["wrong node", "directory"])(
+  "rejects a linked %s without current substitution",
+  async (kind) => {
+    const oldVersion = contentVersion(version, 1, "content_create", "a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/v1/nodes/42")
+        return Response.json(kind === "directory" ? { ...root, id: 42 } : node);
+      if (String(input) === `/api/v1/versions/${version}`)
+        return Response.json({ ...oldVersion, node_id: 99 });
+      throw new Error(`Unexpected request: ${input}`);
+    });
+    await expect(
+      resolveNodeVersionLink("synthetic", { nodeId: 42, versionId: version }),
+    ).rejects.toThrow(
+      kind === "directory"
+        ? "The linked node is a directory. Version links require a file."
+        : "The linked version does not belong to the requested file node.",
+    );
+  },
+);

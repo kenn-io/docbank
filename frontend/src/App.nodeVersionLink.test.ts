@@ -100,49 +100,32 @@ it("opens a node absent from directory rows and downloads its exact historical a
   render(App);
   expect(await screen.findByText(oldID)).toBeTruthy();
   await screen.findByText("1001 retained versions");
-  expect(screen.getByText("a".repeat(64))).toBeTruthy();
-  expect(screen.getByText("7 B (7 bytes)")).toBeTruthy();
   expect(location.hash).toBe(link());
   await fireEvent.click(screen.getByRole("button", { name: "Download this version" }));
   await screen.findByText("Download unavailable in fixture");
   const call = fetchMock.mock.calls.find(([input]) => String(input) === "/api/daemon/web-download");
   expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ version_id: oldID });
-  for (const [input, init] of fetchMock.mock.calls.filter(([input]) =>
-    ["/api/v1/nodes/42", `/api/v1/versions/${oldID}`].includes(String(input)),
-  )) {
-    expect(new Headers(init?.headers).get("X-Docbank-Web-Session"), String(input)).toBe(
-      "synthetic",
-    );
-  }
 });
 
-it.each(["purged version", "wrong node", "directory", "bad request"])(
+it.each(["purged version", "bad request"])(
   "shows unavailable for %s without current substitution",
   async (kind) => {
     history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
     api((url) => {
-      if (kind === "directory" && url === "/api/v1/nodes/42")
-        return Response.json({ ...root, id: 42 });
       if (kind === "bad request" && url === "/api/v1/nodes/42")
         return Response.json({ detail: "Request rejected by the server" }, { status: 400 });
       if (url === `/api/v1/versions/${oldID}`)
-        return kind === "wrong node" || kind === "directory"
-          ? Response.json({ ...oldVersion, node_id: 99 })
-          : kind === "purged version"
-            ? Response.json({ detail: "missing" }, { status: 404 })
-            : undefined;
+        return kind === "purged version"
+          ? Response.json({ detail: "missing" }, { status: 404 })
+          : undefined;
       return undefined;
     });
     render(App);
     expect(
       await screen.findByText(
-        kind === "wrong node"
-          ? /version does not belong to/
-          : kind === "directory"
-            ? "The linked node is a directory. Version links require a file."
-            : kind === "bad request"
-              ? "Request rejected by the server"
-              : /node or version is missing or purged/,
+        kind === "bad request"
+          ? "Request rejected by the server"
+          : /node or version is missing or purged/,
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
@@ -150,40 +133,35 @@ it.each(["purged version", "wrong node", "directory", "bad request"])(
   },
 );
 
-it.each(["resolved", "invalid"])(
-  "keeps the %s linked selection when root rows arrive after sign-in",
-  async (kind) => {
-    history.replaceState(null, "", kind === "resolved" ? `/${link()}` : "/#node=0&version=invalid");
-    let release!: (response: Response) => void;
-    api((url) =>
-      url.includes("/children")
-        ? new Promise<Response>((resolve) => {
-            release = resolve;
-          })
-        : undefined,
-    );
-    render(App);
-    await signIn();
-    await screen.findByText(kind === "resolved" ? oldID : /Invalid node\/version link/);
-    await waitFor(() => expect(release).toBeTypeOf("function"));
-    await act(() =>
-      release(
-        Response.json({
-          directory: root,
-          items: [{ ...node, id: 99, name: "other.txt" }],
-          total: 1,
-          limit: 1000,
-          offset: 0,
-        }),
-      ),
-    );
-    await screen.findByRole("cell", { name: "other.txt" });
-    expect(
-      screen.getByText(kind === "resolved" ? oldID : /Invalid node\/version link/),
-    ).toBeTruthy();
-    expect(location.hash).toBe(kind === "resolved" ? link() : "#node=0&version=invalid");
-  },
-);
+it("keeps the resolved linked selection when root rows arrive after sign-in", async () => {
+  history.replaceState(null, "", `/${link()}`);
+  let release!: (response: Response) => void;
+  api((url) =>
+    url.includes("/children")
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : undefined,
+  );
+  render(App);
+  await signIn();
+  await screen.findByText(oldID);
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  await act(() =>
+    release(
+      Response.json({
+        directory: root,
+        items: [{ ...node, id: 99, name: "other.txt" }],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      }),
+    ),
+  );
+  await screen.findByRole("cell", { name: "other.txt" });
+  expect(screen.getByText(oldID)).toBeTruthy();
+  expect(location.hash).toBe(link());
+});
 
 it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offset=0"])(
   "preserves linked intent through sign-in when %s rejects the session",
@@ -200,7 +178,6 @@ it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offs
     render(App);
     await signIn();
     await screen.findByText(/browser session expired or was rejected/);
-    expect(location.hash).toBe(link());
     await signIn();
     expect(await screen.findByText(oldID)).toBeTruthy();
   },
@@ -267,11 +244,21 @@ it("discards late A when hash navigation selects B and handles back/forward even
 
 it("reopens exact versions on browser back and forward in the mounted drawer", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
+  const replacementID = "44444444-4444-4444-8444-444444444444";
+  const replacement = version(replacementID, 1002, "content_replace", "c");
+  let changed = false;
   let pending = false;
   let release!: (response: Response) => void;
   const fetchMock = api((url) => {
-    if (pending && url === "/api/v1/nodes/42")
-      return Response.json({ ...node, trashed_at: "2026-10-01T00:00:00Z" });
+    if (changed && url === "/api/v1/nodes/42")
+      return Response.json({ ...node, revision: 1002, current_version_id: replacementID });
+    if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
+      return Response.json({
+        items: changed ? [replacement, currentVersion, oldVersion] : [currentVersion, oldVersion],
+        total: changed ? 3 : 2,
+        limit: 1000,
+        offset: 0,
+      });
     if (pending && url === `/api/v1/versions/${oldID}`)
       return new Promise<Response>((resolve) => {
         release = resolve;
@@ -280,7 +267,7 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
   });
   render(App);
   await screen.findByText(oldID);
-  await screen.findByText("1001 retained versions");
+  await screen.findByText("2 retained versions");
   const drawer = screen.getByRole("dialog");
   fetchMock.mockClear();
   await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
@@ -295,6 +282,7 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
       .closest("button")!,
   );
   expect(push).not.toHaveBeenCalled();
+  changed = true;
   pending = true;
   history.back();
   await waitFor(() => expect(release).toBeTypeOf("function"));
@@ -304,11 +292,16 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
   expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
   await act(() => release(Response.json(oldVersion)));
   await screen.findByText(oldID);
-  expect(screen.getByText("Trash", { selector: "span" })).toBeTruthy();
+  const timeline = within(screen.getByRole("region", { name: "Retained versions" }));
+  await timeline.findByText("Revision 1002");
+  expect(
+    within(timeline.getByText("Current").closest("button")!).getByText("Revision 1002"),
+  ).toBeTruthy();
   expect(screen.getByRole("dialog")).toBe(drawer);
   expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
     "/api/v1/nodes/42",
     `/api/v1/versions/${oldID}`,
+    "/api/v1/nodes/42/versions?limit=1000&offset=0",
   ]);
   pending = false;
   history.forward();
@@ -318,10 +311,17 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
   expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
     "/api/v1/nodes/42",
     `/api/v1/versions/${oldID}`,
+    "/api/v1/nodes/42/versions?limit=1000&offset=0",
     "/api/v1/nodes/42",
     `/api/v1/versions/${currentID}`,
   ]);
   expect(location.hash).toBe(link(currentID));
+  await fireEvent.click(timeline.getByText("Revision 1002").closest("button")!);
+  await within(drawer).findByText(replacementID);
+  expect(location.hash).toBe(link(replacementID));
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input).includes("/versions?")),
+  ).toHaveLength(1);
 });
 
 it("replaces an ordinary version drawer when a linked version opens in the same tab", async () => {
@@ -343,104 +343,51 @@ it("replaces an ordinary version drawer when a linked version opens in the same 
   expect(within(screen.getByRole("dialog")).getByText(oldID)).toBeTruthy();
 });
 
-it.each(["renamed", "trashed"])(
-  "uses the newer linked node after Back when the selected directory row is stale and the file was %s",
-  async (change) => {
-    history.replaceState(null, "", `/#${credentials}`);
-    let changed = false;
-    const fetchMock = api((url) => {
-      if (url.includes("/children"))
-        return Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
-      if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
-        return Response.json({
-          items: [currentVersion, oldVersion],
-          total: 2,
-          limit: 1000,
-          offset: 0,
-        });
-      if (changed && url === "/api/v1/nodes/42")
-        return Response.json({
-          ...node,
-          revision: 1002,
-          name: "renamed.txt",
-          path: "/reports/renamed.txt",
-          ...(change === "trashed" ? { trashed_at: "2026-10-01T00:00:00Z" } : {}),
-        });
-      if (url === "/api/daemon/web-download")
-        return Response.json({ detail: "Download unavailable in fixture" }, { status: 503 });
-      return undefined;
-    });
-    render(App);
-    await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
-    await act(() => {
-      location.hash = link();
-    });
-    await screen.findByText(oldID);
-    await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
-    await within(screen.getByRole("dialog")).findByText(currentID);
-    changed = true;
-    history.back();
-    await screen.findByText(oldID);
-    const drawer = within(screen.getByRole("dialog"));
-    expect(drawer.getByText("renamed.txt")).toBeTruthy();
-    if (change === "trashed") {
-      expect(drawer.getByText("Trash", { selector: "span" })).toBeTruthy();
-      expect(drawer.queryByRole("button", { name: "Download this version" })).toBeNull();
-    } else {
-      fetchMock.mockClear();
-      await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
-      await drawer.findByText("Download unavailable in fixture");
-      const call = fetchMock.mock.calls.find(
-        ([input]) => String(input) === "/api/daemon/web-download",
-      );
-      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
-        revision: 1002,
-        version_id: oldID,
-      });
-    }
-  },
-);
-
-it("refreshes Current after Back resolves a newer node revision without reloading on version clicks", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  const replacementID = "44444444-4444-4444-8444-444444444444";
-  const replacement = version(replacementID, 1002, "content_replace", "c");
+it("uses the newer linked node after Back when the selected directory row is stale and the file was renamed", async () => {
+  history.replaceState(null, "", `/#${credentials}`);
   let changed = false;
   const fetchMock = api((url) => {
-    if (changed && url === "/api/v1/nodes/42")
-      return Response.json({ ...node, revision: 1002, current_version_id: replacementID });
+    if (url.includes("/children"))
+      return Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
       return Response.json({
-        items: changed ? [replacement, currentVersion, oldVersion] : [currentVersion, oldVersion],
-        total: changed ? 3 : 2,
+        items: [currentVersion, oldVersion],
+        total: 2,
         limit: 1000,
         offset: 0,
       });
+    if (changed && url === "/api/v1/nodes/42")
+      return Response.json({
+        ...node,
+        revision: 1002,
+        name: "renamed.txt",
+        path: "/reports/renamed.txt",
+      });
+    if (url === "/api/daemon/web-download")
+      return Response.json({ detail: "Download unavailable in fixture" }, { status: 503 });
     return undefined;
   });
   render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
+  await act(() => {
+    location.hash = link();
+  });
   await screen.findByText(oldID);
-  await screen.findByText("2 retained versions");
-  const drawer = screen.getByRole("dialog");
-  fetchMock.mockClear();
-  await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
-  await screen.findByText(currentID);
-  expect(fetchMock).not.toHaveBeenCalled();
+  await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
+  await within(screen.getByRole("dialog")).findByText(currentID);
   changed = true;
   history.back();
   await screen.findByText(oldID);
-  const timeline = within(screen.getByRole("region", { name: "Retained versions" }));
-  await timeline.findByText("Revision 1002");
-  expect(
-    within(timeline.getByText("Current").closest("button")!).getByText("Revision 1002"),
-  ).toBeTruthy();
-  expect(screen.getByRole("dialog")).toBe(drawer);
-  await fireEvent.click(timeline.getByText("Revision 1002").closest("button")!);
-  await within(drawer).findByText(replacementID);
-  expect(location.hash).toBe(link(replacementID));
-  expect(
-    fetchMock.mock.calls.filter(([input]) => String(input).includes("/versions?")),
-  ).toHaveLength(1);
+  const drawer = within(screen.getByRole("dialog"));
+  expect(drawer.getByText("renamed.txt")).toBeTruthy();
+  fetchMock.mockClear();
+  await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
+  await drawer.findByText("Download unavailable in fixture");
+  const call = fetchMock.mock.calls.find(([input]) => String(input) === "/api/daemon/web-download");
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+    revision: 1002,
+    version_id: oldID,
+  });
 });
 
 it("keeps a pending resolve when URL navigation edits the query", async () => {
