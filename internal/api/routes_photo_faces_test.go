@@ -295,6 +295,7 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 		}
 		response, body = get(t, ts, "/api/v1/people?limit=1&"+changed.query+"&cursor="+first.NextCursor, headers)
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+		require.Equal(t, "people_cursor_expired", decodeProblem(t, body).Code)
 	}
 	response, body = get(t, ts, "/api/v1/people", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)

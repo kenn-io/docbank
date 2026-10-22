@@ -314,8 +314,12 @@
     } catch (cause) {
       if (owns()) {
         previewFailure(cause);
+        const expired = cause instanceof APIError && cause.code === "people_cursor_expired";
         searchState = {
           ...pending,
+          ...(expired
+            ? { people: [], pendingCursor: undefined, nextCursor: undefined, incompleteName: "" }
+            : {}),
           status: "error",
           error: cause instanceof Error ? cause.message : String(cause),
         };

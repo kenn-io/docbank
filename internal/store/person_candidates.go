@@ -676,6 +676,16 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 	return assertion, true, err
 }
 
+func recordPersonNamingTx(ctx context.Context, tx *sql.Tx, assertion *PersonDocumentAssertion) error {
+	now := nowRFC3339()
+	if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=?,revision=revision+1 WHERE assertion_id=?`, now, assertion.AssertionID); err != nil {
+		return err
+	}
+	assertion.RecordedAt = now
+	assertion.Revision++
+	return nil
+}
+
 func (s *Store) personCandidateVisibility(ctx context.Context, q metadataQuerier) (string, error) {
 	if _, err := s.hiddenSession(ctx, q); err == nil {
 		return "1=1", nil
