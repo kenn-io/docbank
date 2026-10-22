@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json/v2"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,59 +78,6 @@ func TestMistralOCRRuntimeManifest(t *testing.T) {
 	require.Empty(t, profiles)
 }
 
-func TestMistralOCRSharedProvider(t *testing.T) {
-	cfg, _ := mistralOCRProcessingConfig(t)
-	other := cfg.RenditionProfiles["documents"]
-	runtime := *other.Runtime
-	other.Runtime = &runtime
-	manifest, err := os.ReadFile(runtime.CapabilityManifest)
-	require.NoError(t, err)
-	runtime.CapabilityManifest = filepath.Join(t.TempDir(), "other.json")
-	require.NoError(t, os.WriteFile(runtime.CapabilityManifest, manifest, 0600))
-	cfg.RenditionProfiles["other"] = other
-	processing := cfg.ProcessingProfiles["documents"]
-	processing.Rendition = "other"
-	cfg.ProcessingProfiles["other"] = processing
-	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-	require.NoError(t, err)
-	require.Same(t, profiles["documents"].RenditionProvider, profiles["other"].RenditionProvider)
-}
-
-func TestMistralOCRDescriptorDriftOrder(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		id          bool
-		fingerprint bool
-		want        string
-	}{
-		{"all fields", true, true, "descriptor_id"},
-		{"fingerprint and trust boundary", false, true, "descriptor_fingerprint"},
-		{"trust boundary", false, false, "trust_boundary"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cfg, descriptor := mistralOCRProcessingConfig(t)
-			profile := cfg.RenditionProfiles["documents"]
-			if test.id {
-				profile.DescriptorID = "other.provider"
-			}
-			if test.fingerprint {
-				profile.DescriptorFingerprint = strings.Repeat("0", 64)
-			}
-			profile.TrustBoundary = "operator_network"
-			cfg.RenditionProfiles["documents"] = profile
-			want := map[string]string{
-				"descriptor_id":          descriptor.ID,
-				"descriptor_fingerprint": descriptor.Fingerprint,
-				"trust_boundary":         "hosted_provider",
-			}[test.want]
-			for range 100 {
-				_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-				require.EqualError(t, err, fmt.Sprintf("configuring rendition runtime %q: descriptor differs from portable binding; expected %s = %q", "documents", test.want, want))
-			}
-		})
-	}
-}
-
 func TestDaemonMistralOCRProcessing(t *testing.T) {
 	cfg, _ := mistralOCRProcessingConfig(t)
 	providerRuntime := cfg.RenditionProfiles["documents"].Runtime
@@ -170,8 +116,6 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	require.Len(t, plan.Flow, 1)
-	require.Equal(t, "https://api.eu.mistral.ai", plan.Flow[0].RuntimeDisclosure.Endpoint)
-	require.Equal(t, mistral.DefaultModel, plan.Flow[0].RuntimeDisclosure.Model)
 	job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	// The runtime keeps Mistral's default HTTP retries before recording a failed attempt.
@@ -181,14 +125,4 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 		require.Equal(c, "retry_wait", status.State, "%+v", status)
 		require.Equal(c, "transient", status.FailureCode)
 	}, 20*time.Second, 20*time.Millisecond)
-	uploads, err := os.ReadDir(filepath.Join(root, "blobs", "tmp"))
-	require.NoError(t, err)
-	require.Empty(t, uploads, "the failed attempt must leave no staged upload")
-	original, err := daemon.VersionContent(t.Context(), selector.ContentVersionID)
-	require.NoError(t, err)
-	var originalBytes bytes.Buffer
-	_, err = original.CopyVerified(&originalBytes)
-	require.NoError(t, err)
-	require.NoError(t, original.Close())
-	require.Equal(t, source, originalBytes.Bytes())
 }

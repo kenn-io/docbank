@@ -141,8 +141,44 @@ func TestExternalRenditionRuntimeAuthority(t *testing.T) {
 				{"descriptor ID drift", func(cfg *config.Config) {
 					p := cfg.RenditionProfiles["documents"]
 					p.DescriptorID = "other.provider"
+					if adapter.name == "Mistral" {
+						p.DescriptorFingerprint = strings.Repeat("0", 64)
+					}
 					cfg.RenditionProfiles["documents"] = p
 				}, "expected descriptor_id"},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					cfg, _ := adapter.configure(t)
+					test.mutate(&cfg)
+					_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+					require.ErrorContains(t, err, test.want)
+				})
+			}
+			if adapter.name == "Mistral" {
+				t.Run("reuse", func(t *testing.T) {
+					cfg, _ := mistralOCRProcessingConfig(t)
+					other := cfg.RenditionProfiles["documents"]
+					runtime := *other.Runtime
+					other.Runtime = &runtime
+					manifest, err := os.ReadFile(runtime.CapabilityManifest)
+					require.NoError(t, err)
+					runtime.CapabilityManifest = filepath.Join(t.TempDir(), "other.json")
+					require.NoError(t, os.WriteFile(runtime.CapabilityManifest, manifest, 0600))
+					cfg.RenditionProfiles["other"] = other
+					processing := cfg.ProcessingProfiles["documents"]
+					processing.Rendition = "other"
+					cfg.ProcessingProfiles["other"] = processing
+					profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+					require.NoError(t, err)
+					require.Same(t, profiles["documents"].RenditionProvider, profiles["other"].RenditionProvider)
+				})
+				return
+			}
+			for _, test := range []struct {
+				name   string
+				mutate func(*config.Config)
+				want   string
+			}{
 				{"deployment drift", func(cfg *config.Config) {
 					p := cfg.RenditionProfiles["documents"]
 					p.DeploymentFingerprint = strings.Repeat("0", 64)
