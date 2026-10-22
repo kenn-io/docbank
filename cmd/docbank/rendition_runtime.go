@@ -123,12 +123,12 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, err
 	}
 	descriptor := adapter.descriptor
-	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
-		string(descriptor.TrustBoundary) != configured.TrustBoundary {
-		return nil, disclosure, fmt.Errorf("descriptor differs from portable binding; expected descriptor_fingerprint = %q", descriptor.Fingerprint)
+	for field, binding := range map[string][2]string{"descriptor_id": {configured.DescriptorID, descriptor.ID}, "descriptor_fingerprint": {configured.DescriptorFingerprint, descriptor.Fingerprint}, "trust_boundary": {configured.TrustBoundary, string(descriptor.TrustBoundary)}} {
+		if binding[0] != binding[1] {
+			return nil, disclosure, fmt.Errorf("descriptor differs from portable binding; expected %s = %q", field, binding[1])
+		}
 	}
-	expectedDisclosure := adapter.disclosureFingerprint
-	if configured.DisclosureFingerprint != expectedDisclosure {
+	if configured.DisclosureFingerprint != adapter.disclosureFingerprint {
 		return nil, disclosure, errors.New("disclosure fingerprint does not bind the runtime endpoint")
 	}
 	environmentVariable, ok := secrets.variables[adapter.secretBinding]

@@ -67,42 +67,24 @@ func TestExecutableProcessingProfilesRegistersMistralOCR(t *testing.T) {
 	require.Equal(t, mistral.DefaultModel, disclosure.Model)
 }
 
-func TestMistralOCRRuntimeAuthority(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*config.Config)
-		want   string
-	}{
-		{"descriptor drift", func(c *config.Config) {
-			p := c.RenditionProfiles["documents"]
-			p.DescriptorFingerprint = strings.Repeat("0", 64)
-			c.RenditionProfiles["documents"] = p
-		}, "expected descriptor_fingerprint"},
-		{"deployment drift", func(c *config.Config) {
-			p := c.RenditionProfiles["documents"]
-			p.DeploymentFingerprint = strings.Repeat("0", 64)
-			c.RenditionProfiles["documents"] = p
-		}, "disclosure fingerprint"},
-		{"missing manifest", func(c *config.Config) {
-			c.RenditionProfiles["documents"].Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "missing.json")
-		}, "manifest is unavailable"},
-		{"missing binding", func(c *config.Config) { c.CredentialBindings = nil }, "credential binding"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cfg, _ := mistralOCRProcessingConfig(t)
-			test.mutate(&cfg)
-			_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-			require.ErrorContains(t, err, test.want)
-		})
-	}
-	t.Run("staged runtime", func(t *testing.T) {
-		cfg, _ := mistralOCRProcessingConfig(t)
-		cfg.ProcessingProfiles = nil
-		cfg.RenditionProfiles["documents"].Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "missing.json")
-		profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-		require.NoError(t, err)
-		require.Empty(t, profiles)
-	})
+func TestMistralOCRRuntimeTrustBoundaryDrift(t *testing.T) {
+	cfg, _ := mistralOCRProcessingConfig(t)
+	p := cfg.RenditionProfiles["documents"]
+	p.TrustBoundary = "operator_network"
+	cfg.RenditionProfiles["documents"] = p
+	_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.ErrorContains(t, err, `expected trust_boundary = "hosted_provider"`)
+}
+
+func TestMistralOCRRuntimeManifest(t *testing.T) {
+	cfg, _ := mistralOCRProcessingConfig(t)
+	cfg.RenditionProfiles["documents"].Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "missing.json")
+	_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.ErrorContains(t, err, "manifest is unavailable")
+	cfg.ProcessingProfiles = nil
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	require.Empty(t, profiles)
 }
 
 func TestMistralOCRSharedProvider(t *testing.T) {

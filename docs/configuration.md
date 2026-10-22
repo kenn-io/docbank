@@ -446,6 +446,71 @@ after a model re-pin. The plan shows the adapter, endpoint, model, and deploymen
 before consent. Profiles sharing a descriptor must agree on runtime and credential
 settings. A runtime without a selecting processing profile stays staged.
 
+Start with this complete configuration. The repeated-digit fingerprints are
+placeholders for your policy identities. Replace `descriptor_fingerprint` with
+the value from your manifest and policy, and compute `disclosure_fingerprint`
+with the linked Python command after setting the deployment identity.
+
+For `allowed_cidrs`, use the provider's published address ranges if available,
+or resolve `api.eu.mistral.ai` from the daemon host and allow each approved IPv4
+address as `/32` and IPv6 address as `/128`. Every resolved address must fit the
+allowlist. Review and update it when the provider changes addresses. The example
+uses a documentation-only network; replace it before running the daemon.
+
+```toml
+[credential_bindings.mistral]
+environment_variable = "MISTRAL_API_KEY"
+
+[rendition_profiles.ocr]
+adapter_contract = "docbank-mistral-ocr/v1"
+descriptor_id = "mistral.ocr-v1"
+descriptor_fingerprint = "0000000000000000000000000000000000000000000000000000000000000000"
+authorization_fingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+credential_binding = "credential:mistral"
+deployment_fingerprint = "2222222222222222222222222222222222222222222222222222222222222222"
+disclosure_fingerprint = "3333333333333333333333333333333333333333333333333333333333333333"
+upload_options_fingerprint = "4444444444444444444444444444444444444444444444444444444444444444"
+trust_boundary = "hosted_provider"
+requested_artifacts = ["provider_markdown"]
+max_document_bytes = 1048576
+max_response_bytes = 1048576
+max_units = 100
+
+[rendition_profiles.ocr.runtime]
+endpoint = "https://api.eu.mistral.ai"
+capability_manifest = "mistral-capabilities.json"
+request_timeout = "2m"
+allowed_cidrs = ["192.0.2.0/24"]
+proxy_mode = "disabled"
+connect_timeout = "10s"
+keep_alive = "30s"
+tls_handshake_timeout = "10s"
+
+[retrieval_profiles.ocr]
+lexical_limit = 20
+vector_limit = 20
+
+[processing_profiles.ocr]
+rendition = "ocr"
+retrieval = "ocr"
+attachment_policy_fingerprint = "5555555555555555555555555555555555555555555555555555555555555555"
+completeness_fingerprint = "6666666666666666666666666666666666666666666666666666666666666666"
+consent_fingerprint = "7777777777777777777777777777777777777777777777777777777777777777"
+lexical_segmenter_fingerprint = "8888888888888888888888888888888888888888888888888888888888888888"
+normalizer_fingerprint = "9999999999999999999999999999999999999999999999999999999999999999"
+sanitizer_fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+max_document_chars = 100000
+max_segment_runes = 2000
+max_unit_runes = 100000
+retain_provider_markdown = true
+retain_sanitized_markdown = true
+trust_boundary = "vault-primary"
+```
+
+Set `MISTRAL_API_KEY` in the daemon's environment, then use
+`docbank processing plan /documents/report.pdf --profile ocr` to review the
+upload before granting consent with `docbank processing build`.
+
 ### Supplied audio transcription
 
 The daemon can transcribe supplied WAV and MP3 files through a configured

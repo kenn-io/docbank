@@ -116,26 +116,84 @@ func TestExecutableProcessingProfilesRegistersDoclingDocument(t *testing.T) {
 	require.Equal(t, cfg.RenditionProfiles["documents"].Runtime.Endpoint, disclosure.Endpoint)
 }
 
-func TestDoclingDocumentRuntimeAuthority(t *testing.T) {
+func TestExternalRenditionRuntimeAuthority(t *testing.T) {
+	for _, adapter := range []struct {
+		name      string
+		configure func(*testing.T) (config.Config, document.RenditionDescriptor)
+	}{
+		{"Docling", func(t *testing.T) (config.Config, document.RenditionDescriptor) {
+			t.Helper()
+			return doclingDocumentProcessingConfig(t, "http://127.0.0.1:5001")
+		}},
+		{"Mistral", mistralOCRProcessingConfig},
+	} {
+		t.Run(adapter.name, func(t *testing.T) {
+			for _, test := range []struct {
+				name   string
+				mutate func(*config.Config)
+				want   string
+			}{
+				{"descriptor drift", func(cfg *config.Config) {
+					p := cfg.RenditionProfiles["documents"]
+					p.DescriptorFingerprint = strings.Repeat("0", 64)
+					cfg.RenditionProfiles["documents"] = p
+				}, "expected descriptor_fingerprint"},
+				{"descriptor ID drift", func(cfg *config.Config) {
+					p := cfg.RenditionProfiles["documents"]
+					p.DescriptorID = "other.provider"
+					cfg.RenditionProfiles["documents"] = p
+				}, "expected descriptor_id"},
+				{"deployment drift", func(cfg *config.Config) {
+					p := cfg.RenditionProfiles["documents"]
+					p.DeploymentFingerprint = strings.Repeat("0", 64)
+					cfg.RenditionProfiles["documents"] = p
+				}, "disclosure fingerprint"},
+				{"missing binding", func(cfg *config.Config) { cfg.CredentialBindings = nil }, "credential binding"},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					cfg, _ := adapter.configure(t)
+					test.mutate(&cfg)
+					_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+					require.ErrorContains(t, err, test.want)
+				})
+			}
+			t.Run("staged runtime", func(t *testing.T) {
+				cfg, _ := adapter.configure(t)
+				cfg.ProcessingProfiles = nil
+				profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+				require.NoError(t, err)
+				require.Empty(t, profiles)
+			})
+			t.Run("reuse and conflict", func(t *testing.T) {
+				cfg, _ := adapter.configure(t)
+				cfg.RenditionProfiles["copy"] = cfg.RenditionProfiles["documents"]
+				second := cfg.ProcessingProfiles["documents"]
+				second.Rendition = "copy"
+				second.MaxDocumentChars--
+				cfg.ProcessingProfiles["copy"] = second
+				profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+				require.NoError(t, err)
+				require.Same(t, profiles["documents"].RenditionProvider, profiles["copy"].RenditionProvider)
+				p := cfg.RenditionProfiles["copy"]
+				p.Runtime = new(*p.Runtime)
+				p.Runtime.RequestTimeout = config.Duration(2 * time.Second)
+				cfg.RenditionProfiles["copy"] = p
+				_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+				require.ErrorContains(t, err, "conflicts with another profile")
+			})
+		})
+	}
+}
+
+func TestDoclingDocumentRuntimeBounds(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(*config.Config)
 		want   string
 	}{
-		{"descriptor drift", func(cfg *config.Config) {
-			p := cfg.RenditionProfiles["documents"]
-			p.DescriptorFingerprint = strings.Repeat("0", 64)
-			cfg.RenditionProfiles["documents"] = p
-		}, "descriptor differs"},
 		{"endpoint drift", func(cfg *config.Config) {
 			cfg.RenditionProfiles["documents"].Runtime.Endpoint = "http://127.0.0.2:5001"
 		}, "disclosure fingerprint"},
-		{"deployment drift", func(cfg *config.Config) {
-			p := cfg.RenditionProfiles["documents"]
-			p.DeploymentFingerprint = strings.Repeat("0", 64)
-			cfg.RenditionProfiles["documents"] = p
-		}, "disclosure fingerprint"},
-		{"missing binding", func(cfg *config.Config) { cfg.CredentialBindings = nil }, "credential binding"},
 		{"upload limit", func(cfg *config.Config) {
 			p := cfg.RenditionProfiles["documents"]
 			p.MaxDocumentBytes = docling.MaxDocumentBytes + 1
@@ -154,30 +212,6 @@ func TestDoclingDocumentRuntimeAuthority(t *testing.T) {
 			require.ErrorContains(t, err, test.want)
 		})
 	}
-	t.Run("staged runtime", func(t *testing.T) {
-		cfg, _ := doclingDocumentProcessingConfig(t, "http://127.0.0.1:5001")
-		cfg.ProcessingProfiles = nil
-		profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-		require.NoError(t, err)
-		require.Empty(t, profiles)
-	})
-	t.Run("reuse and conflict", func(t *testing.T) {
-		cfg, _ := doclingDocumentProcessingConfig(t, "http://127.0.0.1:5001")
-		cfg.RenditionProfiles["copy"] = cfg.RenditionProfiles["documents"]
-		second := cfg.ProcessingProfiles["documents"]
-		second.Rendition = "copy"
-		second.MaxDocumentChars--
-		cfg.ProcessingProfiles["copy"] = second
-		profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-		require.NoError(t, err)
-		require.Same(t, profiles["documents"].RenditionProvider, profiles["copy"].RenditionProvider)
-		p := cfg.RenditionProfiles["copy"]
-		p.Runtime = new(*p.Runtime)
-		p.Runtime.RequestTimeout = config.Duration(2 * time.Second)
-		cfg.RenditionProfiles["copy"] = p
-		_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-		require.ErrorContains(t, err, "conflicts with another profile")
-	})
 }
 
 func TestDaemonDoclingDocumentProcessing(t *testing.T) {
