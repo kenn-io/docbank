@@ -892,7 +892,7 @@ func restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFac
 				return ErrStaleRevision
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='assert' AND ?=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'withdrawn' WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,revision=revision+1 WHERE assertion_id=?`, a.Action, a.PhotoMark, a.Revision, a.Action, a.Action, a.PhotoMark, a.AssertionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='assert' AND ?=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'withdrawn' WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,recorded_at=?,revision=revision+1 WHERE assertion_id=?`, a.Action, a.PhotoMark, a.Revision, a.Action, a.Action, a.PhotoMark, a.RecordedAt, a.AssertionID); err != nil {
 			return err
 		}
 	}
@@ -991,7 +991,11 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 			}
 			b.Revision = 1
 		}
-		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
+		// Naming again changes the time; undo restores the recorded before-state.
+		if b.RecordedAt != a.RecordedAt && (a.Revision <= b.Revision || r.UndoOf == "" && (b.Action != personAssertionActionWithdrawn || a.Action != personAssertionActionAssert)) {
+			return ErrInvalidPhotoFace
+		}
+		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
 			return ErrInvalidPhotoFace
 		}
 	}

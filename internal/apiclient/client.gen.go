@@ -10940,14 +10940,12 @@ func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNode
 	return responseParser(ctx, resp)
 }
 
-// ListPersonFacePreviews Read linked source-version photos or one exact assigned face
+// ListPersonFacePreviews Read up to three linked source-version photos in timeline order
 func (c *Client) ListPersonFacePreviews(ctx context.Context, options *ListPersonFacePreviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFacePreviewsResponse, error) {
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"content_version_id": {Style: "form", Explode: &[]bool{false}[0]},
-		"face_id":            {Style: "form", Explode: &[]bool{false}[0]},
-		"hidden":             {Style: "form", Explode: &[]bool{false}[0]},
+		"hidden": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/people/{person_id}/face-previews",
@@ -26738,14 +26736,11 @@ type ListPeopleQuery struct {
 	Limit  *int    `json:"limit,omitempty"`
 	Cursor *string `json:"cursor,omitempty"`
 
-	// PhotoSummary Add Library photo counts, Hidden counts while unlocked, and one card portrait.
+	// PhotoSummary Add Library photo counts and one Library card portrait.
 	PhotoSummary *bool `json:"photo_summary,omitempty"`
 
 	// RecentFirst Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
 	RecentFirst *bool `json:"recent_first,omitempty"`
-
-	// PersonID Return only this person when it is visible.
-	PersonID *string `json:"person_id,omitempty"`
 }
 
 type GetPersonQuery struct {
@@ -26772,12 +26767,6 @@ type UndoPhotoFaceDecisionQuery struct {
 
 type ListPersonFacePreviewsQuery struct {
 	Hidden *bool `json:"hidden,omitempty"`
-
-	// ContentVersionID Restrict results to one source version
-	ContentVersionID *uuid.UUID `json:"content_version_id,omitempty"`
-
-	// FaceID Restrict results to one assigned face
-	FaceID *uuid.UUID `json:"face_id,omitempty"`
 }
 
 type ListPushSourcesQuery struct {

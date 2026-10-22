@@ -645,12 +645,14 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
+			now := nowRFC3339()
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',recorded_at=?,revision=revision+1 WHERE assertion_id=?`, now, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
 			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
+			existing.RecordedAt = now
 			existing.Action = personAssertionActionAssert
 			existing.Revision++
 			return existing, true, nil

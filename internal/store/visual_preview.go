@@ -430,15 +430,12 @@ func (s *Store) personPhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, asse
 	}
 	var eligible bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-	 SELECT 1 FROM content_versions cv JOIN photo_files member ON member.node_id=cv.node_id
-	 JOIN nodes source_node ON source_node.id=cv.node_id
+ SELECT 1 FROM content_versions cv JOIN photo_files member ON member.node_id=cv.node_id
+ JOIN nodes source_node ON source_node.id=cv.node_id AND source_node.current_version_id=cv.version_id
  JOIN person_document_assertions assertion ON assertion.content_version_id=cv.version_id
  JOIN persons person ON person.person_id=assertion.person_id
  WHERE member.asset_id=? AND cv.version_id=? AND assertion.person_id=? AND person.state<>'retired'
-	 AND assertion.role='depicted' AND source_node.trashed_at IS NULL AND (
-		(assertion.action='assert' AND source_node.current_version_id=cv.version_id) OR
-		(assertion.action IN ('assert','withdrawn') AND EXISTS(SELECT 1 FROM photo_faces face
-			WHERE face.assertion_id=assertion.assertion_id AND face.content_version_id=cv.version_id))))`, assetID, versionID, personID).Scan(&eligible)
+ AND assertion.role='depicted' AND assertion.action='assert')`, assetID, versionID, personID).Scan(&eligible)
 	if err != nil {
 		return err
 	}

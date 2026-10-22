@@ -25,18 +25,16 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
       api.listPhotoAssets({ query: { text: "", syntax: "simple" }, page_size: 10 }, { session }),
     );
     const synthetic = photos.items.filter((photo) => photo.name.startsWith("Synthetic-photo-"));
-    const adaFace = JSON.parse(
-      await fixture.run(
-        "photos",
-        "faces",
-        "create",
-        synthetic[0]!.content_version_id,
-        "--box",
-        "0.15,0.3,0.2,0.2",
-        "--person",
-        ada.person_id,
-      ),
-    ).face;
+    await fixture.run(
+      "photos",
+      "faces",
+      "create",
+      synthetic[0]!.content_version_id,
+      "--box",
+      "0.15,0.3,0.2,0.2",
+      "--person",
+      ada.person_id,
+    );
     await fixture.run(
       "photos",
       "faces",
@@ -46,18 +44,6 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
       "0.65,0.3,0.2,0.2",
       "--person",
       grace.person_id,
-    );
-    await fixture.run(
-      "photos",
-      "faces",
-      "reject",
-      synthetic[0]!.content_version_id,
-      "--face",
-      adaFace.face_id,
-      "--person",
-      grace.person_id,
-      "--revision",
-      String(adaFace.revision),
     );
     url.pathname = "/photos/people";
     await page.goto(url.href);
@@ -78,18 +64,14 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     const merge = page.getByRole("dialog", { name: "Merge people" });
     await merge.getByRole("radio", { name: /Keep Grace Hopper/ }).check();
     await merge.getByRole("checkbox", { name: "Confirm merge" }).check();
-    await merge.getByRole("button", { name: "Merge", exact: true }).click();
-    await expect(
-      merge.getByRole("button", { name: "Withdraw rejection for Grace Hopper" }),
-    ).toBeVisible();
     await captureTheme(page, output!, "after-people-merge", "dark");
-    await merge.getByRole("button", { name: "Withdraw rejection for Grace Hopper" }).click();
-    const withdraw = page.getByRole("dialog", {
-      name: "Withdraw the rejection of Grace Hopper from Face 1? The face keeps its current name.",
-    });
-    await withdraw.getByRole("button", { name: "Withdraw rejection", exact: true }).click();
-    await expect(withdraw).toBeHidden();
-    await merge.getByRole("checkbox", { name: "Confirm merge" }).check();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(merge).toBeVisible();
+    expect(await merge.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await captureTheme(page, output!, "after-people-narrow", "dark");
     await merge.getByRole("button", { name: "Merge", exact: true }).click();
     await expect(merge).toBeHidden();
     await expect(
@@ -102,8 +84,6 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     await expect(
       people.getByRole("button", { name: /Grace Hopper 2 Library photos/ }),
     ).toBeVisible();
-    await page.setViewportSize({ width: 390, height: 844 });
-    await captureTheme(page, output!, "after-people-narrow", "dark");
   } finally {
     await fixture.dispose();
   }

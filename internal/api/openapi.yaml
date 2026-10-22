@@ -12226,13 +12226,6 @@ components:
       properties:
         face:
           $ref: "#/components/schemas/PersonFacePreview"
-        face_hidden:
-          type: boolean
-        hidden_count:
-          format: int64
-          type:
-            - integer
-            - "null"
         library_count:
           format: int64
           type: integer
@@ -26331,7 +26324,7 @@ paths:
           name: cursor
           schema:
             type: string
-        - description: Add Library photo counts, Hidden counts while unlocked, and one card portrait.
+        - description: Add Library photo counts and one Library card portrait.
           in: query
           name: photo_summary
           schema:
@@ -26341,11 +26334,6 @@ paths:
           name: recent_first
           schema:
             type: boolean
-        - description: Return only this person when it is visible.
-          in: query
-          name: person_id
-          schema:
-            type: string
       responses:
         "200":
           content:
@@ -28015,22 +28003,6 @@ paths:
           name: hidden
           schema:
             type: boolean
-        - description: Restrict results to one source version
-          explode: false
-          in: query
-          name: content_version_id
-          schema:
-            description: Restrict results to one source version
-            format: uuid
-            type: string
-        - description: Restrict results to one assigned face
-          explode: false
-          in: query
-          name: face_id
-          schema:
-            description: Restrict results to one assigned face
-            format: uuid
-            type: string
       responses:
         "200":
           content:
@@ -28044,7 +28016,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Read linked source-version photos or one exact assigned face
+      summary: Read up to three linked source-version photos in timeline order
   /api/v1/photos/rejects/preflight:
     post:
       operationId: preflightPhotoRejects

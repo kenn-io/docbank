@@ -199,20 +199,6 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE person_id=? AND photo_mark=0 AND EXISTS(SELECT 1 FROM person_document_assertions other WHERE other.person_id=? AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.photo_mark=1)`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		// Keep the newest evidence time on the surviving duplicate. The absorbed
-		// assertion's original timestamp remains in the merge receipt.
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=(
-			SELECT MAX(other.recorded_at) FROM person_document_assertions other
-			WHERE other.person_id=? AND other.content_version_id=person_document_assertions.content_version_id
-			AND other.role=person_document_assertions.role AND other.action=person_document_assertions.action
-		),revision=revision+1 WHERE person_id=? AND role='depicted' AND EXISTS(
-			SELECT 1 FROM person_document_assertions other WHERE other.person_id=?
-			AND other.content_version_id=person_document_assertions.content_version_id
-			AND other.role=person_document_assertions.role AND other.action=person_document_assertions.action
-			AND other.recorded_at>person_document_assertions.recorded_at
-		)`, absorbedID, survivorID, absorbedID); err != nil {
-			return err
-		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=? AND EXISTS(
 			SELECT 1 FROM person_document_assertions keep WHERE keep.person_id=?
 			AND keep.content_version_id=person_document_assertions.content_version_id

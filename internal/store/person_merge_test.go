@@ -62,7 +62,7 @@ func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }
 
-func TestMergePersonsPreservesNewestDuplicateAssertionRecency(t *testing.T) {
+func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -110,12 +110,13 @@ func TestMergePersonsPreservesNewestDuplicateAssertionRecency(t *testing.T) {
 	merged, err := s.DocumentPersonAssertions(ctx, duplicate.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, merged, 1)
-	require.Equal(t, "2026-03-01T00:00:00Z", merged[0].RecordedAt)
+	require.Equal(t, "2026-01-01T00:00:00Z", merged[0].RecordedAt)
+	require.Equal(t, keptAssertion.Revision, merged[0].Revision)
 	after, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 	require.NoError(t, err)
-	require.Equal(t, survivor.PersonID, after[0].PersonID)
-	require.Equal(t, "2026-03-01T00:00:00Z", after[0].RecentRank)
-	require.Equal(t, third.PersonID, after[1].PersonID)
+	require.Equal(t, third.PersonID, after[0].PersonID)
+	require.Equal(t, survivor.PersonID, after[1].PersonID)
+	require.Equal(t, "2026-01-01T00:00:00Z", after[1].RecentRank)
 }
 
 func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {

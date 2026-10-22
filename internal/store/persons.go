@@ -276,7 +276,7 @@ var personRecentSQL = `COALESCE((SELECT recent.recorded_at FROM (
 
 // Materialize the bounded matches before reading their visible identity labels.
 var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
- SELECT persons.*,%s recent_rank FROM persons WHERE %s state<>'retired' AND (?='' OR person_id=?)
+ SELECT persons.*,%s recent_rank FROM persons WHERE %s state<>'retired'
 	AND ` + personVisibleSQL("persons.person_id") + `
 	AND (?='' OR recent_rank<? OR (recent_rank=? AND (display_name_folded>? OR (display_name_folded=? AND person_id>?))))
 	ORDER BY recent_rank DESC,display_name_folded,person_id LIMIT ?)
@@ -302,18 +302,14 @@ type PersonSearchResult struct {
 
 type PersonPhotoSummary struct {
 	LibraryCount int64              `json:"library_count"`
-	HiddenCount  *int64             `json:"hidden_count,omitzero"`
 	Face         *PersonFacePreview `json:"face,omitzero"`
-	FaceHidden   bool               `json:"face_hidden,omitzero"`
 }
 
 type PeopleSearchOptions struct {
 	// RecentFirst orders name groups by their newest visible depicted
 	// evidence, then by folded name and ID. AfterRecent continues that order.
-	RecentFirst bool
-	AfterRecent string
-	// PersonID returns only that person when it is visible, to refresh a card.
-	PersonID     string
+	RecentFirst  bool
+	AfterRecent  string
 	PhotoSummary bool
 	GridRecipe   string
 }
@@ -322,8 +318,7 @@ type PeopleSearchOptions struct {
 // recent-first when requested.
 func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options PeopleSearchOptions) ([]PersonSearchResult, error) {
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
-		(afterName == "") != (afterID == "") || (!options.RecentFirst && options.AfterRecent != "") ||
-		(options.PersonID != "" && validateUUIDv4(options.PersonID) != nil) {
+		(afterName == "") != (afterID == "") || (!options.RecentFirst && options.AfterRecent != "") {
 		return nil, ErrInvalidPerson
 	}
 	people := []PersonSearchResult{}
@@ -348,7 +343,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			candidates = `instr(display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(display_name_folded, ?) AND`
 			args = append(args, prefix, prefix)
 		}
-		args = append(args, options.PersonID, options.PersonID, visibleOnly, hideLocked, hideLocked,
+		args = append(args, visibleOnly, hideLocked, hideLocked,
 			afterName, options.AfterRecent, options.AfterRecent, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, rank, candidates), args...)
 		if err != nil {
@@ -367,7 +362,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			return err
 		}
 		if options.PhotoSummary {
-			return s.personPhotoSummaries(ctx, tx, people, options.GridRecipe, !hideLocked)
+			return s.personPhotoSummaries(ctx, tx, people, options.GridRecipe)
 		}
 		return nil
 	})

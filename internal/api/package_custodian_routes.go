@@ -35,9 +35,8 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 	operations := []*huma.Operation{
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",
 			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor,
-				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Add Library photo counts, Hidden counts while unlocked, and one card portrait.", Schema: &huma.Schema{Type: "boolean"}},
-				{Name: "recent_first", In: openAPIQueryLocation, Description: "Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.", Schema: &huma.Schema{Type: "boolean"}},
-				{Name: "person_id", In: openAPIQueryLocation, Description: "Return only this person when it is visible.", Schema: &huma.Schema{Type: openAPIStringType}}},
+				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Add Library photo counts and one Library card portrait.", Schema: &huma.Schema{Type: "boolean"}},
+				{Name: "recent_first", In: openAPIQueryLocation, Description: "Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.", Schema: &huma.Schema{Type: "boolean"}}},
 			Responses: map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
 		{OperationID: "listPackageCustodians", Method: http.MethodGet, Path: "/api/v1/packages/by-id/{package_id}/custodians",
 			Summary: "List active package custodian claims", Parameters: []*huma.Param{packageID,
@@ -77,8 +76,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "photo_summary and recent_first must be booleans"))
 			return
 		}
-		personID := r.URL.Query().Get("person_id")
-		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst) + "\x01" + personID
+		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst)
 		if browserSessionRequest(r.Context()) || projection {
 			scope, err := d.Store.PhotoHiddenState(r.Context())
 			if err != nil {
@@ -97,7 +95,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid people cursor"))
 			return
 		}
-		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PersonID: personID, PhotoSummary: projection, GridRecipe: fingerprints.GridRecipe})
+		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: fingerprints.GridRecipe})
 		if err != nil {
 			writePackageError(w, err)
 			return

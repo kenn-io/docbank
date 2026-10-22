@@ -19,18 +19,23 @@ type PersonFaceMergeConflictError struct {
 }
 
 func (e *PersonFaceMergeConflictError) Error() string {
-	message := "review contradictory face assignments and rejections before merging"
-	if len(e.FaceIDs) > 0 {
-		message += "; faces: " + strings.Join(e.FaceIDs, ", ")
+	var message strings.Builder
+	message.WriteString("review contradictory face assignments and rejections before merging")
+	for i, id := range e.FaceIDs {
+		message.WriteString("; face " + id + " on version " + e.FaceVersionIDs[i])
+	}
+	if e.More {
+		message.WriteString("; more faces also conflict")
 	}
 	if e.InaccessibleConflict {
-		message += "; an excluded or trashed photo also needs review"
+		message.WriteString("; an excluded or trashed photo also needs review")
 	}
 	if e.HiddenConflict {
-		message += "; a locked Hidden photo also needs review"
+		message.WriteString("; a locked Hidden photo also needs review")
 	}
-	return message
+	return message.String()
 }
+
 func (e *PersonFaceMergeConflictError) Is(target error) bool { return target == ErrPersonMergeConflict }
 
 type PersonMergeFaceCandidate struct {

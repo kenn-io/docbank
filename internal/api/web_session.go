@@ -725,35 +725,19 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/people/"); ok {
 		parts := strings.Split(after, "/")
-		if r.Method != http.MethodGet || len(parts) != 2 || parts[1] != "face-previews" || canonical.ValidateUUIDv4(parts[0]) != nil {
+		if r.Method != http.MethodGet || len(parts) != 2 || parts[1] != "face-previews" || query.ValidateTextOperand("asset", parts[0]) != nil {
 			return false
 		}
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
 			return false
 		}
-		hasVersion, hasFace := false, false
 		for key, entries := range values {
-			if len(entries) != 1 {
-				return false
-			}
-			switch key {
-			case "hidden":
-			case "content_version_id":
-				hasVersion = true
-				if canonical.ValidateUUIDv4(entries[0]) != nil {
-					return false
-				}
-			case "face_id":
-				hasFace = true
-				if canonical.ValidateUUIDv4(entries[0]) != nil {
-					return false
-				}
-			default:
+			if key != "hidden" || len(entries) != 1 {
 				return false
 			}
 		}
-		return hasVersion == hasFace
+		return true
 	}
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/people/by-id/"); ok {
 		parts := strings.Split(after, "/")
@@ -771,7 +755,7 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first" && key != "person_id") || len(entries) != 1 {
+			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first") || len(entries) != 1 {
 				return false
 			}
 		}
