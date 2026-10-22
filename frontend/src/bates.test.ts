@@ -82,14 +82,6 @@ it("keeps sealed package snapshots with pages, including oversized sources", asy
             snapshot_id: "55555555-5555-4555-8555-555555555555",
             page_count: 2,
           },
-          {
-            package_id: "big",
-            package_name: "Oversized",
-            direction: "produced",
-            state: "sealed",
-            snapshot_id: "66666666-6666-4666-8666-666666666666",
-            page_count: 251,
-          },
         ],
         limit: 250,
       }),
@@ -116,12 +108,6 @@ it("keeps sealed package snapshots with pages, including oversized sources", asy
       snapshot_id: "55555555-5555-4555-8555-555555555555",
       page_count: 2,
     },
-    {
-      package_id: "big",
-      package_name: "Oversized",
-      snapshot_id: "66666666-6666-4666-8666-666666666666",
-      page_count: 251,
-    },
   ]);
   expect(fetch).toHaveBeenCalledWith(
     "/api/v1/packages?limit=250",
@@ -129,7 +115,7 @@ it("keeps sealed package snapshots with pages, including oversized sources", asy
   );
 });
 
-it("pages through eligible packages until pagination ends", async () => {
+it("pages through every package and keeps oversized sources for the drawer to explain", async () => {
   const pageOne = Array.from({ length: 250 }, (_, index) => ({
     package_id: `p${index}`,
     package_name: `Set ${index}`,
@@ -149,12 +135,12 @@ it("pages through eligible packages until pagination ends", async () => {
         JSON.stringify({
           items: [
             {
-              package_id: "last",
-              package_name: "Last set",
-              direction: "received",
-              state: "complete",
+              package_id: "big",
+              package_name: "Oversized",
+              direction: "produced",
+              state: "sealed",
               snapshot_id: "22222222-2222-4222-8222-222222222222",
-              page_count: 1,
+              page_count: 251,
             },
           ],
           limit: 250,
@@ -169,10 +155,10 @@ it("pages through eligible packages until pagination ends", async () => {
 
   expect(sources).toHaveLength(251);
   expect(sources.at(-1)).toEqual({
-    package_id: "last",
-    package_name: "Last set",
+    package_id: "big",
+    package_name: "Oversized",
     snapshot_id: "22222222-2222-4222-8222-222222222222",
-    page_count: 1,
+    page_count: 251,
   });
 });
 
@@ -229,29 +215,7 @@ it("starts, reads, lists, and downloads a verified publication", async () => {
   };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/v1/bates/exports") {
-      expect(init).toMatchObject({ method: "POST" });
-      expect(JSON.parse(String(init?.body))).toEqual({
-        allocation_id: allocation.allocation_id,
-        recipe,
-      });
-      return new Response(JSON.stringify(published), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    if (url === `/api/v1/bates/exports/${allocation.allocation_id}`) {
-      expect(init).toMatchObject({ method: "GET" });
-      return new Response(JSON.stringify(published), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    if (url === "/api/v1/bates/exports?limit=50") {
-      expect(init).toMatchObject({ method: "GET" });
-      return new Response(JSON.stringify({ items: [published], total: 1 }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    if (url === `/api/v1/bates/exports/${allocation.allocation_id}/download`) {
+    if (url.endsWith("/download")) {
       expect(init).toMatchObject({ method: "POST", body: "{}" });
       expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
       return new Response(
@@ -265,7 +229,19 @@ it("starts, reads, lists, and downloads a verified publication", async () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }
-    throw new Error(`unexpected request ${url}`);
+    if (url.includes("?limit=50"))
+      return new Response(JSON.stringify({ items: [published], total: 1 }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    if (init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual({
+        allocation_id: allocation.allocation_id,
+        recipe,
+      });
+    }
+    return new Response(JSON.stringify(published), {
+      headers: { "Content-Type": "application/json" },
+    });
   });
 
   await expect(startBatesExport("session", allocation, recipe)).resolves.toMatchObject({

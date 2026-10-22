@@ -196,20 +196,20 @@ func TestStampHonorsCancellation(t *testing.T) {
 	t.Run("before source inspection", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
+		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 1, "Letter"))}
 		var output bytes.Buffer
 
 		_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
 
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Zero(t, output.Len())
-		assert.Zero(t, source.seekCount, "an already-canceled request must not inspect its source")
-		assert.Zero(t, source.readCount, "an already-canceled request must not inspect its source")
+		assert.Zero(t, source.seekCount, "an already-canceled request must not seek its source")
+		assert.Zero(t, source.readCount, "an already-canceled request must not read its source")
 	})
 	t.Run("during source read", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 2, "Letter")), cancel: cancel}
+		source := &cancelOnReadSeeker{Reader: bytes.NewReader(syntheticPDF(t, 1, "Letter")), cancel: cancel}
 		var output bytes.Buffer
 
 		_, err := Stamp(ctx, source, []PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
@@ -275,7 +275,7 @@ func (r *cancelOnReadSeeker) Read(p []byte) (int, error) {
 	}
 	position := r.Size() - int64(r.Len())
 	n, err := r.Reader.Read(p)
-	if position == 0 && n > 0 {
+	if position == 0 && n > 0 && r.cancel != nil {
 		r.canceled = true
 		r.cancel()
 	}
