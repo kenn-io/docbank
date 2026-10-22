@@ -937,6 +937,11 @@
   );
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
+  const versionHistoryNode = $derived.by(() => {
+    if (activePanel?.kind !== "versions") return undefined;
+    const node = activePanel.linked?.node ?? selected?.node;
+    return node?.id === selected?.node.id ? selected?.node : node;
+  });
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
@@ -2902,7 +2907,7 @@
     if (activePanel?.kind !== "versions") return;
     if (activePanel.linked?.version.id === version.id && !nodeVersionLoading && !nodeVersionError)
       return;
-    const node = activePanel.linked?.node ?? selected?.node;
+    const node = versionHistoryNode;
     if (!node || node.id !== version.node_id) return;
     const initial = !activePanel.linked;
     activePanel.linked = { node, version };
@@ -4568,7 +4573,7 @@
             {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
           </Modal>
         {:else if panel.linked || (!snapshotActive && selected?.node.kind === "file")}
-          {@const node = panel.linked?.node ?? selected!.node}
+          {@const node = versionHistoryNode!}
           <VersionHistoryDrawer
             session={webSession}
             {node}

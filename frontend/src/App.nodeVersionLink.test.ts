@@ -454,6 +454,103 @@ it("closes row-opened version history when a pending tag removal selects the nex
   expect(location.hash).toBe("");
 });
 
+it("downloads the exact drawer version with updated node authority after a delayed tag receipt", async () => {
+  history.replaceState(null, "", `/#${credentials}`);
+  const vaultID = "55555555-5555-4555-8555-555555555555";
+  const tag = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 1,
+    assignment_count: 1,
+  };
+  localStorage.setItem(
+    `docbank:tag-hotkeys:v1:${vaultID}`,
+    JSON.stringify({ version: 1, bindings: { "1": tag.id } }),
+  );
+  let release!: (response: Response) => void;
+  const fetchMock = api((url, init) => {
+    if (url.includes("/children"))
+      return Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/audit/status"))
+      return Response.json({
+        enabled: false,
+        vault_id: vaultID,
+        operation_sequence_high_water: 0,
+        allocation_entry_count: 0,
+        scopes: [],
+      });
+    if (
+      url === "/api/v1/tags?limit=1000&offset=0" ||
+      url === "/api/v1/nodes/42/tags?limit=1000&offset=0"
+    )
+      return Response.json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === `/api/v1/nodes/42/tags/${tag.id}` && init?.method === "DELETE")
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
+      return Response.json({
+        items: [currentVersion, oldVersion],
+        total: 2,
+        limit: 1000,
+        offset: 0,
+      });
+    if (url === "/api/daemon/web-download")
+      return Response.json({ detail: "Download unavailable in fixture" }, { status: 503 });
+    return undefined;
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
+  expect((await screen.findByRole("group", { name: "Assigned tags" })).textContent).toContain(
+    "tax",
+  );
+  await fireEvent.keyDown(window, { key: "1" });
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  await fireEvent.click(screen.getByRole("button", { name: "Version history" }));
+  await within(await screen.findByRole("dialog")).findByText(currentID);
+  await fireEvent.click(screen.getByText("Revision 1").closest("button")!);
+  await screen.findByText(oldID);
+
+  await act(() =>
+    release(
+      Response.json({
+        tag: { ...tag, revision: 2, assignment_count: 0 },
+        node: { ...node, revision: 1002 },
+        changed: true,
+      }),
+    ),
+  );
+  await screen.findByText("Removed tax from example.txt.");
+  expect(screen.getByText(oldID)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Download this version" }));
+  await screen.findByText("Download unavailable in fixture");
+  let calls = fetchMock.mock.calls.filter(
+    ([input, init]) =>
+      String(input) === "/api/daemon/web-download" &&
+      JSON.parse(String(init?.body)).purpose !== "preview",
+  );
+  expect(JSON.parse(String(calls[0]?.[1]?.body))).toMatchObject({
+    node_id: 42,
+    revision: 1002,
+    version_id: oldID,
+  });
+
+  await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
+  await within(screen.getByRole("dialog")).findByText(currentID);
+  await fireEvent.click(screen.getByRole("button", { name: "Download this version" }));
+  await screen.findByText("Download unavailable in fixture");
+  calls = fetchMock.mock.calls.filter(
+    ([input, init]) =>
+      String(input) === "/api/daemon/web-download" &&
+      JSON.parse(String(init?.body)).purpose !== "preview",
+  );
+  expect(JSON.parse(String(calls[1]?.[1]?.body))).toMatchObject({
+    node_id: 42,
+    revision: 1002,
+    version_id: currentID,
+  });
+});
+
 it("replaces an ordinary version drawer when a linked version opens in the same tab", async () => {
   history.replaceState(null, "", `/#${credentials}`);
   api((url) =>
