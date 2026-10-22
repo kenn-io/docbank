@@ -10,6 +10,7 @@
   } from "./generated/docbank.js";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { recentPeople } from "./people.svelte.js";
   import { APIError } from "./api-transport.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import { photoFaceCropStyle } from "./photoRotation.js";
@@ -29,6 +30,7 @@
     version: string;
     scope: number;
     query: string;
+    recentIDs: string[];
     people: PersonSummary[];
     nextCursor?: string;
     incompleteName: string;
@@ -42,6 +44,7 @@
     version: faces.version,
     scope: faces.hiddenAccess?.scope ?? 0,
     query: "",
+    recentIDs: recentPeople(session),
     people: [],
     incompleteName: "",
     status: "idle",
@@ -329,7 +332,12 @@
       const fetch = () => {
         request.signal.throwIfAborted();
         return listPeople(
-          { query: pending.query.trim(), limit: 100, ...(cursor ? { cursor } : {}) },
+          {
+            query: pending.query.trim(),
+            limit: 100,
+            ...(pending.recentIDs.length ? { recent_ids: pending.recentIDs.join(",") } : {}),
+            ...(cursor ? { cursor } : {}),
+          },
           { session, signal: request.signal },
         );
       };

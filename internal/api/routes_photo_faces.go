@@ -121,6 +121,7 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 type PhotoFaceDecisionRequest store.PhotoFaceDecisionRequest
 
 type PhotoFaceDecisionResult struct {
+	PersonID  string `json:"person_id,omitzero" format:"uuid"`
 	ReceiptID string `json:"receipt_id" format:"uuid"`
 }
 
@@ -144,7 +145,20 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		return &struct{ Body PhotoFaceDecisionResult }{Body: PhotoFaceDecisionResult{ReceiptID: receipt.ReceiptID}}, nil
+		personID := ""
+		if in.Body.Action == "name" {
+			for _, face := range receipt.After.Faces {
+				if face.FaceID != in.Body.FaceID {
+					continue
+				}
+				for _, assertion := range receipt.After.Assertions {
+					if assertion.AssertionID == face.AssertionID && assertion.Action == "assert" {
+						personID = assertion.PersonID
+					}
+				}
+			}
+		}
+		return &struct{ Body PhotoFaceDecisionResult }{Body: PhotoFaceDecisionResult{ReceiptID: receipt.ReceiptID, PersonID: personID}}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "undoPhotoFaceDecision", Method: http.MethodPost, Path: "/api/v1/photos/face-decisions/{receipt_id}/undo", Summary: "Undo a face decision if its records are unchanged"}, func(ctx context.Context, in *struct {
 		ReceiptID   string `path:"receipt_id" format:"uuid"`

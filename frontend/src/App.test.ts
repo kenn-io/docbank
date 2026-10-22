@@ -1964,42 +1964,48 @@ it("persists a vault-scoped tag binding and applies it only to the inspected fil
   );
 });
 
-it.each(["Albums", "Map"])("blocks Documents tag shortcuts on the Photos %s view", async (view) => {
-  const preferences = prepareKeyboardApp();
-  preferences.setItem(
-    `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
-    JSON.stringify({
-      version: 1,
-      bindings: { "1": keyboardTagID },
-    }),
-  );
-  const backend = installKeyboardBackend();
-  const fetchMock = vi.mocked(globalThis.fetch);
-  const original = fetchMock.getMockImplementation()!;
-  fetchMock.mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url === "/api/v1/photos/hidden") return new Response(JSON.stringify({ configured: false }));
-    if (url === "/api/v1/photos/albums") return new Response("[]");
-    if (url === "/api/v1/photos/assets/query")
-      return new Response(JSON.stringify({ items: [], total: 0 }));
-    return original(input, init);
-  });
-  render(App);
+it.each(["Albums", "Map", "People"])(
+  "blocks Documents tag shortcuts on the Photos %s view",
+  async (view) => {
+    const preferences = prepareKeyboardApp();
+    preferences.setItem(
+      `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
+      JSON.stringify({
+        version: 1,
+        bindings: { "1": keyboardTagID },
+      }),
+    );
+    const backend = installKeyboardBackend();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/photos/hidden")
+        return new Response(JSON.stringify({ configured: false }));
+      if (url === "/api/v1/photos/albums") return new Response("[]");
+      if (url === "/api/v1/photos/assets/query")
+        return new Response(JSON.stringify({ items: [], total: 0 }));
+      return original(input, init);
+    });
+    render(App);
 
-  await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }));
-  await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
-  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
-  );
-  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-  await fireEvent.click(await screen.findByRole("button", { name: view }));
-  await fireEvent.keyDown(window, { key: "1" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+    await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
+    );
+    await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
+    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+    await fireEvent.click(await screen.findByRole("button", { name: view }));
+    await fireEvent.keyDown(window, { key: "1" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-  expect(backend.writes).toEqual([]);
-});
+    expect(backend.writes).toEqual([]);
+  },
+);
 
 it.each(["click", "Enter"] as const)(
   "reloads the inspector when %s reactivates the selected file",

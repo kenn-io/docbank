@@ -12215,6 +12215,28 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PersonPhotoSummary:
+      additionalProperties: false
+      properties:
+        face:
+          $ref: "#/components/schemas/PersonFacePreview"
+        face_hidden:
+          type: boolean
+        hidden_count:
+          format: int64
+          type:
+            - integer
+            - "null"
+        library_count:
+          format: int64
+          type: integer
+      required:
+        - library_count
+      type: object
+      x-go-type: store.PersonPhotoSummary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PersonSplitReceipt:
       additionalProperties: false
       properties:
@@ -12275,6 +12297,8 @@ components:
           type: string
         person_id:
           type: string
+        photo_summary:
+          $ref: "#/components/schemas/PersonPhotoSummary"
         revision:
           format: int64
           type: integer
@@ -13708,6 +13732,9 @@ components:
             - https://example.com/schemas/PhotoFaceDecisionResult.json
           format: uri
           readOnly: true
+          type: string
+        person_id:
+          format: uuid
           type: string
         receipt_id:
           format: uuid
@@ -26293,6 +26320,15 @@ paths:
             type: integer
         - in: query
           name: cursor
+          schema:
+            type: string
+        - in: query
+          name: photo_summary
+          schema:
+            type: boolean
+        - description: Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.
+          in: query
+          name: recent_ids
           schema:
             type: string
       responses:

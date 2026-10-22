@@ -238,3 +238,30 @@ func TestRetirePersonCutsOffInboundMergeAliases(t *testing.T) {
 	require.False(t, survivorValid)
 	require.Equal(t, "deleted", reason)
 }
+
+func TestPeopleRecentNamesStayTogetherAcrossPages(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	zoe, err := s.CreatePerson(ctx, "Zoe", "operator")
+	require.NoError(t, err)
+	other, err := s.CreatePerson(ctx, "Zoe", "operator")
+	require.NoError(t, err)
+	options := PeopleSearchOptions{RecentIDs: []string{zoe.PersonID}}
+	first, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
+	require.NoError(t, err)
+	require.Equal(t, "Zoe", first[0].DisplayName)
+	second, err := s.PeopleByDisplayName(ctx, "", first[0].DisplayNameFolded, first[0].PersonID, 1, true, options)
+	require.NoError(t, err)
+	require.Equal(t, "Zoe", second[0].DisplayName)
+	require.NotEqual(t, first[0].PersonID, second[0].PersonID)
+	third, err := s.PeopleByDisplayName(ctx, "", second[0].DisplayNameFolded, second[0].PersonID, 1, true, options)
+	require.NoError(t, err)
+	require.Equal(t, ada.PersonID, third[0].PersonID)
+	plain, err := s.PeopleByDisplayName(ctx, "", "", "", 3, true)
+	require.NoError(t, err)
+	require.Equal(t, ada.PersonID, plain[0].PersonID)
+	require.ElementsMatch(t, []string{zoe.PersonID, other.PersonID}, []string{first[0].PersonID, second[0].PersonID})
+}

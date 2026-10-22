@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -33,8 +34,10 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 	cursor := &huma.Param{Name: "cursor", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}
 	operations := []*huma.Operation{
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",
-			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor},
-			Responses:  map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
+			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor,
+				{Name: "photo_summary", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "boolean"}},
+				{Name: "recent_ids", In: openAPIQueryLocation, Description: "Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.", Schema: &huma.Schema{Type: openAPIStringType}}},
+			Responses: map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
 		{OperationID: "listPackageCustodians", Method: http.MethodGet, Path: "/api/v1/packages/by-id/{package_id}/custodians",
 			Summary: "List active package custodian claims", Parameters: []*huma.Param{packageID,
 				{Name: "row_id", In: openAPIQueryLocation, Description: "Return claims for this record only. Omit to return package-level defaults only.", Schema: &huma.Schema{Type: openAPIStringType}},
@@ -67,12 +70,28 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		query := r.URL.Query().Get("query")
-		afterName, afterID, err := decodePeopleCursor(r.URL.Query().Get("cursor"), query)
+		projection, err := strconv.ParseBool(defaultQuery(r, "photo_summary", "false"))
+		recentRaw := r.URL.Query().Get("recent_ids")
+		recent := []string{}
+		if recentRaw != "" {
+			recent = strings.Split(recentRaw, ",")
+		}
+		if err != nil || len(recent) > 20 {
+			writeError(w, NewError(422, "validation", "invalid people projection or recent IDs"))
+			return
+		}
+		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + recentRaw
+		fingerprints, err := document.CurrentPhotoQualityFingerprints()
+		if err != nil {
+			writePackageError(w, err)
+			return
+		}
+		afterName, afterID, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
 		if err != nil {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid people cursor"))
 			return
 		}
-		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()))
+		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentIDs: recent, PhotoSummary: projection, GridRecipe: fingerprints.GridRecipe})
 		if err != nil {
 			writePackageError(w, err)
 			return
@@ -81,12 +100,12 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		for index := range out.Items {
 			person := people[index]
 			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName, DisplayNameFolded: person.DisplayNameFolded,
-				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt, IdentityLabel: person.IdentityLabel}
+				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt, IdentityLabel: person.IdentityLabel, PhotoSummary: person.PhotoSummary}
 		}
 		if len(people) > limit {
 			last := people[limit-1]
 			out.SameNameContinues = last.DisplayNameFolded == people[limit].DisplayNameFolded
-			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, query)
+			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, binding)
 		}
 		writeJSON(w, http.StatusOK, out)
 	})

@@ -26732,9 +26732,13 @@ type ResolvePathQuery struct {
 }
 
 type ListPeopleQuery struct {
-	Query  *string `json:"query,omitempty"`
-	Limit  *int    `json:"limit,omitempty"`
-	Cursor *string `json:"cursor,omitempty"`
+	Query        *string `json:"query,omitempty"`
+	Limit        *int    `json:"limit,omitempty"`
+	Cursor       *string `json:"cursor,omitempty"`
+	PhotoSummary *bool   `json:"photo_summary,omitempty"`
+
+	// RecentIds Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.
+	RecentIds *string `json:"recent_ids,omitempty"`
 }
 
 type GetPersonQuery struct {
@@ -29162,6 +29166,8 @@ type PersonMergeMovedCounts = api.PersonMergeMovedCounts
 type PersonMergeReceipt = api.PersonMergeReceipt
 
 type PersonPage = api.PersonPage
+
+type PersonPhotoSummary = store.PersonPhotoSummary
 
 type PersonSplitReceipt = api.PersonSplitReceipt
 

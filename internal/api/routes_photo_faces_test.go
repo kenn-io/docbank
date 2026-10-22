@@ -166,6 +166,12 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	decisions := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
 	response, body := do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonName: "Grace", Revision: 1, OperationID: uuid.NewString()})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var named api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(body), &named))
+	require.NotEmpty(t, named.PersonID)
+	namedPerson, _, err := s.PersonByID(ctx, named.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, "Grace", namedPerson.DisplayName)
 	for _, action := range []string{"reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
@@ -215,7 +221,7 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	response, body := get(t, ts, "/api/v1/people", headers)
+	response, body := get(t, ts, "/api/v1/people?photo_summary=true", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
@@ -224,9 +230,66 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Len(t, response.Cookies(), 1)
 	headers["Cookie"] = response.Cookies()[0].String()
-	response, body = get(t, ts, "/api/v1/people", headers)
+	response, body = get(t, ts, "/api/v1/people?photo_summary=true", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Len(t, page.Items, 1, "the Hidden cookie reaches the store")
 	require.Equal(t, hidden.PersonID, page.Items[0].PersonID)
+	require.Zero(t, page.Items[0].PhotoSummary.LibraryCount)
+	require.NotNil(t, page.Items[0].PhotoSummary.HiddenCount)
+	require.Equal(t, int64(1), *page.Items[0].PhotoSummary.HiddenCount)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", headers, struct{}{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = get(t, ts, "/api/v1/people?photo_summary=true", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Empty(t, page.Items)
+}
+
+func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	zoe, err := s.CreatePerson(ctx, "Zoe", "operator")
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	path := "/api/v1/people?limit=1&photo_summary=true&recent_ids=" + zoe.PersonID
+	response, body := get(t, ts, path, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var first api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.Len(t, first.Items, 1)
+	require.Equal(t, zoe.PersonID, first.Items[0].PersonID)
+	require.NotNil(t, first.Items[0].PhotoSummary)
+	require.Zero(t, first.Items[0].PhotoSummary.LibraryCount)
+	require.Nil(t, first.Items[0].PhotoSummary.HiddenCount)
+	response, body = get(t, ts, path+"&cursor="+first.NextCursor, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var second api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &second))
+	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
+	for _, changed := range []string{"photo_summary=false&recent_ids=" + zoe.PersonID, "photo_summary=true&recent_ids=" + ada.PersonID} {
+		response, body = get(t, ts, "/api/v1/people?"+changed+"&cursor="+first.NextCursor, headers)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
+	response, body = get(t, ts, "/api/v1/people", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NotContains(t, body, "photo_summary")
+	require.NoError(t, json.Unmarshal([]byte(body), &second))
+	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
+	headers["If-Match"] = `"1"`
+	response, body = do(t, ts, http.MethodPatch, "/api/v1/people/by-id/"+ada.PersonID, headers, api.RenamePersonRequest{DisplayName: "Ada Lovelace"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+zoe.PersonID+"/merge", headers, api.MergePersonRequest{AbsorbedPersonID: ada.PersonID, AbsorbedRevision: 2, OperationID: uuid.NewString()})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	person, reached, err := s.PersonByID(ctx, ada.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, zoe.PersonID, person.PersonID)
+	require.Equal(t, ada.PersonID, reached)
+	for _, test := range []struct{ method, suffix string }{{http.MethodGet, ""}, {http.MethodPost, "/retire"}, {http.MethodPost, "/split"}} {
+		response, body = do(t, ts, test.method, "/api/v1/people/by-id/"+zoe.PersonID+test.suffix, headers, nil)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	}
 }

@@ -9,6 +9,7 @@ import {
   type PhotoFaceDecisionRequest,
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
+import { recordRecentPerson } from "./people.svelte.js";
 import { randomUUID } from "./crypto.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
@@ -150,9 +151,18 @@ export class PhotoFaces {
   }
   private decide(decision: PhotoFaceDecisionRequest) {
     const operation_id = randomUUID();
-    return this.write((version, signal) =>
-      decidePhotoFace(version, { ...decision, operation_id }, { session: this.session, signal }),
-    );
+    return this.write(async (version, signal) => {
+      const receipt = await decidePhotoFace(
+        version,
+        { ...decision, operation_id },
+        { session: this.session, signal },
+      );
+      if (decision.action === "name") {
+        const id = receipt.person_id || decision.person_id;
+        if (id) recordRecentPerson(this.session, id);
+      }
+      return receipt;
+    });
   }
   name(face: PhotoFace, personID: string, personName?: string) {
     return this.decide({
@@ -172,17 +182,19 @@ export class PhotoFaces {
     return this.decide({ action: "retract", assertion_id, revision });
   }
   async mark(personID: string, personName?: string) {
-    const saved = await this.write((version, signal) => {
+    const saved = await this.write(async (version, signal) => {
       if (personName !== undefined) {
         if (this.pendingMark?.version !== version || this.pendingMark.name !== personName)
           this.pendingMark = { version, name: personName, person_id: randomUUID() };
         personID = this.pendingMark.person_id;
       }
-      return createPhotoFace(
+      const result = await createPhotoFace(
         version,
         { person_id: personID, ...(personName === undefined ? {} : { person_name: personName }) },
         { session: this.session, signal },
       );
+      recordRecentPerson(this.session, result.assertion?.person_id || personID);
+      return result;
     });
     if (saved) this.pendingMark = undefined;
     return saved;
