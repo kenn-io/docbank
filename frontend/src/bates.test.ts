@@ -37,7 +37,7 @@ it("hashes a recipe to the same digest as the Go stamp engine", async () => {
   await expect(batesRecipeSHA256(recipe)).resolves.toBe(expected);
 });
 
-it("keeps sealed package snapshots with pages, including oversized sources", async () => {
+it("keeps only sealed package snapshots with pages", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -162,7 +162,7 @@ it("pages through every package and keeps oversized sources for the drawer to ex
   });
 });
 
-it("starts, reads, lists, and downloads a verified publication", async () => {
+it("starts, reads, lists, and prepares a verified publication", async () => {
   const namespace = {
     namespace_id: "11111111-1111-4111-8111-111111111111",
     prefix: "CASE",
@@ -254,7 +254,6 @@ it("starts, reads, lists, and downloads a verified publication", async () => {
     total: 1,
     items: [{ artifact_id: published.artifact_id }],
   });
-
   const clicked: { href: string; download: string }[] = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
     function (this: HTMLAnchorElement) {
