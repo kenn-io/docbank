@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const invalidModelBody = `{"object":"error","message":"Invalid model: mistral-ocr-4-0","type":"invalid_model","code":"1500"}`
+
 func TestClientProcessStreamsVerifiedDocumentAndReturnsNeutralEvidence(t *testing.T) {
 	content := testPDF("synthetic")
 	policy := testPolicy(t, 1024, 10)
@@ -151,14 +153,19 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name        string
-		status      int
-		response    string
-		contentType string
-		maxBytes    int64
-		wantError   string
+		name             string
+		status           int
+		response         string
+		contentType      string
+		maxBytes         int64
+		wantError        string
+		wantInvalidModel bool
 	}{
 		{name: "permanent", status: http.StatusBadRequest, response: "private response body", wantError: ErrPermanentResponse.Error()},
+		{name: "invalid model", status: http.StatusBadRequest, response: invalidModelBody, wantError: ErrPermanentResponse.Error(), wantInvalidModel: true},
+		{name: "another type", status: http.StatusBadRequest, response: `{"type":"invalid_request"}`, wantError: ErrPermanentResponse.Error()},
+		{name: "oversize error body", status: http.StatusBadRequest, response: invalidModelBody + strings.Repeat(" ", maxErrorBodyBytes+1-len(invalidModelBody)), wantError: ErrPermanentResponse.Error()},
+		{name: "4096 bytes", status: http.StatusBadRequest, response: invalidModelBody + strings.Repeat(" ", maxErrorBodyBytes-len(invalidModelBody)), wantError: ErrPermanentResponse.Error(), wantInvalidModel: true},
 		{name: "too large", status: http.StatusOK, response: strings.Repeat("x", 65), contentType: "application/json", maxBytes: 64, wantError: ErrResponseTooLarge.Error()},
 		{name: "empty pages", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[],"usage_info":{"pages_processed":0}}`, contentType: "application/json", wantError: "returned no pages"},
 		{name: "missing index", status: http.StatusOK, response: `{"model":"mistral-ocr-4-1","pages":[{}],"usage_info":{"pages_processed":1}}`, contentType: "application/json", wantError: "invalid index"},
@@ -191,6 +198,11 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 			client := newServerClient(t, server, casePolicy, ClientConfig{})
 			_, err := client.Process(t.Context(), prepared, caseAuthorization)
 			require.ErrorContains(t, err, test.wantError)
+			if test.status == http.StatusBadRequest {
+				response, ok := errors.AsType[*permanentResponseError](err)
+				require.True(t, ok)
+				assert.Equal(t, test.wantInvalidModel, response.invalidModel)
+			}
 			assert.NotContains(t, err.Error(), "private response body")
 		})
 	}

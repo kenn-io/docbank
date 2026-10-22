@@ -147,38 +147,6 @@ func TestProbeExplainsFixtureOutsideBoundRange(t *testing.T) {
 	assert.Equal(t, reasonBoundFixtureOutOfRange, result.ReasonCode)
 }
 
-func TestRunCapabilityProbeClassifiesErrorBodies(t *testing.T) {
-	const invalidModelBody = `{"object":"error","message":"Invalid model: mistral-ocr-4-1","type":"invalid_model","code":"1500"}`
-	tests := []struct {
-		name       string
-		body       string
-		wantReason string
-	}{
-		{name: "invalid model", body: invalidModelBody, wantReason: "invalid_model"},
-		{name: "another type", body: `{"type":"invalid_request"}`, wantReason: "provider_4xx"},
-		{name: "non-JSON", body: "invalid model", wantReason: "provider_4xx"},
-		{name: "oversize", body: invalidModelBody + strings.Repeat(" ", maxErrorBodyBytes+1-len(invalidModelBody)), wantReason: "provider_4xx"},
-		{name: "4096 bytes", body: invalidModelBody + strings.Repeat(" ", maxErrorBodyBytes-len(invalidModelBody)), wantReason: "invalid_model"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			policy := testPolicy(t, 1<<20, 10)
-			transport := &probeTransport{t: t, errorBody: test.body}
-			client, err := NewClient(policy, ClientConfig{
-				APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport},
-			})
-			require.NoError(t, err)
-			manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{Fixtures: generatedProbeFixtureConfig(t)})
-			require.NoError(t, err)
-			require.Len(t, manifest.Results, 26)
-			for _, result := range manifest.Results {
-				assert.Equal(t, ProbeStatusRejected, result.Status, result.FormatID)
-				assert.Equal(t, test.wantReason, result.ReasonCode, result.FormatID)
-			}
-		})
-	}
-}
-
 func TestRunCapabilityProbeClassifiesSanitizedFailures(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -187,6 +155,7 @@ func TestRunCapabilityProbeClassifiesSanitizedFailures(t *testing.T) {
 		wantReason string
 	}{
 		{name: "provider rejection", mode: "provider_4xx", wantStatus: ProbeStatusRejected, wantReason: "provider_4xx"},
+		{name: "invalid model", mode: "invalid_model", wantStatus: ProbeStatusRejected, wantReason: "invalid_model"},
 		{name: "transient exhaustion", mode: "transient_exhausted", wantStatus: ProbeStatusFailed, wantReason: "transient_exhausted"},
 		{name: "empty output", mode: "empty_output", wantStatus: ProbeStatusFailed, wantReason: "empty_output"},
 		{name: "missing sentinel", mode: "sentinel_missing", wantStatus: ProbeStatusFailed, wantReason: "sentinel_missing"},
@@ -229,7 +198,6 @@ type probeTransport struct {
 	t           *testing.T
 	boundMode   string
 	failureMode string
-	errorBody   string
 	calls       int
 }
 
@@ -252,9 +220,6 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	require.NoError(transport.t, json.Unmarshal(body, &input))
 	assert.True(transport.t, input.ExtractHeader)
 	assert.True(transport.t, input.ExtractFooter)
-	if transport.errorBody != "" {
-		return probeHTTPResponse(request, http.StatusBadRequest, transport.errorBody), nil
-	}
 
 	mediaType := strings.TrimPrefix(strings.SplitN(input.Document.URL, ";base64,", 2)[0], "data:")
 	candidate, found := candidateByMediaType(mediaType)
@@ -264,6 +229,8 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	}
 	if candidate.ID == "pdf" {
 		switch transport.failureMode {
+		case "invalid_model":
+			return probeHTTPResponse(request, http.StatusBadRequest, invalidModelBody), nil
 		case "provider_4xx":
 			return probeHTTPResponse(request, http.StatusBadRequest, `{}`), nil
 		case "transient_exhausted":
