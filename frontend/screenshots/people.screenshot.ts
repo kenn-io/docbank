@@ -50,7 +50,11 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     await page.setViewportSize({ width: 1440, height: 800 });
     const people = page.getByRole("main", { name: "People", exact: true });
     await expect(people.getByRole("img")).toHaveCount(2);
-    await expect(people.getByRole("button", { name: "Morgan Lee 0 Library photos" })).toBeVisible();
+    await expect(people.getByRole("button", { name: /Ada 1 Library photo$/ })).toBeVisible();
+    await expect(
+      people.getByRole("button", { name: /Grace Hopper 1 Library photo$/ }),
+    ).toBeVisible();
+    await expect(people.getByRole("button", { name: /Morgan Lee/ })).toHaveCount(0);
     await mkdir(output!, { recursive: true });
     await captureTheme(page, output!, "after-people-cards", "dark");
     await people.getByRole("button", { name: "Rename", exact: true }).first().click();
@@ -67,11 +71,16 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     await captureTheme(page, output!, "after-people-merge", "dark");
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(merge).toBeVisible();
-    expect(await merge.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth)).toBe(true);
+    const bounds = await merge.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
+    expect(await page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true);
     await captureTheme(page, output!, "after-people-narrow", "dark");
+    await page.setViewportSize({ width: 1440, height: 800 });
     await merge.getByRole("button", { name: "Merge", exact: true }).click();
     await expect(merge).toBeHidden();
     await expect(
