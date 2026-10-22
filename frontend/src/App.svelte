@@ -940,7 +940,9 @@
   const versionHistoryNode = $derived.by(() => {
     if (activePanel?.kind !== "versions") return undefined;
     const node = activePanel.linked?.node ?? selected?.node;
-    return node?.id === selected?.node.id ? selected?.node : node;
+    return node && node.id === selected?.node.id && selected.node.revision > node.revision
+      ? selected.node
+      : node;
   });
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
@@ -2913,7 +2915,6 @@
     const state = { ...history.state };
     delete state.photoReturn;
     pushPhotoHistory(state, nodeVersionURL(version));
-    nodeVersionHash = location.hash;
   }
 
   function keepQueryDraft(query: Query): void {

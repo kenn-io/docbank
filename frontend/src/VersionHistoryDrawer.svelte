@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as generated from "./generated/docbank.js";
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import HistoryIcon from "@lucide/svelte/icons/history";
   import XIcon from "@lucide/svelte/icons/x";
   import {
@@ -59,8 +59,11 @@
       : page?.items.find((version) => version.id === selectedVersionID),
   );
 
-  onMount(() => {
-    void load();
+  const timelineKey = $derived(`${session}:${node.id}:${node.revision}`);
+
+  $effect(() => {
+    void timelineKey;
+    untrack(() => void load());
     return () => {
       generation += 1;
     };

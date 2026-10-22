@@ -326,6 +326,106 @@ it("replaces an ordinary version drawer when a linked version opens in the same 
   expect(within(screen.getByRole("dialog")).getByText(oldID)).toBeTruthy();
 });
 
+it.each(["renamed", "trashed"])(
+  "uses the newer linked node after Back when the selected directory row is stale and the file was %s",
+  async (change) => {
+    history.replaceState(null, "", `/#${credentials}`);
+    let changed = false;
+    const fetchMock = api((url) => {
+      if (url.includes("/children"))
+        return Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
+      if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
+        return Response.json({
+          items: [currentVersion, oldVersion],
+          total: 2,
+          limit: 1000,
+          offset: 0,
+        });
+      if (changed && url === "/api/v1/nodes/42")
+        return Response.json({
+          ...node,
+          revision: 1002,
+          name: "renamed.txt",
+          path: "/reports/renamed.txt",
+          ...(change === "trashed" ? { trashed_at: "2026-10-01T00:00:00Z" } : {}),
+        });
+      if (url === "/api/daemon/web-download")
+        return Response.json({ detail: "Download unavailable in fixture" }, { status: 503 });
+      return undefined;
+    });
+    render(App);
+    await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
+    await act(() => {
+      location.hash = link();
+    });
+    await screen.findByText(oldID);
+    await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
+    await within(screen.getByRole("dialog")).findByText(currentID);
+    changed = true;
+    history.back();
+    await screen.findByText(oldID);
+    const drawer = within(screen.getByRole("dialog"));
+    expect(drawer.getByText("renamed.txt")).toBeTruthy();
+    if (change === "trashed") {
+      expect(drawer.getByText("Trash", { selector: "span" })).toBeTruthy();
+      expect(drawer.queryByRole("button", { name: "Download this version" })).toBeNull();
+    } else {
+      fetchMock.mockClear();
+      await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
+      await drawer.findByText("Download unavailable in fixture");
+      const call = fetchMock.mock.calls.find(
+        ([input]) => String(input) === "/api/daemon/web-download",
+      );
+      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+        revision: 1002,
+        version_id: oldID,
+      });
+    }
+  },
+);
+
+it("refreshes Current after Back resolves a newer node revision without reloading on version clicks", async () => {
+  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
+  const replacementID = "44444444-4444-4444-8444-444444444444";
+  const replacement = version(replacementID, 1002, "content_replace", "c");
+  let changed = false;
+  const fetchMock = api((url) => {
+    if (changed && url === "/api/v1/nodes/42")
+      return Response.json({ ...node, revision: 1002, current_version_id: replacementID });
+    if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
+      return Response.json({
+        items: changed ? [replacement, currentVersion, oldVersion] : [currentVersion, oldVersion],
+        total: changed ? 3 : 2,
+        limit: 1000,
+        offset: 0,
+      });
+    return undefined;
+  });
+  render(App);
+  await screen.findByText(oldID);
+  await screen.findByText("2 retained versions");
+  const drawer = screen.getByRole("dialog");
+  fetchMock.mockClear();
+  await fireEvent.click(screen.getByText("Revision 1001").closest("button")!);
+  await screen.findByText(currentID);
+  expect(fetchMock).not.toHaveBeenCalled();
+  changed = true;
+  history.back();
+  await screen.findByText(oldID);
+  const timeline = within(screen.getByRole("region", { name: "Retained versions" }));
+  await timeline.findByText("Revision 1002");
+  expect(
+    within(timeline.getByText("Current").closest("button")!).getByText("Revision 1002"),
+  ).toBeTruthy();
+  expect(screen.getByRole("dialog")).toBe(drawer);
+  await fireEvent.click(timeline.getByText("Revision 1002").closest("button")!);
+  await within(drawer).findByText(replacementID);
+  expect(location.hash).toBe(link(replacementID));
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input).includes("/versions?")),
+  ).toHaveLength(1);
+});
+
 it("keeps a pending resolve when URL navigation edits the query", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
   let release!: (response: Response) => void;
