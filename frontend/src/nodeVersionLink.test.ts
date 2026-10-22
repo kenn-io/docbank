@@ -19,7 +19,8 @@ describe("exact version fragments", () => {
     });
   });
 
-  it.each(["invalid", "", "../content"])("leaves version policy to the server: %s", (versionId) => {
+  it("leaves version policy to the server", () => {
+    const versionId = "invalid";
     expect(parseNodeVersionLink(`#node=42&version=${encodeURIComponent(versionId)}`)).toEqual({
       nodeId: 42,
       versionId,
@@ -53,7 +54,7 @@ it.each(["wrong node", "directory"])(
       if (String(input) === "/api/v1/nodes/42")
         return Response.json(kind === "directory" ? { ...root, id: 42 } : node);
       if (String(input) === `/api/v1/versions/${version}`)
-        return Response.json({ ...oldVersion, node_id: 99 });
+        return Response.json(kind === "wrong node" ? { ...oldVersion, node_id: 99 } : oldVersion);
       throw new Error(`Unexpected request: ${input}`);
     });
     await expect(

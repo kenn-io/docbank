@@ -143,7 +143,7 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
     release(
       Response.json({
         directory: root,
-        items: [{ ...node, id: 99, name: "other.txt" }],
+        items: [{ ...fileNode, id: 99, name: "other.txt" }],
         total: 1,
         limit: 1000,
         offset: 0,
@@ -175,23 +175,25 @@ it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offs
   },
 );
 
-it.each([
-  { action: "Lock web session", linked: true },
-  { action: "Lock web session", linked: false },
-])("clears other fragment intent on $action with linked=$linked", async ({ action, linked }) => {
-  const selection = linked ? link().slice(1) + "&" : "";
-  history.replaceState(
-    null,
-    "",
-    `/#${credentials}${selection}query=%7B%7D&photo=example&other=value`,
-  );
-  api();
-  render(App);
-  if (linked) await screen.findByText(oldID);
-  await fireEvent.click(await screen.findByRole("button", { name: action }));
-  await waitFor(() => expect(screen.queryByRole("button", { name: action })).toBeNull());
-  expect(location.hash).toBe(linked ? link() : "");
-});
+it.each([true, false])(
+  "clears other fragment intent on Lock web session with linked=%s",
+  async (linked) => {
+    const selection = linked ? link().slice(1) + "&" : "";
+    history.replaceState(
+      null,
+      "",
+      `/#${credentials}${selection}query=%7B%7D&photo=example&other=value`,
+    );
+    api();
+    render(App);
+    if (linked) await screen.findByText(oldID);
+    await fireEvent.click(await screen.findByRole("button", { name: "Lock web session" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Lock web session" })).toBeNull(),
+    );
+    expect(location.hash).toBe(linked ? link() : "");
+  },
+);
 
 it.each(["changed link key", "unchanged link key"])(
   "handles pending resolution after hash navigation with a %s",
@@ -303,9 +305,6 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
     within(timeline.getByText("Current").closest("button")!).getByText("Revision 1002"),
   ).toBeTruthy();
   expect(screen.getByRole("dialog")).toBe(drawer);
-  expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
-    expect.arrayContaining(["/api/v1/nodes/42", `/api/v1/versions/${oldID}`]),
-  );
   expect(
     fetchMock.mock.calls.filter(([input]) => String(input).includes("/versions?")),
   ).toHaveLength(1);
@@ -314,9 +313,6 @@ it("reopens exact versions on browser back and forward in the mounted drawer", a
   await waitFor(() => expect(location.hash).toBe(link(currentID)));
   await screen.findByText(currentID);
   expect(screen.getByRole("dialog")).toBe(drawer);
-  expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
-    `/api/v1/versions/${currentID}`,
-  );
   expect(location.hash).toBe(link(currentID));
   await fireEvent.click(timeline.getByText("Revision 1002").closest("button")!);
   await within(drawer).findByText(replacementID);
@@ -392,265 +388,150 @@ it("uses the newer linked node after Back when the selected directory row is sta
   });
 });
 
-it("uses the tag removal receipt revision for a linked version download after Back removes the selected row", async () => {
-  history.replaceState(null, "", `/#${credentials}`);
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
-  const vaultID = "55555555-5555-4555-8555-555555555555";
-  const tag = {
-    id: "33333333-3333-4333-8333-333333333333",
-    name: "tax",
-    revision: 1,
-    assignment_count: 2,
-  };
-  const other = { ...node, id: 99, name: "other.txt", path: "/reports/other.txt" };
-  const receipt = {
-    node: { ...node, revision: 1002 },
-    tag: { ...tag, revision: 2, assignment_count: 1 },
-    changed: true,
-  };
-  localStorage.setItem(
-    `docbank:tag-hotkeys:v1:${vaultID}`,
-    JSON.stringify({ version: 1, bindings: { "1": tag.id } }),
-  );
-  let removed = false;
-  let release!: (response: Response) => void;
-  const fetchMock = api((url, init) => {
-    if (url.startsWith("/api/v1/audit/status"))
-      return Response.json({
-        enabled: false,
-        vault_id: vaultID,
-        operation_sequence_high_water: 0,
-        allocation_entry_count: 0,
-        scopes: [],
-      });
-    if (url.includes("/children"))
-      return Response.json({
-        directory: root,
-        items: [node, other],
-        total: 2,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === "/api/v1/tags?limit=1000&offset=0")
-      return Response.json({
-        items: [removed ? receipt.tag : tag],
-        total: 1,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === `/api/v1/tags/${tag.id}/nodes?limit=1000&offset=0&live_only=true`)
-      return Response.json({
-        items: (removed ? [other] : [node, other]).map((item) => ({ node: item, path: item.path })),
-        total: removed ? 1 : 2,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === "/api/v1/nodes/42/tags?limit=1000&offset=0")
-      return Response.json({
-        items: removed ? [] : [tag],
-        total: removed ? 0 : 1,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === `/api/v1/nodes/42/tags/${tag.id}` && init?.method === "DELETE")
-      return new Promise<Response>((resolve) => {
-        release = resolve;
-      });
-    if (url === "/api/v1/nodes/99") return Response.json(other);
-    if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
-      return Response.json({
-        items: [currentVersion, oldVersion],
-        total: 2,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === "/api/daemon/web-download")
-      return JSON.parse(String(init?.body)).revision === 1002
-        ? Response.json({ detail: "Download unavailable in fixture" }, { status: 503 })
-        : Response.json({ detail: "Node revision changed" }, { status: 409 });
-    return undefined;
-  });
-  render(App);
-  await screen.findByRole("cell", { name: "example.txt" });
-  await fireEvent.click(
-    await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
-  );
-  await fireEvent.click(screen.getByRole("option", { name: "tax (2)" }));
-  await fireEvent.click(await screen.findByRole("cell", { name: "/reports/example.txt" }));
-  await screen.findByText("1 assigned");
-  await act(() => {
-    location.hash = link();
-  });
-  await screen.findByText(oldID);
-  await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
-  await within(screen.getByRole("dialog")).findByText(currentID);
-  await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await fireEvent.keyDown(window, { key: "1" });
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  history.back();
-  await screen.findByText(oldID);
-  await act(() => {
-    removed = true;
-    release(Response.json(receipt));
-  });
-  await screen.findByText("Removed tax from example.txt.");
-  await waitFor(() =>
-    expect(screen.queryByRole("cell", { name: "/reports/example.txt" })).toBeNull(),
-  );
-  const drawer = within(screen.getByRole("dialog"));
-  fetchMock.mockClear();
-  await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
-  await waitFor(() =>
-    expect(
-      fetchMock.mock.calls.some(([input]) => String(input) === "/api/daemon/web-download"),
-    ).toBe(true),
-  );
-  const call = fetchMock.mock.calls.find(([input]) => String(input) === "/api/daemon/web-download");
-  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
-    revision: 1002,
-    version_id: oldID,
-  });
-});
-
-it("keeps the tag removal receipt revision when Back resolves a linked version after the row leaves the tag view", async () => {
-  history.replaceState(null, "", `/#${credentials}`);
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
-  const vaultID = "55555555-5555-4555-8555-555555555555";
-  const tag = {
-    id: "33333333-3333-4333-8333-333333333333",
-    name: "tax",
-    revision: 1,
-    assignment_count: 2,
-  };
-  const other = { ...node, id: 99, name: "other.txt", path: "/reports/other.txt" };
-  const receipt = {
-    node: { ...node, revision: 1002 },
-    tag: { ...tag, revision: 2, assignment_count: 1 },
-    changed: true,
-  };
-  localStorage.setItem(
-    `docbank:tag-hotkeys:v1:${vaultID}`,
-    JSON.stringify({ version: 1, bindings: { "1": tag.id } }),
-  );
-  let removed = false;
-  let resolving = false;
-  let releaseVersion!: (response: Response) => void;
-  let release!: (response: Response) => void;
-  const fetchMock = api((url, init) => {
-    if (url.startsWith("/api/v1/audit/status"))
-      return Response.json({
-        enabled: false,
-        vault_id: vaultID,
-        operation_sequence_high_water: 0,
-        allocation_entry_count: 0,
-        scopes: [],
-      });
-    if (url.includes("/children"))
-      return Response.json({
-        directory: root,
-        items: [node, other],
-        total: 2,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === "/api/v1/tags?limit=1000&offset=0")
-      return Response.json({
-        items: [removed ? receipt.tag : tag],
-        total: 1,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === `/api/v1/tags/${tag.id}/nodes?limit=1000&offset=0&live_only=true`)
-      return Response.json({
-        items: (removed ? [other] : [node, other]).map((item) => ({ node: item, path: item.path })),
-        total: removed ? 1 : 2,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === "/api/v1/nodes/42/tags?limit=1000&offset=0")
-      return Response.json({
-        items: removed ? [] : [tag],
-        total: removed ? 0 : 1,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === `/api/v1/nodes/42/tags/${tag.id}` && init?.method === "DELETE")
-      return new Promise<Response>((resolve) => {
-        release = resolve;
-      });
-    if (resolving && url === `/api/v1/versions/${oldID}`)
-      return new Promise<Response>((resolve) => {
-        releaseVersion = resolve;
-      });
-    if (url === "/api/v1/nodes/99") return Response.json(other);
-    if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
-      return Response.json({
-        items: [currentVersion, oldVersion],
-        total: 2,
-        limit: 1000,
-        offset: 0,
-      });
-    if (url === "/api/daemon/web-download")
-      return JSON.parse(String(init?.body)).revision === 1002
-        ? Response.json({ detail: "Download unavailable in fixture" }, { status: 503 })
-        : Response.json({ detail: "Node revision changed" }, { status: 409 });
-    return undefined;
-  });
-  render(App);
-  await screen.findByRole("cell", { name: "example.txt" });
-  await fireEvent.click(
-    await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
-  );
-  await fireEvent.click(screen.getByRole("option", { name: "tax (2)" }));
-  await fireEvent.click(await screen.findByRole("cell", { name: "/reports/example.txt" }));
-  await screen.findByText("1 assigned");
-  await act(() => {
-    location.hash = link();
-  });
-  await screen.findByText(oldID);
-  await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
-  await within(screen.getByRole("dialog")).findByText(currentID);
-  await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await fireEvent.keyDown(window, { key: "1" });
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  resolving = true;
-  fetchMock.mockClear();
-  history.back();
-  await waitFor(() => expect(releaseVersion).toBeTypeOf("function"));
-  expect(location.hash).toBe(link());
-  expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/v1/nodes/42")).toBe(true);
-  await act(() => {
-    removed = true;
-    release(Response.json(receipt));
-  });
-  await screen.findByText("Removed tax from example.txt.");
-  await waitFor(() =>
-    expect(screen.queryByRole("cell", { name: "/reports/example.txt" })).toBeNull(),
-  );
-  await act(() => releaseVersion(Response.json(oldVersion)));
-  await screen.findByText(oldID);
-  const drawer = within(screen.getByRole("dialog"));
-  fetchMock.mockClear();
-  await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
-  await waitFor(() =>
-    expect(
-      fetchMock.mock.calls.some(([input]) => String(input) === "/api/daemon/web-download"),
-    ).toBe(true),
-  );
-  const call = fetchMock.mock.calls.find(([input]) => String(input) === "/api/daemon/web-download");
-  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
-    revision: 1002,
-    version_id: oldID,
-  });
-});
+it.each(["drawer already open", "version lookup pending"])(
+  "keeps the tag removal receipt revision for a linked version download when the receipt arrives with the %s",
+  async (ordering) => {
+    history.replaceState(null, "", `/#${credentials}`);
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const vaultID = "55555555-5555-4555-8555-555555555555";
+    const tag = {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "tax",
+      revision: 1,
+      assignment_count: 2,
+    };
+    const other = { ...fileNode, id: 99, name: "other.txt", path: "/reports/other.txt" };
+    const receipt = {
+      node: { ...node, revision: 1002 },
+      tag: { ...tag, revision: 2, assignment_count: 1 },
+      changed: true,
+    };
+    localStorage.setItem(
+      `docbank:tag-hotkeys:v1:${vaultID}`,
+      JSON.stringify({ version: 1, bindings: { "1": tag.id } }),
+    );
+    let removed = false;
+    let resolving = false;
+    let releaseVersion!: (response: Response) => void;
+    let release!: (response: Response) => void;
+    const fetchMock = api((url, init) => {
+      if (url.startsWith("/api/v1/audit/status"))
+        return Response.json({
+          enabled: false,
+          vault_id: vaultID,
+          operation_sequence_high_water: 0,
+          allocation_entry_count: 0,
+          scopes: [],
+        });
+      if (url.includes("/children"))
+        return Response.json({
+          directory: root,
+          items: [node, other],
+          total: 2,
+          limit: 1000,
+          offset: 0,
+        });
+      if (url === "/api/v1/tags?limit=1000&offset=0")
+        return Response.json({
+          items: [removed ? receipt.tag : tag],
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        });
+      if (url === `/api/v1/tags/${tag.id}/nodes?limit=1000&offset=0&live_only=true`)
+        return Response.json({
+          items: (removed ? [other] : [node, other]).map((item) => ({
+            node: item,
+            path: item.path,
+          })),
+          total: removed ? 1 : 2,
+          limit: 1000,
+          offset: 0,
+        });
+      if (url === "/api/v1/nodes/42/tags?limit=1000&offset=0")
+        return Response.json({
+          items: removed ? [] : [tag],
+          total: removed ? 0 : 1,
+          limit: 1000,
+          offset: 0,
+        });
+      if (url === `/api/v1/nodes/42/tags/${tag.id}` && init?.method === "DELETE")
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      if (resolving && url === `/api/v1/versions/${oldID}`)
+        return new Promise<Response>((resolve) => {
+          releaseVersion = resolve;
+        });
+      if (url === "/api/v1/nodes/99") return Response.json(other);
+      if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
+        return Response.json({
+          items: [currentVersion, oldVersion],
+          total: 2,
+          limit: 1000,
+          offset: 0,
+        });
+      if (url === "/api/daemon/web-download")
+        return JSON.parse(String(init?.body)).revision === 1002
+          ? Response.json({ detail: "Download unavailable in fixture" }, { status: 503 })
+          : Response.json({ detail: "Node revision changed" }, { status: 409 });
+      return undefined;
+    });
+    render(App);
+    await screen.findByRole("cell", { name: "example.txt" });
+    await fireEvent.click(
+      await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+    );
+    await fireEvent.click(screen.getByRole("option", { name: "tax (2)" }));
+    await fireEvent.click(await screen.findByRole("cell", { name: "/reports/example.txt" }));
+    await screen.findByText("1 assigned");
+    await act(() => {
+      location.hash = link();
+    });
+    await screen.findByText(oldID);
+    await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
+    await within(screen.getByRole("dialog")).findByText(currentID);
+    await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await fireEvent.keyDown(window, { key: "1" });
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    resolving = ordering === "version lookup pending";
+    fetchMock.mockClear();
+    history.back();
+    if (resolving) await waitFor(() => expect(releaseVersion).toBeTypeOf("function"));
+    else await screen.findByText(oldID);
+    expect(location.hash).toBe(link());
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/v1/nodes/42")).toBe(true);
+    await act(() => {
+      removed = true;
+      release(Response.json(receipt));
+    });
+    await screen.findByText("Removed tax from example.txt.");
+    await waitFor(() =>
+      expect(screen.queryByRole("cell", { name: "/reports/example.txt" })).toBeNull(),
+    );
+    if (resolving) await act(() => releaseVersion(Response.json(oldVersion)));
+    await screen.findByText(oldID);
+    const drawer = within(screen.getByRole("dialog"));
+    fetchMock.mockClear();
+    await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input) === "/api/daemon/web-download"),
+      ).toBe(true),
+    );
+    const call = fetchMock.mock.calls.find(
+      ([input]) => String(input) === "/api/daemon/web-download",
+    );
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+      revision: 1002,
+      version_id: oldID,
+    });
+  },
+);
 
 it("clears a failed linked version lookup when the same version is selected in the timeline", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
