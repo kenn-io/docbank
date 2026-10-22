@@ -3,10 +3,12 @@
 package providerhttp
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"strings"
 	"time"
@@ -50,6 +52,8 @@ type EgressPolicy struct {
 	KeepAlive           time.Duration
 	TLSHandshakeTimeout time.Duration
 	TLS                 TLSPolicy
+	// DialContext opens a connection to a validated IP address. Nil uses net.Dialer.
+	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 type validatedPolicy struct {

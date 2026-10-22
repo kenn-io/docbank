@@ -1180,7 +1180,8 @@ func TestMistralOCRRuntime(t *testing.T) {
 		{"missing manifest", func(p *RenditionProfileConfig) { p.Runtime.CapabilityManifest = "" }, "absolute capability_manifest"},
 		{"relative manifest", func(p *RenditionProfileConfig) { p.Runtime.CapabilityManifest = "mistral.json" }, "absolute capability_manifest"},
 		{"total timeout", func(p *RenditionProfileConfig) { p.Runtime.TotalTimeout = Duration(time.Second) }, "zero poll bounds"},
-		{"timeout too long", func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = Duration(30*time.Minute + time.Nanosecond) }, "requires request_timeout"},
+		{"timeout too long", func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = Duration(10*time.Minute + time.Nanosecond) }, "requires request_timeout"},
+		{"transcript bound", func(p *RenditionProfileConfig) { p.MaxTranscriptChars = 1 }, "max_transcript_chars is only supported for ASR"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := valid()
@@ -1190,6 +1191,11 @@ func TestMistralOCRRuntime(t *testing.T) {
 			require.ErrorContains(t, c.Validate(), test.want)
 		})
 	}
+	t.Run("authorization window timeout", func(t *testing.T) {
+		c := valid()
+		c.RenditionProfiles["primary"].Runtime.RequestTimeout = Duration(10 * time.Minute)
+		require.NoError(t, c.Validate())
+	})
 	t.Run("missing credential", func(t *testing.T) {
 		c := valid()
 		c.CredentialBindings = nil

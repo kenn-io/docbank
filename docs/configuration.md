@@ -420,7 +420,7 @@ Images and other formats are outside this daemon profile.
 | --- | --- |
 | `endpoint` | Exactly `https://api.eu.mistral.ai`. |
 | `capability_manifest` | Complete authenticated manifest with PDF upload authority. Relative paths resolve against the config root. |
-| `request_timeout` | Positive per-attempt limit, at most thirty minutes. |
+| `request_timeout` | Positive per-attempt limit, at most ten minutes. |
 | `allowed_cidrs`, `proxy_mode` | Non-empty provider IP allowlist and `proxy_mode = "disabled"`. |
 | `spki_sha256` | Optional lowercase SHA-256 SPKI pins for the provider certificate. |
 | `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Positive transport limits, each at most five minutes. |

@@ -30,7 +30,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
-	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
@@ -151,6 +150,31 @@ func TestMistralOCRSharedProvider(t *testing.T) {
 	}
 }
 
+func TestRenditionSharedProviderEquivalentCIDRs(t *testing.T) {
+	for _, adapter := range []string{"Mistral", "Docling"} {
+		t.Run(adapter, func(t *testing.T) {
+			var cfg config.Config
+			if adapter == "Mistral" {
+				cfg, _ = mistralOCRProcessingConfig(t)
+			} else {
+				cfg, _ = doclingDocumentProcessingConfig(t, "http://127.0.0.1:5001")
+			}
+			cfg.RenditionProfiles["documents"].Runtime.AllowedCIDRs = []string{"fd00::/64"}
+			other := cfg.RenditionProfiles["documents"]
+			other.Runtime = new(*other.Runtime)
+			other.Runtime.AllowedCIDRs = []string{"fd00:0:0:0::/64"}
+			cfg.RenditionProfiles["other"] = other
+			processing := cfg.ProcessingProfiles["documents"]
+			processing.Rendition = "other"
+			cfg.ProcessingProfiles["other"] = processing
+			require.NoError(t, cfg.Validate())
+			profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+			require.NoError(t, err)
+			require.Same(t, profiles["documents"].RenditionProvider, profiles["other"].RenditionProvider)
+		})
+	}
+}
+
 func TestDaemonMistralOCRProcessing(t *testing.T) {
 	cfg, _ := mistralOCRProcessingConfig(t)
 	cfg.Server.APIKey = "synthetic-mistral-daemon-key"
@@ -195,12 +219,12 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 	server.StartTLS()
 	t.Cleanup(server.Close)
-	previousEgress, previousDial := renditionTestEgress, providerhttp.TestDialContext
-	t.Cleanup(func() { renditionTestEgress, providerhttp.TestDialContext = previousEgress, previousDial })
+	previousEgress := renditionTestEgress
+	t.Cleanup(func() { renditionTestEgress = previousEgress })
 	renditionTestEgress.resolver = mistralTestResolver{t: t}
 	renditionTestEgress.roots = x509.NewCertPool()
 	renditionTestEgress.roots.AddCert(leaf)
-	providerhttp.TestDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+	renditionTestEgress.dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		assert.Equal(t, "tcp4", network)
 		assert.Equal(t, "127.0.0.1:443", address)
 		var dialer net.Dialer

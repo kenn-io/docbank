@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
 	"slices"
@@ -27,8 +28,9 @@ const (
 
 // Only daemon tests set renditionTestEgress.
 var renditionTestEgress struct {
-	resolver providerhttp.Resolver
-	roots    *x509.CertPool
+	resolver    providerhttp.Resolver
+	roots       *x509.CertPool
+	dialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 type renditionProviderInputs struct {
@@ -37,6 +39,7 @@ type renditionProviderInputs struct {
 	maxDocumentBytes, maxResponseBytes int64
 	credentialEnvironment              string
 	runtime                            config.RenditionRuntimeConfig
+	egress                             providerhttp.EgressPolicy
 }
 
 type registeredRenditionProvider struct {
@@ -101,8 +104,10 @@ func configureRenditionProviders(cfg config.Config) (
 			continue
 		}
 		descriptor := provider.Descriptor()
-		if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
-			string(descriptor.TrustBoundary) != configured.TrustBoundary {
+		// Mistral validates the binding before checking its disclosure, with a fingerprint hint.
+		if configured.AdapterContract != config.MistralOCRAdapterContract &&
+			(descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
+				string(descriptor.TrustBoundary) != configured.TrustBoundary) {
 			return nil, nil, fmt.Errorf("configuring rendition runtime %q: descriptor differs from portable binding", name)
 		}
 		providers[name] = provider
@@ -138,8 +143,8 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 	egress := providerEgressPolicy(configured.Runtime.ProviderEgressConfig)
 	runtime := *configured.Runtime
 	runtime.CapabilityManifest = "" // Descriptor identity covers the manifest contents.
-	runtime.SPKISHA256 = egress.TLS.SPKISHA256
-	inputs := renditionProviderInputs{runtime: runtime, adapterContract: configured.AdapterContract,
+	runtime.ProviderEgressConfig = config.ProviderEgressConfig{}
+	inputs := renditionProviderInputs{runtime: runtime, egress: egress, adapterContract: configured.AdapterContract,
 		maxTranscriptChars: configured.MaxTranscriptChars, maxDocumentBytes: configured.MaxDocumentBytes,
 		maxResponseBytes: configured.MaxResponseBytes, credentialEnvironment: environmentVariable}
 	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: configured.AdapterContract,
@@ -155,6 +160,7 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return existing.provider, disclosure, nil
 	}
 	egress.TLS.RootCAs = renditionTestEgress.roots
+	egress.DialContext = renditionTestEgress.dialContext
 	transport, err := providerhttp.NewTransport(egress, renditionTestEgress.resolver)
 	if err != nil {
 		return nil, disclosure, err
@@ -296,7 +302,8 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 	if err != nil {
 		return mistral.Profile{}, err
 	}
-	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint {
+	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
+		string(descriptor.TrustBoundary) != configured.TrustBoundary {
 		return mistral.Profile{}, fmt.Errorf("descriptor differs from portable binding; expected descriptor_fingerprint = %q", descriptor.Fingerprint)
 	}
 	return mistral.Profile{Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,

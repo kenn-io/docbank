@@ -937,7 +937,7 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 			return fmt.Errorf("%s max_transcript_chars is invalid: %w", prefix, err)
 		}
 	}
-	if profile.AdapterContract == DoclingDocumentAdapterContract && profile.MaxTranscriptChars != 0 {
+	if (profile.AdapterContract == DoclingDocumentAdapterContract || profile.AdapterContract == MistralOCRAdapterContract) && profile.MaxTranscriptChars != 0 {
 		return fmt.Errorf("%s max_transcript_chars is only supported for ASR", prefix)
 	}
 
@@ -1041,8 +1041,8 @@ func validateMistralRuntime(profile RenditionProfileConfig, prefix string) error
 	if _, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix); err != nil {
 		return err
 	}
-	if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > mistral.MaxTimeout || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
-		return fmt.Errorf("%s Mistral runtime requires request_timeout > 0 and <= 30 minutes and zero poll bounds", prefix)
+	if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 10*time.Minute || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
+		return fmt.Errorf("%s Mistral runtime requires request_timeout > 0 and <= 10 minutes and zero poll bounds", prefix)
 	}
 	if _, err := profile.MistralPolicy(); err != nil {
 		return fmt.Errorf("%s: %w", prefix, err)
