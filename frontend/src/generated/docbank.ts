@@ -4855,6 +4855,9 @@ export interface PersonMergeReceipt {
 
 export interface PersonPhotoSummary {
   face?: PersonFacePreview;
+  face_hidden?: boolean;
+  /** @nullable */
+  hidden_count?: number | null;
   library_count: number;
 }
 

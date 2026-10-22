@@ -14,6 +14,7 @@ import {
   storage,
 } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
+import { person, personResponse, personMergeReceipt } from "./people-test-fixtures.js";
 import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
@@ -3924,9 +3925,12 @@ it.each([
       }
       if (url.endsWith("/photos/assets/query")) {
         const request = JSON.parse(String(init?.body));
-        const items = request.query.filters?.person_ids?.includes(personID)
-          ? [item]
-          : [item, other];
+        const items =
+          request.hidden !== hidden
+            ? []
+            : request.query.filters?.person_ids?.includes(personID)
+              ? [item]
+              : [item, other];
         return Response.json({ items, total: items.length, facets: [] });
       }
       if (url.endsWith("/photos/albums")) return Response.json([]);
@@ -3973,8 +3977,8 @@ it.each([
     await waitFor(() =>
       expect(setQuery).toHaveBeenCalledWith(expect.objectContaining(personQuery)),
     );
-    expect(setQuery.mock.contexts.at(-1)).toMatchObject({ hidden: false });
-    expect(location.pathname).toBe("/photos");
+    expect(setQuery.mock.contexts.at(-1)).toMatchObject({ hidden });
+    expect(location.pathname).toBe(hidden ? "/photos/hidden" : "/photos");
     await waitFor(() =>
       expect(setQuery).toHaveBeenLastCalledWith(expect.objectContaining(personQuery)),
     );
@@ -4354,49 +4358,30 @@ it("follows a person filter through a rename and merge in People", async () => {
       disconnect() {}
     },
   );
-  const ada = {
-    person_id: "00000000-0000-4000-8000-000000000001",
+  const ada = person("00000000-0000-4000-8000-000000000001", {
     display_name: "Ada",
-    display_name_folded: "ada",
-    state: "curated",
     revision: 1,
-    created_at: "2026-01-01",
     photo_summary: { library_count: 1 },
-  };
-  const grace = {
-    ...ada,
-    person_id: "00000000-0000-4000-8000-000000000002",
+  });
+  const grace = person("00000000-0000-4000-8000-000000000002", {
     display_name: "Grace",
-    display_name_folded: "grace",
-  };
+    revision: 1,
+    photo_summary: { library_count: 1 },
+  });
   let rows = [ada, grace];
   vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
   vi.spyOn(api, "renamePerson").mockImplementation(async (_id, request) => {
     const renamed = { ...ada, display_name: request.display_name, revision: 2 };
     rows = [renamed, grace];
-    return { ...renamed, origin: "operator", updated_at: "2026-01-02" };
+    return personResponse(renamed);
   });
   vi.spyOn(api, "mergePerson").mockImplementation(async (_id, request) => {
     rows = [grace];
-    return {
-      absorbed_display_name: "Ada Lovelace",
-      absorbed_person_id: ada.person_id,
-      created_at: "2026-01-02",
-      merge_id: "merge",
-      moved: {
-        assertions: 1,
-        custodian_assignments: 0,
-        deduplicated_assertions: 0,
-        deduplicated_identities: 0,
-        external_uids: 0,
-        identities: 0,
-        superseded_candidates: 0,
-      },
-      operation_id: request.operation_id,
-      survivor_person_id: grace.person_id,
-      survivor_revision_after: 2,
-      survivor_revision_before: 1,
-    };
+    return personMergeReceipt(
+      { ...ada, display_name: "Ada Lovelace" },
+      grace,
+      request.operation_id,
+    );
   });
   stubPhotoFetch(async (url, init) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
@@ -4438,4 +4423,48 @@ it("follows a person filter through a rename and merge in People", async () => {
   expect(library.personFilter).toEqual({ id: grace.person_id, name: "Grace" });
   await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
   await screen.findByText("Person: Grace");
+});
+
+it("opens a Hidden-only person's count in filtered Hidden photos", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    photo_summary: { library_count: 0, hidden_count: 1 },
+  });
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const item = photo(1);
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden"))
+      return Response.json({
+        configured: true,
+        expires_at: "2099-01-01T00:00:00Z",
+        expires_in: 300,
+      });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) {
+      const body = JSON.parse(String(init?.body));
+      const items =
+        body.hidden && body.query.filters?.person_ids?.includes(ada.person_id) ? [item] : [];
+      return Response.json({ items, total: items.length, facets: [] });
+    }
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+    );
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "1 Hidden photo" }));
+  await screen.findByText("Person: Ada");
+  await screen.findByRole("button", { name: `Select ${item.name}` });
+  expect(location.pathname).toBe("/photos/hidden");
 });

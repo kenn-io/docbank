@@ -13,11 +13,12 @@
   }: {
     people: People;
     cache: PhotoPreviewCache;
-    onperson: (id: string, name: string) => void;
+    onperson: (id: string, name: string, hidden?: boolean) => void;
   } = $props();
   let editing = $state.raw<PersonSummary>();
   let name = $state("");
   let images = $state.raw<Record<string, { url: string; style: string }>>({});
+  const unlocked = $derived(!!people.access?.deadline);
   const merge = $derived(people.merge);
   const roles = $derived(merge && mergeRoles(merge));
   const selected = (person: PersonSummary) =>
@@ -65,7 +66,7 @@
         const image = await faceCrop(
           cache,
           face,
-          { id: person.person_id, hidden: false, size: 128 },
+          { id: person.person_id, hidden: person.photo_summary?.face_hidden ?? false, size: 128 },
           signal,
           (release) => portrait.releases.push(release),
         );
@@ -156,12 +157,20 @@
         <button
           type="button"
           class="person-open"
-          onclick={() => onperson(person.person_id, person.display_name)}
+          onclick={() => onperson(person.person_id, person.display_name, false)}
         >
           {@render portrait(person)}
           <strong>{person.display_name}</strong>
           {@render counts(person)}
         </button>
+        {#if unlocked && person.photo_summary?.hidden_count !== undefined}<button
+            class="hidden-count"
+            type="button"
+            onclick={() => onperson(person.person_id, person.display_name, true)}
+            >{person.photo_summary.hidden_count} Hidden {person.photo_summary.hidden_count === 1
+              ? "photo"
+              : "photos"}</button
+          >{/if}
         <div class="card-actions">
           <Button
             size="sm"
@@ -314,6 +323,13 @@
     text-decoration: none;
     gap: 8px;
     padding: 12px;
+  }
+  .hidden-count {
+    margin: 0 12px;
+    color: var(--text-muted);
+    background: none;
+    border: 0;
+    cursor: pointer;
   }
   strong {
     overflow-wrap: anywhere;

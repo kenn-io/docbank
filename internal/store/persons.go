@@ -301,6 +301,8 @@ type PersonSearchResult struct {
 }
 
 type PersonPhotoSummary struct {
+	HiddenCount  *int64             `json:"hidden_count,omitzero"`
+	FaceHidden   bool               `json:"face_hidden,omitzero"`
 	LibraryCount int64              `json:"library_count"`
 	Face         *PersonFacePreview `json:"face,omitzero"`
 }
@@ -362,7 +364,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			return err
 		}
 		if options.PhotoSummary {
-			return s.personPhotoSummaries(ctx, tx, people, options.GridRecipe)
+			return s.personPhotoSummaries(ctx, tx, people, options.GridRecipe, !hideLocked)
 		}
 		return nil
 	})
