@@ -13,7 +13,7 @@ uses the revision returned by the preceding read.
 
 ## People in Photos
 
-Open **Photos → People** to browse everyone visible to your browser session, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. People with document evidence or no photo evidence still have a card, with a person icon when no readable assigned face is available.
+Open **Photos → People** to browse the people in your visible photos, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. A card shows a person icon when no readable assigned face is available. People with no visible photo, such as email contacts, get no card.
 
 Select a card to open that person's Library photos. While Hidden is unlocked, a separate Hidden count opens that person's Hidden photos. Hidden-only people appear while Hidden is unlocked and clear when it locks or expires. A readable key face supplies the portrait, including Hidden while unlocked; otherwise Docbank prefers the newest assigned Library face.
 
@@ -21,7 +21,7 @@ Use **Rename** to change the name. The card updates in place, so the people you 
 
 To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records. The list reloads its first page with current counts. When both people have the same name and the same detail, the dialog also shows each person ID. Active photo filters follow renames and merges.
 
-If a write fails or someone else changed either person first, the list reloads its first page. Review the current cards and select again. An uncertain merge result also reloads the list so you can see whether it completed.
+If someone else changed or removed either person first, the list reloads its first page; review the current cards and select again. A rejected name keeps your selection, and a failed merge keeps both people selected. An uncertain merge result also reloads the list so you can see whether it completed.
 
 A merge can stop when a face assigned to one person was rejected for the other. The error lists each visible conflicting face with its content version. Use the CLI or API key that made the rejection to review it:
 

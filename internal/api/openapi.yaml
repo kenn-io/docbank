@@ -26331,7 +26331,7 @@ paths:
           name: cursor
           schema:
             type: string
-        - description: Add Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
+        - description: Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
           in: query
           name: photo_summary
           schema:
