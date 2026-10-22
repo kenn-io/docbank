@@ -233,6 +233,7 @@
         kind: "versions";
         linked?: Awaited<ReturnType<typeof resolveNodeVersionLink>>;
         fromLink?: boolean;
+        receiptNode?: Node;
       }
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
@@ -940,9 +941,7 @@
   const versionHistoryNode = $derived.by(() => {
     if (activePanel?.kind !== "versions") return undefined;
     const node = activePanel.linked?.node ?? selected?.node;
-    return node && node.id === selected?.node.id && selected.node.revision > node.revision
-      ? selected.node
-      : node;
+    return newestNode(node, [selected?.node, activePanel.receiptNode]);
   });
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
@@ -1490,7 +1489,7 @@
       ) {
         return;
       }
-      handleTagChanged(receipt, !assigned);
+      applyTagReceipt(receipt, !assigned);
       shortcutNotice = assigned
         ? `Removed ${receipt.tag.name} from ${target.node.name}.`
         : `Added ${receipt.tag.name} to ${target.node.name}.`;
@@ -2732,6 +2731,21 @@
     truncated = false;
     void loadRoot();
     void loadTagCatalog();
+  }
+
+  function newestNode(node: Node | undefined, others: (Node | undefined)[]): Node | undefined {
+    for (const other of others)
+      if (node && other?.id === node.id && other.revision > node.revision) node = other;
+    return node;
+  }
+
+  function applyTagReceipt(receipt: TagAssignmentReceipt, assigned: boolean): void {
+    const panel = activePanel?.kind === "versions" && activePanel.fromLink ? activePanel : null;
+    const linkedID =
+      nodeVersionSelection && !("error" in nodeVersionSelection) && nodeVersionSelection.nodeId;
+    if (panel && linkedID === receipt.node.id)
+      panel.receiptNode = newestNode(receipt.node, [panel.receiptNode]);
+    handleTagChanged(receipt, assigned);
   }
 
   function handleTagChanged(receipt: TagAssignmentReceipt, assigned: boolean): void {
@@ -4858,7 +4872,7 @@
         assignedTotal={selectedTagsTotal}
         disabled={loading}
         onclose={() => (manageTagsTarget = null)}
-        onchanged={handleTagChanged}
+        onchanged={applyTagReceipt}
         onauthfailure={handleFailure}
       />
     {/if}
