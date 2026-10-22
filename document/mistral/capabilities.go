@@ -55,8 +55,8 @@ var boundUnverifiedReasonCodes = []string{
 
 var failureReasonCodes = []string{
 	"empty_output",
-	"invalid_or_local_failure",
 	reasonInvalidModel,
+	"invalid_or_local_failure",
 	"provider_4xx",
 	"response_too_large",
 	"sentinel_missing",

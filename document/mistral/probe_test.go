@@ -157,8 +157,8 @@ func TestRunCapabilityProbeClassifiesErrorBodies(t *testing.T) {
 		{name: "invalid model", body: invalidModelBody, wantReason: "invalid_model"},
 		{name: "another type", body: `{"type":"invalid_request"}`, wantReason: "provider_4xx"},
 		{name: "non-JSON", body: "invalid model", wantReason: "provider_4xx"},
-		{name: "oversize", body: invalidModelBody + strings.Repeat(" ", 4097-len(invalidModelBody)), wantReason: "provider_4xx"},
-		{name: "4096 bytes", body: invalidModelBody + strings.Repeat(" ", 4096-len(invalidModelBody)), wantReason: "invalid_model"},
+		{name: "oversize", body: invalidModelBody + strings.Repeat(" ", maxErrorBodyBytes+1-len(invalidModelBody)), wantReason: "provider_4xx"},
+		{name: "4096 bytes", body: invalidModelBody + strings.Repeat(" ", maxErrorBodyBytes-len(invalidModelBody)), wantReason: "invalid_model"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

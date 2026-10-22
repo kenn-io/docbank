@@ -542,8 +542,10 @@ type credentialError struct{ cause error }
 func (e *credentialError) Error() string { return "Mistral OCR credential is unavailable" }
 func (e *credentialError) Unwrap() error { return e.cause }
 
+const maxErrorBodyBytes = 4096
+
 func isInvalidModelResponse(reader io.Reader) bool {
-	body, err := providerutil.ReadBounded(reader, 4096)
+	body, err := providerutil.ReadBounded(reader, maxErrorBodyBytes)
 	if err != nil {
 		return false
 	}
