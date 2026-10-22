@@ -21,6 +21,7 @@ import (
 	"golang.org/x/net/idna"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/mistral"
@@ -764,8 +765,8 @@ var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 const (
 	MistralOCRAdapterContract      = mistral.DocumentAdapterContract
-	DoclingASRAdapterContract      = "docbank-docling-asr/v1"
-	DoclingDocumentAdapterContract = "docbank-docling-document/v1"
+	DoclingASRAdapterContract      = docling.ASRAdapterContract
+	DoclingDocumentAdapterContract = docling.DocumentAdapterContract
 )
 
 func validateProcessingProfiles(c Config) error {

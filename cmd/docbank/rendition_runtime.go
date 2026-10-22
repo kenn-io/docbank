@@ -103,12 +103,12 @@ func configureRenditionProviders(cfg config.Config) (
 		if provider == nil {
 			continue
 		}
-		descriptor := provider.Descriptor()
-		// Mistral validates the binding before checking its disclosure, with a fingerprint hint.
-		if configured.AdapterContract != config.MistralOCRAdapterContract &&
-			(descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
-				string(descriptor.TrustBoundary) != configured.TrustBoundary) {
-			return nil, nil, fmt.Errorf("configuring rendition runtime %q: descriptor differs from portable binding", name)
+		if configured.AdapterContract == plaintextRenditionAdapter || configured.AdapterContract == epubRenditionAdapter {
+			descriptor := provider.Descriptor()
+			if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
+				string(descriptor.TrustBoundary) != configured.TrustBoundary {
+				return nil, nil, fmt.Errorf("configuring rendition runtime %q: descriptor differs from portable binding", name)
+			}
 		}
 		providers[name] = provider
 	}
@@ -132,6 +132,10 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, err
 	}
 	descriptor := adapter.descriptor
+	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
+		string(descriptor.TrustBoundary) != configured.TrustBoundary {
+		return nil, disclosure, fmt.Errorf("descriptor differs from portable binding; expected descriptor_fingerprint = %q", descriptor.Fingerprint)
+	}
 	expectedDisclosure := adapter.disclosureFingerprint
 	if configured.DisclosureFingerprint != expectedDisclosure {
 		return nil, disclosure, errors.New("disclosure fingerprint does not bind the runtime endpoint")
@@ -225,9 +229,6 @@ func configuredDoclingProfile(configured config.RenditionProfileConfig) (docling
 	if err != nil {
 		return docling.Profile{}, err
 	}
-	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint {
-		return docling.Profile{}, errors.New("descriptor differs from portable binding")
-	}
 	return configuredDoclingTransportProfile(configured, descriptor), nil
 }
 
@@ -260,10 +261,6 @@ func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docl
 	})
 	if err != nil {
 		return docling.ASRProfile{}, err
-	}
-	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
-		string(descriptor.TrustBoundary) != configured.TrustBoundary {
-		return docling.ASRProfile{}, errors.New("descriptor differs from portable binding")
 	}
 	return docling.ASRProfile{Profile: configuredDoclingTransportProfile(configured, descriptor),
 		MaxTranscriptChars: configured.MaxTranscriptChars}, nil
@@ -301,10 +298,6 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 	descriptor, err := mistral.DocumentDescriptor(policy, manifest)
 	if err != nil {
 		return mistral.Profile{}, err
-	}
-	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
-		string(descriptor.TrustBoundary) != configured.TrustBoundary {
-		return mistral.Profile{}, fmt.Errorf("descriptor differs from portable binding; expected descriptor_fingerprint = %q", descriptor.Fingerprint)
 	}
 	return mistral.Profile{Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), Timeout: runtime.RequestTimeout.Std()}, nil

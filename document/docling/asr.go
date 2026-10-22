@@ -16,6 +16,8 @@ import (
 )
 
 const (
+	// ASRAdapterContract identifies the daemon's qualified audio rendition policy.
+	ASRAdapterContract          = "docbank-docling-asr/v1"
 	qualifiedASRSchemaVersion   = "1.10.0"
 	qualifiedASRProviderVersion = "1.32.0"
 )
@@ -48,7 +50,7 @@ func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
 		SchemaVersion   string                          `json:"schema_version"`
 		ProviderVersion string                          `json:"provider_version"`
 		EvidencePolicy  document.EvidencePolicyIdentity `json:"evidence_policy"`
-	}{"docbank-docling-asr/v1", qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity()})
+	}{ASRAdapterContract, qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity()})
 	if err != nil {
 		return "", err
 	}
@@ -58,7 +60,7 @@ func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
 // ASRDisclosureFingerprint binds a portable ASR profile to its exact endpoint and
 // deployment. Recompute it whenever the descriptor, endpoint, or deployment changes.
 func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
-	return providerutil.RenditionDisclosureFingerprint("docbank-docling-asr/v1", descriptor, endpoint, deployment)
+	return providerutil.RenditionDisclosureFingerprint(ASRAdapterContract, descriptor, endpoint, deployment)
 }
 
 // NewASR constructs the transcript provider for the qualified WAV/MP3 deployment.
