@@ -1,11 +1,16 @@
 package mcp
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"io"
 	"maps"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -120,4 +125,46 @@ func TestOriginalChunkRejectsStreamMismatch(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestMCPOriginalContentKeepsProvenConnection(t *testing.T) {
+	f := newNativeExportFixture(t)
+	original := strings.Repeat("synthetic bytes\x00\xff", 1<<16)
+	selected := f.addFile(t, "large.bin", original)
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-original-key"
+	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs,
+		VaultRoot: os.Getenv("DOCBANK_HOME"), Cfg: cfg, ShutdownToken: "synthetic-proof"})
+	t.Cleanup(daemon.Close)
+	httpServer := httptest.NewServer(daemon.Handler())
+	t.Cleanup(httpServer.Close)
+	record := daemonconn.NewRecord(strings.TrimPrefix(httpServer.URL, "http://"), cfg.Server.APIKey, "synthetic-proof", "")
+	_, err := daemonconn.RuntimeStore(os.Getenv("DOCBANK_HOME")).Write(record)
+	require.NoError(t, err)
+	connection, running, err := daemonconn.Running(t.Context())
+	require.NoError(t, err)
+	require.True(t, running)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return connection, nil
+	}, func(c *daemonconn.Connection) error { return c.Close() })
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
+	var received []byte
+	for offset := 0; offset < len(original); offset += maxOriginalChunk {
+		result := decodeResult(t, exportExchange(t, server, "http", "tools/call", map[string]any{
+			"name": "read_document_content", "arguments": map[string]any{
+				"vault_id": f.catalog.VaultID(), "node_id": selected.NodeID,
+				"content_version_id": selected.VersionID, "blob_hash": selected.SHA256,
+				"size": selected.Size, "offset": offset, "max_bytes": maxOriginalChunk,
+			},
+		}))
+		out := objectField(t, result, "structuredContent")
+		encoded, ok := out["data_base64"].(string)
+		require.True(t, ok)
+		chunk, err := base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		received = append(received, chunk...)
+		require.EqualValues(t, len(received), out["next_offset"])
+	}
+	require.Equal(t, []byte(original), received)
 }
