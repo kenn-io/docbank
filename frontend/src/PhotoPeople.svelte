@@ -295,7 +295,8 @@
       if (owns())
         searchState = {
           ...pending,
-          // A rank can change between pages, so a person may appear twice.
+          // A falling rank can repeat a person; dedupe those rows. A rising
+          // rank can move a group ahead of the cursor and skip it until restart.
           people: [
             ...new Map(
               [...pending.people, ...page.items].map((person) => [person.person_id, person]),

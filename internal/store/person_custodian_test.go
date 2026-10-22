@@ -683,14 +683,16 @@ func TestPeopleSearchIdentityLabelsRespectEvidenceVisibility(t *testing.T) {
 				_, err = s.PublishDocumentPeople(ctx, publication)
 				require.NoError(t, err)
 			}
-			page, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true, PeopleSearchOptions{})
-			require.NoError(t, err)
-			require.Len(t, page, 1)
-			require.Equal(t, test.expected, page[0].IdentityLabel)
-			if test.hidden {
-				page, err = s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), person.DisplayName, "", "", 10, true, PeopleSearchOptions{})
+			for _, options := range []PeopleSearchOptions{{}, {PhotoSummary: true}, {RecentFirst: true}, {PhotoSummary: true, RecentFirst: true}} {
+				page, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true, options)
 				require.NoError(t, err)
-				require.Equal(t, test.value, page[0].IdentityLabel)
+				require.Len(t, page, 1)
+				require.Equal(t, test.expected, page[0].IdentityLabel)
+				if test.hidden {
+					page, err = s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), person.DisplayName, "", "", 10, true, options)
+					require.NoError(t, err)
+					require.Equal(t, test.value, page[0].IdentityLabel)
+				}
 			}
 		})
 	}

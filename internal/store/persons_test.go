@@ -266,25 +266,28 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	// A suppressed assertion is not depicted evidence.
 	_, err := s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-09-01T00:00:00.000000000Z',action='suppress' WHERE person_id=?`, people["Cy"].PersonID)
 	require.NoError(t, err)
-	page := func(ctx context.Context, options PeopleSearchOptions) []string {
+	page := func(ctx context.Context, options PeopleSearchOptions, limit int) []string {
 		var ids []string
 		afterName, afterID := "", ""
 		for {
-			rows, err := s.PeopleByDisplayName(ctx, "", afterName, afterID, 1, true, options)
+			rows, err := s.PeopleByDisplayName(ctx, "", afterName, afterID, limit, true, options)
 			require.NoError(t, err)
 			if len(rows) == 0 {
 				return ids
 			}
-			ids = append(ids, rows[0].PersonID)
-			afterName, afterID, options.AfterRecent = rows[0].DisplayNameFolded, rows[0].PersonID, rows[0].RecentRank
+			for _, row := range rows {
+				ids = append(ids, row.PersonID)
+			}
+			last := rows[len(rows)-1]
+			afterName, afterID, options.AfterRecent = last.DisplayNameFolded, last.PersonID, last.RecentRank
 		}
 	}
 	zoes := []string{people["Zoe"].PersonID, people["zoe"].PersonID}
 	slices.Sort(zoes)
 	// Namesakes share their group's newest evidence and stay adjacent across pages.
 	recent := PeopleSearchOptions{RecentFirst: true}
-	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID), page(ctx, recent))
-	byName := page(ctx, PeopleSearchOptions{})
+	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID), page(ctx, recent, 1))
+	byName := page(ctx, PeopleSearchOptions{}, 1)
 	require.Equal(t, []string{people["Ada"].PersonID, people["Bob"].PersonID, people["Cy"].PersonID}, byName[:3])
 
 	// Locked Hidden evidence neither ranks nor reveals its person.
@@ -293,7 +296,7 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	require.Equal(t, []string{people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID, people["zoe"].PersonID}, page(ctx, recent))
+	require.Equal(t, []string{people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID, people["zoe"].PersonID}, page(ctx, recent, 1))
 	full, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false, recent)
 	require.NoError(t, err)
 	require.Equal(t, people["Bob"].PersonID, full[0].PersonID)
@@ -303,7 +306,13 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	}
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
-	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), recent)[:2])
+	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), recent, 1)[:2])
+	// Equal timestamps use folded name and ID, including across a page boundary.
+	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-01-01T00:00:00.000000001Z' WHERE person_id=?`, people["Zoe"].PersonID)
+	require.NoError(t, err)
+	for _, limit := range []int{1, 2, 3, 100} {
+		require.Equal(t, append([]string{people["Bob"].PersonID}, append(slices.Clone(zoes), people["Ada"].PersonID, people["Cy"].PersonID)...), page(WithPhotoHiddenToken(ctx, token), recent, limit))
+	}
 }
 
 func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
@@ -410,4 +419,46 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.Equal(t, assertions[0].RecordedAt, rows[0].RecentRank)
 		})
 	}
+}
+
+func TestPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	var people []Person
+	for i, name := range []string{"Ada", "Bob", "bob", "Cy"} {
+		person, err := s.CreatePerson(ctx, name, "operator")
+		require.NoError(t, err)
+		people = append(people, person)
+		if name == "bob" {
+			continue // Namesakes share Bob's evidence rank.
+		}
+		node := browsePhotoNode(t, s, name+".jpg", fakeHash("paging-"+name), "image/jpeg")
+		_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("2026-01-%02dT00:00:00.000000000Z", 10-i), person.PersonID)
+		require.NoError(t, err)
+	}
+	options := PeopleSearchOptions{RecentFirst: true}
+	first, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	require.Equal(t, people[0].PersonID, first[0].PersonID)
+	// A new assertion raises Bob and his namesake above the saved Ada cursor.
+	newPhoto := browsePhotoNode(t, s, "new-bob.jpg", fakeHash("paging-new-bob"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, newPhoto.CurrentVersionID, people[1].PersonID, "")
+	require.NoError(t, err)
+	options.AfterRecent = first[0].RecentRank
+	rest, err := s.PeopleByDisplayName(ctx, "", first[0].DisplayNameFolded, first[0].PersonID, 10, true, options)
+	require.NoError(t, err)
+	require.Len(t, rest, 1)
+	require.Equal(t, people[3].PersonID, rest[0].PersonID)
+	// Bob's older assertion cannot bring either namesake back after the cursor.
+	options.AfterRecent = ""
+	restarted, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, options)
+	require.NoError(t, err)
+	require.Len(t, restarted, 4)
+	bobIDs := []string{people[1].PersonID, people[2].PersonID}
+	slices.Sort(bobIDs)
+	require.Equal(t, []string{restarted[0].PersonID, restarted[1].PersonID}, bobIDs)
 }
