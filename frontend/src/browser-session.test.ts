@@ -3,18 +3,30 @@ import { takeFragmentSession } from "./browser-session.js";
 
 afterEach(() => history.replaceState(null, "", "/"));
 
-it("removes only credential fields while preserving browser intent and history state", () => {
-  history.replaceState(
-    { position: 7 },
-    "",
-    "/photos?view=grid#web_session=token&node=42&version=11111111-1111-4111-8111-111111111111&query=%7B%7D&photo=image&web_upload_secret=proof",
-  );
-  expect(takeFragmentSession()).toEqual({ token: "token", uploadSecret: "proof" });
-  expect(location.pathname + location.search + location.hash).toBe(
-    "/photos?view=grid#node=42&version=11111111-1111-4111-8111-111111111111&query=%7B%7D&photo=image",
-  );
-  expect(history.state).toEqual({ position: 7 });
-});
+it.each([
+  {
+    url: "/photos?view=grid#web_session=one%20time&node=42&version=11111111-1111-4111-8111-111111111111&query=%7B%7D&photo=image&web_upload_secret=proof",
+    remaining:
+      "/photos?view=grid#node=42&version=11111111-1111-4111-8111-111111111111&query=%7B%7D&photo=image",
+    hash: "#node=42&version=11111111-1111-4111-8111-111111111111&query=%7B%7D&photo=image",
+  },
+  {
+    url: "/#web_session=one%20time&web_upload_secret=proof",
+    remaining: "/",
+    hash: "",
+  },
+])(
+  "removes only credential fields while preserving browser intent and history state: $url",
+  ({ url, remaining, hash }) => {
+    history.replaceState({ position: 7 }, "", url);
+    expect(takeFragmentSession()).toEqual({ token: "one time", uploadSecret: "proof" });
+    expect(location.pathname + location.search + location.hash).toBe(remaining);
+    expect(location.hash).toBe(hash);
+    expect(sessionStorage.length).toBe(0);
+    expect(history.state).toEqual({ position: 7 });
+    expect(takeFragmentSession()).toBeNull();
+  },
+);
 
 it("scrubs incomplete credentials too", () => {
   history.replaceState(null, "", "/#node=42&web_session=");

@@ -11,7 +11,7 @@ it("round-trips the full query and preserves other fragment keys and history sta
   history.replaceState(
     { fixtureIndex: 3 },
     "",
-    `/reports?view=list#node=42&version=example&photo=photo-1&source=example&query=${encodeURIComponent(JSON.stringify(query))}`,
+    `/reports?view=list#node=42&version=11111111-1111-4111-8111-111111111111&photo=photo-1&query=${encodeURIComponent(JSON.stringify(query))}`,
   );
   const restored = queryFromFragment(location.hash);
   expect(restored).toEqual(query);
@@ -22,9 +22,8 @@ it("round-trips the full query and preserves other fragment keys and history sta
   expect(location.search).toBe("?view=list");
   const params = new URLSearchParams(location.hash.slice(1));
   expect(params.get("node")).toBe("42");
-  expect(params.get("version")).toBe("example");
+  expect(params.get("version")).toBe("11111111-1111-4111-8111-111111111111");
   expect(params.get("photo")).toBe("photo-1");
-  expect(params.get("source")).toBe("example");
 });
 
 it("rejects ambiguous, oversized and unknown query state", () => {
@@ -44,8 +43,8 @@ it("removes only the query when other fragment keys are present", () => {
   history.replaceState(
     null,
     "",
-    "/#node=42&version=example&photo=photo-1&source=example&query=%7B%7D",
+    "/#node=42&version=11111111-1111-4111-8111-111111111111&photo=photo-1&query=%7B%7D",
   );
   replaceQueryURL(null);
-  expect(location.hash).toBe("#node=42&version=example&photo=photo-1&source=example");
+  expect(location.hash).toBe("#node=42&version=11111111-1111-4111-8111-111111111111&photo=photo-1");
 });

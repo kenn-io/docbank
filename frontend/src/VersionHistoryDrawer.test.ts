@@ -70,7 +70,7 @@ describe("version history drawer", () => {
     );
     const close = vi.fn();
 
-    render(VersionHistoryDrawer, {
+    const drawer = render(VersionHistoryDrawer, {
       session: "short-lived",
       pinnedVersion: versions[0],
       node: { ...node, current_version_id: replacedVersionID },
@@ -89,6 +89,11 @@ describe("version history drawer", () => {
     expect(screen.getByText("Revert source")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/nodes/42/versions?limit=1000&offset=0");
+
+    await drawer.rerender({ pinnedVersion: versions[2] });
+    expect(screen.getByText("a".repeat(64))).toBeTruthy();
+    expect(screen.queryByText("Revert source")).toBeNull();
+    expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
     expect(close).toHaveBeenCalledOnce();
