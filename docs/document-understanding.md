@@ -313,7 +313,7 @@ verifying the caller's `ExpectedSize` and `ExpectedSHA256`.
 zeroes that copy when you call `Release`.
 For `PrepareMemory`, compare `SHA256()` yourself if you expect a known hash.
 For direct formats, `Process` reopens and verifies staging files for every
-attempt, or clones the private memory copy without re-hashing it.
+attempt, or verifies and clones the private memory copy.
 It derives request options from the policy and authorization, bounds the
 response, and converts validated provider output into
 `document.SourceDocument`. For a configured

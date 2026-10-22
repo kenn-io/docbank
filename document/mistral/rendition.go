@@ -267,13 +267,7 @@ func (client *RenditionClient) process(
 		return snapshot, nil
 	}
 	readDocument := func(attemptCtx context.Context, attempt preparedSnapshot) ([]byte, error) {
-		if err := attemptCtx.Err(); err != nil {
-			return nil, err
-		}
-		if attempt.size != int64(len(source)) || attempt.sha256 != metadata.SHA256 {
-			return nil, errors.New("mistral rendition source identity changed")
-		}
-		return bytes.Clone(source), nil
+		return cloneVerifiedDocument(attemptCtx, source, attempt)
 	}
 	options := probeRequestOptions(candidate, client.policy.values.MaxUnits,
 		client.policy.values.ExtractHeader, client.policy.values.ExtractFooter)
