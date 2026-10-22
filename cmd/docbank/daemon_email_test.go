@@ -63,7 +63,7 @@ func TestDaemonProcessesEmailWithoutExternalRenditionProvider(t *testing.T) {
 	}, 15*time.Second, 25*time.Millisecond)
 }
 
-func TestServeRecoversAbandonedEmailSpoolBeforeBlobCleanup(t *testing.T) {
+func TestServeRecoversAbandonedProcessingSpoolBeforeBlobCleanup(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	layout := home.Layout{Root: root}
@@ -74,6 +74,9 @@ func TestServeRecoversAbandonedEmailSpoolBeforeBlobCleanup(t *testing.T) {
 		filepath.Join(spool, ".docbank-email-spool"), []byte("docbank-email-spool/v1\n"), 0o600,
 	))
 	require.NoError(t, os.WriteFile(filepath.Join(spool, "source"), []byte("abandoned"), 0o600))
+	native := filepath.Join(layout.BlobTmpDir(), "native-pdf-abandoned")
+	require.NoError(t, os.Mkdir(native, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(native, "source.pdf"), []byte("partial PDF"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(layout.BlobTmpDir(), "blob-unfinished"), []byte("partial"), 0o600))
 
 	t.Setenv("DOCBANK_HOME", root)
@@ -86,7 +89,7 @@ func TestServeRecoversAbandonedEmailSpoolBeforeBlobCleanup(t *testing.T) {
 		case err := <-done:
 			require.NoError(t, err)
 		case <-time.After(10 * time.Second):
-			require.FailNow(t, "daemon did not stop after email spool recovery")
+			require.FailNow(t, "daemon did not stop after spool recovery")
 		}
 	})
 	require.Eventually(t, func() bool {

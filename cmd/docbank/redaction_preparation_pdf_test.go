@@ -48,6 +48,11 @@ func redactionPDFConfig() *model.Configuration {
 
 func readRedactionPDFText(t *testing.T, data []byte) string {
 	t.Helper()
+	return readRedactionPDFPages(t, data)[0]
+}
+
+func readRedactionPDFPages(t *testing.T, data []byte) []string {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	runtimeConfig := wazero.NewRuntimeConfig().
@@ -69,11 +74,15 @@ func readRedactionPDFText(t *testing.T, data []byte) string {
 		_, closeErr := instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
 		require.NoError(t, closeErr)
 	}()
-	result, err := instance.GetPageText(&requests.GetPageText{
-		Page: requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}},
-	})
+	count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
 	require.NoError(t, err)
-	return strings.TrimSpace(result.Text)
+	pages := make([]string, count.PageCount)
+	for i := range pages {
+		result, err := instance.GetPageText(&requests.GetPageText{Page: requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: i}}})
+		require.NoError(t, err)
+		pages[i] = strings.TrimSpace(result.Text)
+	}
+	return pages
 }
 
 func writeRedactionPDF(t *testing.T, path string, source pdfproduction.Source,
@@ -111,7 +120,7 @@ func writeRedactionPDF(t *testing.T, path string, source pdfproduction.Source,
 	output, err := os.Create(path)
 	require.NoError(t, err)
 	writeErr := pdfproduction.WriteFresh(t.Context(), output,
-		&redactionPageSequence{artifact: artifact}, plan, recipe)
+		&redactionPageSequence{artifact: artifact}, plan, pdfproduction.PDFWriteOptions{Recipe: recipe, StagingDirectory: t.TempDir(), MaxBytes: recipe.MaxStagingBytes})
 	closeErr = output.Close()
 	require.NoError(t, writeErr)
 	require.NoError(t, closeErr)
@@ -143,7 +152,7 @@ func verifyRedactionPDF(t *testing.T, pdf, sidecar []byte, artifact pdfproductio
 				}
 				endorsementsRead = true
 				return artifact.Layout, artifact.Endorsements, nil
-			},
+			}, StagingDirectory: t.TempDir(),
 		})
 	require.NoError(t, err)
 }

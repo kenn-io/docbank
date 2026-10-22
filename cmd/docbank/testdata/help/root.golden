@@ -69,7 +69,7 @@ Exports and productions:
   export  Export originals or rendered photos as verified ZIP bundles
   labels  Look up package-scoped received and assigned labels
   package  Inspect and exchange load-file packages
-  redaction  Inspect PDF redaction evidence
+  redaction  Review and redact retained PDFs
   transfer  Inspect portable transfer packages
 
 Vault operations:

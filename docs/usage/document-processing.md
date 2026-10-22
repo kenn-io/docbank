@@ -100,15 +100,14 @@ Agents can use the same JSON command or authenticated
 
 Preparation returns coverage gaps for inspection. Every ordered gap must be
 fully masked, and an unordered gap requires masking its whole page, before the
-internal resolver can proceed. A zero-gap result does not approve redaction or
+resolver can proceed. A zero-gap result does not approve redaction or
 verify an output PDF. Keep the complete envelope with its evidence and frames;
 the map alone is not an execution authorization. This command applies no masks
 and creates no retained job or output PDF.
 
 The entire PDF must fit within 64 MiB and 16 pages. Retained evidence is capped
 at 8 MiB and the full result at 15 MiB. Work has a 60-second request deadline;
-limits or failure never return a partial preparation. One preparation runs at a
-time. Busy or memory refusals exit 5: wait for active work to finish, or retry
+limits or failure never return a partial preparation. Prepare, resolve and render share one slot, with no queue. Busy or memory refusals exit 5: wait for active work to finish, or retry
 when daemon memory use is lower. The renderer's 1 GiB RSS ceiling counts the
 whole daemon, so even a small PDF can be refused on a busy process.
 
@@ -117,6 +116,81 @@ exit 4, and failed integrity checks exit 6. Missing runtime, unsupported PDFs,
 work limits, request cancellation and worker failures exit 1. Native text
 inspection does not add OCR; the [font and coverage limitations](../architecture/page-images.md#remaining-refusals)
 still apply.
+
+## Review and render a native PDF
+
+Save the preparation, supply explicit masks, then inspect the review before rendering:
+
+```bash
+docbank redaction prepare /inbox/source.pdf --json > preparation.json
+docbank redaction resolve preparation.json masks.json --json > review.json
+docbank redaction render preparation.json masks.json review.json redacted.zip
+```
+
+The ZIP contains exactly `redacted.pdf`, `redacted.txt` and `receipt.json`.
+Extract `redacted.pdf` to open it in a PDF viewer. The text file contains the
+sanitized text, with a form feed after each page. The receipt binds the source,
+review, recipe and file hashes. `--json` on render also reports the local
+archive path, size, hash and publication state. `--overwrite` permits replacing
+an existing output; otherwise an existing or concurrently created file is kept.
+Output must be outside the Docbank data directory.
+
+`masks.json` is an array. Each mask has a distinct canonical lowercase UUIDv4
+`id` and a `selector`. For example, to remove the first six UTF-8 **bytes**:
+
+```json
+[
+  {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "selector": {
+      "kind": "text",
+      "map_sha256": "<map.sha256 from preparation.json>",
+      "span": {"start": 0, "end": 6}
+    }
+  }
+]
+```
+
+Spans must end on UTF-8 boundaries. Rectangle selectors use `boxes`, each with
+`page`, `frame_sha256`, `x0`, `y0`, `x1`, `y1` in the map's integer page frame.
+Page selectors use `pages`, a list of one-based page numbers. All selector kinds
+carry `map_sha256`. Up to 256 masks, 1,024 boxes and 1,024 page references fit
+within the 1 MiB mask limit.
+
+Run resolve without `--json` to see effective masks, removed byte spans and
+quoted retained text for each page. If a partial atom needs a larger mask,
+resolve returns `selection_expansion_required` and writes the complete proposal
+to stderr. Review its `expanded` selector, explicitly replace the selector in
+your masks file, and resolve again. Nothing silently accepts the expansion.
+Every gap anywhere in the document must be covered: ordered gaps need covering
+masks; unordered gaps need a whole-page mask. `mapping_incomplete` produces no
+review or output PDF.
+
+Resolve and render inspect the selected original again. Tags, names, moves and
+a newer current version do not invalidate a review of an unchanged retained
+version. The selected version must still belong to the live file; trash or
+pruning makes it unavailable. Revisions in the review and receipt are
+informational. Keep the complete preparation envelope, masks and review;
+a bare map is insufficient. These files contain unredacted evidence.
+
+Render can hold the shared slot for up to ten minutes, including delivery.
+Prepare and resolve have 60-second request deadlines. A busy message identifies
+the active operation. Busy or memory refusals exit 5; wait for that operation or
+lower daemon memory use. Changed evidence or review exits 4 and requires a new
+review. Invalid local inputs exit 2, unavailable versions exit 3, integrity
+failures exit 6, and other refusals or I/O failures exit 1. No write is retried
+automatically. After a reported save followed by an output or cleanup error,
+inspect the named archive before retrying.
+
+The daemon verifies the fresh PDF before creating the ZIP. The CLI verifies the
+transferred archive, its inventory, file hashes, receipt and reviewed text
+before publishing one file. Client checks do not independently verify the
+source pixels. No job, attachment or restart-recoverable output is retained.
+A killed daemon may leave private files in its spool; see the
+[staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
+Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
+and `/api/v1/redaction/render` routes. Browser sessions and MCP tools do not
+expose these operations.
 
 ## Convert documents with Docling
 

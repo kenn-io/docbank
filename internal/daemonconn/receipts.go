@@ -454,15 +454,17 @@ var codeToTypedErr = map[string]error{
 // backup cleanup reports that list every selected or removed pack.
 const maxErrorResponseBytes = 64 << 20
 
-func decodeError(resp *http.Response) error {
+func decodeError(resp *http.Response) error { return decodeErrorLimit(resp, maxErrorResponseBytes) }
+
+func decodeErrorLimit(resp *http.Response, limit int64) error {
 	var e api.Error
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return &responseError{status: resp.StatusCode, err: fmt.Errorf("reading daemon error response: %w", err)}
 	}
-	if len(body) > maxErrorResponseBytes {
+	if int64(len(body)) > limit {
 		return &responseError{status: resp.StatusCode,
-			err: fmt.Errorf("daemon returned %s with an error response over %d bytes", resp.Status, maxErrorResponseBytes)}
+			err: fmt.Errorf("daemon returned %s with an error response over %d bytes", resp.Status, limit)}
 	}
 	if err := json.Unmarshal(body, &e); err != nil || e.Status == 0 {
 		return &responseError{status: resp.StatusCode,
@@ -503,6 +505,9 @@ func apiProblemError(e api.Error) error {
 		}
 	} else {
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
+	}
+	if e.Redaction != nil {
+		cause = errors.Join(cause, e.Redaction)
 	}
 	problem := &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
 	if e.BackupForget != nil || e.BackupPrune != nil {

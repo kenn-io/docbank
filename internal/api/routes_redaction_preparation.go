@@ -60,7 +60,11 @@ func redactionPreparationProblem(ctx context.Context, err error) *Error {
 	case errors.Is(err, processing.ErrRedactionPreparationUnavailable):
 		return NewError(503, "redaction_preparation_unavailable", "native PDF preparation unavailable; check the daemon and configured Linux amd64 page runtime")
 	case errors.Is(err, processing.ErrRedactionPreparationBusy):
-		return NewError(503, "redaction_preparation_busy", "another native PDF preparation is active; retry later")
+		detail := "another native PDF operation is active; retry later"
+		if busy, ok := errors.AsType[*processing.NativePDFBusyError](err); ok {
+			detail = busy.Error()
+		}
+		return NewError(503, "redaction_preparation_busy", detail)
 	case errors.As(err, &memory):
 		return NewError(503, "redaction_preparation_memory", "daemon memory is above the renderer ceiling; retry when the daemon is quieter")
 	case errors.Is(err, context.DeadlineExceeded):

@@ -11979,6 +11979,94 @@ func (c *Client) PrepareNativePDF(ctx context.Context, options *PrepareNativePDF
 	return responseParser(ctx, resp)
 }
 
+// RenderNativePDF Render and verify a reviewed native PDF into one ZIP
+func (c *Client) RenderNativePDF(ctx context.Context, options *RenderNativePDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenderNativePDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/render",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RenderNativePDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RenderNativePDFResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RenderNativePDFErrorResponse](resp, "RenderNativePDFErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/render")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolveNativePDF Review explicit masks against a freshly inspected retained PDF
+func (c *Client) ResolveNativePDF(ctx context.Context, options *ResolveNativePDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveNativePDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveNativePDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveNativePDFResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveNativePDFResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolveNativePDFErrorResponse](resp, "ResolveNativePDFErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReadDocumentRenditionBySelector Stream the active rendition for one exact source selector
 func (c *Client) ReadDocumentRenditionBySelector(ctx context.Context, options *ReadDocumentRenditionBySelectorRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionBySelectorResponse, error) {
 	var err error
@@ -22878,6 +22966,62 @@ func (o *PrepareNativePDFRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// RenderNativePDFRequestOptions is the options needed to make a request to RenderNativePDF.
+type RenderNativePDFRequestOptions struct {
+	Body *RenderNativePDFBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RenderNativePDFRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RenderNativePDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RenderNativePDFRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RenderNativePDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolveNativePDFRequestOptions is the options needed to make a request to ResolveNativePDF.
+type ResolveNativePDFRequestOptions struct {
+	Body *ResolveNativePDFBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolveNativePDFRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolveNativePDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolveNativePDFRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolveNativePDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReadDocumentRenditionBySelectorRequestOptions is the options needed to make a request to ReadDocumentRenditionBySelector.
 type ReadDocumentRenditionBySelectorRequestOptions struct {
 	Body *ReadDocumentRenditionBySelectorBody
@@ -26169,6 +26313,10 @@ type ParseQueryBody = SavedQueryV1Schema
 
 type PrepareNativePDFBody = RedactionPreparationRequest
 
+type RenderNativePDFBody = RedactionRenderRequest
+
+type ResolveNativePDFBody = RedactionResolveRequest
+
 type ReadDocumentRenditionBySelectorBody = RenditionSelectorRequest
 
 type ResolveRenditionTextBody = RenditionTextRequest
@@ -26885,19 +27033,20 @@ type DownloadExportArchiveErrorResponse = Error
 type GetExportJobEventsResponse = []byte
 
 type GetExportJobEventsErrorResponse struct {
-	BackupForget             *BackupForgetReport `json:"backup_forget,omitempty"`
-	BackupPrune              *BackupPruneReport  `json:"backup_prune,omitempty"`
-	Code                     *string             `json:"code,omitempty"`
-	Detail                   *string             `json:"detail,omitempty"`
-	Errors                   []string            `json:"errors,omitempty"`
-	FaceIds                  []string            `json:"face_ids,omitempty"`
-	HiddenFaceConflict       *bool               `json:"hidden_face_conflict,omitempty"`
-	InaccessibleFaceConflict *bool               `json:"inaccessible_face_conflict,omitempty"`
-	More                     *bool               `json:"more,omitempty"`
-	ObservedScopeCount       *int64              `json:"observed_scope_count,omitempty"`
-	Position                 *ErrorPosition      `json:"position,omitempty"`
-	Status                   int64               `json:"status"`
-	Title                    string              `json:"title"`
+	BackupForget             *BackupForgetReport  `json:"backup_forget,omitempty"`
+	BackupPrune              *BackupPruneReport   `json:"backup_prune,omitempty"`
+	Code                     *string              `json:"code,omitempty"`
+	Detail                   *string              `json:"detail,omitempty"`
+	Errors                   []string             `json:"errors,omitempty"`
+	FaceIds                  []string             `json:"face_ids,omitempty"`
+	HiddenFaceConflict       *bool                `json:"hidden_face_conflict,omitempty"`
+	InaccessibleFaceConflict *bool                `json:"inaccessible_face_conflict,omitempty"`
+	More                     *bool                `json:"more,omitempty"`
+	ObservedScopeCount       *int64               `json:"observed_scope_count,omitempty"`
+	Position                 *ErrorPosition       `json:"position,omitempty"`
+	Redaction                *PDFRedactionProblem `json:"redaction,omitempty"`
+	Status                   int64                `json:"status"`
+	Title                    string               `json:"title"`
 }
 
 type CreateExportPlanResponse = bundle.Plan
@@ -27704,6 +27853,34 @@ type PrepareNativePDFErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type PrepareNativePDFErrorResponseApplicationProblemPlusJSON504 api.Error
 
+type RenderNativePDFResponse = []byte
+
+type RenderNativePDFErrorResponse = Error
+
+type ResolveNativePDFResponse = processing.RedactionReview
+
+type ResolveNativePDFErrorResponse api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON403 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ResolveNativePDFErrorResponseApplicationProblemPlusJSON504 api.Error
+
 type ReadDocumentRenditionBySelectorResponse = []byte
 
 type ReadDocumentRenditionBySelectorErrorResponse = Error
@@ -28032,8 +28209,6 @@ type AssignTagPathRequest struct {
 	Path   string  `json:"path"`
 }
 
-type Atom = redaction.Atom
-
 type AttachPhotoFileRequest = api.AttachPhotoFileRequest
 
 type AttachmentPublicationChoice = bundle.AttachmentPublicationChoice
@@ -28197,8 +28372,6 @@ type BatesReserveRequest = api.BatesReserveRequest
 type BlobStore = api.BlobStore
 
 type BlobStorePreview = api.BlobStorePreview
-
-type Box = redaction.Box
 
 type CancelExportJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -28532,8 +28705,6 @@ type GCReport = api.GCReport
 
 type GPSBounds = query.GPSBounds
 
-type Gap = redaction.Gap
-
 type GcRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -28721,6 +28892,8 @@ type NativeGlyph = pdfproduction.NativeGlyph
 
 type NativePDFEvidence = production.NativePDFEvidence
 
+type NativePDFSelection = processing.NativePDFSelection
+
 type NativeTextPage = pdfproduction.NativeTextPage
 
 type Node = api.Node
@@ -28732,6 +28905,32 @@ type OutputCounts = bundle.OutputCounts
 type OutputProblem = bundle.OutputProblem
 
 type OutputProblems = bundle.OutputProblems
+
+type PDFRedactionAtom = redaction.Atom
+
+type PDFRedactionBox = redaction.Box
+
+type PDFRedactionGap = redaction.Gap
+
+type PDFRedactionPage = redaction.Page
+
+type PDFRedactionProblem = redaction.Problem
+
+type PDFRedactionRecipe = redaction.Recipe
+
+type PDFRedactionRedactionRegion = redaction.RedactionRegion
+
+type PDFRedactionResolved = redaction.Resolved
+
+type PDFRedactionRun = redaction.Run
+
+type PDFRedactionSelector = redaction.Selector
+
+type PDFRedactionSpan = redaction.Span
+
+type PDFRedactionTextMap = redaction.TextMap
+
+type PDFRedactionUnit = redaction.Unit
 
 type PackageBrowseVolume = api.PackageBrowseVolume
 
@@ -28786,8 +28985,6 @@ type PackageTimelineInput = store.PackageTimelineInput
 type PackageTimelineInputPage = api.PackageTimelineInputPage
 
 type PackageVolume = api.PackageVolume
-
-type Page = redaction.Page
 
 type PageBinding = store.PageBinding
 
@@ -29161,9 +29358,17 @@ type Receipt = bundle.Receipt
 
 type Recipe = pdfstamp.Recipe
 
+type RedactionMask = processing.RedactionMask
+
 type RedactionPreparation = processing.RedactionPreparation
 
 type RedactionPreparationRequest = processing.RedactionPreparationRequest
+
+type RedactionRenderRequest = processing.RedactionRenderRequest
+
+type RedactionResolveRequest = processing.RedactionResolveRequest
+
+type RedactionReview = processing.RedactionReview
 
 type RegisterBlobStoreRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -29413,8 +29618,6 @@ type SourceMetadataWarningV1 = document.SourceMetadataWarningV1
 
 type SourceRequest = bundle.SourceRequest
 
-type Span = redaction.Span
-
 type SplitPersonRequest = api.SplitPersonRequest
 
 type StartProcessingRequest = api.StartProcessingRequest
@@ -29495,8 +29698,6 @@ type TermReportHistoryPage = store.TermReportHistoryPage
 
 type TextCitation = document.TextCitation
 
-type TextMap = redaction.TextMap
-
 type TextOutlineEntry = document.TextOutlineEntry
 
 type TextOutlinePage = document.TextOutlinePage
@@ -29535,8 +29736,6 @@ type UnassignTagPathRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Path   string  `json:"path"`
 }
-
-type Unit = redaction.Unit
 
 type UpdatePhotoAlbumRequest = api.UpdatePhotoAlbumRequest
 

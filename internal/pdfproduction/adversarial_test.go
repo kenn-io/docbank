@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"image/png"
 	"io"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,7 +87,7 @@ func freshFixture(tb testing.TB) ([]byte, PageArtifact) {
 	tb.Helper()
 	a := unicodeArtifact(tb)
 	var out bytes.Buffer
-	require.NoError(tb, writeFresh(tb.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
+	require.NoError(tb, writeFresh(tb.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: tb.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	return out.Bytes(), a
 }
 
@@ -102,7 +103,7 @@ func TestVerifyMalformedToUnicodeNeverPanics(t *testing.T) {
 			}, nil)
 			var err error
 			require.NotPanics(t, func() {
-				err = VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor([]PageArtifact{a}))
+				err = VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor(t, []PageArtifact{a}))
 			})
 			require.Error(t, err)
 		})
@@ -124,7 +125,7 @@ func TestVerifyRejectsMalformedToUnicodeSyntax(t *testing.T) {
 					return []byte(strings.Replace(string(data), test.from, test.to, 1))
 				})
 			}, nil)
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor([]PageArtifact{a})))
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor(t, []PageArtifact{a})))
 		})
 	}
 }
@@ -166,13 +167,13 @@ func TestVerifyRejectsUnexplainedPDFBytes(t *testing.T) {
 				require.Contains(t, string(objects[test.id]), test.from)
 				objects[test.id] = bytes.Replace(objects[test.id], []byte(test.from), []byte(test.to), 1)
 			}, nil)
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor([]PageArtifact{a})))
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor(t, []PageArtifact{a})))
 		})
 	}
 	for _, extra := range []string{"999999 0 obj\n(SYNTHETIC PRIVATE SOURCE)\nendobj\n", "% SYNTHETIC PRIVATE SOURCE\n", "\n"} {
 		t.Run("unindexed "+extra[:1], func(t *testing.T) {
 			changed := rewriteFreshFixture(t, original, 1, func(map[int][]byte) {}, []byte(extra))
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor([]PageArtifact{a})))
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor(t, []PageArtifact{a})))
 		})
 	}
 }
@@ -199,7 +200,7 @@ func TestVerifyRejectsAlteredCIDMetricsAndMapping(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			changed := rewriteFreshFixture(t, original, 1, test.edit, nil)
 			require.NotEqual(t, original, changed)
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor([]PageArtifact{a})))
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor(t, []PageArtifact{a})))
 		})
 	}
 }
@@ -213,7 +214,7 @@ func TestVerifyRejectsHiddenImageStreamBytes(t *testing.T) {
 		objects[6] = append(append(bytes.Clone(objects[6][:end]), extra...), objects[6][end:]...)
 		objects[7] = fmt.Appendf(nil, "7 0 obj\n%d\nendobj\n", end-start+len(extra))
 	}, nil)
-	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor([]PageArtifact{a})))
+	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor(t, []PageArtifact{a})))
 }
 
 func pngChunk(kind string, data []byte) []byte {
@@ -251,10 +252,10 @@ func TestWriterAndVerifierRejectUnsupportedPNGGrammar(t *testing.T) {
 			artifact.PNGSize, artifact.PNGSHA256 = int64(len(changed)), digest(changed)
 			artifact.OpenPNG = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(changed)), nil }
 			var output bytes.Buffer
-			err := writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, qualificationRecipe())
+			err := writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes})
 			require.Error(t, err)
 			require.Empty(t, output.Bytes(), "unsupported PNG must fail before published output")
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(original), int64(len(original)), verificationFor([]PageArtifact{artifact})))
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(original), int64(len(original)), verificationFor(t, []PageArtifact{artifact})))
 		})
 	}
 }
@@ -313,7 +314,7 @@ func TestVerifyFreezesFinalBytesBetweenChecksAndPages(t *testing.T) {
 				pages = append(pages, renumberArtifact(t, a, 2))
 			}
 			var out bytes.Buffer
-			require.NoError(t, writeFresh(t.Context(), &out, &artifactSequence{pages: pages}, qualificationRecipe()))
+			require.NoError(t, writeFresh(t.Context(), &out, &artifactSequence{pages: pages}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 			original := out.Bytes()
 			changed := rewriteFreshFixture(t, original, count, func(objects map[int][]byte) {
 				id := 8 + (count-1)*8
@@ -321,7 +322,7 @@ func TestVerifyFreezesFinalBytesBetweenChecksAndPages(t *testing.T) {
 			}, nil)
 			require.Len(t, changed, len(original))
 			require.NotEqual(t, original, changed)
-			input := verificationFor(pages)
+			input := verificationFor(t, pages)
 			next := input.NextPageArtifact
 			calls := 0
 			input.NextPageArtifact = func(ctx context.Context) (PageArtifact, error) {
@@ -333,14 +334,14 @@ func TestVerifyFreezesFinalBytesBetweenChecksAndPages(t *testing.T) {
 			}
 			require.NoError(t, VerifyFresh(t.Context(), bytes.NewReader(original), int64(len(original)), input), "all passes must use the original private snapshot, never the callback-mutated reader")
 			require.Equal(t, changed, original)
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(original), int64(len(original)), verificationFor(pages)), "a new verification must reject the now-mutated artifact")
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(original), int64(len(original)), verificationFor(t, pages)), "a new verification must reject the now-mutated artifact")
 		})
 	}
 }
 
 func TestVerifyEvidenceCarriesOnePageDeadline(t *testing.T) {
 	original, a := freshFixture(t)
-	input := verificationFor([]PageArtifact{a})
+	input := verificationFor(t, []PageArtifact{a})
 	var deadline time.Time
 	check := func(ctx context.Context) {
 		got, ok := ctx.Deadline()
@@ -421,7 +422,7 @@ func TestEvidenceBoundsPrecedeCanonicalMarshal(t *testing.T) {
 
 func TestVerifyIndependentEndorsementsArePreflighted(t *testing.T) {
 	original, a := freshFixture(t)
-	input := verificationFor([]PageArtifact{a})
+	input := verificationFor(t, []PageArtifact{a})
 	input.NextEndorsements = func(context.Context) (redaction.PageLayout, []redaction.Endorsement, error) {
 		return a.Layout, []redaction.Endorsement{{Kind: strings.Repeat("x", maxTextBytes+1)}}, nil
 	}
@@ -432,7 +433,7 @@ func TestVerifyDeadlineInterruptsInFlightEvidence(t *testing.T) {
 	original, a := freshFixture(t)
 	for _, stage := range []string{"artifact", "text", "endorsements"} {
 		t.Run(stage, func(t *testing.T) {
-			input := verificationFor([]PageArtifact{a})
+			input := verificationFor(t, []PageArtifact{a})
 			wait := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 			switch stage {
 			case "artifact":
@@ -460,7 +461,7 @@ func TestVerifyCancellationDuringPNGReadClosesReader(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	closed := false
-	input := verificationFor([]PageArtifact{a})
+	input := verificationFor(t, []PageArtifact{a})
 	next := input.NextPageArtifact
 	input.NextPageArtifact = func(pageCtx context.Context) (PageArtifact, error) {
 		artifact, err := next(pageCtx)
@@ -488,9 +489,11 @@ func (r *cancelPNGReader) Close() error { *r.closed = true; return nil }
 
 func TestFreshSnapshotIdentityAndReadOnlyHandle(t *testing.T) {
 	data := []byte("synthetic final PDF snapshot")
-	snapshot, err := freezeFresh(t.Context(), bytes.NewReader(data), int64(len(data)), 1000)
+	directory := t.TempDir()
+	snapshot, err := freezeFresh(t.Context(), bytes.NewReader(data), int64(len(data)), PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: directory, MaxBytes: 1000})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, snapshot.Close()) }()
+	require.Equal(t, directory, filepath.Dir(snapshot.file.Name()))
 	require.Equal(t, digest(data), snapshot.sha256)
 	require.Equal(t, int64(len(data)), snapshot.size)
 	_, err = snapshot.file.WriteAt([]byte("changed"), 0)
@@ -547,7 +550,7 @@ func TestFreshEnvelopeRejectsXrefAndObjectBoundaryAttacks(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			data := test.edit(bytes.Clone(original))
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor([]PageArtifact{a})))
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor(t, []PageArtifact{a})))
 		})
 	}
 }

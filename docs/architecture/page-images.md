@@ -142,13 +142,13 @@ Text spans count UTF-8 bytes. Text is neither normalized nor trimmed, and page
 boundaries add no separators. Semantic `units` is empty.
 
 The map's evidence digest binds this native evidence record. Existing `Align`
-callers continue to bind normalized evidence instead. Any future mask admission
+callers continue to bind normalized evidence instead. Mask admission
 must accept the complete preparation envelope and check its evidence contract;
 a bare `aligned-text/v1` map cannot identify the meaning of that digest. The
 service and client check source, frame, evidence and map bindings. Client checks
 establish response consistency, not independent verification of source pixels.
 
-One preparation may run per daemon, with no queue. Shutdown cancels admitted
+Preparation shares one slot with resolve and render, with no queue. Shutdown cancels admitted
 work and waits for cleanup. Limits are 8 KiB requests, 64 MiB originals, the
 entire 1–16-page PDF, 8 MiB retained evidence, a 15 MiB result and a 16 MiB client
 wire read. A refusal returns no partial result. The ordinary 60-second request
@@ -164,12 +164,77 @@ returns 503 busy. Limit and unsupported-source refusals are 422, stale selection
 is 409, and missing or trashed selection is 404. Corrupt originals or invalid
 inspector output return 500 integrity; other worker failures return 500 failed.
 
-`TestNativePDFPreparationCLI` imports a synthetic Helvetica PDF and obtains the
-map through the real daemon and CLI. A test-only consumer resolves its rectangle,
-writes a fresh PDF, then checks sanitized text, a black mask interior and
-unchanged retained pixels. `TestPDFRedactionSourcePreparation` separately
-qualifies the existing normalized-evidence path, including fractional-position
-Courier text. Neither test exposes mask execution as a product operation.
+`TestNativePDFRedactionCLI` qualifies import, preparation, review and render
+through the real CLI and daemon. It independently checks extracted text, black
+mask pixels and unchanged retained pixels in the saved PDF. The qualification
+also covers historical versions after metadata changes, multiple pages, explicit
+expansion and both gap kinds. `TestPDFRedactionSourcePreparation` separately
+qualifies normalized evidence, including fractional-position Courier text.
+
+### Native-PDF mask execution
+
+The API-key-only resolve and render routes admit a live file's exact retained
+version, hash and size. They do not require the observed node revision.
+Preparation still checks its own requested revision. The preparation and review
+digests use typed projections that exclude revisions; observed/admitted revisions
+remain informational. Both operations derive the map again from the complete
+evidence envelope and repeat native inspection of freshly captured source bytes.
+Any evidence or frame difference refuses the operation before output.
+
+Masks contain only a UUIDv4 ID and an explicit text, rectangle or page selector.
+Text ranges use UTF-8 byte offsets. Resolution uses the qualified recipe and
+fixed redact action, with no additional labels or reasons. Complete expansion
+proposals travel in the problem's `redaction` field. The entire problem is capped
+at 16 MiB; a larger proposal returns `redaction_limit` with narrower-selection
+advice, never a truncated selector. Requests are capped at 17 MiB and reviews
+at 15 MiB (16 MiB on the client wire).
+
+Render rechecks the reviewed hash, renders all pages, burns masks, writes a
+fresh PDF and verifies it with independent artifact iterators before packaging.
+The renderer closes before verification takes the shared WASM lease. Sanitized
+text is bounded at 1 MiB per page. The ZIP has three stored entries in order:
+`redacted.pdf`, `redacted.txt`, `receipt.json`, with no source filenames or
+optional contents. The client checks inventory, CRCs, hashes, review bindings
+and reconstructed sanitized text before atomic local publication. It does not
+run PDFium or claim to authenticate source pixels independently.
+
+Prepare, resolve and render share one shutdown-accounted operation slot. A busy
+refusal names its holder. The shared capture gate protects original bytes only
+until capture finishes. The slot remains held through verified ZIP delivery and
+cleanup. Render has a ten-minute context deadline and actual socket deadlines;
+a stalled upload or download cannot retain the slot indefinitely. Resolve uses
+the ordinary 60-second request deadline. A failed transfer after headers aborts
+the stream instead of appending a JSON error to a ZIP.
+
+All large copies live in one private directory under the service spool, passed
+explicitly to source staging, the PDF writer and verification. No operation
+changes `TMPDIR`. Component caps are 1 GiB total PNGs, 512 MiB PDF (including
+its private writer/verification copy), 256 KiB receipt and 544 MiB ZIP.
+
+| Phase | Maximum simultaneous file payload |
+|---|---|
+| Native inspection and page rendering | 1,088 MiB: PNGs plus one source copy |
+| Writing or verification | 2,048 MiB: PNGs, endpoint PDF and one private PDF copy |
+| Packaging | 1,072.25 MiB + 16 bytes: PDF, ZIP, optional text and receipt |
+
+Source copies are removed before writing, writer copies before verification,
+and verification copies and PNGs before packaging. Cleanup failure stops phase
+advancement. These bounds fit a conservative 2.125 GiB operation reservation;
+filesystem overhead and unrelated spool users require additional space. A tmpfs
+spool consumes memory outside the renderer's process-RSS measurement. Normal
+completion, cancellation and refusal remove the operation directory. Startup
+recovery removes directories left by a hard kill while holding the processing
+spool lock, before loose blob cleanup. There is no resume or global spool-quota
+mechanism.
+
+The receipt records the admitted version, informational revision, all review
+bindings, qualified recipe, page count and PDF/text sizes and digests. Local
+paths and publication state belong only to CLI output. The service creates no
+job or retained output. Request cancellation/timeout map from the request's own
+context; memory refusal is `redaction_memory`, inner deadline is
+`redaction_worker_timeout`, and unexplained worker cancellation is a failure.
+Expected 503 refusals are logged at informational level; 500 failures retain
+their diagnostic cause.
 
 Resolution requires complete gap coverage across the entire document. Every
 ordered gap must be fully masked, even away from a selected rectangle. An
@@ -250,5 +315,5 @@ an inked whitespace alias adds an ordered `unproven_whitespace` gap, even if
 that alias is unused on the source page. Every gap still needs complete masking.
 
 Preparation is an inspection step. It does not apply masks, approve a review,
-retain redaction outputs, or provide restart recovery, numbering or delivery.
+retain redaction outputs, or provide restart recovery or numbering.
 The saved-PDF qualification uses an upstream PDFium reader only in tests.

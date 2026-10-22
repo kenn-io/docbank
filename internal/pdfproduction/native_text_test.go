@@ -45,7 +45,8 @@ func TestInspectNativeTextAcrossPages(t *testing.T) {
 			[4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 		require.NoError(t, err)
 	}
-	pages, err := InspectNativeText(t.Context(), Source{bytes.NewReader(encoded.Bytes()), source.Size, source.SHA256}, frames, nil)
+	pages, err := InspectNativeText(t.Context(), Source{t.TempDir(),
+		bytes.NewReader(encoded.Bytes()), source.Size, source.SHA256}, frames, nil)
 	require.NoError(t, err)
 	require.Len(t, pages, count)
 	for index, page := range pages {
@@ -63,7 +64,8 @@ func TestInspectNativeTextAcrossPages(t *testing.T) {
 		require.NoError(t, err)
 		second, _, err := canonical.BoundedSize(pages[1], 1<<20)
 		require.NoError(t, err)
-		_, err = inspectNativeText(t.Context(), nativeTextInput{source: Source{bytes.NewReader(encoded.Bytes()), source.Size, source.SHA256}, frames: frames, maxObservationBytes: first + second - 1})
+		_, err = inspectNativeText(t.Context(), nativeTextInput{source: Source{t.TempDir(),
+			bytes.NewReader(encoded.Bytes()), source.Size, source.SHA256}, frames: frames, maxObservationBytes: first + second - 1})
 		var problem *redaction.Problem
 		require.ErrorAs(t, err, &problem)
 		require.Equal(t, "render_limit", problem.Code)
@@ -80,7 +82,7 @@ func TestInspectNativeTextFromInspection(t *testing.T) {
 	inspection, err := runtime.Inspect(t.Context(), data, source, "application/pdf")
 	require.NoError(t, err)
 	pages, err := InspectNativeTextFromInspection(t.Context(), NativeInspectionInput{
-		Source:     Source{Reader: bytes.NewReader(data), Size: source.Size, SHA256: source.SHA256},
+		Source:     Source{Reader: bytes.NewReader(data), Size: source.Size, SHA256: source.SHA256, StagingDirectory: t.TempDir()},
 		Inspection: inspection, MaxObservationBytes: 8 << 20,
 	})
 	require.NoError(t, err)

@@ -95,7 +95,7 @@ func TestVaultFormatCoverageCapturesConstructedProviders(t *testing.T) {
 	assert.Contains(t, coverage.GeneratedBy.BoundProviders, descriptor.Fingerprint)
 }
 
-func TestRootPackageRecoversInterruptedProcessingUploads(t *testing.T) {
+func TestRootPackageRecoversInterruptedProcessingSpool(t *testing.T) {
 	for _, custom := range []bool{false, true} {
 		name := "default"
 		if custom {
@@ -115,10 +115,14 @@ func TestRootPackageRecoversInterruptedProcessingUploads(t *testing.T) {
 			stale := filepath.Join(spool, ".docbank-upload-synthetic")
 			require.NoError(t, os.Mkdir(stale, 0o700))
 			require.NoError(t, os.WriteFile(filepath.Join(stale, "source"), []byte("partial upload"), 0o600))
+			native := filepath.Join(spool, "native-pdf-abandoned")
+			require.NoError(t, os.Mkdir(native, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(native, "source.pdf"), []byte("partial PDF"), 0o600))
 			loose := filepath.Join(config.Root, "blobs", "tmp", "partial-blob")
 			require.NoError(t, os.WriteFile(loose, []byte("partial blob"), 0o600))
-			unrelated := filepath.Join(spool, "keep.txt")
+			unrelated := filepath.Join(spool, "keep", "source")
 			if custom {
+				require.NoError(t, os.Mkdir(filepath.Dir(unrelated), 0o700))
 				require.NoError(t, os.WriteFile(unrelated, []byte("keep"), 0o600))
 			}
 
@@ -126,6 +130,8 @@ func TestRootPackageRecoversInterruptedProcessingUploads(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, vault.Close()) })
 			_, err = os.Stat(stale)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			_, err = os.Stat(native)
 			require.ErrorIs(t, err, os.ErrNotExist)
 			_, err = os.Stat(loose)
 			require.ErrorIs(t, err, os.ErrNotExist)
@@ -158,6 +164,10 @@ func TestRootPackageOwnsProcessingSpoolUntilClose(t *testing.T) {
 			require.NoError(t, os.Mkdir(active, 0o700))
 			source := filepath.Join(active, "source")
 			require.NoError(t, os.WriteFile(source, []byte("active upload"), 0o600))
+			native := filepath.Join(spool, "native-pdf-active")
+			require.NoError(t, os.Mkdir(native, 0o700))
+			nativeSource := filepath.Join(native, "source.pdf")
+			require.NoError(t, os.WriteFile(nativeSource, []byte("active PDF"), 0o600))
 
 			otherConfig := docbank.Config{Root: t.TempDir(),
 				Processing: docbank.ProcessingOptions{SpoolDirectory: spool}}
@@ -169,12 +179,17 @@ func TestRootPackageOwnsProcessingSpoolUntilClose(t *testing.T) {
 			content, err := os.ReadFile(source)
 			require.NoError(t, err)
 			require.Equal(t, "active upload", string(content))
+			content, err = os.ReadFile(nativeSource)
+			require.NoError(t, err)
+			require.Equal(t, "active PDF", string(content))
 
 			require.NoError(t, first.Close())
 			other, err = docbank.New(t.Context(), otherConfig)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, other.Close()) })
 			_, err = os.Stat(active)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			_, err = os.Stat(native)
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	}

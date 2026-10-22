@@ -34,7 +34,8 @@ func TestAlignQualifiedFontOverlappingPeriod(t *testing.T) {
 				engine, err := pdfproduction.NewPDFium(pdfproduction.QualifiedRecipe())
 				require.NoError(t, err)
 				raster, err := engine.Render(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(pdf),
-					Size: int64(len(pdf)), SHA256: sum(pdf)}, m.Pages[0], pdfproduction.QualifiedRecipe())
+					Size: int64(len(pdf)), SHA256: sum(pdf), StagingDirectory: t.TempDir(),
+				}, m.Pages[0], pdfproduction.QualifiedRecipe())
 				require.NoError(t, err)
 				rasters = append(rasters, bytes.Clone(raster.Pixels.Pix))
 				require.NoError(t, engine.Close())
@@ -69,7 +70,8 @@ func TestAlignQualifiedFontSameObjectApostrophe(t *testing.T) {
 		engine, err := pdfproduction.NewPDFium(pdfproduction.QualifiedRecipe())
 		require.NoError(t, err)
 		raster, err := engine.Render(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(pdf),
-			Size: int64(len(pdf)), SHA256: sum(pdf)}, m.Pages[0], pdfproduction.QualifiedRecipe())
+			Size: int64(len(pdf)), SHA256: sum(pdf), StagingDirectory: t.TempDir(),
+		}, m.Pages[0], pdfproduction.QualifiedRecipe())
 		require.NoError(t, err)
 		rasters = append(rasters, bytes.Clone(raster.Pixels.Pix))
 		require.NoError(t, engine.Close())

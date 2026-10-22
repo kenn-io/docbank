@@ -22,7 +22,7 @@ func TestNativeFontDomainsBindStagedSource(t *testing.T) {
 		SHA256: hashBytes(data), Size: int64(len(data))}
 	inspection, err := pagerender.InspectSource(data, identity, "application/pdf")
 	require.NoError(t, err)
-	source := Source{Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256}
+	source := Source{Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256, StagingDirectory: t.TempDir()}
 	domains, err := nativeFontDomains(t.Context(), runtime, bytes.NewReader(data), source,
 		inspection.Frames)
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestNativeFontDomainsRejectCIDWithQualifiedProgram(t *testing.T) {
 		SHA256: hashBytes(data), Size: int64(len(data))}
 	inspection, err := pagerender.InspectSource(data, identity, "application/pdf")
 	require.NoError(t, err)
-	source := Source{Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256}
+	source := Source{Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256, StagingDirectory: t.TempDir()}
 	domains, err := nativeFontDomains(t.Context(), runtime, bytes.NewReader(data), source,
 		inspection.Frames)
 	require.NoError(t, err)

@@ -309,6 +309,9 @@ func openVaultWithRootOpener(
 	if _, err := upload.RecoverStale(context.Background(), spoolDirectory); err != nil {
 		return nil, fmt.Errorf("recovering processing uploads: %w", err)
 	}
+	if err := internalprocessing.RecoverNativePDFSpool(context.Background(), spoolDirectory); err != nil {
+		return nil, fmt.Errorf("recovering native PDF staging: %w", err)
+	}
 	if _, err := emailmime.RecoverStale(context.Background(), layout.BlobTmpDir()); err != nil {
 		return nil, err
 	}

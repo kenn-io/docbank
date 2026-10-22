@@ -94,3 +94,15 @@ func OpenAPIYAML() ([]byte, error) {
 	}
 	return out, nil
 }
+
+// The redaction library's generic names (notably Recipe) overlap other PDF APIs.
+func apiSchemaName(t reflect.Type, hint string) string {
+	name := huma.DefaultSchemaNamer(t, hint)
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+		t = t.Elem()
+	}
+	if t.PkgPath() == "go.kenn.io/docbank/document/redaction" {
+		return "PDFRedaction" + name
+	}
+	return name
+}

@@ -240,11 +240,14 @@ func verifyFresh(ctx context.Context, reader io.ReaderAt, size int64, input Veri
 	}(ctx)
 	setupCtx, setupCancel := context.WithTimeout(ctx, time.Duration(recipe.PageTimeoutSeconds)*time.Second)
 	defer setupCancel()
-	snapshot, err := freezeFresh(setupCtx, reader, size, recipe.MaxStagingBytes)
+	snapshot, err := freezeFresh(setupCtx, reader, size, PDFWriteOptions{Recipe: recipe, StagingDirectory: input.StagingDirectory, MaxBytes: recipe.MaxStagingBytes})
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, snapshot.Close()) }()
+	if input.PDFSHA256 != "" && snapshot.sha256 != input.PDFSHA256 {
+		return errors.New("final PDF snapshot digest differs from publication digest")
+	}
 	reader, size = snapshot.file, snapshot.size
 	index, err := parseFreshIndex(setupCtx, reader, size, n)
 	setupCancel()

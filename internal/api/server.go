@@ -129,6 +129,7 @@ func NewServer(d Deps) *Server {
 	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
+	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", apiSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
 			return json.MarshalWrite(w, value)
@@ -220,6 +221,7 @@ func NewServer(d Deps) *Server {
 	registerUploadRoute(mux, humaAPI, d, g)
 	registerMailboxRoutes(mux, humaAPI, d, g)
 	registerContentWriteRoute(mux, humaAPI, d, g)
+	registerRedactionRoutes(mux, humaAPI, d)
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)

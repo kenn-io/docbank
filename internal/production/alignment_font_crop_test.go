@@ -54,7 +54,8 @@ func TestAlignQualifiedFontInheritedCrop(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { require.NoError(t, engine.Close()) }()
 			raster, err := engine.Render(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(data),
-				Size: int64(len(data)), SHA256: sum(data)}, mapping.Pages[0], pdfproduction.QualifiedRecipe())
+				Size: int64(len(data)), SHA256: sum(data), StagingDirectory: t.TempDir(),
+			}, mapping.Pages[0], pdfproduction.QualifiedRecipe())
 			require.NoError(t, err)
 			// The source override keeps A visible here; an inherited crop must not hide its probe.
 			ink := 0

@@ -49,8 +49,21 @@ jobs:
           go test -tags fts5 -v ./document/pagerender/ ./internal/processing/ -run '^(TestRealRuntimeInspectAndRenderPDFAndPNG|TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs|TestRealPageAPIBackupRestoreAndGC)$' -count=1
           go test -tags fts5 -v -p 1 \
             ./internal/production/ ./internal/pdfproduction/ ./internal/processing/ \
-            ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestInspectNativeTextFromInspection|TestRedactionPreparation)' -count=1
-          go test -tags fts5 -v ./cmd/docbank/ -run '^TestNativePDFPreparationCLI$' -count=1
+            ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestInspectNativeTextFromInspection|TestRedaction|TestNativeRedactionRender)' -count=1
+          if ! go test -tags fts5 -json ./cmd/docbank/ -run '^TestNativePDF(Preparation|Redaction)CLI$' -count=1 > /tmp/native-redaction-proof.jsonl; then
+            cat /tmp/native-redaction-proof.jsonl
+            exit 1
+          fi
+          cat /tmp/native-redaction-proof.jsonl
+          python3 -I - /tmp/native-redaction-proof.jsonl <<'PY'
+          import json, sys
+          events = [json.loads(line) for line in open(sys.argv[1])]
+          for name in ("TestNativePDFPreparationCLI", "TestNativePDFRedactionCLI"):
+              outcomes = [event["Action"] for event in events
+                          if event.get("Test") == name and event["Action"] in ("pass", "fail", "skip")]
+              if outcomes != ["pass"]:
+                  raise SystemExit(f"{name}: expected one unskipped pass, got {outcomes}")
+          PY
 
       - name: Run mandatory owner proof
         env:

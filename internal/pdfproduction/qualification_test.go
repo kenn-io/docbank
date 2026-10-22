@@ -35,8 +35,10 @@ import (
 	"go.kenn.io/docbank/internal/redactiontest"
 )
 
-func verificationFor(pages []PageArtifact) VerificationInput {
-	input := VerificationInput{}
+func verificationFor(tb testing.TB,
+	pages []PageArtifact) VerificationInput {
+	tb.Helper()
+	input := VerificationInput{StagingDirectory: tb.TempDir()}
 	for _, p := range pages {
 		input.Pages = append(input.Pages, p.Page)
 		input.ResolvedSHA256 = append(input.ResolvedSHA256, p.ResolvedSHA256)
@@ -137,14 +139,14 @@ func TestPDFProductionWorker(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, output.Close()) }()
 	sequence := &entropySequence{t: t, count: count}
-	require.NoError(t, writeFresh(t.Context(), output, sequence, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), output, sequence, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	stat, err := output.Stat()
 	require.NoError(t, err)
 	width, height := entropySize()
 	if count > 1 {
 		require.Greater(t, stat.Size(), int64(count)*int64(width)*int64(height)*3*9/10, "high-entropy qualification must not collapse to a small deduplicated payload")
 	}
-	input := VerificationInput{}
+	input := VerificationInput{StagingDirectory: t.TempDir()}
 	for i := 1; i <= count; i++ {
 		a := entropyDescriptor(i)
 		input.Pages = append(input.Pages, a.Page)
@@ -311,10 +313,10 @@ func TestPDFiumRejectsTruncatedWASMFileSize(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
 	a := unicodeArtifact(t)
-	_, err = engine.Render(t.Context(), Source{Reader: reader, Size: 1 << 32, SHA256: digest([]byte("synthetic"))}, a.Page, qualificationRecipe())
+	_, err = engine.Render(t.Context(), Source{Reader: reader, Size: 1 << 32, SHA256: digest([]byte("synthetic")), StagingDirectory: t.TempDir()}, a.Page, qualificationRecipe())
 	require.Error(t, err)
 	require.Zero(t, reader.reads, "WASM i32 file lengths must be rejected before any reader access")
-	require.Error(t, VerifyFresh(t.Context(), reader, 1<<32, verificationFor([]PageArtifact{a})))
+	require.Error(t, VerifyFresh(t.Context(), reader, 1<<32, verificationFor(t, []PageArtifact{a})))
 	require.Zero(t, reader.reads)
 }
 
@@ -348,9 +350,11 @@ func TestPDFiumRendersOnlyVerifiedSourceBytes(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
 	page := redaction.Page{Number: 1, FrameSHA256: digest([]byte("source frame")), Width: 85000, Height: 110000}
-	want, err := engine.Render(t.Context(), Source{bytes.NewReader(first), int64(len(first)), digest(first)}, page, qualificationRecipe())
+	want, err := engine.Render(t.Context(), Source{t.TempDir(),
+		bytes.NewReader(first), int64(len(first)), digest(first)}, page, qualificationRecipe())
 	require.NoError(t, err)
-	got, err := engine.Render(t.Context(), Source{&changingSource{first: first, second: second}, int64(len(first)), digest(first)}, page, qualificationRecipe())
+	got, err := engine.Render(t.Context(), Source{t.TempDir(),
+		&changingSource{first: first, second: second}, int64(len(first)), digest(first)}, page, qualificationRecipe())
 	require.NoError(t, err)
 	require.True(t, bytes.Equal(want.Pixels.Pix, got.Pixels.Pix), "rendering must use the same immutable bytes that passed the source hash check")
 }
@@ -361,7 +365,7 @@ func TestUnicodeFontUnavailableFailsClosed(t *testing.T) {
 	fontBytes = []byte("unavailable")
 	t.Cleanup(func() { fontBytes = old })
 	var output bytes.Buffer
-	require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
+	require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	require.Empty(t, output.Bytes())
 }
 
@@ -383,18 +387,18 @@ func TestPNGRowStreamMatchesIndependentPixels(t *testing.T) {
 func TestFreshRejectsAlteredEmbeddedFont(t *testing.T) {
 	a := unicodeArtifact(t)
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	data := output.Bytes()
 	start := bytes.Index(data, fontBytes[:64])
 	require.Positive(t, start)
 	data[start+len(fontBytes)-1] ^= 1
-	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor([]PageArtifact{a})))
+	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(data), int64(len(data)), verificationFor(t, []PageArtifact{a})))
 }
 
 func TestFreshComparesActualPixelsWithStagedEvidence(t *testing.T) {
 	a := unicodeArtifact(t)
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	reader, err := a.OpenPNG()
 	require.NoError(t, err)
 	decoded, err := png.Decode(reader)
@@ -413,7 +417,7 @@ func TestFreshComparesActualPixelsWithStagedEvidence(t *testing.T) {
 	a.PNGSHA256 = digest(data)
 	a.PNGSize = int64(len(data))
 	a.OpenPNG = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
-	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor([]PageArtifact{a})))
+	require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor(t, []PageArtifact{a})))
 }
 
 func freshFooterArtifact(t *testing.T) (PageArtifact, []byte) {
@@ -443,13 +447,13 @@ func freshFooterArtifact(t *testing.T) (PageArtifact, []byte) {
 	require.NoError(t, err)
 	a.EndorsementsSHA256 = digest(endorsements)
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	return a, bytes.Clone(output.Bytes())
 }
 
 func TestFreshFooterPreservesSourceOrigin(t *testing.T) {
 	a, output := freshFooterArtifact(t)
-	require.NoError(t, VerifyFresh(t.Context(), bytes.NewReader(output), int64(len(output)), verificationFor([]PageArtifact{a})))
+	require.NoError(t, VerifyFresh(t.Context(), bytes.NewReader(output), int64(len(output)), verificationFor(t, []PageArtifact{a})))
 	// Its source origin remains unchanged while the endorsement sits only in
 	// the new 0.5-inch footer.
 	engine, err := NewPDFium(qualificationRecipe())
@@ -480,7 +484,7 @@ func TestVerifyFreshRejectsUnqualifiedFooterAndEndorsementKind(t *testing.T) {
 		layout, err := canonical.Marshal(candidate.Layout)
 		require.NoError(t, err)
 		candidate.LayoutSHA256 = digest(layout)
-		err = VerifyFresh(t.Context(), bytes.NewReader(output), int64(len(output)), verificationFor([]PageArtifact{candidate}))
+		err = VerifyFresh(t.Context(), bytes.NewReader(output), int64(len(output)), verificationFor(t, []PageArtifact{candidate}))
 		require.ErrorContains(t, err, "endorsement_layout_conflict")
 	})
 	t.Run("endorsement kind", func(t *testing.T) {
@@ -490,7 +494,7 @@ func TestVerifyFreshRejectsUnqualifiedFooterAndEndorsementKind(t *testing.T) {
 		endorsements, err := canonical.Marshal(candidate.Endorsements)
 		require.NoError(t, err)
 		candidate.EndorsementsSHA256 = digest(endorsements)
-		err = VerifyFresh(t.Context(), bytes.NewReader(output), int64(len(output)), verificationFor([]PageArtifact{candidate}))
+		err = VerifyFresh(t.Context(), bytes.NewReader(output), int64(len(output)), verificationFor(t, []PageArtifact{candidate}))
 		require.ErrorContains(t, err, "endorsement_layout_conflict")
 	})
 }
@@ -569,7 +573,7 @@ func TestFreshTextUsesDeclaredGeometry(t *testing.T) {
 	require.NoError(t, err)
 	a.EndorsementsSHA256 = digest(encoded)
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	engine, err := NewPDFium(qualificationRecipe())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
@@ -603,7 +607,7 @@ func TestQualifiedRSSCeiling(t *testing.T) {
 	require.Error(t, err)
 	a := unicodeArtifact(t)
 	var output bytes.Buffer
-	require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, r))
+	require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 	require.Empty(t, output.Bytes())
 }
 
@@ -794,7 +798,8 @@ func TestPDFiumDeniedFilesystemAndCancellation(t *testing.T) {
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = engine.Render(ctx, Source{bytes.NewReader(pdf), int64(len(pdf)), digest(pdf)}, redaction.Page{Number: 1, FrameSHA256: digest([]byte("frame")), Width: 85000, Height: 110000}, qualificationRecipe())
+	_, err = engine.Render(ctx, Source{t.TempDir(),
+		bytes.NewReader(pdf), int64(len(pdf)), digest(pdf)}, redaction.Page{Number: 1, FrameSHA256: digest([]byte("frame")), Width: 85000, Height: 110000}, qualificationRecipe())
 	require.ErrorIs(t, err, context.Canceled)
 	ctx, cancel = context.WithTimeout(t.Context(), 0)
 	defer cancel()
@@ -802,9 +807,6 @@ func TestPDFiumDeniedFilesystemAndCancellation(t *testing.T) {
 }
 
 func TestFreshBudgetsAndPNGDecodeLimits(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
-	t.Setenv("TMP", os.Getenv("TMPDIR"))
-	t.Setenv("TEMP", os.Getenv("TMPDIR"))
 	a := unicodeArtifact(t)
 	for _, test := range []struct {
 		name   string
@@ -820,21 +822,27 @@ func TestFreshBudgetsAndPNGDecodeLimits(t *testing.T) {
 		}},
 		{"layout mismatch", func(a *PageArtifact, _ *redaction.Recipe) { a.Layout.Output.Height++ }},
 		{"staging budget", func(_ *PageArtifact, r *redaction.Recipe) { r.MaxStagingBytes = 128 }},
-		{"PNG decompression bomb", func(a *PageArtifact, _ *redaction.Recipe) {
-			header := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x00\x00\x00\x00\x00\x08\x02\x00\x00\x00\x00\x00\x00\x00")
-			binary.BigEndian.PutUint32(header[16:20], math.MaxUint32)
-			a.PNGSize = int64(len(header))
-			a.PNGSHA256 = digest(header)
-			a.OpenPNG = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(header)), nil }
+		{"PNG dimensions disagree with page", func(a *PageArtifact, _ *redaction.Recipe) {
+			pixels := image.NewNRGBA(image.Rect(0, 0, 301, 300))
+			for i := 3; i < len(pixels.Pix); i += 4 {
+				pixels.Pix[i] = 255
+			}
+			var encoded bytes.Buffer
+			require.NoError(t, png.Encode(&encoded, pixels))
+			data := encoded.Bytes()
+			a.PNGSize = int64(len(data))
+			a.PNGSHA256 = digest(data)
+			a.OpenPNG = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p, r := a, qualificationRecipe()
 			test.mutate(&p, &r)
+			staging := t.TempDir()
 			var output bytes.Buffer
-			require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{p}}, r))
+			require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{p}}, PDFWriteOptions{Recipe: r, StagingDirectory: staging, MaxBytes: r.MaxStagingBytes}))
 			require.Empty(t, output.Bytes())
-			files, err := os.ReadDir(os.Getenv("TMPDIR"))
+			files, err := os.ReadDir(staging)
 			require.NoError(t, err)
 			require.Empty(t, files)
 		})
@@ -865,7 +873,7 @@ func (s *contextPageSequence) Next(ctx context.Context) (PageArtifact, error) {
 func TestFreshKeepsPageContextUntilArtifactConsumed(t *testing.T) {
 	var output bytes.Buffer
 	sequence := &contextPageSequence{artifact: unicodeArtifact(t)}
-	require.NoError(t, writeFresh(t.Context(), &output, sequence, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, sequence, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 }
 
 func TestFreshDoesNotTreatTruncatedPNGAsSequenceEnd(t *testing.T) {
@@ -884,7 +892,7 @@ func TestFreshDoesNotTreatTruncatedPNGAsSequenceEnd(t *testing.T) {
 	first.OpenPNG = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(imageBytes)), nil }
 	second.OpenPNG = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(nil)), nil }
 	var output bytes.Buffer
-	require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{first, second}}, qualificationRecipe()))
+	require.Error(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{first, second}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	require.Empty(t, output.Bytes())
 }
 
@@ -897,8 +905,8 @@ func TestFreshEndorsementOccurrencesAndTampering(t *testing.T) {
 	require.NoError(t, err)
 	a.EndorsementsSHA256 = digest(encoded)
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
-	require.NoError(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor([]PageArtifact{a})))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
+	require.NoError(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor(t, []PageArtifact{a})))
 	for _, test := range []struct{ name, old, replacement string }{
 		{"wrong role", "/Endorsement BMC", "/SanitizedS BMC"},
 		{"moved text", "7.2 21.6 Tm", "8.2 21.6 Tm"},
@@ -912,7 +920,7 @@ func TestFreshEndorsementOccurrencesAndTampering(t *testing.T) {
 			offset := bytes.LastIndex(output.Bytes(), []byte(test.old))
 			changed := bytes.Clone(output.Bytes())
 			copy(changed[offset:], test.replacement)
-			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor([]PageArtifact{a})))
+			require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(changed), int64(len(changed)), verificationFor(t, []PageArtifact{a})))
 		})
 	}
 }
@@ -920,27 +928,32 @@ func TestFreshEndorsementOccurrencesAndTampering(t *testing.T) {
 func TestVerifyFreshIndependentEvidence(t *testing.T) {
 	a := unicodeArtifact(t)
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, qualificationRecipe()))
-	require.NoError(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor([]PageArtifact{a})))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{a}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
+	require.NoError(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor(t, []PageArtifact{a})))
+	t.Run("expected PDF digest mismatch", func(t *testing.T) {
+		input := verificationFor(t, []PageArtifact{a})
+		input.PDFSHA256 = digest([]byte("different PDF"))
+		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), input))
+	})
 	t.Run("expected text mismatch", func(t *testing.T) {
-		input := verificationFor([]PageArtifact{a})
+		input := verificationFor(t, []PageArtifact{a})
 		input.NextText = func(context.Context) (int, []byte, error) { return 1, []byte("UNSANITIZED"), nil }
 		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), input))
 	})
 	t.Run("expected image mismatch", func(t *testing.T) {
 		changed := a
 		changed.PNGSHA256 = digest([]byte("wrong"))
-		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor([]PageArtifact{changed})))
+		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor(t, []PageArtifact{changed})))
 	})
 	t.Run("missing evidence", func(t *testing.T) {
-		input := verificationFor([]PageArtifact{a})
+		input := verificationFor(t, []PageArtifact{a})
 		input.NextEndorsements = func(context.Context) (redaction.PageLayout, []redaction.Endorsement, error) {
 			return redaction.PageLayout{}, nil, io.EOF
 		}
 		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), input))
 	})
 	t.Run("extra evidence", func(t *testing.T) {
-		input := verificationFor([]PageArtifact{a})
+		input := verificationFor(t, []PageArtifact{a})
 		input.NextText = func(context.Context) (int, []byte, error) { return 1, []byte("café給与[REDACTED]"), nil }
 		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), input))
 	})
