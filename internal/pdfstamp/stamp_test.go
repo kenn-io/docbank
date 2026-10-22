@@ -248,17 +248,12 @@ type cancelOnReadSeeker struct {
 	*bytes.Reader
 
 	cancel          context.CancelFunc
-	offset          int64
 	canceled        bool
 	readAfterCancel bool
 }
 
 func (r *cancelOnReadSeeker) Seek(offset int64, whence int) (int64, error) {
-	position, err := r.Reader.Seek(offset, whence)
-	if err == nil {
-		r.offset = position
-	}
-	return position, err //nolint:wrapcheck // Preserve io.Seek errors for the ReadSeeker contract.
+	return r.Reader.Seek(offset, whence) //nolint:wrapcheck // Preserve io.Seek errors for the ReadSeeker contract.
 }
 
 func (r *cancelOnReadSeeker) Read(p []byte) (int, error) {
@@ -266,9 +261,8 @@ func (r *cancelOnReadSeeker) Read(p []byte) (int, error) {
 		r.readAfterCancel = true
 		return 0, io.ErrUnexpectedEOF
 	}
-	position := r.offset
+	position := r.Size() - int64(r.Len())
 	n, err := r.Reader.Read(p)
-	r.offset = position + int64(n)
 	if position == 0 && n > 0 {
 		r.canceled = true
 		r.cancel()
