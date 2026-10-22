@@ -211,7 +211,6 @@
     sortDirection: SortDirection;
   };
 
-  type LinkedVersion = Awaited<ReturnType<typeof resolveNodeVersionLink>>;
   type Panel =
     | {
         kind:
@@ -232,9 +231,8 @@
       }
     | {
         kind: "versions";
-        linked?: LinkedVersion;
+        linked?: Awaited<ReturnType<typeof resolveNodeVersionLink>>;
         fromLink?: boolean;
-        receipt?: Node;
       }
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
@@ -312,7 +310,7 @@
       nodeVersionLoading = true;
       void resolveNodeVersionLink(session, selection, controller.signal)
         .then((resolved) => {
-          if (current && activePanel === target) target.linked = newer(resolved, target.receipt);
+          if (current && activePanel === target) target.linked = resolved;
         })
         .catch((cause: unknown) => {
           if (!current || activePanel !== target) return;
@@ -2736,26 +2734,10 @@
     void loadTagCatalog();
   }
 
-  function newer(linked: LinkedVersion, node?: Node): LinkedVersion {
-    if (node?.id === linked.node.id && node.revision > linked.node.revision) linked.node = node;
-    return linked;
-  }
-
-  // A tag receipt can land while a link-driven panel is still resolving; keep
-  // it so resolution does not install the older revision it fetched first.
-  function keepLinkedReceipt(panel: Panel | null, node: Node): void {
-    if (panel?.kind !== "versions") return;
-    const selection = nodeVersionSelection;
-    if (panel.linked) newer(panel.linked, node);
-    else if (selection && !("error" in selection) && selection.nodeId === node.id)
-      panel.receipt = node.revision > (panel.receipt?.revision ?? 0) ? node : panel.receipt;
-  }
-
   function handleTagChanged(receipt: TagAssignmentReceipt, assigned: boolean): void {
     const selectedChanged = selectedID === receipt.node.id;
     const modalChanged = manageTagsTarget?.node.id === receipt.node.id;
     if (!selectedChanged && !modalChanged) return;
-    keepLinkedReceipt(activePanel, receipt.node);
     if (modalChanged && manageTagsTarget) {
       manageTagsTarget = {
         ...manageTagsTarget,
@@ -2772,7 +2754,11 @@
     replaceRows(
       rows.map((row) =>
         row.node.id === receipt.node.id
-          ? { ...row, node: receipt.node, path: receipt.node.path ?? row.path }
+          ? {
+              ...row,
+              node: receipt.node,
+              path: receipt.node.path ?? row.path,
+            }
           : row,
       ),
       true,
@@ -2927,8 +2913,8 @@
 
   function selectLinkedVersion(version: generated.ContentVersion): void {
     if (activePanel?.kind !== "versions" || !activePanel.fromLink) return;
-    if (activePanel.linked?.version.id === version.id && !nodeVersionLoading && !nodeVersionError)
-      return;
+    if (nodeVersionLoading) return;
+    if (activePanel.linked?.version.id === version.id && !nodeVersionError) return;
     const node = versionHistoryNode;
     if (!node || node.id !== version.node_id) return;
     activePanel.linked = { node, version };
