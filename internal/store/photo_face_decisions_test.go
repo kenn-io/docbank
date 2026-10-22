@@ -1101,6 +1101,10 @@ func TestPhotoFaceDecisionPhotoMarkClearAndUndo(t *testing.T) {
 			faces, assertions, _, err := restored.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.True(t, assertions[0].PhotoMark)
+			if !named {
+				require.Len(t, faces, 1)
+				require.Empty(t, faces[0].AssertionID)
+			}
 			if named {
 				require.Equal(t, assertions[0].AssertionID, faces[0].AssertionID)
 				decideFaceForTest(t, restored, n, f.FaceID, "", "retract")

@@ -509,7 +509,7 @@ func (s *Store) applyFaceDecisionTx(ctx context.Context, tx *sql.Tx, before *Pho
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,named_at=? WHERE face_id=? AND content_version_id=?`, a.AssertionID, nowRFC3339(), face.FaceID, face.ContentVersionID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET named_at=CASE WHEN assertion_id=? THEN named_at ELSE ? END,assertion_id=? WHERE face_id=? AND content_version_id=?`, a.AssertionID, nowRFC3339(), a.AssertionID, face.FaceID, face.ContentVersionID); err != nil {
 			return err
 		}
 		return s.clearNamedFaceCandidatesTx(ctx, tx, before, face.FaceID, request.PersonID, request.Action)
@@ -835,7 +835,7 @@ func restoreFaceDecisionRowsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecis
 		if f.Revision == r.After.Faces[i].Revision {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, nullableString(f.AssertionID), f.FaceID, r.After.VersionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,named_at=NULL,revision=revision+1 WHERE face_id=? AND content_version_id=?`, nullableString(f.AssertionID), f.FaceID, r.After.VersionID); err != nil {
 			return err
 		}
 	}

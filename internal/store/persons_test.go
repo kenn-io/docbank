@@ -363,7 +363,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 
 func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"reactivate", "second face", "create face", "whole-photo mark"} {
+	for _, action := range []string{"reactivate", "second face", "create face", "whole-photo mark", "same person", "reassignment", "candidate"} {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
@@ -383,7 +383,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "retract", FaceID: face.FaceID, Revision: face.Revision})
 				require.NoError(t, err)
 				face.Revision++
-			} else {
+			} else if action != "same person" && action != "reassignment" {
 				face, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .3, Width: .2, Height: .2}, "")
 				require.NoError(t, err)
 			}
@@ -396,7 +396,14 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, grace.PersonID, rows[0].PersonID)
 			var named PhotoFaceDecisionReceipt
+			expectedPerson := ada.PersonID
 			switch action {
+			case "candidate":
+				candidate := candidateForTest(t, "face:"+face.FaceID, "Ada", ada.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
+				candidate.Reason = "face_match"
+				opened := openCandidateForTest(t, s, candidate)
+				_, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: opened.CandidateID, ExpectedRevision: opened.Revision, Action: "link", PersonID: ada.PersonID})
+				require.NoError(t, err)
 			case "whole-photo mark":
 				mark, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, ada.PersonID, "")
 				require.NoError(t, err)
@@ -412,7 +419,12 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, saved, replay)
 			default:
-				request := PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision, PersonID: ada.PersonID, OperationID: uuid.NewString()}
+				if action == "reassignment" {
+					cy, err := s.CreatePerson(ctx, "Cy", "operator")
+					require.NoError(t, err)
+					expectedPerson = cy.PersonID
+				}
+				request := PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision, PersonID: expectedPerson, OperationID: uuid.NewString()}
 				named, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
 				require.NoError(t, err)
 				require.NoError(t, validateFaceDecisionReceipt(named, named.ReceiptID))
@@ -420,19 +432,29 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				require.NoError(t, err)
 				_, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 				require.NoError(t, err)
-				require.Equal(t, named.After.Assertions, assertions)
+				if action != "same person" && action != "reassignment" {
+					require.Equal(t, named.After.Assertions, assertions)
+				}
 			}
 			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
-			require.Equal(t, ada.PersonID, rows[0].PersonID)
+			if action == "same person" {
+				require.Equal(t, grace.PersonID, rows[0].PersonID)
+				return
+			}
+			require.Equal(t, expectedPerson, rows[0].PersonID)
 			require.Greater(t, rows[0].RecentRank, "2002-01-01T00:00:00.000000000Z")
-			if action == "create face" || action == "whole-photo mark" {
+			if action == "create face" || action == "whole-photo mark" || action == "candidate" {
 				return
 			}
 			undone, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 			require.NoError(t, err)
 			require.NoError(t, validateFaceDecisionReceipt(undone, undone.ReceiptID))
-			require.Equal(t, "2001-01-01T00:00:00.000000000Z", undone.After.Assertions[0].RecordedAt)
+			for _, assertion := range undone.After.Assertions {
+				if assertion.PersonID == ada.PersonID {
+					require.Equal(t, "2001-01-01T00:00:00.000000000Z", assertion.RecordedAt)
+				}
+			}
 			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Equal(t, grace.PersonID, rows[0].PersonID)

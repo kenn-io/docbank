@@ -711,7 +711,7 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 	if existing == assertionID {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, assertionID, occurrence.EvidenceID, occurrence.ContentVersionID)
+	_, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,named_at=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, assertionID, nowRFC3339(), occurrence.EvidenceID, occurrence.ContentVersionID)
 	return err
 }
 
