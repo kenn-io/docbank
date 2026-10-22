@@ -51,7 +51,7 @@ it.each(["valid", "empty", "wrong person", "invalid revision", "wrong ETag"])(
   "renames with a %s response",
   async (result) => {
     const read = vi.spyOn(api, "listPeople");
-    const saved = await personResponse(ada, { display_name: "Ada L", revision: 3 }).json();
+    const saved = await personResponse(ada, { display_name: "Zoe", revision: 3 }).json();
     const body =
       result === "empty"
         ? {}
@@ -67,28 +67,37 @@ it.each(["valid", "empty", "wrong person", "invalid revision", "wrong ETag"])(
       );
     const changed = vi.fn();
     const people = new People("session", vi.fn(), undefined, changed);
-    people.items = [ada, grace];
+    people.items = [ada];
+    people.query = "Ada";
+    people.cursor = "old-page";
     people.toggle(ada);
-    read.mockResolvedValue({ items: [ada, grace] });
-    expect(await people.rename(ada, " Ada L ")).toBe(result === "valid");
+    read.mockResolvedValue({ items: result === "valid" ? [] : [ada] });
+    expect(await people.rename(ada, " Zoe ")).toBe(result === "valid");
     expect(rename.mock.calls[0]!.slice(0, 3)).toEqual([
       "ada",
-      { display_name: "Ada L" },
+      { display_name: "Zoe" },
       { "If-Match": '"2"' },
     ]);
     if (result !== "valid") {
       expect(people.writeError).toBe("Invalid person response.");
       expect(changed).not.toHaveBeenCalled();
-      expect(people.items).toEqual([ada, grace]);
+      expect(people.items).toEqual([ada]);
       expect(people.selected).toEqual([ada]);
       expect(read).toHaveBeenCalledOnce();
       people.dispose();
       return;
     }
-    expect(people.items[0]).toMatchObject({ display_name: "Ada L", revision: 3 });
-    expect(people.selected[0]).toEqual(people.items[0]);
-    expect(changed).toHaveBeenCalledWith("ada", "Ada L");
-    expect(read).not.toHaveBeenCalled();
+    expect(people.items).toEqual([]);
+    expect(people.cursor).toBeUndefined();
+    expect(people.selected[0]).toMatchObject({
+      person_id: "ada",
+      display_name: "Zoe",
+      revision: 3,
+    });
+    expect(changed).toHaveBeenCalledWith("ada", "Zoe");
+    expect(read).toHaveBeenCalledOnce();
+    expect(read.mock.calls[0]![0]).toMatchObject({ query: "Ada" });
+    expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
     people.dispose();
   },
 );
@@ -216,17 +225,18 @@ it("reports sign-in expiry", async () => {
   people.dispose();
 });
 
-it("deduplicates renamed cards crossing a saved cursor", async () => {
-  const renamed = { ...ada, display_name: "Zoe", revision: 3 };
+it("uses refreshed name order and pagination after rename", async () => {
+  const renamed = { ...ada, display_name: "Zoe", display_name_folded: "zoe", revision: 3 };
   vi.spyOn(api, "listPeople")
     .mockResolvedValueOnce({ items: [ada], next_cursor: "next" })
-    .mockResolvedValueOnce({ items: [grace, renamed] });
+    .mockResolvedValueOnce({ items: [grace], next_cursor: "fresh" })
+    .mockResolvedValueOnce({ items: [renamed] });
   vi.spyOn(api, "renamePerson").mockResolvedValue(personResponse(renamed));
   const people = new People("session", vi.fn());
   await people.load();
   await people.rename(ada, "Zoe");
   await people.load("", true);
-  expect(people.items.map((row) => row.person_id)).toEqual(["ada", "grace"]);
+  expect(people.items).toEqual([grace, renamed]);
   people.dispose();
 });
 

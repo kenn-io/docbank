@@ -357,7 +357,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 
 func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"reactivate", "second face", "create face", "whole-photo mark", "same person", "reassignment", "candidate", "rejection undo", "rejection redo"} {
+	for _, action := range []string{"reactivate", "second face", "create face", "whole-photo mark", "same person", "reassignment", "reassignment with prior naming", "candidate", "rejection undo", "rejection redo"} {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
@@ -373,11 +373,15 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at='2001-01-01T00:00:00.000000000Z' WHERE face_id=?`, face.FaceID)
 			require.NoError(t, err)
+			if action == "reassignment with prior naming" {
+				_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at='2003-01-01T00:00:00.000000000Z' WHERE face_id=?`, face.FaceID)
+				require.NoError(t, err)
+			}
 			if action == "reactivate" {
 				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "retract", FaceID: face.FaceID, Revision: face.Revision})
 				require.NoError(t, err)
 				face.Revision++
-			} else if action != "same person" && action != "reassignment" {
+			} else if action != "same person" && action != "reassignment" && action != "reassignment with prior naming" {
 				face, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .3, Width: .2, Height: .2}, "")
 				require.NoError(t, err)
 			}
@@ -388,7 +392,11 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.NoError(t, err)
 			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
-			require.Equal(t, grace.PersonID, rows[0].PersonID)
+			if action == "reassignment with prior naming" {
+				require.Equal(t, ada.PersonID, rows[0].PersonID)
+			} else {
+				require.Equal(t, grace.PersonID, rows[0].PersonID)
+			}
 			var named PhotoFaceDecisionReceipt
 			expectedPerson := ada.PersonID
 			switch action {
@@ -413,7 +421,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, saved, replay)
 			default:
-				if action == "reassignment" {
+				if action == "reassignment" || action == "reassignment with prior naming" {
 					cy, err := s.CreatePerson(ctx, "Cy", "operator")
 					require.NoError(t, err)
 					expectedPerson = cy.PersonID
@@ -426,7 +434,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				require.NoError(t, err)
 				_, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 				require.NoError(t, err)
-				if action != "same person" && action != "reassignment" {
+				if action != "same person" && action != "reassignment" && action != "reassignment with prior naming" {
 					require.Equal(t, named.After.Assertions, assertions)
 				}
 			}
@@ -454,6 +462,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				require.Equal(t, ada.PersonID, rows[0].PersonID)
 				return
 			}
+			namedRank := rows[0].RecentRank
 			undone, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 			require.NoError(t, err)
 			require.NoError(t, validateFaceDecisionReceipt(undone, undone.ReceiptID))
@@ -464,7 +473,18 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			}
 			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
-			require.Equal(t, grace.PersonID, rows[0].PersonID)
+			if action == "reassignment with prior naming" {
+				require.Equal(t, ada.PersonID, rows[0].PersonID)
+				require.Equal(t, "2003-01-01T00:00:00.000000000Z", rows[0].RecentRank)
+				_, err = s.UndoPhotoFaceDecision(ctx, undone.ReceiptID)
+				require.NoError(t, err)
+				redone, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+				require.NoError(t, err)
+				require.Equal(t, expectedPerson, redone[0].PersonID)
+				require.Equal(t, namedRank, redone[0].RecentRank)
+			} else {
+				require.Equal(t, grace.PersonID, rows[0].PersonID)
+			}
 		})
 	}
 }

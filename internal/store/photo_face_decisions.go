@@ -35,11 +35,12 @@ type faceDecisionPerson struct {
 }
 
 type PhotoFaceDecisionState struct {
-	VersionID  string                    `json:"content_version_id"`
-	Faces      []PhotoFace               `json:"faces"`
-	Assertions []PersonDocumentAssertion `json:"assertions"`
-	Candidates []PersonMatchCandidate    `json:"candidates"`
-	People     []faceDecisionPerson      `json:"people"`
+	FaceNamedAt map[string]string         `json:"face_named_at,omitzero"`
+	VersionID   string                    `json:"content_version_id"`
+	Faces       []PhotoFace               `json:"faces"`
+	Assertions  []PersonDocumentAssertion `json:"assertions"`
+	Candidates  []PersonMatchCandidate    `json:"candidates"`
+	People      []faceDecisionPerson      `json:"people"`
 }
 
 type PhotoFaceDecisionReceipt struct {
@@ -169,7 +170,8 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 		}
 		state.People = append(state.People, p)
 	}
-	return state, nil
+	state.FaceNamedAt, err = faceDecisionNamingTimesTx(ctx, tx, state.Faces)
+	return state, err
 }
 
 func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after PhotoFaceDecisionState, createdPerson faceDecisionPerson, undo, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
@@ -217,6 +219,13 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 		return 0
 	})
 	before.Faces, after.Faces = changedFaceRows(before.Faces, after.Faces)
+	for _, state := range []*PhotoFaceDecisionState{&before, &after} {
+		for id := range state.FaceNamedAt {
+			if !slices.ContainsFunc(state.Faces, func(f PhotoFace) bool { return f.FaceID == id }) {
+				delete(state.FaceNamedAt, id)
+			}
+		}
+	}
 	var dependencies []PersonDocumentAssertion
 	for i, a := range after.Assertions {
 		if reflect.DeepEqual(before.Assertions[i], a) && slices.ContainsFunc(before.Faces, func(f PhotoFace) bool {
@@ -728,11 +737,16 @@ func fenceFaceDecisionUndoTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisio
 		observed.Action, observed.Revision = a.Action, a.Revision
 		fenced.Assertions[i] = observed
 	}
+	// Naming times are restored data, not revision dependencies. Another face
+	// can gain a naming time without invalidating this decision.
+	fenced.FaceNamedAt = nil
+	after := r.After
+	after.FaceNamedAt = nil
 	currentHash, err := requestDigest(fenced)
 	if err != nil {
 		return current, err
 	}
-	afterHash, err := requestDigest(r.After)
+	afterHash, err := requestDigest(after)
 	if err != nil {
 		return current, err
 	}
@@ -835,7 +849,7 @@ func restoreFaceDecisionRowsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecis
 		if f.Revision == r.After.Faces[i].Revision {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET named_at=CASE WHEN assertion_id IS ? THEN named_at ELSE NULL END,assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, nullableString(f.AssertionID), nullableString(f.AssertionID), f.FaceID, r.After.VersionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET named_at=?,assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, nullableString(r.Before.FaceNamedAt[f.FaceID]), nullableString(f.AssertionID), f.FaceID, r.After.VersionID); err != nil {
 			return err
 		}
 	}
@@ -960,6 +974,13 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 	}
 	if len(r.Before.Faces) != len(r.After.Faces) || len(r.Before.Assertions) != len(r.After.Assertions) || len(r.Before.Candidates) != len(r.After.Candidates) || len(r.Before.People) != len(r.After.People) || len(r.After.Faces) > 1000 || len(r.After.Assertions) > 1000 || len(r.After.Candidates) > 1000 || len(r.After.People) > 1000 {
 		return ErrInvalidPhotoFace
+	}
+	for _, state := range []PhotoFaceDecisionState{r.Before, r.After} {
+		for id, namedAt := range state.FaceNamedAt {
+			if validateMetadataTime("face named_at", namedAt) != nil || !slices.ContainsFunc(state.Faces, func(f PhotoFace) bool { return f.FaceID == id && f.AssertionID != "" }) {
+				return ErrInvalidPhotoFace
+			}
+		}
 	}
 	for i, a := range r.After.Faces {
 		b := r.Before.Faces[i]
@@ -1320,7 +1341,26 @@ func faceDecisionRowsTx(ctx context.Context, tx *sql.Tx, template PhotoFaceDecis
 		}
 		current.People = append(current.People, p)
 	}
-	return current, nil
+	var err error
+	current.FaceNamedAt, err = faceDecisionNamingTimesTx(ctx, tx, current.Faces)
+	return current, err
+}
+
+func faceDecisionNamingTimesTx(ctx context.Context, tx *sql.Tx, faces []PhotoFace) (map[string]string, error) {
+	var times map[string]string
+	for _, face := range faces {
+		var namedAt string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(named_at,'') FROM photo_faces WHERE face_id=? AND content_version_id=?`, face.FaceID, face.ContentVersionID).Scan(&namedAt); err != nil {
+			return nil, err
+		}
+		if namedAt != "" {
+			if times == nil {
+				times = make(map[string]string)
+			}
+			times[face.FaceID] = namedAt
+		}
+	}
+	return times, nil
 }
 
 func replayFaceDecisionTx(ctx context.Context, tx *sql.Tx, id, requestSHA string) (PhotoFaceDecisionReceipt, bool, error) {
