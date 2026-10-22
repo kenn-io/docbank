@@ -70,6 +70,12 @@ func (provider *configuredRenditionProvider) Render(
 func configureRenditionProviders(cfg config.Config) (
 	map[string]document.RenditionProvider, map[string]processing.RuntimeDisclosure, error,
 ) {
+	return configureRenditionProvidersWithTransport(cfg, nil)
+}
+
+func configureRenditionProvidersWithTransport(cfg config.Config, wrapTransport func(*http.Transport) http.RoundTripper) (
+	map[string]document.RenditionProvider, map[string]processing.RuntimeDisclosure, error,
+) {
 	providers := make(map[string]document.RenditionProvider)
 	disclosures := make(map[string]processing.RuntimeDisclosure)
 	registered := make(map[string]registeredRenditionProvider)
@@ -92,7 +98,7 @@ func configureRenditionProviders(cfg config.Config) (
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
-			provider, disclosures[name], err = configureExternalRendition(cfg, name, secrets, registered)
+			provider, disclosures[name], err = configureExternalRendition(cfg, name, secrets, registered, wrapTransport)
 		default:
 			continue
 		}
@@ -113,7 +119,7 @@ func configureRenditionProviders(cfg config.Config) (
 }
 
 func configureExternalRendition(cfg config.Config, name string, secrets environmentCredentialSecrets,
-	registered map[string]registeredRenditionProvider,
+	registered map[string]registeredRenditionProvider, wrapTransport func(*http.Transport) http.RoundTripper,
 ) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
 	var disclosure processing.RuntimeDisclosure
 	configured := cfg.RenditionProfiles[name]
@@ -124,51 +130,30 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 	if err != nil || len(requestFingerprints) == 0 {
 		return nil, disclosure, err
 	}
-	var mistralProfile mistral.Profile
-	var doclingProfile docling.Profile
-	var descriptor document.RenditionDescriptor
-	var secretBinding, model string
-	if configured.AdapterContract == config.MistralOCRAdapterContract {
-		mistralProfile, err = configuredMistralProfile(configured)
-		if err != nil {
-			return nil, disclosure, err
-		}
-		descriptor, secretBinding = mistralProfile.Descriptor, mistralProfile.SecretBinding
-		model = mistral.DefaultModel
-	} else {
-		doclingProfile, err = configuredDoclingProfile(configured)
-		if err != nil {
-			return nil, disclosure, err
-		}
-		descriptor, secretBinding = doclingProfile.Descriptor, doclingProfile.SecretBinding
+	adapter, err := resolveRenditionAdapter(configured)
+	if err != nil {
+		return nil, disclosure, err
 	}
-	var expectedDisclosure string
-	switch configured.AdapterContract {
-	case config.MistralOCRAdapterContract:
-		expectedDisclosure = mistral.DisclosureFingerprint(descriptor, configured.Runtime.Endpoint, configured.DeploymentFingerprint)
-	case config.DoclingASRAdapterContract:
-		expectedDisclosure = docling.ASRDisclosureFingerprint(descriptor, configured.Runtime.Endpoint, configured.DeploymentFingerprint)
-	default:
-		expectedDisclosure = docling.DocumentDisclosureFingerprint(descriptor, configured.Runtime.Endpoint, configured.DeploymentFingerprint)
-	}
+	descriptor := adapter.descriptor
+	expectedDisclosure := adapter.disclosureFingerprint
 	if configured.DisclosureFingerprint != expectedDisclosure {
 		return nil, disclosure, errors.New("disclosure fingerprint does not bind the runtime endpoint")
 	}
-	environmentVariable, ok := secrets.variables[secretBinding]
+	environmentVariable, ok := secrets.variables[adapter.secretBinding]
 	if !ok {
 		return nil, disclosure, errors.New("rendition credential binding is not configured")
 	}
 	egress := providerEgressPolicy(configured.Runtime.ProviderEgressConfig)
 	runtime := configured.Runtime
 	inputs := renditionProviderInputs{profile: renditionExecutionInputs{
-		secretBinding: secretBinding, requestTimeout: runtime.RequestTimeout.Std(), totalTimeout: runtime.TotalTimeout.Std(),
+		secretBinding: adapter.secretBinding, requestTimeout: runtime.RequestTimeout.Std(), totalTimeout: runtime.TotalTimeout.Std(),
 		pollInterval: runtime.PollInterval.Std(), maxPollAttempts: runtime.MaxPollAttempts,
 		maxDocumentBytes: configured.MaxDocumentBytes, maxResponseBytes: configured.MaxResponseBytes,
 	}, adapterContract: configured.AdapterContract,
 		maxTranscriptChars: configured.MaxTranscriptChars, egress: egress, credentialEnvironment: environmentVariable}
 	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: configured.AdapterContract,
 		UltimateProcessor: descriptor.ID, Endpoint: configured.Runtime.Endpoint,
-		Deployment: configured.DeploymentFingerprint, Model: model}
+		Deployment: configured.DeploymentFingerprint, Model: adapter.model}
 	if existing, ok := registered[descriptor.Fingerprint]; ok {
 		if !reflect.DeepEqual(existing.inputs, inputs) {
 			return nil, disclosure, errors.New("conflicts with another profile's provider for the same descriptor")
@@ -182,15 +167,11 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 	if err != nil {
 		return nil, disclosure, err
 	}
-	var provider document.RenditionProvider
-	switch configured.AdapterContract {
-	case config.MistralOCRAdapterContract:
-		provider, err = mistral.NewRenditionProvider(mistralProfile, secrets, &http.Client{Transport: transport})
-	case config.DoclingASRAdapterContract:
-		provider, err = docling.NewASR(docling.ASRProfile{Profile: doclingProfile, MaxTranscriptChars: configured.MaxTranscriptChars}, secrets, &http.Client{Transport: transport})
-	default:
-		provider, err = docling.New(doclingProfile, secrets, &http.Client{Transport: transport})
+	var roundTripper http.RoundTripper = transport
+	if wrapTransport != nil {
+		roundTripper = wrapTransport(transport)
 	}
+	provider, err := adapter.newProvider(secrets, &http.Client{Transport: roundTripper})
 	if err != nil {
 		return nil, disclosure, err
 	}
@@ -200,11 +181,52 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 	return bound, disclosure, nil
 }
 
-func configuredDoclingProfile(configured config.RenditionProfileConfig) (docling.Profile, error) {
-	if configured.AdapterContract == config.DoclingASRAdapterContract {
+type resolvedRenditionAdapter struct {
+	descriptor            document.RenditionDescriptor
+	secretBinding         string
+	model                 string
+	disclosureFingerprint string
+	newProvider           func(environmentCredentialSecrets, *http.Client) (document.RenditionProvider, error)
+}
+
+func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolvedRenditionAdapter, error) {
+	runtime := configured.Runtime
+	switch configured.AdapterContract {
+	case config.MistralOCRAdapterContract:
+		profile, err := configuredMistralProfile(configured)
+		if err != nil {
+			return resolvedRenditionAdapter{}, err
+		}
+		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
+			model:                 mistral.DefaultModel,
+			disclosureFingerprint: mistral.DisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
+				return mistral.NewRenditionProvider(profile, secrets, client)
+			}}, nil
+	case config.DoclingASRAdapterContract:
 		profile, err := configuredDoclingASRProfile(configured)
-		return profile.Profile, err
+		if err != nil {
+			return resolvedRenditionAdapter{}, err
+		}
+		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
+			disclosureFingerprint: docling.ASRDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
+				return docling.NewASR(profile, secrets, client)
+			}}, nil
+	default:
+		profile, err := configuredDoclingProfile(configured)
+		if err != nil {
+			return resolvedRenditionAdapter{}, err
+		}
+		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
+			disclosureFingerprint: docling.DocumentDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
+				return docling.New(profile, secrets, client)
+			}}, nil
 	}
+}
+
+func configuredDoclingProfile(configured config.RenditionProfileConfig) (docling.Profile, error) {
 	descriptor, err := docling.DocumentDescriptor(document.RenditionTrustBoundary(configured.TrustBoundary))
 	if err != nil {
 		return docling.Profile{}, err
@@ -278,19 +300,9 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 	if err != nil {
 		return mistral.Profile{}, err
 	}
-	normalize, err := document.NewNormalizePolicy(25_000_000)
+	policy, err := configured.MistralPolicy()
 	if err != nil {
 		return mistral.Profile{}, err
-	}
-	policy, err := mistral.NewPolicy(mistral.PolicyConfig{Region: mistral.RegionEU, Model: mistral.DefaultModel,
-		Retention: runtime.Retention, Training: runtime.Training, MaxDocumentBytes: configured.MaxDocumentBytes,
-		MaxResponseBytes: configured.MaxResponseBytes, MaxUnits: configured.MaxUnits,
-		ExtractHeader: true, ExtractFooter: true, NormalizePolicy: normalize})
-	if err != nil {
-		return mistral.Profile{}, err
-	}
-	if runtime.Endpoint != strings.TrimSuffix(policy.Values().Endpoint, "/v1/ocr") {
-		return mistral.Profile{}, errors.New("mistral runtime endpoint differs from policy origin")
 	}
 	descriptor, err := mistral.DocumentDescriptor(policy, manifest)
 	if err != nil {

@@ -171,7 +171,13 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 func executableProcessingProfiles(cfg config.Config,
 	bundle embeddingRuntimeBundle,
 ) (map[string]processing.ProfileConfig, error) {
-	renditionProviders, renditionDisclosures, err := configureRenditionProviders(cfg)
+	return executableProcessingProfilesWithRenditionTransport(cfg, bundle, nil)
+}
+
+func executableProcessingProfilesWithRenditionTransport(cfg config.Config,
+	bundle embeddingRuntimeBundle, wrapTransport func(*http.Transport) http.RoundTripper,
+) (map[string]processing.ProfileConfig, error) {
+	renditionProviders, renditionDisclosures, err := configureRenditionProvidersWithTransport(cfg, wrapTransport)
 	if err != nil {
 		return nil, err
 	}

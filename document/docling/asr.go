@@ -58,9 +58,7 @@ func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
 // ASRDisclosureFingerprint binds a portable ASR profile to its exact endpoint and
 // deployment. Recompute it whenever the descriptor, endpoint, or deployment changes.
 func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
-	return providerutil.SHA256Hex([]byte(strings.Join([]string{
-		"docbank-docling-asr/v1", descriptor.ID, descriptor.Fingerprint, endpoint, deployment,
-	}, "\x00")))
+	return providerutil.RenditionDisclosureFingerprint("docbank-docling-asr/v1", descriptor, endpoint, deployment)
 }
 
 // NewASR constructs the transcript provider for the qualified WAV/MP3 deployment.

@@ -120,10 +120,10 @@ func vectorIndexRetryPolicy(isBusy func(error) bool) func(error) bool {
 }
 
 func runServe(ctx context.Context) (retErr error) {
-	return runServeWithProcessingProfiles(ctx, executableProcessingProfiles)
+	return runServeWithRenditionTransport(ctx, nil)
 }
 
-func runServeWithProcessingProfiles(ctx context.Context, configureProfiles func(config.Config, embeddingRuntimeBundle) (map[string]processing.ProfileConfig, error)) (retErr error) {
+func runServeWithRenditionTransport(ctx context.Context, wrapTransport func(*http.Transport) http.RoundTripper) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
@@ -277,7 +277,7 @@ func runServeWithProcessingProfiles(ctx context.Context, configureProfiles func(
 		return fmt.Errorf("configuring embedding runtimes: %w", err)
 	}
 	embeddingRuntimeRegistry := embeddingRuntimes.registry
-	processingProfiles, err := configureProfiles(cfg, embeddingRuntimes)
+	processingProfiles, err := executableProcessingProfilesWithRenditionTransport(cfg, embeddingRuntimes, wrapTransport)
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}

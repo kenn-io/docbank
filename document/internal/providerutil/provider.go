@@ -323,3 +323,10 @@ func NewReceipt(provider Provider, input Receipt) (document.RenditionReceipt, er
 		RetryDelayMillis:            input.RetryDelay.Milliseconds(),
 	}, nil
 }
+
+// RenditionDisclosureFingerprint binds an adapter and descriptor to a deployment.
+func RenditionDisclosureFingerprint(contract string, descriptor document.RenditionDescriptor, endpoint, deployment string) string {
+	return SHA256Hex([]byte(strings.Join([]string{
+		contract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment,
+	}, "\x00")))
+}

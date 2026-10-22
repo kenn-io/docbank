@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -975,19 +974,12 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		return fmt.Errorf("%s runtime is supported only for %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract)
 	}
 	if profile.AdapterContract == MistralOCRAdapterContract {
-		if profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
-			return fmt.Errorf("%s Mistral runtime requires hosted_provider", prefix)
-		}
-		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactMarkdown) {
-			return fmt.Errorf("%s Mistral runtime requires exactly provider_markdown", prefix)
-		}
-		if runtime.CapabilityManifest == "" || !filepath.IsAbs(runtime.CapabilityManifest) {
-			return fmt.Errorf("%s Mistral runtime requires an absolute capability_manifest", prefix)
-		}
-	} else if runtime.CapabilityManifest != "" || runtime.Retention != "" || runtime.Training != "" {
+		return validateMistralRuntime(profile, prefix)
+	}
+	if runtime.CapabilityManifest != "" || runtime.Retention != "" || runtime.Training != "" {
 		return fmt.Errorf("%s capability_manifest, retention, and training are only supported for Mistral", prefix)
 	}
-	if profile.AdapterContract != MistralOCRAdapterContract && profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
+	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
 		return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
 	}
@@ -1028,25 +1020,6 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 	if parsed.Scheme == "http" && profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) {
 		return fmt.Errorf("%s runtime HTTP endpoint requires operator_network", prefix)
 	}
-	if profile.AdapterContract == MistralOCRAdapterContract {
-		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > mistral.MaxTimeout || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
-			return fmt.Errorf("%s Mistral runtime requires request_timeout > 0 and <= 30 minutes and zero poll bounds", prefix)
-		}
-		if runtime.Endpoint != "https://api.eu.mistral.ai" {
-			return fmt.Errorf("%s Mistral runtime endpoint must be https://api.eu.mistral.ai", prefix)
-		}
-		if !slices.Contains([]string{mistral.RetentionStandard, mistral.RetentionZDR}, runtime.Retention) {
-			return fmt.Errorf("%s Mistral retention must be standard or zdr", prefix)
-		}
-		if !slices.Contains([]string{mistral.TrainingDefaultOptOut, mistral.TrainingOptedOut}, runtime.Training) {
-			return fmt.Errorf("%s Mistral training must be default-opt-out or opted-out", prefix)
-		}
-		if profile.MaxDocumentBytes > mistral.MaxDocumentBytes || profile.MaxResponseBytes > mistral.MaxResponseBytes ||
-			profile.MaxUnits < mistral.MinUnits || profile.MaxUnits > mistral.MaxUnits {
-			return fmt.Errorf("%s Mistral processing bounds are invalid", prefix)
-		}
-		return nil
-	}
 	if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour ||
 		runtime.TotalTimeout.Std() <= 0 || runtime.TotalTimeout.Std() > 24*time.Hour ||
 		runtime.PollInterval.Std() <= 0 || runtime.PollInterval.Std() > runtime.TotalTimeout.Std() ||
@@ -1054,6 +1027,49 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		return fmt.Errorf("%s runtime request and poll bounds are invalid", prefix)
 	}
 	return nil
+}
+
+func validateMistralRuntime(profile RenditionProfileConfig, prefix string) error {
+	runtime := profile.Runtime
+	if profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
+		return fmt.Errorf("%s Mistral runtime requires hosted_provider", prefix)
+	}
+	if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactMarkdown) {
+		return fmt.Errorf("%s Mistral runtime requires exactly provider_markdown", prefix)
+	}
+	if runtime.CapabilityManifest == "" || !filepath.IsAbs(runtime.CapabilityManifest) {
+		return fmt.Errorf("%s Mistral runtime requires an absolute capability_manifest", prefix)
+	}
+	if _, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix); err != nil {
+		return err
+	}
+	if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > mistral.MaxTimeout || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
+		return fmt.Errorf("%s Mistral runtime requires request_timeout > 0 and <= 30 minutes and zero poll bounds", prefix)
+	}
+	if _, err := profile.MistralPolicy(); err != nil {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	return nil
+}
+
+// MistralPolicy constructs the daemon's PDF policy for validation and execution.
+func (profile RenditionProfileConfig) MistralPolicy() (mistral.Policy, error) {
+	runtime := profile.Runtime
+	normalize, err := document.NewNormalizePolicy(25_000_000)
+	if err != nil {
+		return mistral.Policy{}, err
+	}
+	policy, err := mistral.NewPolicy(mistral.PolicyConfig{Region: mistral.RegionEU, Model: mistral.DefaultModel,
+		Retention: runtime.Retention, Training: runtime.Training, MaxDocumentBytes: profile.MaxDocumentBytes,
+		MaxResponseBytes: profile.MaxResponseBytes, MaxUnits: profile.MaxUnits,
+		ExtractHeader: true, ExtractFooter: true, NormalizePolicy: normalize})
+	if err != nil {
+		return mistral.Policy{}, err
+	}
+	if runtime.Endpoint != strings.TrimSuffix(policy.Values().Endpoint, "/v1/ocr") {
+		return mistral.Policy{}, errors.New("mistral runtime endpoint differs from policy origin")
+	}
+	return policy, nil
 }
 
 var privateRenditionNetworks = []netip.Prefix{

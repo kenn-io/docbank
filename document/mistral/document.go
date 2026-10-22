@@ -1,8 +1,6 @@
 package mistral
 
 import (
-	"strings"
-
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
 )
@@ -26,7 +24,5 @@ func DocumentDescriptor(policy Policy, manifest CapabilityManifest) (document.Re
 
 // DisclosureFingerprint binds the PDF descriptor to its exact endpoint and deployment.
 func DisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
-	return providerutil.SHA256Hex([]byte(strings.Join([]string{
-		DocumentAdapterContract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment,
-	}, "\x00")))
+	return providerutil.RenditionDisclosureFingerprint(DocumentAdapterContract, descriptor, endpoint, deployment)
 }

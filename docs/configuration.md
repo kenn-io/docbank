@@ -426,7 +426,7 @@ runtime uses these deployment-local settings:
 | `capability_manifest` | Path to a complete authenticated capability manifest with PDF upload authority. Relative paths resolve against the config root. |
 | `retention` | `standard` or `zdr`, matching the account's retention posture. |
 | `training` | `default-opt-out` or `opted-out`, matching the account's training posture. |
-| `request_timeout` | Positive request limit, bounded by the Mistral adapter's maximum of thirty minutes. |
+| `request_timeout` | Positive per-attempt limit, at most thirty minutes. The daemon's ten-minute authorization window also bounds uploads and retries. |
 | `allowed_cidrs`, `proxy_mode` | Non-empty provider IP allowlist and `proxy_mode = "disabled"`. |
 | `spki_sha256` | Optional lowercase SHA-256 SPKI pins for the provider certificate. |
 | `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Positive transport limits, each at most five minutes. |
@@ -437,10 +437,14 @@ variable through `credential_bindings`. The daemon reads it when processing
 starts; a missing secret raises a provider `authentication` error, recorded by
 the worker as a `terminal` job failure.
 
+The client makes at most four attempts, with up to thirty seconds between
+attempts. All attempts share the authorization window, which starts after
+inspection and spooling. The worker renews its lease while processing; lease
+renewal keeps the job claimed, while authorization expiry stops provider work.
+
 Obtain the manifest with `mistral.RunCapabilityProbe` and
-`mistral.EncodeCapabilityManifest` from `go.kenn.io/docbank/document/mistral`,
-or msgvault's `documents probe-mistral` command. Probe with header and footer
-extraction enabled and a unit bound at least as large as the profile's
+`mistral.EncodeCapabilityManifest` from `go.kenn.io/docbank/document/mistral`.
+Probe with header and footer extraction enabled and a unit bound at least as large as the profile's
 `max_units`. The daemon fixes normalization identity at 25,000,000 characters,
 uses the package-pinned `mistral.DefaultModel` in the EU region, and accepts
 `max_units` from 3 to 5,000, subject to the manifest's authority. Document and

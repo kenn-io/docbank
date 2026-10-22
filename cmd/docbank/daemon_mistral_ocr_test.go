@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +25,6 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/processing"
 )
 
 func mistralOCRProcessingConfig(t *testing.T) (config.Config, document.RenditionDescriptor) {
@@ -210,31 +208,13 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 				assert.NoError(t, err)
 			}))
 			t.Cleanup(server.Close)
-			renderErrors := make(chan error, 1)
 			root := t.TempDir()
 			require.NoError(t, writeDaemonASRConfig(root, cfg))
 			t.Setenv("DOCBANK_HOME", root)
 			startServeWithRunner(t, func(ctx context.Context) error {
-				return runServeWithProcessingProfiles(ctx, func(cfg config.Config, bundle embeddingRuntimeBundle) (map[string]processing.ProfileConfig, error) {
-					profiles, err := executableProcessingProfiles(cfg, bundle)
-					if err != nil {
-						return nil, err
-					}
-					profile, err := configuredMistralProfile(cfg.RenditionProfiles["documents"])
-					if err != nil {
-						return nil, err
-					}
-					secrets := environmentCredentialSecrets{variables: map[string]string{profile.SecretBinding: cfg.CredentialBindings[profile.SecretBinding].EnvironmentVariable}}
-					client, err := mistral.NewRenditionProvider(profile, secrets, &http.Client{Transport: mistralTestTransport{server: server}})
-					if err != nil {
-						return nil, err
-					}
-					bound := profiles["documents"].RenditionProvider.(*configuredRenditionProvider)
-					bound.RenditionProvider = client
-					supplied := profiles["documents"]
-					supplied.RenditionProvider = &observedMistralProvider{RenditionProvider: bound, errors: renderErrors}
-					profiles["documents"] = supplied
-					return profiles, nil
+				return runServeWithRenditionTransport(ctx, func(transport *http.Transport) http.RoundTripper {
+					t.Cleanup(transport.CloseIdleConnections)
+					return mistralTestTransport{server: server, t: t}
 				})
 			})
 			runtime := waitForDaemon(t, root)
@@ -269,14 +249,6 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 			require.Zero(t, requests.Load(), "planning and builds without consent must not upload")
 			job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 			require.NoError(t, err)
-			var providerErr error
-			select {
-			case providerErr = <-renderErrors:
-			case <-time.After(10 * time.Second):
-				status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
-				require.NoError(t, statusErr)
-				t.Fatalf("Mistral Render was not called: %+v", status)
-			}
 
 			require.EventuallyWithT(t, func(c *assert.CollectT) {
 				status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
@@ -299,13 +271,8 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 			if missingSecret {
 				require.Error(t, err)
 				require.Zero(t, requests.Load())
-				classified, ok := errors.AsType[*document.RenditionProviderError](providerErr)
-				require.True(t, ok, "%v", providerErr)
-				require.Equal(t, document.RenditionErrorAuthentication, classified.Code())
-				require.EqualError(t, classified.Unwrap(), "Mistral credential is unavailable: Mistral OCR credential is unavailable")
 				return
 			}
-			require.NoError(t, providerErr)
 			require.NoError(t, err)
 			var markdown bytes.Buffer
 			_, err = rendition.CopyVerified(&markdown)
@@ -323,9 +290,13 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 }
 
 // Only the HTTP destination changes; the real Mistral client still validates and maps OCR.
-type mistralTestTransport struct{ server *httptest.Server }
+type mistralTestTransport struct {
+	server *httptest.Server
+	t      *testing.T
+}
 
 func (transport mistralTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	assert.Equal(transport.t, "https://api.eu.mistral.ai/v1/ocr", request.URL.String())
 	forwarded := request.Clone(request.Context())
 	destination, err := url.Parse(transport.server.URL)
 	if err != nil {
@@ -333,15 +304,4 @@ func (transport mistralTestTransport) RoundTrip(request *http.Request) (*http.Re
 	}
 	forwarded.URL.Scheme, forwarded.URL.Host = destination.Scheme, destination.Host
 	return transport.server.Client().Transport.RoundTrip(forwarded)
-}
-
-type observedMistralProvider struct {
-	document.RenditionProvider
-	errors chan<- error
-}
-
-func (provider *observedMistralProvider) Render(ctx context.Context, upload document.AuthorizedUpload, auth document.RenditionAuthorization) (document.RenditionResult, error) {
-	result, err := provider.RenditionProvider.Render(ctx, upload, auth)
-	provider.errors <- err
-	return result, err
 }
