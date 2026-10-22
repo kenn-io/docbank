@@ -885,10 +885,15 @@
     }
   }
 
-  let pendingPerson = $state<{ id: string; name: string }>();
+  let pendingPerson = $state<{ id: string; name: string; hidden: boolean }>();
   function applyPersonPhotos() {
-    if (!pendingPerson || !photoValidated || !photoState) return false;
-    const photos = photoState.photos;
+    if (!pendingPerson) return false;
+    const photos = pendingPerson.hidden
+      ? hiddenWorkspace?.activePhotos()
+      : photoValidated
+        ? photoState?.photos
+        : undefined;
+    if (!photos) return false;
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) {
       pendingPerson = undefined;
       return false;
@@ -904,11 +909,14 @@
       pendingPerson = undefined;
       return false;
     }
-    photos.personFilter = pendingPerson;
+    photos.personFilter = { id: pendingPerson.id, name: pendingPerson.name };
     pendingPerson = undefined;
     return true;
   }
-  function openPersonPhotos(personID: string, name: string) {
+  $effect(() => {
+    if (hiddenMode && hiddenWorkspace?.activePhotos() && pendingPerson) untrack(applyPersonPhotos);
+  });
+  function openPersonPhotos(personID: string, name: string, hidden = hiddenMode) {
     const photos = activePhotos();
     if (photos?.hiding || photos?.trashing) {
       pendingPerson = undefined;
@@ -918,9 +926,9 @@
       return;
     }
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
-    pendingPerson = { id: personID, name };
+    pendingPerson = { id: personID, name, hidden };
     applyPersonPhotos();
-    navigatePhotos("/photos");
+    navigatePhotos(hidden ? "/photos/hidden" : "/photos");
   }
   function onpersonchanged(id: string, name: string, survivorID = id) {
     for (const photos of [

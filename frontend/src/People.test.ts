@@ -217,3 +217,22 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
   people.dispose();
   await cache.dispose();
 });
+
+it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () => {
+  const access = unlockedAccess();
+  const people = new People("session", vi.fn(), access);
+  people.items = [{ ...grace, photo_summary: { library_count: 0, hidden_count: 1 } }];
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const open = vi.fn();
+  const view = render(PeopleView, { people, cache, onperson: open });
+  await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
+  expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Grace 0 Library photos" }));
+  expect(open).toHaveBeenLastCalledWith("grace", "Grace", false);
+  await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+  expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
+  view.unmount();
+  people.dispose();
+  access.dispose();
+  await cache.dispose();
+});

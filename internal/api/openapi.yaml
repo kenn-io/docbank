@@ -12226,6 +12226,13 @@ components:
       properties:
         face:
           $ref: "#/components/schemas/PersonFacePreview"
+        face_hidden:
+          type: boolean
+        hidden_count:
+          format: int64
+          type:
+            - integer
+            - "null"
         library_count:
           format: int64
           type: integer
