@@ -316,7 +316,7 @@
         .catch((cause: unknown) => {
           if (!current || activePanel !== target) return;
           if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-          else if (cause instanceof APIError && (cause.status === 404 || cause.status === 410))
+          else if (cause instanceof APIError && cause.status === 404)
             nodeVersionError = "The linked node or version is missing or purged.";
           else
             nodeVersionError =

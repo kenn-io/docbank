@@ -106,27 +106,42 @@ it("opens a node absent from directory rows at its linked historical version", a
   expect(location.hash).toBe(link());
 });
 
-it.each(["purged version", "server error message"])(
-  "shows unavailable for %s without current substitution",
-  async (kind) => {
-    history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-    api((url) => {
-      if (kind === "server error message" && url === "/api/v1/nodes/42")
-        return Response.json({ detail: "Request rejected by the server" }, { status: 400 });
-      if (url === `/api/v1/versions/${oldID}`)
-        return kind === "purged version"
-          ? Response.json({ detail: "missing" }, { status: 404 })
-          : undefined;
-      return undefined;
-    });
+it.each([
+  {
+    kind: "purged version",
+    hash: link(),
+    url: `/api/v1/versions/${oldID}`,
+    response: () => Response.json({ detail: "missing" }, { status: 404 }),
+    message: /node or version is missing or purged/,
+  },
+  {
+    kind: "server error message",
+    hash: link(),
+    url: "/api/v1/nodes/42",
+    response: () => Response.json({ detail: "Request rejected by the server" }, { status: 400 }),
+    message: "Request rejected by the server",
+  },
+  {
+    kind: "malformed link",
+    hash: "#node=42",
+    url: "",
+    response: () => undefined,
+    message: /Invalid node\/version link/,
+  },
+  {
+    kind: "trashed linked node",
+    hash: link(),
+    url: "/api/v1/nodes/42",
+    response: () => Response.json({ ...node, path: undefined, trashed_at: "2026-10-01T00:00:00Z" }),
+    message: "Trash",
+  },
+])(
+  "shows $kind without current substitution or download",
+  async ({ hash, url, response, message }) => {
+    history.replaceState(null, "", `/#${credentials}${hash.slice(1)}`);
+    api((requestURL) => (requestURL === url ? response() : undefined));
     render(App);
-    expect(
-      await screen.findByText(
-        kind === "server error message"
-          ? "Request rejected by the server"
-          : /node or version is missing or purged/,
-      ),
-    ).toBeTruthy();
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByText(message)).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
     expect(screen.queryByText(currentID)).toBeNull();
   },

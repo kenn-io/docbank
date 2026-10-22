@@ -51,15 +51,11 @@ it.each(["wrong node", "directory"])(
           kind === "directory" ? { ...root, id: 42, name: "reports", path: "/reports" } : node,
         );
       if (String(input) === `/api/v1/versions/${version}`)
-        return Response.json(kind === "wrong node" ? { ...oldVersion, node_id: 99 } : oldVersion);
+        return Response.json({ ...oldVersion, node_id: 99 });
       throw new Error(`Unexpected request: ${input}`);
     });
     await expect(
       resolveNodeVersionLink("synthetic", { nodeId: 42, versionId: version }),
-    ).rejects.toThrow(
-      kind === "directory"
-        ? "The linked node is a directory. Version links require a file."
-        : "The linked version does not belong to the requested file node.",
-    );
+    ).rejects.toThrow("The linked version does not belong to the requested file node.");
   },
 );

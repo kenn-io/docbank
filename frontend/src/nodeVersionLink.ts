@@ -29,9 +29,6 @@ export async function resolveNodeVersionLink(
     getNode(selection.nodeId, { session, signal }),
     getContentVersion(selection.versionId, { session, signal }),
   ]);
-  if (node.kind !== "file") {
-    throw new Error("The linked node is a directory. Version links require a file.");
-  }
   if (version.node_id !== node.id) {
     throw new Error("The linked version does not belong to the requested file node.");
   }
