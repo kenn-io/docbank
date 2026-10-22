@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -234,25 +235,21 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 }
 
 // Materialize the bounded matches before reading their visible identity labels.
-// person_document_assertions has no person_id index in the frozen schema, so
-// browser searches read it once per query instead of once per candidate person.
-var peopleByDisplayNameSQL = `WITH hidden_versions AS MATERIALIZED (
- SELECT v.version_id FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id
- JOIN content_versions v ON v.node_id=f.node_id WHERE ?<>0 AND a.hidden_at IS NOT NULL
-), assertion_evidence AS MATERIALIZED (
- SELECT person_id,MAX(role<>'blind_copy' AND content_version_id NOT IN hidden_versions) visible
- FROM person_document_assertions WHERE ?<>0 GROUP BY person_id
-), matches AS MATERIALIZED (
- SELECT persons.* FROM persons LEFT JOIN assertion_evidence e ON e.person_id=persons.person_id
- WHERE %s state<>'retired'
-	AND (?=0 OR (e.person_id IS NULL
+var peopleByDisplayNameSQL = `WITH recent_names AS MATERIALIZED (
+ SELECT p.display_name_folded,MIN(CAST(j.key AS INTEGER)) rank
+ FROM json_each(?) j JOIN persons p ON p.person_id=j.value GROUP BY p.display_name_folded
+ ), matches AS MATERIALIZED (
+ SELECT persons.*,COALESCE(recent.rank,20) recent_rank FROM persons
+ LEFT JOIN recent_names recent USING(display_name_folded) WHERE %s state<>'retired'
+	AND (?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=persons.person_id
 			AND i.origin='derived' AND i.confidence='exact_identifier')) OR e.visible OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
 		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))
-	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND persons.person_id>?))
-	ORDER BY display_name_folded,persons.person_id LIMIT ?)
+	AND (?='' OR (COALESCE(recent.rank,20),display_name_folded,person_id) >
+ (COALESCE((SELECT rank FROM recent_names WHERE display_name_folded=?),20),?,?))
+ ORDER BY recent_rank,display_name_folded,person_id LIMIT ?)
 SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,
 	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
 		FROM person_identities i WHERE i.person_id=persons.person_id
@@ -261,24 +258,54 @@ SELECT person_id,display_name,display_name_folded,origin,state,revision,created_
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
 			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
- FROM matches persons ORDER BY display_name_folded,person_id`
+ FROM matches persons ORDER BY recent_rank,display_name_folded,person_id`
 
 type PersonSearchResult struct {
 	Person
 
 	IdentityLabel string
+	PhotoSummary  *PersonPhotoSummary
+}
+
+type PersonPhotoSummary struct {
+	LibraryCount int64              `json:"library_count"`
+	HiddenCount  *int64             `json:"hidden_count,omitzero"`
+	Face         *PersonFacePreview `json:"face,omitzero"`
+	FaceHidden   bool               `json:"face_hidden,omitzero"`
+}
+
+type PeopleSearchOptions struct {
+	RecentIDs    []string
+	PhotoSummary bool
+	GridRecipe   string
 }
 
 // PeopleByDisplayName returns active people in stable folded-name order.
-func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool) ([]PersonSearchResult, error) {
+func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options ...PeopleSearchOptions) ([]PersonSearchResult, error) {
+	var option PeopleSearchOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	if len(option.RecentIDs) > 20 {
+		return nil, ErrInvalidPerson
+	}
+	for _, id := range option.RecentIDs {
+		if validateUUIDv4(id) != nil {
+			return nil, ErrInvalidPerson
+		}
+	}
+	recent, err := json.Marshal(option.RecentIDs)
+	if err != nil {
+		return nil, err
+	}
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
 		(afterName == "") != (afterID == "") {
 		return nil, ErrInvalidPerson
 	}
 	people := []PersonSearchResult{}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		hideLocked := false
-		if visibleOnly {
+		if visibleOnly || option.PhotoSummary {
 			_, err := s.hiddenSession(ctx, tx)
 			if err != nil && !errors.Is(err, ErrHiddenLocked) {
 				return err
@@ -287,7 +314,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		}
 		prefix := document.FoldPersonName(query)
 		candidates := ""
-		args := []any{visibleOnly && hideLocked, visibleOnly}
+		args := []any{string(recent)}
 		if prefix != "" {
 			candidates = `instr(display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(display_name_folded, ?) AND`
 			args = append(args, prefix, prefix)
@@ -306,7 +333,22 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			}
 			people = append(people, person)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if option.PhotoSummary {
+			for i := range people {
+				summary, err := s.personPhotoSummary(ctx, tx, people[i].PersonID, option.GridRecipe, !hideLocked)
+				if err != nil {
+					return err
+				}
+				people[i].PhotoSummary = &summary
+			}
+		}
+		return nil
 	})
 	return people, err
 }

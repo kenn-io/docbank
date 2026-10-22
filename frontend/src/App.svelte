@@ -84,6 +84,9 @@
   import HiddenSetupModal from "./HiddenSetupModal.svelte";
   import PhotoActionError from "./PhotoActionError.svelte";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
+  import PeopleView from "./People.svelte";
+  import { People, clearRecentPeople } from "./people.svelte.js";
+  import UserIcon from "@lucide/svelte/icons/user";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
   import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
   import StarIcon from "@lucide/svelte/icons/star";
@@ -354,7 +357,7 @@
   const isMapPath = (path: string) => path === "/photos/map" || path.startsWith("/photos/map/");
   const isPhotoPath = (path: string) =>
     isMapPath(path) ||
-    ["/photos", "/photos/hidden", "/photos/albums"].includes(path) ||
+    ["/photos", "/photos/hidden", "/photos/albums", "/photos/people"].includes(path) ||
     path.startsWith("/photos/albums/");
   let photoMode = $state(isPhotoPath(location.pathname));
   let openedPhotos = false;
@@ -410,6 +413,7 @@
   );
   const albumScopeID = $derived(albumID || mapAlbumID);
   let photoAlbums = $state<PhotoAlbums>();
+  let peopleView = $state<People>();
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
   let dragOver = $state("");
@@ -587,7 +591,10 @@
     if (photoAccessChecked && changed) void photoAlbums?.load();
     photoAccessChecked = true;
     photoChangeID = result.change_id;
-    if (!photoMode || hiddenMode) return;
+    if (!photoMode || hiddenMode) {
+      applyPersonPhotos();
+      return;
+    }
     const state = photoState;
     const photos = albumID
       ? albumPhotos
@@ -657,6 +664,30 @@
       albums.dispose();
       photoAlbums = undefined;
     };
+  });
+  $effect(() => {
+    if (!webSession) return;
+    const people = new People(webSession, handleFailure, hiddenAccess, () =>
+      handlePhotoFacesChanged(false),
+    );
+    peopleView = people;
+    return () => {
+      people.dispose();
+      peopleView = undefined;
+      clearRecentPeople();
+    };
+  });
+  $effect(() => {
+    const people = peopleView;
+    const visible =
+      photoMode && photoPath === "/photos/people" && photoValidated && !photoConcealed;
+    void hiddenAccess?.scope;
+    if (!people) return;
+    untrack(() => {
+      people.conceal();
+      if (visible) void people.load();
+    });
+    return () => people.conceal();
   });
   function albumQuery(id: string): Query {
     return {
@@ -886,7 +917,10 @@
     pendingPerson = undefined;
     return true;
   }
-  function openPersonPhotos(personID: string, name: string) {
+  $effect(() => {
+    if (hiddenMode && hiddenWorkspace?.activePhotos() && pendingPerson) untrack(applyPersonPhotos);
+  });
+  function openPersonPhotos(personID: string, name: string, hidden?: boolean) {
     const photos = activePhotos();
     if (photos?.hiding || photos?.trashing) {
       pendingPerson = undefined;
@@ -897,6 +931,10 @@
     }
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
     pendingPerson = { id: personID, name };
+    if (hidden && !hiddenMode) {
+      navigatePhotos("/photos/hidden");
+      return;
+    }
     if (hiddenMode) {
       if (applyPersonPhotos()) navigatePhotos("/photos/hidden");
     } else if (photoState && photoValidated) {
@@ -2605,7 +2643,8 @@
     }
   }
 
-  function handlePhotoFacesChanged(): void {
+  function handlePhotoFacesChanged(refreshPeople = true): void {
+    if (refreshPeople && photoPath === "/photos/people") void peopleView?.load();
     for (const photos of siblingPhotoLists()) if (photos.dependsOnPeople) void photos.refresh();
     queuePhotoDocumentsRefresh();
   }
@@ -3300,6 +3339,13 @@
           <button
             type="button"
             class="nav-item"
+            aria-current={photoPath === "/photos/people" ? "page" : undefined}
+            onclick={() => navigatePhotos("/photos/people")}
+            ><UserIcon size="16" aria-hidden="true" />People</button
+          >
+          <button
+            type="button"
+            class="nav-item"
             aria-current={hiddenMode ? "page" : undefined}
             onclick={() => navigatePhotos("/photos/hidden")}
             ><EyeOffIcon size="16" aria-hidden="true" />Hidden</button
@@ -3614,7 +3660,12 @@
             message={hiddenPhotoActionError}
             ondismiss={() => (hiddenPhotoActionError = "")}
           />
-          {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex
+          {#if photoPath === "/photos/people"}{#if peopleView}<PeopleView
+                people={peopleView}
+                cache={photoState.cache}
+                onperson={openPersonPhotos}
+              />{/if}
+          {:else if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex
                 albums={photoAlbums}
                 cache={photoState.cache}
                 onnavigate={navigatePhotos}

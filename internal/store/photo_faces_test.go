@@ -875,3 +875,105 @@ func TestPhotoFaceGenericDepictedAuthorization(t *testing.T) {
 	_, err = s.AssertDocumentPerson(WithPhotoHiddenToken(ctx, token), assertion)
 	require.NoError(t, err)
 }
+
+func TestPeoplePhotoSummary(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	zero, err := s.CreatePerson(ctx, "Document only", "operator")
+	require.NoError(t, err)
+	hiddenOnly, err := s.CreatePerson(ctx, "Hidden only", "operator")
+	require.NoError(t, err)
+	var nodes []Node
+	var assets []PhotoAsset
+	var faces []PhotoFace
+	for i := range 5 {
+		node := browsePhotoNode(t, s, fmt.Sprintf("summary-%d.jpg", i), fakeHash(fmt.Sprintf("%02x", i+30)), "image/jpeg")
+		browsePhotoMetadata(t, s, node, fmt.Sprintf("summary-%d", i), exifCapture(fmt.Sprintf("2026-01-%02dT12:00:00Z", i+1)))
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: .3, Height: .3}, person.PersonID)
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+		assets = append(assets, asset)
+		faces = append(faces, face)
+	}
+	// Repeated faces and whole-photo evidence count the asset once.
+	_, _, err = s.CreatePhotoFace(ctx, nodes[0].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .1, Height: .1}, person.PersonID)
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, nodes[0].CurrentVersionID, person.PersonID, "")
+	require.NoError(t, err)
+	p, _, err := s.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	_, err = s.DecidePhotoFace(ctx, nodes[0].CurrentVersionID, PhotoFaceDecisionRequest{Action: "key", Revision: 1, PersonID: p.PersonID, PersonRevision: p.Revision, FaceID: faces[0].FaceID})
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, assets[2].ID, assets[2].Revision, true)
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, nodes[2].CurrentVersionID, hiddenOnly.PersonID, "")
+	// Hidden writes require the same unlocked scope as reads.
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	_, err = s.MarkPersonInPhoto(unlocked, nodes[2].CurrentVersionID, hiddenOnly.PersonID, "")
+	require.NoError(t, err)
+	// Excluded assets and missing sources contribute neither a count nor a face.
+	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, assets[3].ID)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET trashed_at='2026-01-01T00:00:00Z' WHERE id=?`, nodes[4].ID)
+	require.NoError(t, err)
+	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	rows, err := s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	require.Equal(t, int64(2), rows[0].PhotoSummary.LibraryCount)
+	require.Equal(t, int64(1), *rows[0].PhotoSummary.HiddenCount)
+	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	require.Equal(t, zero.PersonID, rows[1].PersonID)
+	require.Zero(t, rows[1].PhotoSummary.LibraryCount)
+	require.Nil(t, rows[1].PhotoSummary.Face)
+	rows, err = s.PeopleByDisplayName(ctx, "", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Nil(t, rows[0].PhotoSummary.HiddenCount)
+	// Hiding the selected face makes the remaining readable face the card source.
+	_, err = s.SetPhotoAssetHidden(unlocked, assets[0].ID, assets[0].Revision, true)
+	require.NoError(t, err)
+	rows, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	rows, err = s.PeopleByDisplayName(unlocked, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.True(t, rows[0].PhotoSummary.FaceHidden)
+	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+}
+
+func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset, nodes := photoTrashFixture(t, s)
+	imageFile := fileByRole(asset.Files, PhotoRoleImage)
+	_, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFile.ID)
+	require.NoError(t, err)
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	for _, node := range nodes[:2] {
+		_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, person.PersonID)
+		require.NoError(t, err)
+	}
+	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	rows, err := s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+	// Once the RAW changes, its old face no longer supplies the crop.
+	_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("d4"), 4, "image/x-canon-cr2")
+	require.NoError(t, err)
+	rows, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+}

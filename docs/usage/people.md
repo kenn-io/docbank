@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-21
 title: People
-description: List and edit canonical people through the daemon API and CLI, and read them through MCP.
+description: Browse people and their photos, rename or merge people, and manage canonical records through the API and CLI.
 ---
 
 # People
@@ -10,6 +10,16 @@ Docbank keeps one canonical person record for each person in the vault. The
 daemon API and CLI can list, search, create, rename, retire, merge, and split
 these records. MCP can find and read them. Every edit to an existing person
 uses the revision returned by the preceding read.
+
+## People in Photos
+
+Open **Photos → People** to browse everyone visible to your browser session. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. People with document evidence or no photo evidence still have a card, with a person icon when no readable assigned face is available.
+
+Select a card to open that person's Library photos. While Hidden is unlocked, cards also show a separate **Hidden** photo count that opens the same person in Hidden. Hidden-only people and their counts clear when Hidden locks or expires. An available key face supplies the portrait; otherwise Docbank uses another readable assigned face.
+
+Use **Rename** to change the name. Use **Merge** to choose the person to keep, then confirm. The survivor keeps their name and receives the other person's records. Each choice includes its identity label or full person ID so you can distinguish namesakes. A rejected edit shows its validation, revision, conflict, or capacity error. If a merge result can't be confirmed, **Retry merge** reuses the operation ID to retrieve the saved result.
+
+Face-name pickers put the people you named most recently in this signed-in browser session first. Namesakes stay together; the remaining names follow name order. This history keeps the last 20 choices, including newly created people and whole-photo marks, and resets on reload or sign-out.
 
 ## List and search
 

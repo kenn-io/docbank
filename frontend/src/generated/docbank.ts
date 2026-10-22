@@ -4848,12 +4848,21 @@ export interface PersonMergeReceipt {
   survivor_revision_before: number;
 }
 
+export interface PersonPhotoSummary {
+  face?: PersonFacePreview;
+  face_hidden?: boolean;
+  /** @nullable */
+  hidden_count?: number | null;
+  library_count: number;
+}
+
 export interface PersonSummary {
   created_at: string;
   display_name: string;
   display_name_folded: string;
   identity_label?: string;
   person_id: string;
+  photo_summary?: PersonPhotoSummary;
   revision: number;
   state: string;
 }
@@ -6210,6 +6219,7 @@ export interface PhotoFaceDecisionRequest {
 export interface PhotoFaceDecisionResult {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  person_id?: string;
   receipt_id: string;
 }
 
@@ -9309,6 +9319,11 @@ query?: string;
  */
 limit?: number;
 cursor?: string;
+photo_summary?: boolean;
+/**
+ * Up to 20 comma-separated person UUIDs, most recent first. Namesakes stay together.
+ */
+recent_ids?: string;
 };
 
 export type GetPersonParams = {

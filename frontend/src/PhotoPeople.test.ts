@@ -1,11 +1,13 @@
 import { photoFace, photoPersonAssertion, photoFacePage } from "./photo-test-fixtures.js";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { clearRecentPeople } from "./people.svelte.js";
 import { PhotoFaces } from "./photoFaces.svelte.js";
 import PhotoPeople from "./PhotoPeople.svelte";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 afterEach(() => {
+  clearRecentPeople();
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -93,7 +95,7 @@ it("marks existing people and creates a new person in the whole photo", async ()
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "New name" } });
   await waitFor(() =>
     expect(search).toHaveBeenLastCalledWith(
-      { query: "New name", limit: 100 },
+      { query: "New name", limit: 100, recent_ids: "person-b" },
       expect.objectContaining({ session: "session" }),
     ),
   );
@@ -952,3 +954,30 @@ it.each(["unauthorized", "generic"])(
     faces.dispose();
   },
 );
+
+it("sends a newly named person first to the next face picker", async () => {
+  const second = photoFace({ face_id: "second", assertion_id: undefined });
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
+    photoFacePage({ faces: [face, second], people: [], assertions: [] }),
+  );
+  const search = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+  vi.spyOn(api, "decidePhotoFace").mockResolvedValue({
+    receipt_id: "receipt",
+    person_id: "new-zoe",
+  });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByTitle("Name face 1"));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Zoe" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: 'Create person "Zoe"' }));
+  await waitFor(() => expect(faces.busy).toBe(false));
+  await fireEvent.click(screen.getByTitle("Name face 2"));
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith(
+      { query: "", limit: 100, recent_ids: "new-zoe" },
+      expect.anything(),
+    ),
+  );
+  faces.dispose();
+});
