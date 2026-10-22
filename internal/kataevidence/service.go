@@ -112,40 +112,40 @@ func validateCiteRequest(r CiteRequest) error {
 		return fmt.Errorf("%w: selector requires a node ID or absolute path", ErrInvalid)
 	}
 	if p.StartRune < 0 {
-		return fmt.Errorf("%w: --start must be nonnegative", ErrInvalid)
+		return fmt.Errorf("%w: start_rune must be nonnegative", ErrInvalid)
 	}
 	if p.EndRune <= p.StartRune || p.EndRune > 2147483647 || p.EndRune-p.StartRune > MaxChars {
-		return fmt.Errorf("%w: --end must follow --start by at most 1000 code points", ErrInvalid)
+		return fmt.Errorf("%w: end_rune must follow start_rune by at most 1000 code points", ErrInvalid)
 	}
 	if !bounded(p.Quote, MaxChars) {
-		return fmt.Errorf("%w: --quote must contain at most 1000 UTF-8 code points", ErrInvalid)
+		return fmt.Errorf("%w: quote must contain at most 1000 UTF-8 code points", ErrInvalid)
 	}
 	if p.ExpectedVersion != "" && canonical.ValidateUUIDv4(p.ExpectedVersion) != nil {
-		return fmt.Errorf("%w: --expected-version requires a content version UUID", ErrInvalid)
+		return fmt.Errorf("%w: expected_version requires a content version UUID", ErrInvalid)
 	}
 	if !bounded(r.Brief, 2000) {
-		return fmt.Errorf("%w: --brief exceeds 2000 code points", ErrInvalid)
+		return fmt.Errorf("%w: brief exceeds 2000 code points", ErrInvalid)
 	}
 	if !bounded(r.Title, 512) {
-		return fmt.Errorf("%w: --title exceeds 512 code points", ErrInvalid)
+		return fmt.Errorf("%w: title exceeds 512 code points", ErrInvalid)
 	}
 	if len(r.Issue) > 256 {
-		return fmt.Errorf("%w: --issue exceeds 256 bytes", ErrInvalid)
+		return fmt.Errorf("%w: issue exceeds 256 bytes", ErrInvalid)
 	}
 	// ResolveTextCitation owns citation validation. Here we bind the selector to it.
 	if p.Citation != nil && documentCitationMismatch(p) {
-		return fmt.Errorf("%w: --citation does not match the selected node or range", ErrInvalid)
+		return fmt.Errorf("%w: citation does not match the selected node or range", ErrInvalid)
 	}
 	if r.Issue != "" {
 		if r.Title != "" || r.Brief != "" || r.IdempotencyKey != "" {
-			return fmt.Errorf("%w: --issue cannot be combined with --title, --brief, or --idempotency-key", ErrInvalid)
+			return fmt.Errorf("%w: issue cannot be combined with title, brief, or idempotency_key", ErrInvalid)
 		}
 	} else {
 		if strings.TrimSpace(r.Title) == "" {
-			return fmt.Errorf("%w: --title is required", ErrInvalid)
+			return fmt.Errorf("%w: title is required", ErrInvalid)
 		}
 		if strings.TrimSpace(r.IdempotencyKey) == "" || !utf8.ValidString(r.IdempotencyKey) || len(r.IdempotencyKey) > 128 || strings.ContainsAny(r.IdempotencyKey, "\r\n\x00") {
-			return fmt.Errorf("%w: --idempotency-key requires 1 to 128 bytes without line breaks", ErrInvalid)
+			return fmt.Errorf("%w: idempotency_key requires 1 to 128 bytes without line breaks", ErrInvalid)
 		}
 	}
 	return nil

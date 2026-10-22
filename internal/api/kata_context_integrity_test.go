@@ -16,12 +16,12 @@ func TestKataContextRejectsForgedOriginalQuote(t *testing.T) {
 	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata.URL, APIKeyEnv: "DKE_API_KATA_KEY"}
+		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
 	})
 	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
 	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{Title: "Review", IdempotencyKey: "verify-quote", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5}})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	client := kataclient.New(config.KataConnection{Endpoint: kata.URL, APIKey: "synthetic-kata-token", Project: "docbank"})
+	client := kataclient.New(config.KataConnection{Endpoint: kata, APIKey: "synthetic-kata-token", Project: "docbank"})
 	saved, err := client.Get(t.Context(), "docbank#"+issue().Issue.ShortID)
 	require.NoError(t, err)
 	var envelope struct {

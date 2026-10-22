@@ -27,7 +27,8 @@ func TestKataProblemClassifiesPermanentReferenceFailures(t *testing.T) {
 		{"unauthorized", &kataclient.Error{Status: 401, Code: "http_error"}, 401, "kata_unauthorized", ""},
 		{"forbidden", &kataclient.Error{Status: 403, Code: "http_error"}, 403, "kata_forbidden", ""},
 		{"unavailable", &kataclient.Error{Status: 404, Code: "http_error"}, 404, "kata_issue_unavailable", ""},
-		{"invalid_range", document.ErrInvalidCitationRange, 422, "invalid_kata_evidence", "--end"},
+		{"invalid_range", document.ErrInvalidCitationRange, 422, "invalid_kata_evidence", "end_rune or start_rune"},
+		{"invalid_citation", document.ErrInvalidTextCitation, 422, "invalid_kata_evidence", "citation is invalid"},
 		{"entry_limit", kataevidence.ErrEntryLimit, 409, "kata_evidence_limit", "issue already holds the maximum of 64 Docbank quotes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -38,6 +39,7 @@ func TestKataProblemClassifiesPermanentReferenceFailures(t *testing.T) {
 				require.Contains(t, problem.Detail, tc.detail)
 			}
 			require.NotContains(t, strings.ToLower(problem.Detail), "retry")
+			require.NotContains(t, problem.Detail, "--")
 		})
 	}
 }

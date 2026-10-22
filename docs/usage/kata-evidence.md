@@ -13,7 +13,7 @@ Files imported through any Docbank ingestion path can supply evidence.
 
 ## Connect Kata
 
-Kata API schema 0.x at or above 0.21.0 is required. Other major versions are unsupported.
+Kata API schemas 0.21.0 through 0.28.x are supported. Other versions are rejected before any write.
 `GET /api/v1/health` reports it as `api_schema_version`, separate from the Kata release number.
 Kata v0.18.0 reports schema 0.21.0; v0.19.0 reports 0.28.0. Both meet the
 requirement. Docbank checks it only when you use this integration.
@@ -143,7 +143,7 @@ operation error.
 
 Retaining an older content version does not make it current: changing the file
 still reports `changed`. Rewriting byte-identical original text stays `available`
-after Docbank verifies the range and saved quote again. An unavailable Kata connection is an operation error,
+after Docbank verifies the range and saved quote again. Readback preserves the saved reference and entry ID, including the originally cited content version. An unavailable Kata connection is an operation error,
 not evidence that a document changed.
 
 ## Use MCP

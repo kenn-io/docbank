@@ -23,6 +23,8 @@ const (
 	operationTimeout = 10 * time.Second
 	maxRequestBytes  = 1 << 20
 	maxResponseBytes = 2 << 20
+	// maxSupportedSchemaMinor is verified against Kata v0.19.0.
+	maxSupportedSchemaMinor = 28
 )
 
 type Issue struct {
@@ -44,7 +46,7 @@ type Error struct {
 
 func (e *Error) Error() string {
 	if e.Code == "incompatible_api" {
-		return "unsupported Kata API schema: require 0.x at or above 0.21.0"
+		return fmt.Sprintf("unsupported Kata API schema: require 0.21.0 through 0.%d.x", maxSupportedSchemaMinor)
 	}
 	return fmt.Sprintf("Kata request failed (status %d, code %s)", e.Status, e.Code)
 }
@@ -441,7 +443,7 @@ func supportedSchema(version string) bool {
 		}
 		numbers[i] = n
 	}
-	if numbers[0] != 0 {
+	if numbers[0] != 0 || numbers[1] > maxSupportedSchemaMinor {
 		return false
 	}
 	if numbers[1] > 21 {

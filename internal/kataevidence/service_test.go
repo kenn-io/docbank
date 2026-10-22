@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/kata/pkg/client"
 	"go.kenn.io/kata/pkg/client/generated"
@@ -325,6 +326,34 @@ func TestCiteRejectsInvalidRequests(t *testing.T) {
 	} {
 		_, err := (Service{}).Cite(t.Context(), request)
 		require.ErrorIs(t, err, ErrInvalid)
+	}
+}
+
+func TestCiteValidationNamesFields(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*CiteRequest)
+		detail string
+	}{
+		{"start", func(r *CiteRequest) { r.Selector.StartRune = -1 }, "start_rune must be nonnegative"},
+		{"end", func(r *CiteRequest) { r.Selector.EndRune = 1001 }, "end_rune must follow start_rune by at most 1000 code points"},
+		{"quote", func(r *CiteRequest) { r.Selector.Quote = strings.Repeat("x", 1001) }, "quote must contain at most 1000 UTF-8 code points"},
+		{"expected_version", func(r *CiteRequest) { r.Selector.ExpectedVersion = "invalid" }, "expected_version requires a content version UUID"},
+		{"brief", func(r *CiteRequest) { r.Brief = strings.Repeat("x", 2001) }, "brief exceeds 2000 code points"},
+		{"title", func(r *CiteRequest) { r.Title = strings.Repeat("x", 513) }, "title exceeds 512 code points"},
+		{"issue", func(r *CiteRequest) { r.Issue = strings.Repeat("x", 257) }, "issue exceeds 256 bytes"},
+		{"citation", func(r *CiteRequest) { r.Selector.Citation = &document.TextCitation{NodeID: 3} }, "citation does not match the selected node or range"},
+		{"append", func(r *CiteRequest) { r.Issue = "abcd" }, "issue cannot be combined with title, brief, or idempotency_key"},
+		{"missing_title", func(r *CiteRequest) { r.Title = "" }, "title is required"},
+		{"missing_key", func(r *CiteRequest) { r.IdempotencyKey = "" }, "idempotency_key requires 1 to 128 bytes without line breaks"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := CiteRequest{Selector: Selector{NodeID: 2, EndRune: 5}, Title: "Review", IdempotencyKey: "key"}
+			tc.change(&request)
+			_, err := (Service{}).Cite(t.Context(), request)
+			require.ErrorIs(t, err, ErrInvalid)
+			require.EqualError(t, err, "invalid Kata evidence request: "+tc.detail)
+		})
 	}
 }
 

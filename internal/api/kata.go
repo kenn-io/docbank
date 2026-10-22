@@ -113,18 +113,18 @@ func kataProblem(err error) *Error {
 		}
 		switch failure.Code {
 		case "incompatible_api":
-			return NewError(503, "kata_incompatible", "unsupported Kata API schema: require 0.x at or above 0.21.0")
+			return NewError(503, "kata_incompatible", failure.Error())
 		case "invalid_reference", "wrong_project", "project_unavailable":
 			return NewError(422, "invalid_kata_evidence", "Kata issue reference is invalid, unavailable, or outside the configured project")
 		}
 	}
 	switch {
 	case errors.Is(err, document.ErrInvalidTextCitation):
-		return NewError(422, "invalid_kata_evidence", "--citation is invalid")
+		return NewError(422, "invalid_kata_evidence", "citation is invalid")
 	case errors.Is(err, kataevidence.ErrIdempotencyConflict):
 		return NewError(409, "kata_idempotency_conflict", err.Error())
 	case errors.Is(err, document.ErrInvalidCitationRange):
-		return NewError(422, "invalid_kata_evidence", "--end or --start is outside the selected text")
+		return NewError(422, "invalid_kata_evidence", "end_rune or start_rune is outside the selected text")
 	case errors.Is(err, kataevidence.ErrInvalid):
 		return NewError(422, "invalid_kata_evidence", err.Error())
 	case errors.Is(err, kataevidence.ErrChanged), errors.Is(err, kataevidence.ErrConflict):

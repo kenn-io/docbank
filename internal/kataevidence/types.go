@@ -34,7 +34,7 @@ var (
 	ErrIdempotencyConflict = errors.New("idempotency key was already used for a different request")
 )
 
-// Reference extends msgvault's reference union without inventing message provenance.
+// Reference shares only msgvault's version/entries/id/reference envelope fields.
 type Reference struct {
 	Version   int                    `json:"version"`
 	Kind      string                 `json:"kind"`
