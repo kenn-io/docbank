@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,20 +95,39 @@ func TestMistralOCRSharedProvider(t *testing.T) {
 	require.Same(t, profiles["documents"].RenditionProvider, profiles["other"].RenditionProvider)
 }
 
-func TestRenditionSharedProviderEquivalentCIDRs(t *testing.T) {
-	cfg, _ := doclingDocumentProcessingConfig(t, "http://127.0.0.1:5001")
-	cfg.RenditionProfiles["documents"].Runtime.AllowedCIDRs = []string{"fd00::/64"}
-	other := cfg.RenditionProfiles["documents"]
-	other.Runtime = new(*other.Runtime)
-	other.Runtime.AllowedCIDRs = []string{"fd00:0:0:0::/64"}
-	cfg.RenditionProfiles["other"] = other
-	processing := cfg.ProcessingProfiles["documents"]
-	processing.Rendition = "other"
-	cfg.ProcessingProfiles["other"] = processing
-	require.NoError(t, cfg.Validate())
-	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-	require.NoError(t, err)
-	require.Same(t, profiles["documents"].RenditionProvider, profiles["other"].RenditionProvider)
+func TestMistralOCRDescriptorDriftOrder(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		id          bool
+		fingerprint bool
+		want        string
+	}{
+		{"all fields", true, true, "descriptor_id"},
+		{"fingerprint and trust boundary", false, true, "descriptor_fingerprint"},
+		{"trust boundary", false, false, "trust_boundary"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, descriptor := mistralOCRProcessingConfig(t)
+			profile := cfg.RenditionProfiles["documents"]
+			if test.id {
+				profile.DescriptorID = "other.provider"
+			}
+			if test.fingerprint {
+				profile.DescriptorFingerprint = strings.Repeat("0", 64)
+			}
+			profile.TrustBoundary = "operator_network"
+			cfg.RenditionProfiles["documents"] = profile
+			want := map[string]string{
+				"descriptor_id":          descriptor.ID,
+				"descriptor_fingerprint": descriptor.Fingerprint,
+				"trust_boundary":         "hosted_provider",
+			}[test.want]
+			for range 100 {
+				_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+				require.EqualError(t, err, fmt.Sprintf("configuring rendition runtime %q: descriptor differs from portable binding; expected %s = %q", "documents", test.want, want))
+			}
+		})
+	}
 }
 
 func TestDaemonMistralOCRProcessing(t *testing.T) {

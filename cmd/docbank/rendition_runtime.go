@@ -123,9 +123,13 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, err
 	}
 	descriptor := adapter.descriptor
-	for field, binding := range map[string][2]string{"descriptor_id": {configured.DescriptorID, descriptor.ID}, "descriptor_fingerprint": {configured.DescriptorFingerprint, descriptor.Fingerprint}, "trust_boundary": {configured.TrustBoundary, string(descriptor.TrustBoundary)}} {
-		if binding[0] != binding[1] {
-			return nil, disclosure, fmt.Errorf("descriptor differs from portable binding; expected %s = %q", field, binding[1])
+	for _, binding := range []struct{ field, configured, expected string }{
+		{"descriptor_id", configured.DescriptorID, descriptor.ID},
+		{"descriptor_fingerprint", configured.DescriptorFingerprint, descriptor.Fingerprint},
+		{"trust_boundary", configured.TrustBoundary, string(descriptor.TrustBoundary)},
+	} {
+		if binding.configured != binding.expected {
+			return nil, disclosure, fmt.Errorf("descriptor differs from portable binding; expected %s = %q", binding.field, binding.expected)
 		}
 	}
 	if configured.DisclosureFingerprint != adapter.disclosureFingerprint {

@@ -485,7 +485,6 @@ func loadTOML(root string) (Config, error) {
 			*manifest = filepath.Clean(filepath.Join(root, *manifest))
 		}
 	}
-
 	return c, nil
 }
 
