@@ -162,6 +162,7 @@ func TestPrepareMemoryRejectsInvalidSource(t *testing.T) {
 		policy   Policy
 		declared string
 	}{
+		{name: "empty content", content: []byte{}, policy: policy, declared: mediaTypePDF},
 		{name: "over limit", content: content, policy: testPolicy(t, int64(len(content))-1, 10), declared: mediaTypePDF},
 		{name: "media type mismatch", content: content, policy: policy, declared: "image/png"},
 		{name: "malformed PDF", content: []byte("%PDF-1.7\nmalformed\n%%EOF"), policy: policy, declared: mediaTypePDF},
@@ -180,4 +181,28 @@ func TestPrepareMemoryRejectsInvalidSource(t *testing.T) {
 	prepared, err = PrepareMemory(t.Context(), content, Policy{}, MemoryPrepareOptions{})
 	require.ErrorContains(t, err, "use NewPolicy")
 	require.Nil(t, prepared)
+}
+
+func TestPrepareMemoryCanceledDuringInspection(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	inspectionCtx := &cancelDuringInspectionContext{Context: ctx, cancel: cancel}
+	prepared, err := PrepareMemory(inspectionCtx, testPDF("cancel during inspection"), testPolicy(t, 1024, 10), MemoryPrepareOptions{DeclaredMediaType: mediaTypePDF})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, prepared)
+}
+
+type cancelDuringInspectionContext struct {
+	context.Context
+
+	cancel context.CancelFunc
+	checks int
+}
+
+func (ctx *cancelDuringInspectionContext) Err() error {
+	ctx.checks++
+	if ctx.checks == 2 {
+		ctx.cancel()
+	}
+	return ctx.Context.Err()
 }

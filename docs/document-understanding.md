@@ -307,9 +307,11 @@ For each production document:
 6. Call `NormalizeDocument(Result.Document, Policy.NormalizePolicy())` on a
    successful result.
 
-`Prepare` copies one input into a private, bounded, immutable staging file.
+`Prepare` copies one input into a private, bounded, immutable staging file,
+verifying the caller's `ExpectedSize` and `ExpectedSHA256`.
 `PrepareMemory` keeps a copy in memory, computes its size and SHA-256, and
 zeroes that copy when you call `Release`.
+For `PrepareMemory`, compare `SHA256()` yourself if you expect a known hash.
 For direct formats, `Process` reopens and verifies staging files for every
 attempt, or clones the private memory copy without re-hashing it.
 It derives request options from the policy and authorization, bounds the
