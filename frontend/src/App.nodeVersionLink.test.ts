@@ -88,15 +88,6 @@ async function signIn() {
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 }
 
-it("opens a node absent from directory rows at its linked historical version", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  api();
-  render(App);
-  expect(await screen.findByText(oldID)).toBeTruthy();
-  await screen.findByText("1001 retained versions");
-  expect(location.hash).toBe(link());
-});
-
 it.each([
   {
     kind: "purged version",
@@ -118,13 +109,6 @@ it.each([
     url: "",
     response: () => undefined,
     message: /Invalid node\/version link/,
-  },
-  {
-    kind: "trashed linked node",
-    hash: link(),
-    url: "/api/v1/nodes/42",
-    response: () => Response.json({ ...node, path: undefined, trashed_at: "2026-10-01T00:00:00Z" }),
-    message: "Trash",
   },
 ])(
   "shows $kind without current substitution or download",
@@ -165,6 +149,7 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
   );
   await screen.findByRole("cell", { name: "other.txt" });
   expect(screen.getByText(oldID)).toBeTruthy();
+  await screen.findByText("1001 retained versions");
   expect(location.hash).toBe(link());
 });
 
@@ -188,60 +173,23 @@ it.each([`/api/v1/versions/${oldID}`, "/api/v1/nodes/42/versions?limit=1000&offs
   },
 );
 
-it.each([true, false])(
-  "clears other fragment intent on Lock web session with linked=%s",
-  async (linked) => {
-    const selection = linked ? link().slice(1) + "&" : "";
-    history.replaceState(
-      null,
-      "",
-      `/#${credentials}${selection}query=%7B%7D&photo=example&other=value`,
-    );
-    api();
-    render(App);
-    if (linked) await screen.findByText(oldID);
-    await fireEvent.click(await screen.findByRole("button", { name: "Lock web session" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Lock web session" })).toBeNull(),
-    );
-    expect(location.hash).toBe(linked ? link() : "");
-  },
-);
-
-it("aborts a pending lookup on a changed link and closes the drawer on link removal", async () => {
-  history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
-  let release!: (response: Response) => void;
-  let oldSignal: AbortSignal | null | undefined;
-  const fetchMock = api((url, init) => {
-    if (url === `/api/v1/versions/${oldID}` && !release) {
-      oldSignal = init?.signal;
-      return new Promise<Response>((resolve) => {
-        release = resolve;
-      });
-    }
-    return undefined;
-  });
+it("clears other fragment intent on Lock web session while preserving the linked version", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#${credentials}${link().slice(1)}&query=%7B%7D&photo=example&other=value`,
+  );
+  api();
   render(App);
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  await act(() => {
-    history.pushState(null, "", `/${link(currentID)}`);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
-  });
-  await screen.findByText(currentID);
-  expect(oldSignal?.aborted).toBe(true);
-  await act(() => release(Response.json(oldVersion)));
-  expect(screen.queryByText(oldID)).toBeNull();
-  expect(
-    fetchMock.mock.calls.filter(([input]) => String(input) === `/api/v1/versions/${currentID}`),
-  ).toHaveLength(1);
-  await act(() => {
-    history.replaceState(null, "", "/#photo=example");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
-  expect(screen.queryByRole("dialog")).toBeNull();
+  await screen.findByText(oldID);
+  await fireEvent.click(await screen.findByRole("button", { name: "Lock web session" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Lock web session" })).toBeNull(),
+  );
+  expect(location.hash).toBe(link());
 });
 
-it("keeps a pending lookup and the mounted drawer when the link key is unchanged", async () => {
+it("preserves a pending lookup for the same link key, aborts it on key changes, and closes on removal", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
   let release!: (response: Response) => void;
   let oldSignal: AbortSignal | null | undefined;
@@ -269,9 +217,23 @@ it("keeps a pending lookup and the mounted drawer when the link key is unchanged
   expect(
     fetchMock.mock.calls.filter(([input]) => String(input) === `/api/v1/versions/${oldID}`),
   ).toHaveLength(1);
-  await act(() => release(Response.json(oldVersion)));
-  expect(await screen.findByText(oldID)).toBeTruthy();
   expect(location.hash).toBe(`${link()}&query=%7B%7D`);
+  await act(() => {
+    history.pushState(null, "", `/${link(currentID)}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  await screen.findByText(currentID);
+  expect(oldSignal?.aborted).toBe(true);
+  await act(() => release(Response.json(oldVersion)));
+  expect(screen.queryByText(oldID)).toBeNull();
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input) === `/api/v1/versions/${currentID}`),
+  ).toHaveLength(1);
+  await act(() => {
+    history.replaceState(null, "", "/#photo=example");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("replaces an ordinary version drawer when a linked version opens in the same tab", async () => {

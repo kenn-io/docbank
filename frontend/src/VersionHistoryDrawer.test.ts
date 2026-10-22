@@ -150,32 +150,6 @@ describe("version history drawer", () => {
     await vi.waitFor(() => expect(downloadSignal?.aborted).toBe(true));
   });
 
-  it("hides unresolved and unavailable linked selections", async () => {
-    const newest = version(currentVersionID, 3, "content_replace", "c");
-    const older = version(createdVersionID, 1, "content_create", "a");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ items: [newest, older], total: 2, limit: 1000, offset: 0 }),
-    );
-    const drawer = render(VersionHistoryDrawer, {
-      session: "short-lived",
-      node,
-      path: "/Reports/example.txt",
-      onselect: vi.fn(),
-      pinnedVersion: newest,
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
-    await screen.findByText("2 retained versions");
-    expect(screen.getByText(currentVersionID)).toBeTruthy();
-    await drawer.rerender({ resolving: true });
-    expect(screen.queryByText(currentVersionID)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
-    await drawer.rerender({ resolving: false, unavailable: "Version lookup unavailable" });
-    expect(screen.getByText("Version lookup unavailable")).toBeTruthy();
-    expect(screen.queryByText(currentVersionID)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
-  });
-
   it("refreshes linked history when the same node has a new current version", async () => {
     const older = version(createdVersionID, 1, "content_create", "a");
     const previous = version(replacedVersionID, 2, "content_replace", "b");
@@ -191,7 +165,13 @@ describe("version history drawer", () => {
     const onselect = vi.fn();
     const drawer = render(VersionHistoryDrawer, {
       session: "short-lived",
-      node: { ...node, current_version_id: previous.id, revision: 2 },
+      node: {
+        ...node,
+        current_version_id: previous.id,
+        blob_hash: previous.blob_hash,
+        size: previous.size,
+        revision: 2,
+      },
       path: "/Reports/example.txt",
       pinnedVersion: older,
       onselect,
@@ -202,12 +182,24 @@ describe("version history drawer", () => {
     expect(screen.getByText("Current").closest("button")?.textContent).toContain("Revision 2");
 
     await drawer.rerender({
-      node: { ...node, current_version_id: previous.id, revision: 3 },
+      node: {
+        ...node,
+        current_version_id: previous.id,
+        blob_hash: previous.blob_hash,
+        size: previous.size,
+        revision: 3,
+      },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await drawer.rerender({
-      node: { ...node, current_version_id: newest.id, revision: 4 },
+      node: {
+        ...node,
+        current_version_id: newest.id,
+        blob_hash: newest.blob_hash,
+        size: newest.size,
+        revision: 4,
+      },
     });
     await screen.findByText("3 retained versions");
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -250,5 +242,12 @@ describe("version history drawer", () => {
     expect(screen.getByText(currentVersionID)).toBeTruthy();
     expect(screen.queryByText(createdVersionID)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+    await drawer.rerender({ resolving: true });
+    expect(screen.queryByText(currentVersionID)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
+    await drawer.rerender({ resolving: false, unavailable: "Version lookup unavailable" });
+    expect(screen.getByText("Version lookup unavailable")).toBeTruthy();
+    expect(screen.queryByText(currentVersionID)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
   });
 });
