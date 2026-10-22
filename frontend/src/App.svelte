@@ -815,9 +815,16 @@
     }
   }
 
-  let pendingPerson = $state<{ id: string; name: string; hidden: boolean }>();
+  let pendingPerson = $state<{ id: string; name: string; hidden: boolean; scope?: number }>();
   function applyPersonPhotos() {
     if (!pendingPerson) return false;
+    if (
+      pendingPerson.hidden &&
+      (pendingPerson.scope !== hiddenAccess?.scope || !hiddenAccess?.deadline)
+    ) {
+      pendingPerson = undefined;
+      return false;
+    }
     const photos = pendingPerson.hidden
       ? hiddenWorkspace?.activePhotos()
       : photoValidated
@@ -844,6 +851,13 @@
     return true;
   }
   $effect(() => {
+    if (
+      pendingPerson?.hidden &&
+      (!hiddenMode || pendingPerson.scope !== hiddenAccess?.scope || !hiddenAccess?.deadline)
+    ) {
+      pendingPerson = undefined;
+      return;
+    }
     if (hiddenMode && hiddenWorkspace?.activePhotos() && pendingPerson) untrack(applyPersonPhotos);
   });
   function openPersonPhotos(personID: string, name: string, hidden = hiddenMode) {
@@ -856,19 +870,20 @@
       return;
     }
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
-    pendingPerson = { id: personID, name, hidden };
+    pendingPerson = { id: personID, name, hidden, scope: hidden ? hiddenAccess?.scope : undefined };
     applyPersonPhotos();
     navigatePhotos(hidden ? "/photos/hidden" : "/photos");
   }
   function onpersonchanged(id: string, name: string, survivorID = id) {
     const faces = activePhotos()?.faceEditor;
     if (faces?.version) void faces.load(faces.version);
-    for (const photos of [
+    const affected = new Set([activePhotos(), ...siblingPhotoLists()]);
+    for (const photos of new Set([
       photoState?.photos,
       albumPhotos,
       mapPhotos,
       hiddenWorkspace?.activePhotos(),
-    ]) {
+    ])) {
       if (!photos) continue;
       if (photos.personFilter?.id === id) photos.personFilter = { id: survivorID, name };
       if (survivorID !== id && photos.query.filters.person_ids?.includes(id)) {
@@ -885,9 +900,9 @@
             ],
           },
         });
-      } else if (photos === activePhotos() && photos.dependsOnPeople) void photos.refresh();
+      } else if (affected.has(photos) && photos.dependsOnPeople) void photos.refresh();
     }
-    handlePhotoFacesChanged();
+    queuePhotoDocumentsRefresh();
   }
 
   function navigatePhotos(path: string) {
