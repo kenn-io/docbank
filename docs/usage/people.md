@@ -17,13 +17,15 @@ Open **Photos → People** to browse everyone visible to your browser session, 2
 
 Select a card to open that person's Library photos. While Hidden is unlocked, cards also show a separate **Hidden** photo count that opens the same person in Hidden. If Hidden locks before that view opens, it opens without the person filter. Hidden-only people and their counts clear when Hidden locks or expires. A readable key face supplies the portrait; otherwise Docbank uses the newest readable assigned face, from Library first and then from unlocked Hidden.
 
-Use **Rename** to change the name. The card updates in place, so the people you have already loaded stay on screen. Use **Merge** to choose the person to keep, then confirm. The survivor keeps their name and receives the other person's records; the other card disappears and the survivor's counts refresh.
+Use **Rename** to change the name. The card updates in place, so the people you have already loaded stay on screen.
 
-If someone else changed either person first, the dialog shows both current names and asks you to confirm again. If either person is no longer available, choose again. If a merge result can't be confirmed, **Retry merge** sends the same request to retrieve the saved result.
+To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. The dialog shows both cards side by side with their faces and counts. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records; the other card disappears and the survivor's counts refresh. When both people have the same name and the same detail, the dialog also shows each person ID.
 
-A merge can stop because a face is named as one person and marked "not" the other. The dialog lists each such face you can open, including faces on older versions of a photo. Use **Clear name** on a face to remove its name, then confirm the merge again. Faces in locked Hidden photos or in excluded or trashed photos are reported but not listed.
+If someone else changed either person first, the dialog shows both current cards and asks you to confirm again. If either person is no longer available, the dialog closes and you select again. If a merge result can't be confirmed, **Retry merge** sends the same request to retrieve the saved result.
 
-Name pickers, in the inspector and in **Merge**, list people with the newest face or photo evidence first, then by name. Namesakes stay together. This order comes from the vault, so it survives sign-in and follows people through merges. It reflects when evidence was added: naming a face that was already linked doesn't move the person up.
+A merge can stop because a face is linked to one person and marked "not" the other. The dialog lists each such face you can open, including faces on older versions of a photo and faces whose name was cleared. Use **Withdraw "not …"** on a face and confirm to remove that rejection; the face keeps its name. Then confirm the merge again. Faces in locked Hidden photos or in excluded or trashed photos are reported but not listed. Locking Hidden clears the selection, Hidden counts, and any open dialog.
+
+Name pickers in the inspector list people with the newest face or photo evidence first, then by name. Namesakes stay together. This order comes from the vault, so it survives sign-in and follows people through merges. It reflects when evidence was added: naming a face that was already linked doesn't move the person up.
 
 ## List and search
 

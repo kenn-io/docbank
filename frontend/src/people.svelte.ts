@@ -7,15 +7,22 @@ export const peoplePageSize = 24;
 
 export type MergeConflict = ProblemFace;
 
-// A merge keeps its source, survivor, confirmation, and exact request together,
-// so an uncertain result retries the same operation.
+// A merge keeps the two selected people, the one to keep, the confirmation,
+// and the exact request together, so an uncertain result retries the same
+// operation.
 export type PeopleMerge = {
-  source: PersonSummary;
-  survivor?: PersonSummary;
+  pair: readonly [PersonSummary, PersonSummary];
+  keep?: string;
   confirmed: boolean;
   conflicts: MergeConflict[];
-  notice: string;
+  notice: "" | "stale" | "uncertain";
   attempt?: { source: PersonSummary; survivor: PersonSummary; operation: string };
+};
+
+export const mergeRoles = ({ pair, keep }: PeopleMerge) => {
+  const survivor = pair.find((person) => person.person_id === keep);
+  const source = pair.find((person) => person.person_id !== keep);
+  return survivor && source ? { source, survivor } : undefined;
 };
 
 const uncertain = (cause: unknown) => !(cause instanceof APIError) || cause.status >= 500;
@@ -31,7 +38,12 @@ export class People {
   busy = $state(false);
   writeError = $state("");
   merge = $state.raw<PeopleMerge>();
+  // selected holds up to two people to merge and survives new searches.
+  selected = $state.raw<PersonSummary[]>([]);
   private controller?: AbortController;
+  // epoch changes whenever the cards are concealed, as when Hidden locks, so a
+  // read that started earlier cannot restore a card, selection, or Hidden count.
+  private epoch = 0;
   private writer?: AbortController;
   private disposed = false;
   constructor(
@@ -49,6 +61,8 @@ export class People {
   }
   conceal() {
     this.controller?.abort();
+    this.epoch++;
+    this.selected = [];
     this.items = [];
     this.cursor = undefined;
     this.loading = false;
@@ -92,7 +106,7 @@ export class People {
   }
   // current reads one visible person by ID, or undefined when it is hidden,
   // merged away, or gone.
-  private async current(id: string, signal: AbortSignal) {
+  private async current(id: string, signal: AbortSignal): Promise<PersonSummary | undefined> {
     const page = await this.run(() => {
       signal.throwIfAborted();
       return listPeople(
@@ -102,17 +116,21 @@ export class People {
     });
     return page.items[0];
   }
-  private place(id: string, person?: PersonSummary) {
-    this.items = person
-      ? this.items.map((row) => (row.person_id === id ? person : row))
-      : this.items.filter((row) => row.person_id !== id);
+  private place(epoch: number, id: string, person?: PersonSummary) {
+    if (epoch !== this.epoch) return;
+    const replace = (rows: PersonSummary[]) =>
+      person
+        ? rows.map((row) => (row.person_id === id ? person : row))
+        : rows.filter((row) => row.person_id !== id);
+    this.items = replace(this.items);
+    this.selected = replace(this.selected);
   }
   // refreshCard returns null when the read fails, leaving the card as it was.
-  private async refreshCard(id: string, signal: AbortSignal) {
+  private async refreshCard(id: string, signal: AbortSignal, epoch: number) {
     try {
       const person = await this.current(id, signal);
-      if (!signal.aborted) this.place(id, person);
-      return person;
+      if (!signal.aborted) this.place(epoch, id, person);
+      return epoch === this.epoch ? person : null;
     } catch (cause) {
       if (!signal.aborted) this.failure(cause);
       return null;
@@ -128,6 +146,7 @@ export class People {
   async rename(person: PersonSummary, name: string) {
     const request = this.begin();
     if (!request) return false;
+    const epoch = this.epoch;
     const display_name = name.trim();
     try {
       const saved = await this.run(() =>
@@ -139,19 +158,19 @@ export class People {
         ),
       );
       if (request.signal.aborted) return false;
-      this.place(person.person_id, {
+      this.place(epoch, person.person_id, {
         ...person,
         display_name: saved.display_name,
         revision: saved.revision,
         state: saved.state,
       });
       this.onchanged();
-      await this.refreshCard(person.person_id, request.signal);
+      await this.refreshCard(person.person_id, request.signal, epoch);
       return true;
     } catch (cause) {
       if (request.signal.aborted) return false;
       this.writeError = this.failure(cause);
-      const current = await this.refreshCard(person.person_id, request.signal);
+      const current = await this.refreshCard(person.person_id, request.signal, epoch);
       // An unconfirmed rename that the current record shows has completed.
       if (uncertain(cause) && current?.display_name === display_name) {
         this.writeError = "";
@@ -163,18 +182,32 @@ export class People {
       if (!request.signal.aborted) this.busy = false;
     }
   }
-  startMerge(source: PersonSummary) {
-    if (this.busy) return;
+  toggle(person: PersonSummary) {
+    if (this.merge) return;
     this.writeError = "";
-    this.merge = { source, confirmed: false, conflicts: [], notice: "" };
+    if (this.selected.some((row) => row.person_id === person.person_id))
+      this.selected = this.selected.filter((row) => row.person_id !== person.person_id);
+    else if (this.selected.length < 2) this.selected = [...this.selected, person];
+  }
+  clearSelection() {
+    if (this.merge) return;
+    this.selected = [];
+    this.writeError = "";
+  }
+  startMerge() {
+    const [first, second] = this.selected;
+    if (this.busy || !first || !second) return;
+    this.writeError = "";
+    this.merge = { pair: [first, second], confirmed: false, conflicts: [], notice: "" };
   }
   closeMerge() {
+    if (this.busy) return;
     this.writeError = "";
     this.merge = undefined;
   }
-  chooseSurvivor(survivor: PersonSummary | undefined) {
+  keep(id: string) {
     if (!this.merge || this.busy) return;
-    this.merge = { ...this.merge, survivor, confirmed: false, conflicts: [], notice: "" };
+    this.merge = { ...this.merge, keep: id, confirmed: false, notice: "" };
   }
   confirmMerge(confirmed: boolean) {
     if (this.merge && !this.busy) this.merge = { ...this.merge, confirmed };
@@ -191,10 +224,12 @@ export class People {
   }
   async submitMerge() {
     const selected = this.merge;
-    const { source, survivor } = selected ?? {};
-    if (!selected || !source || !survivor || !selected.confirmed) return false;
+    const roles = selected && mergeRoles(selected);
+    if (!selected || !roles || !selected.confirmed) return false;
     const request = this.begin();
     if (!request) return false;
+    const epoch = this.epoch;
+    const { source, survivor } = roles;
     const previous = selected.attempt;
     const attempt =
       previous?.source.person_id === source.person_id &&
@@ -204,6 +239,8 @@ export class People {
         ? previous
         : { source, survivor, operation: randomUUID() };
     this.merge = { ...selected, attempt, notice: "" };
+    // The dialog belongs to this request while it shows the same pair.
+    const owns = () => !request.signal.aborted && this.merge?.pair === selected.pair;
     try {
       await this.run(() =>
         mergePerson(
@@ -219,34 +256,34 @@ export class People {
       );
       if (request.signal.aborted) return false;
       this.merge = undefined;
-      this.place(source.person_id);
+      this.place(epoch, source.person_id);
+      this.selected = [];
       this.onchanged();
-      await this.refreshCard(survivor.person_id, request.signal);
+      await this.refreshCard(survivor.person_id, request.signal, epoch);
       return true;
     } catch (cause) {
-      if (request.signal.aborted || this.merge?.source !== source) return false;
+      if (!owns()) return false;
       this.writeError = this.failure(cause);
       if (uncertain(cause)) {
-        this.merge = { ...this.merge, notice: "uncertain" };
+        this.merge = { ...this.merge!, notice: "uncertain" };
         return false;
       }
-      const next: PeopleMerge = { ...this.merge, attempt: undefined, confirmed: false };
+      const next: PeopleMerge = { ...this.merge!, attempt: undefined, confirmed: false };
       if (cause instanceof APIError && cause.status === 412) {
-        // Show both people's current names before asking again. A failed
-        // read keeps the earlier selection; a person no longer visible needs
-        // a new choice.
-        const [currentSource, currentSurvivor] = await Promise.all([
-          this.refreshCard(source.person_id, request.signal),
-          this.refreshCard(survivor.person_id, request.signal),
-        ]);
-        if (request.signal.aborted || this.merge?.source !== source) return false;
-        if (currentSource === undefined) {
+        // Show both people's current details before asking again. A failed
+        // read keeps the earlier card; a person no longer visible ends the merge.
+        const current = await Promise.all(
+          selected.pair.map((person) => this.refreshCard(person.person_id, request.signal, epoch)),
+        );
+        if (!owns()) return false;
+        if (current.includes(undefined)) {
           this.merge = undefined;
+          this.writeError =
+            "A selected person is no longer available. Choose people to merge again.";
           return false;
         }
-        next.source = currentSource ?? source;
-        next.survivor = currentSurvivor === null ? survivor : currentSurvivor;
-        next.notice = currentSurvivor ? "stale" : currentSurvivor === undefined ? "reselect" : "";
+        next.pair = [current[0] ?? selected.pair[0], current[1] ?? selected.pair[1]];
+        next.notice = current.some(Boolean) ? "stale" : "";
       } else if (cause instanceof APIError && cause.code === "person_merge_conflict") {
         next.conflicts = cause.faces;
       }

@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { Button, Modal, TextInput, Typeahead, Spinner, Checkbox } from "@kenn-io/kit-ui";
+  import { Button, Modal, TextInput, Spinner, Checkbox } from "@kenn-io/kit-ui";
   import UserIcon from "@lucide/svelte/icons/user";
   import { untrack } from "svelte";
-  import { listPeople, preparePhotoPreview, type PersonSummary } from "./generated/docbank.js";
-  import { personLabel } from "./personLabel.js";
-  import type { People } from "./people.svelte.js";
+  import type { PersonSummary } from "./generated/docbank.js";
+  import { distinctLabel } from "./personLabel.js";
+  import { mergeRoles, type People } from "./people.svelte.js";
   import PeopleMergeConflict from "./PeopleMergeConflict.svelte";
-  import { PhotoPreviewCache, previewObjectURL } from "./photoPreviewCache.js";
-  import { photoFaceCropStyle } from "./photoRotation.js";
+  import { PhotoPreviewCache, faceCrop } from "./photoPreviewCache.js";
   let {
     people,
     cache,
@@ -19,35 +18,27 @@
   } = $props();
   let editing = $state.raw<PersonSummary>();
   let name = $state("");
-  let candidates = $state.raw<PersonSummary[]>([]);
-  let searchQuery = $state("");
-  let nextCursor = $state<string>();
-  let searchError = $state("");
-  let searching = $state(false);
-  let searchController: AbortController | undefined;
   let images = $state.raw<Record<string, { url: string; style: string }>>({});
   const merge = $derived(people.merge);
+  const roles = $derived(merge && mergeRoles(merge));
   const unlocked = $derived(!!people.access?.deadline);
+  const selected = (person: PersonSummary) =>
+    people.selected.some((row) => row.person_id === person.person_id);
   function close() {
     if (people.busy) return;
     editing = undefined;
-    candidates = [];
-    searchController?.abort();
     people.closeMerge();
   }
   $effect(() => {
     void people.access?.scope;
     untrack(() => {
-      searchController?.abort();
       editing = undefined;
-      candidates = [];
       people.closeMerge();
     });
-    return () => searchController?.abort();
   });
   // Portraits load per face, so in-place card updates and Load more keep the
   // images already shown. An access-scope change starts over.
-  type Portrait = { abort: AbortController; release?: () => void };
+  type Portrait = { abort: AbortController; releases: (() => void)[] };
   const portraits = new Map<string, Portrait>();
   let hiddenCache: PhotoPreviewCache | undefined;
   const portraitKey = (person: PersonSummary) => {
@@ -59,7 +50,7 @@
   function releasePortrait(key: string) {
     const portrait = portraits.get(key);
     portrait?.abort.abort();
-    portrait?.release?.();
+    for (const release of portrait?.releases ?? []) release();
     portraits.delete(key);
     const id = key.split("\0")[0]!;
     if (images[id]) {
@@ -71,80 +62,41 @@
   function loadPortrait(key: string, person: PersonSummary) {
     const face = person.photo_summary!.face!;
     const hidden = !!person.photo_summary?.face_hidden;
-    const portrait: Portrait = { abort: new AbortController() };
+    const portrait: Portrait = { abort: new AbortController(), releases: [] };
     const { signal } = portrait.abort;
     portraits.set(key, portrait);
-    const load = async () => {
+    hiddenCache ??= new PhotoPreviewCache(people.session, people.onauthfailure, true);
+    const source = hidden ? hiddenCache : cache;
+    void people.run(async () => {
       try {
         signal.throwIfAborted();
-        let generation = face.generation_id;
-        if (!generation) {
-          const slot = await preparePhotoPreview(
-            face.asset_id,
-            {
-              content_version_id: face.content_version_id,
-              person_id: person.person_id,
-              size: "grid",
-              hidden,
-            },
-            { session: people.session, signal },
-          );
-          if (slot.state !== "ready" || !slot.generation_id) return;
-          generation = slot.generation_id;
-        }
-        signal.throwIfAborted();
-        hiddenCache ??= new PhotoPreviewCache(people.session, people.onauthfailure, true);
-        portrait.release = previewObjectURL(
-          hidden ? hiddenCache : cache,
-          face.asset_id,
-          generation,
-          async (url) => {
-            try {
-              const image = new Image();
-              image.src = url;
-              await image.decode();
-              if (!signal.aborted)
-                images = {
-                  ...images,
-                  [person.person_id]: {
-                    url,
-                    style: photoFaceCropStyle(
-                      face.box,
-                      image.naturalWidth,
-                      image.naturalHeight,
-                      face.rotation,
-                      128,
-                    ),
-                  },
-                };
-            } catch {
-              /* Keep the person placeholder when bytes cannot be decoded. */
-            }
-          },
-          (cause) => {
-            if (!signal.aborted) people.failure(cause);
-          },
-          false,
-          person.person_id,
+        const image = await faceCrop(
+          source,
+          face,
+          { id: person.person_id, hidden, size: 128 },
+          signal,
+          (release) => portrait.releases.push(release),
         );
+        if (image && !signal.aborted) images = { ...images, [person.person_id]: image };
       } catch (cause) {
+        // A failed portrait keeps the person placeholder.
         if (!signal.aborted) people.failure(cause);
       }
-    };
-    void people.run(load);
+    });
   }
   function syncPortraits(rows: PersonSummary[]) {
     const wanted = new Map(rows.map((person) => [portraitKey(person), person]));
     for (const key of portraits.keys()) if (!wanted.has(key)) releasePortrait(key);
     for (const [key, person] of wanted) if (key && !portraits.has(key)) loadPortrait(key, person);
   }
+  // Selected people keep their portraits after a search replaces the cards.
   $effect(() => {
-    const rows = people.items;
+    const rows = [...people.items, ...people.selected];
     untrack(() => syncPortraits(rows));
   });
   $effect(() => {
     void people.access?.scope;
-    untrack(() => syncPortraits(people.items));
+    untrack(() => syncPortraits([...people.items, ...people.selected]));
     return () => {
       for (const key of portraits.keys()) releasePortrait(key);
       images = {};
@@ -152,43 +104,31 @@
       hiddenCache = undefined;
     };
   });
-  async function search(value: string, more = false) {
-    searchController?.abort();
-    const request = (searchController = new AbortController());
-    searchQuery = value;
-    if (!more) {
-      candidates = [];
-      nextCursor = undefined;
-    }
-    searching = true;
-    searchError = "";
-    try {
-      const page = await people.run(() => {
-        request.signal.throwIfAborted();
-        return listPeople(
-          {
-            query: value,
-            limit: 100,
-            recent_first: true,
-            ...(more && nextCursor ? { cursor: nextCursor } : {}),
-          },
-          { session: people.session, signal: request.signal },
-        );
-      });
-      if (!request.signal.aborted) {
-        candidates = [
-          ...candidates,
-          ...page.items.filter((person) => person.person_id !== people.merge?.source.person_id),
-        ];
-        nextCursor = page.next_cursor;
-      }
-    } catch (cause) {
-      if (!request.signal.aborted) searchError = people.failure(cause);
-    } finally {
-      if (!request.signal.aborted) searching = false;
-    }
-  }
 </script>
+
+{#snippet portrait(person: PersonSummary)}
+  {@const image = images[person.person_id]}
+  <span class="face-tile">
+    <span class="face-crop"
+      >{#if image}<img
+          src={image.url}
+          alt={`Face of ${person.display_name}`}
+          style={image.style}
+          onerror={() => {
+            const next = { ...images };
+            delete next[person.person_id];
+            images = next;
+          }}
+        />{:else}<UserIcon size="48" aria-hidden="true" />{/if}</span
+    >
+  </span>
+{/snippet}
+{#snippet counts(person: PersonSummary)}
+  {@const summary = person.photo_summary}
+  <span class="count"
+    >{summary?.library_count ?? 0} Library {summary?.library_count === 1 ? "photo" : "photos"}</span
+  >
+{/snippet}
 
 <main class="people-workspace" aria-label="People">
   <div class="browser-toolbar people-toolbar">
@@ -215,36 +155,27 @@
   {:else if !people.items.length && !people.error}<p>
       {people.query ? "No matching people" : "No people yet"}
     </p>{/if}
+  {#if people.selected.length}<div class="selection" role="region" aria-label="Selected people">
+      <span>{people.selected.map((person) => person.display_name).join(" and ")} selected</span>
+      {#if people.writeError && !merge && !editing}<span role="alert">{people.writeError}</span
+        >{/if}
+      <Button
+        disabled={people.busy || people.selected.length !== 2}
+        onclick={() => people.startMerge()}>Merge</Button
+      ><Button disabled={people.busy} onclick={() => people.clearSelection()}>Clear</Button>
+    </div>{/if}
   <ul class="people-grid">
     {#each people.items as person (person.person_id)}
-      {@const image = images[person.person_id]}
       {@const summary = person.photo_summary}
-      <li class="person-card">
+      <li class="person-card" class:selected={selected(person)}>
         <button
           type="button"
           class="person-open"
           onclick={() => onperson(person.person_id, person.display_name)}
         >
-          <span class="face-tile">
-            <span class="face-crop"
-              >{#if image}<img
-                  src={image.url}
-                  alt={`Face of ${person.display_name}`}
-                  style={image.style}
-                  onerror={() => {
-                    const next = { ...images };
-                    delete next[person.person_id];
-                    images = next;
-                  }}
-                />{:else}<UserIcon size="48" aria-hidden="true" />{/if}</span
-            >
-          </span>
+          {@render portrait(person)}
           <strong>{person.display_name}</strong>
-          <span class="count"
-            >{summary?.library_count ?? 0} Library {summary?.library_count === 1
-              ? "photo"
-              : "photos"}</span
-          >
+          {@render counts(person)}
         </button>
         {#if unlocked && summary?.hidden_count !== undefined}<button
             class="hidden-count"
@@ -261,15 +192,13 @@
               editing = person;
               name = person.display_name;
             }}>Rename</Button
-          ><Button
-            size="sm"
-            disabled={people.busy}
-            onclick={() => {
-              close();
-              people.startMerge(person);
-              void search("");
-            }}>Merge</Button
-          >
+          ><Checkbox
+            label="Select"
+            ariaLabel={`Select ${person.display_name}`}
+            checked={selected(person)}
+            disabled={!!merge || (!selected(person) && people.selected.length >= 2)}
+            onchange={() => people.toggle(person)}
+          />
         </div>
       </li>
     {/each}
@@ -305,44 +234,38 @@
   </Modal>
 {/if}
 {#if merge}
-  {@const { source, survivor } = merge}
-  <Modal title={`Merge ${source.display_name}`} onclose={close}>
-    <Typeahead
-      remote
-      title="Keep person"
-      placeholder="Find the person to keep"
-      value={survivor?.person_id ?? ""}
-      fallbackLabel={survivor ? personLabel(survivor) : "Find the person to keep"}
-      options={candidates.map((person) => ({
-        name: person.person_id,
-        label: personLabel(person),
-      }))}
-      disabled={people.busy}
-      loading={searching}
-      error={searchError}
-      onquery={(value) => search(value)}
-      onselect={(value) => {
-        const chosen = candidates.find((person) => person.person_id === value);
-        people.chooseSurvivor(chosen);
-        return !!chosen;
-      }}
-    />
-    {#if searchError}<Button
-        disabled={searching}
-        onclick={() => void search(searchQuery, !!candidates.length)}>Retry search</Button
-      >{/if}
-    {#if nextCursor}<Button disabled={searching} onclick={() => void search(searchQuery, true)}
-        >Load more people</Button
-      >{/if}
-    {#if merge.notice === "stale" && survivor}<p role="status">
-        {personLabel(source)} or {personLabel(survivor)} changed. Check the current names and confirm
+  {@const label = (person: PersonSummary) => distinctLabel(person, merge.pair)}
+  <Modal title="Merge people" onclose={close}>
+    <div class="merge-pair" role="radiogroup" aria-label="Person to keep">
+      {#each merge.pair as person (person.person_id)}
+        <label class="person-card merge-card">
+          {@render portrait(person)}
+          <strong>{label(person)}</strong>
+          {@render counts(person)}
+          {#if unlocked && person.photo_summary?.hidden_count !== undefined}<span class="count"
+              >{person.photo_summary.hidden_count} Hidden {person.photo_summary.hidden_count === 1
+                ? "photo"
+                : "photos"}</span
+            >{/if}
+          <span class="keep"
+            ><input
+              type="radio"
+              name="keep"
+              aria-label={`Keep ${label(person)}`}
+              checked={merge.keep === person.person_id}
+              disabled={people.busy}
+              onchange={() => people.keep(person.person_id)}
+            />Keep this one</span
+          >
+        </label>
+      {/each}
+    </div>
+    {#if merge.notice === "stale"}<p role="status">
+        {label(merge.pair[0])} or {label(merge.pair[1])} changed. Check the current details and confirm
         again.
-      </p>
-    {:else if merge.notice === "reselect"}<p role="status">
-        The person to keep is no longer available. Choose another person.
       </p>{/if}
-    {#if survivor}<p>
-        Keep {personLabel(survivor)}. Move {personLabel(source)}'s records into this person.
+    {#if roles}<p>
+        Keep {label(roles.survivor)}. Move {label(roles.source)}'s records into this person.
       </p>
       <Checkbox
         label="Confirm merge"
@@ -362,7 +285,7 @@
       </p>{/if}
     <div class="modal-actions">
       <Button disabled={people.busy} onclick={close}>Cancel</Button><Button
-        disabled={people.busy || !survivor || !merge.confirmed}
+        disabled={people.busy || !roles || !merge.confirmed}
         onclick={() =>
           void people.submitMerge().then((saved) => {
             if (saved) close();
@@ -461,6 +384,31 @@
   }
   .card-actions {
     padding: 12px;
+  }
+  .person-card.selected {
+    border-color: var(--accent, var(--border-strong, currentColor));
+  }
+  .selection {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5) 0;
+  }
+  .merge-pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    gap: 16px;
+  }
+  .merge-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+  }
+  .keep {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
   .conflicts {
     padding-left: var(--space-4);

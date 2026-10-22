@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
@@ -129,8 +130,10 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             PhotoFaceDecisionRequest
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
-		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" && in.Body.Action != "dismiss" {
-			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces and clear whole-photo marks.")
+		// A browser withdraws a rejection to clear a merge conflict; rejecting
+		// and choosing a key face stay with API keys and the CLI.
+		if browserSessionRequest(ctx) && !slices.Contains([]string{"name", "retract", "dismiss", "withdraw_rejection"}, in.Body.Action) {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces, clear whole-photo marks, and withdraw rejections.")
 		}
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {

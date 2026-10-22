@@ -305,7 +305,7 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	require.Equal(t, []string{people["Bob"].PersonID, cy.PersonID, people["zoe"].PersonID}, page(ctx, recent))
 	full, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false, recent)
 	require.NoError(t, err)
-	require.Equal(t, zoes, []string{full[0].PersonID, full[1].PersonID})
+	require.Equal(t, []string{full[0].PersonID, full[1].PersonID}, zoes)
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), recent)[:2])
@@ -343,6 +343,16 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
 			require.Empty(t, rows[1].RecentRank)
+			// Older readable evidence ranks Bob when his newest photo is unavailable.
+			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")
+			_, err = s.MarkPersonInPhoto(ctx, older.CurrentVersionID, bob.PersonID, "")
+			require.NoError(t, err)
+			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2025-12-01T00:00:00Z' WHERE content_version_id=?`, older.CurrentVersionID)
+			require.NoError(t, err)
+			rows, err = s.PeopleByDisplayName(ctx, "Bo", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			require.NoError(t, err)
+			require.Equal(t, bob.PersonID, rows[0].PersonID)
+			require.Equal(t, "2025-12-01T00:00:00Z", rows[0].RecentRank)
 		})
 	}
 }
