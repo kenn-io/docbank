@@ -77,7 +77,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst)
-		if browserSessionRequest(r.Context()) || projection {
+		if browserSessionRequest(r.Context()) || projection || recentFirst {
 			scope, err := d.Store.PhotoHiddenState(r.Context())
 			if err != nil {
 				writePackageError(w, err)

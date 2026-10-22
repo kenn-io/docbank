@@ -7,9 +7,6 @@ export interface Problem {
   errors?: unknown;
 }
 
-const strings = (value: unknown) =>
-  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-
 export class APIError extends Error {
   constructor(
     message: string,
@@ -97,7 +94,9 @@ async function send(
     } catch {
       /* An empty error still carries its HTTP status. */
     }
-    const errors = strings(problem.errors);
+    const errors = Array.isArray(problem.errors)
+      ? problem.errors.filter((entry): entry is string => typeof entry === "string")
+      : [];
     const error = new APIError(
       problem.detail || problem.title || `HTTP ${response.status}`,
       response.status,

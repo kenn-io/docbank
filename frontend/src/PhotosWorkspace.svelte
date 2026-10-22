@@ -223,7 +223,7 @@
     const filter = photos.personFilter;
     const person = inspectorFaces.people.find((person) => person.person_id === filter?.id);
     if (filter && person && filter.name !== person.display_name)
-      photos.personFilter = { ...filter, name: person.display_name };
+      photos.personFilter = { id: filter.id, name: person.display_name };
   });
   $effect(() => {
     const cullID = culling ? cull?.currentID : undefined;
