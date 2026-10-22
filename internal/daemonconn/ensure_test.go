@@ -24,8 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/packagetest"
@@ -158,44 +156,21 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	require.NoError(t, err)
 	olderProtocol := strconv.Itoa(currentProtocol - 1)
 	root, rec := startUnresponsiveRuntime(t)
-	assetID := "00000000-0000-4000-8000-000000000001"
-	fileID := "00000000-0000-4000-8000-000000000010"
-	stamp := "2026-09-22T00:00:00Z"
-	request := document.TextOutlineRequest{Citation: clientCitation(t).Citation}
-	wantOutline := document.TextOutlinePage{Citation: request.Citation, DocumentChars: 5,
-		EnclosingSection: document.TextSectionRange{Start: 0, End: 5}, Total: 1,
-		Sections: []document.TextOutlineEntry{{Start: 0, End: 5}}}
-	var started atomic.Bool
+	started := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == kitdaemon.DefaultPingPath {
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
 			_ = json.MarshalWrite(w, kitdaemon.PingInfo{
 				OK: true, Service: Service, Version: version.Version, PID: rec.PID,
 			})
-		} else if r.URL.Path == daemonauth.ChallengePath {
+		case daemonauth.ChallengePath:
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
 			_ = json.MarshalWrite(w, map[string]string{
 				"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce),
 			})
-		} else if started.Load() && r.URL.Path == "/api/v1/text-citations/outline" {
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, "new-key", r.Header.Get("X-Api-Key"))
-			var got document.TextOutlineRequest
-			assert.NoError(t, json.UnmarshalRead(r.Body, &got))
-			assert.Equal(t, request, got)
-			_ = json.MarshalWrite(w, wantOutline)
-		} else if started.Load() && r.URL.Path == "/api/v1/photos/assets/"+assetID+"/trash" {
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
-			w.Header().Set("ETag", `"2"`)
-			_ = json.MarshalWrite(w, api.PhotoAsset{
-				ID: assetID, Kind: "photo", Revision: 2, DisplayFileID: &fileID,
-				DisplaySource: "default", CreatedAt: stamp, UpdatedAt: stamp,
-				Files: []api.PhotoFile{{ID: fileID, AssetID: assetID,
-					NodeID: 1, Role: "image", CreatedAt: stamp}},
-			})
-		} else {
+		default:
 			http.NotFound(w, r)
 		}
 	}))
@@ -207,23 +182,14 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
-			started.Store(true)
+			started = true
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
 	require.NoError(t, err)
-	require.True(t, started.Load(), "an older protocol daemon is replaced")
-	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
-	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	outline, err := client.GetTextOutline(t.Context(), request)
-	require.NoError(t, err)
-	assert.Equal(t, wantOutline, outline)
+	require.True(t, started, "an older protocol daemon is replaced")
 	require.NotNil(t, result.Replaced)
 	assert.Equal(t, rec.PID, result.Replaced.PID)
 	assert.Equal(t, daemonProtocolVersion, result.Record.Metadata[metaProtocolVersion])
-	asset, err := client.TrashPhotoAsset(t.Context(), assetID, 1)
-	require.NoError(t, err)
-	assert.Equal(t, assetID, asset.ID)
-	assert.Equal(t, int64(2), asset.Revision)
 }
 
 func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {

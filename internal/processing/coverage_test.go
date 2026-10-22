@@ -16,7 +16,7 @@ import (
 
 var updateFormatCoverage = flag.Bool("update", false, "update the pinned format coverage fixture")
 
-func TestMetadataQualificationSurvivesToolchainChanges(t *testing.T) {
+func TestMetadataFingerprintIsPinnedAndQualificationSurvivesToolchainChanges(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		version     string
