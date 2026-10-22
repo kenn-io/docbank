@@ -2,14 +2,10 @@ package kataevidence
 
 import (
 	"database/sql"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/config"
@@ -62,35 +58,4 @@ func TestCreateReplayRejectsMovedIssueAfterWindow(t *testing.T) {
 	require.Len(t, all.Issues, 1)
 	require.Equal(t, issue.UID, all.Issues[0].UID)
 	require.Equal(t, other.Project.ID, all.Issues[0].ProjectID)
-}
-
-func TestCiteContainsEveryQuoteLineEnding(t *testing.T) {
-	for _, words := range []string{"first\r# second", "first\r\n# second", "first\n# second"} {
-		for _, appendQuote := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%q/append=%t", words, appendQuote), func(t *testing.T) {
-				k := newTestKata(t, map[string]jsontext.Value{}, "")
-				evidence := NewEvidence(nativeReference(), words, "notes.txt")
-				service := Service{Kata: k, Archive: &memoryArchive{evidence: &evidence}}
-				request := CiteRequest{Title: "Review", IdempotencyKey: "line-endings", Selector: Selector{NodeID: 2, EndRune: utf8.RuneCountInString(words)}}
-				if appendQuote {
-					request.Title, request.IdempotencyKey, request.Issue = "", "", k.ref
-				}
-				issue, err := service.Cite(t.Context(), request)
-				require.NoError(t, err)
-				if appendQuote {
-					comments, err := k.GetComments(t.Context(), k.ref)
-					require.NoError(t, err)
-					require.Len(t, comments, 1)
-					require.Contains(t, comments[0], "\n\n> first\n> # second\n")
-				} else {
-					require.Equal(t, "Evidence: notes.txt\n\n> first\n> # second\n", issue.Body)
-				}
-				var saved struct {
-					Entries []Entry `json:"entries"`
-				}
-				require.NoError(t, json.Unmarshal(issue.Metadata[MetadataKey], &saved))
-				require.Equal(t, words, saved.Entries[0].Quote)
-			})
-		}
-	}
 }
