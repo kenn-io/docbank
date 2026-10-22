@@ -138,6 +138,8 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /text-citations/resolve` | reopen an exact quote from retained rendition text | Implemented |
 | `POST /text-citations/outline` | read headings and whole-section bounds from retained text | Implemented |
 | `POST /text-citations/section` | read an exact page of a retained text section | Implemented |
+| `POST /kata/cite` | quote a verified document passage into a new or existing Kata issue | Implemented |
+| `POST /kata/context` | read saved Docbank evidence from a Kata issue with its current source status | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
 | `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
