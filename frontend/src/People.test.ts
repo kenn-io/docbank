@@ -5,6 +5,7 @@ import { People } from "./people.svelte.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import * as api from "./generated/docbank.js";
+import { APIError } from "./api-transport.js";
 import { ada, grace, personMergeReceipt, personResponse } from "./people-test-fixtures.js";
 
 afterEach(() => {
@@ -76,13 +77,14 @@ it("renames a zero-photo person", async () => {
   people.dispose();
   await cache.dispose();
 });
-it("merges two selected cards after choosing the one to keep and confirming", async () => {
+it.each([false, true])("submits selected cards and reports a locked merge=%s", async (locked) => {
   const people = new People("session", vi.fn());
   people.items = [ada, grace];
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
   const merge = vi
     .spyOn(api, "mergePerson")
     .mockImplementation(async (personID, request, _headers) => {
+      if (locked) throw new APIError("unlock Hidden and retry the merge", 403, "hidden_locked");
       const source = [ada, grace].find(
         (person) => person.person_id === request.absorbed_person_id,
       )!;
@@ -108,6 +110,7 @@ it("merges two selected cards after choosing the one to keep and confirming", as
   await fireEvent.click(confirm);
   await waitFor(() => expect(merge).toHaveBeenCalledOnce());
   expect(merge.mock.calls[0]![0]).toBe("grace");
+  if (locked) expect(await screen.findByText("unlock Hidden and retry the merge")).toBeTruthy();
   view.unmount();
   people.dispose();
   await cache.dispose();
