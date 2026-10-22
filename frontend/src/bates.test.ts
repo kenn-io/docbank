@@ -14,7 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("hashes a recipe to the same digest as the Go stamp engine", async () => {
+it("hashes recipes with SubtleCrypto and its fallback", async () => {
   const recipe = batesRecipe(
     {
       namespace_id: "ns-synthetic",
