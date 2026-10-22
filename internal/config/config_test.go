@@ -1153,3 +1153,65 @@ func TestMediaSourceCeilingConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestMistralOCRRuntime(t *testing.T) {
+	valid := func() Config {
+		c := validRenditionRuntimeConfig(t)
+		p := c.RenditionProfiles["primary"]
+		p.AdapterContract = MistralOCRAdapterContract
+		p.TrustBoundary = "hosted_provider"
+		p.MaxTranscriptChars = 0
+		p.RequestedArtifacts = []string{"provider_markdown"}
+		p.Runtime.Endpoint = "https://api.eu.mistral.ai"
+		p.Runtime.AllowedCIDRs = []string{"192.0.2.0/24"}
+		p.Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "mistral.json")
+		p.Runtime.Retention, p.Runtime.Training = "zdr", "opted-out"
+		p.Runtime.TotalTimeout, p.Runtime.PollInterval, p.Runtime.MaxPollAttempts = 0, 0, 0
+		c.RenditionProfiles["primary"] = p
+		return c
+	}
+	require.NoError(t, valid().Validate())
+	for _, test := range []struct {
+		name   string
+		mutate func(*RenditionProfileConfig)
+		want   string
+	}{
+		{"operator network", func(p *RenditionProfileConfig) { p.TrustBoundary = "operator_network" }, "requires hosted_provider"},
+		{"structured role", func(p *RenditionProfileConfig) { p.RequestedArtifacts = []string{"structured_evidence"} }, "exactly provider_markdown"},
+		{"transcript role", func(p *RenditionProfileConfig) {
+			p.RequestedArtifacts = []string{string(document.EvidenceArtifactTranscript)}
+		}, "exactly provider_markdown"},
+		{"missing manifest", func(p *RenditionProfileConfig) { p.Runtime.CapabilityManifest = "" }, "absolute capability_manifest"},
+		{"relative manifest", func(p *RenditionProfileConfig) { p.Runtime.CapabilityManifest = "mistral.json" }, "absolute capability_manifest"},
+		{"total timeout", func(p *RenditionProfileConfig) { p.Runtime.TotalTimeout = Duration(time.Second) }, "zero poll bounds"},
+		{"poll interval", func(p *RenditionProfileConfig) { p.Runtime.PollInterval = Duration(time.Second) }, "zero poll bounds"},
+		{"poll attempts", func(p *RenditionProfileConfig) { p.Runtime.MaxPollAttempts = 1 }, "zero poll bounds"},
+		{"missing timeout", func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = 0 }, "requires request_timeout"},
+		{"transcript limit", func(p *RenditionProfileConfig) { p.MaxTranscriptChars = 1 }, "only supported for ASR"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := valid()
+			p := c.RenditionProfiles["primary"]
+			test.mutate(&p)
+			c.RenditionProfiles["primary"] = p
+			require.ErrorContains(t, c.Validate(), test.want)
+		})
+	}
+	t.Run("missing credential", func(t *testing.T) {
+		c := valid()
+		c.CredentialBindings = nil
+		require.ErrorContains(t, c.Validate(), "runtime credential binding")
+	})
+	t.Run("Docling manifest", func(t *testing.T) {
+		c := validRenditionRuntimeConfig(t)
+		c.RenditionProfiles["primary"].Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "mistral.json")
+		require.ErrorContains(t, c.Validate(), "only supported for Mistral")
+	})
+	t.Run("relative manifest loads from config root", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[rendition_profiles.ocr.runtime]\ncapability_manifest = 'manifests/mistral.json'\n"), 0600))
+		c, err := Load(root)
+		require.NoError(t, err)
+		require.Equal(t, filepath.Join(root, "manifests", "mistral.json"), c.RenditionProfiles["ocr"].Runtime.CapabilityManifest)
+	})
+}

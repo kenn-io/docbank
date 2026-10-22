@@ -407,6 +407,56 @@ still apply. Original bytes remain unchanged. After changing the descriptor,
 queued work fails with `stale_authority`; plan and consent to the changed profile
 before retrying.
 
+### Document OCR with Mistral
+
+The daemon can send PDFs to Mistral OCR and retain searchable Markdown through
+its existing processing plan and consent flow. Configure a rendition profile
+with `adapter_contract = "docbank-mistral-ocr/v1"`,
+`descriptor_id = "mistral.ocr-v1"`, `trust_boundary = "hosted_provider"`, and
+`requested_artifacts = ["provider_markdown"]`. Images and other formats are
+outside this daemon profile.
+
+Use the same portable rendition and selecting processing-profile fields as
+[Docling document conversion](#document-conversion-with-docling). The Mistral
+runtime uses these deployment-local settings:
+
+| Runtime field | Meaning |
+| --- | --- |
+| `endpoint` | Exactly `https://api.eu.mistral.ai`. |
+| `capability_manifest` | Path to a complete authenticated capability manifest with PDF upload authority. Relative paths resolve against the config root. |
+| `retention` | `standard` or `zdr`, matching the account's retention posture. |
+| `training` | `default-opt-out` or `opted-out`, matching the account's training posture. |
+| `request_timeout` | Positive request limit, bounded by the Mistral adapter's maximum of thirty minutes. |
+| `allowed_cidrs`, `proxy_mode` | Non-empty provider IP allowlist and `proxy_mode = "disabled"`. |
+| `spki_sha256` | Optional lowercase SHA-256 SPKI pins for the provider certificate. |
+| `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Positive transport limits, each at most five minutes. |
+
+Leave `total_timeout`, `poll_interval`, `max_poll_attempts`, and
+`max_transcript_chars` at zero. Bind the named credential to an environment
+variable through `credential_bindings`. The daemon reads it when processing
+starts; a missing secret raises a provider `authentication` error, recorded by
+the worker as a `terminal` job failure.
+
+Obtain the manifest with `mistral.RunCapabilityProbe` and
+`mistral.EncodeCapabilityManifest` from `go.kenn.io/docbank/document/mistral`,
+or msgvault's `documents probe-mistral` command. Probe with header and footer
+extraction enabled and a unit bound at least as large as the profile's
+`max_units`. The daemon fixes normalization identity at 25,000,000 characters,
+uses the package-pinned `mistral.DefaultModel` in the EU region, and accepts
+`max_units` from 3 to 5,000, subject to the manifest's authority. Document and
+response limits cannot exceed 500 MiB and 512 MiB, respectively.
+
+Startup reports the expected `descriptor_fingerprint` if the configured value
+differs. Copy that value, then compute `disclosure_fingerprint` with the
+[Python disclosure command](#supplied-audio-transcription), using your Mistral
+profile name. Retention, training, manifest format authority, and the pinned
+model affect the descriptor. A manifest probed under an older pinned model is
+rejected. Re-probe after a model re-pin and recompute both fingerprints.
+
+The plan shows the adapter, endpoint, model, and deployment before consent.
+Profiles sharing a descriptor must agree on runtime and credential settings.
+A runtime without a selecting processing profile stays staged.
+
 ### Supplied audio transcription
 
 The daemon can transcribe supplied WAV and MP3 files through a configured

@@ -1033,6 +1033,7 @@ func writeDaemonASRConfig(root string, cfg config.Config) error {
 		if runtime := profile.Runtime; runtime != nil {
 			value["runtime"] = map[string]any{
 				"endpoint": runtime.Endpoint, "request_timeout": runtime.RequestTimeout.Std().String(),
+				"capability_manifest": runtime.CapabilityManifest, "retention": runtime.Retention, "training": runtime.Training,
 				"total_timeout": runtime.TotalTimeout.Std().String(), "poll_interval": runtime.PollInterval.Std().String(),
 				"max_poll_attempts": runtime.MaxPollAttempts, "allowed_cidrs": runtime.AllowedCIDRs,
 				"spki_sha256": runtime.SPKISHA256, "proxy_mode": runtime.ProxyMode,

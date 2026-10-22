@@ -257,10 +257,13 @@ type EmbeddingRuntimeConfig struct {
 type RenditionRuntimeConfig struct {
 	ProviderEgressConfig
 
-	RequestTimeout  Duration `toml:"request_timeout"`
-	TotalTimeout    Duration `toml:"total_timeout"`
-	PollInterval    Duration `toml:"poll_interval"`
-	MaxPollAttempts int      `toml:"max_poll_attempts"`
+	CapabilityManifest string   `toml:"capability_manifest"`
+	Retention          string   `toml:"retention"`
+	Training           string   `toml:"training"`
+	RequestTimeout     Duration `toml:"request_timeout"`
+	TotalTimeout       Duration `toml:"total_timeout"`
+	PollInterval       Duration `toml:"poll_interval"`
+	MaxPollAttempts    int      `toml:"max_poll_attempts"`
 }
 
 type CredentialBindingConfig struct {
@@ -473,6 +476,14 @@ func loadTOML(root string) (Config, error) {
 		profile.Runtime.CapabilityManifest = filepath.Clean(filepath.Join(root, profile.Runtime.CapabilityManifest))
 		c.EmbeddingProfiles[name] = profile
 	}
+	for name, profile := range c.RenditionProfiles {
+		if profile.Runtime == nil || profile.Runtime.CapabilityManifest == "" || filepath.IsAbs(profile.Runtime.CapabilityManifest) {
+			continue
+		}
+		profile.Runtime.CapabilityManifest = filepath.Clean(filepath.Join(root, profile.Runtime.CapabilityManifest))
+		c.RenditionProfiles[name] = profile
+	}
+
 	return c, nil
 }
 
@@ -751,6 +762,7 @@ var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]
 var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 const (
+	MistralOCRAdapterContract      = "docbank-mistral-ocr/v1"
 	DoclingASRAdapterContract      = "docbank-docling-asr/v1"
 	DoclingDocumentAdapterContract = "docbank-docling-document/v1"
 )
@@ -924,7 +936,7 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 			return fmt.Errorf("%s max_transcript_chars is invalid: %w", prefix, err)
 		}
 	}
-	if profile.AdapterContract == DoclingDocumentAdapterContract && profile.MaxTranscriptChars != 0 {
+	if (profile.AdapterContract == DoclingDocumentAdapterContract || profile.AdapterContract == MistralOCRAdapterContract) && profile.MaxTranscriptChars != 0 {
 		return fmt.Errorf("%s max_transcript_chars is only supported for ASR", prefix)
 	}
 
@@ -955,8 +967,21 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract {
+		return fmt.Errorf("%s runtime is supported only for %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract)
+	}
+	if profile.AdapterContract == MistralOCRAdapterContract {
+		if profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
+			return fmt.Errorf("%s Mistral runtime requires hosted_provider", prefix)
+		}
+		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactMarkdown) {
+			return fmt.Errorf("%s Mistral runtime requires exactly provider_markdown", prefix)
+		}
+		if runtime.CapabilityManifest == "" || !filepath.IsAbs(runtime.CapabilityManifest) {
+			return fmt.Errorf("%s Mistral runtime requires an absolute capability_manifest", prefix)
+		}
+	} else if runtime.CapabilityManifest != "" || runtime.Retention != "" || runtime.Training != "" {
+		return fmt.Errorf("%s capability_manifest, retention, and training are only supported for Mistral", prefix)
 	}
 	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
@@ -998,6 +1023,12 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 	}
 	if parsed.Scheme == "http" && profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) {
 		return fmt.Errorf("%s runtime HTTP endpoint requires operator_network", prefix)
+	}
+	if profile.AdapterContract == MistralOCRAdapterContract {
+		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
+			return fmt.Errorf("%s Mistral runtime requires request_timeout and zero poll bounds", prefix)
+		}
+		return nil
 	}
 	if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour ||
 		runtime.TotalTimeout.Std() <= 0 || runtime.TotalTimeout.Std() > 24*time.Hour ||
