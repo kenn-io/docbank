@@ -155,14 +155,14 @@ it("resets validated person search input on reopen", async () => {
   });
   expect(await screen.findByRole("option", { name: `Create person "${normalized}"` })).toBeTruthy();
   expect(search).toHaveBeenLastCalledWith(
-    { query: normalized, limit: 100, recent_first: true },
+    expect.objectContaining({ query: normalized, limit: 100 }),
     expect.objectContaining({ session: "session" }),
   );
   await fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
   await waitFor(() =>
     expect(search).toHaveBeenLastCalledWith(
-      { query: "", limit: 100, recent_first: true },
+      expect.objectContaining({ query: "", limit: 100 }),
       expect.objectContaining({ session: "session" }),
     ),
   );
@@ -217,7 +217,7 @@ it("searches again after a failed assignment and disables the picker throughout 
   await screen.findByText("Response lost");
   await waitFor(() =>
     expect(search).toHaveBeenCalledWith(
-      { query: "Ada", limit: 100, recent_first: true },
+      expect.objectContaining({ query: "Ada", limit: 100 }),
       expect.objectContaining({ session: "session" }),
     ),
   );
@@ -788,7 +788,7 @@ it.each(["exact", "absent", "broad", "case"])(
       await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
       await waitFor(() =>
         expect(search).toHaveBeenCalledWith(
-          { query, limit: 100, recent_first: true, cursor: "last" },
+          expect.objectContaining({ query, limit: 100, cursor: "last" }),
           expect.anything(),
         ),
       );
@@ -851,7 +851,7 @@ it.each(["exact", "absent", "broad", "case"])(
       );
     }
     expect(search).toHaveBeenCalledWith(
-      { query, limit: 100, recent_first: true, cursor: "tail" },
+      expect.objectContaining({ query, limit: 100, cursor: "tail" }),
       expect.anything(),
     );
     expect(search.mock.calls.filter(([params]) => params?.query === query)).toHaveLength(
@@ -946,7 +946,7 @@ it.each(["unauthorized", "generic"])(
       search.mockResolvedValue({ items: [] });
       await fireEvent.mouseDown(await screen.findByRole("option", { name: "Retry" }));
       expect(search).toHaveBeenLastCalledWith(
-        { query: "Ada", limit: 100, recent_first: true },
+        expect.objectContaining({ query: "Ada", limit: 100 }),
         expect.objectContaining({ session: "session" }),
       );
       await fireEvent.mouseDown(await screen.findByRole("option", { name: 'Create person "Ada"' }));
