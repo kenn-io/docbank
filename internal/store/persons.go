@@ -271,11 +271,11 @@ func personRecentSQL() string {
 
 // Materialize the bounded matches before reading their visible identity labels.
 var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
- SELECT persons.*,%s recent_rank FROM persons WHERE %s state<>'retired'
+ SELECT persons.*%s FROM persons WHERE %s state<>'retired'
 	AND ` + personVisibleSQL("persons.person_id") + `
-	AND (?='' OR recent_rank<? OR (recent_rank=? AND (display_name_folded>? OR (display_name_folded=? AND person_id>?))))
-	ORDER BY recent_rank DESC,display_name_folded,person_id LIMIT ?)
-SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,recent_rank,
+	AND (%s)
+	ORDER BY %s LIMIT ?)
+SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,%s,
 	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
 		FROM person_identities i WHERE i.person_id=persons.person_id
 		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
@@ -283,7 +283,7 @@ SELECT person_id,display_name,display_name_folded,origin,state,revision,created_
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
 			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
- FROM matches persons ORDER BY recent_rank DESC,display_name_folded,person_id`
+ FROM matches persons ORDER BY %s`
 
 type PersonSearchResult struct {
 	Person
@@ -345,17 +345,24 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			}
 			hideLocked = errors.Is(err, ErrHiddenLocked)
 		}
-		rank := `''`
+		rankColumn, rank := "", `''`
+		order := "display_name_folded,person_id"
+		cursor := `?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?)`
+		cursorArgs := []any{afterName, afterName, afterName, afterID}
 		args := []any{}
 		if options.RecentFirst {
-			rank = personRecentSQL()
+			rankColumn, rank = ","+personRecentSQL()+" recent_rank", "recent_rank"
+			order = "recent_rank DESC," + order
+			cursor = `?='' OR recent_rank<? OR (recent_rank=? AND (display_name_folded>? OR (display_name_folded=? AND person_id>?)))`
+			cursorArgs = []any{afterName, options.AfterRecent, options.AfterRecent, afterName, afterName, afterID}
 			args = append(args, hideLocked)
 		}
 		candidates, filter := peopleCandidatesSQL(document.FoldPersonName(query), options.PhotoSummary, !hideLocked)
 		args = append(args, filter...)
-		args = append(args, visibleOnly, hideLocked, hideLocked,
-			afterName, options.AfterRecent, options.AfterRecent, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, rank, candidates), args...)
+		args = append(args, visibleOnly, hideLocked, hideLocked)
+		args = append(args, cursorArgs...)
+		args = append(args, limit, visibleOnly, hideLocked)
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, rankColumn, candidates, cursor, order, rank, order), args...)
 		if err != nil {
 			return err
 		}

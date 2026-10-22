@@ -88,6 +88,9 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 		err = e
 		if e == nil {
 			state.Faces = []PhotoFace{f}
+			// Only the requested face can change its assignment. Siblings
+			// supply assertion dependencies but keep their naming times.
+			state.FaceNamedAt, err = faceDecisionNamingTimesTx(ctx, tx, state.Faces)
 		}
 	}
 	if err != nil {
@@ -170,8 +173,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 		}
 		state.People = append(state.People, p)
 	}
-	state.FaceNamedAt, err = faceDecisionNamingTimesTx(ctx, tx, state.Faces)
-	return state, err
+	return state, nil
 }
 
 func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after PhotoFaceDecisionState, createdPerson faceDecisionPerson, undo, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
@@ -219,13 +221,6 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 		return 0
 	})
 	before.Faces, after.Faces = changedFaceRows(before.Faces, after.Faces)
-	for _, state := range []*PhotoFaceDecisionState{&before, &after} {
-		for id := range state.FaceNamedAt {
-			if !slices.ContainsFunc(state.Faces, func(f PhotoFace) bool { return f.FaceID == id }) {
-				delete(state.FaceNamedAt, id)
-			}
-		}
-	}
 	var dependencies []PersonDocumentAssertion
 	for i, a := range after.Assertions {
 		if reflect.DeepEqual(before.Assertions[i], a) && slices.ContainsFunc(before.Faces, func(f PhotoFace) bool {

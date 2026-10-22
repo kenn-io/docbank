@@ -30,6 +30,9 @@ var photoFaceMetadata = newMetadataTable(metadataTable[metadataPhotoFace]{record
 		face.AssertionID = *v.AssertionID
 	}
 	if v.NamedAt != nil {
+		if v.AssertionID == nil {
+			return ErrInvalidPhotoFace
+		}
 		if err := validateMetadataTime("photo face named_at", *v.NamedAt); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidPhotoFace, err)
 		}
