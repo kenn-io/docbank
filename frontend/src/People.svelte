@@ -159,7 +159,8 @@
         <button
           type="button"
           class="person-open"
-          onclick={() => onperson(person.person_id, person.display_name, false)}
+          onclick={() =>
+            onperson(person.person_id, person.display_name, !person.photo_summary?.library_count)}
         >
           {@render portrait(person)}
           <strong>{person.display_name}</strong>

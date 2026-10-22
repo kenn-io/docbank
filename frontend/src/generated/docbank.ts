@@ -16015,9 +16015,9 @@ export const getRenamePersonUrl = (personId: string,) => {
 /**
  * @summary Rename one canonical person
  */
-export const renamePerson = async (personId: string,
+export const renamePerson = (personId: string,
     renamePersonRequest: NonReadonly<RenamePersonRequest>,
-    headers: RenamePersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Person> => {
+    headers: RenamePersonHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16033,7 +16033,7 @@ export const renamePerson = async (personId: string,
     }
     return headers;
   };
-return sessionJSON<Person>(getRenamePersonUrl(personId),
+return sessionResponse<Person>(getRenamePersonUrl(personId),
   {
     ...options,
     method: 'PATCH',
@@ -16055,9 +16055,9 @@ export const getMergePersonUrl = (personId: string,) => {
 /**
  * @summary Merge one person into another
  */
-export const mergePerson = async (personId: string,
+export const mergePerson = (personId: string,
     mergePersonRequest: NonReadonly<MergePersonRequest>,
-    headers: MergePersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonMergeReceipt> => {
+    headers: MergePersonHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16073,7 +16073,7 @@ export const mergePerson = async (personId: string,
     }
     return headers;
   };
-return sessionJSON<PersonMergeReceipt>(getMergePersonUrl(personId),
+return sessionResponse<PersonMergeReceipt>(getMergePersonUrl(personId),
   {
     ...options,
     method: 'POST',

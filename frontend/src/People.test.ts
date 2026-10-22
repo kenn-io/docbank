@@ -255,7 +255,7 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
   expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
   await fireEvent.click(screen.getByRole("button", { name: "Grace 0 Library photos" }));
-  expect(open).toHaveBeenLastCalledWith("grace", "Grace", false);
+  expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
   await act(() => access.acceptState({ configured: true }, Date.now() + 1));
   expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
   view.unmount();

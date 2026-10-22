@@ -47,40 +47,89 @@ it("retries from the first page when a saved People cursor expires", async () =>
   people.dispose();
 });
 
-it("renames a loaded card and its selection from the response", async () => {
-  const read = vi.spyOn(api, "listPeople");
-  const rename = vi
-    .spyOn(api, "renamePerson")
-    .mockResolvedValue(personResponse(ada, { display_name: "Ada L", revision: 3 }));
-  const changed = vi.fn();
-  const people = new People("session", vi.fn(), undefined, changed);
-  people.items = [ada, grace];
-  people.toggle(ada);
-  expect(await people.rename(ada, " Ada L ")).toBe(true);
-  expect(rename.mock.calls[0]!.slice(0, 3)).toEqual([
-    "ada",
-    { display_name: "Ada L" },
-    { "If-Match": '"2"' },
-  ]);
-  expect(people.items[0]).toMatchObject({ display_name: "Ada L", revision: 3 });
-  expect(people.selected[0]).toEqual(people.items[0]);
-  expect(changed).toHaveBeenCalledWith("ada", "Ada L");
-  expect(read).not.toHaveBeenCalled();
-  people.dispose();
-});
+it.each(["valid", "empty", "wrong person", "invalid revision", "wrong ETag"])(
+  "renames with a %s response",
+  async (result) => {
+    const read = vi.spyOn(api, "listPeople");
+    const saved = await personResponse(ada, { display_name: "Ada L", revision: 3 }).json();
+    const body =
+      result === "empty"
+        ? {}
+        : {
+            ...saved,
+            ...(result === "wrong person" ? { person_id: "someone-else" } : {}),
+            ...(result === "invalid revision" ? { revision: 0 } : {}),
+          };
+    const rename = vi
+      .spyOn(api, "renamePerson")
+      .mockResolvedValue(
+        Response.json(body, { headers: { ETag: result === "wrong ETag" ? '"4"' : '"3"' } }),
+      );
+    const changed = vi.fn();
+    const people = new People("session", vi.fn(), undefined, changed);
+    people.items = [ada, grace];
+    people.toggle(ada);
+    read.mockResolvedValue({ items: [ada, grace] });
+    expect(await people.rename(ada, " Ada L ")).toBe(result === "valid");
+    expect(rename.mock.calls[0]!.slice(0, 3)).toEqual([
+      "ada",
+      { display_name: "Ada L" },
+      { "If-Match": '"2"' },
+    ]);
+    if (result !== "valid") {
+      expect(people.writeError).toBe("Invalid person response.");
+      expect(changed).not.toHaveBeenCalled();
+      expect(people.items).toEqual([ada, grace]);
+      expect(people.selected).toEqual([ada]);
+      expect(read).toHaveBeenCalledOnce();
+      people.dispose();
+      return;
+    }
+    expect(people.items[0]).toMatchObject({ display_name: "Ada L", revision: 3 });
+    expect(people.selected[0]).toEqual(people.items[0]);
+    expect(changed).toHaveBeenCalledWith("ada", "Ada L");
+    expect(read).not.toHaveBeenCalled();
+    people.dispose();
+  },
+);
 
-it("reloads the first page after merging and reports the survivor", async () => {
+it.each([
+  "valid",
+  "empty",
+  "wrong survivor",
+  "wrong source",
+  "wrong operation",
+  "missing merge ID",
+  "wrong revision before",
+  "invalid revision after",
+  "wrong ETag",
+])("reloads after merging with a %s receipt", async (result) => {
   const kept = { ...grace, revision: 5, photo_summary: { library_count: 3 } };
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [kept] });
-  const merge = vi
-    .spyOn(api, "mergePerson")
-    .mockImplementation(async (_, request) => personMergeReceipt(ada, grace, request.operation_id));
+  const merge = vi.spyOn(api, "mergePerson").mockImplementation(async (_, request) => {
+    const receipt = await personMergeReceipt(ada, grace, request.operation_id).json();
+    const body =
+      result === "empty"
+        ? {}
+        : {
+            ...receipt,
+            ...(result === "wrong survivor" ? { survivor_person_id: "someone-else" } : {}),
+            ...(result === "wrong source" ? { absorbed_person_id: "someone-else" } : {}),
+            ...(result === "wrong operation"
+              ? { operation_id: "00000000-0000-4000-8000-000000000098" }
+              : {}),
+            ...(result === "missing merge ID" ? { merge_id: "" } : {}),
+            ...(result === "wrong revision before" ? { survivor_revision_before: 3 } : {}),
+            ...(result === "invalid revision after" ? { survivor_revision_after: 4 } : {}),
+          };
+    return Response.json(body, { headers: { ETag: result === "wrong ETag" ? '"4"' : '"5"' } });
+  });
   const changed = vi.fn();
   const people = new People("session", vi.fn(), undefined, changed);
   people.items = [ada, grace];
   people.cursor = "old-page";
   merging(people);
-  expect(await people.submitMerge()).toBe(true);
+  expect(await people.submitMerge()).toBe(result === "valid");
   expect(merge.mock.calls[0]!.slice(0, 3)).toEqual([
     "grace",
     { absorbed_person_id: "ada", absorbed_revision: 2, operation_id: expect.any(String) },
@@ -88,33 +137,37 @@ it("reloads the first page after merging and reports the survivor", async () => 
   ]);
   expect(people.items).toEqual([kept]);
   expect(people.merge).toBeUndefined();
-  expect(people.selected).toEqual([]);
+  expect(people.selected).toEqual(result === "valid" ? [] : [ada, grace]);
   expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
-  expect(changed).toHaveBeenCalledWith("ada", "Grace", "grace");
+  if (result === "valid") expect(changed).toHaveBeenCalledWith("ada", "Grace", "grace");
+  else {
+    expect(people.writeError).toBe("Invalid person merge response.");
+    expect(changed).not.toHaveBeenCalled();
+  }
   people.dispose();
 });
 
-it.each([409, 412, 503])(
-  "shows the server detail and reloads after merge HTTP %s",
-  async (status) => {
-    const detail = "Review face face-a on version version-a; more faces also conflict";
-    const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
-    vi.spyOn(api, "mergePerson").mockRejectedValue(
-      new APIError(detail, status, "person_merge_conflict"),
-    );
-    const people = new People("session", vi.fn());
-    people.items = [ada, grace];
-    people.cursor = "old-page";
-    merging(people);
-    expect(await people.submitMerge()).toBe(false);
-    expect(people.writeError).toBe(detail);
-    expect(people.items).toEqual([grace]);
-    if (status === 409) expect(people.selected).toEqual([ada, grace]);
-    expect(people.merge).toBeUndefined();
-    expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
-    people.dispose();
-  },
-);
+it.each([
+  [409, "person_merge_conflict"],
+  [409, "person_retired"],
+  [412, "stale_revision"],
+  [503, "unavailable"],
+] as const)("shows the server detail and reloads after merge HTTP %s %s", async (status, code) => {
+  const detail = "Review face face-a on version version-a; more faces also conflict";
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  vi.spyOn(api, "mergePerson").mockRejectedValue(new APIError(detail, status, code));
+  const people = new People("session", vi.fn());
+  people.items = [ada, grace];
+  people.cursor = "old-page";
+  merging(people);
+  expect(await people.submitMerge()).toBe(false);
+  expect(people.writeError).toBe(detail);
+  expect(people.items).toEqual([grace]);
+  expect(people.selected).toEqual(code === "person_retired" || status === 412 ? [] : [ada, grace]);
+  expect(people.merge).toBeUndefined();
+  expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
+  people.dispose();
+});
 
 it.each([412, 503, 422])("recovers after rename HTTP %s", async (status) => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });

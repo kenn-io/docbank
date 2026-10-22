@@ -1,7 +1,52 @@
-import { listPeople, renamePerson, mergePerson, type PersonSummary } from "./generated/docbank.js";
+import {
+  listPeople,
+  renamePerson,
+  mergePerson,
+  type Person,
+  type PersonMergeReceipt,
+  type PersonSummary,
+} from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
+import { uuidV4Pattern as uuid } from "./query.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+
+async function readPerson(response: Response, expectedID: string): Promise<Person> {
+  const person = await response.json();
+  if (
+    !person ||
+    person.person_id !== expectedID ||
+    typeof person.display_name !== "string" ||
+    !Number.isSafeInteger(person.revision) ||
+    person.revision < 1 ||
+    response.headers.get("ETag") !== `"${person.revision}"`
+  )
+    throw new Error("Invalid person response.");
+  return person;
+}
+
+async function readReceipt(
+  response: Response,
+  source: PersonSummary,
+  survivor: PersonSummary,
+  operationID: string,
+): Promise<PersonMergeReceipt> {
+  const receipt = await response.json();
+  if (
+    !receipt ||
+    typeof receipt.merge_id !== "string" ||
+    !uuid.test(receipt.merge_id) ||
+    receipt.operation_id !== operationID ||
+    receipt.absorbed_person_id !== source.person_id ||
+    receipt.survivor_person_id !== survivor.person_id ||
+    receipt.survivor_revision_before !== survivor.revision ||
+    !Number.isSafeInteger(receipt.survivor_revision_after) ||
+    receipt.survivor_revision_after !== survivor.revision + 1 ||
+    response.headers.get("ETag") !== `"${receipt.survivor_revision_after}"`
+  )
+    throw new Error("Invalid person merge response.");
+  return receipt;
+}
 
 export const peoplePageSize = 24;
 export type PeopleMerge = {
@@ -116,7 +161,12 @@ export class People {
   private async recover(cause: unknown) {
     this.writeError = this.failure(cause);
     const status = cause instanceof APIError ? cause.status : 0;
-    if (status === 404 || status === 412) this.selected = [];
+    if (
+      status === 404 ||
+      status === 412 ||
+      (cause instanceof APIError && cause.code === "person_retired")
+    )
+      this.selected = [];
     if (status !== 422) await this.load();
   }
   async rename(person: PersonSummary, name: string) {
@@ -124,7 +174,7 @@ export class People {
     if (!request) return false;
     const epoch = this.epoch;
     try {
-      const saved = await this.run(() =>
+      const response = await this.run(() =>
         renamePerson(
           person.person_id,
           { display_name: name.trim() },
@@ -132,6 +182,7 @@ export class People {
           { session: this.session, signal: request.signal },
         ),
       );
+      const saved = await readPerson(response, person.person_id);
       if (request.signal.aborted) return false;
       this.onchanged(person.person_id, saved.display_name);
       if (epoch === this.epoch) {
@@ -192,19 +243,21 @@ export class People {
     if (!request) return false;
     const epoch = this.epoch;
     const { source, survivor } = roles;
+    const operationID = randomUUID();
     try {
-      await this.run(() =>
+      const response = await this.run(() =>
         mergePerson(
           survivor.person_id,
           {
             absorbed_person_id: source.person_id,
             absorbed_revision: source.revision,
-            operation_id: randomUUID(),
+            operation_id: operationID,
           },
           { "If-Match": `"${survivor.revision}"` },
           { session: this.session, signal: request.signal },
         ),
       );
+      await readReceipt(response, source, survivor, operationID);
       if (request.signal.aborted) return false;
       this.onchanged(source.person_id, survivor.display_name, survivor.person_id);
       if (epoch === this.epoch) {
