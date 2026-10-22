@@ -23,7 +23,7 @@ To merge two people, check **Select** on both cards, then choose **Merge**. Your
 
 If someone else changed either person first, the dialog shows both current cards and asks you to confirm again. If either person is no longer available, the dialog closes and you select again. If a merge result can't be confirmed, **Retry merge** sends the same request to retrieve the saved result.
 
-A merge can stop when a face assigned to one person was rejected for the other. The dialog shows a crop from that exact photo version and names the rejected person. Choose **Withdraw rejection for [person]** to remove the rejection; the face keeps its current name. Confirm the merge again. Conflicts in locked Hidden, excluded, or trashed photos are reported without showing a face. Locking Hidden clears the selection, Hidden counts, and the dialog.
+A merge can stop when a face assigned to one person was rejected for the other. The dialog shows a crop from that exact photo version and names the rejected person. Choose **Withdraw rejection for** followed by the rejected person's name to remove the rejection; the face keeps its current name. Confirm the merge again. Conflicts in locked Hidden, excluded, or trashed photos are reported without showing a face. Locking Hidden clears the selection, Hidden counts, and the dialog.
 
 Name pickers in the inspector list people with the newest face or photo evidence first, then by name. Namesakes stay together. This order comes from the vault, so it survives sign-in and follows people through merges. It reflects when evidence was added: naming a face that was already linked doesn't move the person up.
 
