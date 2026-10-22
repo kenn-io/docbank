@@ -259,8 +259,6 @@ type RenditionRuntimeConfig struct {
 	ProviderEgressConfig
 
 	CapabilityManifest string   `toml:"capability_manifest"`
-	Retention          string   `toml:"retention"`
-	Training           string   `toml:"training"`
 	RequestTimeout     Duration `toml:"request_timeout"`
 	TotalTimeout       Duration `toml:"total_timeout"`
 	PollInterval       Duration `toml:"poll_interval"`
@@ -481,9 +479,9 @@ func loadTOML(root string) (Config, error) {
 			manifests = append(manifests, &profile.Runtime.CapabilityManifest)
 		}
 	}
-	for _, path := range manifests {
-		if *path != "" && !filepath.IsAbs(*path) {
-			*path = filepath.Clean(filepath.Join(root, *path))
+	for _, manifest := range manifests {
+		if *manifest != "" && !filepath.IsAbs(*manifest) {
+			*manifest = filepath.Clean(filepath.Join(root, *manifest))
 		}
 	}
 
@@ -939,7 +937,7 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 			return fmt.Errorf("%s max_transcript_chars is invalid: %w", prefix, err)
 		}
 	}
-	if (profile.AdapterContract == DoclingDocumentAdapterContract || profile.AdapterContract == MistralOCRAdapterContract) && profile.MaxTranscriptChars != 0 {
+	if profile.AdapterContract == DoclingDocumentAdapterContract && profile.MaxTranscriptChars != 0 {
 		return fmt.Errorf("%s max_transcript_chars is only supported for ASR", prefix)
 	}
 
@@ -976,19 +974,18 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 	if profile.AdapterContract == MistralOCRAdapterContract {
 		return validateMistralRuntime(profile, prefix)
 	}
-	if runtime.CapabilityManifest != "" || runtime.Retention != "" || runtime.Training != "" {
-		return fmt.Errorf("%s capability_manifest, retention, and training are only supported for Mistral", prefix)
+	if runtime.CapabilityManifest != "" {
+		return fmt.Errorf("%s capability_manifest is only supported for Mistral", prefix)
 	}
 	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
 		return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
 	}
-	switch profile.AdapterContract {
-	case DoclingASRAdapterContract:
+	if profile.AdapterContract == DoclingASRAdapterContract {
 		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
 			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
 		}
-	case DoclingDocumentAdapterContract:
+	} else {
 		hasMarkdown := false
 		for _, role := range profile.RequestedArtifacts {
 			switch document.EvidenceArtifactRole(role) {
@@ -1061,9 +1058,9 @@ func (profile RenditionProfileConfig) MistralPolicy() (mistral.Policy, error) {
 		return mistral.Policy{}, err
 	}
 	policy, err := mistral.NewPolicy(mistral.PolicyConfig{Region: mistral.RegionEU, Model: mistral.DefaultModel,
-		Retention: runtime.Retention, Training: runtime.Training, MaxDocumentBytes: profile.MaxDocumentBytes,
+		Retention: mistral.RetentionStandard, Training: mistral.TrainingDefaultOptOut, MaxDocumentBytes: profile.MaxDocumentBytes,
 		MaxResponseBytes: profile.MaxResponseBytes, MaxUnits: profile.MaxUnits,
-		ExtractHeader: true, ExtractFooter: true, NormalizePolicy: normalize})
+		ExtractHeader: false, ExtractFooter: false, NormalizePolicy: normalize})
 	if err != nil {
 		return mistral.Policy{}, err
 	}

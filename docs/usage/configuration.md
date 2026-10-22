@@ -89,7 +89,7 @@ across deployments.
 For document conversion, configure Docling with
 `adapter_contract = "docbank-docling-document/v1"` or Mistral OCR with
 `adapter_contract = "docbank-mistral-ocr/v1"`. Mistral accepts PDFs and requires
-a capability manifest, the EU endpoint, retention and training settings, and
+a capability manifest, the EU endpoint, and
 a request timeout of at most thirty minutes. Re-probe after a model re-pin,
 then recompute the descriptor and disclosure fingerprints. See the
 [Docling](../configuration.md#document-conversion-with-docling) and

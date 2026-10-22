@@ -26,6 +26,10 @@ var (
 	ErrCertificatePin = errors.New("provider egress certificate pin mismatch")
 )
 
+// TestDialContext lets daemon tests redirect the final socket dial after address validation.
+// Only tests set it, before creating a transport.
+var TestDialContext func(context.Context, string, string) (net.Conn, error)
+
 // Resolver performs the one DNS lookup allowed for each connection attempt.
 type Resolver interface {
 	LookupNetIP(ctx context.Context, network string, host string) ([]netip.Addr, error)
@@ -62,7 +66,10 @@ func NewTransport(policy EgressPolicy, resolver Resolver) (*http.Transport, erro
 	}
 	dialer := &policyDialer{
 		policy: validated, resolver: resolver,
-		dialer: net.Dialer{Timeout: validated.connect, KeepAlive: validated.keepAlive},
+		dialContext: (&net.Dialer{Timeout: validated.connect, KeepAlive: validated.keepAlive}).DialContext,
+	}
+	if TestDialContext != nil {
+		dialer.dialContext = TestDialContext
 	}
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -173,9 +180,9 @@ func parseAuthority(authority, scheme string) (string, uint16, error) {
 }
 
 type policyDialer struct {
-	policy   validatedPolicy
-	resolver Resolver
-	dialer   net.Dialer
+	policy      validatedPolicy
+	resolver    Resolver
+	dialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 func (dialer *policyDialer) dial(
@@ -207,7 +214,7 @@ func (dialer *policyDialer) dial(
 		if selected.Is4() {
 			exactNetwork = "tcp4"
 		}
-		connection, dialErr := dialer.dialer.DialContext(
+		connection, dialErr := dialer.dialContext(
 			ctx, exactNetwork, net.JoinHostPort(selected.String(), port),
 		)
 		if dialErr == nil {

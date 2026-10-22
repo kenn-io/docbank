@@ -241,7 +241,7 @@ matches, with optional query expansion, reranking, and QMD retrieval.
 components.
 
 The daemon can extract plain text and EPUB locally. With configuration, it can
-also transcribe audio through Docling and run
+also transcribe audio and convert documents through Docling, run Mistral OCR, and use
 [embedding runtimes](configuration.md#embedding-workers-and-credentials).
 Installing a provider package does not register it with the daemon, and does
 not prepare an import for semantic search. The default configuration has no

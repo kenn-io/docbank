@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
 	"strings"
-	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
@@ -25,20 +25,18 @@ const (
 	epubRenditionAdapter      = "docbank-epub-rendition/v1"
 )
 
-type renditionProviderInputs struct {
-	profile               renditionExecutionInputs
-	adapterContract       string
-	maxTranscriptChars    int
-	egress                providerhttp.EgressPolicy
-	credentialEnvironment string
+// Only daemon tests set renditionTestEgress.
+var renditionTestEgress struct {
+	resolver providerhttp.Resolver
+	roots    *x509.CertPool
 }
 
-// Descriptor identity covers policy; these values control execution only.
-type renditionExecutionInputs struct {
-	secretBinding                              string
-	requestTimeout, totalTimeout, pollInterval time.Duration
-	maxPollAttempts                            int
-	maxDocumentBytes, maxResponseBytes         int64
+type renditionProviderInputs struct {
+	adapterContract                    string
+	maxTranscriptChars                 int
+	maxDocumentBytes, maxResponseBytes int64
+	credentialEnvironment              string
+	runtime                            config.RenditionRuntimeConfig
 }
 
 type registeredRenditionProvider struct {
@@ -70,12 +68,6 @@ func (provider *configuredRenditionProvider) Render(
 func configureRenditionProviders(cfg config.Config) (
 	map[string]document.RenditionProvider, map[string]processing.RuntimeDisclosure, error,
 ) {
-	return configureRenditionProvidersWithTransport(cfg, nil)
-}
-
-func configureRenditionProvidersWithTransport(cfg config.Config, wrapTransport func(*http.Transport) http.RoundTripper) (
-	map[string]document.RenditionProvider, map[string]processing.RuntimeDisclosure, error,
-) {
 	providers := make(map[string]document.RenditionProvider)
 	disclosures := make(map[string]processing.RuntimeDisclosure)
 	registered := make(map[string]registeredRenditionProvider)
@@ -98,7 +90,7 @@ func configureRenditionProvidersWithTransport(cfg config.Config, wrapTransport f
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
-			provider, disclosures[name], err = configureExternalRendition(cfg, name, secrets, registered, wrapTransport)
+			provider, disclosures[name], err = configureExternalRendition(cfg, name, secrets, registered)
 		default:
 			continue
 		}
@@ -119,7 +111,7 @@ func configureRenditionProvidersWithTransport(cfg config.Config, wrapTransport f
 }
 
 func configureExternalRendition(cfg config.Config, name string, secrets environmentCredentialSecrets,
-	registered map[string]registeredRenditionProvider, wrapTransport func(*http.Transport) http.RoundTripper,
+	registered map[string]registeredRenditionProvider,
 ) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
 	var disclosure processing.RuntimeDisclosure
 	configured := cfg.RenditionProfiles[name]
@@ -144,13 +136,12 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, errors.New("rendition credential binding is not configured")
 	}
 	egress := providerEgressPolicy(configured.Runtime.ProviderEgressConfig)
-	runtime := configured.Runtime
-	inputs := renditionProviderInputs{profile: renditionExecutionInputs{
-		secretBinding: adapter.secretBinding, requestTimeout: runtime.RequestTimeout.Std(), totalTimeout: runtime.TotalTimeout.Std(),
-		pollInterval: runtime.PollInterval.Std(), maxPollAttempts: runtime.MaxPollAttempts,
-		maxDocumentBytes: configured.MaxDocumentBytes, maxResponseBytes: configured.MaxResponseBytes,
-	}, adapterContract: configured.AdapterContract,
-		maxTranscriptChars: configured.MaxTranscriptChars, egress: egress, credentialEnvironment: environmentVariable}
+	runtime := *configured.Runtime
+	runtime.CapabilityManifest = "" // Descriptor identity covers the manifest contents.
+	runtime.SPKISHA256 = egress.TLS.SPKISHA256
+	inputs := renditionProviderInputs{runtime: runtime, adapterContract: configured.AdapterContract,
+		maxTranscriptChars: configured.MaxTranscriptChars, maxDocumentBytes: configured.MaxDocumentBytes,
+		maxResponseBytes: configured.MaxResponseBytes, credentialEnvironment: environmentVariable}
 	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: configured.AdapterContract,
 		UltimateProcessor: descriptor.ID, Endpoint: configured.Runtime.Endpoint,
 		Deployment: configured.DeploymentFingerprint, Model: adapter.model}
@@ -163,15 +154,12 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		}
 		return existing.provider, disclosure, nil
 	}
-	transport, err := providerhttp.NewTransport(egress, nil)
+	egress.TLS.RootCAs = renditionTestEgress.roots
+	transport, err := providerhttp.NewTransport(egress, renditionTestEgress.resolver)
 	if err != nil {
 		return nil, disclosure, err
 	}
-	var roundTripper http.RoundTripper = transport
-	if wrapTransport != nil {
-		roundTripper = wrapTransport(transport)
-	}
-	provider, err := adapter.newProvider(secrets, &http.Client{Transport: roundTripper})
+	provider, err := adapter.newProvider(secrets, &http.Client{Transport: transport})
 	if err != nil {
 		return nil, disclosure, err
 	}

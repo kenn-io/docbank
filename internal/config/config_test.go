@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -15,8 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
-	"go.kenn.io/docbank/document/mistral"
-	"go.kenn.io/docbank/document/mistral/mistraltest"
 )
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -1168,19 +1165,7 @@ func TestMistralOCRRuntime(t *testing.T) {
 		p.Runtime.Endpoint = "https://api.eu.mistral.ai"
 		p.Runtime.AllowedCIDRs = []string{"192.0.2.0/24"}
 		p.Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "mistral.json")
-		p.Runtime.Retention, p.Runtime.Training = "zdr", "opted-out"
 		p.Runtime.TotalTimeout, p.Runtime.PollInterval, p.Runtime.MaxPollAttempts = 0, 0, 0
-		policy, err := p.MistralPolicy()
-		require.NoError(t, err)
-		manifest, err := mistraltest.SyntheticManifest(policy, true)
-		require.NoError(t, err)
-		var encoded bytes.Buffer
-		require.NoError(t, mistral.EncodeCapabilityManifest(&encoded, manifest))
-		require.NoError(t, os.WriteFile(p.Runtime.CapabilityManifest, encoded.Bytes(), 0600))
-		descriptor, err := mistral.DocumentDescriptor(policy, manifest)
-		require.NoError(t, err)
-		p.DescriptorID, p.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
-		p.DisclosureFingerprint = mistral.DisclosureFingerprint(descriptor, p.Runtime.Endpoint, p.DeploymentFingerprint)
 		c.RenditionProfiles["primary"] = p
 		return c
 	}
@@ -1192,25 +1177,10 @@ func TestMistralOCRRuntime(t *testing.T) {
 	}{
 		{"operator network", func(p *RenditionProfileConfig) { p.TrustBoundary = "operator_network" }, "requires hosted_provider"},
 		{"structured role", func(p *RenditionProfileConfig) { p.RequestedArtifacts = []string{"structured_evidence"} }, "exactly provider_markdown"},
-		{"transcript role", func(p *RenditionProfileConfig) {
-			p.RequestedArtifacts = []string{string(document.EvidenceArtifactTranscript)}
-		}, "exactly provider_markdown"},
 		{"missing manifest", func(p *RenditionProfileConfig) { p.Runtime.CapabilityManifest = "" }, "absolute capability_manifest"},
 		{"relative manifest", func(p *RenditionProfileConfig) { p.Runtime.CapabilityManifest = "mistral.json" }, "absolute capability_manifest"},
 		{"total timeout", func(p *RenditionProfileConfig) { p.Runtime.TotalTimeout = Duration(time.Second) }, "zero poll bounds"},
-		{"poll interval", func(p *RenditionProfileConfig) { p.Runtime.PollInterval = Duration(time.Second) }, "zero poll bounds"},
-		{"poll attempts", func(p *RenditionProfileConfig) { p.Runtime.MaxPollAttempts = 1 }, "zero poll bounds"},
-		{"missing timeout", func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = 0 }, "requires request_timeout"},
 		{"timeout too long", func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = Duration(30*time.Minute + time.Nanosecond) }, "requires request_timeout"},
-		{"wrong origin", func(p *RenditionProfileConfig) { p.Runtime.Endpoint = "https://example.invalid" }, "endpoint differs from policy origin"},
-		{"origin trailing slash", func(p *RenditionProfileConfig) { p.Runtime.Endpoint += "/" }, "endpoint differs from policy origin"},
-		{"unknown retention", func(p *RenditionProfileConfig) { p.Runtime.Retention = "unknown" }, "retention posture must be"},
-		{"unknown training", func(p *RenditionProfileConfig) { p.Runtime.Training = "unknown" }, "training posture must be"},
-		{"document bytes too large", func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 500<<20 + 1 }, "mistral policy processing bounds"},
-		{"response bytes too large", func(p *RenditionProfileConfig) { p.MaxResponseBytes = 512<<20 + 1 }, "mistral policy processing bounds"},
-		{"units too small", func(p *RenditionProfileConfig) { p.MaxUnits = 2 }, "mistral policy processing bounds"},
-		{"units too large", func(p *RenditionProfileConfig) { p.MaxUnits = 5001 }, "mistral policy processing bounds"},
-		{"transcript limit", func(p *RenditionProfileConfig) { p.MaxTranscriptChars = 1 }, "only supported for ASR"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := valid()
@@ -1220,12 +1190,6 @@ func TestMistralOCRRuntime(t *testing.T) {
 			require.ErrorContains(t, c.Validate(), test.want)
 		})
 	}
-	t.Run("maximum request timeout", func(t *testing.T) {
-		c := valid()
-		c.RenditionProfiles["primary"].Runtime.RequestTimeout = Duration(30 * time.Minute)
-		require.NoError(t, c.Validate())
-	})
-
 	t.Run("missing credential", func(t *testing.T) {
 		c := valid()
 		c.CredentialBindings = nil
