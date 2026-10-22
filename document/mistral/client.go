@@ -692,12 +692,15 @@ func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byt
 		return nil, errors.New("invalid Mistral OCR prepared document SHA-256")
 	}
 	if snapshot.memory != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		snapshot.memory.mu.Lock()
 		defer snapshot.memory.mu.Unlock()
 		if snapshot.memory.released {
 			return nil, errors.New("mistral OCR prepared document was released")
 		}
-		return cloneVerifiedDocument(ctx, snapshot.memory.contents, snapshot)
+		return bytes.Clone(snapshot.memory.contents), nil
 	}
 	file, err := openPrivateFile(snapshot.path)
 	if err != nil {
@@ -729,17 +732,6 @@ func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byt
 		return nil, errors.New("mistral OCR spool hash mismatch")
 	}
 	return contents, nil
-}
-
-func cloneVerifiedDocument(ctx context.Context, contents []byte, snapshot preparedSnapshot) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	digest := sha256.Sum256(contents)
-	if snapshot.size != int64(len(contents)) || snapshot.sha256 != hex.EncodeToString(digest[:]) {
-		return nil, errors.New("mistral rendition source identity changed")
-	}
-	return bytes.Clone(contents), nil
 }
 
 func requestEnvelope(
