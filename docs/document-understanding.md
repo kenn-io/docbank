@@ -299,7 +299,9 @@ For each production document:
 
 1. Call `Policy.Authorize(validated manifest, declared format)`.
 2. Check your application's consent record against `PolicyFingerprint`.
-3. Call `Prepare` with private staging storage, or `PrepareMemory` for bytes that must stay off disk.
+3. Call `Prepare` with private staging storage, or `PrepareMemory` to avoid
+   staging files for direct uploads. Formats rendered to PDF still use the
+   renderer's temporary files.
 4. Call `Process`. The detected format must match the authorization.
 5. Call `Release` on success or failure.
 6. Call `NormalizeDocument(Result.Document, Policy.NormalizePolicy())` on a
@@ -308,7 +310,8 @@ For each production document:
 `Prepare` copies one input into a private, bounded, immutable staging file.
 `PrepareMemory` keeps a copy in memory, computes its size and SHA-256, and
 zeroes that copy when you call `Release`.
-For direct formats, `Process` reopens and verifies those bytes for every attempt.
+For direct formats, `Process` reopens and verifies staging files for every
+attempt, or clones the private memory copy without re-hashing it.
 It derives request options from the policy and authorization, bounds the
 response, and converts validated provider output into
 `document.SourceDocument`. For a configured
@@ -673,8 +676,8 @@ This Go API does not add CSV OCR to the daemon or CLI.
 
 ## Show preparation failures
 
-`mistral.Prepare`, `mistral.PrepareMemory`, and `csvpdf.Convert` attach `ocr.PreparationError` to local
-source and conversion failures. Extract it with
+`mistral.Prepare`, `mistral.PrepareMemory`, and `csvpdf.Convert` attach
+`ocr.PreparationError` to local source and conversion failures. Extract it with
 `errors.AsType[*ocr.PreparationError]` and display its `Error()` value. The
 description contains fixed text. The original cause remains available through
 `Unwrap()` for private diagnostics.
@@ -705,8 +708,10 @@ func preparationMessage(err error) string {
 Use the original error for scheduling. For `ocr.Processor` failures, use
 `ocr.ErrorKindOf(err)`. For direct `mistral.Prepare` calls, use `errors.Is` with
 `mistral.ErrSpoolCapacity`, `mistral.ErrSpoolUnavailable`, and
-`mistral.ErrInvalidSource`. Use `errors.Is` for context errors in either path
-and for `csvpdf.Convert`. Display descriptions are not retry classifications.
+`mistral.ErrInvalidSource`. `mistral.PrepareMemory` returns
+`mistral.ErrInvalidSource` for invalid content and never returns spool errors.
+Use `errors.Is` for context errors in all these paths and for `csvpdf.Convert`.
+Display descriptions are not retry classifications.
 Do not match their text to decide whether to retry.
 
 ## Convert office files locally to PDF

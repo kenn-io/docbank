@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -37,17 +36,18 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 
 	var requests atomic.Int32
 	var requestBody []byte
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+	client := clientWithTransport(t, policy, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		requests.Add(1)
 		var readErr error
 		requestBody, readErr = io.ReadAll(request.Body)
-		assert.NoError(t, readErr)
-		w.Header().Set("Content-Type", "application/json")
-		_, writeErr := io.WriteString(w, testSuccessfulResponse)
-		assert.NoError(t, writeErr)
+		require.NoError(t, readErr)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
+			Request:    request,
+		}, nil
 	}))
-	defer server.Close()
-	client := newServerClient(t, server, policy, ClientConfig{})
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 	_, err = client.Process(t.Context(), prepared, authorization)
@@ -73,6 +73,46 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 	require.ErrorContains(t, err, "released")
 	assert.Equal(t, int32(1), requests.Load())
 	require.NoError(t, prepared.Release())
+}
+
+func TestPrepareMemoryReleaseDuringProcess(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			content := testPDF("release during upload")
+			policy := testPolicy(t, 1024, 10)
+			prepared, err := PrepareMemory(t.Context(), content, policy, MemoryPrepareOptions{DeclaredMediaType: mediaTypePDF})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, prepared.Release()) })
+			authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
+			require.NoError(t, err)
+
+			requests := 0
+			client := clientWithTransport(t, policy, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				requests++
+				require.NoError(t, prepared.Release())
+				body, readErr := io.ReadAll(request.Body)
+				require.NoError(t, readErr)
+				assert.Contains(t, string(body), "data:"+mediaTypePDF+";base64,"+base64.StdEncoding.EncodeToString(content))
+				return &http.Response{
+					StatusCode: status,
+					Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"0"}},
+					Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
+					Request:    request,
+				}, nil
+			}))
+			result, err := client.Process(t.Context(), prepared, authorization)
+			if status == http.StatusOK {
+				require.NoError(t, err)
+				assert.Equal(t, 1, result.Metrics.Requests)
+			} else {
+				require.ErrorContains(t, err, "released")
+				assert.Equal(t, 1, MetricsFromError(err).Requests)
+			}
+			_, err = client.Process(t.Context(), prepared, authorization)
+			require.ErrorContains(t, err, "released")
+			assert.Equal(t, 1, requests)
+		})
+	}
 }
 
 func TestPrepareMemoryRejectsInvalidSource(t *testing.T) {
