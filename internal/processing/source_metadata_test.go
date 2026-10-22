@@ -29,6 +29,25 @@ import (
 
 func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 	t.Parallel()
+	for _, testCase := range []struct {
+		name string
+		err  error
+	}{
+		{name: "PDF canceled", err: context.Canceled},
+		{name: "PDF expired deadline", err: context.DeadlineExceeded},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			if errors.Is(testCase.err, context.DeadlineExceeded) {
+				cancel()
+				ctx, cancel = context.WithDeadline(t.Context(), time.Time{})
+			}
+			cancel()
+			metadata, err := ExtractSourceMetadata(ctx, sourceMetadataTestSpool(t), syntheticMetadataPDF(9))
+			require.ErrorIs(t, err, testCase.err)
+			assert.Equal(t, document.SourceMetadataV1{}, metadata)
+		})
+	}
 	ooxml := syntheticOOXML(t)
 	for _, testCase := range []struct {
 		name      string

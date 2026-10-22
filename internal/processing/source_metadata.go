@@ -792,7 +792,9 @@ func ExtractSourceMetadata(ctx context.Context, spoolParent string, data []byte)
 			return document.SourceMetadataV1{}, err
 		}
 	case bytes.HasPrefix(data, []byte("%PDF-")):
-		collector.extractPDF(data)
+		if err := collector.extractPDF(ctx, data); err != nil {
+			return document.SourceMetadataV1{}, err
+		}
 	case bytes.HasPrefix(data, []byte("PK\x03\x04")):
 		collector.extractOOXML(data)
 	case bytes.HasPrefix(data, []byte("BEGIN:VCALENDAR")):
@@ -1069,11 +1071,14 @@ func sourceWarning(code, namespace, source, detail string) document.SourceMetada
 	return document.SourceMetadataWarningV1{Code: code, Namespace: namespace, SourceField: source, Detail: detail}
 }
 
-func (c *metadataCollector) extractPDF(data []byte) {
-	metadata, err := documentmedia.ReadPDFMetadata(data)
+func (c *metadataCollector) extractPDF(ctx context.Context, data []byte) error {
+	metadata, err := documentmedia.ReadPDFMetadata(ctx, data)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		c.warn("unparseable_pdf_pages", "pdf.info", "Pages", "PDF page tree could not be verified")
-		return
+		return nil
 	}
 	c.string("title", "pdf.info", "Title", metadata.Info.Title, false)
 	c.strings("creators", "pdf.info", "Author", splitValues(metadata.Info.Author))
@@ -1092,6 +1097,7 @@ func (c *metadataCollector) extractPDF(data []byte) {
 	if len(metadata.XMP) != 0 {
 		c.extractXMLText(metadata.XMP, "xmp")
 	}
+	return nil
 }
 
 func (c *metadataCollector) extractOOXML(data []byte) {

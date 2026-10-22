@@ -506,9 +506,9 @@ func CountPDFPages(data []byte) (int64, error) {
 
 // ReadPDFMetadata resolves the document information dictionary and catalog XMP
 // stream instead of scanning unrelated object or page-stream bytes.
-func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
+func ReadPDFMetadata(ctx context.Context, data []byte) (PDFMetadata, error) {
 	sourceBytes := int64(len(data))
-	context, err := readPDFMetadataObjectGraph(data, PDFLimits{
+	context, err := readPDFMetadataObjectGraph(ctx, data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
@@ -565,9 +565,9 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	return metadata, nil
 }
 
-func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+func readPDFMetadataObjectGraph(ctx context.Context, data []byte, limits PDFLimits) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
-	pdfContext, err := api.ReadContext(context.Background(), bytes.NewReader(data), configuration)
+	pdfContext, err := api.ReadContext(ctx, bytes.NewReader(data), configuration)
 	if err != nil {
 		return nil, fmt.Errorf("read PDF object graph: %w", err)
 	}
@@ -583,7 +583,7 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 	if hasMetadata {
 		pdfContext.RootDict.Delete("Metadata")
 	}
-	err = api.ValidateContext(context.Background(), pdfContext)
+	err = api.ValidateContext(ctx, pdfContext)
 	if err == nil {
 		var external bool
 		external, err = pdfHasExternalReference(pdfContext)

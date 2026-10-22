@@ -1,6 +1,7 @@
 package scanfixture
 
 import (
+	"context"
 	"errors"
 
 	"go.kenn.io/docbank/document/internal/formatdetect"
@@ -47,7 +48,7 @@ func Measure(f Fixture, maxSourceBytes int64) Measurement {
 	if err != nil {
 		measurement.InspectError = err.Error()
 	}
-	_, err = formatdetect.ReadPDFMetadata(source)
+	_, err = formatdetect.ReadPDFMetadata(context.Background(), source)
 	if err != nil {
 		measurement.MetadataError = err.Error()
 	}

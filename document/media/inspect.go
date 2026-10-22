@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
@@ -1361,9 +1362,10 @@ type PDFInfoMetadata struct {
 	Title, Author, Subject, Keywords, CreationDate, ModDate string
 }
 
-// ReadPDFMetadata resolves PDF metadata from the validated object graph.
-func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
-	metadata, err := formatdetect.ReadPDFMetadata(data)
+// ReadPDFMetadata resolves PDF metadata from the validated object graph,
+// honoring caller cancellation during parsing and validation.
+func ReadPDFMetadata(ctx context.Context, data []byte) (PDFMetadata, error) {
+	metadata, err := formatdetect.ReadPDFMetadata(ctx, data)
 	if err != nil {
 		return PDFMetadata{}, err
 	}
