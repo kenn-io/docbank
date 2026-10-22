@@ -27,7 +27,7 @@
     "yaml": "2.8.1"
   },
   "devDependencies": {
-    "@playwright/test": "1.61.1",
+    "@playwright/test": "1.64.1",
     "@sveltejs/vite-plugin-svelte": "7.2.0",
     "@testing-library/svelte": "5.3.1",
     "@tsconfig/svelte": "5.0.8",
@@ -47,7 +47,7 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4"
   },
   "engines": {
-    "node": ">=24.11.0"
+    "node": ">=24.22.1"
   },
   "packageManager": "npm@11.17.0"
 }
