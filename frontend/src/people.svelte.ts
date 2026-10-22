@@ -110,6 +110,15 @@ export class People {
     this.writeError = "";
     return request;
   }
+  // recover reports a failed write and discards only what it invalidates: a
+  // rejected input keeps the cards, and only a stale or missing person clears
+  // the selection.
+  private async recover(cause: unknown) {
+    this.writeError = this.failure(cause);
+    const status = cause instanceof APIError ? cause.status : 0;
+    if (status === 404 || status === 412) this.selected = [];
+    if (status !== 422) await this.load();
+  }
   async rename(person: PersonSummary, name: string) {
     const request = this.begin();
     if (!request) return false;
@@ -138,9 +147,7 @@ export class People {
       return true;
     } catch (cause) {
       if (!request.signal.aborted && epoch === this.epoch) {
-        this.writeError = this.failure(cause);
-        this.selected = [];
-        await this.load();
+        await this.recover(cause);
       }
       return false;
     } finally {
@@ -208,10 +215,8 @@ export class People {
       return true;
     } catch (cause) {
       if (!request.signal.aborted && epoch === this.epoch) {
-        this.writeError = this.failure(cause);
         this.merge = undefined;
-        this.selected = [];
-        await this.load();
+        await this.recover(cause);
       }
       return false;
     } finally {
