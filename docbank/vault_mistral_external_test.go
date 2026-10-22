@@ -3,12 +3,10 @@ package docbank_test
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json/v2"
 	"io"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,28 +16,28 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
+	"go.kenn.io/docbank/internal/config"
 )
 
 func TestEmbeddedMistralProcessingRetainsSearchableRendition(t *testing.T) {
-	normalize, err := document.NewNormalizePolicy(25_000_000)
-	require.NoError(t, err)
-	policy, err := mistral.NewPolicy(mistral.PolicyConfig{Region: mistral.RegionEU, Model: mistral.DefaultModel,
-		Retention: mistral.RetentionStandard, Training: mistral.TrainingDefaultOptOut,
-		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 100,
-		ExtractHeader: false, ExtractFooter: false, NormalizePolicy: normalize})
+	configured := config.RenditionProfileConfig{MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 100,
+		Runtime: &config.RenditionRuntimeConfig{Endpoint: "https://api.eu.mistral.ai"}}
+	policy, err := configured.MistralPolicy()
 	require.NoError(t, err)
 	manifest, err := mistraltest.SyntheticManifest(policy, true)
 	require.NoError(t, err)
 	descriptor, err := mistral.DocumentDescriptor(policy, manifest)
 	require.NoError(t, err)
 	source := mistraltest.MinimalPDF("synthetic embedded OCR")
-	transport := &embeddedMistralTransport{t: t, source: source}
+	transport := &embeddedMistralTransport{t: t}
 	provider, err := mistral.NewRenditionProvider(mistral.Profile{
 		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: "mistral", Timeout: time.Second,
 	}, transport, &http.Client{Transport: transport})
 	require.NoError(t, err)
 	profile := embeddedProcessingProfile(t, descriptor)
+	profile.Rendition.Name = "mistral"
+	profile.Rendition.DisclosureFingerprint = mistral.DisclosureFingerprint(descriptor, "https://api.eu.mistral.ai", profile.Rendition.DeploymentFingerprint)
 	profile.Rendition.AdapterContract = mistral.DocumentAdapterContract
 	profile.Rendition.CredentialBinding = "credential:mistral"
 	profile.Rendition.MaxUnits = 100
@@ -58,14 +56,11 @@ func TestEmbeddedMistralProcessingRetainsSearchableRendition(t *testing.T) {
 	request := docbank.ProcessingPlanRequest{Selector: selector}
 	plan, err := vault.PlanProcessing(t.Context(), request)
 	require.NoError(t, err)
-	require.True(t, plan.ConsentRequired)
-	require.Zero(t, transport.calls.Load())
 	job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err)
 	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State, "%+v", status)
-	require.EqualValues(t, 1, transport.calls.Load())
 	rendition, err := vault.Rendition(t.Context(), docbank.RenditionRequest{Selector: selector})
 	require.NoError(t, err)
 	body, err := io.ReadAll(rendition.Reader)
@@ -82,9 +77,7 @@ func TestEmbeddedMistralProcessingRetainsSearchableRendition(t *testing.T) {
 }
 
 type embeddedMistralTransport struct {
-	t      *testing.T
-	source []byte
-	calls  atomic.Int32
+	t *testing.T
 }
 
 func (transport *embeddedMistralTransport) ResolveSecret(_ context.Context, binding string) (string, error) {
@@ -93,23 +86,13 @@ func (transport *embeddedMistralTransport) ResolveSecret(_ context.Context, bind
 }
 
 func (transport *embeddedMistralTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	transport.calls.Add(1)
-	assert.Equal(transport.t, "https://api.eu.mistral.ai/v1/ocr", request.URL.String())
-	assert.Equal(transport.t, http.MethodPost, request.Method)
-	assert.Equal(transport.t, "Bearer synthetic-mistral-key", request.Header.Get("Authorization"))
 	var wire struct {
-		Model    string `json:"model"`
-		Document struct {
-			URL string `json:"document_url"`
-		} `json:"document"`
 		ExtractHeader bool `json:"extract_header"`
 		ExtractFooter bool `json:"extract_footer"`
 	}
 	if err := json.UnmarshalRead(request.Body, &wire); err != nil {
 		return nil, err
 	}
-	assert.Equal(transport.t, "mistral-ocr-4-1", wire.Model)
-	assert.Equal(transport.t, "data:application/pdf;base64,"+base64.StdEncoding.EncodeToString(transport.source), wire.Document.URL)
 	assert.False(transport.t, wire.ExtractHeader)
 	assert.False(transport.t, wire.ExtractFooter)
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},

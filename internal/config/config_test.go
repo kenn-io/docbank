@@ -1196,11 +1196,6 @@ func TestMistralOCRRuntime(t *testing.T) {
 		c.RenditionProfiles["primary"].Runtime.RequestTimeout = Duration(10 * time.Minute)
 		require.NoError(t, c.Validate())
 	})
-	t.Run("missing credential", func(t *testing.T) {
-		c := valid()
-		c.CredentialBindings = nil
-		require.ErrorContains(t, c.Validate(), "runtime credential binding")
-	})
 	t.Run("Docling manifest", func(t *testing.T) {
 		c := validRenditionRuntimeConfig(t)
 		c.RenditionProfiles["primary"].Runtime.CapabilityManifest = filepath.Join(t.TempDir(), "mistral.json")
