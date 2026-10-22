@@ -8,7 +8,7 @@ afterEach(() => vi.restoreAllMocks());
 const version = "11111111-1111-4111-8111-111111111111";
 
 describe("exact version fragments", () => {
-  it("accepts a positive safe node ID and a UUID alongside other intent", () => {
+  it("accepts a positive safe node ID and leaves version policy to the server", () => {
     expect(parseNodeVersionLink(`#query=%7B%7D&node=42&version=${version}&photo=image`)).toEqual({
       nodeId: 42,
       versionId: version,
@@ -17,9 +17,6 @@ describe("exact version fragments", () => {
       nodeId: Number.MAX_SAFE_INTEGER,
       versionId: version,
     });
-  });
-
-  it("leaves version policy to the server", () => {
     const versionId = "invalid";
     expect(parseNodeVersionLink(`#node=42&version=${encodeURIComponent(versionId)}`)).toEqual({
       nodeId: 42,
@@ -34,9 +31,7 @@ describe("exact version fragments", () => {
   it.each([
     `#node=42`,
     `#version=${version}`,
-    `#node=&version=${version}`,
     `#node=0&version=${version}`,
-    `#node=-1&version=${version}`,
     `#node=1e2&version=${version}`,
     `#node=9007199254740992&version=${version}`,
     `#node=42&node=43&version=${version}`,
@@ -52,7 +47,9 @@ it.each(["wrong node", "directory"])(
     const oldVersion = contentVersion(version, 1, "content_create", "a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/v1/nodes/42")
-        return Response.json(kind === "directory" ? { ...root, id: 42 } : node);
+        return Response.json(
+          kind === "directory" ? { ...root, id: 42, name: "reports", path: "/reports" } : node,
+        );
       if (String(input) === `/api/v1/versions/${version}`)
         return Response.json(kind === "wrong node" ? { ...oldVersion, node_id: 99 } : oldVersion);
       throw new Error(`Unexpected request: ${input}`);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
 import { node, version } from "./version-test-fixtures.js";
 
@@ -31,6 +31,9 @@ describe("version history drawer", () => {
       session: "short-lived",
       node: {
         ...node,
+        current_version_id: emailVersion.id,
+        revision: emailVersion.node_revision,
+        blob_hash: emailVersion.blob_hash,
         name: "message.eml",
         mime_type: "message/rfc822",
         trashed_at: "2026-10-01T00:00:00Z",
@@ -147,12 +150,12 @@ describe("version history drawer", () => {
     await vi.waitFor(() => expect(downloadSignal?.aborted).toBe(true));
   });
 
-  it("keeps an ordinary drawer's selection without reloading when the node revision changes", async () => {
+  it("reloads on revision changes only in linked mode and hides unresolved selections", async () => {
     const newest = version(currentVersionID, 3, "content_replace", "c");
     const older = version(createdVersionID, 1, "content_create", "a");
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
+      .mockImplementation(async () =>
         Response.json({ items: [newest, older], total: 2, limit: 1000, offset: 0 }),
       );
     const drawer = render(VersionHistoryDrawer, {
@@ -171,6 +174,47 @@ describe("version history drawer", () => {
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       "/api/v1/nodes/42/versions?limit=1000&offset=0",
     ]);
+
+    const onselect = vi.fn();
+    await drawer.rerender({ onselect, pinnedVersion: newest });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await screen.findByText("Revision 1");
+    fetchMock.mockClear();
+    await fireEvent.click(screen.getByText("Revision 1").closest("button")!);
+    expect(onselect).toHaveBeenCalledExactlyOnceWith(older);
+    await drawer.rerender({ pinnedVersion: older });
+    expect(screen.getByText(createdVersionID)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const replacementID = "44444444-4444-4444-8444-444444444444";
+    const replacement = version(replacementID, 5, "content_replace", "d");
+    fetchMock.mockResolvedValue(
+      Response.json({ items: [replacement, newest, older], total: 3, limit: 1000, offset: 0 }),
+    );
+    await drawer.rerender({
+      node: {
+        ...node,
+        revision: 5,
+        current_version_id: replacementID,
+        blob_hash: replacement.blob_hash,
+      },
+      pinnedVersion: newest,
+      resolving: true,
+    });
+    expect(screen.queryByText(currentVersionID)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
+    const timeline = within(screen.getByRole("region", { name: "Retained versions" }));
+    await timeline.findByText("Revision 5");
+    expect(
+      within(timeline.getByText("Current").closest("button")!).getByText("Revision 5"),
+    ).toBeTruthy();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      "/api/v1/nodes/42/versions?limit=1000&offset=0",
+    ]);
+    await drawer.rerender({ resolving: false, unavailable: "Version lookup unavailable" });
+    expect(screen.getByText("Version lookup unavailable")).toBeTruthy();
+    expect(screen.queryByText(currentVersionID)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
   });
 
   it("keeps the pinned version until the parent accepts a linked selection", async () => {
