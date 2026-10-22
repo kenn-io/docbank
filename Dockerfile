@@ -12,7 +12,7 @@ RUN npm run build
 
 # Keep the Go version aligned with go.mod: source-metadata qualification
 # includes the exact toolchain version.
-FROM golang:1.27.0-trixie@sha256:df98008ecd2b0ecc9f0a94d1b07e3564a9c92b555369b33d9b5f60d0765b2db7 AS build
+FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

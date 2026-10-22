@@ -250,7 +250,7 @@ func TestTransferPackageCanBeImportedByExternalModule(t *testing.T) {
 	temp := filepath.Join(root, "consumer")
 	require.NoError(t, os.Mkdir(temp, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(temp, "go.mod"), []byte(
-		"module example.test/transfer-consumer\n\ngo 1.27.0\n\nrequire go.kenn.io/docbank v0.0.0\n\nreplace go.kenn.io/docbank => "+repoRoot+"\n",
+		"module example.test/transfer-consumer\n\ngo 1.27.3\n\nrequire go.kenn.io/docbank v0.0.0\n\nreplace go.kenn.io/docbank => "+repoRoot+"\n",
 	), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(temp, "main.go"), []byte(
 		"package main\n\nimport transfer \"go.kenn.io/docbank/document/transfer\"\n\nfunc main() { _, _ = transfer.RecordKey(\"source\", transfer.KindEmail, \"record\") }\n",
