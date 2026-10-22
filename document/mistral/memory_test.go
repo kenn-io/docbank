@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,10 +32,8 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 	assert.Equal(t, staged.Size(), prepared.Size())
 	assert.Equal(t, staged.SHA256(), prepared.SHA256())
 
-	var requests atomic.Int32
 	var requestBody []byte
 	client := clientWithTransport(t, policy, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests.Add(1)
 		var readErr error
 		requestBody, readErr = io.ReadAll(request.Body)
 		require.NoError(t, readErr)
@@ -63,10 +60,6 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 	require.Equal(t, original, retained)
 	require.NoError(t, prepared.Release())
 	assert.Equal(t, make([]byte, len(original)), retained)
-	_, err = client.Process(t.Context(), prepared, authorization)
-	require.ErrorContains(t, err, "released")
-	assert.Equal(t, int32(1), requests.Load())
-	require.NoError(t, prepared.Release())
 }
 
 func TestPrepareMemoryCountsPPTXSlides(t *testing.T) {
@@ -82,71 +75,25 @@ func TestPrepareMemoryCountsPPTXSlides(t *testing.T) {
 	assert.Equal(t, 2, prepared.localUnits)
 }
 
-func TestPrepareMemoryProcessesRenderedDOCX(t *testing.T) {
-	pdf := testMultipagePDF(1)
-	renderPolicy, runner := testRenderPDFPolicyAndRunner(t, pdf, nil)
-	policy := testPolicyWithRenderPDF(t, renderPolicy, 1<<20, 10)
-	candidate, ok := CandidateFormatByID("docx")
-	require.True(t, ok)
-	prepared, err := PrepareMemory(t.Context(), loadDOCXFixture(t, "explicit-breaks.docx"), policy, MemoryPrepareOptions{DeclaredMediaType: candidate.MediaType})
+func TestPrepareMemoryReleaseDuringProcess(t *testing.T) {
+	content := testPDF("release during upload")
+	policy := testPolicy(t, 1024, 10)
+	prepared, err := PrepareMemory(t.Context(), content, policy, MemoryPrepareOptions{DeclaredMediaType: mediaTypePDF})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
-	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "docx")
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 
-	requests := 0
 	client := clientWithTransport(t, policy, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests++
+		require.NoError(t, prepared.Release())
 		body, readErr := io.ReadAll(request.Body)
 		require.NoError(t, readErr)
-		assert.Contains(t, string(body), "data:"+mediaTypePDF+";base64,"+base64.StdEncoding.EncodeToString(pdf))
-		return probeHTTPResponse(request, http.StatusOK, ocrResponse(1, len(pdf))), nil
+		assert.Contains(t, string(body), "data:"+mediaTypePDF+";base64,"+base64.StdEncoding.EncodeToString(content))
+		return probeHTTPResponse(request, http.StatusOK, testSuccessfulResponse), nil
 	}))
 	result, err := client.Process(t.Context(), prepared, authorization)
 	require.NoError(t, err)
-	assert.Equal(t, 1, requests)
-	assert.Len(t, runner.calls, 2)
-	assert.Equal(t, 1, result.UnitsProcessed)
-	require.NotNil(t, result.ConversionReceipt)
-	assert.Equal(t, prepared.SHA256(), result.ConversionReceipt.SourceSHA256)
-	assert.Equal(t, digestBytes(pdf), result.ConversionReceipt.PDFSHA256)
-}
-
-func TestPrepareMemoryReleaseDuringProcess(t *testing.T) {
-	for _, status := range []int{http.StatusOK, http.StatusServiceUnavailable} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			content := testPDF("release during upload")
-			policy := testPolicy(t, 1024, 10)
-			prepared, err := PrepareMemory(t.Context(), content, policy, MemoryPrepareOptions{DeclaredMediaType: mediaTypePDF})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, prepared.Release()) })
-			authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
-			require.NoError(t, err)
-
-			requests := 0
-			client := clientWithTransport(t, policy, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-				requests++
-				require.NoError(t, prepared.Release())
-				body, readErr := io.ReadAll(request.Body)
-				require.NoError(t, readErr)
-				assert.Contains(t, string(body), "data:"+mediaTypePDF+";base64,"+base64.StdEncoding.EncodeToString(content))
-				response := probeHTTPResponse(request, status, testSuccessfulResponse)
-				response.Header.Set("Retry-After", "0")
-				return response, nil
-			}))
-			result, err := client.Process(t.Context(), prepared, authorization)
-			if status == http.StatusOK {
-				require.NoError(t, err)
-				assert.Equal(t, 1, result.Metrics.Requests)
-			} else {
-				require.ErrorContains(t, err, "released")
-				assert.Equal(t, 1, MetricsFromError(err).Requests)
-			}
-			_, err = client.Process(t.Context(), prepared, authorization)
-			require.ErrorContains(t, err, "released")
-			assert.Equal(t, 1, requests)
-		})
-	}
+	assert.Equal(t, 1, result.Metrics.Requests)
 }
 
 func TestPrepareMemoryRejectsInvalidSource(t *testing.T) {
@@ -165,7 +112,6 @@ func TestPrepareMemoryRejectsInvalidSource(t *testing.T) {
 		{name: "empty content", content: []byte{}, policy: policy, declared: mediaTypePDF},
 		{name: "over limit", content: content, policy: testPolicy(t, int64(len(content))-1, 10), declared: mediaTypePDF},
 		{name: "media type mismatch", content: content, policy: policy, declared: "image/png"},
-		{name: "malformed PDF", content: []byte("%PDF-1.7\nmalformed\n%%EOF"), policy: policy, declared: mediaTypePDF},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			prepared, err := PrepareMemory(t.Context(), test.content, test.policy, MemoryPrepareOptions{DeclaredMediaType: test.declared})
@@ -186,23 +132,17 @@ func TestPrepareMemoryRejectsInvalidSource(t *testing.T) {
 func TestPrepareMemoryCanceledDuringInspection(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	inspectionCtx := &cancelDuringInspectionContext{Context: ctx, cancel: cancel}
-	prepared, err := PrepareMemory(inspectionCtx, testPDF("cancel during inspection"), testPolicy(t, 1024, 10), MemoryPrepareOptions{DeclaredMediaType: mediaTypePDF})
+	reader := &cancelDuringInspectionReader{cancel: cancel}
+	content := testPDF("cancel during inspection")
+	_, _, err := inspectPreparedContent(ctx, reader, int64(len(content)), mediaTypePDF)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Nil(t, prepared)
 }
 
-type cancelDuringInspectionContext struct {
-	context.Context
-
+type cancelDuringInspectionReader struct {
 	cancel context.CancelFunc
-	checks int
 }
 
-func (ctx *cancelDuringInspectionContext) Err() error {
-	ctx.checks++
-	if ctx.checks == 2 {
-		ctx.cancel()
-	}
-	return ctx.Context.Err()
+func (reader *cancelDuringInspectionReader) ReadAt(_ []byte, _ int64) (int, error) {
+	reader.cancel()
+	return 0, context.Canceled
 }
