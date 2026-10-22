@@ -211,7 +211,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
 	require.NoError(t, err)
-	require.True(t, started.Load(), "protocol %s uses the previous Bates recipe engine", olderProtocol)
+	require.True(t, started.Load(), "an older protocol daemon is replaced")
 	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	outline, err := client.GetTextOutline(t.Context(), request)

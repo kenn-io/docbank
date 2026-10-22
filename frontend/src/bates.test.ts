@@ -37,7 +37,7 @@ it("hashes a recipe to the same digest as the Go stamp engine", async () => {
   await expect(batesRecipeSHA256(recipe)).resolves.toBe(expected);
 });
 
-it("keeps only sealed package snapshots with pages", async () => {
+it("keeps sealed package snapshots with pages, including oversized sources", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -82,6 +82,14 @@ it("keeps only sealed package snapshots with pages", async () => {
             snapshot_id: "55555555-5555-4555-8555-555555555555",
             page_count: 2,
           },
+          {
+            package_id: "big",
+            package_name: "Oversized",
+            direction: "produced",
+            state: "sealed",
+            snapshot_id: "66666666-6666-4666-8666-666666666666",
+            page_count: 251,
+          },
         ],
         limit: 250,
       }),
@@ -107,6 +115,12 @@ it("keeps only sealed package snapshots with pages", async () => {
       package_name: "Produced review",
       snapshot_id: "55555555-5555-4555-8555-555555555555",
       page_count: 2,
+    },
+    {
+      package_id: "big",
+      package_name: "Oversized",
+      snapshot_id: "66666666-6666-4666-8666-666666666666",
+      page_count: 251,
     },
   ]);
   expect(fetch).toHaveBeenCalledWith(
@@ -160,36 +174,6 @@ it("pages through eligible packages until pagination ends", async () => {
     snapshot_id: "22222222-2222-4222-8222-222222222222",
     page_count: 1,
   });
-});
-
-it("keeps oversized sources available for the drawer to explain", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        items: [
-          {
-            package_id: "big",
-            package_name: "Oversized",
-            direction: "produced",
-            state: "sealed",
-            snapshot_id: "22222222-2222-4222-8222-222222222222",
-            page_count: 251,
-          },
-        ],
-        limit: 250,
-      }),
-      { headers: { "Content-Type": "application/json" } },
-    ),
-  );
-
-  await expect(listBatesSources("session")).resolves.toEqual([
-    {
-      package_id: "big",
-      package_name: "Oversized",
-      snapshot_id: "22222222-2222-4222-8222-222222222222",
-      page_count: 251,
-    },
-  ]);
 });
 
 async function verifiedPublicationFixture() {
@@ -266,11 +250,14 @@ it("starts a verified export for its reservation", async () => {
 
 it("reads a Bates export by allocation ID", async () => {
   const { allocation, published } = await verifiedPublicationFixture();
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify(published), {
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === `/api/v1/bates/exports/${allocation.allocation_id}`) {
+      return new Response(JSON.stringify(published), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${String(input)}`);
+  });
 
   await expect(readBatesExport("session", allocation.allocation_id)).resolves.toMatchObject({
     allocation_id: allocation.allocation_id,

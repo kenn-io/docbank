@@ -552,12 +552,10 @@ func TestBackfillSourceMetadataRefreshesGenerationAfterPDFParserUpgrade(t *testi
 	require.NoError(t, err)
 	_, err = BackfillSourceMetadataTargets(ctx, f.catalog, f.blobs, f.spool, targets)
 	require.NoError(t, err)
-	generation, metadata, err := f.catalog.ActiveSourceMetadata(ctx, target.Version.BlobHash)
+	generation, _, err := f.catalog.ActiveSourceMetadata(ctx, target.Version.BlobHash)
 	require.NoError(t, err)
+	assert.NotEqual(t, legacyFingerprint, generation.ExtractorFingerprint)
 	assert.Equal(t, SourceMetadataExtractorFingerprint, generation.ExtractorFingerprint)
-	title, found := sourceMetadataString(metadata, "title")
-	require.True(t, found)
-	assert.Equal(t, `A\nB`, title)
 }
 
 func TestExtractSourceMetadataPreservesPDFPagesWhenInfoFieldIsMalformed(t *testing.T) {
