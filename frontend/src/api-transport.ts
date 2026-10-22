@@ -5,12 +5,8 @@ export interface Problem {
   title?: string;
   position?: unknown;
   errors?: unknown;
-  face_ids?: unknown;
-  face_version_ids?: unknown;
 }
 
-// A person merge conflict names each visible face with its exact version.
-export type ProblemFace = { face_id: string; version: string };
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 
@@ -21,7 +17,6 @@ export class APIError extends Error {
     readonly code: string,
     readonly position?: unknown,
     readonly errors: string[] = [],
-    readonly faces: ProblemFace[] = [],
   ) {
     super(message);
     this.name = "APIError";
@@ -39,7 +34,6 @@ export function isCurrentSessionError(cause: unknown, activeSession: string): bo
 
 export interface SessionOptions extends RequestInit {
   session?: string;
-  onResponseHeaders?: (headers: Headers) => void;
 }
 
 // Reads that use POST for their request body, so scrolling or typing a search never defers a pass.
@@ -80,7 +74,7 @@ export const sessionResponse = <_T>(
 
 async function send(
   url: string,
-  { session = "", onResponseHeaders, ...init }: SessionOptions,
+  { session = "", ...init }: SessionOptions,
   allowNotModified = false,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
@@ -104,22 +98,16 @@ async function send(
       /* An empty error still carries its HTTP status. */
     }
     const errors = strings(problem.errors);
-    const versions = strings(problem.face_version_ids);
-    const faces = strings(problem.face_ids)
-      .map((face_id, index) => ({ face_id, version: versions[index] ?? "" }))
-      .filter((face) => face.version);
     const error = new APIError(
       problem.detail || problem.title || `HTTP ${response.status}`,
       response.status,
       problem.code ?? "",
       problem.position,
       errors,
-      faces,
     );
     requestSessionByError.set(error, session);
     throw error;
   }
-  onResponseHeaders?.(response.headers);
   return response;
 }
 

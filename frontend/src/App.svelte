@@ -667,7 +667,7 @@
   });
   $effect(() => {
     if (!webSession) return;
-    const people = new People(webSession, handleFailure, hiddenAccess, handlePhotoFacesChanged);
+    const people = new People(webSession, handleFailure, hiddenAccess, onpersonchanged);
     peopleView = people;
     return () => {
       people.dispose();
@@ -885,17 +885,10 @@
     }
   }
 
-  // A Hidden person filter belongs to the access scope it was opened in.
-  let pendingPerson = $state<{ id: string; name: string; scope?: number }>();
+  let pendingPerson = $state<{ id: string; name: string }>();
   function applyPersonPhotos() {
-    if (!pendingPerson) return false;
-    const photos = hiddenMode
-      ? hiddenWorkspace?.activePhotos()
-      : photoValidated
-        ? photoState?.photos
-        : undefined;
-    if (!photos) return false;
-    const { id: personID, name } = pendingPerson;
+    if (!pendingPerson || !photoValidated || !photoState) return false;
+    const photos = photoState.photos;
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) {
       pendingPerson = undefined;
       return false;
@@ -905,81 +898,17 @@
         ...photos.query,
         text: "",
         sort: photoSearchSort({ text: "", syntax: photos.query.syntax }),
-        filters: { person_ids: [personID] },
+        filters: { person_ids: [pendingPerson.id] },
       })
     ) {
       pendingPerson = undefined;
       return false;
     }
-    photos.personFilter = {
-      id: personID,
-      name,
-      ...(hiddenAccess ? { scope: hiddenAccess.scope } : {}),
-    };
+    photos.personFilter = pendingPerson;
     pendingPerson = undefined;
     return true;
   }
-  $effect(() => {
-    const scope = hiddenAccess?.scope;
-    if (pendingPerson?.scope !== undefined && pendingPerson.scope !== scope)
-      pendingPerson = undefined;
-  });
-  $effect(() => {
-    const scope = hiddenAccess?.scope;
-    const session = webSession;
-    const photos = activePhotos();
-    const filter = photos?.personFilter;
-    if (
-      scope === undefined ||
-      !session ||
-      !photos ||
-      !filter ||
-      filter.scope === scope ||
-      !photos.query.filters.person_ids?.includes(filter.id)
-    )
-      return;
-    const personID = filter.id;
-    const controller = new AbortController();
-    const owns = () =>
-      !controller.signal.aborted &&
-      activePhotos() === photos &&
-      photos.personFilter?.id === personID &&
-      photos.query.filters.person_ids?.includes(personID) &&
-      hiddenAccess?.scope === scope;
-    const clear = () => {
-      const filters = { ...photos.query.filters };
-      delete filters.person_ids;
-      photos.personFilter = undefined;
-      void photos.setQuery({ ...photos.query, filters });
-    };
-    const read = () => {
-      controller.signal.throwIfAborted();
-      return generated.listPeople(
-        { person_id: personID, limit: 1 },
-        { session, signal: controller.signal },
-      );
-    };
-    void (hiddenAccess ? hiddenAccess.run(read) : read())
-      .then((page) => {
-        if (!owns()) return;
-        const person = page.items[0];
-        if (!person) {
-          clear();
-          return;
-        }
-        photos.personFilter = { ...filter, name: person.display_name, scope };
-      })
-      .catch((cause: unknown) => {
-        if (!owns()) return;
-        handleFailure(cause);
-        clear();
-      });
-    return () => controller.abort();
-  });
-  $effect(() => {
-    if (hiddenMode && hiddenWorkspace?.activePhotos() && pendingPerson) untrack(applyPersonPhotos);
-  });
-  function openPersonPhotos(personID: string, name: string, hidden?: boolean) {
+  function openPersonPhotos(personID: string, name: string) {
     const photos = activePhotos();
     if (photos?.hiding || photos?.trashing) {
       pendingPerson = undefined;
@@ -989,16 +918,36 @@
       return;
     }
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
-    pendingPerson = { id: personID, name, ...(hidden ? { scope: hiddenAccess?.scope ?? 0 } : {}) };
-    if (hidden && !hiddenMode) {
-      navigatePhotos("/photos/hidden");
-      return;
+    pendingPerson = { id: personID, name };
+    applyPersonPhotos();
+    navigatePhotos("/photos");
+  }
+  function onpersonchanged(id: string, name: string, survivorID = id) {
+    for (const photos of [
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ]) {
+      if (!photos) continue;
+      if (photos.personFilter?.id === id) photos.personFilter = { id: survivorID, name };
+      if (survivorID !== id && photos.query.filters.person_ids?.includes(id)) {
+        void photos.setQuery({
+          ...photos.query,
+          filters: {
+            ...photos.query.filters,
+            person_ids: [
+              ...new Set(
+                photos.query.filters.person_ids.map((personID) =>
+                  personID === id ? survivorID : personID,
+                ),
+              ),
+            ],
+          },
+        });
+      }
     }
-    if (hiddenMode) {
-      if (applyPersonPhotos()) navigatePhotos("/photos/hidden");
-    } else if (photoState && photoValidated) {
-      if (applyPersonPhotos()) navigatePhotos("/photos");
-    } else navigatePhotos("/photos");
+    handlePhotoFacesChanged();
   }
 
   function navigatePhotos(path: string) {

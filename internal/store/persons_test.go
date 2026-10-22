@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestPersonRevisionFence(t *testing.T) {
@@ -353,4 +354,39 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.Equal(t, "2025-12-01T00:00:00Z", rows[0].RecentRank)
 		})
 	}
+}
+
+func TestPeopleRecentFirstAfterNameClearedAndGivenAgain(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	bob, err := s.CreatePerson(ctx, "Bob", "operator")
+	require.NoError(t, err)
+	node := browsePhotoNode(t, s, "rename.jpg", fakeHash("rename-recency"), "image/jpeg")
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, ada.PersonID)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2001-01-01T00:00:00Z' WHERE person_id=?`, ada.PersonID)
+	require.NoError(t, err)
+	_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "retract", FaceID: face.FaceID, Revision: face.Revision})
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, bob.PersonID, "")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2002-01-01T00:00:00Z' WHERE person_id=?`, bob.PersonID)
+	require.NoError(t, err)
+	rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+	require.NoError(t, err)
+	require.Equal(t, bob.PersonID, rows[0].PersonID)
+	named, err := s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision + 1, PersonID: ada.PersonID})
+	require.NoError(t, err)
+	rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+	require.NoError(t, err)
+	require.Equal(t, ada.PersonID, rows[0].PersonID)
+	require.Greater(t, rows[0].RecentRank, "2002-01-01T00:00:00Z")
+	_, err = s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
+	require.NoError(t, err)
+	rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+	require.NoError(t, err)
+	require.Equal(t, bob.PersonID, rows[0].PersonID)
 }

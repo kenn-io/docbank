@@ -15,17 +15,23 @@ uses the revision returned by the preceding read.
 
 Open **Photos → People** to browse everyone visible to your browser session, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. People with document evidence or no photo evidence still have a card, with a person icon when no readable assigned face is available.
 
-Select a card to open that person's Library photos. While Hidden is unlocked, cards also show a separate **Hidden** photo count that opens the same person in Hidden. If Hidden locks before that view opens, it opens without the person filter. Hidden-only people and their counts clear when Hidden locks or expires. A readable key face supplies the portrait; otherwise Docbank uses the newest readable assigned face, from Library first and then from unlocked Hidden.
+Select a card to open that person's Library photos. Cards show Library counts and portraits. Hidden-only people appear while Hidden is unlocked and clear when it locks or expires. A Library key face supplies the portrait; otherwise Docbank uses the newest assigned Library face.
 
 Use **Rename** to change the name. The card updates in place, so the people you have already loaded stay on screen.
 
-To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. The dialog shows both cards side by side with their faces and counts. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records; the other card disappears and the survivor's counts refresh. When both people have the same name and the same detail, the dialog also shows each person ID.
+To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records. The list reloads its first page with current counts. When both people have the same name and the same detail, the dialog also shows each person ID. Active photo filters follow renames and merges.
 
-If someone else changed either person first, the dialog shows both current cards and asks you to confirm again. If either person is no longer available, the dialog closes and you select again. If a merge result can't be confirmed, **Retry merge** sends the same request to retrieve the saved result.
+If a write fails or someone else changed either person first, the list reloads its first page. Review the current cards and select again. An uncertain merge result also reloads the list so you can see whether it completed.
 
-A merge can stop when a face assigned to one person was rejected for the other. The dialog shows a crop from that exact photo version and names the rejected person. Choose **Withdraw rejection for** followed by the rejected person's name to remove the rejection; the face keeps its current name. Confirm the merge again. Conflicts in locked Hidden, excluded, or trashed photos are reported without showing a face. Locking Hidden clears the selection, Hidden counts, and the dialog.
+A merge can stop when a face assigned to one person was rejected for the other. The error lists each visible conflicting face with its content version. Use the CLI or API key that made the rejection to review it:
 
-Name pickers in the inspector list people with the newest face or photo evidence first, then by name. Namesakes stay together. This order comes from the vault, so it survives sign-in and follows people through merges. It reflects when evidence was added: naming a face that was already linked doesn't move the person up.
+1. Read the face with `docbank photos faces list <content-version-id>`.
+2. Withdraw the rejection with `docbank photos faces withdraw-rejection <content-version-id> --face <face-id> --person <rejected-person-id> --revision <face-revision>`.
+3. Select both people again and retry the merge.
+
+Locked Hidden, excluded, or trashed conflicts return notices without face IDs. Unlock, reinclude, or restore the photo before reviewing its rejection. Locking Hidden clears the selection and dialog.
+
+Name pickers in the inspector list people with the newest active, visible face or photo naming first, then by name. Namesakes stay together. Clearing a name and giving it again records a new naming time. Naming an already linked face keeps its time. A merge preserves assertion times; the survivor ranks by the newest active assertion it retains.
 
 ## List and search
 

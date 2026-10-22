@@ -411,6 +411,9 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 			}
 			require.Len(t, conflict.FaceIDs, test.visible)
 			require.Equal(t, test.more, conflict.More)
+			if test.more {
+				require.Contains(t, err.Error(), "more faces also conflict")
+			}
 			require.Equal(t, test.inaccessible, conflict.InaccessibleConflict)
 			require.Len(t, conflict.FaceVersionIDs, test.visible)
 			if test.visible == 1 {

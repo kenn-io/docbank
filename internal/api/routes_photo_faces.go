@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
@@ -53,13 +52,11 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 	if err != nil {
 		panic(err)
 	}
-	huma.Register(api, huma.Operation{OperationID: "listPersonFacePreviews", Method: http.MethodGet, Path: "/api/v1/photos/people/{person_id}/face-previews", Summary: "Read linked source-version photos or one exact assigned face"}, func(ctx context.Context, in *struct {
-		PersonID         string `path:"person_id" format:"uuid"`
-		Hidden           bool   `query:"hidden"`
-		ContentVersionID string `query:"content_version_id" format:"uuid" doc:"Restrict results to one source version"`
-		FaceID           string `query:"face_id" format:"uuid" doc:"Restrict results to one assigned face"`
+	huma.Register(api, huma.Operation{OperationID: "listPersonFacePreviews", Method: http.MethodGet, Path: "/api/v1/photos/people/{person_id}/face-previews", Summary: "Read up to three linked source-version photos in timeline order"}, func(ctx context.Context, in *struct {
+		PersonID string `path:"person_id" format:"uuid"`
+		Hidden   bool   `query:"hidden"`
 	}) (*struct{ Body store.PersonFacePreviewPage }, error) {
-		previews, err := d.Store.PersonFacePreviews(ctx, in.PersonID, fingerprints.GridRecipe, in.Hidden, in.ContentVersionID, in.FaceID)
+		previews, err := d.Store.PersonFacePreviews(ctx, in.PersonID, fingerprints.GridRecipe, in.Hidden)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -132,10 +129,8 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             PhotoFaceDecisionRequest
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
-		// A browser withdraws a rejection to clear a merge conflict; rejecting
-		// and choosing a key face stay with API keys and the CLI.
-		if browserSessionRequest(ctx) && !slices.Contains([]string{"name", "retract", "dismiss", "withdraw_rejection"}, in.Body.Action) {
-			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces, clear whole-photo marks, and withdraw rejections.")
+		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" && in.Body.Action != "dismiss" {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces and clear whole-photo marks.")
 		}
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {

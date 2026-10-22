@@ -172,20 +172,13 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "reject", FaceID: faceID, PersonID: person.PersonID, Revision: 2})
 	require.NoError(t, err)
-	for _, action := range []string{"reject", "key"} {
+	for _, action := range []string{"reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 3, OperationID: uuid.NewString(), PersonRevision: 1})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}
-	// A browser can withdraw a rejection on a visible face, fenced by its revision.
-	withdraw := api.PhotoFaceDecisionRequest{Action: "withdraw_rejection", FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()}
-	response, body = do(t, ts, http.MethodPost, decisions, headers, withdraw)
-	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
-	withdraw.Revision, withdraw.OperationID = 3, uuid.NewString()
-	response, body = do(t, ts, http.MethodPost, decisions, headers, withdraw)
+	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 3})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 4})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 5})
+	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 4})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 
 	marks := "/api/v1/photos/versions/" + node.CurrentVersionID + "/faces"
@@ -289,7 +282,6 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 		{query: "photo_summary=false&recent_first=true"},
 		{query: "photo_summary=true&recent_first=false"},
 		{query: "photo_summary=true&recent_first=true&query=Z"},
-		{query: "photo_summary=true&recent_first=true&person_id=" + ada.PersonID},
 		{query: "photo_summary=true&recent_first=true", unlock: true},
 	} {
 		if changed.unlock {
@@ -301,13 +293,6 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 		response, body = get(t, ts, "/api/v1/people?limit=1&"+changed.query+"&cursor="+first.NextCursor, headers)
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	}
-	response, body = get(t, ts, "/api/v1/people?photo_summary=true&person_id="+ada.PersonID, headers)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &second))
-	require.Len(t, second.Items, 1)
-	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
-	response, body = get(t, ts, "/api/v1/people?person_id=not-a-person", headers)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	response, body = get(t, ts, "/api/v1/people", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NotContains(t, body, "photo_summary")
@@ -339,4 +324,5 @@ func TestBrowserMergeConflictNamesFaceVersion(t *testing.T) {
 	problem := decodeProblem(t, body)
 	require.Equal(t, []string{face.FaceID}, problem.FaceIDs)
 	require.Equal(t, []string{node.CurrentVersionID}, problem.FaceVersionIDs)
+	require.Contains(t, problem.Detail, "face "+face.FaceID+" on version "+node.CurrentVersionID)
 }

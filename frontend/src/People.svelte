@@ -5,7 +5,6 @@
   import type { PersonSummary } from "./generated/docbank.js";
   import { distinctLabel } from "./personLabel.js";
   import { mergeRoles, type People } from "./people.svelte.js";
-  import PeopleMergeConflict from "./PeopleMergeConflict.svelte";
   import { PhotoPreviewCache, faceCrop } from "./photoPreviewCache.js";
   let {
     people,
@@ -14,14 +13,13 @@
   }: {
     people: People;
     cache: PhotoPreviewCache;
-    onperson: (id: string, name: string, hidden?: boolean) => void;
+    onperson: (id: string, name: string) => void;
   } = $props();
   let editing = $state.raw<PersonSummary>();
   let name = $state("");
   let images = $state.raw<Record<string, { url: string; style: string }>>({});
   const merge = $derived(people.merge);
   const roles = $derived(merge && mergeRoles(merge));
-  const unlocked = $derived(!!people.access?.deadline);
   const selected = (person: PersonSummary) =>
     people.selected.some((row) => row.person_id === person.person_id);
   function close() {
@@ -40,12 +38,9 @@
   // images already shown. An access-scope change starts over.
   type Portrait = { abort: AbortController; releases: (() => void)[] };
   const portraits = new Map<string, Portrait>();
-  let hiddenCache: PhotoPreviewCache | undefined;
   const portraitKey = (person: PersonSummary) => {
     const face = person.photo_summary?.face;
-    return face
-      ? `${person.person_id}\0${JSON.stringify([face, !!person.photo_summary?.face_hidden])}`
-      : "";
+    return face ? `${person.person_id}\0${JSON.stringify(face)}` : "";
   };
   function releasePortrait(key: string) {
     const portrait = portraits.get(key);
@@ -61,19 +56,16 @@
   }
   function loadPortrait(key: string, person: PersonSummary) {
     const face = person.photo_summary!.face!;
-    const hidden = !!person.photo_summary?.face_hidden;
     const portrait: Portrait = { abort: new AbortController(), releases: [] };
     const { signal } = portrait.abort;
     portraits.set(key, portrait);
-    hiddenCache ??= new PhotoPreviewCache(people.session, people.onauthfailure, true);
-    const source = hidden ? hiddenCache : cache;
     void people.run(async () => {
       try {
         signal.throwIfAborted();
         const image = await faceCrop(
-          source,
+          cache,
           face,
-          { id: person.person_id, hidden, size: 128 },
+          { id: person.person_id, hidden: false, size: 128 },
           signal,
           (release) => portrait.releases.push(release),
         );
@@ -100,8 +92,6 @@
     return () => {
       for (const key of portraits.keys()) releasePortrait(key);
       images = {};
-      void hiddenCache?.dispose();
-      hiddenCache = undefined;
     };
   });
 </script>
@@ -134,7 +124,6 @@
   <div class="browser-toolbar people-toolbar">
     <div>
       <h1>People</h1>
-      <span>{unlocked ? "Library and unlocked Hidden photos" : "Library photos"}</span>
     </div>
     <form
       onsubmit={(event) => {
@@ -153,10 +142,9 @@
   {:else if !people.items.length && !people.error}<p>
       {people.query ? "No matching people" : "No people yet"}
     </p>{/if}
+  {#if people.writeError && !merge && !editing}<p role="alert">{people.writeError}</p>{/if}
   {#if people.selected.length}<div class="selection" role="region" aria-label="Selected people">
       <span>{people.selected.map((person) => person.display_name).join(" and ")} selected</span>
-      {#if people.writeError && !merge && !editing}<span role="alert">{people.writeError}</span
-        >{/if}
       <Button
         disabled={people.busy || people.selected.length !== 2}
         onclick={() => people.startMerge()}>Merge</Button
@@ -164,7 +152,6 @@
     </div>{/if}
   <ul class="people-grid">
     {#each people.items as person (person.person_id)}
-      {@const summary = person.photo_summary}
       <li class="person-card" class:selected={selected(person)}>
         <button
           type="button"
@@ -175,12 +162,6 @@
           <strong>{person.display_name}</strong>
           {@render counts(person)}
         </button>
-        {#if unlocked && summary?.hidden_count !== undefined}<button
-            class="hidden-count"
-            type="button"
-            onclick={() => onperson(person.person_id, person.display_name, true)}
-            >{summary.hidden_count} Hidden {summary.hidden_count === 1 ? "photo" : "photos"}</button
-          >{/if}
         <div class="card-actions">
           <Button
             size="sm"
@@ -240,11 +221,6 @@
           {@render portrait(person)}
           <strong>{label(person)}</strong>
           {@render counts(person)}
-          {#if unlocked && person.photo_summary?.hidden_count !== undefined}<span class="count"
-              >{person.photo_summary.hidden_count} Hidden {person.photo_summary.hidden_count === 1
-                ? "photo"
-                : "photos"}</span
-            >{/if}
           <span class="keep"
             ><input
               type="radio"
@@ -258,10 +234,6 @@
         </label>
       {/each}
     </div>
-    {#if merge.notice === "stale"}<p role="status">
-        {label(merge.pair[0])} or {label(merge.pair[1])} changed. Check the current details and confirm
-        again.
-      </p>{/if}
     {#if roles}<p>
         Keep {label(roles.survivor)}. Move {label(roles.source)}'s records into this person.
       </p>
@@ -272,23 +244,13 @@
         disabled={people.busy}
       />{/if}
     {#if people.writeError}<p role="alert">{people.writeError}</p>{/if}
-    {#if merge.conflicts.length}<ul class="conflicts" aria-label="Faces to review">
-        {#each merge.conflicts as conflict (conflict.face_id)}<PeopleMergeConflict
-            {people}
-            {conflict}
-            {cache}
-          />{/each}
-      </ul>{/if}
-    {#if merge.notice === "uncertain"}<p>
-        The result couldn't be confirmed. Retry to check whether the merge completed.
-      </p>{/if}
     <div class="modal-actions">
       <Button disabled={people.busy} onclick={close}>Cancel</Button><Button
         disabled={people.busy || !roles || !merge.confirmed}
         onclick={() =>
           void people.submitMerge().then((saved) => {
             if (saved) close();
-          })}>{merge.notice === "uncertain" ? "Retry merge" : "Merge"}</Button
+          })}>Merge</Button
       >
     </div>
   </Modal>
@@ -395,7 +357,7 @@
   }
   .merge-pair {
     display: grid;
-    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
     gap: 16px;
   }
   .merge-card {
@@ -408,21 +370,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-  }
-  .conflicts {
-    padding-left: var(--space-4);
-  }
-  .conflicts :global(li) {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .hidden-count {
-    margin: 0 12px;
-    color: var(--text-muted);
-    background: none;
-    border: 0;
-    cursor: pointer;
   }
   .people-workspace > p {
     padding: var(--space-4);

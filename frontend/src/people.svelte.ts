@@ -1,110 +1,18 @@
-import {
-  listPeople,
-  renamePerson,
-  mergePerson,
-  type Person,
-  type PersonMergeReceipt,
-  type PersonSummary,
-} from "./generated/docbank.js";
-import { APIError, type ProblemFace } from "./api-transport.js";
+import { listPeople, renamePerson, mergePerson, type PersonSummary } from "./generated/docbank.js";
+import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 export const peoplePageSize = 24;
-
-export type MergeConflict = ProblemFace;
-
-// A merge keeps the two selected people, the one to keep, the confirmation,
-// and the exact request together, so an uncertain result retries the same
-// operation.
 export type PeopleMerge = {
   pair: readonly [PersonSummary, PersonSummary];
   keep?: string;
   confirmed: boolean;
-  conflicts: MergeConflict[];
-  notice: "" | "stale" | "uncertain";
-  attempt?: { source: PersonSummary; survivor: PersonSummary; operation: string };
 };
-
 export const mergeRoles = ({ pair, keep }: PeopleMerge) => {
   const survivor = pair.find((person) => person.person_id === keep);
   const source = pair.find((person) => person.person_id !== keep);
   return survivor && source ? { source, survivor } : undefined;
-};
-
-const uncertain = (cause: unknown) => !(cause instanceof APIError) || cause.status >= 500;
-const responseRevisionMatches = (revision: unknown, etag: string | null) =>
-  typeof revision === "number" &&
-  Number.isSafeInteger(revision) &&
-  revision > 0 &&
-  etag === `"${revision}"`;
-
-const validRenameResponse = (
-  value: unknown,
-  personID: string,
-  displayName: string,
-  previousRevision: number,
-  etag: string | null,
-): value is Person => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const person = value as Partial<Person>;
-  return (
-    person.person_id === personID &&
-    person.display_name === displayName &&
-    typeof person.origin === "string" &&
-    typeof person.state === "string" &&
-    typeof person.created_at === "string" &&
-    typeof person.updated_at === "string" &&
-    typeof person.revision === "number" &&
-    Number.isSafeInteger(person.revision) &&
-    person.revision > previousRevision &&
-    responseRevisionMatches(person.revision, etag)
-  );
-};
-
-const mergeReceiptCounts = [
-  "assertions",
-  "custodian_assignments",
-  "deduplicated_assertions",
-  "deduplicated_identities",
-  "external_uids",
-  "identities",
-  "superseded_candidates",
-] as const;
-
-const validMergeReceipt = (
-  value: unknown,
-  source: PersonSummary,
-  survivor: PersonSummary,
-  operationID: string,
-  etag: string | null,
-): value is PersonMergeReceipt => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const receipt = value as Partial<PersonMergeReceipt>;
-  const moved = receipt.moved;
-  if (!moved || typeof moved !== "object" || Array.isArray(moved)) return false;
-  const counts = moved as Partial<PersonMergeReceipt["moved"]>;
-  return (
-    receipt.absorbed_person_id === source.person_id &&
-    receipt.survivor_person_id === survivor.person_id &&
-    receipt.operation_id === operationID &&
-    typeof receipt.absorbed_display_name === "string" &&
-    typeof receipt.merge_id === "string" &&
-    receipt.merge_id.length > 0 &&
-    typeof receipt.created_at === "string" &&
-    receipt.created_at.length > 0 &&
-    receipt.survivor_revision_before === survivor.revision &&
-    typeof receipt.survivor_revision_after === "number" &&
-    Number.isSafeInteger(receipt.survivor_revision_after) &&
-    receipt.survivor_revision_after > survivor.revision &&
-    responseRevisionMatches(receipt.survivor_revision_after, etag) &&
-    mergeReceiptCounts.every(
-      (field) =>
-        typeof counts[field] === "number" &&
-        Number.isSafeInteger(counts[field]) &&
-        counts[field]! >= 0,
-    )
-  );
 };
 
 export class People {
@@ -122,7 +30,7 @@ export class People {
   selected = $state.raw<PersonSummary[]>([]);
   private controller?: AbortController;
   // epoch changes whenever the cards are concealed, as when Hidden locks, so a
-  // read that started earlier cannot restore a card, selection, or Hidden count.
+  // response from an earlier scope cannot restore cards or selections.
   private epoch = 0;
   private writer?: AbortController;
   private disposed = false;
@@ -131,7 +39,7 @@ export class People {
     readonly session: string,
     readonly onauthfailure: (cause: unknown) => void,
     readonly access?: HiddenAccess,
-    readonly onchanged: () => void = () => {},
+    readonly onchanged: (id: string, name: string, survivorID?: string) => void = () => {},
   ) {}
   run<T>(request: () => Promise<T>) {
     return this.access ? this.access.run(request) : request();
@@ -195,38 +103,6 @@ export class People {
   retry() {
     return this.load(this.query, !!this.items.length && !this.cursorExpired);
   }
-  // current reads one visible person by ID, or undefined when it is hidden,
-  // merged away, or gone.
-  private async current(id: string, signal: AbortSignal): Promise<PersonSummary | undefined> {
-    const page = await this.run(() => {
-      signal.throwIfAborted();
-      return listPeople(
-        { person_id: id, limit: 1, photo_summary: true },
-        { session: this.session, signal },
-      );
-    });
-    return page.items[0];
-  }
-  private place(epoch: number, id: string, person?: PersonSummary) {
-    if (epoch !== this.epoch) return;
-    const replace = (rows: PersonSummary[]) =>
-      person
-        ? rows.map((row) => (row.person_id === id ? person : row))
-        : rows.filter((row) => row.person_id !== id);
-    this.items = replace(this.items);
-    this.selected = replace(this.selected);
-  }
-  // refreshCard returns null when the read fails, leaving the card as it was.
-  private async refreshCard(id: string, signal: AbortSignal, epoch: number) {
-    try {
-      const person = await this.current(id, signal);
-      if (!signal.aborted) this.place(epoch, id, person);
-      return epoch === this.epoch ? person : null;
-    } catch (cause) {
-      if (!signal.aborted) this.failure(cause);
-      return null;
-    }
-  }
   private begin() {
     if (this.busy || this.disposed) return;
     const request = (this.writer = new AbortController());
@@ -238,44 +114,33 @@ export class People {
     const request = this.begin();
     if (!request) return false;
     const epoch = this.epoch;
-    const display_name = name.trim();
     try {
-      let etag: string | null = null;
       const saved = await this.run(() =>
         renamePerson(
           person.person_id,
-          { display_name },
+          { display_name: name.trim() },
           { "If-Match": `"${person.revision}"` },
-          {
-            session: this.session,
-            signal: request.signal,
-            onResponseHeaders: (headers) => {
-              etag = headers.get("ETag");
-            },
-          },
+          { session: this.session, signal: request.signal },
         ),
       );
       if (request.signal.aborted) return false;
-      if (!validRenameResponse(saved, person.person_id, display_name, person.revision, etag))
-        throw new Error("The rename response could not be confirmed.");
-      this.place(epoch, person.person_id, {
-        ...person,
-        display_name: saved.display_name,
-        revision: saved.revision,
-        state: saved.state,
-      });
-      this.onchanged();
-      await this.refreshCard(person.person_id, request.signal, epoch);
+      this.onchanged(person.person_id, saved.display_name);
+      if (epoch === this.epoch) {
+        const replace = (rows: PersonSummary[]) =>
+          rows.map((row) =>
+            row.person_id === person.person_id
+              ? { ...row, display_name: saved.display_name, revision: saved.revision }
+              : row,
+          );
+        this.items = replace(this.items);
+        this.selected = replace(this.selected);
+      }
       return true;
     } catch (cause) {
-      if (request.signal.aborted) return false;
-      this.writeError = this.failure(cause);
-      const current = await this.refreshCard(person.person_id, request.signal, epoch);
-      // An unconfirmed rename that the current record shows has completed.
-      if (uncertain(cause) && current?.display_name === display_name) {
-        this.writeError = "";
-        this.onchanged();
-        return true;
+      if (!request.signal.aborted && epoch === this.epoch) {
+        this.writeError = this.failure(cause);
+        this.selected = [];
+        await this.load();
       }
       return false;
     } finally {
@@ -298,7 +163,7 @@ export class People {
     const [first, second] = this.selected;
     if (this.busy || !first || !second) return;
     this.writeError = "";
-    this.merge = { pair: [first, second], confirmed: false, conflicts: [], notice: "" };
+    this.merge = { pair: [first, second], confirmed: false };
   }
   closeMerge() {
     if (this.busy) return;
@@ -307,20 +172,10 @@ export class People {
   }
   keep(id: string) {
     if (!this.merge || this.busy) return;
-    this.merge = { ...this.merge, keep: id, confirmed: false, notice: "" };
+    this.merge = { ...this.merge, keep: id, confirmed: false };
   }
   confirmMerge(confirmed: boolean) {
     if (this.merge && !this.busy) this.merge = { ...this.merge, confirmed };
-  }
-  // conflictCleared asks for a fresh confirmation after one face changes.
-  conflictCleared(conflict: MergeConflict) {
-    if (!this.merge) return;
-    this.merge = {
-      ...this.merge,
-      confirmed: false,
-      conflicts: this.merge.conflicts.filter((entry) => entry.face_id !== conflict.face_id),
-    };
-    this.onchanged();
   }
   async submitMerge() {
     const selected = this.merge;
@@ -330,90 +185,34 @@ export class People {
     if (!request) return false;
     const epoch = this.epoch;
     const { source, survivor } = roles;
-    const previous = selected.attempt;
-    const attempt =
-      previous?.source.person_id === source.person_id &&
-      previous.survivor.person_id === survivor.person_id &&
-      previous.source.revision === source.revision &&
-      previous.survivor.revision === survivor.revision
-        ? previous
-        : { source, survivor, operation: randomUUID() };
-    this.merge = { ...selected, attempt, notice: "" };
-    // The dialog belongs to this request while it shows the same pair.
-    const owns = () => !request.signal.aborted && this.merge?.pair === selected.pair;
     try {
-      let etag: string | null = null;
-      const receipt = await this.run(() =>
+      await this.run(() =>
         mergePerson(
-          attempt.survivor.person_id,
+          survivor.person_id,
           {
-            absorbed_person_id: attempt.source.person_id,
-            absorbed_revision: attempt.source.revision,
-            operation_id: attempt.operation,
+            absorbed_person_id: source.person_id,
+            absorbed_revision: source.revision,
+            operation_id: randomUUID(),
           },
-          { "If-Match": `"${attempt.survivor.revision}"` },
-          {
-            session: this.session,
-            signal: request.signal,
-            onResponseHeaders: (headers) => {
-              etag = headers.get("ETag");
-            },
-          },
+          { "If-Match": `"${survivor.revision}"` },
+          { session: this.session, signal: request.signal },
         ),
       );
       if (request.signal.aborted) return false;
-      if (!validMergeReceipt(receipt, source, survivor, attempt.operation, etag))
-        throw new Error("The merge response could not be confirmed.");
-      this.merge = undefined;
-      this.place(epoch, source.person_id);
-      this.selected = [];
-      this.onchanged();
-      await this.refreshCard(survivor.person_id, request.signal, epoch);
+      this.onchanged(source.person_id, survivor.display_name, survivor.person_id);
+      if (epoch === this.epoch) {
+        this.merge = undefined;
+        this.selected = [];
+        await this.load();
+      }
       return true;
     } catch (cause) {
-      if (!owns()) return false;
-      this.writeError = this.failure(cause);
-      if (uncertain(cause)) {
-        this.merge = { ...this.merge!, notice: "uncertain" };
-        return false;
+      if (!request.signal.aborted && epoch === this.epoch) {
+        this.writeError = this.failure(cause);
+        this.merge = undefined;
+        this.selected = [];
+        await this.load();
       }
-      const next: PeopleMerge = { ...this.merge!, attempt: undefined, confirmed: false };
-      if (
-        cause instanceof APIError &&
-        (cause.status === 412 ||
-          (cause.status === 404 && cause.code === "not_found") ||
-          (cause.status === 409 && cause.code === "person_retired"))
-      ) {
-        // Refresh both selections before asking again. A failed read keeps the
-        // earlier card; a person no longer visible ends the merge.
-        const current = await Promise.all(
-          selected.pair.map((person) => this.refreshCard(person.person_id, request.signal, epoch)),
-        );
-        if (!owns()) return false;
-        if (current.includes(undefined)) {
-          this.merge = undefined;
-          this.writeError =
-            "A selected person is no longer available. Choose people to merge again.";
-          return false;
-        }
-        next.pair = [current[0] ?? selected.pair[0], current[1] ?? selected.pair[1]];
-        next.notice = current.some(Boolean) ? "stale" : "";
-      } else if (cause instanceof APIError && cause.code === "person_merge_conflict") {
-        const notices: string[] = [];
-        if (cause.message.includes("excluded or trashed photo")) {
-          notices.push("An excluded or trashed photo also needs review.");
-        }
-        if (cause.message.includes("locked Hidden photo")) {
-          notices.push("A locked Hidden photo also needs review.");
-        }
-        this.writeError = notices.length
-          ? notices.join(" ")
-          : cause.faces.length
-            ? ""
-            : "This merge has a face conflict that needs review.";
-        next.conflicts = cause.faces;
-      }
-      this.merge = next;
       return false;
     } finally {
       if (!request.signal.aborted) this.busy = false;

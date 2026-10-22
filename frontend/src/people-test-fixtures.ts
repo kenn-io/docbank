@@ -42,25 +42,6 @@ export const personMergeReceipt = (
   survivor_revision_after: survivor.revision + 1,
   survivor_revision_before: survivor.revision,
 });
-export const personRenameResponse = (
-  person: PersonSummary,
-  overrides: Partial<Person> = {},
-  onResponseHeaders?: (headers: Headers) => void,
-): Person => {
-  const response = personResponse(person, overrides);
-  onResponseHeaders?.(new Headers({ ETag: `"${response.revision}"` }));
-  return response;
-};
-export const personMergeResponse = (
-  source: PersonSummary,
-  survivor: PersonSummary,
-  operationID: string,
-  onResponseHeaders?: (headers: Headers) => void,
-): PersonMergeReceipt => {
-  const response = personMergeReceipt(source, survivor, operationID);
-  onResponseHeaders?.(new Headers({ ETag: `"${response.survivor_revision_after}"` }));
-  return response;
-};
 export const ada: PersonSummary = person("ada", {
   display_name: "Ada",
   revision: 2,

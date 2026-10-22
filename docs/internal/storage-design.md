@@ -780,8 +780,7 @@ Schema 36 adds the person's key-face reference and the derived `person_candidate
 
 Face decisions store changed faces, assertions, candidates and key-face rows plus shared assertion dependencies in photo receipts. Receipts retain their photo asset as provenance. Automatic-withdrawal checks use a content-version receipt index and the typed receipt decoder, so regrouping photo files preserves undo. Undo compares each recorded after-state and advances restored revisions. Retracting the last face assignment preserves its assertion ID, note and history as `withdrawn`; explicit `suppress` remains an operator decision. Active person predicates ignore withdrawals. Merge advances affected face revisions, reviews assignment/rejection conflicts through Hidden authorization, and treats withdrawals as neutral. Split moves selected assertions with their faces; person detail pages eligible selectors, including retained photo versions.
 
-!!! info "Planned"
-    The People view will join canonical people to current document edges, operator assertions and photo faces. Document edges require the current binding epoch and generation; photo visibility follows the photo resolver.
+The People view lists canonical people visible to the browser. Its photo summary counts distinct current, live Library assets and selects a Library key face or newest assigned face. Browser rename and merge enforce that same person visibility inside their write transactions. Name pickers rank active, visible depicted assertions by `recorded_at`; reactivating an assertion sets a new naming time, while merging preserves retained and moved times.
 
 ## Released schema policy
 

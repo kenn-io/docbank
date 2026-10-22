@@ -68,22 +68,6 @@ it("keeps a write counted until its answer body is read", async () => {
   expect(mutationsInFlight()).toBe(0);
 });
 
-it("exposes successful JSON response headers to the caller", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json({ saved: true }, { headers: { ETag: '"7"' } }),
-  );
-  let etag = "";
-  const options = {
-    session: "tab",
-    onResponseHeaders: (headers: Headers) => {
-      etag = headers.get("ETag") ?? "";
-    },
-  } as never;
-
-  await expect(sessionJSON("/api/v1/people/by-id/ada", options)).resolves.toEqual({ saved: true });
-  expect(etag).toBe('"7"');
-});
-
 it("binds authorization failures to the session that issued the request", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify({ detail: "session expired" }), {
@@ -99,27 +83,6 @@ it("binds authorization failures to the session that issued the request", async 
   expect(cause).toBeInstanceOf(APIError);
   expect(isCurrentSessionError(cause, "old-tab")).toBe(true);
   expect(isCurrentSessionError(cause, "new-tab")).toBe(false);
-});
-
-it("pairs each merge-conflict face with its exact content version", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json(
-      {
-        detail: "review faces",
-        code: "person_merge_conflict",
-        face_ids: ["face-a", "face-b"],
-        face_version_ids: ["old-version", "current-version"],
-      },
-      { status: 409 },
-    ),
-  );
-  const cause = await sessionResponse("/api/v1/people/by-id/a/merge", {}).catch(
-    (error: unknown) => error,
-  );
-  expect((cause as APIError).faces).toEqual([
-    { face_id: "face-a", version: "old-version" },
-    { face_id: "face-b", version: "current-version" },
-  ]);
 });
 
 it("keeps manually-created API errors compatible with current-session handling", () => {

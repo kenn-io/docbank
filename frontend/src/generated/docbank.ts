@@ -4855,9 +4855,6 @@ export interface PersonMergeReceipt {
 
 export interface PersonPhotoSummary {
   face?: PersonFacePreview;
-  face_hidden?: boolean;
-  /** @nullable */
-  hidden_count?: number | null;
   library_count: number;
 }
 
@@ -9329,17 +9326,13 @@ query?: string;
 limit?: number;
 cursor?: string;
 /**
- * Add Library photo counts, Hidden counts while unlocked, and one card portrait.
+ * Add Library photo counts and one Library card portrait.
  */
 photo_summary?: boolean;
 /**
  * Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
  */
 recent_first?: boolean;
-/**
- * Return only this person when it is visible.
- */
-person_id?: string;
 };
 
 export type GetPersonParams = {
@@ -9450,14 +9443,6 @@ export type PromotePhotoNodeHeaders = {
 
 export type ListPersonFacePreviewsParams = {
 hidden?: boolean;
-/**
- * Restrict results to one source version
- */
-content_version_id?: string;
-/**
- * Restrict results to one assigned face
- */
-face_id?: string;
 };
 
 export type SetPhotoSettingsHeaders = {
@@ -17965,7 +17950,7 @@ export const getListPersonFacePreviewsUrl = (personId: string,
 }
 
 /**
- * @summary Read linked source-version photos or one exact assigned face
+ * @summary Read up to three linked source-version photos in timeline order
  */
 export const listPersonFacePreviews = async (personId: string,
     params?: ListPersonFacePreviewsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonFacePreviewPage> => {
