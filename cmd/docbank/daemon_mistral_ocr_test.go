@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mistral"
@@ -132,6 +134,13 @@ func TestMistralOCRDescriptorDriftOrder(t *testing.T) {
 
 func TestDaemonMistralOCRProcessing(t *testing.T) {
 	cfg, _ := mistralOCRProcessingConfig(t)
+	providerRuntime := cfg.RenditionProfiles["documents"].Runtime
+	providerRuntime.AllowedCIDRs = []string{"192.0.2.0/32"}
+	providerRuntime.RequestTimeout = config.Duration(time.Nanosecond)
+	providerRuntime.ConnectTimeout = config.Duration(time.Nanosecond)
+	providerRuntime.KeepAlive = config.Duration(time.Nanosecond)
+	providerRuntime.TLSHandshakeTimeout = config.Duration(time.Nanosecond)
+	require.NoError(t, cfg.Validate())
 	cfg.Server.APIKey = "synthetic-mistral-daemon-key"
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-mistral-key")
 	source := mistraltest.MinimalPDF("synthetic daemon OCR")
@@ -163,4 +172,23 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	require.Len(t, plan.Flow, 1)
 	require.Equal(t, "https://api.eu.mistral.ai", plan.Flow[0].RuntimeDisclosure.Endpoint)
 	require.Equal(t, mistral.DefaultModel, plan.Flow[0].RuntimeDisclosure.Model)
+	job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+	require.NoError(t, err)
+	// The runtime keeps Mistral's default HTTP retries before recording a failed attempt.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
+		require.NoError(c, statusErr)
+		require.Equal(c, "retry_wait", status.State, "%+v", status)
+		require.Equal(c, "transient", status.FailureCode)
+	}, 20*time.Second, 20*time.Millisecond)
+	uploads, err := os.ReadDir(filepath.Join(root, "blobs", "tmp"))
+	require.NoError(t, err)
+	require.Empty(t, uploads, "the failed attempt must leave no staged upload")
+	original, err := daemon.VersionContent(t.Context(), selector.ContentVersionID)
+	require.NoError(t, err)
+	var originalBytes bytes.Buffer
+	_, err = original.CopyVerified(&originalBytes)
+	require.NoError(t, err)
+	require.NoError(t, original.Close())
+	require.Equal(t, source, originalBytes.Bytes())
 }
