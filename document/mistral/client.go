@@ -682,13 +682,24 @@ func decodeWirePages(
 }
 
 func readVerifiedDocument(ctx context.Context, snapshot preparedSnapshot) ([]byte, error) {
-	if snapshot.path == "" || snapshot.size < 0 || snapshot.format.ID == "" ||
+	if (snapshot.path == "" && snapshot.memory == nil) || snapshot.size < 0 || snapshot.format.ID == "" ||
 		snapshot.mediaType != snapshot.format.MediaType || len(snapshot.sha256) != sha256.Size*2 ||
 		strings.ToLower(snapshot.sha256) != snapshot.sha256 {
 		return nil, errors.New("invalid Mistral OCR prepared document metadata")
 	}
 	if _, err := hex.DecodeString(snapshot.sha256); err != nil {
 		return nil, errors.New("invalid Mistral OCR prepared document SHA-256")
+	}
+	if snapshot.memory != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		snapshot.memory.mu.Lock()
+		defer snapshot.memory.mu.Unlock()
+		if snapshot.memory.released || int64(len(snapshot.memory.contents)) != snapshot.size {
+			return nil, errors.New("mistral OCR prepared document was released")
+		}
+		return bytes.Clone(snapshot.memory.contents), nil
 	}
 	file, err := openPrivateFile(snapshot.path)
 	if err != nil {

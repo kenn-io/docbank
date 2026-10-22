@@ -299,13 +299,15 @@ For each production document:
 
 1. Call `Policy.Authorize(validated manifest, declared format)`.
 2. Check your application's consent record against `PolicyFingerprint`.
-3. Call `Prepare` with private staging storage.
+3. Call `Prepare` with private staging storage, or `PrepareMemory` for bytes that must stay off disk.
 4. Call `Process`. The detected format must match the authorization.
 5. Call `Release` on success or failure.
 6. Call `NormalizeDocument(Result.Document, Policy.NormalizePolicy())` on a
    successful result.
 
 `Prepare` copies one input into a private, bounded, immutable staging file.
+`PrepareMemory` keeps a copy in memory, computes its size and SHA-256, and
+zeroes that copy when you call `Release`.
 For direct formats, `Process` reopens and verifies those bytes for every attempt.
 It derives request options from the policy and authorization, bounds the
 response, and converts validated provider output into
@@ -671,7 +673,7 @@ This Go API does not add CSV OCR to the daemon or CLI.
 
 ## Show preparation failures
 
-`mistral.Prepare` and `csvpdf.Convert` attach `ocr.PreparationError` to local
+`mistral.Prepare`, `mistral.PrepareMemory`, and `csvpdf.Convert` attach `ocr.PreparationError` to local
 source and conversion failures. Extract it with
 `errors.AsType[*ocr.PreparationError]` and display its `Error()` value. The
 description contains fixed text. The original cause remains available through
