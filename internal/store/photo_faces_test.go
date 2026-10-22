@@ -919,11 +919,11 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.NoError(t, err)
 	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
 	// Filter contacts before applying the page limit.
-	page, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
+	page, _, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	require.Equal(t, person.PersonID, page[0].PersonID)
-	rows, err := s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)
+	rows, _, err := s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)
 	require.NoError(t, err)
 	// A person without photo evidence gets no card.
 	require.Len(t, rows, 2)
@@ -932,31 +932,31 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.Equal(t, hiddenOnly.PersonID, rows[1].PersonID)
 	require.Equal(t, int64(1), *rows[1].PhotoSummary.HiddenCount)
 	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
-	rows, err = s.PeopleByDisplayName(ctx, "", "", "", 100, true, options)
+	rows, _, err = s.PeopleByDisplayName(ctx, "", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Nil(t, rows[0].PhotoSummary.HiddenCount)
 	// Hiding the selected face makes the remaining readable face the card source.
 	_, err = s.SetPhotoAssetHidden(unlocked, assets[0].ID, assets[0].Revision, true)
 	require.NoError(t, err)
-	rows, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	rows, _, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 	// Unlocking restores the Hidden key face.
-	rows, err = s.PeopleByDisplayName(unlocked, "Ada", "", "", 100, true, options)
+	rows, _, err = s.PeopleByDisplayName(unlocked, "Ada", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 	require.True(t, rows[0].PhotoSummary.FaceHidden)
 	// A Hidden-only person gets a portrait while unlocked.
 	_, _, err = s.CreatePhotoFace(unlocked, nodes[2].CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Y: .5, Width: .2, Height: .2}, hiddenOnly.PersonID)
 	require.NoError(t, err)
-	rows, err = s.PeopleByDisplayName(unlocked, "Hidden only", "", "", 100, true, options)
+	rows, _, err = s.PeopleByDisplayName(unlocked, "Hidden only", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Equal(t, nodes[2].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 	require.True(t, rows[0].PhotoSummary.FaceHidden)
 	require.Equal(t, int64(1), *rows[0].PhotoSummary.HiddenCount)
 	require.Zero(t, rows[0].PhotoSummary.LibraryCount)
-	rows, err = s.PeopleByDisplayName(ctx, "Hidden only", "", "", 100, true, options)
+	rows, _, err = s.PeopleByDisplayName(ctx, "Hidden only", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }
@@ -976,13 +976,13 @@ func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
 		require.NoError(t, err)
 	}
 	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
-	rows, err := s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	rows, _, err := s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
 	// Once the RAW changes, its old face no longer supplies the crop.
 	_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("d4"), 4, "image/x-canon-cr2")
 	require.NoError(t, err)
-	rows, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
+	rows, _, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
 	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
@@ -1006,7 +1006,7 @@ func TestPeoplePhotoSummarySharedPhotos(t *testing.T) {
 		}
 	}
 	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
-	page, err := s.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
+	page, _, err := s.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
 	require.NoError(t, err)
 	require.Len(t, page, 2)
 	// Photos shared by people on one page count for each of them.

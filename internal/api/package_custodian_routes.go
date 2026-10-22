@@ -77,14 +77,6 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst)
-		if browserSessionRequest(r.Context()) || projection || recentFirst {
-			scope, err := d.Store.PhotoHiddenState(r.Context())
-			if err != nil {
-				writePackageError(w, err)
-				return
-			}
-			binding += "\x01" + strconv.FormatBool(scope.Configured) + "\x01" + strconv.FormatBool(scope.ExpiresAt != nil) + "\x01" + scope.ChangeID
-		}
 		var gridRecipe string
 		if projection {
 			fingerprints, err := document.CurrentPhotoQualityFingerprints()
@@ -94,14 +86,20 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			}
 			gridRecipe = fingerprints.GridRecipe
 		}
-		afterName, afterID, afterRecent, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
+		afterName, afterID, afterRecent, cursorScope, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
 		if err != nil {
 			writeError(w, peopleCursorExpiredError())
 			return
 		}
-		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: gridRecipe})
+		people, scope, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: gridRecipe})
 		if err != nil {
 			writePackageError(w, err)
+			return
+		}
+		// The cursor carries the Hidden scope this page was read under.
+		binding += peopleScopeBinding(scope)
+		if afterName != "" && cursorScope != peopleScopeBinding(scope) {
+			writeError(w, peopleCursorExpiredError())
 			return
 		}
 		out := PersonPage{Items: make([]PersonSummary, min(limit, len(people)))}
@@ -249,16 +247,26 @@ func encodePeopleCursor(name, id, recent, binding string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(name + "\x00" + id + "\x00" + recent + "\x00" + binding))
 }
 
-func decodePeopleCursor(cursor, binding string) (string, string, string, error) {
+// decodePeopleCursor checks the request binding and returns the Hidden scope
+// binding that follows it, which the caller checks against the page's scope.
+func decodePeopleCursor(cursor, binding string) (string, string, string, string, error) {
 	if cursor == "" {
-		return "", "", "", nil
+		return "", "", "", "", nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
 	parts := strings.SplitN(string(raw), "\x00", 4)
-	if err != nil || len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[3] != binding {
-		return "", "", "", errors.New("invalid cursor")
+	if err != nil || len(parts) != 4 || parts[0] == "" || parts[1] == "" || !strings.HasPrefix(parts[3], binding) {
+		return "", "", "", "", errors.New("invalid cursor")
 	}
-	return parts[0], parts[1], parts[2], nil
+	return parts[0], parts[1], parts[2], parts[3][len(binding):], nil
+}
+
+// peopleScopeBinding binds a cursor to the Hidden scope a page was read under.
+func peopleScopeBinding(scope *store.PhotoHiddenState) string {
+	if scope == nil {
+		return ""
+	}
+	return "\x01" + strconv.FormatBool(scope.Configured) + "\x01" + strconv.FormatBool(scope.ExpiresAt != nil) + "\x01" + scope.ChangeID
 }
 
 func encodeCustodianCursor(packageID, rowID string, unresolvedOnly bool, offset int) string {

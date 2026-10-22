@@ -96,7 +96,7 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 			require.Len(t, merged, 1)
 			require.Equal(t, "2026-01-01T00:00:00.000000000Z", merged[0].RecordedAt)
 			require.Equal(t, keptAssertion.Revision, merged[0].Revision)
-			after, err := s.PeopleByDisplayName(ctx, "Survivor", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			after, _, err := s.PeopleByDisplayName(ctx, "Survivor", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Len(t, after, 1)
 			require.Equal(t, "2026-01-01T00:00:00.000000000Z", after[0].RecentRank)

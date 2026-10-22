@@ -102,7 +102,7 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts int) {
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				rows, err := s.PeopleByDisplayName(ctx, "", "", "", test.limit, true, PeopleSearchOptions{RecentFirst: test.recentFirst, PhotoSummary: test.photoSummary, GridRecipe: "grid"})
+				rows, _, err := s.PeopleByDisplayName(ctx, "", "", "", test.limit, true, PeopleSearchOptions{RecentFirst: test.recentFirst, PhotoSummary: test.photoSummary, GridRecipe: "grid"})
 				if err != nil || len(rows) != test.limit || test.recentFirst && rows[0].RecentRank == "" {
 					b.Fatalf("rows=%d err=%v", len(rows), err)
 				}
