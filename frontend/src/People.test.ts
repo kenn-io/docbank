@@ -177,9 +177,14 @@ it("keeps portraits through in-place updates and releases them when cards clear"
       }
     },
   );
+  let nextURL = 0;
+  const revokeObjectURL = vi.fn();
   vi.stubGlobal(
     "URL",
-    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:person"), revokeObjectURL: vi.fn() }),
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => `blob:person-${++nextURL}`),
+      revokeObjectURL,
+    }),
   );
   const people = new People("session", vi.fn());
   people.items = [
@@ -227,8 +232,10 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   await waitFor(() => expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy());
   await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
   expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy();
+  const portraitURL = screen.getByRole("img", { name: "Face of Ada L" }).getAttribute("src");
+  revokeObjectURL.mockClear();
   await act(() => people.conceal());
-  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:person");
+  expect(revokeObjectURL).toHaveBeenCalledWith(portraitURL);
   view.unmount();
   people.dispose();
   await cache.dispose();
