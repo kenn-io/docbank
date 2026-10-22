@@ -251,16 +251,22 @@ func personVisibleSQL(person string) string {
 		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))`
 }
 
-// personRecentSQL ranks a name group by its newest visible depicted evidence,
-// so namesakes stay adjacent for paging and the pickers' same-name groups. It
-// binds hideLocked once. The Hidden version set is read once per query rather
-// than probed for each assertion.
-const personRecentSQL = `COALESCE((SELECT MAX(a.recorded_at) FROM persons namesake
-	JOIN person_document_assertions a ON a.person_id=namesake.person_id
-	WHERE namesake.display_name_folded=persons.display_name_folded AND namesake.state<>'retired'
-	AND a.role='depicted' AND a.action='assert' AND (?=0 OR a.content_version_id NOT IN (
-		SELECT v.version_id FROM photo_assets hidden JOIN photo_files f ON f.asset_id=hidden.asset_id
-		JOIN content_versions v ON v.node_id=f.node_id WHERE hidden.hidden_at IS NOT NULL))),'')`
+// personRecentSQL keeps namesakes together and ranks their readable, current
+// depicted evidence. It binds whether locked Hidden photos must be concealed.
+var personRecentSQL = `COALESCE((SELECT MAX(assertion.recorded_at) FROM persons namesake
+ JOIN person_document_assertions assertion ON assertion.person_id=namesake.person_id
+ WHERE namesake.display_name_folded=persons.display_name_folded AND namesake.state<>'retired'
+ AND assertion.role='depicted' AND assertion.action='assert'
+ AND assertion.content_version_id IN (
+ SELECT evidence.version_id FROM nodes evidence_node
+ JOIN content_versions evidence ON evidence.version_id=evidence_node.current_version_id
+ LEFT JOIN photo_files member ON member.node_id=evidence_node.id
+ LEFT JOIN photo_assets a ON a.asset_id=member.asset_id
+ LEFT JOIN photo_files f ON f.file_id=a.display_file_id
+ LEFT JOIN nodes n ON n.id=f.node_id
+ WHERE evidence_node.trashed_at IS NULL AND (member.file_id IS NULL OR (
+ ` + currentPhotoSourcePredicate("member", "evidence_node", "evidence.version_id") + `
+ AND ` + photoBrowseLiveDisplay + ` AND (` + photoVisibilityPredicate(false) + ` OR (?=0 AND ` + photoVisibilityPredicate(true) + `)))))),'')`
 
 // Materialize the bounded matches before reading their visible identity labels.
 var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (

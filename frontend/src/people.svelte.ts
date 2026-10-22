@@ -53,7 +53,8 @@ export class People {
     this.cursor = undefined;
     this.loading = false;
     this.error = "";
-    if (!this.busy) this.merge = undefined;
+    this.merge = undefined;
+    this.writeError = "";
   }
   async load(query = this.query, more = false) {
     if (this.disposed) return;
@@ -76,7 +77,11 @@ export class People {
         );
       });
       if (!request.signal.aborted) {
-        this.items = [...this.items, ...page.items];
+        this.items = [
+          ...new Map(
+            [...this.items, ...page.items].map((person) => [person.person_id, person]),
+          ).values(),
+        ];
         this.cursor = page.next_cursor;
       }
     } catch (cause) {
@@ -164,7 +169,6 @@ export class People {
     this.merge = { source, confirmed: false, conflicts: [], notice: "" };
   }
   closeMerge() {
-    if (this.busy) return;
     this.writeError = "";
     this.merge = undefined;
   }
@@ -235,7 +239,7 @@ export class People {
           this.refreshCard(source.person_id, request.signal),
           this.refreshCard(survivor.person_id, request.signal),
         ]);
-        if (request.signal.aborted) return false;
+        if (request.signal.aborted || this.merge?.source !== source) return false;
         if (currentSource === undefined) {
           this.merge = undefined;
           return false;

@@ -449,3 +449,50 @@ func TestPeoplePageContinuesFoldedName(t *testing.T) {
 		require.Equal(t, limit == "1", page.SameNameContinues)
 	}
 }
+
+func TestPeopleCursorRejectsChangedHiddenScope(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	ctx := t.Context()
+	people := map[string]store.Person{}
+	for _, name := range []string{"Ada", "Bob", "Cy"} {
+		person, err := catalog.CreatePerson(ctx, name, "operator")
+		require.NoError(t, err)
+		people[name] = person
+	}
+	for _, name := range []string{"Ada", "Bob"} {
+		hash, size, err := catalog.Blobs.Write(strings.NewReader("synthetic portrait " + name))
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(ctx, catalog.RootID(), name+".jpg", hash, size, "image/jpeg")
+		require.NoError(t, err)
+		_, err = catalog.MarkPersonInPhoto(ctx, node.CurrentVersionID, people[name].PersonID, "")
+		require.NoError(t, err)
+		if name == "Bob" {
+			asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			require.NoError(t, catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			_, err = catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+		}
+	}
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	path := "/api/v1/people?limit=1&photo_summary=true&recent_first=true"
+	response, body := get(t, ts, path, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Equal(t, people["Ada"].PersonID, page.Items[0].PersonID)
+	require.NotEmpty(t, page.NextCursor)
+	cursor := page.NextCursor
+	unlocked, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, unlocked.StatusCode, body)
+	require.Len(t, unlocked.Cookies(), 1)
+	headers["Cookie"] = unlocked.Cookies()[0].String()
+	response, body = get(t, ts, path+"&cursor="+cursor, headers)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	response, body = get(t, ts, path, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Equal(t, people["Bob"].PersonID, page.Items[0].PersonID)
+	require.Equal(t, int64(1), *page.Items[0].PhotoSummary.HiddenCount)
+}

@@ -79,6 +79,14 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		}
 		personID := r.URL.Query().Get("person_id")
 		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst) + "\x01" + personID
+		if browserSessionRequest(r.Context()) || projection {
+			scope, err := d.Store.PhotoHiddenState(r.Context())
+			if err != nil {
+				writePackageError(w, err)
+				return
+			}
+			binding += "\x01" + strconv.FormatBool(scope.Configured) + "\x01" + strconv.FormatBool(scope.ExpiresAt != nil) + "\x01" + scope.ChangeID
+		}
 		fingerprints, err := document.CurrentPhotoQualityFingerprints()
 		if err != nil {
 			writePackageError(w, err)
@@ -234,7 +242,7 @@ func defaultQuery(r *http.Request, key, fallback string) string {
 	return fallback
 }
 
-// People cursors bind the query, projection, order, and person filter.
+// People cursors bind the query, projection, order, person filter, and visibility.
 func encodePeopleCursor(name, id, recent, binding string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(name + "\x00" + id + "\x00" + recent + "\x00" + binding))
 }

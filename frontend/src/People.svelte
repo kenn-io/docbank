@@ -3,6 +3,7 @@
   import UserIcon from "@lucide/svelte/icons/user";
   import { untrack } from "svelte";
   import { listPeople, preparePhotoPreview, type PersonSummary } from "./generated/docbank.js";
+  import { personLabel } from "./personLabel.js";
   import type { People } from "./people.svelte.js";
   import PeopleMergeConflict from "./PeopleMergeConflict.svelte";
   import { PhotoPreviewCache, previewObjectURL } from "./photoPreviewCache.js";
@@ -311,10 +312,10 @@
       title="Keep person"
       placeholder="Find the person to keep"
       value={survivor?.person_id ?? ""}
-      fallbackLabel={survivor?.display_name ?? "Find the person to keep"}
+      fallbackLabel={survivor ? personLabel(survivor) : "Find the person to keep"}
       options={candidates.map((person) => ({
         name: person.person_id,
-        label: `${person.display_name} · ${person.identity_label || person.person_id}`,
+        label: personLabel(person),
       }))}
       disabled={people.busy}
       loading={searching}
@@ -334,14 +335,14 @@
         >Load more people</Button
       >{/if}
     {#if merge.notice === "stale" && survivor}<p role="status">
-        {source.display_name} or {survivor.display_name} changed. Check the current names and confirm
+        {personLabel(source)} or {personLabel(survivor)} changed. Check the current names and confirm
         again.
       </p>
     {:else if merge.notice === "reselect"}<p role="status">
         The person to keep is no longer available. Choose another person.
       </p>{/if}
     {#if survivor}<p>
-        Keep {survivor.display_name}. Move {source.display_name}'s records into this person.
+        Keep {personLabel(survivor)}. Move {personLabel(source)}'s records into this person.
       </p>
       <Checkbox
         label="Confirm merge"

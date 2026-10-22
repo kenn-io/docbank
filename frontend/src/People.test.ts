@@ -110,8 +110,18 @@ it("chooses the merge survivor by ID and requires confirmation", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   const dialog = screen.getByRole("dialog", { name: "Merge Ada" });
   await fireEvent.click(within(dialog).getByRole("button", { name: /Find the person to keep/ }));
-  await waitFor(() => expect(screen.getByRole("option", { name: "Grace · grace" })).toBeTruthy());
-  await fireEvent.mouseDown(screen.getByRole("option", { name: "Grace · grace" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("option", {
+        name: `Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+      }),
+    ).toBeTruthy(),
+  );
+  await fireEvent.mouseDown(
+    screen.getByRole("option", {
+      name: `Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+    }),
+  );
   const confirm = within(dialog).getByRole("button", { name: "Merge" });
   expect(confirm.hasAttribute("disabled")).toBe(true);
   await fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm merge" }));
@@ -158,7 +168,11 @@ it("clears the exact retained face in a merge conflict, then asks for a fresh co
   await fireEvent.click(screen.getAllByRole("button", { name: "Merge" })[0]!);
   const dialog = screen.getByRole("dialog", { name: "Merge Ada" });
   await fireEvent.click(within(dialog).getByRole("button", { name: /Find the person to keep/ }));
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Grace · grace" }));
+  await fireEvent.mouseDown(
+    await screen.findByRole("option", {
+      name: `Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+    }),
+  );
   await fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm merge" }));
   await fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
   const faceRow = await within(dialog).findByText("Face 1 · Grace · marked not Ada");
@@ -260,6 +274,40 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   expect(get).toHaveBeenCalledOnce();
   await act(() => people.conceal());
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:person");
+  view.unmount();
+  people.dispose();
+  await cache.dispose();
+});
+it("disambiguates namesakes in merge options, selection, confirmation, and stale notice", async () => {
+  const source = { ...ada, display_name: "Alex", identity_label: "alex@example.test" };
+  const survivor = { ...grace, display_name: "Alex" };
+  const detail = new Date(survivor.created_at).toLocaleDateString();
+  const people = new People("session", vi.fn());
+  people.items = [source];
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [survivor] });
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Find the person to keep/ }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: `Alex · ${detail}` }));
+  read.mockResolvedValue({ items: [] });
+  await fireEvent.click(screen.getByRole("button", { name: /Alex ·/ }));
+  const search = screen.getByRole("combobox", { name: "Find the person to keep" });
+  await fireEvent.input(search, { target: { value: "Other" } });
+  await waitFor(() => expect(read.mock.calls.at(-1)![0]).toMatchObject({ query: "Other" }));
+  await fireEvent.keyDown(search, { key: "Escape" });
+  expect(screen.getByRole("button", { name: /Alex ·/ }).textContent).toContain(`Alex · ${detail}`);
+  expect(
+    screen.getByText(
+      `Keep Alex · ${detail}. Move Alex · alex@example.test's records into this person.`,
+    ),
+  ).toBeTruthy();
+  await act(() => {
+    people.merge = { ...people.merge!, notice: "stale" };
+  });
+  expect(screen.getByRole("status").textContent).toContain(
+    `Alex · alex@example.test or Alex · ${detail} changed.`,
+  );
   view.unmount();
   people.dispose();
   await cache.dispose();
