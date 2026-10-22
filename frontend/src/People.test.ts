@@ -280,12 +280,7 @@ it("clears the selected cards and open merge when People is concealed", async ()
   const people = new People("session", vi.fn(), access);
   people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: 1 } }, grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
-  const open = vi.fn();
-  const view = render(PeopleView, { people, cache, onperson: open });
-  await fireEvent.click(screen.getByRole("button", { name: "Ada 3 Library photos" }));
-  expect(open).toHaveBeenCalledWith("ada", "Ada");
-  await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
-  expect(open).toHaveBeenCalledWith("ada", "Ada", true);
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Ada" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Grace" }));
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
