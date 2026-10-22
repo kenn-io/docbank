@@ -31,7 +31,7 @@ it("hashes a recipe to the same digest as the Go stamp engine", async () => {
   expect(globalThis.crypto.subtle).toBeDefined();
   // Golden digest from internal/pdfstamp/stamp_test.go validRecipe.
   const expected = "bf113c1f5c51f7d55c9d214c822a231d47404f07eae61542ba18cbdf0f5f6923";
-  expect(await batesRecipeSHA256(recipe)).toBe(expected);
+  await expect(batesRecipeSHA256(recipe)).resolves.toBe(expected);
 
   vi.stubGlobal("crypto", { getRandomValues: vi.fn() });
   await expect(batesRecipeSHA256(recipe)).resolves.toBe(expected);
@@ -115,7 +115,7 @@ it("keeps only sealed package snapshots with pages", async () => {
   );
 });
 
-it("pages through every package and keeps oversized sources for the drawer to explain", async () => {
+it("pages through eligible packages until pagination ends", async () => {
   const pageOne = Array.from({ length: 250 }, (_, index) => ({
     package_id: `p${index}`,
     package_name: `Set ${index}`,
@@ -135,12 +135,12 @@ it("pages through every package and keeps oversized sources for the drawer to ex
         JSON.stringify({
           items: [
             {
-              package_id: "big",
-              package_name: "Oversized",
-              direction: "produced",
-              state: "sealed",
+              package_id: "last",
+              package_name: "Last set",
+              direction: "received",
+              state: "complete",
               snapshot_id: "22222222-2222-4222-8222-222222222222",
-              page_count: 251,
+              page_count: 1,
             },
           ],
           limit: 250,
@@ -155,14 +155,44 @@ it("pages through every package and keeps oversized sources for the drawer to ex
 
   expect(sources).toHaveLength(251);
   expect(sources.at(-1)).toEqual({
-    package_id: "big",
-    package_name: "Oversized",
+    package_id: "last",
+    package_name: "Last set",
     snapshot_id: "22222222-2222-4222-8222-222222222222",
-    page_count: 251,
+    page_count: 1,
   });
 });
 
-it("starts, reads, lists, and prepares a verified publication", async () => {
+it("keeps oversized sources available for the drawer to explain", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        items: [
+          {
+            package_id: "big",
+            package_name: "Oversized",
+            direction: "produced",
+            state: "sealed",
+            snapshot_id: "22222222-2222-4222-8222-222222222222",
+            page_count: 251,
+          },
+        ],
+        limit: 250,
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    ),
+  );
+
+  await expect(listBatesSources("session")).resolves.toEqual([
+    {
+      package_id: "big",
+      package_name: "Oversized",
+      snapshot_id: "22222222-2222-4222-8222-222222222222",
+      page_count: 251,
+    },
+  ]);
+});
+
+async function verifiedPublicationFixture() {
   const namespace = {
     namespace_id: "11111111-1111-4111-8111-111111111111",
     prefix: "CASE",
@@ -213,9 +243,61 @@ it("starts, reads, lists, and prepares a verified publication", async () => {
       },
     ],
   };
+  return { recipe, allocation, published };
+}
+
+it("starts a verified export for its reservation", async () => {
+  const { allocation, recipe, published } = await verifiedPublicationFixture();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    expect(init).toMatchObject({ method: "POST" });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      allocation_id: allocation.allocation_id,
+      recipe,
+    });
+    return new Response(JSON.stringify(published), {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  await expect(startBatesExport("session", allocation, recipe)).resolves.toMatchObject({
+    state: "verified",
+  });
+});
+
+it("reads a Bates export by allocation ID", async () => {
+  const { allocation, published } = await verifiedPublicationFixture();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(published), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+
+  await expect(readBatesExport("session", allocation.allocation_id)).resolves.toMatchObject({
+    allocation_id: allocation.allocation_id,
+  });
+});
+
+it("lists Bates exports with artifact metadata", async () => {
+  const { published } = await verifiedPublicationFixture();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("?limit=50")) {
+      return new Response(JSON.stringify({ items: [published], total: 1 }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${String(input)}`);
+  });
+
+  await expect(listBatesExports("session")).resolves.toMatchObject({
+    total: 1,
+    items: [{ artifact_id: published.artifact_id }],
+  });
+});
+
+it("downloads a verified Bates export with its one-use ticket", async () => {
+  const { allocation, published } = await verifiedPublicationFixture();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url.endsWith("/download")) {
+    if (String(input).endsWith("/download")) {
       expect(init).toMatchObject({ method: "POST", body: "{}" });
       expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
       return new Response(
@@ -229,31 +311,9 @@ it("starts, reads, lists, and prepares a verified publication", async () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }
-    if (url.includes("?limit=50"))
-      return new Response(JSON.stringify({ items: [published], total: 1 }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    if (init?.method === "POST") {
-      expect(JSON.parse(String(init.body))).toEqual({
-        allocation_id: allocation.allocation_id,
-        recipe,
-      });
-    }
-    return new Response(JSON.stringify(published), {
-      headers: { "Content-Type": "application/json" },
-    });
+    throw new Error(`unexpected request ${String(input)}`);
   });
 
-  await expect(startBatesExport("session", allocation, recipe)).resolves.toMatchObject({
-    state: "verified",
-  });
-  await expect(readBatesExport("session", allocation.allocation_id)).resolves.toMatchObject({
-    allocation_id: allocation.allocation_id,
-  });
-  await expect(listBatesExports("session")).resolves.toMatchObject({
-    total: 1,
-    items: [{ artifact_id: published.artifact_id }],
-  });
   const clicked: { href: string; download: string }[] = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
     function (this: HTMLAnchorElement) {
