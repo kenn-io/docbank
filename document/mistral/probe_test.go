@@ -147,29 +147,14 @@ func TestProbeExplainsFixtureOutsideBoundRange(t *testing.T) {
 	assert.Equal(t, reasonBoundFixtureOutOfRange, result.ReasonCode)
 }
 
-func TestRunCapabilityProbeClassifiesInvalidModel(t *testing.T) {
-	policy := testPolicy(t, 1<<20, 10)
-	transport := &probeTransport{t: t, failureMode: "invalid_model"}
-	client, err := NewClient(policy, ClientConfig{
-		APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport},
-	})
-	require.NoError(t, err)
-	manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{Fixtures: generatedProbeFixtureConfig(t)})
-	require.NoError(t, err)
-	require.Len(t, manifest.Results, 26)
-	for _, result := range manifest.Results {
-		assert.Equal(t, ProbeStatusRejected, result.Status, result.FormatID)
-		assert.Equal(t, "invalid_model", result.ReasonCode, result.FormatID)
-	}
-}
-
 func TestRunCapabilityProbeClassifiesErrorBodies(t *testing.T) {
-	const invalidModelBody = `{"type":"invalid_model"}`
+	const invalidModelBody = `{"object":"error","message":"Invalid model: mistral-ocr-4-1","type":"invalid_model","code":"1500"}`
 	tests := []struct {
 		name       string
 		body       string
 		wantReason string
 	}{
+		{name: "invalid model", body: invalidModelBody, wantReason: "invalid_model"},
 		{name: "another type", body: `{"type":"invalid_request"}`, wantReason: "provider_4xx"},
 		{name: "non-JSON", body: "invalid model", wantReason: "provider_4xx"},
 		{name: "oversize", body: invalidModelBody + strings.Repeat(" ", 4097-len(invalidModelBody)), wantReason: "provider_4xx"},
@@ -269,9 +254,6 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	assert.True(transport.t, input.ExtractFooter)
 	if transport.errorBody != "" {
 		return probeHTTPResponse(request, http.StatusBadRequest, transport.errorBody), nil
-	}
-	if transport.failureMode == "invalid_model" {
-		return probeHTTPResponse(request, http.StatusBadRequest, `{"object":"error","message":"Invalid model: mistral-ocr-4-1","type":"invalid_model","code":"1500"}`), nil
 	}
 
 	mediaType := strings.TrimPrefix(strings.SplitN(input.Document.URL, ";base64,", 2)[0], "data:")

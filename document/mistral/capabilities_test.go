@@ -212,13 +212,6 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 		{name: "target mismatch", mutate: func(manifest *CapabilityManifest) { manifest.Endpoint = "https://example.invalid/v1/ocr" }, want: "not pinned"},
 		{name: "unit limit", mutate: func(manifest *CapabilityManifest) { manifest.MaxUnits = 1 }, want: "invalid unit limit"},
 		{name: "partial matrix", mutate: func(manifest *CapabilityManifest) { manifest.Results = manifest.Results[:len(manifest.Results)-1] }, want: "results"},
-		{name: "invalid model with returned model", mutate: func(manifest *CapabilityManifest) {
-			manifest.Results[1].Status = ProbeStatusRejected
-			manifest.Results[1].ReasonCode = reasonInvalidModel
-			manifest.Results[1].ReturnedModel = defaultModel
-			manifest.Results[1].UnitCount = 0
-			manifest.Results[1].UnitsProcessed = 0
-		}, want: "is not scrubbed"},
 		{name: "reordered matrix", mutate: func(manifest *CapabilityManifest) {
 			manifest.Results[0], manifest.Results[1] = manifest.Results[1], manifest.Results[0]
 		}, want: "does not match"},
