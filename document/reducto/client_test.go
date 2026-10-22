@@ -738,16 +738,20 @@ func TestClientClassifiesCancellationAfterEgressAsAmbiguous(t *testing.T) {
 
 func TestClientDistinguishesPreEgressContextFailures(t *testing.T) {
 	t.Run("wall timeout while reading source", func(t *testing.T) {
-		fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("wall source"))
-		fixture.profile.MaxWallTime = 10 * time.Millisecond
-		transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
-			t.Fatal("wall timeout reached egress")
-			return nil, errors.New("unexpected egress")
+		// Advance time only once the source read blocks, so a busy runner cannot
+		// expire the operation before it reaches the read this test exercises.
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("wall source"))
+			fixture.profile.MaxWallTime = 10 * time.Millisecond
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Fatal("wall timeout reached egress")
+				return nil, errors.New("unexpected egress")
+			})
+			upload := newBlockingTestUpload(fixture.metadata)
+			_, err := fixture.client(t, transport).Render(t.Context(), upload, fixture.authorization)
+			assertCode(t, err, document.RenditionErrorCapacity)
+			assert.True(t, upload.wasClosed())
 		})
-		upload := newBlockingTestUpload(fixture.metadata)
-		_, err := fixture.client(t, transport).Render(t.Context(), upload, fixture.authorization)
-		assertCode(t, err, document.RenditionErrorCapacity)
-		assert.True(t, upload.wasClosed())
 	})
 
 	t.Run("wall timeout resolving secret", func(t *testing.T) {
