@@ -121,7 +121,7 @@ func ReadPDFPasswords(path string) ([]string, error) {
 	if len(data) > 16<<10 {
 		return nil, errors.New("PDF passwords file exceeds 16 KiB")
 	}
-	var passwords []string
+	passwords := []string{}
 	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if line != "" {

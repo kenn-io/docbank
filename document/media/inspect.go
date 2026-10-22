@@ -1305,7 +1305,7 @@ func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 		MaxEntryBytes:    policy.MaxEntryBytes,
 		MaxEntries:       policy.MaxEntries,
 	})
-	if errors.Is(err, formatdetect.ErrPDFEncrypted) && policy.UnlockPDF && (policy.pdfPassword != nil || len(policy.PDFPasswords) > 0) {
+	if errors.Is(err, formatdetect.ErrPDFEncrypted) && policy.UnlockPDF && (policy.pdfPassword != nil || policy.PDFPasswords != nil) {
 		var unlocked []byte
 		var password string
 		var unlockErr error

@@ -193,7 +193,7 @@ func TestReadPDFPasswords(t *testing.T) {
 		tooLarge bool
 	}{
 		{"open\n\ncorrect horse\r\n spaced \n", []string{"open", "correct horse", " spaced "}, false},
-		{"", nil, false}, {strings.Repeat("x\n", 128), strings.Split(strings.TrimSuffix(strings.Repeat("x\n", 128), "\n"), "\n"), false},
+		{"", []string{}, false}, {strings.Repeat("x\n", 128), strings.Split(strings.TrimSuffix(strings.Repeat("x\n", 128), "\n"), "\n"), false},
 		{strings.Repeat("x\n", 129), nil, true},
 		{strings.Repeat("x", 16<<10), []string{strings.Repeat("x", 16<<10)}, false},
 		{strings.Repeat("x", (16<<10)+1), nil, true},
