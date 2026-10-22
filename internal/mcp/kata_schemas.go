@@ -74,9 +74,8 @@ func citeKataEvidenceSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"selector": selector, "title": title, "brief": stringSchema(2000), "idempotency_key": key, "issue": kataIssueRefSchema(),
 	}, "selector")
-	input["oneOf"] = []schema{
-		{kataRequiredField: []string{"title", "idempotency_key"}, "not": schema{kataRequiredField: []string{"issue"}}},
-		{kataRequiredField: []string{"issue"}, "not": schema{"anyOf": []schema{{kataRequiredField: []string{"title"}}, {kataRequiredField: []string{"brief"}}, {kataRequiredField: []string{"idempotency_key"}}}}},
-	}
+	input["if"] = schema{kataRequiredField: []string{"issue"}}
+	input["then"] = schema{"not": schema{"anyOf": []schema{{kataRequiredField: []string{"title"}}, {kataRequiredField: []string{"brief"}}, {kataRequiredField: []string{"idempotency_key"}}}}}
+	input["else"] = schema{kataRequiredField: []string{"title", "idempotency_key"}}
 	return input, rootObjectSchema(withPrivateCache(schema{"issue": kataIssueReceiptSchema()}), cacheRequired("issue")...)
 }

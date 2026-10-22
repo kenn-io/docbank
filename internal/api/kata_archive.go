@@ -26,18 +26,23 @@ type kataArchive struct {
 func (a kataArchive) VaultUID() string { return a.deps.Store.VaultID() }
 
 func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector) (kataevidence.Evidence, error) {
-	var result kataevidence.Evidence
 	// Exact rendition reads take the processing service's own capture gate.
 	if selector.Citation != nil {
 		if selector.Path != "" {
 			node, err := a.deps.Store.NodeByPath(ctx, selector.Path)
 			if err != nil {
-				return result, err
+				return kataevidence.Evidence{}, err
 			}
 			selector.NodeID = node.ID
 		}
 		return a.prepareRendition(ctx, selector)
 	}
+	return a.prepareOriginal(ctx, selector, "")
+}
+
+// A saved hash verifies an existing citation; new citations also need MIME admission.
+func (a kataArchive) prepareOriginal(ctx context.Context, selector kataevidence.Selector, savedHash string) (kataevidence.Evidence, error) {
+	var result kataevidence.Evidence
 	err := a.gate.CaptureContext(ctx, func() error {
 		var node store.Node
 		var err error
@@ -55,10 +60,13 @@ func (a kataArchive) Prepare(ctx context.Context, selector kataevidence.Selector
 		if selector.ExpectedVersion != "" && selector.ExpectedVersion != node.CurrentVersionID {
 			return kataevidence.ErrChanged
 		}
+		if savedHash != "" && savedHash != node.BlobHash {
+			return kataevidence.ErrChanged
+		}
 		if node.Size < 0 || node.Size > kataOriginalMaxBytes {
 			return fmt.Errorf("%w: document exceeds the 16 MiB original-text citation limit", kataevidence.ErrUnsupportedSource)
 		}
-		if !store.SupportsTextExtractionMIME(node.MimeType) {
+		if savedHash == "" && !store.SupportsTextExtractionMIME(node.MimeType) {
 			return fmt.Errorf("%w: document needs a retained text rendition; supply an exact text citation", kataevidence.ErrUnsupportedSource)
 		}
 		text, err := a.originalText(ctx, node)
@@ -174,11 +182,16 @@ func (a kataArchive) Resolve(ctx context.Context, ref kataevidence.Reference, qu
 		return result, nil
 	}
 	// Identical original bytes remain verifiable after a version-only rewrite.
-	// Pin the current version so Prepare still detects a concurrent replacement.
+	// Pin the current version so verification still detects a concurrent replacement.
 	if ref.Docbank != nil {
 		selector.ExpectedVersion = node.CurrentVersionID
 	}
-	evidence, err := a.Prepare(ctx, selector)
+	var evidence kataevidence.Evidence
+	if ref.Docbank != nil {
+		evidence, err = a.prepareOriginal(ctx, selector, hash)
+	} else {
+		evidence, err = a.prepareRendition(ctx, selector)
+	}
 	switch {
 	case err == nil && evidence.Excerpt == quote:
 		result.State = "available"

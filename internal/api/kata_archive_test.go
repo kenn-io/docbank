@@ -101,6 +101,7 @@ func TestKataOriginalPreparationFailures(t *testing.T) {
 	}{
 		{name: "too_large", mimeType: "text/plain", content: []byte(strings.Repeat("x", kataOriginalMaxBytes+1)), end: 1, detail: "document exceeds"},
 		{name: "unsupported_media", mimeType: "application/pdf", content: []byte("synthetic PDF"), end: 1, detail: "retained text rendition"},
+		{name: "octet_stream_text", mimeType: "application/octet-stream", content: []byte("hello"), end: 5, detail: "retained text rendition"},
 		{name: "invalid_utf8", mimeType: "text/plain", content: []byte{0xff}, end: 1, detail: "not UTF-8 text"},
 		{name: "end_beyond_text", mimeType: "text/plain", content: []byte("é🙂hello日"), start: 1, end: 9, quote: "🙂he", detail: "end_rune"},
 		{name: "quote_mismatch", mimeType: "text/plain", content: []byte("hello"), end: 5, quote: "other", detail: "quote does not match the selected range"},

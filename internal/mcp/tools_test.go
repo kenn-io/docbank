@@ -103,7 +103,7 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 }
 
 func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
-	server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: true, AllowPackageWrites: true})
+	server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: true, AllowPackageWrites: true, AllowKataWrites: true})
 	listed := decodeResult(t, exchangeRaw(t, server, requestFor("tools/list", map[string]any{})))
 	assert.EqualValues(t, toolCatalogTTLMs, listed["ttlMs"])
 	assert.Equal(t, "public", listed["cacheScope"])
@@ -111,7 +111,7 @@ func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
 	assert.Empty(t, listed["nextCursor"])
 	wireTools := listedToolsByName(t, listed)
 	registered := catalogMap(toolCatalog(ServerOptions{
-		AllowProcessing: true, AllowPackageWrites: true,
+		AllowProcessing: true, AllowPackageWrites: true, AllowKataWrites: true,
 	}))
 	require.Len(t, wireTools, len(registered))
 

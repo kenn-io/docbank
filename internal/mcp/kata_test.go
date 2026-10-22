@@ -151,6 +151,25 @@ func TestKataContextSchemaBoundsOffset(t *testing.T) {
 	assertSchemaRejects(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset + 1})
 }
 
+func TestKataCiteSchemaSeparatesCreateAndAppend(t *testing.T) {
+	tools := catalogMap(toolCatalog(ServerOptions{AllowKataWrites: true}))
+	input := tools["cite_kata_evidence"].InputSchema
+	create := kataCiteArguments()
+	assertSchemaAccepts(t, input, create)
+	appendArgs := map[string]any{"selector": create["selector"], "issue": "docbank#abcd"}
+	assertSchemaAccepts(t, input, appendArgs)
+	for _, field := range []string{"title", "brief", "idempotency_key"} {
+		appendArgs[field] = create[field]
+		assertSchemaRejects(t, input, appendArgs)
+		delete(appendArgs, field)
+	}
+	for _, field := range []string{"title", "idempotency_key"} {
+		incomplete := kataCiteArguments()
+		delete(incomplete, field)
+		assertSchemaRejects(t, input, incomplete)
+	}
+}
+
 func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 	future := kataReferenceFixture()
 	future.Version = 2

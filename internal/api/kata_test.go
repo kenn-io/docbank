@@ -163,11 +163,13 @@ func TestKataHTTPContextIdenticalRewriteAvailable(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(metadata, &saved))
 	require.Len(t, saved.Entries, 1)
-	hash, size, err := s.Blobs.Write(strings.NewReader("hello"))
-	require.NoError(t, err)
-	_, version, err := s.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
-	require.NoError(t, err)
-	require.NotEqual(t, node.CurrentVersionID, version.ID)
+	rewrite, rewriteBody := sendContentReplacement(t, ts.URL, ts.Client(), node.ID, node.Revision, []byte("hello"), node.BlobHash, 5, "")
+	require.Equal(t, http.StatusOK, rewrite.StatusCode, string(rewriteBody))
+	var receipt api.ContentReplacementReceipt
+	require.NoError(t, json.Unmarshal(rewriteBody, &receipt))
+	require.Equal(t, "application/octet-stream", receipt.Node.MimeType)
+	require.Equal(t, node.BlobHash, receipt.Node.BlobHash)
+	require.NotEqual(t, node.CurrentVersionID, receipt.Version.ID)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/kata/context", nil, kataevidence.ContextRequest{Issue: "docbank#" + issue().Issue.ShortID})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page kataevidence.Context
