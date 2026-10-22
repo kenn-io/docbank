@@ -54,7 +54,6 @@ const (
 	RenditionFailureConsent             RenditionFailureCode = "consent"
 	RenditionFailureStaleAuthority      RenditionFailureCode = "stale_authority"
 	RenditionFailurePDFPasswordRequired RenditionFailureCode = "pdf_password_required"
-	RenditionFailurePDFPasswordsFile    RenditionFailureCode = "pdf_password_file_unreadable"
 )
 
 var (
@@ -296,7 +295,7 @@ func (s *Store) EnqueueRenditionJob(
 			authorization_revocation_fence=NULL,failure_code=NULL,updated_at=?
 			WHERE job_id=? AND state='failed'
 			  AND phase IN ('queued','build_staged','generation_staged')
-			  AND failure_code IN ('consent','stale_authority','pdf_password_required','pdf_password_file_unreadable')`, now, now, jobID); err != nil {
+			  AND failure_code IN ('consent','stale_authority','pdf_password_required')`, now, now, jobID); err != nil {
 			return fmt.Errorf("requeueing safe rendition authority failure: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
@@ -1146,7 +1145,7 @@ func (s *Store) MarkRenditionJobFailed(
 	ctx context.Context, claim RenditionJobClaim, code RenditionFailureCode, at time.Time,
 ) error {
 	if code != RenditionFailureTerminal && code != RenditionFailureConsent &&
-		code != RenditionFailureStaleAuthority && code != RenditionFailurePDFPasswordRequired && code != RenditionFailurePDFPasswordsFile {
+		code != RenditionFailureStaleAuthority && code != RenditionFailurePDFPasswordRequired {
 		return errors.New("rendition job failure class is not terminal")
 	}
 	return s.finishRenditionJobClaim(ctx, claim, at, RenditionJobFailed, code)
@@ -1843,7 +1842,7 @@ func validRenditionJobPhase(value RenditionJobPhase) bool {
 func validRenditionFailureCode(value RenditionFailureCode) bool {
 	switch value {
 	case RenditionFailureTransient, RenditionFailureTerminal, RenditionFailureAmbiguous,
-		RenditionFailureConsent, RenditionFailureStaleAuthority, RenditionFailurePDFPasswordRequired, RenditionFailurePDFPasswordsFile:
+		RenditionFailureConsent, RenditionFailureStaleAuthority, RenditionFailurePDFPasswordRequired:
 		return true
 	default:
 		return false

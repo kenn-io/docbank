@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
@@ -153,7 +152,7 @@ type capabilityRecordIdentity CapabilityRecord
 
 // InspectCapability reads one bounded source, verifies its declared identity, and
 // returns a checksum-sealed finite capability decision.
-func InspectCapability(ctx context.Context, reader io.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
 	if reader == nil {
 		return CapabilityRecord{}, errors.New("media: inspection source is required")
 	}
@@ -193,10 +192,7 @@ func InspectCapability(ctx context.Context, reader io.Reader, policy InspectionP
 	case strings.HasPrefix(baseType, "image/") || strings.HasPrefix(baseType, "video/"):
 		record = inspectVisualCapability(data, baseType, policy)
 	case baseType == "application/pdf" || ext == ".pdf":
-		record = inspectPDF(ctx, data, &policy)
-		if err := ctx.Err(); err != nil {
-			return CapabilityRecord{}, err
-		}
+		record = inspectPDF(data, &policy)
 	case strings.HasPrefix(baseType, "audio/"):
 		record = CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnboundedFamily,
 			MediaFamily: "audio", MediaType: baseType, Format: strings.TrimPrefix(ext, ".")}
@@ -1302,26 +1298,25 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 	return record
 }
 
-func inspectPDF(ctx context.Context, data []byte, policy *InspectionPolicy) CapabilityRecord {
+func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaFamily: "pdf", MediaType: "application/pdf", Format: "pdf"}
 	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{
 		MaxExpandedBytes: policy.MaxExpandedBytes,
 		MaxEntryBytes:    policy.MaxEntryBytes,
 		MaxEntries:       policy.MaxEntries,
 	})
-	if errors.Is(err, formatdetect.ErrPDFEncrypted) && policy.UnlockPDF {
+	if errors.Is(err, formatdetect.ErrPDFEncrypted) && policy.UnlockPDF && (policy.pdfPassword != nil || len(policy.PDFPasswords) > 0) {
 		var unlocked []byte
 		var password string
 		var unlockErr error
 		if policy.pdfPassword != nil {
 			password = *policy.pdfPassword
-			unlocked, unlockErr = formatdetect.DecryptPDF(ctx, data, password, policy.MaxExpandedBytes)
+			unlocked, unlockErr = formatdetect.DecryptPDF(data, password, policy.MaxExpandedBytes)
 		} else {
-			unlocked, password, unlockErr = formatdetect.UnlockPDF(ctx, data, policy.PDFPasswords, policy.MaxExpandedBytes)
+			unlocked, password, unlockErr = formatdetect.UnlockPDF(data, policy.PDFPasswords, policy.MaxExpandedBytes)
 		}
 		err = unlockErr
 		if err == nil {
-			policy.PDFPasswords = nil
 			policy.pdfPassword = new(password)
 			measurements, err = formatdetect.InspectPDF(unlocked, formatdetect.PDFLimits{
 				MaxExpandedBytes: policy.MaxExpandedBytes, MaxEntryBytes: policy.MaxEntryBytes, MaxEntries: policy.MaxEntries,
@@ -1329,6 +1324,7 @@ func inspectPDF(ctx context.Context, data []byte, policy *InspectionPolicy) Capa
 			clear(unlocked)
 		}
 	}
+	policy.PDFPasswords = nil
 	if err != nil {
 		switch {
 		case errors.Is(err, formatdetect.ErrPDFEncrypted):

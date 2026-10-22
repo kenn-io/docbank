@@ -158,15 +158,15 @@ and the pinned model before upload.
 
 ## Password-protected PDFs
 
-Docling and Mistral processing can open encrypted PDFs using `[media].pdf_passwords_file` from [configuration](../configuration.md). Put one password per line in that owner-only file. LF and CRLF line endings work; blank lines are ignored, and spaces belong to the password. The file may contain up to 16 KiB.
+Docling and Mistral processing can open encrypted PDFs using `[media].pdf_passwords_file` from [configuration](../configuration.md). Put one password per line in that owner-only file. LF and CRLF line endings work; blank lines are ignored, and spaces belong to the password. The file must be UTF-8 without a byte-order mark and may contain up to 16 KiB and 128 passwords.
 
-Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. A file that no listed password opens, or a PDF that needs a password with no password file configured, creates a job that ends `failed` with `pdf_password_required`. Read it with `docbank processing status <job-id>`. Browser Run also creates this failed job.
+Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. A file that no listed password opens, or a PDF that needs a password with no password file configured, creates a job that ends `failed` with `pdf_password_required`. Read it with `docbank processing status <job-id>`.
 
-Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. An unreadable file produces a startup warning and `pdf_password_file_unreadable` in job status for PDFs that need a password. Fix the file path or owner-only permissions, then build again. Plain PDFs and audio continue processing.
+Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. If the file can't be read, planning or building a locked PDF reports the error, and queued jobs retry until the file is fixed. Plain PDFs and audio keep processing.
 
 ### Design choices
 
-The pinned pdfcpu version cannot open AES-256 PDFs whose passwords contain spaces. These files report `pdf_password_required` even with the correct password until the pdfcpu upgrade. Older ciphers support spaces. Docbank always tries an empty password first, so owner-only encryption opens even without a password file.
+The pinned pdfcpu version cannot open AES-256 PDFs whose passwords contain spaces. These files report `pdf_password_required` even with the correct password until the pdfcpu upgrade. Older ciphers support spaces. With a password file configured, Docbank also tries an empty password first, so owner-only PDFs open. Without one, every encrypted PDF reports `pdf_password_required`.
 
 ## Find similar documents
 

@@ -1366,7 +1366,7 @@ func TestDoclingUnlocksPDF(t *testing.T) {
 	require.NoError(t, err)
 	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
 
-	inspection, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
+	inspection, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
 		Filename: fixture.metadata.Filename, DeclaredMediaType: "application/pdf",
 		ExpectedBytes: int64(len(source)), ExpectedSHA256: fixture.metadata.SHA256,
 		DescriptorFingerprint: fixture.authorization.DescriptorFingerprint,

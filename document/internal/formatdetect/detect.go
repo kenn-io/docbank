@@ -1900,12 +1900,9 @@ func readPrefix(reader io.ReaderAt, size, limit int64) ([]byte, error) {
 }
 
 // UnlockPDF decrypts a bounded copy and returns the password that opened it.
-func UnlockPDF(ctx context.Context, data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
+func UnlockPDF(data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
 	for _, password := range append([]string{""}, passwords...) {
-		if err := ctx.Err(); err != nil {
-			return nil, "", err
-		}
-		output, err := DecryptPDF(ctx, data, password, maxBytes)
+		output, err := DecryptPDF(data, password, maxBytes)
 		if err == nil {
 			return output, password, nil
 		}
@@ -1923,10 +1920,7 @@ func UnlockPDF(ctx context.Context, data []byte, passwords []string, maxBytes in
 }
 
 // DecryptPDF decrypts once with the password selected by local inspection.
-func DecryptPDF(ctx context.Context, data []byte, password string, maxBytes int64) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func DecryptPDF(data []byte, password string, maxBytes int64) ([]byte, error) {
 	configuration := pdfConfiguration(len(data), PDFLimits{MaxExpandedBytes: maxBytes, MaxEntryBytes: maxBytes})
 	configuration.UserPW, configuration.OwnerPW = password, password
 	configuration.Eol = types.EolLF

@@ -166,13 +166,7 @@
   }
 
   async function execute(): Promise<void> {
-    if (
-      !plan ||
-      (plan.rendition_ineligible_reason &&
-        plan.rendition_ineligible_reason !== "pdf_password_required") ||
-      !node.current_version_id
-    )
-      return;
+    if (!plan || plan.rendition_ineligible_reason || !node.current_version_id) return;
     cancelProcessing();
     const active = new AbortController();
     processingController = active;
@@ -495,11 +489,7 @@
           Consent covers this processing profile and operator scope until revoked or expired. The
           exact plan fingerprint is still reviewed before each run.
         </p>
-        {#if plan.rendition_ineligible_reason === "pdf_password_required"}
-          <p class="retention-warning">
-            Add this PDF's password to the configured password file, then run processing again.
-          </p>
-        {:else if plan.rendition_ineligible_reason}
+        {#if plan.rendition_ineligible_reason}
           <p class="retention-warning">
             This profile can't process this file: {plan.rendition_ineligible_reason.replaceAll(
               "_",
@@ -510,10 +500,7 @@
         <Button
           size="sm"
           tone="info"
-          disabled={running ||
-            loading ||
-            (!!plan.rendition_ineligible_reason &&
-              plan.rendition_ineligible_reason !== "pdf_password_required")}
+          disabled={running || loading || !!plan.rendition_ineligible_reason}
           onclick={() => void execute()}
         >
           {#if running}<Spinner size={14} /> Running…{:else}<ActivityIcon

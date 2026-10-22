@@ -1339,7 +1339,7 @@ func geminiCapability(t *testing.T, profile Profile, data []byte, filename, medi
 	if strings.HasPrefix(mediaType, "video/") {
 		maxDuration = 120_000
 	}
-	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), media.InspectionPolicy{
+	record, err := media.InspectCapability(bytes.NewReader(data), media.InspectionPolicy{
 		Filename: filename, DeclaredMediaType: mediaType, ExpectedBytes: int64(len(data)),
 		ExpectedSHA256: hex.EncodeToString(digest[:]), DescriptorFingerprint: profile.Descriptor.Fingerprint,
 		ProfileFingerprint: profile.CapabilityProfileFingerprint, DisclosureFingerprint: profile.DisclosureFingerprint,

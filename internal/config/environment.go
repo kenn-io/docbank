@@ -126,6 +126,9 @@ func ReadPDFPasswords(path string) ([]string, error) {
 		line = strings.TrimSuffix(line, "\r")
 		if line != "" {
 			passwords = append(passwords, line)
+			if len(passwords) > 128 {
+				return nil, errors.New("PDF passwords file lists more than 128 passwords")
+			}
 		}
 	}
 	return passwords, nil

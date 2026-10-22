@@ -473,7 +473,7 @@ func (service *Service) stageAndRetainMedia(
 	if owned {
 		defer func() { _ = staged.Close() }()
 	}
-	record, err := media.InspectCapability(ctx, staged, mediaInspectionPolicy(request, service.mediaMaxBytes))
+	record, err := media.InspectCapability(staged, mediaInspectionPolicy(request, service.mediaMaxBytes))
 	if err != nil {
 		return store.MediaPublicationReceipt{}, err
 	}

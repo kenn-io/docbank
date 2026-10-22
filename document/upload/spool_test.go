@@ -335,7 +335,7 @@ func TestRecoverStaleRejectsSymlinkRoot(t *testing.T) {
 func TestAuthorizeRejectsIneligibleRecordBeforeReadingSource(t *testing.T) {
 	data := []byte("%PDF-1.7\n")
 	policy := inspectionPolicy(data, "report.pdf", "application/pdf")
-	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.False(t, record.Eligible)
 	reader := &countingReadCloser{Reader: bytes.NewReader(data)}
@@ -348,7 +348,7 @@ func TestAuthorizeRejectsIneligibleRecordBeforeReadingSource(t *testing.T) {
 
 func inspectCapability(t *testing.T, data []byte) media.CapabilityRecord {
 	t.Helper()
-	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "notes.txt", "text/plain"))
+	record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "notes.txt", "text/plain"))
 	require.NoError(t, err)
 	require.True(t, record.Eligible)
 	return record

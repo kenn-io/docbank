@@ -152,7 +152,7 @@ func (client *RenditionClient) Render(
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
-	source, uploadSHA256, err := providerutil.UnlockPDF(operation.Context(), renditionProvider, upload, source, client.policy.values.MaxDocumentBytes)
+	source, uploadSHA256, err := providerutil.DecryptUpload(renditionProvider, upload, source, client.policy.values.MaxDocumentBytes)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -489,6 +489,3 @@ func renditionCandidate(format document.RenditionFormatCapability) (CandidateFor
 	}
 	return CandidateFormat{}, false
 }
-
-// SupportsPDFPasswords reports support for locally decrypted PDF input.
-func (*RenditionClient) SupportsPDFPasswords() {}

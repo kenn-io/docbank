@@ -20,7 +20,7 @@ func TestInspectM4A(t *testing.T) {
 					copy(data[8:12], brand)
 					policy := inspectionPolicy(data, "call.M4A", mime)
 					policy.MaxDurationMS = 1000
-					record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+					record, err := media.InspectCapability(bytes.NewReader(data), policy)
 					require.NoError(t, err)
 					require.True(t, record.Eligible, record.Reason)
 					require.Equal(t, "audio", record.MediaFamily)
@@ -29,7 +29,7 @@ func TestInspectM4A(t *testing.T) {
 					require.Equal(t, int64(1000), record.Measurements.DurationMS)
 					require.NoError(t, media.ValidateCapabilityRecord(record))
 					policy.MaxDurationMS = 999
-					record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+					record, err = media.InspectCapability(bytes.NewReader(data), policy)
 					require.NoError(t, err)
 					require.False(t, record.Eligible)
 					require.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -65,7 +65,7 @@ func TestInspectM4ARejectsUnsafeContainers(t *testing.T) {
 			data := mutate(mediatest.M4A("mp4a"))
 			policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 			policy.MaxDurationMS = 1000
-			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.False(t, record.Eligible)
 			require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -76,14 +76,14 @@ func TestInspectM4ARejectsUnsafeContainers(t *testing.T) {
 	policy.MaxDurationMS = 300000
 	policy.MaxPixels = 1 << 20
 	policy.MaxFrames = 18000
-	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	require.Equal(t, "video", record.MediaFamily)
 	require.Equal(t, "mp4", record.Format)
 	policy = inspectionPolicy(data, "disguised.m4a", "audio/mp4")
 	policy.MaxDurationMS = 20000
-	record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	record, err = media.InspectCapability(bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.False(t, record.Eligible)
 }
@@ -95,7 +95,7 @@ func TestInspectM4AIdentityAndMetadataBound(t *testing.T) {
 	} {
 		policy := inspectionPolicy(data, labels[0], labels[1])
 		policy.MaxDurationMS = 1000
-		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		canonical := labels == [2]string{"call.m4a", "audio/mp4"}
 		require.Equal(t, canonical, record.Eligible, labels)
@@ -106,13 +106,13 @@ func TestInspectM4AIdentityAndMetadataBound(t *testing.T) {
 	policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 	policy.MaxDurationMS = 1000
 	policy.MaxEntryBytes = 32
-	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.False(t, record.Eligible)
 	require.Equal(t, media.CapabilityReasonEntryBytes, record.Reason)
 	policy.MaxEntryBytes = 1 << 20
 	policy.ExpectedSHA256 = strings.Repeat("a", 64)
-	_, err = media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	_, err = media.InspectCapability(bytes.NewReader(data), policy)
 	require.ErrorContains(t, err, "SHA-256")
 }
 
@@ -133,12 +133,12 @@ func TestInspectM4ALongestDuration(t *testing.T) {
 			}
 			policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 			policy.MaxDurationMS = 2000
-			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.True(t, record.Eligible, record.Reason)
 			require.Equal(t, int64(2000), record.Measurements.DurationMS)
 			policy.MaxDurationMS = 1999
-			record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			record, err = media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.False(t, record.Eligible)
 			require.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -162,7 +162,7 @@ func TestInspectM4AExtendedAndToEndBoxes(t *testing.T) {
 		}
 		policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 		policy.MaxDurationMS = 1000
-		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		require.True(t, record.Eligible, record.Reason)
 	}
@@ -173,7 +173,7 @@ func TestInspectM4AEncoderFixtures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			policy := inspectionPolicy(data, "silent.m4a", "audio/mp4")
 			policy.MaxDurationMS = 1000
-			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.True(t, record.Eligible, record.Reason)
 			require.Equal(t, "audio", record.MediaFamily)
@@ -190,7 +190,7 @@ func TestInspectM4ARejectsTruncatedAACConfiguration(t *testing.T) {
 			data := bytes.Replace(mediatest.M4A("mp4a"), []byte{0x11, 0x88}, config, 1)
 			policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 			policy.MaxDurationMS = 1000
-			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.False(t, record.Eligible)
 			require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -223,12 +223,12 @@ func TestInspectM4AMeasuresDecodedFrames(t *testing.T) {
 			}
 			policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 			policy.MaxDurationMS = test.want
-			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.True(t, record.Eligible, record.Reason)
 			require.Equal(t, test.want, record.Measurements.DurationMS)
 			policy.MaxDurationMS = test.want - 1
-			record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			record, err = media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.False(t, record.Eligible)
 			require.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -243,7 +243,7 @@ func TestInspectM4AReportsNestedEntryCount(t *testing.T) {
 	policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 	policy.MaxDurationMS = 1000
 	policy.MaxEntries = 4
-	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.False(t, record.Eligible)
 	require.Equal(t, media.CapabilityReasonEntryCount, record.Reason)
@@ -268,7 +268,7 @@ func TestInspectM4ABoundsChunkCount(t *testing.T) {
 		policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 		policy.MaxSourceBytes, policy.MaxExpandedBytes, policy.MaxEntryBytes = 8<<20, 8<<20, 8<<20
 		policy.MaxDurationMS = 1000
-		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		require.False(t, record.Eligible)
 		require.Equal(t, want, record.Reason, "chunks=%d", chunks)

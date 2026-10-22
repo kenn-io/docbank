@@ -262,7 +262,7 @@ func Authorize(
 	if _, err := reader.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("upload: rewind spool for capability validation: %w", err)
 	}
-	reinspected, err := media.InspectCapability(ctx, reader, policy)
+	reinspected, err := media.InspectCapability(reader, policy)
 	if err != nil {
 		return nil, fmt.Errorf("upload: inspect sealed spool: %w", err)
 	}

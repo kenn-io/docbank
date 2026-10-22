@@ -103,7 +103,7 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		}
 		work.SourceFilename = syntheticFilename(work.SourceFilename, work.SourceMediaType, false)
 		policy := directEmbeddingInspectionPolicy(work)
-		capability, err := media.InspectCapability(ctx, reader, policy)
+		capability, err := media.InspectCapability(reader, policy)
 		if err != nil {
 			_ = reader.Close()
 			return EmbeddingExecution{}, err

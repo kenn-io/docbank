@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"encoding/json/v2"
+	"errors"
 	"testing"
 	"time"
 
@@ -18,11 +19,12 @@ type passwordCountingProvider struct {
 
 	calls     int
 	supported bool
+	err       error
 }
 
 func (provider *passwordCountingProvider) PDFPasswords() ([]string, bool, error) {
 	provider.calls++
-	return nil, provider.supported, nil
+	return nil, provider.supported, provider.err
 }
 
 func TestInspectionReadsPasswordsOnlyForEncryptedPDF(t *testing.T) {
@@ -31,22 +33,25 @@ func TestInspectionReadsPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	require.NoError(t, err)
 	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128)
 	require.NoError(t, err)
+	passwordErr := errors.New("password file read failed")
 	for _, tc := range []struct {
 		name, mime string
 		data       []byte
 		supported  bool
 		calls      int
 		reason     media.CapabilityReason
+		err        error
 	}{
-		{"plain.pdf", "application/pdf", mediatest.PDF(), true, 0, media.CapabilityReasonEligible},
-		{"audio.wav", "audio/wav", mediatest.WAV(), true, 0, media.CapabilityReasonEligible},
-		{"locked.pdf", "application/pdf", encrypted, false, 1, media.CapabilityReasonEncryptedContainer},
-		{"supported.pdf", "application/pdf", encrypted, true, 1, media.CapabilityReasonPDFPasswordRequired},
-		{"owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonEligible},
+		{"plain.pdf", "application/pdf", mediatest.PDF(), true, 0, media.CapabilityReasonEligible, nil},
+		{"audio.wav", "audio/wav", mediatest.WAV(), true, 0, media.CapabilityReasonEligible, nil},
+		{"locked.pdf", "application/pdf", encrypted, false, 1, media.CapabilityReasonEncryptedContainer, nil},
+		{"supported.pdf", "application/pdf", encrypted, true, 1, media.CapabilityReasonPDFPasswordRequired, nil},
+		{"owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonPDFPasswordRequired, nil},
+		{"unreadable.pdf", "application/pdf", encrypted, true, 1, "", passwordErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
-			provider := &passwordCountingProvider{RenditionProvider: newWorkerProvider(t), supported: tc.supported}
+			provider := &passwordCountingProvider{RenditionProvider: newWorkerProvider(t), supported: tc.supported, err: tc.err}
 			stored := workerProcessingProfile(t, provider.Descriptor())
 			var portable document.ProcessingProfileV1
 			require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
@@ -58,6 +63,11 @@ func TestInspectionReadsPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
 			require.NoError(t, err)
 			capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
+				require.Equal(t, tc.calls, provider.calls)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, tc.reason, capability.Reason)
 			require.Equal(t, tc.calls, provider.calls)

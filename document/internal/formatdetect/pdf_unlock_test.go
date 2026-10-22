@@ -2,7 +2,6 @@ package formatdetect_test
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -19,7 +18,7 @@ func TestUnlockPDF(t *testing.T) {
 	for _, user := range []string{"open", ""} {
 		source, err := mediatest.EncryptedPDF(user, "owner", 256)
 		require.NoError(t, err)
-		plain, _, err := formatdetect.UnlockPDF(t.Context(), source, []string{"wrong space", "open"}, 1<<20)
+		plain, _, err := formatdetect.UnlockPDF(source, []string{"wrong space", "open"}, 1<<20)
 		require.NoError(t, err)
 		pages, err := formatdetect.CountPDFPages(plain)
 		require.NoError(t, err)
@@ -29,15 +28,11 @@ func TestUnlockPDF(t *testing.T) {
 	}
 	source, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)
-	_, _, err = formatdetect.UnlockPDF(t.Context(), source, []string{"wrong"}, 1<<20)
+	_, _, err = formatdetect.UnlockPDF(source, []string{"wrong"}, 1<<20)
 	require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
-	_, _, err = formatdetect.UnlockPDF(t.Context(), source, []string{"open"}, 1)
+	_, _, err = formatdetect.UnlockPDF(source, []string{"open"}, 1)
 	require.ErrorIs(t, err, formatdetect.ErrPDFExpandedBytes)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, _, err = formatdetect.UnlockPDF(ctx, source, []string{"open"}, 1<<20)
-	require.ErrorIs(t, err, context.Canceled)
-	_, _, err = formatdetect.UnlockPDF(t.Context(), []byte("broken PDF"), []string{"wrong", "open"}, 1<<20)
+	_, _, err = formatdetect.UnlockPDF([]byte("broken PDF"), []string{"wrong", "open"}, 1<<20)
 	require.Error(t, err)
 	require.NotErrorIs(t, err, formatdetect.ErrPDFEncrypted)
 }
@@ -61,7 +56,7 @@ func TestUnlockPDFBoundsExpandedObjectOutput(t *testing.T) {
 	require.NoError(t, api.Optimize(bytes.NewReader(plain), &packed, model.NewDefaultConfiguration()))
 	require.NoError(t, api.Encrypt(bytes.NewReader(packed.Bytes()), &encrypted, model.NewAESConfiguration("open", "owner", 128)))
 	require.Less(t, encrypted.Len(), 1<<20)
-	unlocked, _, err := formatdetect.UnlockPDF(t.Context(), encrypted.Bytes(), []string{"open"}, 1<<20)
+	unlocked, _, err := formatdetect.UnlockPDF(encrypted.Bytes(), []string{"open"}, 1<<20)
 	require.ErrorIs(t, err, formatdetect.ErrPDFExpandedBytes)
 	require.Nil(t, unlocked)
 }

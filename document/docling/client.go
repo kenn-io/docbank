@@ -182,7 +182,7 @@ func (client *Client) startRender(
 		return nil, err
 	}
 	original := source
-	source, uploadSHA256, err := providerutil.UnlockPDF(operation.Context(), provider, upload, source, client.maxDocumentBytes)
+	source, uploadSHA256, err := providerutil.DecryptUpload(provider, upload, source, client.maxDocumentBytes)
 	if uploadSHA256 != "" || err != nil {
 		clear(original)
 	}
@@ -698,6 +698,3 @@ func partialSuccessWarnings(partial bool) []string {
 	}
 	return []string{"partial_success"}
 }
-
-// SupportsPDFPasswords reports support for locally decrypted PDF input.
-func (*Client) SupportsPDFPasswords() {}
