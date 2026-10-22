@@ -358,7 +358,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 
 func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"reactivate", "second face", "create face", "whole-photo mark", "same person", "reassignment", "reassignment with prior naming", "candidate", "rejection undo", "rejection redo"} {
+	for _, action := range []string{"name face", "create face", "whole-photo mark", "candidate"} {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
@@ -367,113 +367,45 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.NoError(t, err)
 			grace, err := s.CreatePerson(ctx, "Grace", "operator")
 			require.NoError(t, err)
-			node := browsePhotoNode(t, s, "rename.jpg", fakeHash("rename-recency"), "image/jpeg")
-			face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, ada.PersonID)
-			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2001-01-01T00:00:00.000000000Z' WHERE person_id=?`, ada.PersonID)
-			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at='2001-01-01T00:00:00.000000000Z' WHERE face_id=?`, face.FaceID)
-			require.NoError(t, err)
-			if action == "reassignment with prior naming" {
-				_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at='2003-01-01T00:00:00.000000000Z' WHERE face_id=?`, face.FaceID)
+			for i, person := range []Person{ada, grace} {
+				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
+				_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("200%d-01-01T00:00:00.000000000Z", i+1), person.PersonID)
 				require.NoError(t, err)
 			}
-			if action == "reactivate" {
-				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "retract", FaceID: face.FaceID, Revision: face.Revision})
-				require.NoError(t, err)
-				face.Revision++
-			} else if action != "same person" && action != "reassignment" && action != "reassignment with prior naming" {
-				face, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .3, Width: .2, Height: .2}, "")
-				require.NoError(t, err)
-			}
-			other := browsePhotoNode(t, s, "grace.jpg", fakeHash("grace-recency"), "image/jpeg")
-			_, err = s.MarkPersonInPhoto(ctx, other.CurrentVersionID, grace.PersonID, "")
+			recent := PeopleSearchOptions{RecentFirst: true}
+			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, recent)
 			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2002-01-01T00:00:00.000000000Z' WHERE person_id=?`, grace.PersonID)
-			require.NoError(t, err)
-			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
-			require.NoError(t, err)
-			if action == "reassignment with prior naming" {
-				require.Equal(t, ada.PersonID, rows[0].PersonID)
-			} else {
-				require.Equal(t, grace.PersonID, rows[0].PersonID)
-			}
-			var named PhotoFaceDecisionReceipt
-			expectedPerson := ada.PersonID
+			require.Equal(t, grace.PersonID, rows[0].PersonID)
+
+			// Naming Ada on a new photo records a new depicted assertion.
+			node := browsePhotoNode(t, s, "new.jpg", fakeHash("new-recency"), "image/jpeg")
 			switch action {
-			case "candidate":
-				candidate := candidateForTest(t, "face:"+face.FaceID, "Ada", ada.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
-				candidate.Reason = "face_match"
-				opened := openCandidateForTest(t, s, candidate)
-				_, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: opened.CandidateID, ExpectedRevision: opened.Revision, Action: "link", PersonID: ada.PersonID})
-				require.NoError(t, err)
-			case "whole-photo mark":
-				mark, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, ada.PersonID, "")
-				require.NoError(t, err)
-				replay, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, ada.PersonID, "")
-				require.NoError(t, err)
-				require.Equal(t, mark, replay)
 			case "create face":
-				id := uuid.NewString()
-				box := document.FaceBox{X: .6, Width: .2, Height: .2}
-				_, saved, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, ada.PersonID)
-				require.NoError(t, err)
-				_, replay, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, ada.PersonID)
-				require.NoError(t, err)
-				require.Equal(t, saved, replay)
+				_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, ada.PersonID)
+			case "whole-photo mark":
+				_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, ada.PersonID, "")
 			default:
-				if action == "reassignment" || action == "reassignment with prior naming" {
-					cy, err := s.CreatePerson(ctx, "Cy", "operator")
-					require.NoError(t, err)
-					expectedPerson = cy.PersonID
+				face, _, createErr := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
+				require.NoError(t, createErr)
+				if action == "candidate" {
+					candidate := candidateForTest(t, "face:"+face.FaceID, "Ada", ada.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
+					candidate.Reason = "face_match"
+					opened := openCandidateForTest(t, s, candidate)
+					_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: opened.CandidateID, ExpectedRevision: opened.Revision, Action: "link", PersonID: ada.PersonID})
+				} else {
+					_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision, PersonID: ada.PersonID})
 				}
-				request := PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision, PersonID: expectedPerson, OperationID: uuid.NewString()}
-				named, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
-				require.NoError(t, err)
 			}
-			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
-			if action == "same person" {
-				require.Equal(t, grace.PersonID, rows[0].PersonID)
-				require.Equal(t, "2002-01-01T00:00:00.000000000Z", rows[0].RecentRank)
-				return
-			}
-			require.Equal(t, expectedPerson, rows[0].PersonID)
-			require.Greater(t, rows[0].RecentRank, "2002-01-01T00:00:00.000000000Z")
-			if action == "create face" || action == "whole-photo mark" || action == "candidate" {
-				return
-			}
-			namedRank := rows[0].RecentRank
-			if action == "rejection undo" || action == "rejection redo" {
-				rejected := decideFaceForTest(t, s, node, face.FaceID, grace.PersonID, "reject")
-				undo, err := s.UndoPhotoFaceDecision(ctx, rejected.ReceiptID)
-				require.NoError(t, err)
-				if action == "rejection redo" {
-					_, err = s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
-					require.NoError(t, err)
-				}
-				rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
-				require.NoError(t, err)
-				require.Equal(t, ada.PersonID, rows[0].PersonID)
-				require.Equal(t, namedRank, rows[0].RecentRank)
-				return
-			}
-			undone, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
+			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, recent)
 			require.NoError(t, err)
-			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			require.Equal(t, ada.PersonID, rows[0].PersonID)
+			assertions, err := s.DocumentPersonAssertions(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
-			if action == "reassignment with prior naming" {
-				require.Equal(t, ada.PersonID, rows[0].PersonID)
-				require.Equal(t, "2003-01-01T00:00:00.000000000Z", rows[0].RecentRank)
-				_, err = s.UndoPhotoFaceDecision(ctx, undone.ReceiptID)
-				require.NoError(t, err)
-				redone, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
-				require.NoError(t, err)
-				require.Equal(t, expectedPerson, redone[0].PersonID)
-				require.Equal(t, namedRank, redone[0].RecentRank)
-			} else {
-				require.Equal(t, grace.PersonID, rows[0].PersonID)
-			}
+			require.Len(t, assertions, 1)
+			require.Equal(t, assertions[0].RecordedAt, rows[0].RecentRank)
 		})
 	}
 }

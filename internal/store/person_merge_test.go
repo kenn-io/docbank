@@ -85,11 +85,8 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 				require.NoError(t, err)
 			}
 			var face PhotoFace
-			const namedAt = "2026-03-15T00:00:00.000000000Z"
 			if evidence == "face" {
 				face, _, err = s.CreatePhotoFace(ctx, duplicate.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, absorbed.PersonID)
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at=? WHERE face_id=?`, namedAt, face.FaceID)
 				require.NoError(t, err)
 			}
 			_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
@@ -102,14 +99,13 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 			after, err := s.PeopleByDisplayName(ctx, "Survivor", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Len(t, after, 1)
+			require.Equal(t, "2026-01-01T00:00:00.000000000Z", after[0].RecentRank)
 			if evidence == "face" {
-				var mergedNamedAt, mergedAssertionID string
-				require.NoError(t, s.db.QueryRowContext(ctx, `SELECT named_at,assertion_id FROM photo_faces WHERE face_id=?`, face.FaceID).Scan(&mergedNamedAt, &mergedAssertionID))
-				require.Equal(t, namedAt, mergedNamedAt)
-				require.Equal(t, keptAssertion.AssertionID, mergedAssertionID)
-				require.Equal(t, namedAt, after[0].RecentRank)
-			} else {
-				require.Equal(t, "2026-01-01T00:00:00.000000000Z", after[0].RecentRank)
+				faces, _, _, err := s.PhotoFacePersonNames(ctx, duplicate.CurrentVersionID)
+				require.NoError(t, err)
+				require.Len(t, faces, 1)
+				require.Equal(t, face.FaceID, faces[0].FaceID)
+				require.Equal(t, keptAssertion.AssertionID, faces[0].AssertionID)
 			}
 		})
 	}

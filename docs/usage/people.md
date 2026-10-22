@@ -33,7 +33,7 @@ A browser merge is refused while Hidden is locked if either person has Hidden ph
 
 Locked Hidden, excluded, or trashed conflicts return notices without face IDs. Unlock, reinclude, or restore the photo before reviewing its rejection. Locking Hidden clears the selection and dialog.
 
-Name pickers in the inspector list people with the newest active, visible face or photo naming first, then by name. Namesakes stay together. Clearing a name and giving it again records a new naming time. Naming an already linked face keeps its time. A merge preserves assertion times; the survivor ranks by the newest active assertion it retains.
+Name pickers in the inspector list people by their newest active, visible photo assertion, then by name. Namesakes stay together and share their group's newest assertion time. Naming a person on a new photo moves the group up. Adding another face or a whole-photo mark for someone already named on that photo keeps the assertion's time. A merge preserves retained and moved assertion times.
 
 ## List and search
 

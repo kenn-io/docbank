@@ -405,9 +405,6 @@ func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	require.NoError(t, err)
 	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
 	require.NoError(t, err)
-	const namedAt = "2026-01-02T03:04:05.000000000Z"
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at=? WHERE face_id=?`, namedAt, face.FaceID)
-	require.NoError(t, err)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	require.NoError(t, s.ValidateMetadata(ctx))
@@ -416,24 +413,17 @@ func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	faces, _, _, err := target.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoFace{face}, faces)
-	var restoredNamedAt string
-	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT named_at FROM photo_faces WHERE face_id=?`, face.FaceID).Scan(&restoredNamedAt))
-	require.Equal(t, namedAt, restoredNamedAt)
 	var roundtrip bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &roundtrip))
 	require.Equal(t, exported.String(), roundtrip.String())
-	for _, field := range []string{"content_version_id", "assertion_id", "named_at", "named_without_assertion"} {
+	for _, field := range []string{"content_version_id", "assertion_id"} {
 		t.Run(field, func(t *testing.T) {
 			lines := strings.Split(exported.String(), "\n")
 			for i, line := range lines {
 				if strings.Contains(line, `"type":"photo_face"`) {
 					var record map[string]any
 					require.NoError(t, json.Unmarshal([]byte(line), &record))
-					if field == "named_without_assertion" {
-						record["assertion_id"] = nil
-					} else {
-						record[field] = "11111111-1111-4111-8111-111111111111"
-					}
+					record[field] = "11111111-1111-4111-8111-111111111111"
 					raw, err := json.Marshal(record)
 					require.NoError(t, err)
 					lines[i] = string(raw)
