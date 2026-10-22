@@ -84,14 +84,14 @@ docbank kata cite id:12 --start 28 --end 45 --issue docbank#abcd
 ```
 
 Appends and context reads stay inside `default_project`. They preserve other metadata and
-existing citations. Docbank records a pending quotation before posting its
+existing citations. Docbank saves the pending quotation and its local save time together before posting its
 comment, so retrying the same pinned selection can finish an interrupted
 append. Each append delivers only the requested quotation; other pending quotes wait for their own retry.
 Pending quotes less than six days old replay the same comment request without
 reading the discussion. At six days, Docbank reads the issue's comments once and skips
 posting if a comment contains that evidence entry's marker. If the discussion exceeds the read
 limit, the stale pending quote stays pending and the operation returns a permanent error.
-Pending quotes with an unknown or future save time use the same replay request. Use an `id:` selector and `--expected-version` when an original-text
+Use an `id:` selector and `--expected-version` when an original-text
 append must be replayable after source deletion. Each issue supports at most 64 native Docbank evidence entries.
 
 Kata returns `401` for a rejected credential, `403` for denied permission, and
@@ -198,7 +198,7 @@ quoted words as Markdown blockquote lines. Each appended comment ends with
 `<!-- docbank-evidence:<entry id> -->` on its own line. This marker is invisible
 in rendered Markdown and distinguishes citations that quote identical words.
 Entries keep `quote` and `label`;
-`pending` records the Kata save time until the comment posts. IDs use SHA-256 over
+`pending.saved_at` records Docbank's save time until the comment posts. IDs use SHA-256 over
 length-prefixed fields in `docbank.kata.*.v1` domains.
 
 Docbank reads and writes only `docbank.evidence`. It does not read msgvault

@@ -23,7 +23,6 @@ func TestAppendPendingReconciliation(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		age       time.Duration
-		zero      bool
 		existing  bool
 		edited    bool
 		oversized bool
@@ -31,7 +30,7 @@ func TestAppendPendingReconciliation(t *testing.T) {
 		wantPosts int
 	}{
 		{name: "inside_window", age: 6*24*time.Hour - time.Second, existing: true, wantPosts: 1},
-		{name: "zero_save_time", age: 7 * 24 * time.Hour, zero: true, existing: true, wantPosts: 1},
+		{name: "inside_window_oversized_discussion", age: 6*24*time.Hour - time.Second, existing: true, oversized: true, wantPosts: 1},
 		{name: "future_save_time", age: -time.Hour, existing: true, wantPosts: 1},
 		{name: "stale_exact_comment", age: 6 * 24 * time.Hour, existing: true, wantReads: 1},
 		{name: "stale_edited_comment", age: 6 * 24 * time.Hour, existing: true, edited: true, wantReads: 1},
@@ -58,10 +57,7 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			client := kataclient.New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
 			issue, err = client.Create(t.Context(), "create", "Follow up", "", nil)
 			require.NoError(t, err)
-			savedAt := issue.UpdatedAt
-			if tc.zero {
-				savedAt = time.Time{}
-			}
+			savedAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 			ref := nativeReference()
 			entry, err := json.Marshal(Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{SavedAt: savedAt}})
 			require.NoError(t, err)
@@ -90,9 +86,9 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			before, err := api.ShowIssue(t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: project.Project.ID, Ref: issue.UID}})
 			require.NoError(t, err)
 			reads, posts = 0, 0
-			s := Service{Kata: client, Archive: &memoryArchive{prepareErr: ErrUnavailable}, Now: func() time.Time { return issue.UpdatedAt.Add(tc.age) }}
+			s := Service{Kata: client, Archive: &memoryArchive{prepareErr: ErrUnavailable}, Now: func() time.Time { return savedAt.Add(tc.age) }}
 			_, err = s.Cite(t.Context(), CiteRequest{Issue: issue.QualifiedRef, Selector: Selector{NodeID: 2, EndRune: 5, ExpectedVersion: ref.Docbank.ContentVersionID}})
-			if tc.oversized {
+			if tc.oversized && tc.wantReads > 0 {
 				require.ErrorIs(t, err, ErrUnsupported)
 				require.Contains(t, err.Error(), "stale pending quote can't be verified against the discussion")
 			} else {
@@ -109,7 +105,7 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			require.Len(t, after.Comments, wantComments)
 			saved, err := client.Get(t.Context(), issue.QualifiedRef)
 			require.NoError(t, err)
-			if tc.oversized {
+			if tc.oversized && tc.wantReads > 0 {
 				require.JSONEq(t, string(data), string(saved.Metadata[MetadataKey]))
 			} else {
 				require.NotContains(t, string(saved.Metadata[MetadataKey]), `"pending"`)
@@ -125,7 +121,7 @@ func TestAppendReplayRejectsMovedIssue(t *testing.T) {
 	require.NoError(t, err)
 	client := kataclient.New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
 	ref := nativeReference()
-	entry, err := json.Marshal(Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{}})
+	entry, err := json.Marshal(Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{SavedAt: time.Now()}})
 	require.NoError(t, err)
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
@@ -175,7 +171,7 @@ func TestDiscussionGrowthAndUnrelatedPurgeKeepFreshAppendReadable(t *testing.T) 
 	require.Equal(t, "notes.txt", page.Passages[0].Evidence.Label)
 	// Restore the pending marker inside the replay window. Even this large
 	// discussion must not prevent Kata from replaying the same comment request.
-	entry.Pending = &Pending{SavedAt: page.Issue.UpdatedAt}
+	entry.Pending = &Pending{SavedAt: time.Now()}
 	pending, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
 	require.NoError(t, err)
 	_, err = k.Patch(t.Context(), k.ref, MetadataKey, page.Issue.Metadata[MetadataKey], pending)

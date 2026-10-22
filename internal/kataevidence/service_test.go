@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -199,7 +200,7 @@ func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.
 	k := newTestKata(t, map[string]jsontext.Value{}, "")
 	k.commentFails = true
 	a := &memoryArchive{evidence: &evidence}
-	s := Service{Kata: k, Archive: a}
+	s := Service{Kata: k, Archive: a, Now: func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) }}
 	r := CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5, Citation: citation}}
 	_, err := s.Cite(t.Context(), r)
 	require.ErrorContains(t, err, "status 503")
@@ -210,8 +211,7 @@ func TestCitationOnlyAppendRetryFinishesPendingAfterSourceDisappears(t *testing.
 	require.NoError(t, json.Unmarshal(saved.Metadata[MetadataKey], &pending))
 	require.Len(t, pending.Entries, 1)
 	require.NotNil(t, pending.Entries[0].Pending)
-	require.False(t, pending.Entries[0].Pending.SavedAt.IsZero())
-	require.False(t, pending.Entries[0].Pending.SavedAt.After(saved.UpdatedAt))
+	require.Equal(t, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), pending.Entries[0].Pending.SavedAt)
 	k.commentFails = false
 	a.prepareErr = ErrUnavailable
 	for _, field := range []string{"vault", "version"} {

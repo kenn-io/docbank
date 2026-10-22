@@ -31,6 +31,13 @@ type Service struct {
 	Now     func() time.Time
 }
 
+func (s Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
 // Entry retains the selected words; Pending marks an undelivered comment.
 type Entry struct {
 	ID        string    `json:"id"`
@@ -240,7 +247,7 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 			if len(env.entries) >= MaxEntries {
 				return kataclient.Issue{}, ErrEntryLimit
 			}
-			entry, _ := json.Marshal(Entry{ID: evidence.ID, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{}})
+			entry, _ := json.Marshal(Entry{ID: evidence.ID, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{SavedAt: s.now()}})
 			env.entries = append(env.entries, entry)
 			data, err := env.encode()
 			if err != nil {
@@ -281,49 +288,12 @@ func matchesSelection(ref Reference, p Selector, vault string) bool {
 }
 
 func (s Service) finishPending(ctx context.Context, ref string, issue kataclient.Issue, entryID string) (kataclient.Issue, error) {
-	now := time.Now
-	if s.Now != nil {
-		now = s.Now
-	}
 	var comments []string
 	commentsRead := false
 	for range 3 {
 		env, err := parseEnvelope(issue.Metadata[MetadataKey])
 		if err != nil {
 			return kataclient.Issue{}, err
-		}
-		unstamped := false
-		unstampedEntries := make(map[string]bool)
-		for i, raw := range env.entries {
-			entry, valid := parseNative(raw)
-			if valid && entry.ID == entryID && entry.Pending != nil && entry.Pending.SavedAt.IsZero() {
-				var fields map[string]jsontext.Value
-				if json.Unmarshal(raw, &fields) != nil {
-					return kataclient.Issue{}, ErrUnsupported
-				}
-				fields["pending"], _ = json.Marshal(Pending{SavedAt: issue.UpdatedAt})
-				env.entries[i], _ = json.Marshal(fields)
-				unstamped = true
-				unstampedEntries[entry.ID] = true
-			}
-		}
-		if unstamped {
-			data, err := env.encode()
-			if err != nil {
-				return kataclient.Issue{}, err
-			}
-			updated, err := s.Kata.Patch(ctx, ref, MetadataKey, issue.Metadata[MetadataKey], data)
-			if kataclient.IsGuardConflict(err) {
-				issue, err = s.Kata.Get(ctx, ref)
-				if err != nil {
-					return kataclient.Issue{}, err
-				}
-				continue
-			}
-			if err != nil {
-				return kataclient.Issue{}, err
-			}
-			issue = updated
 		}
 		changed := false
 		for i, raw := range env.entries {
@@ -336,7 +306,7 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 			key := commentKey(issue.UID, entry.ID, body)
 			posted := false
 			// Leave a day of margin inside Kata's seven-day replay window.
-			if !unstampedEntries[entry.ID] && !entry.Pending.SavedAt.IsZero() && now().Sub(entry.Pending.SavedAt) >= 6*24*time.Hour {
+			if s.now().Sub(entry.Pending.SavedAt) >= 6*24*time.Hour {
 				if !commentsRead {
 					comments, err = s.Kata.GetComments(ctx, ref)
 					if failure, ok := errors.AsType[*kataclient.Error](err); ok && failure.Code == "response_too_large" {

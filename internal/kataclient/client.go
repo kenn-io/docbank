@@ -26,7 +26,6 @@ const (
 )
 
 type Issue struct {
-	UpdatedAt    time.Time                 `json:"-"`
 	UID          string                    `json:"uid"`
 	ShortID      string                    `json:"short_id"`
 	Title        string                    `json:"title"`
@@ -182,11 +181,11 @@ func (c *Client) get(ctx context.Context, project, id string) (Issue, error) {
 		return Issue{}, &Error{Code: "invalid_response"}
 	}
 	node := response.Nodes[0]
-	return fromIssue(wire.ShowIssueOut{UID: node.UID, ShortID: node.ShortID, Title: node.Title, Body: node.Body, Metadata: node.Metadata, UpdatedAt: node.UpdatedAt}, project)
+	return fromIssue(wire.ShowIssueOut{UID: node.UID, ShortID: node.ShortID, Title: node.Title, Body: node.Body, Metadata: node.Metadata}, project)
 }
 
 func fromIssue(source wire.ShowIssueOut, project string) (Issue, error) {
-	issue := Issue{UpdatedAt: source.UpdatedAt, UID: source.UID, ShortID: source.ShortID, Title: source.Title, Body: source.Body, Metadata: make(map[string]jsontext.Value, len(source.Metadata))}
+	issue := Issue{UID: source.UID, ShortID: source.ShortID, Title: source.Title, Body: source.Body, Metadata: make(map[string]jsontext.Value, len(source.Metadata))}
 	if !validID(issue.UID) || !validID(issue.ShortID) {
 		return Issue{}, &Error{Code: "invalid_response"}
 	}
@@ -321,7 +320,7 @@ func (c *Client) Patch(ctx context.Context, ref, key string, previous, value jso
 		return Issue{}, err
 	}
 	saved := response.Issue
-	return fromIssue(wire.ShowIssueOut{UID: saved.UID, ShortID: saved.ShortID, Title: saved.Title, Body: saved.Body, Metadata: saved.Metadata, UpdatedAt: saved.UpdatedAt}, project)
+	return fromIssue(wire.ShowIssueOut{UID: saved.UID, ShortID: saved.ShortID, Title: saved.Title, Body: saved.Body, Metadata: saved.Metadata}, project)
 }
 
 func (c *Client) Comment(ctx context.Context, ref, key, body string) error {
