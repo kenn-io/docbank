@@ -250,10 +250,6 @@ type cancelOnReadSeeker struct {
 	readAfterCancel bool
 }
 
-func (r *cancelOnReadSeeker) Seek(offset int64, whence int) (int64, error) {
-	return r.Reader.Seek(offset, whence) //nolint:wrapcheck // Preserve io.Seek errors for the ReadSeeker contract.
-}
-
 func (r *cancelOnReadSeeker) Read(p []byte) (int, error) {
 	if r.canceled {
 		r.readAfterCancel = true

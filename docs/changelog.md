@@ -10,22 +10,6 @@ pre-1.0, so public interfaces may still evolve, but vaults created by v0.9.0 and
 later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
-## Unreleased
-
-- Bates export now uses pdfcpu v0.16.3 and stops PDF work when a request is
-  canceled. Publish reservations created with pdfcpu v0.15.0 before upgrading;
-  their unspent numbers remain consumed. See the
-  [Bates upgrade steps](cli-reference.md#docbank-bates).
-- pdfcpu v0.16.3 requires x/image v0.47.0, which changes each visual-preview
-  recipe identity. Docbank automatically rebuilds grid previews and photo-quality
-  signals in the background. The upgrade also changes PDF metadata extraction,
-  so Docbank refreshes source metadata from retained originals in the background.
-  Fit and large previews regenerate on request, and older generations remain
-  retained. The page-image parser identity also changes.
-- Page-image deployments must rebuild the inspector from this revision and
-  update its configured SHA-256 pin. The inspector identity changed and has no
-  compatibility path; see [verified page images](architecture/page-images.md).
-
 ## [v0.15.2](https://github.com/kenn-io/docbank/releases/tag/v0.15.2) — 2026-10-09
 
 ### New features
