@@ -101,7 +101,7 @@ func requestError(ctx context.Context, err error) error {
 	}
 	if envelope, ok := errors.AsType[wire.ErrorEnvelope](err); ok {
 		switch envelope.ErrorData.Code {
-		case "metadata_guard_failed", "token_invalid":
+		case "metadata_guard_failed", "token_invalid", "idempotency_deleted":
 			failure.Code = envelope.ErrorData.Code
 		}
 	}

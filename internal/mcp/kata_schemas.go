@@ -50,6 +50,7 @@ func getKataContextSchemas() (schema, schema) {
 	passage := objectSchema(schema{
 		schemaStateField: enumSchema("available", "changed", "unavailable", "unreachable", "unsupported", "failed"),
 		"evidence":       evidence, "saved_quote": stringSchema(kataevidence.MaxChars),
+		"pending": objectSchema(schema{"saved_at": stringSchema(64)}, "saved_at"),
 	}, schemaStateField)
 	passage["if"] = schema{"properties": schema{schemaStateField: enumSchema("unsupported")}}
 	passage["then"] = schema{}

@@ -11501,6 +11501,19 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    Pending:
+      additionalProperties: false
+      properties:
+        saved_at:
+          format: date-time
+          type: string
+      required:
+        - saved_at
+      type: object
+      x-go-type: kataevidence.Pending
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/kataevidence
+        name: kataevidence
     PendingFormatV1:
       additionalProperties: false
       properties:
@@ -16827,6 +16840,8 @@ components:
       properties:
         evidence:
           $ref: "#/components/schemas/Evidence"
+        pending:
+          $ref: "#/components/schemas/Pending"
         saved_quote:
           type: string
         state:

@@ -20,7 +20,7 @@ func newKataCommand() *cobra.Command {
 	var asJSON bool
 	cite := &cobra.Command{Use: "cite <path-or-id>", Short: "Create a Kata issue or append one verified passage", Args: cobra.ExactArgs(1),
 		Example: "  docbank kata cite /notes.txt --start 0 --end 20 --title 'Follow up' --idempotency-key follow-up-1\n  docbank kata cite id:12 --citation citation.json --issue docbank#abcd",
-		Long:    "Quote at most 1,000 Unicode code points. --start is included; --end is excluded.\nOriginals must be UTF-8 text/JSON of at most 16 MiB. For a retained rendition,\npass its saved TextCitation JSON with --citation.\nNo processing is started.\nCreate with --title and --idempotency-key, or append with --issue.\nEnable [integrations.kata]; credentials use an env or file source.",
+		Long:    "Quote at most 1,000 Unicode code points. --start is included; --end is excluded.\nOriginals must be UTF-8 text/JSON of at most 16 MiB. For a retained rendition,\npass its saved TextCitation JSON with --citation.\nFor binary files, build citation.json from MCP read_rendition_text and list_document_versions reads; the CLI has no command that emits it.\nNo processing is started.\nCreate with --title and --idempotency-key, or append with --issue.\nEnable [integrations.kata]; credentials use an env or file source.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selection, err := kataCiteSelector(cmd, args[0], kataevidence.Selector{StartRune: start, EndRune: end, Quote: quote, ExpectedVersion: expectedVersion}, citationFile)
 			if err != nil {
@@ -130,14 +130,18 @@ func writeKataContext(out io.Writer, result kataevidence.Context) error {
 		return fmt.Errorf("writing Kata context: %w", err)
 	}
 	for _, passage := range result.Passages {
+		state := passage.State
+		if passage.Pending != nil {
+			state += " (comment pending)"
+		}
 		p := passage.Evidence.Reference.Docbank
 		var err error
 		if p != nil {
-			_, err = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", passage.State, p.NodeID, p.StartRune, p.EndRune, p.ContentVersionID)
+			_, err = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", state, p.NodeID, p.StartRune, p.EndRune, p.ContentVersionID)
 		} else if c := passage.Evidence.Reference.Rendition; c != nil {
-			_, err = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", passage.State, c.NodeID, c.Start, c.End, c.ContentVersionID)
+			_, err = fmt.Fprintf(out, "%s id:%d [%d,%d) version %s\n", state, c.NodeID, c.Start, c.End, c.ContentVersionID)
 		} else {
-			_, err = fmt.Fprintln(out, passage.State)
+			_, err = fmt.Fprintln(out, state)
 		}
 		if err != nil {
 			return fmt.Errorf("writing Kata passage: %w", err)

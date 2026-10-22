@@ -477,7 +477,7 @@ func stableDomainError(err error) (string, int) {
 	switch facts.Code {
 	case "kata_incompatible", "kata_unconfigured", "invalid_kata_evidence", "kata_idempotency_conflict", "kata_evidence_changed", "kata_evidence_unavailable",
 		"kata_evidence_unsupported", "kata_evidence_limit", "kata_timeout", "kata_request_failed", "kata_unauthorized", "kata_forbidden", "kata_issue_unavailable",
-		"kata_token_invalid", "kata_evidence_integrity":
+		"kata_token_invalid", "kata_evidence_integrity", "kata_idempotency_deleted":
 		return facts.Code, 0
 	case "invalid_text_navigation", "text_navigation_limit",
 		"invalid_text_citation", "citation_unavailable", "citation_limit", "invalid_citation_range",
@@ -527,6 +527,8 @@ func domainErrorMessage(code string) string {
 	switch code {
 	case "kata_token_invalid":
 		return "Kata token was rejected; configure Kata with that token"
+	case "kata_idempotency_deleted":
+		return "Kata issue was deleted; restore the issue or use a new idempotency key"
 	case "kata_evidence_integrity":
 		return "Stored document failed verification; do not retry"
 	case "kata_unauthorized":

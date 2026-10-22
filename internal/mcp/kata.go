@@ -57,6 +57,7 @@ type kataContextPassage struct {
 	State      string                 `json:"state"`
 	Evidence   *kataevidence.Evidence `json:"evidence,omitzero"`
 	SavedQuote string                 `json:"saved_quote,omitzero"`
+	Pending    *kataevidence.Pending  `json:"pending,omitzero"`
 }
 
 type kataContextOutput struct {
@@ -133,7 +134,7 @@ func getKataContext(ctx context.Context, lease *daemonLease, raw []byte) (kataCo
 
 	passages := make([]kataContextPassage, 0, len(page.Passages))
 	for _, passage := range page.Passages {
-		projected := kataContextPassage{State: passage.State, SavedQuote: passage.SavedQuote}
+		projected := kataContextPassage{State: passage.State, SavedQuote: passage.SavedQuote, Pending: passage.Pending}
 		// Keep future versions with familiar fields; omit incomplete references
 		// while preserving their saved quote and other evidence on the issue.
 		if passage.State != "unsupported" || kataEvidenceHasKnownShape(passage.Evidence) {

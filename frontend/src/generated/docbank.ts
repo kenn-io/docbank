@@ -1602,8 +1602,13 @@ export interface Evidence {
   reference: Reference;
 }
 
+export interface Pending {
+  saved_at: string;
+}
+
 export interface Resolution {
   evidence: Evidence;
+  pending?: Pending;
   saved_quote?: string;
   state: string;
 }

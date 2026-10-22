@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 const (
@@ -98,11 +100,13 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 	api.OpenAPI().Components.Schemas.Map()["Issue"].Properties["metadata"].AdditionalProperties = &huma.Schema{}
 }
 
-func kataProblem(err error) *Error {
+func kataProblem(err error) error {
 	if failure, ok := errors.AsType[*kataclient.Error](err); ok {
 		switch code := failure.Code; {
 		case code == "token_invalid":
 			return NewError(403, "kata_token_invalid", "Kata token was rejected; configure Kata with that token")
+		case code == "idempotency_deleted":
+			return NewError(409, "kata_idempotency_deleted", "Kata issue was deleted; restore the issue or use a new idempotency key")
 		case failure.Status == http.StatusUnauthorized:
 			return NewError(401, "kata_unauthorized", "Kata rejected the configured credential; update the Kata connection")
 		case failure.Status == http.StatusForbidden:
@@ -113,9 +117,14 @@ func kataProblem(err error) *Error {
 			return NewError(503, "kata_incompatible", failure.Error())
 		case code == "invalid_reference", code == "wrong_project", code == "project_unavailable":
 			return NewError(422, "invalid_kata_evidence", "Kata issue reference is invalid, unavailable, or outside the configured project")
+		case failure.Status == 400, failure.Status == 413, failure.Status == 422:
+			return NewError(failure.Status, "invalid_kata_evidence", "Kata rejected the evidence request: "+failure.Error())
 		}
+		slog.Warn("Kata request failed", "status", failure.Status, "code", failure.Code)
 	}
 	switch {
+	case errors.Is(err, packstore.ErrPhysicalMissing):
+		return FromStoreError(err)
 	case errors.Is(err, document.ErrInvalidTextCitation):
 		return NewError(422, "invalid_kata_evidence", "citation is invalid")
 	case errors.Is(err, kataevidence.ErrIdempotencyConflict):

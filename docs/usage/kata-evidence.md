@@ -101,12 +101,12 @@ issue reference before trying again. Upstream outages return `502` with retry
 guidance.
 A `403 token_invalid` response says the Kata token was rejected and asks you to
 configure Kata with that token.
+Kata request rejections return `400`, `413`, or `422` without retry advice; a deleted issue's create replay returns `409 kata_idempotency_deleted` and asks you to restore the issue or use a new idempotency key.
+Missing original blobs use the vault's `503 content_missing` storage error without Kata retry advice.
 
 ## Quote a transcript or rendition
 
-Use an exact [saved text citation](mcp.md#saved-text-citations), obtained from
-a rendition text read or a text section. Save that flat citation object in a
-JSON file, then pass it with the document selector:
+For binary files, build the `--citation citation.json` object from MCP `read_rendition_text` and `list_document_versions` reads as described in [Saved text citations](mcp.md#saved-text-citations); the CLI has no command that emits it.
 
 ```bash
 docbank kata cite id:12 --citation citation.json \
@@ -132,6 +132,7 @@ from the current source text. Readback takes saved words and labels from the
 evidence entries and reads issue fields without the discussion. CLI, HTTP, and
 MCP operations require the Docbank daemon; an unavailable daemon returns an
 operation error.
+An entry's `pending.saved_at` means its quotation was saved before the comment finished posting; CLI text marks it `comment pending` independently of the source state.
 
 | State | Meaning |
 | --- | --- |

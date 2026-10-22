@@ -212,3 +212,32 @@ func TestKataHTTPIntegrityFailureIsLocalAndPermanent(t *testing.T) {
 	require.Contains(t, body, `"code":"kata_evidence_integrity"`)
 	require.Empty(t, issue().Issue.Body)
 }
+
+func TestKataHTTPMissingBlobIsLocalAndPermanent(t *testing.T) {
+	kata, issue := realKataForDocbank(t)
+	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
+	})
+	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
+	require.NoError(t, os.Remove(filepath.Join(s.BlobsDir, node.BlobHash[:2], node.BlobHash)))
+	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{Title: "Review", IdempotencyKey: "missing", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5}})
+	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
+	require.Contains(t, body, `"code":"content_missing"`)
+	require.NotContains(t, strings.ToLower(body), "retry")
+	require.Empty(t, issue().Issue.Body)
+}
+
+func TestKataHTTPRejectsInvalidTitlePermanently(t *testing.T) {
+	kata, issue := realKataForDocbank(t)
+	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
+	})
+	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
+	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{Title: "Review\x00title", IdempotencyKey: "invalid-title", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5}})
+	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	require.Contains(t, body, `"code":"invalid_kata_evidence"`)
+	require.NotContains(t, strings.ToLower(body), "retry")
+	require.Empty(t, issue().Issue.Body)
+}

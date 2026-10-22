@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"io"
 	"os"
 	"path/filepath"
@@ -84,4 +85,23 @@ func TestKataContextPrintsPassagesAndPropagatesWriteErrors(t *testing.T) {
 		}), result)
 		require.ErrorIs(t, err, io.ErrClosedPipe, "write %d: %v", failAt, err)
 	}
+}
+
+func TestKataContextPrintsPendingComment(t *testing.T) {
+	var result kataevidence.Context
+	require.NoError(t, json.Unmarshal([]byte(`{"passages":[{"state":"available","evidence":{},"pending":{"saved_at":"2026-01-01T00:00:00Z"},"saved_quote":"hello"}]}`), &result))
+	var out bytes.Buffer
+	require.NoError(t, writeKataContext(&out, result))
+	require.Contains(t, out.String(), "comment pending")
+	require.Contains(t, out.String(), "hello")
+}
+
+func TestKataCiteHelpExplainsBinaryCitation(t *testing.T) {
+	command, _, err := newKataCommand().Find([]string{"cite"})
+	require.NoError(t, err)
+	var out bytes.Buffer
+	command.SetOut(&out)
+	require.NoError(t, command.Help())
+	require.Contains(t, out.String(), "read_rendition_text")
+	require.Contains(t, out.String(), "list_document_versions")
 }

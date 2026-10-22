@@ -48,6 +48,7 @@ func (s Service) Context(ctx context.Context, r ContextRequest) (Context, error)
 			resolution.SavedQuote = entry.Quote
 			resolution.Evidence.Label = entry.Label
 		}
+		resolution.Pending = entry.Pending
 		result.Passages = append(result.Passages, resolution)
 	}
 	if end < len(env.entries) {

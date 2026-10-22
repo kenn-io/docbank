@@ -29037,6 +29037,8 @@ type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
 
+type Pending = kataevidence.Pending
+
 type PendingFormatV1 = document.PendingFormatV1
 
 type PeopleBuild = api.PeopleBuild

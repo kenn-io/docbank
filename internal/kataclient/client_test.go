@@ -50,6 +50,19 @@ func TestCreateAndCommentReplay(t *testing.T) {
 	require.Equal(t, issue.UID, marker.UID)
 }
 
+func TestCreateReplayAfterDeletion(t *testing.T) {
+	c, api, projectID := realClient(t)
+	issue, err := c.Create(t.Context(), "deleted-key", "Synthetic issue", "", nil)
+	require.NoError(t, err)
+	_, err = api.DeleteIssue(t.Context(), &wire.DeleteIssueRequestOptions{PathParams: &wire.DeleteIssuePath{ProjectID: projectID, Ref: issue.UID}, Body: &wire.DeleteIssueBody{Actor: "docbank"}, Header: &wire.DeleteIssueHeaders{XKataConfirm: new("DELETE " + issue.QualifiedRef)}})
+	require.NoError(t, err)
+	_, err = c.Create(t.Context(), "deleted-key", "Synthetic issue", "", nil)
+	failure, ok := errors.AsType[*Error](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, 409, failure.Status)
+	require.Equal(t, "idempotency_deleted", failure.Code)
+}
+
 func TestPatchGuardsPreserveConcurrentMetadata(t *testing.T) {
 	c, _, _ := realClient(t)
 	issue, err := c.Create(t.Context(), "create-key", "Synthetic issue", "", map[string]jsontext.Value{"unrelated": jsontext.Value(`"keep"`), "future": jsontext.Value(`9007199254740993`)})

@@ -263,6 +263,22 @@ func TestContextAvailableAndUnreachable(t *testing.T) {
 	require.Equal(t, "hello", page.Passages[0].SavedQuote)
 }
 
+func TestContextPreservesPendingComment(t *testing.T) {
+	ref := nativeReference()
+	entry := Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{SavedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}
+	metadata, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
+	require.NoError(t, err)
+	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: metadata}, "")
+	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
+	page, err := s.Context(t.Context(), ContextRequest{Issue: k.ref})
+	require.NoError(t, err)
+	encoded, err := json.Marshal(page.Passages)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"pending":{"saved_at":"2026-01-01T00:00:00Z"}`)
+	require.Equal(t, "available", page.Passages[0].State)
+	require.Zero(t, k.commentCount())
+}
+
 func TestAppendRefusesEnvelopeThatWouldExceedReadLimit(t *testing.T) {
 	previous, err := json.Marshal(map[string]any{"version": 1, "entries": []any{}, "future": strings.Repeat("x", (512<<10)-200)})
 	require.NoError(t, err)

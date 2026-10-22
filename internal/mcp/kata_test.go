@@ -129,6 +129,7 @@ func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
 		"kata_evidence_limit": 409, "kata_evidence_unsupported": 409, "kata_timeout": 504,
 		"kata_request_failed": 502,
 		"kata_token_invalid":  403, "kata_evidence_integrity": 500,
+		"kata_idempotency_deleted": 409,
 	} {
 		t.Run(code, func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +142,8 @@ func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
 			output := exportCall(t, server, "get_kata_context", map[string]any{"issue": "docbank#abcd"})
 			require.Equal(t, code, output["code"])
 			switch code {
+			case "kata_idempotency_deleted":
+				require.Contains(t, output["message"], "restore the issue or use a new idempotency key")
 			case "kata_token_invalid":
 				require.Equal(t, "Kata token was rejected; configure Kata with that token", output["message"])
 			case "kata_evidence_integrity":
@@ -158,6 +161,27 @@ func TestKataContextSchemaBoundsOffset(t *testing.T) {
 	tools := catalogMap(toolCatalog(ServerOptions{}))
 	assertSchemaAccepts(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset})
 	assertSchemaRejects(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset + 1})
+}
+
+func TestKataContextExposesPendingComment(t *testing.T) {
+	ref := kataReferenceFixture()
+	evidence := kataevidence.NewEvidence(ref, "hello", "notes.txt")
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, map[string]any{
+			"issue":    kataclient.Issue{UID: "01TEST", QualifiedRef: "docbank#abcd", Title: "Synthetic issue"},
+			"passages": []any{map[string]any{"state": "available", "evidence": evidence, "pending": map[string]any{"saved_at": "2026-01-01T00:00:00Z"}}},
+		}))
+	}))
+	defer daemon.Close()
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
+	output := exportCall(t, server, "get_kata_context", map[string]any{"issue": "docbank#abcd"})
+	passages, ok := output["passages"].([]any)
+	require.True(t, ok)
+	require.Len(t, passages, 1)
+	passage, ok := passages[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "2026-01-01T00:00:00Z", objectField(t, passage, "pending")["saved_at"])
 }
 
 func TestKataCiteSchemaSeparatesCreateAndAppend(t *testing.T) {

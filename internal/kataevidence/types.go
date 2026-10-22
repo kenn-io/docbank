@@ -88,6 +88,7 @@ type Resolution struct {
 	State      string   `json:"state"`
 	Evidence   Evidence `json:"evidence"`
 	SavedQuote string   `json:"saved_quote,omitzero"`
+	Pending    *Pending `json:"pending,omitzero"`
 }
 
 type Archive interface {

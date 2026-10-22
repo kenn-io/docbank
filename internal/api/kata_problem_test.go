@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -30,9 +31,14 @@ func TestKataProblemClassifiesPermanentReferenceFailures(t *testing.T) {
 		{"invalid_range", document.ErrInvalidCitationRange, 422, "invalid_kata_evidence", "end_rune or start_rune"},
 		{"invalid_citation", document.ErrInvalidTextCitation, 422, "invalid_kata_evidence", "citation is invalid"},
 		{"entry_limit", kataevidence.ErrEntryLimit, 409, "kata_evidence_limit", "issue already holds the maximum of 64 Docbank quotes"},
+		{"deleted_replay", &kataclient.Error{Status: 409, Code: "idempotency_deleted"}, 409, "kata_idempotency_deleted", "restore the issue or use a new idempotency key"},
+		{"bad_request", &kataclient.Error{Status: 400, Code: "request_failed"}, 400, "invalid_kata_evidence", "Kata rejected"},
+		{"too_large", &kataclient.Error{Status: 413, Code: "request_failed"}, 413, "invalid_kata_evidence", "Kata rejected"},
+		{"unprocessable", &kataclient.Error{Status: 422, Code: "request_failed"}, 422, "invalid_kata_evidence", "Kata rejected"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			problem := kataProblem(tc.err)
+			problem, ok := errors.AsType[*Error](kataProblem(tc.err))
+			require.True(t, ok)
 			require.Equal(t, tc.status, problem.Status)
 			require.Equal(t, tc.code, problem.Code)
 			if tc.detail != "" {
@@ -46,7 +52,8 @@ func TestKataProblemClassifiesPermanentReferenceFailures(t *testing.T) {
 
 func TestKataProblemKeepsTransientFailuresRetryable(t *testing.T) {
 	t.Parallel()
-	problem := kataProblem(&kataclient.Error{Status: 502, Code: "request_failed"})
+	problem, ok := errors.AsType[*Error](kataProblem(&kataclient.Error{Status: 502, Code: "request_failed"}))
+	require.True(t, ok)
 	require.Equal(t, 502, problem.Status)
 	require.Equal(t, "kata_request_failed", problem.Code)
 	require.Contains(t, problem.Detail, "retry")
