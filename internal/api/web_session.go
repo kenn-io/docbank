@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/telemetry"

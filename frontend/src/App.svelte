@@ -953,8 +953,7 @@
             ],
           },
         });
-      } else if (survivorID !== id && photos.query.filters.person_ids?.includes(survivorID))
-        void photos.refresh();
+      } else if (photos === activePhotos() && photos.dependsOnPeople) void photos.refresh();
     }
     handlePhotoFacesChanged();
   }

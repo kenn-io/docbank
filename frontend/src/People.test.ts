@@ -249,3 +249,24 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   access.dispose();
   await cache.dispose();
 });
+
+it("distinguishes cards with repeated names using their identity details", async () => {
+  const people = new People("session", vi.fn());
+  people.items = [
+    { ...ada, display_name: "Ada", identity_label: "ada@example.com" },
+    { ...grace, display_name: "Ada", identity_label: "other@example.com" },
+  ];
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  expect(
+    screen.getByRole("button", { name: "Ada · ada@example.com 3 Library photos" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Ada · other@example.com 2 Library photos" }),
+  ).toBeTruthy();
+  await act(() => (people.items = [{ ...ada, identity_label: "ada@example.com" }]));
+  expect(screen.getByRole("button", { name: "Ada 3 Library photos" })).toBeTruthy();
+  view.unmount();
+  people.dispose();
+  await cache.dispose();
+});

@@ -147,6 +147,9 @@ func TestPhotoFaceDecisionRejectDismissRename(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, faces[0].AssertionID)
 	require.Empty(t, assertions)
+	var namedAt *string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT named_at FROM photo_faces WHERE face_id=?`, face.FaceID).Scan(&namedAt))
+	require.Nil(t, namedAt)
 	require.Equal(t, []string{ada.PersonID}, faces[0].RejectedPersonIDs)
 	_, err = s.UndoPhotoFaceDecision(ctx, rejected.ReceiptID)
 	require.NoError(t, err)

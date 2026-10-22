@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,7 +15,23 @@ import (
 // BenchmarkPeopleRecentAtVaultScale compares a name page with recency ranking
 // and card summaries, including people with hundreds of photos.
 func BenchmarkPeopleRecentAtVaultScale(b *testing.B) {
-	const people, evidencePeople, photosPerPerson = 5000, 100, 3
+	for _, scale := range []struct {
+		name     string
+		people   int
+		contacts int
+	}{
+		{name: "5000-people", people: 5000},
+		{name: "50000-people-mail-heavy", people: 50000, contacts: 10000},
+	} {
+		b.Run(scale.name, func(b *testing.B) {
+			benchmarkPeopleRecent(b, scale.people, scale.contacts)
+		})
+	}
+}
+
+func benchmarkPeopleRecent(b *testing.B, people, contacts int) {
+	b.Helper()
+	const evidencePeople, photosPerPerson = 100, 3
 	const heavyPeople, heavyPhotos = 8, 300
 	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
@@ -34,18 +51,35 @@ func BenchmarkPeopleRecentAtVaultScale(b *testing.B) {
 		}
 		return nil
 	}))
-	for index := range people {
-		person, err := s.CreatePerson(ctx, fmt.Sprintf("Person %05d", index), "operator")
-		require.NoError(b, err)
-		if index >= evidencePeople {
-			continue
+	ids := make([]string, people)
+	require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		insert, err := tx.PrepareContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,'operator','curated',?,?)`)
+		if err != nil {
+			return err
 		}
+		defer func() { require.NoError(b, insert.Close()) }()
+		for index := range people {
+			ids[index] = uuid.NewString()
+			name := fmt.Sprintf("Person %05d", index)
+			if _, err := insert.ExecContext(ctx, ids[index], name, strings.ToLower(name), nowRFC3339(), nowRFC3339()); err != nil {
+				return err
+			}
+		}
+		// Email contacts have hundreds of sender assertions but no depicted
+		// evidence. Reuse synthetic versions to bound fixture setup and disk use.
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at)
+ SELECT persons.person_id || ':' || cv.version_id,cv.version_id,persons.person_id,'sender','assert','','2001-01-01T00:00:00.000000000Z'
+ FROM (SELECT person_id FROM persons ORDER BY display_name_folded LIMIT ? OFFSET ?) persons
+ CROSS JOIN (SELECT version_id FROM content_versions LIMIT 200) cv`, contacts, evidencePeople)
+		return err
+	}))
+	for index := range evidencePeople {
 		evidence := nodes[:photosPerPerson]
 		if index < heavyPeople {
 			evidence = nodes
 		}
 		for _, node := range evidence {
-			_, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, person.PersonID)
+			_, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, ids[index])
 			require.NoError(b, err)
 		}
 	}
