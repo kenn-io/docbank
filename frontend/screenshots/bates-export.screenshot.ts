@@ -35,7 +35,7 @@ test("publishes selected pages from a sealed synthetic package through the real 
     await mkdir(output!, { recursive: true, mode: 0o700 });
     await run("go", ["run", "-tags", "fts5", "./frontend/screenshots/bates-fixture.go", vault], {
       cwd: repository,
-      env: { ...process.env, GOTOOLCHAIN: "go1.27.0" },
+      env: { ...process.env, GOTOOLCHAIN: "go1.27.3" },
       timeout: 90_000,
       maxBuffer: 4 * 1024 * 1024,
     });

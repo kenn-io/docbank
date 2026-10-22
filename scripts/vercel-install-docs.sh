@@ -4,7 +4,7 @@ set -eu
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 tools_root="$repo_root/.vercel-tools"
-uv_version=0.12.7
+uv_version=0.13.4
 
 if [ "$(uname -s)" != "Linux" ]; then
   printf 'Vercel documentation install requires Linux\n' >&2
@@ -14,11 +14,11 @@ fi
 case "$(uname -m)" in
   x86_64 | amd64)
     target=x86_64-unknown-linux-gnu
-    expected_sha=788f18abea7c5f55d6216e4f5613fd89d4d59b631efeec117b2b07fe72f1da21
+    expected_sha=2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
     ;;
   aarch64 | arm64)
     target=aarch64-unknown-linux-gnu
-    expected_sha=66393193038dd7eb108abd7a218d9cec04ac70ab98242b0720fa94de19223b7c
+    expected_sha=1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab
     ;;
   *)
     printf 'unsupported Vercel build architecture: %s\n' "$(uname -m)" >&2
