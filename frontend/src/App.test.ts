@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import { person } from "./people-test-fixtures.js";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
@@ -1980,13 +1981,11 @@ it("refreshes visible People cards when another tab changes photo access", async
       peopleReads++;
       return Response.json({
         items: [
-          {
-            person_id: "11111111-1111-4111-8111-111111111111",
+          person("11111111-1111-4111-8111-111111111111", {
             display_name: "Ada",
-            display_name_folded: "ada",
             revision: 1,
             photo_summary: { library_count: changeID === "before" ? 2 : 1 },
-          },
+          }),
         ],
       });
     }

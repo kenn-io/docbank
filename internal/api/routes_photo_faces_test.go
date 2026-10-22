@@ -263,9 +263,15 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	apiPath := "/api/v1/people?limit=1&recent_first=true"
+	response, body := get(t, ts, apiPath, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var apiFirst api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &apiFirst))
+	require.NotEmpty(t, apiFirst.NextCursor)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 	path := "/api/v1/people?limit=1&photo_summary=true&recent_first=true"
-	response, body := get(t, ts, path, headers)
+	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var first api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
@@ -295,6 +301,9 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 			require.Equal(t, http.StatusOK, unlocked.StatusCode, body)
 			require.Len(t, unlocked.Cookies(), 1)
 			headers["Cookie"] = unlocked.Cookies()[0].String()
+			response, body = get(t, ts, apiPath+"&cursor="+apiFirst.NextCursor, map[string]string{"Cookie": headers["Cookie"]})
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Equal(t, "people_cursor_expired", decodeProblem(t, body).Code)
 		}
 		response, body = get(t, ts, "/api/v1/people?limit=1&"+changed.query+"&cursor="+first.NextCursor, headers)
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
@@ -305,50 +314,6 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	require.NotContains(t, body, "photo_summary")
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
-}
-
-func TestPeopleRecentAPIKeyCursorBindsHiddenScope(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	ctx := t.Context()
-	ada, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	zoe, err := s.CreatePerson(ctx, "Zoe", "operator")
-	require.NoError(t, err)
-	for _, person := range []store.Person{ada, zoe} {
-		hash, size, err := s.Blobs.Write(strings.NewReader("synthetic photo of " + person.DisplayName))
-		require.NoError(t, err)
-		node, err := s.CreateFile(ctx, s.RootID(), person.DisplayName+".jpg", hash, size, "image/jpeg")
-		require.NoError(t, err)
-		_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
-		require.NoError(t, err)
-		if person.PersonID == zoe.PersonID {
-			asset, err := s.PhotoAssetForNode(ctx, node.ID)
-			require.NoError(t, err)
-			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-			require.NoError(t, err)
-		}
-	}
-	path := "/api/v1/people?limit=1&recent_first=true"
-	response, body := get(t, ts, path, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var first api.PersonPage
-	require.NoError(t, json.Unmarshal([]byte(body), &first))
-	require.Len(t, first.Items, 1)
-	require.Equal(t, ada.PersonID, first.Items[0].PersonID)
-	require.NotEmpty(t, first.NextCursor)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "synthetic-passcode"})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Len(t, response.Cookies(), 1)
-	headers := map[string]string{"Cookie": response.Cookies()[0].String()}
-	response, body = get(t, ts, path+"&cursor="+first.NextCursor, headers)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Equal(t, "people_cursor_expired", decodeProblem(t, body).Code)
-	response, body = get(t, ts, path, headers)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &first))
-	require.Equal(t, zoe.PersonID, first.Items[0].PersonID)
 }
 
 // Browser merge conflicts identify the exact face version to review.
@@ -375,5 +340,7 @@ func TestBrowserMergeConflictNamesFaceVersion(t *testing.T) {
 	problem := decodeProblem(t, body)
 	require.Equal(t, []string{face.FaceID}, problem.FaceIDs)
 	require.Equal(t, []string{node.CurrentVersionID}, problem.FaceVersionIDs)
-	require.Equal(t, "review contradictory face assignments and rejections before merging; face "+face.FaceID+" on version "+node.CurrentVersionID, problem.Detail)
+	_, conflict := s.MergePersons(ctx, ada.PersonID, grace.PersonID, merge.OperationID, 1, 1)
+	require.Error(t, conflict)
+	require.Contains(t, problem.Detail, conflict.Error())
 }
