@@ -22,6 +22,7 @@ func BenchmarkPeopleRecentAtVaultScale(b *testing.B) {
 	}{
 		{name: "5000-people", people: 5000},
 		{name: "50000-people-mail-heavy", people: 50000, contacts: 10000},
+		{name: "100000-people", people: 100000},
 	} {
 		b.Run(scale.name, func(b *testing.B) {
 			benchmarkPeopleRecent(b, scale.people, scale.contacts)
@@ -87,17 +88,22 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts int) {
 		name         string
 		recentFirst  bool
 		photoSummary bool
+		limit        int
 	}{
+		{name: "page-25-default", limit: 25},
 		{name: "page-24-name"},
 		{name: "page-24-recent", recentFirst: true},
 		{name: "page-24-name-summary", photoSummary: true},
 		{name: "page-24-recent-summary", recentFirst: true, photoSummary: true},
 	} {
+		if test.limit == 0 {
+			test.limit = 24
+		}
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				rows, err := s.PeopleByDisplayName(ctx, "", "", "", 24, true, PeopleSearchOptions{RecentFirst: test.recentFirst, PhotoSummary: test.photoSummary, GridRecipe: "grid"})
-				if err != nil || len(rows) != 24 || test.recentFirst && rows[0].RecentRank == "" {
+				rows, err := s.PeopleByDisplayName(ctx, "", "", "", test.limit, true, PeopleSearchOptions{RecentFirst: test.recentFirst, PhotoSummary: test.photoSummary, GridRecipe: "grid"})
+				if err != nil || len(rows) != test.limit || test.recentFirst && rows[0].RecentRank == "" {
 					b.Fatalf("rows=%d err=%v", len(rows), err)
 				}
 				if test.photoSummary && (rows[0].PhotoSummary == nil || rows[0].PhotoSummary.LibraryCount == 0 || rows[0].PhotoSummary.Face == nil) {

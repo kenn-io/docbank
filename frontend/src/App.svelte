@@ -861,6 +861,8 @@
     navigatePhotos(hidden ? "/photos/hidden" : "/photos");
   }
   function onpersonchanged(id: string, name: string, survivorID = id) {
+    const faces = activePhotos()?.faceEditor;
+    if (faces?.version) void faces.load(faces.version);
     for (const photos of [
       photoState?.photos,
       albumPhotos,

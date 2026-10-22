@@ -422,14 +422,18 @@ func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	var roundtrip bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &roundtrip))
 	require.Equal(t, exported.String(), roundtrip.String())
-	for _, field := range []string{"content_version_id", "assertion_id", "named_at"} {
+	for _, field := range []string{"content_version_id", "assertion_id", "named_at", "named_without_assertion"} {
 		t.Run(field, func(t *testing.T) {
 			lines := strings.Split(exported.String(), "\n")
 			for i, line := range lines {
 				if strings.Contains(line, `"type":"photo_face"`) {
 					var record map[string]any
 					require.NoError(t, json.Unmarshal([]byte(line), &record))
-					record[field] = "11111111-1111-4111-8111-111111111111"
+					if field == "named_without_assertion" {
+						record["assertion_id"] = nil
+					} else {
+						record[field] = "11111111-1111-4111-8111-111111111111"
+					}
 					raw, err := json.Marshal(record)
 					require.NoError(t, err)
 					lines[i] = string(raw)
