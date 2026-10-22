@@ -2459,6 +2459,7 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
     );
   });
   const photos = new Photos("scope", vi.fn());
+  photos.filtersOpen = true;
   await photos.loadMore();
   expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1"]);
   expect(photos.loading).toBe(false);
@@ -2471,14 +2472,6 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
   expect(counts[0].signal.aborted).toBe(true);
   photos.resume();
   expect(counts).toHaveLength(2);
-  const facet = {
-    dimension: "camera",
-    available: true,
-    total: 3,
-    values: [],
-    missing: 3,
-    other: 0,
-  };
   counts[0].finish(new Response(JSON.stringify({ facets: [{ ...facet, total: 99 }] })));
   counts[1].finish(
     new Response(
@@ -2557,14 +2550,6 @@ it.each([
     retryable: false,
   },
 ])("handles unavailable $reason counts", async ({ reason, message, retryable }) => {
-  const facet = {
-    dimension: "camera",
-    available: true,
-    total: 3,
-    values: [],
-    missing: 3,
-    other: 0,
-  };
   const counts = vi
     .fn()
     .mockResolvedValueOnce(
@@ -2576,6 +2561,7 @@ it.each([
     JSON.parse(init.body as string).page_size === 1 ? counts() : rows(),
   );
   const photos = new Photos("scope", vi.fn());
+  photos.filtersOpen = true;
   await photos.loadMore();
   await vi.waitFor(() => expect(photos.facetsError).toBe(message));
   expect(photos.facetsRetryable).toBe(retryable);
@@ -2589,6 +2575,74 @@ it.each([
   photos.dispose();
 });
 
+const facet = {
+  dimension: "camera",
+  available: true,
+  total: 3,
+  values: [],
+  missing: 3,
+  other: 0,
+};
+
+it.each([
+  { action: "reloadCounts", state: "loaded" },
+  { action: "refresh", state: "loaded" },
+  { action: "rating change", state: "failed" },
+  { action: "rating change", state: "partial" },
+] as const)(
+  "drops $state counts after $action while Filters is closed",
+  async ({ action, state }) => {
+    let finish!: (value: Response) => void;
+    const counts = vi
+      .fn()
+      .mockResolvedValueOnce(
+        state === "failed"
+          ? Response.json({ detail: "Counts unavailable" }, { status: 503 })
+          : Response.json({
+              facets:
+                state === "partial"
+                  ? [
+                      facet,
+                      { dimension: "rating", available: false, reason: "member_budget_exceeded" },
+                    ]
+                  : [facet],
+            }),
+      )
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)));
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) =>
+      JSON.parse(init.body as string).page_size === 1 ? counts() : response([photo(1)]),
+    );
+    const photos = new Photos("scoped", vi.fn());
+    photos.filtersOpen = true;
+    await photos.loadMore();
+    if (state === "loaded") await vi.waitFor(() => expect(photos.facets).toEqual([facet]));
+    else {
+      await vi.waitFor(() => expect(photos.facetsError).toBeTruthy());
+      expect(photos.facetsRetryable).toBe(state === "failed");
+    }
+    photos.toggleFilters();
+    if (action === "rating change") {
+      const before = preparedPhoto(1);
+      photos.metadataChanged({
+        receipt_id: "rating-edit",
+        before: [before],
+        after: [{ ...before, values: { ...before.values, rating: 5 } }],
+      });
+    } else await photos[action]();
+    expect(counts).toHaveBeenCalledOnce();
+    expect(photos.facetsError).toBe("");
+    expect(photos.facetsRetryable).toBe(true);
+    photos.toggleFilters();
+    expect(counts).toHaveBeenCalledTimes(2);
+    expect(photos.facetsLoading).toBe(true);
+    expect(photos.facets).toEqual([]);
+    finish(Response.json({ facets: [{ ...facet, total: 4, missing: 4 }] }));
+    await vi.waitFor(() => expect(photos.facetsLoading).toBe(false));
+    expect(photos.facets).toEqual([{ ...facet, total: 4, missing: 4 }]);
+    photos.dispose();
+  },
+);
+
 it("requests filter counts for the library but not for an album", async () => {
   for (const album of [false, true]) {
     const fetcher = vi.fn(async (_url: string, _init: RequestInit) => response([photo(1)]));
@@ -2598,6 +2652,10 @@ it("requests filter counts for the library but not for an album", async () => {
       : photoQuery;
     const photos = new Photos("scoped", vi.fn(), false, scope);
     await photos.loadMore();
+    await vi.waitFor(() => expect(photos.facetsLoading).toBe(false));
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(fetcher.mock.calls[0][1].body)).facets).toEqual([]);
+    photos.toggleFilters();
     await vi.waitFor(() => expect(photos.facetsLoading).toBe(false));
     const counted = fetcher.mock.calls.filter(
       ([, init]) => JSON.parse(String(init.body)).facets?.length,

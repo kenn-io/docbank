@@ -341,7 +341,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await page
       .getByRole("searchbox", { name: "Search photos", exact: true })
       .fill("Synthetic-photo-00001");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Search photos", exact: true }).press("Enter");
     await expect(page.locator(".photo-cell")).toHaveCount(1);
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     await replacementConfirmation.getByRole("button", { name: "Replace", exact: true }).click();

@@ -24,6 +24,7 @@ beforeEach(() =>
     },
   ),
 );
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -169,15 +170,15 @@ it.each(["delete", "duplicate", "rename"] as const)(
     const onnavigate = vi.fn();
     const { albums } = setup(true, onnavigate);
     albums.targetID = album.id;
-    await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
+    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
     await fireEvent.click(
       await screen.findByRole("menuitem", {
         name:
           operation === "delete"
             ? "Delete album…"
             : operation === "rename"
-              ? "Rename"
-              : "Duplicate…",
+              ? "Rename album"
+              : "Duplicate album…",
       }),
     );
     if (operation === "duplicate")
@@ -286,7 +287,8 @@ it("refreshes previews and summary counts inside an album", async () => {
   const { photos, albums } = setup(true);
   const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
   const load = vi.spyOn(albums, "load").mockResolvedValue(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(load).toHaveBeenCalledTimes(1);
 });
@@ -450,7 +452,7 @@ it.each(["loaded list", "failed list, name retry", "failed list, target retry"])
 it("renders unavailable card observations and omits an unknown count from deletion", async () => {
   const { albums } = setup(true);
   albums.loadError = "Album list unavailable";
-  await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Delete album…" }));
   expect(screen.getByText('Delete "Trip"? Its photos stay in your library.')).toBeTruthy();
   cleanup();
@@ -641,14 +643,19 @@ it("renders added order and cancels rename without a write", async () => {
     ),
   ).toEqual(["photo-1", "photo-2"]);
   const update = vi.spyOn(albums, "update").mockResolvedValue(album);
-  await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Rename album" }));
   expect((screen.getByRole("button", { name: "Star album" }) as HTMLButtonElement).disabled).toBe(
     true,
   );
+  // The menu stays open to other actions while renaming.
+  const more = screen.getByRole("button", { name: "More photo actions" }) as HTMLButtonElement;
+  expect(more.disabled).toBe(false);
+  await fireEvent.click(more);
   expect(
-    (screen.getByRole("button", { name: "Album actions" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
+    (await screen.findByRole("menuitem", { name: "Rename album" })).getAttribute("aria-disabled"),
+  ).toBe("true");
+  await fireEvent.keyDown(document, { key: "Escape" });
   await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), {
     target: { value: "Canceled" },
   });

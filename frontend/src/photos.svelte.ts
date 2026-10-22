@@ -1,7 +1,7 @@
 import { patchPhotoRows, photoRows, photoStacksChanged, type PhotoBrowseRow } from "./photoRows.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { photoSearchSort } from "./photoSearch.js";
+import { isFilterSet, photoSearchSort } from "./photoSearch.js";
 import { getSavedQuery, type SavedQuery } from "./savedQueries.js";
 import {
   getPhotoSettings,
@@ -328,6 +328,8 @@ export class Photos {
   }
   baseQuery = $state.raw<Query>(photoQuery);
   query = $state.raw<Query>(photoQuery);
+  // queryResets counts accepted resetQuery calls; the search box remounts on it.
+  queryResets = $state(0);
   timeline = $state<CaptureDayFacet | undefined>();
   timelineLoading = $state(false);
   timelineError = $state("");
@@ -337,6 +339,8 @@ export class Photos {
   facetsLoading = $state(false);
   facetsError = $state("");
   facetsRetryable = $state(true);
+  // Only the Filters panel shows counts, so they load while it is open.
+  filtersOpen = $state(false);
   private rows = $state.raw<PhotoRow[]>([]);
   private seenIDs: Set<string> | undefined;
   appendedFrom = $state.raw<PhotoRow[]>();
@@ -716,6 +720,19 @@ export class Photos {
     return this.loadMore();
   }
 
+  // resetQuery clears search text, filters, and sort, and discards unsent
+  // search drafts, which an ordinary setQuery keeps.
+  resetQuery() {
+    const loading = this.setQuery({
+      ...this.baseQuery,
+      text: "",
+      filters: {},
+      sort: { field: "capture_time", direction: "desc" },
+    });
+    if (loading) this.queryResets++;
+    return loading;
+  }
+
   setDensity(value: Density) {
     density = value;
     try {
@@ -976,13 +993,7 @@ export class Photos {
   get dependsOnAuthored() {
     const filters = this.query.filters ?? {};
     return (
-      Boolean(this.query.text.trim()) ||
-      authoredFilters.some((key) => {
-        const value = filters[key];
-        return Array.isArray(value)
-          ? value.length > 0
-          : value !== undefined && value !== false && value !== "";
-      })
+      Boolean(this.query.text.trim()) || authoredFilters.some((key) => isFilterSet(filters[key]))
     );
   }
 
@@ -1419,11 +1430,25 @@ export class Photos {
     this.facetsController.abort();
     this.facetsLoading = false;
     this.needsFacets = true;
+    if (this.countsHidden) {
+      this.facets = [];
+      this.facetsError = "";
+      this.facetsRetryable = true;
+    }
     return this.retryFacets();
   }
 
+  toggleFilters() {
+    this.filtersOpen = !this.filtersOpen;
+    if (this.needsFacets && !this.facetsError) void this.retryFacets();
+  }
+
+  private get countsHidden() {
+    return this.withoutCounts || !this.filtersOpen;
+  }
+
   async retryFacets() {
-    if (this.disposed || !this.started || this.facetsLoading || this.withoutCounts) return;
+    if (this.disposed || !this.started || this.facetsLoading || this.countsHidden) return;
     this.facetsController.abort();
     const controller = (this.facetsController = new AbortController());
     this.needsFacets = true;

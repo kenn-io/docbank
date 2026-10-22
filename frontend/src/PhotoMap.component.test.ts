@@ -470,7 +470,7 @@ it.each(["append", "hide", "trash"])(
         expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull(),
       );
       expect(screen.getByRole("button", { name: "Open Photo 2.jpg" })).toBeTruthy();
-      expect(screen.getByText("1 photos", { exact: true })).toBeTruthy();
+      expect(screen.getByText("1 photo", { exact: true })).toBeTruthy();
       expect(mocks.map.project).toHaveBeenCalledTimes(1);
       finish(Response.json({ map_items: [third], total: 3 }));
       await loading;

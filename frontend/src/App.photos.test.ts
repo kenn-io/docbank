@@ -87,6 +87,46 @@ afterEach(() => {
   new Photos("scoped", vi.fn()).setDensity("comfortable");
 });
 
+it("hides top-bar Photos search when a denied access check conceals Library", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      poll = callback as () => void;
+      return 0 as unknown as ReturnType<typeof setInterval>;
+    }
+    return interval(callback, delay, ...args);
+  });
+  let denied = false;
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden"))
+      return denied
+        ? Response.json({ detail: "Access denied" }, { status: 403 })
+        : Response.json({ configured: true });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  expect(screen.getByRole("searchbox", { name: "Search photos" })).toBeTruthy();
+  denied = true;
+  poll();
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  expect(screen.queryByRole("searchbox", { name: "Search photos" })).toBeNull();
+});
+
 it("retains the navigated comparison and closeup across a browser tab switch", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();
@@ -156,6 +196,161 @@ it("retains the navigated comparison and closeup across a browser tab switch", a
   expect(owner.compareCrop).toBeUndefined();
   await fireEvent(document, new Event("visibilitychange"));
   expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
+});
+
+it.each(["workspace switch", "Clear filters"])(
+  "discards unsent search text and mode on %s",
+  async (trigger) => {
+    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+    storage();
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (url.endsWith("/photos/hidden"))
+        return Response.json({
+          configured: true,
+          expires_at: "2099-01-01T00:00:00Z",
+          expires_in: 300,
+        });
+      if (url.endsWith("/photos/assets/query")) {
+        const request = JSON.parse(String(init.body));
+        return Response.json({
+          items: [photo(1)],
+          total: 1,
+          facets: request.facets?.includes("camera")
+            ? [
+                {
+                  dimension: "camera",
+                  available: true,
+                  reason: "",
+                  total: 1,
+                  missing: 0,
+                  other: 0,
+                  values: [
+                    {
+                      key: "Canon",
+                      label: "Canon",
+                      count: 1,
+                      selected: request.query.filters?.cameras?.includes("Canon") ?? false,
+                    },
+                  ],
+                },
+              ]
+            : [],
+        });
+      }
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    });
+    render(App);
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    if (trigger === "Clear filters") {
+      await fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+      await fireEvent.click(await screen.findByRole("button", { name: "Canon, 1 photos" }));
+      await screen.findByRole("button", { name: "Canon, 1 photos, selected" });
+    }
+    const input = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
+    await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Plain words" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
+    await fireEvent.input(input, { target: { value: "rating:5" } });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: trigger === "workspace switch" ? "Hidden" : "Clear filters",
+      }),
+    );
+    if (trigger === "Clear filters")
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull(),
+      );
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
+      ).toBe(""),
+    );
+    expect(screen.getByRole("combobox", { name: "Search mode: Plain words" })).toBeTruthy();
+  },
+);
+
+it.each(["viewer", "compare", "cull"] as const)("makes search inert during %s", async (surface) => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  if (surface === "cull") {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
+    vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
+      this.run = {
+        ids: ["photo-1"],
+        checkpoint: {
+          runID: "run",
+          revision: 0,
+          pass: ["photo-1"],
+          position: 0,
+          visited: [],
+          skipped: [],
+          unavailable: [],
+          scope: "all",
+          autoAdvance: true,
+        },
+      };
+      return true;
+    });
+  }
+  const rows = [photo(1), photo(2), photo(3)];
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+    if (url.includes("/audit/status"))
+      return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
+    if (url.endsWith("/photos/assets/query")) {
+      const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
+      return Response.json({
+        items: ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows,
+        total: rows.length,
+      });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  const searchControls = () => document.querySelector<HTMLElement>(".search-controls");
+  if (surface === "viewer") {
+    await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 1.jpg" }), {
+      key: "Enter",
+    });
+    await screen.findByRole("dialog", { name: /Photo viewer/ });
+    expect(searchControls()?.inert).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+    await waitFor(() => expect(searchControls()?.inert).toBe(false));
+  } else if (surface === "cull") {
+    const cull = await screen.findByRole("button", { name: "Cull" });
+    await waitFor(() => expect((cull as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(cull);
+    await screen.findByRole("dialog", { name: "Cull photos" });
+    expect(searchControls()?.inert).toBe(true);
+  } else {
+    for (const id of [1, 2])
+      await fireEvent.click(
+        await screen.findByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }),
+      );
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    await screen.findByRole("dialog", { name: "Compare photos" });
+    expect(searchControls()?.inert).toBe(true);
+  }
 });
 
 it("removes a delayed direct-link photo fragment on tab switch without history.back", async () => {
@@ -398,7 +593,8 @@ it.each(["unhide", "trash", "rejects"])(
       await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
       await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
     } else if (action === "rejects") {
-      await fireEvent.click(screen.getByRole("button", { name: "Move rejects" }));
+      await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Move rejects" }));
       await fireEvent.click(await screen.findByRole("button", { name: "Move 3 to trash" }));
     } else {
       await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
@@ -612,7 +808,7 @@ it.each(["server", "stale first page"])(
     }
     if (outcome !== "stale first page")
       await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-    await screen.findByText("1 photos · 1 loaded", undefined, { timeout: 5000 });
+    await screen.findByText("1 photo", undefined, { timeout: 5000 });
     expect(screen.queryByText("This album is empty")).toBeNull();
   },
 );
@@ -671,6 +867,7 @@ it("reloads Library album counts after adding photos to an album", async () => {
   );
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   await waitFor(() => expect(countRequests).toBe(1));
   expect(screen.queryByRole("button", { name: `${album.name}, 1 photos` })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
@@ -854,9 +1051,7 @@ it.each(["document trash", "delayed photo trash", "restore"])(
     if (operation === "restore") await screen.findByText("Your photo library is empty");
     else await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
     await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
-    await screen.findByText(
-      operation === "restore" ? "This album is empty" : "1 photos · 1 loaded",
-    );
+    await screen.findByText(operation === "restore" ? "This album is empty" : "1 photo");
     const before = { ...reads };
     if (operation === "document trash") {
       await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
@@ -892,7 +1087,7 @@ it.each(["document trash", "delayed photo trash", "restore"])(
       await waitFor(() => expect(finishTrash).toBeTypeOf("function"));
       await fireEvent.click(screen.getByRole("button", { name: /^Other/ }));
       await screen.findByRole("heading", { name: "Other" });
-      await screen.findByText("1 photos · 1 loaded");
+      await screen.findByText("1 photo");
       Object.assign(before, reads);
       finishTrash();
     }
@@ -1231,7 +1426,8 @@ it.each(["change", "failure", "background", "delayed page", "album route", "unre
     }
     if (kind === "delayed page") {
       delay = true;
-      await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+      await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
       await waitFor(() => expect(finish).toBeDefined());
     }
     changed = true;
@@ -1395,6 +1591,7 @@ it("clears previews on sidebar and history departure while retaining eligible se
   vi.stubGlobal("fetch", fetcher);
   render(App);
   await screen.findByRole("main", { name: "Photo library" });
+  await fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   const cacheName = stored.open.mock.calls[0][0];
   await waitFor(() => expect(stored.data.get(cacheName)?.size).toBe(1));
@@ -1820,7 +2017,10 @@ it.each([
   if (cause === "change") {
     changed = true;
     await returnToMap();
-  } else await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+  } else {
+    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
+  }
   await waitFor(() => expect(finish).not.toBe(previous));
   if (cause.startsWith("interrupted return")) {
     const interrupted = finish;
@@ -2100,13 +2300,15 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
       if (source === "Hidden") {
         await waitFor(() =>
           expect(
-            (screen.getByRole("button", { name: "Search" }) as HTMLButtonElement).disabled,
+            (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).disabled,
           ).toBe(false),
         );
         await fireEvent.input(await screen.findByRole("searchbox", { name: "Search photos" }), {
           target: { value: "private" },
         });
-        await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+        await fireEvent.submit(
+          screen.getByRole("searchbox", { name: "Search photos" }).closest("form")!,
+        );
         await waitFor(() =>
           expect(
             queries.some((request) => request.hidden && request.query.text === "private"),
@@ -2322,6 +2524,7 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
   });
   render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Filters" }));
   await waitFor(() => expect(counts).toHaveLength(1));
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   await act(async () => {});
@@ -2990,7 +3193,7 @@ it("forwards photo edit and Undo receipts to Library, Albums, and Documents", as
   expect(within(inspector).getByText("Revision").nextElementSibling?.textContent).toBe("3");
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  await screen.findByText("1 photos · 1 loaded");
+  await screen.findByText("1 photo");
   fetcher.mockClear();
   await fireEvent.click(await screen.findByRole("button", { name: "Undo last photo edit" }));
   await waitFor(() => expect(changed).toHaveBeenCalledTimes(6));

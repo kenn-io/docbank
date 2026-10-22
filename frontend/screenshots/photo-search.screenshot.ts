@@ -56,6 +56,7 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
     await page.goto(webURL.href);
     await expect(page.getByText(/10,000 photos/)).toBeVisible();
     await expect(page.locator("[data-asset] img").first()).toBeVisible();
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
     await expect(page.getByText("Loading counts…")).toBeVisible();
     for (const theme of ["light", "dark"]) {
       await page.evaluate((value) => {
@@ -76,7 +77,7 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
     await page.getByRole("searchbox", { name: "Search photos" }).fill("Nikon");
     await camera.getByRole("button", { name: "Canon EOS R6, 5000 photos" }).click();
     await expect(page.getByText(/5,000 photos/)).toBeVisible();
-    await expect(page.getByRole("searchbox", { name: "Search photos" })).toHaveValue("");
+    await expect(page.getByRole("searchbox", { name: "Search photos" })).toHaveValue("Nikon");
     // The fixture's 27 metadata-free photos fall on the Nikon side, so only 4,973 carry its camera and location.
     await expect(camera.getByRole("button", { name: "Nikon Z6, 4973 photos" })).toBeVisible();
     await page.getByRole("button", { name: "Clear filters", exact: true }).click();
@@ -89,11 +90,10 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
         response.request().postDataJSON().query.text === "Canon" &&
         response.request().postDataJSON().facets.length === 0,
     );
-    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Search photos", exact: true }).press("Enter");
     const first: PhotoBrowsePage = await (await searchPage).json();
     await expect(page.getByText(/5,000 photos/)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Search results" })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Photo years" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
     await expect(
       page
         .getByRole("group", { name: "Albums facet" })
@@ -140,7 +140,7 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
     }
     await page.getByRole("button", { name: "Clear filters", exact: true }).click();
     await page.getByRole("searchbox", { name: "Search photos" }).fill("Paris");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Search photos", exact: true }).press("Enter");
     await expect(page.getByText(/9,973 photos/)).toBeVisible();
     await expect(
       page.getByRole("group", { name: "Location facet" }).getByRole("button").first(),

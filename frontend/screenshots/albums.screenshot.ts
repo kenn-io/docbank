@@ -23,7 +23,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
-    await expect(page.getByText("10,000 photos · 250 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByText("10,000 photos", { exact: true })).toBeVisible();
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
     await page.locator(".photo-image").nth(0).click();
     await page
@@ -34,8 +34,13 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       .locator(".photo-image")
       .nth(1)
       .click({ modifiers: ["Control"] });
-    await page.getByRole("button", { name: "Refresh previews", exact: true }).click();
-    await expect(page.locator(".photo-loading")).not.toContainText("Loading");
+    await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+    const refreshed = page.waitForResponse(
+      (response) => response.url().endsWith("/photos/assets/query") && response.ok(),
+    );
+    await page.getByRole("menuitem", { name: "Refresh previews", exact: true }).click();
+    await refreshed;
+    await expect(page.locator(".photo-pill")).toHaveCount(0);
     await page
       .locator(".photo-image")
       .nth(2)
@@ -63,10 +68,10 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     expect(adds).toHaveLength(1);
     expect(adds[0]).toHaveProperty("query");
     expect(adds[0]).not.toHaveProperty("asset_ids");
-    await expect(page.getByText("10,000 photos · 250 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByText("10,000 photos", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await page.locator(".photo-image").first().click();
-    await page.locator(".library-title h1").click();
+    await page.getByRole("heading", { name: "Library", exact: true }).click();
     await page.keyboard.press("b");
     await expect.poll(() => adds.length).toBe(2);
     expect(adds[1]).toHaveProperty("asset_ids");
@@ -85,7 +90,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     albumID = (await card.getAttribute("href"))!.split("/").at(-1)!;
     await card.click();
     await expect(page.getByRole("main", { name: "Photo album" })).toBeVisible();
-    await expect(page.getByText("10,000 photos · 250 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByText("10,000 photos", { exact: true })).toBeVisible();
     await page.getByRole("combobox", { name: /Sort photos/ }).click();
     await page.getByRole("option", { name: "Imported", exact: true }).click();
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
@@ -99,8 +104,13 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     await expect
       .poll(() => page.getByTestId("photo-scroll").evaluate((element) => element.scrollTop))
       .toBe(500);
-    await page.getByRole("button", { name: "Refresh previews", exact: true }).click();
-    await expect(page.locator(".photo-loading")).not.toContainText("Loading");
+    await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+    const refreshedAlbum = page.waitForResponse(
+      (response) => response.url().endsWith("/photos/assets/query") && response.ok(),
+    );
+    await page.getByRole("menuitem", { name: "Refresh previews", exact: true }).click();
+    await refreshedAlbum;
+    await expect(page.locator(".photo-pill")).toHaveCount(0);
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await page.reload();
     await expect(page.getByText("Open your Docbank", { exact: true })).toBeVisible();
@@ -130,7 +140,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       });
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Clear selection", exact: true }).click();
-      await page.locator(".album-back").click();
+      await page.getByRole("main").getByRole("button", { name: "Albums", exact: true }).click();
       await expect(page.locator(".album-cover img").first()).toBeVisible();
       await page.waitForLoadState("networkidle");
       await page.screenshot({

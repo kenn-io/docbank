@@ -360,7 +360,7 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
       .getByRole("navigation", { name: "Timeline years" })
       .getByRole("button", { name: "2022 10", exact: true })
       .click();
-    await expect(page.getByText(/photos in 2022 ·/)).toBeVisible();
+    await expect(page.getByText(/photos in 2022/)).toBeVisible();
     await page.getByRole("button", { name: "Map", exact: true }).first().click();
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
     await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
@@ -380,13 +380,13 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     });
     await page.getByRole("button", { name: "Library", exact: true }).click();
     await page.getByRole("button", { name: "Clear date", exact: true }).click();
-    await expect(page.getByText("15 photos · 15 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByText("15 photos", { exact: true })).toBeVisible();
     await page
       .getByRole("navigation", { name: "Docbank navigation" })
       .getByRole("button", { name: /Paris walks/ })
       .click();
     await expect(page.getByRole("heading", { name: "Paris walks", exact: true })).toBeVisible();
-    await expect(page.getByText("8 photos · 8 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByText("8 photos", { exact: true })).toBeVisible();
     await page
       .getByRole("navigation", { name: "Docbank navigation" })
       .getByRole("button", { name: "Map", exact: true })

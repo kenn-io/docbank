@@ -1,5 +1,5 @@
 import * as actions from "./action-events.js";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
@@ -63,6 +63,16 @@ vi.mock("./action-events.js", () => ({ reportAction: vi.fn() }));
 
 const tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 };
 
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+
 afterEach(() => {
   cleanup();
   map.onvisible = undefined;
@@ -79,13 +89,6 @@ afterEach(() => {
 it.each([false, true])(
   "preserves subsequent scrolling when an interrupted refresh resumes after remount, map=%s",
   async (mapMode) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
@@ -140,7 +143,8 @@ it.each([false, true])(
       await tick();
     }
     await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(500));
-    await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
     view.unmount();
     render(PhotosWorkspace, props);
     if (mapMode) {
@@ -170,14 +174,7 @@ it.each([false, true])(
   },
 );
 
-it("disables search and filters until a delayed Hide finishes", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
+it("disables filters until a delayed Hide finishes", async () => {
   let finish!: (response: Response) => void;
   vi.stubGlobal(
     "fetch",
@@ -204,36 +201,23 @@ it("disables search and filters until a delayed Hide finishes", async () => {
   ];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
+  await fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   const controls = [
-    screen.getByRole("searchbox", { name: "Search photos" }),
-    screen.getByRole("button", { name: "Search" }),
-    screen.getByRole("combobox", { name: "Sort photos: Capture date" }),
     screen.getByRole("button", { name: "Clear filters" }),
     screen.getByRole("button", { name: "Canon, 1 photos" }),
   ];
-  expect(screen.getByRole("button", { name: "Clear filters" }).getAttribute("type")).toBe("button");
   const pending = photos.setHidden("photo-1");
   await waitFor(() => {
     for (const control of controls) expect(control.hasAttribute("disabled")).toBe(true);
   });
   finish(Response.json({ id: "photo-1", revision: 2 }));
   await pending;
-  await waitFor(() => {
-    for (const control of controls.slice(0, 4))
-      expect(control.hasAttribute("disabled")).toBe(false);
-  });
+  await waitFor(() => expect(controls[0].hasAttribute("disabled")).toBe(false));
   photos.dispose();
   await cache.dispose();
 });
 
-it("restores applied search after a facet click and keeps empty-library guidance when clearing filters", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
+it("keeps empty-library guidance when clearing filters", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -257,26 +241,19 @@ it("restores applied search after a facet click and keeps empty-library guidance
   ];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
+  await fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   await screen.findByText("Your photo library is empty");
   expect(
     await screen.findByText(
       /Choose a folder or files with Add photos\. Large camera cards on the daemon's own disk import faster with docbank photos import\./,
     ),
   ).toBeTruthy();
-  const search = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
-  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
-  await fireEvent.input(search, { target: { value: "Nikon" } });
-  expect(search.value).toBe("Nikon");
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Canon, 1 photos" }));
-  await waitFor(() => expect(search.value).toBe(""));
-  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.text).toBe("");
   await waitFor(() => expect(photos.loading).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
   await screen.findByText("Your photo library is empty");
-  await fireEvent.click(screen.getByRole("combobox", { name: "Sort photos: Capture date" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Capture date" }));
   await photos.setQuery({ ...photos.query, filters: { iso_min: 0 } });
   await screen.findByText("No matching photos");
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
@@ -290,58 +267,7 @@ it("restores applied search after a facet click and keeps empty-library guidance
   await cache.dispose();
 });
 
-it("reports completed photo searches while blank and canceled searches stay silent", async () => {
-  const action = vi.mocked(actions.reportAction);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  let finish!: (response: Response) => void;
-  const fetcher = vi.fn(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] })));
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  photos.started = true;
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const submit = vi.spyOn(photos, "setQuery");
-  render(PhotosWorkspace, { photos, cache });
-  const search = screen.getByRole("searchbox", { name: "Search photos" });
-  expect(action).not.toHaveBeenCalled();
-  await fireEvent.input(search, { target: { value: "   " } });
-  await fireEvent.submit(search.closest("form")!);
-  await waitFor(() => expect(photos.loading).toBe(false));
-  expect(action).not.toHaveBeenCalled();
-  await fireEvent.input(search, { target: { value: "Nikon" } });
-  await fireEvent.submit(search.closest("form")!);
-  await waitFor(() =>
-    expect(action).toHaveBeenCalledExactlyOnceWith("scoped", "search_run", "text"),
-  );
-  action.mockClear();
-  fetcher.mockClear();
-  submit.mockClear();
-  fetcher.mockImplementation(() => new Promise<Response>((resolve) => (finish = resolve)));
-  await fireEvent.input(search, { target: { value: "river" } });
-  await fireEvent.submit(search.closest("form")!);
-  expect(fetcher).toHaveBeenCalledOnce();
-  photos.dispose();
-  await act(async () => {
-    finish(Response.json({ items: [], total: 0, facets: [] }));
-    await submit.mock.results[0].value;
-  });
-  expect(actions.reportAction).not.toHaveBeenCalled();
-  await cache.dispose();
-});
-
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   let listings = 0;
@@ -390,13 +316,6 @@ it("keeps failed confirmation visible and closes after cancellation or success",
 });
 
 it("renders surviving photos beside collapsed stacks after a failed refresh", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn());
@@ -415,13 +334,6 @@ it("renders surviving photos beside collapsed stacks after a failed refresh", as
 });
 
 it("does not write the user's scroll position back to the grid", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
   stubPhotoFetch(vi.fn());
@@ -452,13 +364,6 @@ it("does not write the user's scroll position back to the grid", async () => {
 });
 
 it("starts no extra detail request after a successful reload", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   vi.spyOn(photos, "resume").mockResolvedValue();
@@ -495,13 +400,6 @@ it.each([
 ])(
   "stages timeline period %s, retains the grid on failure and restarts paging on Retry",
   async (date, previous, name, after, before, label) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
     const photos = new Photos("scoped", vi.fn());
@@ -543,7 +441,7 @@ it.each([
     const scroll = screen.getByTestId("photo-scroll");
     scroll.scrollTop = 500;
     await fireEvent.scroll(scroll);
-    const heading = document.querySelector(".library-title span")!.textContent;
+    const heading = document.querySelector(".photo-bar .toolbar-actions > span")!.textContent;
     const button = screen.getByRole(date.length === 4 ? "navigation" : "region", {
       name: date.length === 4 ? "Timeline years" : "Photo timeline",
     });
@@ -552,7 +450,7 @@ it.each([
         name.test(button.textContent!.trim()),
       )!,
     );
-    expect(document.querySelector(".library-title span")!.textContent).toBe(heading);
+    expect(document.querySelector(".photo-bar .toolbar-actions > span")!.textContent).toBe(heading);
     expect(photos.date).toBe(previous);
     expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
     expect(scroll.scrollTop).toBe(500);
@@ -561,14 +459,16 @@ it.each([
     expect(JSON.parse(fetcher.mock.calls[0][1].body).cursor).toBeUndefined();
     finish(new Response(JSON.stringify({ detail: "Date unavailable" }), { status: 503 }));
     await screen.findByText("Date unavailable");
-    expect(document.querySelector(".library-title span")!.textContent).toBe(heading);
+    expect(document.querySelector(".photo-bar .toolbar-actions > span")!.textContent).toBe(heading);
     expect(photos.items[0].asset_id).toBe("photo-1");
     expect(photos.cursor).toBe("old-page");
     expect(photos.date).toBe(previous);
     expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
     expect(scroll.scrollTop).toBe(500);
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByText(`100 photos ${label} · 60 loaded`);
+    expect((await screen.findByTitle(`100 photos ${label}`)).textContent).toBe(
+      `100 photos ${label}`,
+    );
     expect(photos.date).toBe(date);
     expect(photos.selection.selectedIDs.size).toBe(0);
     expect(scroll.scrollTop).toBe(0);
@@ -576,7 +476,9 @@ it.each([
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetcher.mock.calls[1][1].body).cursor).toBeUndefined();
     await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
-    await screen.findByText(`100 photos ${label} · 61 loaded`);
+    expect((await screen.findByTitle(`100 photos ${label}`)).textContent).toBe(
+      `100 photos ${label}`,
+    );
     expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({
       cursor: "new-page",
       query: { filters },
@@ -588,13 +490,6 @@ it.each([
 );
 
 it("keeps loaded photos visible on paging failure and selects with touch checkboxes", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const fetcher = vi
@@ -632,8 +527,6 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   fetcher.mockImplementationOnce(() => new Promise(() => {}));
   photos.cursor = "manual-page";
   await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
-  expect(await screen.findByText("Loading photos…")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   view.unmount();
   expect(fetcher.mock.calls[3][1].signal.aborted).toBe(true);
   photos.dispose();
@@ -641,13 +534,6 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
 });
 
 it("retains visible cells and pending previews across a prepend larger than the window", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
@@ -720,13 +606,6 @@ it("retains visible cells and pending previews across a prepend larger than the 
 });
 
 it("shows both years of a New Year session and jumps to the newest containing group", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn());
@@ -777,13 +656,6 @@ it("shows both years of a New Year session and jumps to the newest containing gr
 });
 
 it("clears selection with Escape from focused photo controls while honoring shortcut suppression", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   Object.defineProperty(Element.prototype, "scrollIntoView", {
@@ -821,13 +693,6 @@ it("clears selection with Escape from focused photo controls while honoring shor
 });
 
 it("keeps the retained scroll position when density changed in another view", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
   const photos = new Photos("scoped", vi.fn());
@@ -850,13 +715,6 @@ it.each([
 ])("keeps the top photo after $title", async ({ kind }) => {
   const density = kind.endsWith("density");
   const relevance = kind === "relevance density";
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
@@ -917,7 +775,7 @@ it.each([
   if (density) {
     await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   } else {
-    await screen.findByText("60 photos · 60 loaded");
+    await screen.findByText("60 photos");
   }
   if (kind === "density") {
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
@@ -963,15 +821,8 @@ it.each([
 
 it("opens on touch with empty selection and toggles membership on touch taps", async () => {
   vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  vi.stubGlobal(
     "matchMedia",
-    vi.fn(() => ({ matches: true })),
+    vi.fn(() => Object.assign(new EventTarget(), { matches: true })),
   );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
@@ -996,7 +847,7 @@ it("opens on touch with empty selection and toggles membership on touch taps", a
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal(
     "matchMedia",
-    vi.fn(() => ({ matches: false })),
+    vi.fn(() => Object.assign(new EventTarget(), { matches: false })),
   );
   const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
   await touchTap(second, 1351, 1);
@@ -1014,13 +865,6 @@ it.each(["success", "grid", "removed", "pending"])(
     const removed = expired || scenario === "pending";
     const initial = [photo(1, "2024-04-30T23:30:00-02:00"), photo(2, "2024-05-01T00:00:00Z")],
       following = photo(3, "2024-05-01T00:30:00+02:00");
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
     const fetcher = vi.fn(async (url: string, init: RequestInit) => {
@@ -1167,13 +1011,6 @@ it.each(["success", "grid", "removed", "pending"])(
 it.each(["close", "photo", "unmount", "live"])(
   "keeps deferred continuation scoped to its %s photo visit",
   async (interruption) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
     const photos = new Photos("scoped", vi.fn());
@@ -1234,13 +1071,6 @@ it.each(["close", "photo", "unmount", "live"])(
 it.each(["listing", "late", "navigation", "retry", "fresh"])(
   "keeps standalone lookup authoritative across %s",
   async (scenario) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     vi.stubGlobal(
       "Image",
       class {
@@ -1357,13 +1187,6 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])(
 );
 
 function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map") {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection });
@@ -1417,7 +1240,8 @@ it("refreshes a filtered view and restarts pending reads after a metadata edit",
   const notify = edit.mock.calls[0]![3];
   await view.rerender({ photoID: "photo-1" });
   await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
   const oldSignal = fetcher.mock.calls[0]![1].signal as AbortSignal;
   const oldLookupSignal = lookup.mock.calls[0]![1];
   await notify(receipt, []);
@@ -1565,13 +1389,6 @@ it.each([
   "reloads a %s failure with a %s version and keeps the viewer context",
   async (operation, version) => {
     vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.stubGlobal(
       "Image",
       class {
         src = "";
@@ -1648,13 +1465,6 @@ it.each([
 it.each(["success", "failure", "interrupted", "late"] as const)(
   "consumes a %s reload before revisiting the listed photo",
   async (outcome) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     const photos = new Photos("scoped", vi.fn());
     photos.items = [photo(1), photo(2)];
     photos.started = true;
@@ -1702,13 +1512,6 @@ it.each(["success", "failure", "interrupted", "late"] as const)(
 );
 
 it("switches Grid and Timeline, seeks an empty day and clears its date", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn());
@@ -1740,23 +1543,25 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   await fireEvent.click(
     screen.getByRole("navigation", { name: "Timeline years" }).querySelector("button")!,
   );
-  expect(screen.getByText("1 photos · 1 loaded")).toBeTruthy();
+  expect(screen.getByText("1 photo")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
-  expect(screen.queryByText("0 photos in 2024 · 0 loaded")).toBeNull();
+  expect(screen.queryByTitle("0 photos in 2024")).toBeNull();
   finish(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }));
   await screen.findByText("Try again");
-  expect(screen.getByText("1 photos · 1 loaded")).toBeTruthy();
+  expect(screen.getByText("1 photo")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
-  expect(screen.queryByText("0 photos in 2024 · 0 loaded")).toBeNull();
+  expect(screen.queryByTitle("0 photos in 2024")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: /^Retry$/ }));
   expect(await screen.findByText("No photos in this year")).toBeTruthy();
-  expect(screen.getByText("0 photos in 2024 · 0 loaded")).toBeTruthy();
+  expect(screen.getByTitle("0 photos in 2024").textContent).toBe("0 photos in 2024");
   await photos.selectDate("2024-02");
   expect(await screen.findByText("No photos in this month")).toBeTruthy();
-  expect(screen.getByText("0 photos in February 2024 · 0 loaded")).toBeTruthy();
+  expect(screen.getByTitle("0 photos in February 2024").textContent).toBe(
+    "0 photos in February 2024",
+  );
   await photos.selectDate("2024-02-29");
   expect(await screen.findByText("No photos on this day")).toBeTruthy();
-  expect(screen.getByText("0 photos on 2024-02-29 · 0 loaded")).toBeTruthy();
+  expect(screen.getByTitle("0 photos on 2024-02-29").textContent).toBe("0 photos on 2024-02-29");
   await fireEvent.click(screen.getByRole("button", { name: "Clear date" }));
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   expect(screen.queryByRole("button", { name: "Clear date" })).toBeNull();
@@ -1768,13 +1573,6 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
 });
 
 it("explains the relevance limit and hides it for complete results or capture dates", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   photos.items = [photo(1)];
@@ -1799,13 +1597,6 @@ it("explains the relevance limit and hides it for complete results or capture da
 });
 
 it("applies the selected Relevance sort", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     "fetch",
@@ -1837,13 +1628,6 @@ it.each([
   ["9", { label: "blue" }],
   ["v", { label: "purple" }],
 ])("applies the registered %s photo shortcut", async (key, patch) => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.started = true;
@@ -1873,13 +1657,6 @@ it.each([
   ["trashing", "trashing"],
   ["busy", "busy"],
 ] as const)("gates metadata shortcuts for %s", async (_scenario, pending) => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   photos.items = [photo(1)];
@@ -2042,13 +1819,6 @@ it("keeps the Metadata draft after a refused loupe edit until Reload metadata", 
 });
 
 it("guards loupe navigation through the metadata editor", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   photos.items = [photo(1), photo(2)];
@@ -2092,13 +1862,6 @@ it("guards loupe navigation through the metadata editor", async () => {
 });
 
 it("keeps a Library reload error through a list refresh", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.started = true;
@@ -2132,11 +1895,10 @@ it("keeps Library recovery below its toolbar and inside the grid", async () => {
   photos.error = "Page unavailable";
   const retry = vi.spyOn(photos, "retry").mockResolvedValue();
   render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
-  expect(screen.getByRole("button", { name: "Move rejects" })).toBeTruthy();
   const alert = screen.getByRole("alert");
   expect(alert.closest(".library-grid")).toBeTruthy();
   expect(
-    document.querySelector(".photo-toolbar")!.compareDocumentPosition(alert) &
+    document.querySelector(".photo-bar")!.compareDocumentPosition(alert) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   await fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
@@ -2166,13 +1928,6 @@ it("renders disabled maps without fetching and keeps the Library selection on Es
 });
 
 it("shows the Map limit notice only for capped results and bounds loading progress", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   photos.items = [mapPhoto(1), mapPhoto(2)];
   photos.started = true;
@@ -2216,13 +1971,6 @@ it("shows the Map limit notice only for capped results and bounds loading progre
 });
 
 it("reopens the map where it was after a remount", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.items = [mapPhoto(1)];
   photos.total = 1;
@@ -2253,13 +2001,6 @@ it("reopens the map where it was after a remount", async () => {
 });
 
 function openMapViewerSetup() {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
@@ -2434,13 +2175,6 @@ it("keeps an open Map photo's detail request through appended pages", async () =
 });
 
 it("viewer follows the Map query while the viewport filters its grid", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn());
@@ -2486,13 +2220,6 @@ it("viewer follows the Map query while the viewport filters its grid", async () 
 });
 
 function mapRecoverySetup() {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn());
@@ -2563,10 +2290,41 @@ it("shows the Map date without Library controls", async () => {
   photos.date = "2024";
   photos.total = 1;
   await vi.dynamicImportSettled();
-  expect(screen.queryByRole("button", { name: "Move rejects" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  const menu = screen.getByRole("menu");
+  expect(within(menu).getByRole("menuitem", { name: "Refresh previews" })).toBeTruthy();
+  expect(within(menu).queryByRole("menuitem", { name: "Move rejects" })).toBeNull();
+  expect(within(menu).queryByRole("menuitem", { name: /^Cull/ })).toBeNull();
+  await fireEvent.keyDown(document, { key: "Escape" });
   expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Clear date" })).toBeNull();
+  expect(document.querySelector(".photo-stack-controls")).toBeNull();
   await screen.findByText("1 located photo in 2024");
+  photos.dispose();
+});
+
+it("shows the Map viewport count only after loading starts, with singular and plural labels", async () => {
+  const { photos } = mapRecoverySetup();
+  photos.started = false;
+  photos.error = "";
+  await vi.dynamicImportSettled();
+  await tick();
+  expect.soft(document.querySelector(".photo-count-value")?.textContent).toBe("");
+  photos.loading = true;
+  await tick();
+  expect.soft(document.querySelector(".photo-count-value")?.textContent).toBe("Loading…");
+  photos.started = true;
+  photos.loading = false;
+  photos.total = 20;
+  map.onvisible!([mapPhoto(1)]);
+  await tick();
+  expect.soft(document.querySelector(".photo-count-value")?.textContent).toBe("1 photo");
+  map.onvisible!([mapPhoto(1), mapPhoto(2)]);
+  await tick();
+  expect(document.querySelector(".photo-count-value")?.textContent).toBe("2 photos");
+  map.onvisible!([]);
+  await tick();
+  expect(document.querySelector(".photo-count-value")?.textContent).toBe("0 photos");
   photos.dispose();
 });
 
@@ -2627,13 +2385,6 @@ it("explains why Add photos is unavailable", async () => {
 });
 
 it("explains the photo export cap before offering scope or selected export", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const photos = new Photos("scoped", vi.fn());
@@ -2648,9 +2399,13 @@ it("explains the photo export cap before offering scope or selected export", asy
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const onexport = vi.fn();
   render(PhotosWorkspace, { photos, cache, onexport });
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
   expect(
-    (screen.getByRole("button", { name: "Export photos" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
+    screen
+      .getByRole("menuitem", { name: "Export all (limit 16 photos)" })
+      .getAttribute("aria-disabled"),
+  ).toBe("true");
+  await fireEvent.keyDown(document, { key: "Escape" });
   expect(
     (screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement).disabled,
   ).toBe(true);
@@ -2663,13 +2418,6 @@ it("explains the photo export cap before offering scope or selected export", asy
   await cache.dispose();
 });
 it("exports the visible scope, including album filters and all-results selections", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const albumQuery = {
@@ -2687,7 +2435,8 @@ it("exports the visible scope, including album filters and all-results selection
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const onexport = vi.fn();
   render(PhotosWorkspace, { photos, cache, onexport });
-  await fireEvent.click(screen.getByRole("button", { name: "Export photos" }));
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Export all 3 photos" }));
   expect(onexport).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({
       label: "Library",
@@ -2712,13 +2461,6 @@ it("exports the visible scope, including album filters and all-results selection
 });
 
 it("exports explicit Map selections without offering the broader Library query", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   photos.items = [mapPhoto(1), mapPhoto(2)];
   photos.total = 2;
@@ -2741,7 +2483,10 @@ it("exports explicit Map selections without offering the broader Library query",
   await vi.dynamicImportSettled();
   map.onvisible!([mapPhoto(1)]);
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-  expect(screen.queryByRole("button", { name: "Export photos" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  const menu = screen.getByRole("menu");
+  expect(within(menu).queryByRole("menuitem", { name: /^Export/ })).toBeNull();
+  await fireEvent.keyDown(document, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
   expect(onexport).toHaveBeenCalledExactlyOnceWith({
     label: "Selected photos",
@@ -2752,13 +2497,6 @@ it("exports explicit Map selections without offering the broader Library query",
 });
 
 it("exports the prepared metadata selection after the query grows beyond the export cap", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.total = 3;
@@ -2796,13 +2534,6 @@ it("exports the prepared metadata selection after the query grows beyond the exp
 });
 
 it("disables selected export when a metadata draft keeps an empty selection open", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.total = 1;
@@ -2832,13 +2563,6 @@ it.each([false, true])(
     });
     vi.stubGlobal("indexedDB", new IDBFactory());
     vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
     vi.spyOn(PhotoCull.prototype, "flush").mockResolvedValue();
     const rows = [photo(1), photo(2)];
@@ -2905,13 +2629,6 @@ it.each([false, true])(
 );
 
 it("reloads durable culls and retains their draft only for the same vault", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const rows = [photo(1), photo(2)];
   const photos = new Photos("scoped", vi.fn());
   photos.items = rows;
@@ -2973,13 +2690,6 @@ it("reloads durable culls and retains their draft only for the same vault", asyn
 });
 
 async function captureWorkspace() {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
   vi.spyOn(PhotoCull.prototype, "flush").mockResolvedValue();
   const rows = [photo(1), photo(2)];
@@ -3026,13 +2736,6 @@ async function captureWorkspace() {
 }
 
 it("compares eight selected photos and asks to narrow a larger selection", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const rows = Array.from({ length: 9 }, (_, index) => photo(index + 1));
   const ids = rows.map((row) => row.asset_id);
   const photos = new Photos("scoped", vi.fn());
@@ -3081,6 +2784,7 @@ it.each(["compare", "draft"])(
     if (action === "compare") {
       photos.select(ids[0]!, new MouseEvent("click"), ids);
       photos.select(ids[1]!, new MouseEvent("click", { ctrlKey: true }), ids);
+      await tick();
       await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
       expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
       expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
@@ -3098,13 +2802,6 @@ it.each(["compare", "draft"])(
 );
 
 it("uses the resolved vault identity when Cull mounted before audit status arrived", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   // Reaching IndexedDB distinguishes a valid binding from the empty-identity guard.
   const open = vi.fn(() => {
     throw new Error("Synthetic storage reached");
@@ -3141,13 +2838,6 @@ it.each(
   async ({ answer, formatVersion }) => {
     vi.stubGlobal("indexedDB", new IDBFactory());
     vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
     const store = photoCullStorage("synthetic-vault");
     const original = {
       ids: ["photo-1"],
@@ -3219,14 +2909,131 @@ it.each(
   },
 );
 
-it("explains paused grouping beside the Library stack controls", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
+it("toggles the Filters panel", async () => {
+  stubPhotoFetch(() => Promise.resolve(Response.json({ items: [photo(1)], total: 1, facets: [] })));
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const toggle = screen.getByRole("button", { name: "Filters" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("complementary", { name: "Photo facets" })).toBeNull();
+  await fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("complementary", { name: "Photo facets" })).toBeTruthy();
+  const panelID = toggle.getAttribute("aria-controls");
+  expect(panelID).toBeTruthy();
+  expect(
+    document
+      .getElementById(panelID!)
+      ?.contains(screen.getByRole("complementary", { name: "Photo facets" })),
+  ).toBe(true);
+  await fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("complementary", { name: "Photo facets" })).toBeNull();
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("renders the active filter badge", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.baseQuery = photos.query = { ...photos.query, filters: { rating_min: 1 } };
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  expect(screen.getByRole("button", { name: "Filters, 1 active filter" }).textContent).toContain(
+    "1",
   );
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each([false, true])(
+  "moves Group, Density and Cull into the menu on compact screens, map=%s",
+  async (mapMode) => {
+    vi.stubGlobal("matchMedia", (media: string) =>
+      Object.assign(new EventTarget(), { media, matches: media === "(max-width: 640px)" }),
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+      projection: mapMode ? "map" : undefined,
+    });
+    photos.started = true;
+    photos.items = [photo(1)];
+    photos.total = 1;
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache,
+      mapMode,
+      tiles: {
+        tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
+        host: "tiles.example.org",
+        attribution: "Example",
+        max_zoom: 19,
+      },
+    });
+    if (mapMode) {
+      await vi.dynamicImportSettled();
+      await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+    } else await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+    expect(screen.queryByRole("combobox", { name: /^Group photos/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /^Grid density/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cull" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+    if (!mapMode)
+      expect(
+        screen.getByRole("menuitem", { name: "Cull Vault identity unavailable. Reload to retry." }),
+      ).toBeTruthy();
+    await fireEvent.click(screen.getByRole("menuitemradio", { name: "Capture sessions" }));
+    expect(photos.grouping).toBe("sessions");
+    await fireEvent.click(screen.getByRole("menuitemradio", { name: "Large" }));
+    expect(photos.density).toBe("large");
+    await fireEvent.keyDown(document, { key: "Escape" });
+    if (!mapMode) {
+      vi.spyOn(PhotoCull.prototype, "probe").mockImplementation(async function (this: PhotoCull) {
+        this.saved = true;
+      });
+      await view.rerender({ photos, cache, vaultID: "synthetic-vault" });
+      await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+      expect(await screen.findByRole("menuitem", { name: "Resume cull" })).toBeTruthy();
+      expect(screen.getByRole("menuitem", { name: "Cull" })).toBeTruthy();
+      await fireEvent.keyDown(document, { key: "Escape" });
+    }
+    photos.dispose();
+    await cache.dispose();
+  },
+);
+
+it("shows a loading pill while a page loads and Load more when it settles", async () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
+  photos.total = 100;
+  photos.cursor = "next";
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const status = document.querySelector(".photo-results [role=status]");
+  expect(status).toBeTruthy();
+  expect(status!.textContent).toBe("");
+  await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  expect(screen.getByText("Loading photos…").classList.contains("photo-pill")).toBe(true);
+  expect(document.querySelector(".photo-results [role=status]")).toBe(status);
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  finish(Response.json({ items: [photo(61)], total: 100, next_cursor: "last" }));
+  await waitFor(() => expect(screen.queryByText("Loading photos…")).toBeNull());
+  expect(document.querySelector(".photo-results [role=status]")).toBe(status);
+  expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("explains paused grouping beside the Library stack controls", async () => {
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.total = 1;
