@@ -13,18 +13,11 @@ const merging = (people: People) => {
   people.confirmMerge(true);
 };
 
-it("pages the projection and cancels a late scoped response", async () => {
-  let finish!: (value: api.PersonPage) => void;
+it("pages the projection", async () => {
   const read = vi
     .spyOn(api, "listPeople")
     .mockResolvedValueOnce({ items: [ada], next_cursor: "next" })
-    .mockResolvedValueOnce({ items: [grace] })
-    .mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
+    .mockResolvedValueOnce({ items: [grace] });
   const people = new People("session", vi.fn());
   await people.load();
   await people.load("", true);
@@ -35,12 +28,6 @@ it("pages the projection and cancels a late scoped response", async () => {
     photo_summary: true,
     cursor: "next",
   });
-  const pending = people.load("Grace");
-  people.conceal();
-  finish({ items: [grace] });
-  await pending;
-  expect(people.items).toEqual([]);
-  expect(read.mock.calls[2]![1]!.signal!.aborted).toBe(true);
   people.dispose();
 });
 
@@ -122,24 +109,35 @@ it.each([409, 412, 503])(
     expect(await people.submitMerge()).toBe(false);
     expect(people.writeError).toBe(detail);
     expect(people.items).toEqual([grace]);
+    if (status === 409) expect(people.selected).toEqual([ada, grace]);
     expect(people.merge).toBeUndefined();
     expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
     people.dispose();
   },
 );
 
-it.each([412, 503])("reloads the first page after rename HTTP %s", async (status) => {
+it.each([412, 503, 422])("recovers after rename HTTP %s", async (status) => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  const detail = status === 422 ? "Name is too long" : "Rename failed";
   vi.spyOn(api, "renamePerson").mockRejectedValue(
-    new APIError("Rename failed", status, "stale_revision"),
+    new APIError(detail, status, status === 422 ? "validation" : "stale_revision"),
   );
   const people = new People("session", vi.fn());
   people.items = [ada, grace];
   people.cursor = "old-page";
-  expect(await people.rename(ada, "Ada L")).toBe(false);
-  expect(people.writeError).toBe("Rename failed");
-  expect(people.items).toEqual([grace]);
-  expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
+  people.toggle(ada);
+  people.toggle(grace);
+  expect(await people.rename(ada, status === 422 ? "x".repeat(1000) : "Ada L")).toBe(false);
+  expect(people.writeError).toBe(detail);
+  if (status === 422) {
+    expect(people.selected).toEqual([ada, grace]);
+    expect(people.items).toEqual([ada, grace]);
+    expect(people.cursor).toBe("old-page");
+    expect(read).not.toHaveBeenCalled();
+  } else {
+    expect(people.items).toEqual([grace]);
+    expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
+  }
   people.dispose();
 });
 
@@ -184,9 +182,18 @@ it("deduplicates renamed cards crossing a saved cursor", async () => {
   people.dispose();
 });
 
-it.each(["rename", "merge"])("conceals names after a late %s response", async (action) => {
+it.each(["rename", "merge", "load"])("conceals names after a late %s response", async (action) => {
   let reject!: (cause: Error) => void;
-  if (action === "merge")
+  let finish!: (page: api.PersonPage) => void;
+  const read = vi.spyOn(api, "listPeople");
+  if (action === "load")
+    read.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+  else if (action === "merge")
     vi.spyOn(api, "mergePerson").mockImplementation(
       () =>
         new Promise((_, fail) => {
@@ -200,18 +207,26 @@ it.each(["rename", "merge"])("conceals names after a late %s response", async (a
           reject = fail;
         }),
     );
-  const read = vi.spyOn(api, "listPeople");
   const people = new People("session", vi.fn());
   people.items = [ada, grace];
   merging(people);
-  const pending = action === "merge" ? people.submitMerge() : people.rename(ada, "Ada L");
+  const pending =
+    action === "load"
+      ? people.load("Grace")
+      : action === "merge"
+        ? people.submitMerge()
+        : people.rename(ada, "Ada L");
   people.conceal();
-  reject(new Error("Offline"));
+  if (action === "load") finish({ items: [grace] });
+  else reject(new Error("Offline"));
   await pending;
   expect(people.items).toEqual([]);
   expect(people.merge).toBeUndefined();
   expect(people.writeError).toBe("");
   expect(people.busy).toBe(false);
-  expect(read).not.toHaveBeenCalled();
+  if (action === "load") {
+    expect(read).toHaveBeenCalledOnce();
+    expect(read.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  } else expect(read).not.toHaveBeenCalled();
   people.dispose();
 });

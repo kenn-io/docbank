@@ -49,5 +49,5 @@ export const ada: PersonSummary = person("ada", {
 });
 export const grace: PersonSummary = person("grace", {
   display_name: "Grace",
-  photo_summary: { library_count: 0 },
+  photo_summary: { library_count: 2 },
 });

@@ -125,13 +125,14 @@ func TestBrowserPersonWritesRequireVisibility(t *testing.T) {
 	_, err = s.UpdatePerson(WithVisiblePeopleOnly(unlocked), hiddenOnly.PersonID, revision(hiddenOnly.PersonID), "Hidden Renamed")
 	require.NoError(t, err)
 
-	// Replay is answered from its receipt after the absorbed person retires.
-	absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
-	require.NoError(t, err)
-	operation, survivorRevision := uuid.NewString(), revision(visible.PersonID)
-	first, err := s.MergePersons(browser, visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
-	require.NoError(t, err)
-	replayed, err := s.MergePersons(browser, visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
-	require.NoError(t, err)
-	require.Equal(t, first.MergeID, replayed.MergeID)
+	t.Run("replays the receipt after the absorbed person retires", func(t *testing.T) {
+		absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
+		require.NoError(t, err)
+		operation, survivorRevision := uuid.NewString(), revision(visible.PersonID)
+		first, err := s.MergePersons(browser, visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
+		require.NoError(t, err)
+		replayed, err := s.MergePersons(browser, visible.PersonID, absorbed.PersonID, operation, survivorRevision, absorbed.Revision)
+		require.NoError(t, err)
+		require.Equal(t, first.MergeID, replayed.MergeID)
+	})
 }

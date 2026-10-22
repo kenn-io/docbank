@@ -879,7 +879,7 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
-	_, err = s.CreatePerson(ctx, "Document only", "operator")
+	_, err = s.CreatePerson(ctx, "A Contact", "operator")
 	require.NoError(t, err)
 	hiddenOnly, err := s.CreatePerson(ctx, "Hidden only", "operator")
 	require.NoError(t, err)
@@ -920,6 +920,11 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	_, _, err = s.Trash(ctx, nodes[4].ID, nodes[4].Revision)
 	require.NoError(t, err)
 	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	// Filter contacts before applying the page limit.
+	page, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, person.PersonID, page[0].PersonID)
 	rows, err := s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)
 	require.NoError(t, err)
 	// A person without photo evidence gets no card.
