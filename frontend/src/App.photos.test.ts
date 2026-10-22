@@ -17,6 +17,7 @@ import App from "./App.svelte";
 import { person, personResponse, personMergeReceipt } from "./people-test-fixtures.js";
 import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
+import { People } from "./people.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
@@ -4411,6 +4412,7 @@ it.each(["absorbed", "survivor", "text"])(
       );
     });
     const query = vi.spyOn(Photos.prototype, "setQuery");
+    const peopleLoad = vi.spyOn(People.prototype, "load");
     render(App);
     await fireEvent.click(await screen.findByRole("button", { name: "Ada 1 Library photo" }));
     await screen.findByText("Person: Ada");
@@ -4418,17 +4420,19 @@ it.each(["absorbed", "survivor", "text"])(
     expect(library.query.filters.person_ids).toEqual([ada.person_id]);
     await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
     await screen.findByRole("button", { name: "Ada 1 Library photo" });
-    await fireEvent.click(screen.getAllByRole("button", { name: /^Rename$/ })[0]!);
-    const renameDialog = screen.getByRole("dialog", { name: "Rename Ada" });
-    await fireEvent.input(within(renameDialog).getByRole("textbox", { name: "Person name" }), {
-      target: { value: "Ada Lovelace" },
-    });
-    await fireEvent.click(within(renameDialog).getByRole("button", { name: "Rename" }));
-    await screen.findByRole("button", { name: "Ada Lovelace 1 Library photo" });
-    expect(library.personFilter).toEqual({ id: ada.person_id, name: "Ada Lovelace" });
-    await fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace 1 Library photo" }));
-    await screen.findByText("Person: Ada Lovelace");
-    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+    if (filter === "absorbed") {
+      await fireEvent.click(screen.getAllByRole("button", { name: /^Rename$/ })[0]!);
+      const renameDialog = screen.getByRole("dialog", { name: "Rename Ada" });
+      await fireEvent.input(within(renameDialog).getByRole("textbox", { name: "Person name" }), {
+        target: { value: "Ada Lovelace" },
+      });
+      await fireEvent.click(within(renameDialog).getByRole("button", { name: "Rename" }));
+      await screen.findByRole("button", { name: "Ada Lovelace 1 Library photo" });
+      expect(library.personFilter).toEqual({ id: ada.person_id, name: "Ada Lovelace" });
+      await fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace 1 Library photo" }));
+      await screen.findByText("Person: Ada Lovelace");
+      await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+    }
     if (filter === "survivor") {
       await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
       await screen.findByText("Person: Grace");
@@ -4445,21 +4449,34 @@ it.each(["absorbed", "survivor", "text"])(
       await waitFor(() => expect(library.query.text).toBe("person:Grace"));
       await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
     }
-    await fireEvent.click(
-      await screen.findByRole("checkbox", {
-        name: `Select Ada Lovelace · ${new Date(ada.created_at).toLocaleDateString()}`,
-      }),
-    );
-    await fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: `Select Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
-      }),
-    );
-    await fireEvent.click(screen.getByRole("button", { name: /^Merge$/ }));
-    const mergeDialog = screen.getByRole("dialog", { name: "Merge people" });
-    await fireEvent.click(within(mergeDialog).getByRole("radio", { name: /^Keep Grace/ }));
-    await fireEvent.click(within(mergeDialog).getByRole("checkbox", { name: "Confirm merge" }));
-    await fireEvent.click(within(mergeDialog).getByRole("button", { name: "Merge" }));
+    let pendingMerge: Promise<boolean> | undefined;
+    if (filter === "absorbed") {
+      await fireEvent.click(
+        await screen.findByRole("checkbox", {
+          name: `Select Ada Lovelace · ${new Date(ada.created_at).toLocaleDateString()}`,
+        }),
+      );
+      await fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: `Select Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+        }),
+      );
+      await fireEvent.click(screen.getByRole("button", { name: /^Merge$/ }));
+      const mergeDialog = screen.getByRole("dialog", { name: "Merge people" });
+      await fireEvent.click(within(mergeDialog).getByRole("radio", { name: /^Keep Grace/ }));
+      await fireEvent.click(within(mergeDialog).getByRole("checkbox", { name: "Confirm merge" }));
+      await fireEvent.click(within(mergeDialog).getByRole("button", { name: "Merge" }));
+    } else {
+      const people = peopleLoad.mock.contexts.at(-1) as People;
+      people.toggle(rows[0]!);
+      people.toggle(grace);
+      people.startMerge();
+      people.keep(grace.person_id);
+      people.confirmMerge(true);
+      await act(() => {
+        pendingMerge = people.submitMerge();
+      });
+    }
     await waitFor(() => expect(finishMerge).toBeTypeOf("function"));
     if (filter !== "absorbed") {
       const readsBeforeNavigation = survivorReads;
@@ -4469,7 +4486,10 @@ it.each(["absorbed", "survivor", "text"])(
       await waitFor(() => expect(library.loading).toBe(false));
     }
     const readsBeforeMerge = survivorReads;
-    finishMerge();
+    await act(async () => {
+      finishMerge();
+      await pendingMerge;
+    });
     await waitFor(() => expect(survivorReads).toBe(readsBeforeMerge + 1));
     if (filter === "text") {
       expect(library.query.text).toBe("person:Grace");
@@ -4483,7 +4503,7 @@ it.each(["absorbed", "survivor", "text"])(
   },
 );
 
-it.each(["1 Hidden photo"])("opens %s in filtered Hidden photos", async (button) => {
+it("opens 1 Hidden photo in filtered Hidden photos", async () => {
   history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
   storage();
   vi.stubGlobal(
@@ -4521,7 +4541,7 @@ it.each(["1 Hidden photo"])("opens %s in filtered Hidden photos", async (button)
     );
   });
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: button }));
+  await fireEvent.click(await screen.findByRole("button", { name: "1 Hidden photo" }));
   await screen.findByText("Person: Ada");
   await screen.findByRole("button", { name: `Select ${item.name}` });
   expect(location.pathname).toBe("/photos/hidden");

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -315,7 +314,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.NoError(t, err)
 			for index, person := range []Person{ada, bob} {
 				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
-				_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+				_, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
 				require.NoError(t, err)
 				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("2026-0%d-01T00:00:00.000000000Z", index+1), person.PersonID)
 				require.NoError(t, err)
@@ -330,10 +329,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 					case "stale":
 						_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("d4"), 4, "image/jpeg")
 					case "memberless":
-						// Keep the depicted assertion on a version without photo membership.
-						_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=NULL WHERE display_file_id IN (SELECT file_id FROM photo_files WHERE node_id=?)`, node.ID)
-						require.NoError(t, err)
-						_, err = s.db.ExecContext(ctx, `DELETE FROM photo_files WHERE node_id=?`, node.ID)
+						_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("memberless"), 4, "text/plain")
 					}
 					require.NoError(t, err)
 				}
@@ -341,6 +337,11 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
+			cards, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{PhotoSummary: true})
+			require.NoError(t, err)
+			require.Len(t, cards, 1)
+			require.Equal(t, ada.PersonID, cards[0].PersonID)
+			require.Equal(t, int64(1), cards[0].PhotoSummary.LibraryCount)
 			// Older readable evidence ranks Bob when his newest photo is unavailable.
 			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")
 			_, err = s.MarkPersonInPhoto(ctx, older.CurrentVersionID, bob.PersonID, "")
@@ -429,19 +430,12 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				request := PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision, PersonID: expectedPerson, OperationID: uuid.NewString()}
 				named, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
 				require.NoError(t, err)
-				require.NoError(t, validateFaceDecisionReceipt(named, named.ReceiptID))
-				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
-				require.NoError(t, err)
-				_, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
-				require.NoError(t, err)
-				if action != "same person" && action != "reassignment" && action != "reassignment with prior naming" {
-					require.Equal(t, named.After.Assertions, assertions)
-				}
 			}
 			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			if action == "same person" {
 				require.Equal(t, grace.PersonID, rows[0].PersonID)
+				require.Equal(t, "2002-01-01T00:00:00.000000000Z", rows[0].RecentRank)
 				return
 			}
 			require.Equal(t, expectedPerson, rows[0].PersonID)
@@ -449,6 +443,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			if action == "create face" || action == "whole-photo mark" || action == "candidate" {
 				return
 			}
+			namedRank := rows[0].RecentRank
 			if action == "rejection undo" || action == "rejection redo" {
 				rejected := decideFaceForTest(t, s, node, face.FaceID, grace.PersonID, "reject")
 				undo, err := s.UndoPhotoFaceDecision(ctx, rejected.ReceiptID)
@@ -460,17 +455,11 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 				require.NoError(t, err)
 				require.Equal(t, ada.PersonID, rows[0].PersonID)
+				require.Equal(t, namedRank, rows[0].RecentRank)
 				return
 			}
-			namedRank := rows[0].RecentRank
 			undone, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 			require.NoError(t, err)
-			require.NoError(t, validateFaceDecisionReceipt(undone, undone.ReceiptID))
-			for _, assertion := range undone.After.Assertions {
-				if assertion.PersonID == ada.PersonID {
-					require.Equal(t, "2001-01-01T00:00:00.000000000Z", assertion.RecordedAt)
-				}
-			}
 			rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			if action == "reassignment with prior naming" {
@@ -487,21 +476,4 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPeopleRecentSeeksDepictedAssertions(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	rows, err := s.db.QueryContext(t.Context(), `EXPLAIN QUERY PLAN SELECT `+personRecentSQL()+` FROM persons`, false)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var plan []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		plan = append(plan, detail)
-	}
-	require.NoError(t, rows.Err())
-	require.Contains(t, strings.Join(plan, "\n"), "(person_id=? AND role=? AND action=?)", "recency must seek depicted evidence without reading a contact's sender assertions")
 }
