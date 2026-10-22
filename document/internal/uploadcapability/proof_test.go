@@ -17,7 +17,7 @@ func TestProofCannotCarryLocalAuthorityThroughJSON(t *testing.T) {
 	require.False(t, local)
 }
 
-func TestProofKeepsSelectedPasswordPrivateAndComparable(t *testing.T) {
+func TestProofKeepsSelectedPasswordComparable(t *testing.T) {
 	for _, password := range []string{"open", ""} {
 		candidate := password
 		proof := New(Facts{Checksum: "synthetic"}, &candidate)

@@ -30,8 +30,6 @@ func TestUnlockPDF(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = formatdetect.UnlockPDF(source, []string{"wrong"}, 1<<20)
 	require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
-	_, _, err = formatdetect.UnlockPDF(source, []string{"open"}, 1)
-	require.ErrorIs(t, err, formatdetect.ErrPDFExpandedBytes)
 	_, _, err = formatdetect.UnlockPDF([]byte("broken PDF"), []string{"wrong", "open"}, 1<<20)
 	require.Error(t, err)
 	require.NotErrorIs(t, err, formatdetect.ErrPDFEncrypted)

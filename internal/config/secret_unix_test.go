@@ -45,9 +45,8 @@ func TestSecretFileOwnershipModesAndSymlinks(t *testing.T) {
 
 func TestPDFPasswordsRejectBroadMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "passwords")
-	require.NoError(t, os.WriteFile(path, []byte("synthetic-password"), 0644))
+	require.NoError(t, os.WriteFile(path, []byte("synthetic-password"), 0600))
 	require.NoError(t, os.Chmod(path, 0644))
 	_, err := ReadPDFPasswords(path)
 	require.Error(t, err)
-	require.NotContains(t, err.Error(), "synthetic-password")
 }

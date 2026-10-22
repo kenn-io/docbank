@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,7 +12,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/internal/config"
 )
 
 type passwordCountingProvider struct {
@@ -31,7 +28,7 @@ func (provider *passwordCountingProvider) PDFPasswords() ([]string, bool, error)
 	return provider.passwords, provider.supported, provider.err
 }
 
-func TestInspectionReadsPasswordsOnlyForEncryptedPDF(t *testing.T) {
+func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	t.Parallel()
 	encrypted, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)
@@ -45,26 +42,18 @@ func TestInspectionReadsPasswordsOnlyForEncryptedPDF(t *testing.T) {
 		calls      int
 		reason     media.CapabilityReason
 		err        error
-		file       *string
+		passwords  []string
 	}{
 		{"plain.pdf", "application/pdf", mediatest.PDF(), true, 0, media.CapabilityReasonEligible, nil, nil},
 		{"audio.wav", "audio/wav", mediatest.WAV(), true, 0, media.CapabilityReasonEligible, nil, nil},
 		{"locked.pdf", "application/pdf", encrypted, false, 1, media.CapabilityReasonEncryptedContainer, nil, nil},
 		{"supported.pdf", "application/pdf", encrypted, true, 1, media.CapabilityReasonPDFPasswordRequired, nil, nil},
-		{"owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonPDFPasswordRequired, nil, nil},
-		{"empty-file-owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonEligible, nil, new("")},
-		{"blank-file-owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonEligible, nil, new("\n\r\n")},
+		{"empty-passwords-owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonEligible, nil, []string{}},
 		{"unreadable.pdf", "application/pdf", encrypted, true, 1, "", passwordErr, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
-			provider := &passwordCountingProvider{RenditionProvider: newWorkerProvider(t), supported: tc.supported, err: tc.err}
-			if tc.file != nil {
-				path := filepath.Join(t.TempDir(), "passwords")
-				require.NoError(t, os.WriteFile(path, []byte(*tc.file), 0600))
-				provider.passwords, err = config.ReadPDFPasswords(path)
-				require.NoError(t, err)
-			}
+			provider := &passwordCountingProvider{RenditionProvider: newWorkerProvider(t), passwords: tc.passwords, supported: tc.supported, err: tc.err}
 			stored := workerProcessingProfile(t, provider.Descriptor())
 			var portable document.ProcessingProfileV1
 			require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))

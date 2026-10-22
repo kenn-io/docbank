@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -19,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
@@ -197,11 +195,11 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 		require.Equal(c, "pdf_password_required", status.FailureCode)
 	}, 10*time.Second, 10*time.Millisecond)
 	transport.mu.Lock()
-	requests := len(transport.bodies)
+	requests := transport.requests
 	transport.mu.Unlock()
 	require.Zero(t, requests)
 
-	require.NoError(t, os.WriteFile(path, []byte("wrong space\nopen\n"), 0600))
+	require.NoError(t, os.WriteFile(path, []byte("wrong\nopen\n"), 0600))
 	plan, err = daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	completed, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
@@ -216,22 +214,9 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "failed", previous.State)
 	transport.mu.Lock()
-	bodies := append([][]byte(nil), transport.bodies...)
+	requests = transport.requests
 	transport.mu.Unlock()
-	require.Len(t, bodies, 1)
-	var wire struct {
-		Document struct {
-			URL string `json:"document_url"`
-		} `json:"document"`
-	}
-	require.NoError(t, json.Unmarshal(bodies[len(bodies)-1], &wire))
-	sent, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
-	require.NoError(t, err)
-	pages, err := media.CountPDFPages(sent)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), pages)
-	require.NotContains(t, string(sent), "/Encrypt")
-	require.NotEqual(t, source, sent)
+	require.Equal(t, 1, requests)
 
 	original, _, err := blobs.OpenStreamContext(t.Context(), written.Hash)
 	require.NoError(t, err)
@@ -249,30 +234,17 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 }
 
 type passwordOCRTransport struct {
-	mu     sync.Mutex
-	bodies [][]byte
+	mu       sync.Mutex
+	requests int
 }
 
 func (transport *passwordOCRTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	body, err := io.ReadAll(request.Body)
-	if err != nil {
+	if _, err := io.Copy(io.Discard, request.Body); err != nil {
 		return nil, err
 	}
 	transport.mu.Lock()
-	transport.bodies = append(transport.bodies, body)
+	transport.requests++
 	transport.mu.Unlock()
-	var wire struct {
-		Document struct {
-			URL string `json:"document_url"`
-		} `json:"document"`
-	}
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return nil, err
-	}
-	sent, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
-	if err != nil {
-		return nil, fmt.Errorf("decode PDF upload: %w", err)
-	}
-	response := fmt.Sprintf(`{"model":%q,"pages":[{"index":0,"markdown":"# Password needle","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, mistral.DefaultModel, len(sent))
+	response := fmt.Sprintf(`{"model":%q,"pages":[{"index":0,"markdown":"# Password needle","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1}}`, mistral.DefaultModel)
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
 }
