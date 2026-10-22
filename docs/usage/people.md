@@ -15,7 +15,7 @@ uses the revision returned by the preceding read.
 
 Open **Photos → People** to browse the people in your visible photos, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. A card shows a person icon when no readable assigned face is available. People with no visible photo, such as email contacts, get no card.
 
-Select a card to open that person's Library photos. While Hidden is unlocked, a separate Hidden count opens that person's Hidden photos. Hidden-only people appear while Hidden is unlocked and clear when it locks or expires. A readable key face supplies the portrait, including Hidden while unlocked; otherwise Docbank prefers the newest assigned Library face.
+Select a card to open that person's Library photos, or their Hidden photos when they have none in Library. While Hidden is unlocked, a separate Hidden count opens that person's Hidden photos. Hidden-only people appear while Hidden is unlocked and clear when it locks or expires. A readable key face supplies the portrait, including Hidden while unlocked; otherwise Docbank prefers the newest assigned Library face.
 
 Use **Rename** to change the name. The card updates in place, so the people you have already loaded stay on screen.
 
