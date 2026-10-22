@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import App from "./App.svelte";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
+import { version } from "./version-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -2102,6 +2103,55 @@ it("suppresses repeated pending tag writes and discards completion after selecti
   await Promise.resolve();
   expect(screen.queryByText("Added tax to zeta.txt.")).toBeNull();
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+});
+
+it("keeps an ordinary drawer's historical download after a pending tag hotkey completes", async () => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend("pending");
+  const oldID = "11111111-1111-4111-8111-111111111111";
+  const currentID = "22222222-2222-4222-8222-222222222222";
+  const versions = [
+    { ...version(currentID, 3, "content_replace", "b"), node_id: 10 },
+    { ...version(oldID, 1, "content_create", "a"), node_id: 10 },
+  ];
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/nodes/10/versions?limit=1000&offset=0")
+      return Response.json({ items: versions, total: 2, limit: 1000, offset: 0 });
+    if (String(input) === "/api/daemon/web-download")
+      return Response.json({ detail: "Download unavailable in fixture" }, { status: 503 });
+    return original(input, init);
+  });
+  render(App);
+
+  await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
+  await screen.findByText("No tags are assigned to this node.");
+  await configureFirstTagHotkey();
+  await fireEvent.keyDown(window, { key: "1" });
+  expect(backend.writes).toHaveLength(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Version history" }));
+  const drawer = within(await screen.findByRole("dialog"));
+  await drawer.findByText("2 retained versions");
+  await fireEvent.click(drawer.getByText("Created").closest("button")!);
+  expect(drawer.getByText(oldID)).toBeTruthy();
+
+  backend.resolveMutation();
+  await screen.findByText("Added tax to zeta.txt.");
+  await waitFor(() => expect(drawer.queryByText("Loading immutable versions…")).toBeNull());
+  expect(drawer.getByText(oldID)).toBeTruthy();
+  await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
+  await drawer.findByText("Download unavailable in fixture");
+  const download = fetchMock.mock.calls.findLast(
+    ([input]) => String(input) === "/api/daemon/web-download",
+  );
+  expect(JSON.parse(String(download?.[1]?.body))).toMatchObject({ version_id: oldID });
+  expect(drawer.getByText(oldID)).toBeTruthy();
+  expect(
+    fetchMock.mock.calls.filter(
+      ([input]) => String(input) === "/api/v1/nodes/10/versions?limit=1000&offset=0",
+    ),
+  ).toHaveLength(1);
 });
 
 it("discards pending tag completion after the session is locked", async () => {
