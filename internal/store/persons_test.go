@@ -310,7 +310,7 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 
 func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 	t.Parallel()
-	for _, condition := range []string{"excluded", "trashed", "stale"} {
+	for _, condition := range []string{"excluded", "trashed", "stale", "memberless"} {
 		t.Run(condition, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -334,14 +334,21 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 						_, _, err = s.Trash(ctx, node.ID, node.Revision)
 					case "stale":
 						_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("d4"), 4, "image/jpeg")
+					case "memberless":
+						// Keep the depicted assertion on a version without photo membership.
+						_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=NULL WHERE display_file_id IN (SELECT file_id FROM photo_files WHERE node_id=?)`, node.ID)
+						require.NoError(t, err)
+						_, err = s.db.ExecContext(ctx, `DELETE FROM photo_files WHERE node_id=?`, node.ID)
 					}
 					require.NoError(t, err)
 				}
 			}
-			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true, PhotoSummary: true, GridRecipe: "grid"})
 			require.NoError(t, err)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
 			require.Empty(t, rows[1].RecentRank)
+			require.Zero(t, rows[1].PhotoSummary.LibraryCount)
+			require.Nil(t, rows[1].PhotoSummary.Face)
 			// Older readable evidence ranks Bob when his newest photo is unavailable.
 			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")
 			_, err = s.MarkPersonInPhoto(ctx, older.CurrentVersionID, bob.PersonID, "")

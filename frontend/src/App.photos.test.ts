@@ -23,6 +23,7 @@ import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 const savedImportCheckpoints = vi.hoisted(
   () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
@@ -4468,3 +4469,63 @@ it("opens a Hidden-only person's count in filtered Hidden photos", async () => {
   await screen.findByRole("button", { name: `Select ${item.name}` });
   expect(location.pathname).toBe("/photos/hidden");
 });
+
+it.each([false, true])(
+  "keeps a card's Library filter while Hidden access changes to unlocked=%s during navigation",
+  async (unlocked) => {
+    history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+    storage();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const ada = person("00000000-0000-4000-8000-000000000001", {
+      display_name: "Ada",
+      photo_summary: { library_count: 1, hidden_count: 1 },
+    });
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+    const state = (open: boolean) => ({
+      configured: true,
+      ...(open ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}),
+    });
+    const accessState = vi.spyOn(HiddenAccess.prototype, "acceptState");
+    let navigationStarted = false;
+    let finishAccess!: (response: Response) => void;
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) {
+        if (navigationStarted)
+          return new Promise<Response>((resolve) => {
+            finishAccess = resolve;
+          });
+        return Response.json(state(!unlocked));
+      }
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [], total: 0, facets: [] });
+      return (
+        photoMetadataResponse(url, init) ??
+        Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+      );
+    });
+    const query = vi.spyOn(Photos.prototype, "setQuery");
+    render(App);
+    const card = await screen.findByRole("button", { name: "Ada 1 Library photo" });
+    const access = accessState.mock.contexts.at(-1)!;
+    navigationStarted = true;
+    const navigating = fireEvent.click(card);
+    access.acceptState(state(unlocked), Date.now() + 1);
+    await navigating;
+    await waitFor(() => expect(finishAccess).toBeTypeOf("function"));
+    finishAccess(Response.json(state(unlocked)));
+    await screen.findByText("Person: Ada");
+    expect(location.pathname).toBe("/photos");
+    const filtered = query.mock.contexts.filter((photos) =>
+      photos.query.filters.person_ids?.includes(ada.person_id),
+    );
+    expect(filtered.length).toBeGreaterThan(0);
+    expect(filtered.every((photos) => !photos.hidden)).toBe(true);
+  },
+);

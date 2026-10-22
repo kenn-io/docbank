@@ -257,22 +257,17 @@ func personVisibleSQL(person string) string {
 // current photo. The inner LIMIT -1 keeps SQLite from flattening the sorted
 // assertions into the outer query, so the photo checks stop at the newest
 // readable one. It binds whether locked Hidden photos must be concealed.
-var personRecentSQL = `COALESCE((SELECT recent.recorded_at FROM (
+func personRecentSQL() string {
+	joins, where := personPhotoSource(true)
+	return `COALESCE((SELECT recent.recorded_at FROM (
  SELECT assertion.recorded_at,assertion.content_version_id FROM persons namesake
  CROSS JOIN person_document_assertions assertion ON assertion.person_id=namesake.person_id AND assertion.action='assert'
  WHERE namesake.display_name_folded=persons.display_name_folded AND namesake.state<>'retired' AND assertion.role='depicted'
  ORDER BY assertion.recorded_at DESC LIMIT -1) recent
- WHERE EXISTS(SELECT 1 FROM content_versions evidence
- CROSS JOIN nodes evidence_node ON evidence_node.id=evidence.node_id
- LEFT JOIN photo_files member ON member.node_id=evidence_node.id
- LEFT JOIN photo_assets a ON a.asset_id=member.asset_id
- LEFT JOIN photo_files f ON f.file_id=a.display_file_id
- LEFT JOIN nodes n ON n.id=f.node_id
- WHERE evidence.version_id=recent.content_version_id AND evidence_node.current_version_id=evidence.version_id
- AND evidence_node.trashed_at IS NULL AND (member.file_id IS NULL OR (
- ` + currentPhotoSourcePredicate("member", "evidence_node", "evidence.version_id") + `
- AND ` + photoBrowseLiveDisplay + ` AND (` + photoVisibilityPredicate(false) + ` OR (?=0 AND ` + photoVisibilityPredicate(true) + `)))))
+ WHERE EXISTS(SELECT 1 FROM content_versions cv` + joins + where + `
+ AND cv.version_id=recent.content_version_id AND (?=0 OR ` + photoVisibilityPredicate(false) + `))
  LIMIT 1),'')`
+}
 
 // Materialize the bounded matches before reading their visible identity labels.
 var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
@@ -336,7 +331,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		rank := `''`
 		args := []any{}
 		if options.RecentFirst {
-			rank = personRecentSQL
+			rank = personRecentSQL()
 			args = append(args, hideLocked)
 		}
 		prefix := document.FoldPersonName(query)
