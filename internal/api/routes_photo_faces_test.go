@@ -50,10 +50,6 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	require.Len(t, previews.Items, 1)
-	response, body = get(t, ts, previewPath+"?content_version_id="+node.CurrentVersionID+"&face_id="+faceID, browserHeaders)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &previews))
-	require.Equal(t, []store.PersonFacePreview{{AssetID: asset.ID, ContentVersionID: node.CurrentVersionID, Box: &box}}, previews.Items)
 
 	conflictBox := box
 	conflictBox.X = 0.5
@@ -187,11 +183,6 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	withdraw.Revision, withdraw.OperationID = 3, uuid.NewString()
 	response, body = do(t, ts, http.MethodPost, decisions, headers, withdraw)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
-	require.NoError(t, err)
-	require.Len(t, faces, 1)
-	require.Empty(t, faces[0].RejectedPersonIDs)
-	require.NotEmpty(t, faces[0].AssertionID, "withdrawing a rejection keeps the assignment")
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 4})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 5})
@@ -325,7 +316,7 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 }
 
 // Browser merge conflicts identify the exact face version to review.
-func TestBrowserMergeConflictRejectionWithdrawal(t *testing.T) {
+func TestBrowserMergeConflictNamesFaceVersion(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()

@@ -78,6 +78,8 @@ func TestPeopleMCPReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, absorbed.PersonID, person["person_id"])
 	assert.Equal(t, "Absorbed", person["display_name"])
+	assert.Equal(t, "absorbed", person["display_name_folded"])
+	assert.Equal(t, absorbed.CreatedAt, person["created_at"])
 	assert.Equal(t, "absorbed@example.test", person["identity_label"])
 	absorbedDetail := call("get_person", map[string]any{"person_id": absorbed.PersonID})
 	assert.Equal(t, "Absorbed", absorbedDetail["display_name"])
