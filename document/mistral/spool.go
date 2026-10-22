@@ -1,6 +1,7 @@
 package mistral
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -44,11 +45,12 @@ type PrepareOptions struct {
 	MinFreeBytes      int64
 }
 
-// PreparedDocument is an immutable private staging file. Its filesystem path
-// is never exposed.
+// PreparedDocument holds immutable content in a private staging file or memory.
+// Its filesystem path and retained bytes are never exposed.
 type PreparedDocument struct {
 	mu         sync.Mutex
 	path       string
+	contents   []byte
 	format     CandidateFormat
 	size       int64
 	sha256     string
@@ -89,8 +91,8 @@ func (d *PreparedDocument) MediaType() string {
 	return d.mediaType
 }
 
-// Release removes only this package-created staging file. It is idempotent and
-// makes the document unavailable to future Process calls.
+// Release removes the package-created staging file or zeroes the retained bytes.
+// It is idempotent and makes the document unavailable to future Process calls.
 func (d *PreparedDocument) Release() error {
 	return d.release(context.Background())
 }
@@ -101,6 +103,8 @@ func (d *PreparedDocument) release(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.released = true
+	clear(d.contents)
+	d.contents = nil
 	path := d.path
 	d.mu.Unlock()
 	if path == "" {
@@ -124,6 +128,7 @@ func (d *PreparedDocument) release(ctx context.Context) error {
 
 type preparedSnapshot struct {
 	path       string
+	memory     *PreparedDocument
 	format     CandidateFormat
 	size       int64
 	sha256     string
@@ -137,12 +142,47 @@ func (d *PreparedDocument) snapshot() (preparedSnapshot, error) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.released || d.path == "" {
+	if d.released || (d.path == "" && d.contents == nil) {
 		return preparedSnapshot{}, errors.New("mistral OCR prepared document was released")
 	}
+	var memory *PreparedDocument
+	if d.contents != nil {
+		memory = d
+	}
 	return preparedSnapshot{
-		path: d.path, format: d.format, size: d.size, sha256: d.sha256,
+		path: d.path, memory: memory, format: d.format, size: d.size, sha256: d.sha256,
 		mediaType: d.mediaType, localUnits: d.localUnits,
+	}, nil
+}
+
+// MemoryPrepareOptions supplies the application's declared source media type.
+type MemoryPrepareOptions struct {
+	DeclaredMediaType string
+}
+
+// PrepareMemory retains a private copy of content and computes its size and
+// SHA-256. The caller keeps content; Release zeroes the retained copy.
+func PrepareMemory(ctx context.Context, content []byte, policy Policy, options MemoryPrepareOptions) (*PreparedDocument, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if policy.digest == "" {
+		return nil, errors.New("mistral policy is invalid; use NewPolicy")
+	}
+	if int64(len(content)) > policy.values.MaxDocumentBytes {
+		return nil, ocr.NewPreparationError("source size is outside policy bounds", ErrInvalidSource)
+	}
+	contents := bytes.Clone(content)
+	size := int64(len(contents))
+	format, localUnits, err := inspectPreparedContent(ctx, bytes.NewReader(contents), size, options.DeclaredMediaType)
+	if err != nil {
+		clear(contents)
+		return nil, err
+	}
+	digest := sha256.Sum256(contents)
+	return &PreparedDocument{
+		contents: contents, format: format, size: size, sha256: hex.EncodeToString(digest[:]),
+		mediaType: format.MediaType, localUnits: localUnits,
 	}, nil
 }
 
@@ -294,29 +334,8 @@ func Prepare(
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("%w: rewind Mistral OCR spool: %w", ErrSpoolUnavailable, err)
 	}
-	contextFile := &contextReaderAt{ctx: ctx, reader: file}
-	format, err := DetectFormat(contextFile, written, options.DeclaredMediaType)
+	format, localUnits, err := inspectPreparedContent(ctx, file, written, options.DeclaredMediaType)
 	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		description := "document format is invalid or does not match its declared media type"
-		if errors.Is(err, formatdetect.ErrPDFStructure) {
-			description = "PDF structure could not be validated"
-		}
-		return nil, ocr.NewPreparationError(description, errors.Join(ErrInvalidSource, err))
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	localUnits, err := countLocalUnits(format, contextFile, written)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, ocr.NewPreparationError("document page or unit count could not be determined", errors.Join(ErrInvalidSource, err))
-	}
-	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	closeErr := file.Close()
@@ -333,6 +352,35 @@ func Prepare(
 		path: path, format: format, size: written, sha256: actualHash,
 		mediaType: format.MediaType, localUnits: localUnits,
 	}, nil
+}
+
+func inspectPreparedContent(ctx context.Context, reader io.ReaderAt, size int64, declared string) (CandidateFormat, int, error) {
+	contextFile := &contextReaderAt{ctx: ctx, reader: reader}
+	format, err := DetectFormat(contextFile, size, declared)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CandidateFormat{}, 0, ctxErr
+		}
+		description := "document format is invalid or does not match its declared media type"
+		if errors.Is(err, formatdetect.ErrPDFStructure) {
+			description = "PDF structure could not be validated"
+		}
+		return CandidateFormat{}, 0, ocr.NewPreparationError(description, errors.Join(ErrInvalidSource, err))
+	}
+	if err := ctx.Err(); err != nil {
+		return CandidateFormat{}, 0, err
+	}
+	localUnits, err := countLocalUnits(format, contextFile, size)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CandidateFormat{}, 0, ctxErr
+		}
+		return CandidateFormat{}, 0, ocr.NewPreparationError("document page or unit count could not be determined", errors.Join(ErrInvalidSource, err))
+	}
+	if err := ctx.Err(); err != nil {
+		return CandidateFormat{}, 0, err
+	}
+	return format, localUnits, nil
 }
 
 func wrapSpoolIOError(operation string, err error) error {
