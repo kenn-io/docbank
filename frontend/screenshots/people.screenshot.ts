@@ -57,10 +57,11 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     await rename.getByRole("textbox", { name: "Person name" }).fill("Ada Lovelace");
     await rename.getByRole("button", { name: "Rename", exact: true }).click();
     await expect(rename).toBeHidden();
-    await people.getByRole("button", { name: "Merge", exact: true }).first().click();
-    const merge = page.getByRole("dialog", { name: "Merge Ada Lovelace" });
-    await merge.getByRole("button", { name: /Find the person to keep/ }).click();
-    await page.getByRole("option", { name: /Grace Hopper/ }).click();
+    await people.getByRole("checkbox", { name: "Select Ada Lovelace" }).check();
+    await people.getByRole("checkbox", { name: "Select Grace Hopper" }).check();
+    await people.getByRole("button", { name: "Merge", exact: true }).click();
+    const merge = page.getByRole("dialog", { name: "Merge people" });
+    await merge.getByRole("radio", { name: /Keep Grace Hopper/ }).check();
     await merge.getByRole("checkbox", { name: "Confirm merge" }).check();
     await captureThemes(page, output!, "after-people-merge");
     await merge.getByRole("button", { name: "Merge", exact: true }).click();

@@ -987,3 +987,39 @@ func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
 	require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
 	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 }
+
+func TestPeoplePhotoSummarySharedPhotos(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	bob, err := s.CreatePerson(ctx, "Bob", "operator")
+	require.NoError(t, err)
+	// Ada's faces are on the left and Bob's on the right.
+	left := map[string]float64{ada.PersonID: .1, bob.PersonID: .5}
+	for i, people := range [][]Person{{ada, bob}, {ada, bob}, {bob}} {
+		node := browsePhotoNode(t, s, fmt.Sprintf("shared-%d.jpg", i), fakeHash(fmt.Sprintf("%02x", i+60)), "image/jpeg")
+		for _, person := range people {
+			_, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: left[person.PersonID], Y: .1, Width: .3, Height: .3}, person.PersonID)
+			require.NoError(t, err)
+		}
+	}
+	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
+	page, err := s.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	// Photos shared by people on one page count for each of them.
+	require.Equal(t, int64(2), page[0].PhotoSummary.LibraryCount)
+	require.Equal(t, int64(3), page[1].PhotoSummary.LibraryCount)
+	// The portrait is the person's own face, not another face in the same photo.
+	require.InDelta(t, .1, page[0].PhotoSummary.Face.Box.X, 1e-9)
+	require.InDelta(t, .5, page[1].PhotoSummary.Face.Box.X, 1e-9)
+	// A one-person card refresh reads the same summary as the page.
+	for _, row := range page {
+		one, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, PeopleSearchOptions{PersonID: row.PersonID, PhotoSummary: true, GridRecipe: "grid"})
+		require.NoError(t, err)
+		require.Len(t, one, 1)
+		require.Equal(t, row.PhotoSummary, one[0].PhotoSummary)
+	}
+}

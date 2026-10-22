@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -11,20 +12,22 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-// BenchmarkPeoplePhotoSummaries reads one People page with counts and
-// portraits. Every person is linked to every synthetic photo, and each has one
-// boxed face. Fixture creation is outside the timer.
-func BenchmarkPeoplePhotoSummaries(b *testing.B) {
-	const photos = 5000
-	for _, people := range []int{24, 100} {
-		b.Run(fmt.Sprintf("people=%d/photos=%d", people, photos), func(b *testing.B) {
+// BenchmarkPeopleSparseEvidence reads People cards and ranks a typed prefix
+// while unrelated photos grow. Each of 100 people has a boxed face in three
+// photos; the other photos depict no one. A query that starts from the
+// requested people's assertions should not slow down as unrelated photos grow.
+// Fixture creation is outside the timer.
+func BenchmarkPeopleSparseEvidence(b *testing.B) {
+	const people, perPerson = 100, 3
+	for _, unrelated := range []int{1000, 10000} {
+		b.Run(fmt.Sprintf("unrelated=%d", unrelated), func(b *testing.B) {
 			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()
 			var nodes []Node
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				for index := range photos {
+				for index := range people*perPerson + unrelated {
 					node, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("photo-%05d.jpg", index), fmt.Sprintf("%064x", index+1), 128, "image/jpeg")
 					if err != nil {
 						return err
@@ -36,23 +39,34 @@ func BenchmarkPeoplePhotoSummaries(b *testing.B) {
 				}
 				return nil
 			}))
+			var first string
 			for index := range people {
 				person, err := s.CreatePerson(ctx, fmt.Sprintf("Person %03d", index), "operator")
 				require.NoError(b, err)
-				_, _, err = s.CreatePhotoFace(ctx, nodes[index].CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, person.PersonID)
-				require.NoError(b, err)
+				first = cmp.Or(first, person.PersonID)
+				for photo := range perPerson {
+					_, _, err = s.CreatePhotoFace(ctx, nodes[index*perPerson+photo].CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, person.PersonID)
+					require.NoError(b, err)
+				}
 			}
-			_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at)
-				SELECT lower(hex(randomblob(16))),n.current_version_id,p.person_id,'depicted','assert','','2026-01-01T00:00:00Z'
-				FROM nodes n CROSS JOIN persons p WHERE n.current_version_id IS NOT NULL`)
-			require.NoError(b, err)
-			for _, recent := range []bool{false, true} {
-				b.Run(fmt.Sprintf("recent=%t", recent), func(b *testing.B) {
-					options := PeopleSearchOptions{RecentFirst: recent, PhotoSummary: true, GridRecipe: "grid"}
+			cases := []struct {
+				name  string
+				query string
+				limit int
+				want  int
+				opts  PeopleSearchOptions
+			}{
+				{"refresh-one", "", 1, 1, PeopleSearchOptions{PersonID: first, PhotoSummary: true, GridRecipe: "grid"}},
+				{"page-24", "", 24, 24, PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}},
+				{"prefix-recent", "Person 05", 24, 10, PeopleSearchOptions{RecentFirst: true}},
+			}
+			for _, c := range cases {
+				b.Run(c.name, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
-						rows, err := s.PeopleByDisplayName(ctx, "", "", "", people, true, options)
-						if err != nil || len(rows) != people || rows[0].PhotoSummary.LibraryCount != photos || rows[0].PhotoSummary.Face == nil {
+						rows, err := s.PeopleByDisplayName(ctx, c.query, "", "", c.limit, true, c.opts)
+						if err != nil || len(rows) != c.want || c.opts.PhotoSummary && (rows[0].PhotoSummary.LibraryCount != perPerson || rows[0].PhotoSummary.Face == nil) ||
+							c.opts.RecentFirst && rows[0].RecentRank == "" {
 							b.Fatalf("rows=%d err=%v", len(rows), err)
 						}
 					}

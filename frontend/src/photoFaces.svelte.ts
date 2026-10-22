@@ -165,6 +165,15 @@ export class PhotoFaces {
   clear(face: PhotoFace) {
     return this.decide({ action: "retract", face_id: face.face_id, revision: face.revision });
   }
+  // withdrawRejection keeps the face's assignment and removes "not this person".
+  withdrawRejection(face: PhotoFace, personID: string) {
+    return this.decide({
+      action: "withdraw_rejection",
+      face_id: face.face_id,
+      revision: face.revision,
+      person_id: personID,
+    });
+  }
   remove(face: PhotoFace) {
     return this.decide({ action: "dismiss", face_id: face.face_id, revision: face.revision });
   }

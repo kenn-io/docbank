@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -166,13 +167,27 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	decisions := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
 	response, body := do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonName: "Grace", Revision: 1, OperationID: uuid.NewString()})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	for _, action := range []string{"reject", "key", "withdraw_rejection"} {
-		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
+	_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "reject", FaceID: faceID, PersonID: person.PersonID, Revision: 2})
+	require.NoError(t, err)
+	for _, action := range []string{"reject", "key"} {
+		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 3, OperationID: uuid.NewString(), PersonRevision: 1})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}
-	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
+	// A browser can withdraw a rejection on a visible face, fenced by its revision.
+	withdraw := api.PhotoFaceDecisionRequest{Action: "withdraw_rejection", FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()}
+	response, body = do(t, ts, http.MethodPost, decisions, headers, withdraw)
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
+	withdraw.Revision, withdraw.OperationID = 3, uuid.NewString()
+	response, body = do(t, ts, http.MethodPost, decisions, headers, withdraw)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 3})
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, faces, 1)
+	require.Empty(t, faces[0].RejectedPersonIDs)
+	require.NotEmpty(t, faces[0].AssertionID, "withdrawing a rejection keeps the assignment")
+	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 4})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 5})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 
 	marks := "/api/v1/photos/versions/" + node.CurrentVersionID + "/faces"
@@ -290,4 +305,57 @@ func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, zoe.PersonID, person.PersonID)
 	require.Equal(t, ada.PersonID, reached)
+}
+
+// A browser merge blocked by a visible rejection can withdraw that rejection
+// and merge, whether the face's assignment is active or withdrawn.
+func TestBrowserMergeConflictRejectionWithdrawal(t *testing.T) {
+	t.Parallel()
+	for _, withdrawn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("withdrawn=%t", withdrawn), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			ctx := t.Context()
+			hash, size, err := s.Blobs.Write(strings.NewReader("synthetic merge portrait"))
+			require.NoError(t, err)
+			node, err := s.CreateFile(ctx, s.RootID(), "merge-portrait.jpg", hash, size, "image/jpeg")
+			require.NoError(t, err)
+			ada, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			grace, err := s.CreatePerson(ctx, "Grace", "operator")
+			require.NoError(t, err)
+			face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, ada.PersonID)
+			require.NoError(t, err)
+			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "reject", FaceID: face.FaceID, PersonID: grace.PersonID, Revision: face.Revision})
+			require.NoError(t, err)
+			if withdrawn {
+				assertions, err := s.DocumentPersonAssertions(ctx, node.CurrentVersionID)
+				require.NoError(t, err)
+				assertions[0].Action = "withdrawn"
+				_, err = s.AssertDocumentPerson(ctx, assertions[0])
+				require.NoError(t, err)
+				_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, grace.PersonID, "")
+				require.NoError(t, err)
+			}
+			headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
+			merge := api.MergePersonRequest{AbsorbedPersonID: grace.PersonID, AbsorbedRevision: 1, OperationID: uuid.NewString()}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+ada.PersonID+"/merge", headers, merge)
+			require.Equal(t, http.StatusConflict, response.StatusCode, body)
+			require.Contains(t, body, face.FaceID)
+			faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			delete(headers, "If-Match")
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/versions/"+node.CurrentVersionID+"/face-decisions", headers,
+				api.PhotoFaceDecisionRequest{Action: "withdraw_rejection", FaceID: face.FaceID, PersonID: grace.PersonID, Revision: faces[0].Revision, OperationID: uuid.NewString()})
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			headers["If-Match"] = `"1"`
+			merge.OperationID = uuid.NewString()
+			response, body = do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+ada.PersonID+"/merge", headers, merge)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			assertions, err := s.DocumentPersonAssertions(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			require.Len(t, assertions, 1)
+			require.Equal(t, ada.PersonID, assertions[0].PersonID)
+			require.Equal(t, "assert", assertions[0].Action, "the merged person keeps the photo")
+		})
+	}
 }

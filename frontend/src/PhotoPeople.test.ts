@@ -953,3 +953,25 @@ it.each(["unauthorized", "generic"])(
     faces.dispose();
   },
 );
+it("lists a person once when a rank change repeats them on the next page", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
+  const person = (id: string, name: string) => ({
+    person_id: id,
+    display_name: name,
+    display_name_folded: name.toLowerCase(),
+    state: "curated",
+    revision: 1,
+    created_at: "2026-01-01T00:00:00Z",
+  });
+  vi.spyOn(api, "listPeople")
+    .mockResolvedValueOnce({ items: [person("ada", "Ada")], next_cursor: "next" })
+    .mockResolvedValueOnce({ items: [person("ada", "Ada"), person("bob", "Bob")] });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Mark person in photo" }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
+  await screen.findByRole("option", { name: "Bob" });
+  expect(screen.getByRole("option", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: "Ada · 2 people" })).toBeNull();
+});

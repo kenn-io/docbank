@@ -10,8 +10,10 @@ afterEach(() => {
 const byID = (rows: api.PersonSummary[]) => (params?: api.ListPeopleParams) =>
   Promise.resolve({ items: rows.filter((row) => row.person_id === params?.person_id) });
 const merging = (people: People, source: api.PersonSummary, survivor: api.PersonSummary) => {
-  people.startMerge(source);
-  people.chooseSurvivor(survivor);
+  people.toggle(source);
+  people.toggle(survivor);
+  people.startMerge();
+  people.keep(survivor.person_id);
   people.confirmMerge(true);
 };
 
@@ -134,10 +136,61 @@ it("uses a new operation when the survivor changes", async () => {
   const people = new People("session", vi.fn());
   merging(people, ada, grace);
   await people.submitMerge();
-  people.chooseSurvivor(person("zoe"));
+  people.keep("ada");
   people.confirmMerge(true);
   await people.submitMerge();
+  expect(merge.mock.calls[1]![0]).toBe("ada");
+  expect(merge.mock.calls[1]![1].absorbed_person_id).toBe("grace");
   expect(merge.mock.calls[0]![1].operation_id).not.toBe(merge.mock.calls[1]![1].operation_id);
+  people.dispose();
+});
+
+it("keeps two selections across searches and merges them", async () => {
+  vi.spyOn(api, "listPeople")
+    .mockResolvedValueOnce({ items: [ada] })
+    .mockResolvedValueOnce({ items: [grace, person("zoe")] });
+  const people = new People("session", vi.fn());
+  await people.load("Ada");
+  people.toggle(people.items[0]!);
+  await people.load("G");
+  people.toggle(people.items[0]!);
+  // A third person waits until one of the two is cleared.
+  people.toggle(people.items[1]!);
+  expect(people.selected).toEqual([ada, grace]);
+  people.startMerge();
+  expect(people.merge?.pair).toEqual([ada, grace]);
+  expect(people.merge?.keep).toBeUndefined();
+  people.conceal();
+  expect(people.selected).toEqual([]);
+  expect(people.merge).toBeUndefined();
+  people.dispose();
+});
+
+it("keeps a card read from before Hidden locked out of the new cards", async () => {
+  let finish!: (page: api.PersonPage) => void;
+  vi.spyOn(api, "renamePerson").mockResolvedValue({
+    ...ada,
+    display_name: "Ada L",
+    revision: 3,
+    origin: "operator",
+    updated_at: "2026-01-02",
+  });
+  const read = vi
+    .spyOn(api, "listPeople")
+    .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+    .mockResolvedValueOnce({ items: [{ ...ada, photo_summary: { library_count: 3 } }] });
+  const people = new People("session", vi.fn());
+  people.items = [ada];
+  people.toggle(ada);
+  const pending = people.rename(ada, "Ada L");
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  // Hidden locks: the cards reload without the Hidden count.
+  people.conceal();
+  await people.load();
+  finish({ items: [{ ...ada, display_name: "Ada L", revision: 3 }] });
+  await pending;
+  expect(people.items).toEqual([{ ...ada, photo_summary: { library_count: 3 } }]);
+  expect(people.selected).toEqual([]);
   people.dispose();
 });
 
@@ -153,7 +206,12 @@ it("shows both current names after a stale merge and asks for a fresh confirmati
   people.items = [ada, grace];
   merging(people, ada, grace);
   expect(await people.submitMerge()).toBe(false);
-  expect(people.merge).toMatchObject({ source, survivor, confirmed: false, notice: "stale" });
+  expect(people.merge).toMatchObject({
+    pair: [source, survivor],
+    keep: "grace",
+    confirmed: false,
+    notice: "stale",
+  });
   expect(people.items[0]).toEqual(source);
   expect(await people.submitMerge()).toBe(false);
   expect(merge).toHaveBeenCalledOnce();
@@ -172,27 +230,26 @@ it("keeps the stale merge selection when the current names can't be read", async
   people.items = [ada, grace];
   merging(people, ada, grace);
   expect(await people.submitMerge()).toBe(false);
-  expect(people.merge).toMatchObject({ source: ada, survivor: grace, confirmed: false });
+  expect(people.merge).toMatchObject({ pair: [ada, grace], confirmed: false, notice: "" });
   expect(people.items).toEqual([ada, grace]);
   expect(people.writeError).toBe("Stale");
   people.dispose();
 });
 
-it.each([
-  ["survivor", { survivor: undefined, notice: "reselect" }],
-  ["source", undefined],
-] as const)(
-  "requires a new selection when the stale merge %s is no longer visible",
-  async (gone, expected) => {
-    vi.spyOn(api, "listPeople").mockImplementation(byID(gone === "source" ? [grace] : [ada]));
+it.each(["survivor", "source"])(
+  "ends the merge when the stale merge %s is no longer visible",
+  async (gone) => {
+    const kept = gone === "source" ? grace : ada;
+    vi.spyOn(api, "listPeople").mockImplementation(byID([kept]));
     vi.spyOn(api, "mergePerson").mockRejectedValue(new APIError("Stale", 412, "stale_revision"));
     const people = new People("session", vi.fn());
     people.items = [ada, grace];
     merging(people, ada, grace);
     expect(await people.submitMerge()).toBe(false);
-    if (expected) expect(people.merge).toMatchObject(expected);
-    else expect(people.merge).toBeUndefined();
-    expect(people.items).toEqual(gone === "source" ? [grace] : [ada]);
+    expect(people.merge).toBeUndefined();
+    expect(people.items).toEqual([kept]);
+    expect(people.selected).toEqual([kept]);
+    expect(people.writeError).toContain("no longer available");
     people.dispose();
   },
 );

@@ -20,20 +20,19 @@
   onDestroy(() => faces.dispose());
   let confirmation = $state<PhotoCullConfirmation>();
   const face = $derived(faces.faces.find((row) => row.face_id === conflict.face_id));
-  const assigned = $derived(face && faces.person(face));
-  const rejected = $derived(
-    (face?.rejected_person_ids ?? []).map((id) => faces.personLabel(id)).join(", "),
-  );
-  async function clear() {
-    if (!face || !assigned) return;
+  const pair = $derived(people.merge?.pair.map((person) => person.person_id) ?? []);
+  // Only a rejection of one of the two people blocks this merge.
+  const blocking = $derived((face?.rejected_person_ids ?? []).filter((id) => pair.includes(id)));
+  async function withdraw(personID: string) {
+    if (!face) return;
     const captured = { ...face };
-    const name = faces.personLabel(assigned.person_id);
+    const name = faces.personLabel(personID);
     if (
       (await confirmation!.confirm(
-        `Clear the name ${name} from ${faces.number(captured)}?`,
-        "Clear name",
+        `Withdraw "not ${name}" from ${faces.number(captured)}? The face keeps its current name.`,
+        "Withdraw rejection",
       )) &&
-      (await faces.clear(captured))
+      (await faces.withdrawRejection(captured, personID))
     )
       people.conflictCleared(conflict);
   }
@@ -41,10 +40,11 @@
 
 <li>
   {#if faces.loading}<span role="status">Loading face…</span>
-  {:else if face}<span
-      >{faces.caption(face)}{#if rejected}&nbsp;· marked not {rejected}{/if}</span
-    >{#if assigned}<Button size="sm" disabled={faces.busy} onclick={clear}>Clear name</Button
-      >{/if}{/if}
+  {:else if face}<span>{faces.caption(face)}</span>{#each blocking as id (id)}<Button
+        size="sm"
+        disabled={faces.busy}
+        onclick={() => withdraw(id)}>Withdraw "not {faces.personLabel(id)}"</Button
+      >{/each}{/if}
   {#if faces.error}<span role="alert">{faces.error}</span>{/if}
 </li>
 <PhotoCullConfirmation bind:this={confirmation} />
