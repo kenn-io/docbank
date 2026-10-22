@@ -41,6 +41,9 @@ it("keeps the search text with the applied query when the view returns", async (
   await cache.dispose();
 });
 it("renames a person with Library photos", async () => {
+  vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: [{ ...grace, display_name: "Grace Hopper", revision: 5 }],
+  });
   const people = new People("session", vi.fn());
   people.items = [grace];
   const rename = vi
@@ -164,13 +167,17 @@ it("keeps portraits through in-place updates and releases them when cards clear"
         face: {
           asset_id: "asset",
           content_version_id: "version",
-          generation_id: "ready",
+          generation_id: "",
           rotation: 0,
           box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
         },
       },
     },
   ];
+  vi.spyOn(api, "preparePhotoPreview").mockResolvedValue({
+    state: "ready",
+    generation_id: "ready",
+  });
   const cache = new PhotoPreviewCache("session", vi.fn());
   const get = vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
@@ -180,6 +187,23 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   await act(() => (people.items = [{ ...people.items[0]!, display_name: "Ada L", revision: 3 }]));
   expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy();
   expect(get).toHaveBeenCalledOnce();
+  await act(() => people.toggle(people.items[0]!));
+  const current = people.items[0]!;
+  vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: [
+      {
+        ...current,
+        photo_summary: {
+          ...current.photo_summary!,
+          face: { ...current.photo_summary!.face!, generation_id: "ready" },
+        },
+      },
+    ],
+  });
+  await act(() => people.load("Ada"));
+  await waitFor(() => expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy());
+  await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy();
   await act(() => people.conceal());
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:person");
   view.unmount();

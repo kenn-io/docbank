@@ -186,8 +186,8 @@ export class People {
               ? { ...row, display_name: saved.display_name, revision: saved.revision }
               : row,
           );
-        this.items = replace(this.items);
         this.selected = replace(this.selected);
+        await this.load();
       }
       return true;
     } catch (cause) {

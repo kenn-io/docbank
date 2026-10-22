@@ -78,18 +78,19 @@
     });
   }
   function syncPortraits(rows: PersonSummary[]) {
-    const wanted = new Map(rows.map((person) => [portraitKey(person), person]));
+    const owners = new Map(rows.map((person) => [person.person_id, person]));
+    const wanted = new Map([...owners.values()].map((person) => [portraitKey(person), person]));
     for (const key of portraits.keys()) if (!wanted.has(key)) releasePortrait(key);
     for (const [key, person] of wanted) if (key && !portraits.has(key)) loadPortrait(key, person);
   }
   // Selected people keep their portraits after a search replaces the cards.
   $effect(() => {
-    const rows = [...people.items, ...people.selected];
+    const rows = [...people.selected, ...people.items];
     untrack(() => syncPortraits(rows));
   });
   $effect(() => {
     void people.access?.scope;
-    untrack(() => syncPortraits([...people.items, ...people.selected]));
+    untrack(() => syncPortraits([...people.selected, ...people.items]));
     return () => {
       for (const key of portraits.keys()) releasePortrait(key);
       images = {};
