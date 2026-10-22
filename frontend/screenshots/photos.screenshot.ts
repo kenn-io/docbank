@@ -15,6 +15,47 @@ const binary =
 
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
+test("paging keeps the bottom of the photo grid stable while loading", async ({ page }) => {
+  await withPhotoFixture(300, "paging", async (run) => {
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => (entered = resolve));
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/v1/photos/assets/query", async (route) => {
+      if (route.request().postDataJSON().cursor) {
+        entered();
+        await hold;
+      }
+      await route.continue();
+    });
+    try {
+      const url = new URL(await run("web", "--no-browser"));
+      url.pathname = "/photos";
+      await page.goto(url.href);
+      await expect(page.getByRole("button", { name: "Load more", exact: true })).toBeVisible();
+      const scroll = page.getByTestId("photo-scroll");
+      const before = await scroll.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        return { top: element.scrollTop, height: element.clientHeight };
+      });
+      expect(before.top).toBeGreaterThan(0);
+      await pending;
+      await expect(page.getByText("Loading photos…", { exact: true })).toBeVisible();
+      expect(
+        await scroll.evaluate((element) => ({
+          top: element.scrollTop,
+          height: element.clientHeight,
+        })),
+      ).toEqual(before);
+    } finally {
+      release();
+      await page.unrouteAll({ behavior: "wait" });
+    }
+    await expect(page.getByText("Loading photos…", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
+  });
+});
+
 test("photo inspector keeps Apply reachable at 400×480", async ({ page }) => {
   test.setTimeout(300_000);
   const workspace = await mkdtemp(path.join(repository, ".superpowers", "metadata-search-proof-"));

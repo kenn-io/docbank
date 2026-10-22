@@ -1321,11 +1321,11 @@
                     <Spinner size={14} />Loading photos…
                   </div>{/if}
               </div>
-              {#if !mapMode && !photos.loading && photos.cursor && !photos.error}<div
-                  class="photo-loading"
-                >
-                  <Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button
-                  >
+              {#if !mapMode && photos.cursor && !photos.error}<div class="photo-loading">
+                  {#if !photos.loading}<Button
+                      size="sm"
+                      onclick={() => void photos.loadMore(preserve)}>Load more</Button
+                    >{/if}
                 </div>{/if}
             </div>
             {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
