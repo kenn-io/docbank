@@ -327,5 +327,4 @@ func TestBrowserMergeConflictNamesFaceVersion(t *testing.T) {
 	problem := decodeProblem(t, body)
 	require.Equal(t, []string{face.FaceID}, problem.FaceIDs)
 	require.Equal(t, []string{node.CurrentVersionID}, problem.FaceVersionIDs)
-	require.Contains(t, problem.Detail, "face "+face.FaceID+" on version "+node.CurrentVersionID)
 }

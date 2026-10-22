@@ -4200,13 +4200,8 @@ it.each([
       ],
       people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
     });
-    const locks = vi.fn();
     const other = photo(2);
     stubPhotoFetch(async (url, init) => {
-      if (url.endsWith("/photos/hidden/lock")) {
-        locks();
-        return Response.json({ configured: true });
-      }
       if (url.endsWith("/photos/hidden")) {
         return Response.json({
           configured: true,
@@ -4704,8 +4699,16 @@ it("follows a person filter through a rename and merge in People", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace 1 Library photo" }));
   await screen.findByText("Person: Ada Lovelace");
   await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
-  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select Ada Lovelace" }));
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Select Grace" }));
+  await fireEvent.click(
+    await screen.findByRole("checkbox", {
+      name: `Select Ada Lovelace · ${new Date(ada.created_at).toLocaleDateString()}`,
+    }),
+  );
+  await fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: `Select Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+    }),
+  );
   await fireEvent.click(screen.getByRole("button", { name: /^Merge$/ }));
   const mergeDialog = screen.getByRole("dialog", { name: "Merge people" });
   await fireEvent.click(within(mergeDialog).getByRole("radio", { name: /^Keep Grace/ }));

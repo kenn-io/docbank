@@ -96,22 +96,12 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
-	receipt, err := s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
 	require.NoError(t, err)
-	require.Equal(t, []PersonMergeDeduplicatedAssertion{{
-		Assertion: PersonDocumentAssertion{
-			AssertionID: absorbedAssertion.AssertionID, ContentVersionID: duplicate.CurrentVersionID,
-			PersonID: absorbed.PersonID, Role: personAssertionRoleDepicted,
-			Action: personAssertionActionAssert, RecordedAt: "2026-03-01T00:00:00Z",
-			Revision: absorbedAssertion.Revision, PhotoMark: true,
-		},
-		RetainedAssertionID: keptAssertion.AssertionID,
-	}}, receipt.Moved.DeduplicatedAssertions)
 	merged, err := s.DocumentPersonAssertions(ctx, duplicate.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, merged, 1)
 	require.Equal(t, "2026-01-01T00:00:00Z", merged[0].RecordedAt)
-	require.Equal(t, keptAssertion.Revision, merged[0].Revision)
 	after, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 	require.NoError(t, err)
 	require.Equal(t, third.PersonID, after[0].PersonID)

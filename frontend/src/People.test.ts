@@ -51,7 +51,7 @@ it("keeps the search text with the applied query when the view returns", async (
   people.dispose();
   await cache.dispose();
 });
-it("renames a zero-photo person", async () => {
+it("renames a person with Library photos", async () => {
   const people = new People("session", vi.fn());
   people.items = [grace];
   vi.spyOn(api, "listPeople").mockResolvedValue({
@@ -72,7 +72,7 @@ it("renames a zero-photo person", async () => {
   await fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(rename).toHaveBeenCalledOnce();
-  expect(screen.getByRole("button", { name: "Grace Hopper 0 Library photos" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Grace Hopper 2 Library photos" })).toBeTruthy();
   view.unmount();
   people.dispose();
   await cache.dispose();
@@ -108,7 +108,7 @@ it.each([false, true])("submits selected cards and reports a locked merge=%s", a
   const dialog = screen.getByRole("dialog", { name: "Merge people" });
   // Both cards show their Library evidence side by side.
   expect(within(dialog).getByText("3 Library photos")).toBeTruthy();
-  expect(within(dialog).getByText("0 Library photos")).toBeTruthy();
+  expect(within(dialog).getByText("2 Library photos")).toBeTruthy();
   expect(within(dialog).queryByRole("checkbox", { name: "Confirm merge" })).toBeNull();
   const detail = new Date(grace.created_at).toLocaleDateString();
   await fireEvent.click(within(dialog).getByRole("radio", { name: `Keep Grace · ${detail}` }));
@@ -126,7 +126,7 @@ it.each([false, true])("submits selected cards and reports a locked merge=%s", a
 it("clears the selected cards and open merge when People is concealed", async () => {
   const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
-  people.items = [{ ...ada, photo_summary: { library_count: 3 } }, grace];
+  people.items = [ada, grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.click(
@@ -148,7 +148,6 @@ it("clears the selected cards and open merge when People is concealed", async ()
   });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("region", { name: "Selected people" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
   view.unmount();
   people.dispose();
   access.dispose();

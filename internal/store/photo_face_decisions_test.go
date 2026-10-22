@@ -420,6 +420,7 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
 				// A retained conflict names the replaced version, not the current one.
 				require.Equal(t, []string{n.CurrentVersionID}, conflict.FaceVersionIDs)
+				require.Contains(t, err.Error(), "face "+f.FaceID+" on version "+n.CurrentVersionID)
 			}
 			if test.inaccessible {
 				require.NotContains(t, err.Error(), f.FaceID)
