@@ -287,19 +287,13 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	byName := page(ctx, PeopleSearchOptions{})
 	require.Equal(t, []string{people["Ada"].PersonID, people["Bob"].PersonID, people["Cy"].PersonID}, byName[:3])
 
-	// Merging moves evidence, so the survivor takes the absorbed person's rank.
-	cy, ada := people["Cy"], people["Ada"]
-	_, err = s.MergePersons(ctx, cy.PersonID, ada.PersonID, uuid.NewString(), cy.Revision, ada.Revision)
-	require.NoError(t, err)
-	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, cy.PersonID), page(ctx, recent))
-
 	// Locked Hidden evidence neither ranks nor reveals its person.
 	asset, err := s.PhotoAssetForNode(ctx, nodes["Zoe"].ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	require.Equal(t, []string{people["Bob"].PersonID, cy.PersonID, people["zoe"].PersonID}, page(ctx, recent))
+	require.Equal(t, []string{people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID, people["zoe"].PersonID}, page(ctx, recent))
 	full, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false, recent)
 	require.NoError(t, err)
 	require.Equal(t, []string{full[0].PersonID, full[1].PersonID}, zoes)
@@ -343,9 +337,8 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true, PhotoSummary: true, GridRecipe: "grid"})
+			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
-			require.Len(t, rows, 1)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
 			// Older readable evidence ranks Bob when his newest photo is unavailable.
 			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")

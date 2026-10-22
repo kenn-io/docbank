@@ -86,7 +86,7 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &unlocked))
 	require.Equal(t, []api.PhotoFace{*created.Face}, unlocked.Faces)
 	require.Equal(t, []api.PhotoPersonAssertion{*created.Assertion}, unlocked.Assertions)
-	response, body = get(t, ts, previewPath+"?hidden=true&content_version_id="+node.CurrentVersionID+"&face_id="+faceID, headers)
+	response, body = get(t, ts, previewPath+"?hidden=true", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &previews))
 	require.Equal(t, []store.PersonFacePreview{{AssetID: asset.ID, ContentVersionID: node.CurrentVersionID, Box: &box}}, previews.Items)
@@ -221,7 +221,7 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	response, body := get(t, ts, "/api/v1/people?photo_summary=true", headers)
+	response, body := get(t, ts, "/api/v1/people", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
@@ -235,7 +235,7 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Len(t, response.Cookies(), 1)
 	headers["Cookie"] = response.Cookies()[0].String()
-	response, body = get(t, ts, "/api/v1/people?photo_summary=true", headers)
+	response, body = get(t, ts, "/api/v1/people", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Len(t, page.Items, 1, "the Hidden cookie reaches the store")

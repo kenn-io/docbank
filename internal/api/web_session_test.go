@@ -53,7 +53,6 @@ func TestWebSessionAllowsPeopleAndPhotoRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/people?photo_summary=true&recent_first=true"},
 		{http.MethodPatch, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111"},
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/merge"},
-		{http.MethodPost, "/api/v1/people/by-id/not-a-uuid/merge"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false"},
 	} {

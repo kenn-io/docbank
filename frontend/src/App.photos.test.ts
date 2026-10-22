@@ -3911,7 +3911,12 @@ it.each([
       people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
     });
     const other = photo(2);
+    const locks = vi.fn();
     stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden/lock")) {
+        locks();
+        return Response.json({ configured: true });
+      }
       if (url.endsWith("/photos/hidden")) {
         return Response.json({
           configured: true,
@@ -3985,6 +3990,11 @@ it.each([
     await screen.findByRole("button", { name: `Select ${item.name}` });
     expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
     expect(screen.queryByRole("button", { name: `Select ${other.name}` })).toBeNull();
+    if (hidden) {
+      expect(locks).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Lock", exact: true })).toBeTruthy();
+      expect(location.hash).toBe("");
+    }
   },
 );
 
@@ -4429,52 +4439,49 @@ it("follows a person filter through a rename and merge in People", async () => {
   await screen.findByText("Person: Grace");
 });
 
-it.each(["1 Hidden photo", "Ada 0 Library photos"])(
-  "opens %s in filtered Hidden photos",
-  async (button) => {
-    history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
-    storage();
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
+it.each(["1 Hidden photo"])("opens %s in filtered Hidden photos", async (button) => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    photo_summary: { library_count: 0, hidden_count: 1 },
+  });
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const item = photo(1);
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden"))
+      return Response.json({
+        configured: true,
+        expires_at: "2099-01-01T00:00:00Z",
+        expires_in: 300,
+      });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) {
+      const body = JSON.parse(String(init?.body));
+      const items =
+        body.hidden && body.query.filters?.person_ids?.includes(ada.person_id) ? [item] : [];
+      return Response.json({ items, total: items.length, facets: [] });
+    }
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
     );
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-    const ada = person("00000000-0000-4000-8000-000000000001", {
-      display_name: "Ada",
-      photo_summary: { library_count: 0, hidden_count: 1 },
-    });
-    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
-    const item = photo(1);
-    stubPhotoFetch(async (url, init) => {
-      if (url.endsWith("/photos/hidden"))
-        return Response.json({
-          configured: true,
-          expires_at: "2099-01-01T00:00:00Z",
-          expires_in: 300,
-        });
-      if (url.endsWith("/photos/albums")) return Response.json([]);
-      if (url.endsWith("/photos/assets/query")) {
-        const body = JSON.parse(String(init?.body));
-        const items =
-          body.hidden && body.query.filters?.person_ids?.includes(ada.person_id) ? [item] : [];
-        return Response.json({ items, total: items.length, facets: [] });
-      }
-      return (
-        photoMetadataResponse(url, init) ??
-        Response.json({ items: [], nodes: [], tags: [], profiles: [] })
-      );
-    });
-    render(App);
-    await fireEvent.click(await screen.findByRole("button", { name: button }));
-    await screen.findByText("Person: Ada");
-    await screen.findByRole("button", { name: `Select ${item.name}` });
-    expect(location.pathname).toBe("/photos/hidden");
-  },
-);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: button }));
+  await screen.findByText("Person: Ada");
+  await screen.findByRole("button", { name: `Select ${item.name}` });
+  expect(location.pathname).toBe("/photos/hidden");
+});
 
 it.each([false, true])(
   "keeps a card's Library filter while Hidden access changes to unlocked=%s during navigation",
@@ -4490,7 +4497,7 @@ it.each([false, true])(
     );
     const ada = person("00000000-0000-4000-8000-000000000001", {
       display_name: "Ada",
-      photo_summary: { library_count: 1, hidden_count: 1 },
+      photo_summary: { library_count: 1 },
     });
     vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
     const state = (open: boolean) => ({

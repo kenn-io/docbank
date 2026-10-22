@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PeopleView from "./People.svelte";
 import { People } from "./people.svelte.js";
@@ -12,17 +12,6 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-});
-beforeEach(() => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-    },
-  );
-  vi.spyOn(api, "listPersonFacePreviews").mockResolvedValue({ items: [] });
 });
 const unlockedAccess = () => {
   const access = new HiddenAccess("session", vi.fn());
@@ -54,9 +43,6 @@ it("keeps the search text with the applied query when the view returns", async (
 it("renames a person with Library photos", async () => {
   const people = new People("session", vi.fn());
   people.items = [grace];
-  vi.spyOn(api, "listPeople").mockResolvedValue({
-    items: [{ ...grace, display_name: "Grace Hopper", revision: 5 }],
-  });
   const rename = vi
     .spyOn(api, "renamePerson")
     .mockImplementation(async (_id, _request, _headers) =>

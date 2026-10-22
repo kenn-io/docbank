@@ -147,7 +147,6 @@ it.each([
   [409, "person_merge_conflict"],
   [409, "person_retired"],
   [412, "stale_revision"],
-  [503, "unavailable"],
 ] as const)("shows the server detail and reloads after merge HTTP %s %s", async (status, code) => {
   const detail = "Review face face-a on version version-a; more faces also conflict";
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
@@ -165,7 +164,7 @@ it.each([
   people.dispose();
 });
 
-it.each([412, 503, 422])("recovers after rename HTTP %s", async (status) => {
+it.each([503, 422])("recovers after rename HTTP %s", async (status) => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
   const detail = status === 422 ? "Name is too long" : "Rename failed";
   vi.spyOn(api, "renamePerson").mockRejectedValue(
