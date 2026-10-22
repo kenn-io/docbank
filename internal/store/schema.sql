@@ -2766,7 +2766,8 @@ CREATE TABLE IF NOT EXISTS photo_faces (
     height REAL NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
     assertion_id TEXT REFERENCES person_document_assertions(assertion_id),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    named_at TEXT
 );
 CREATE INDEX IF NOT EXISTS photo_faces_version ON photo_faces(content_version_id,face_id);
 CREATE INDEX IF NOT EXISTS photo_faces_assertion ON photo_faces(assertion_id,content_version_id);

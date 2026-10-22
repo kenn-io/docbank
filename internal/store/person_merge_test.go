@@ -89,6 +89,11 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-02-01T00:00:00.000000000Z' WHERE person_id=?`, third.PersonID)
 	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, duplicate.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, absorbed.PersonID)
+	require.NoError(t, err)
+	const namedAt = "2026-01-15T00:00:00.000000000Z"
+	_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at=? WHERE face_id=?`, namedAt, face.FaceID)
+	require.NoError(t, err)
 	before, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 	require.NoError(t, err)
 	require.Equal(t, absorbed.PersonID, before[0].PersonID)
@@ -102,11 +107,16 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, merged, 1)
 	require.Equal(t, "2026-01-01T00:00:00.000000000Z", merged[0].RecordedAt)
+	require.Equal(t, keptAssertion.Revision, merged[0].Revision)
+	var mergedNamedAt, mergedAssertionID string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT named_at,assertion_id FROM photo_faces WHERE face_id=?`, face.FaceID).Scan(&mergedNamedAt, &mergedAssertionID))
+	require.Equal(t, namedAt, mergedNamedAt)
+	require.Equal(t, keptAssertion.AssertionID, mergedAssertionID)
 	after, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 	require.NoError(t, err)
 	require.Equal(t, third.PersonID, after[0].PersonID)
 	require.Equal(t, survivor.PersonID, after[1].PersonID)
-	require.Equal(t, "2026-01-01T00:00:00.000000000Z", after[1].RecentRank)
+	require.Equal(t, namedAt, after[1].RecentRank)
 }
 
 func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {

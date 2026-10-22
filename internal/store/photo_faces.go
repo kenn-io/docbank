@@ -231,22 +231,22 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]P
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt)
+	var namedAt *string
+	if face.AssertionID != "" {
+		namedAt = &face.CreatedAt
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at,named_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt, namedAt)
 	return err
 }
 
 // assertDepictedPersonTx creates or reuses the shared depicted edge for an active person.
 // An existing suppressed edge requires an explicit assertion edit.
-func assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID string, newFace bool) (PersonDocumentAssertion, error) {
+func assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID string) (PersonDocumentAssertion, error) {
 	resolved, err := resolveActiveCandidatePersonTx(ctx, tx, personID)
 	if err != nil {
 		return PersonDocumentAssertion{}, err
 	}
 	assertion, changed, err := ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
-	if err == nil && !changed && newFace {
-		err = recordPersonNamingTx(ctx, tx, &assertion)
-		changed = err == nil
-	}
 	if err == nil && changed {
 		err = advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
 	}
@@ -301,7 +301,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 		}
 		face = PhotoFace{FaceID: faceID, ContentVersionID: versionID, Box: box, Revision: 1, CreatedAt: nowRFC3339()}
 		if personID != "" {
-			saved, err := assertDepictedPersonTx(ctx, tx, versionID, personID, true)
+			saved, err := assertDepictedPersonTx(ctx, tx, versionID, personID)
 			if err != nil {
 				return err
 			}
@@ -372,7 +372,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 			}
 		}
 		var err error
-		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID, false)
+		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID)
 		if err == nil && !assertion.PhotoMark {
 			now := nowRFC3339()
 			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,recorded_at=?,revision=revision+1 WHERE assertion_id=?`, now, assertion.AssertionID)

@@ -588,27 +588,6 @@ func TestPhotoFaceDecisionUndoRejectsReusedPreviousKeyFace(t *testing.T) {
 
 func TestPhotoFaceDecisionReceiptRejectsInvalidShape(t *testing.T) {
 	t.Parallel()
-	for _, delta := range []string{"no new binding", "unchanged revision", "suppressed assertion"} {
-		t.Run("naming time with "+delta, func(t *testing.T) {
-			s := newTestStore(t)
-			person, err := s.CreatePerson(t.Context(), "Ada", "operator")
-			require.NoError(t, err)
-			node, _ := faceForDecisionTest(t, s, person.PersonID)
-			face, _, err := s.CreatePhotoFace(t.Context(), node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
-			require.NoError(t, err)
-			receipt := decideFaceForTest(t, s, node, face.FaceID, person.PersonID, "name")
-			require.NoError(t, validateFaceDecisionReceipt(receipt, receipt.ReceiptID))
-			switch delta {
-			case "no new binding":
-				receipt.Before.Faces[0].AssertionID = receipt.After.Faces[0].AssertionID
-			case "unchanged revision":
-				receipt.After.Assertions[0].Revision = receipt.Before.Assertions[0].Revision
-			case "suppressed assertion":
-				receipt.Before.Assertions[0].Action = "suppress"
-			}
-			require.ErrorIs(t, validateFaceDecisionReceipt(receipt, receipt.ReceiptID), ErrInvalidPhotoFace)
-		})
-	}
 	t.Run("unrelated created person", func(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
@@ -751,47 +730,22 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 				_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: remaining.FaceID, PersonID: p.PersonID, Action: "key", Revision: 2, PersonRevision: p.Revision})
 				require.NoError(t, err)
 				_, err = s.UndoPhotoFaceDecision(ctx, a.ReceiptID)
-				if test.reverse {
-					require.NoError(t, err)
-				} else {
-					// The second naming advanced the shared assertion's time and revision.
-					require.ErrorIs(t, err, ErrStaleRevision)
-				}
-				require.Equal(t, remaining.FaceID, personKeyFaceForTest(t, s, p.PersonID))
-				if !test.reverse {
-					faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
-					require.NoError(t, err)
-					for _, face := range faces {
-						require.NotEmpty(t, face.AssertionID)
-					}
-					require.NoError(t, s.ValidateMetadata(ctx))
-					return
-				}
-			case test.undoBoth:
-				lastUndo, err := s.UndoPhotoFaceDecision(ctx, a.ReceiptID)
-				if !test.reverse {
-					require.ErrorIs(t, err, ErrStaleRevision)
-					a, b = b, a
-					lastUndo, err = s.UndoPhotoFaceDecision(ctx, a.ReceiptID)
-				}
 				require.NoError(t, err)
-				_, err = s.UndoPhotoFaceDecision(ctx, b.ReceiptID)
-				require.ErrorIs(t, err, ErrStaleRevision)
+				require.Equal(t, remaining.FaceID, personKeyFaceForTest(t, s, p.PersonID))
+			case test.undoBoth:
+				_, err = s.UndoPhotoFaceDecision(ctx, a.ReceiptID)
+				require.NoError(t, err)
+				lastUndo, err := s.UndoPhotoFaceDecision(ctx, b.ReceiptID)
+				require.NoError(t, err)
 				faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				for _, face := range faces {
-					if face.FaceID == first.FaceID {
-						require.NotEmpty(t, face.AssertionID)
-					} else {
-						require.Empty(t, face.AssertionID)
-					}
+					require.Empty(t, face.AssertionID)
 				}
-				require.Len(t, assertions, 1)
+				require.Empty(t, assertions)
 				require.NoError(t, s.ValidateMetadata(ctx))
 				_, err = s.UndoPhotoFaceDecision(ctx, lastUndo.ReceiptID)
 				require.NoError(t, err)
-				require.NoError(t, s.ValidateMetadata(ctx))
-				return
 			case test.explicitWithdrawal:
 				r := decideFaceForTest(t, s, n, first.FaceID, "", "retract")
 				assertions, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)

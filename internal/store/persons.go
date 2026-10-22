@@ -260,10 +260,10 @@ func personVisibleSQL(person string) string {
 func personRecentSQL() string {
 	joins, where := personPhotoSource(true)
 	return `COALESCE((SELECT recent.recorded_at FROM (
- SELECT assertion.recorded_at,assertion.content_version_id FROM persons namesake
+ SELECT MAX(assertion.recorded_at,COALESCE((SELECT MAX(f.named_at) FROM photo_faces f WHERE f.assertion_id=assertion.assertion_id),assertion.recorded_at)) recorded_at,assertion.content_version_id FROM persons namesake
  CROSS JOIN person_document_assertions assertion ON assertion.person_id=namesake.person_id AND assertion.action='assert'
  WHERE namesake.display_name_folded=persons.display_name_folded AND namesake.state<>'retired' AND assertion.role='depicted'
- ORDER BY assertion.recorded_at DESC LIMIT -1) recent
+ ORDER BY recorded_at DESC LIMIT -1) recent
  WHERE EXISTS(SELECT 1 FROM content_versions cv` + joins + where + `
  AND cv.version_id=recent.content_version_id AND (?=0 OR ` + photoVisibilityPredicate(false) + `))
  LIMIT 1),'')`
