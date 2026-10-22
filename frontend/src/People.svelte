@@ -134,7 +134,7 @@
   }
   function syncPortraits(rows: PersonSummary[]) {
     const wanted = new Map(rows.map((person) => [portraitKey(person), person]));
-    for (const key of [...portraits.keys()]) if (!wanted.has(key)) releasePortrait(key);
+    for (const key of portraits.keys()) if (!wanted.has(key)) releasePortrait(key);
     for (const [key, person] of wanted) if (key && !portraits.has(key)) loadPortrait(key, person);
   }
   $effect(() => {
@@ -145,7 +145,7 @@
     void people.access?.scope;
     untrack(() => syncPortraits(people.items));
     return () => {
-      for (const key of [...portraits.keys()]) releasePortrait(key);
+      for (const key of portraits.keys()) releasePortrait(key);
       images = {};
       void hiddenCache?.dispose();
       hiddenCache = undefined;
