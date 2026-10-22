@@ -1983,8 +1983,11 @@ it.each(["Albums", "Map", "People"])(
       if (url === "/api/v1/photos/hidden")
         return new Response(JSON.stringify({ configured: false }));
       if (url === "/api/v1/photos/albums") return new Response("[]");
+      if (url.startsWith("/api/v1/people?")) return Response.json({ items: [] });
       if (url === "/api/v1/photos/assets/query")
-        return new Response(JSON.stringify({ items: [], total: 0 }));
+        return view === "Map"
+          ? Response.json({ items: [], total: 0 })
+          : Response.json({ detail: "use a person ID" }, { status: 422 });
       return original(input, init);
     });
     render(App);
@@ -1999,7 +2002,12 @@ it.each(["Albums", "Map", "People"])(
       expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
     );
     await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+    if (view !== "Map") await screen.findByText("use a person ID");
     await fireEvent.click(await screen.findByRole("button", { name: view }));
+    if (view !== "Map") {
+      expect(await screen.findByRole("main", { name: view })).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
     await fireEvent.keyDown(window, { key: "1" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
