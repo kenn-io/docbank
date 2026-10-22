@@ -39,6 +39,7 @@ export function isCurrentSessionError(cause: unknown, activeSession: string): bo
 
 export interface SessionOptions extends RequestInit {
   session?: string;
+  onResponseHeaders?: (headers: Headers) => void;
 }
 
 // Reads that use POST for their request body, so scrolling or typing a search never defers a pass.
@@ -79,8 +80,8 @@ export const sessionResponse = <_T>(
 
 async function send(
   url: string,
-  { session = "", ...init }: SessionOptions,
-  allowNotModified: boolean,
+  { session = "", onResponseHeaders, ...init }: SessionOptions,
+  allowNotModified = false,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   if (init.body instanceof Blob && init.body.type.startsWith("multipart/form-data;")) {
@@ -118,6 +119,7 @@ async function send(
     requestSessionByError.set(error, session);
     throw error;
   }
+  onResponseHeaders?.(response.headers);
   return response;
 }
 

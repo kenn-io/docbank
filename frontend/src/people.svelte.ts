@@ -1,4 +1,11 @@
-import { listPeople, renamePerson, mergePerson, type PersonSummary } from "./generated/docbank.js";
+import {
+  listPeople,
+  renamePerson,
+  mergePerson,
+  type Person,
+  type PersonMergeReceipt,
+  type PersonSummary,
+} from "./generated/docbank.js";
 import { APIError, type ProblemFace } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
@@ -26,6 +33,79 @@ export const mergeRoles = ({ pair, keep }: PeopleMerge) => {
 };
 
 const uncertain = (cause: unknown) => !(cause instanceof APIError) || cause.status >= 500;
+const responseRevisionMatches = (revision: unknown, etag: string | null) =>
+  typeof revision === "number" &&
+  Number.isSafeInteger(revision) &&
+  revision > 0 &&
+  etag === `"${revision}"`;
+
+const validRenameResponse = (
+  value: unknown,
+  personID: string,
+  displayName: string,
+  previousRevision: number,
+  etag: string | null,
+): value is Person => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const person = value as Partial<Person>;
+  return (
+    person.person_id === personID &&
+    person.display_name === displayName &&
+    typeof person.origin === "string" &&
+    typeof person.state === "string" &&
+    typeof person.created_at === "string" &&
+    typeof person.updated_at === "string" &&
+    typeof person.revision === "number" &&
+    Number.isSafeInteger(person.revision) &&
+    person.revision > previousRevision &&
+    responseRevisionMatches(person.revision, etag)
+  );
+};
+
+const mergeReceiptCounts = [
+  "assertions",
+  "custodian_assignments",
+  "deduplicated_assertions",
+  "deduplicated_identities",
+  "external_uids",
+  "identities",
+  "superseded_candidates",
+] as const;
+
+const validMergeReceipt = (
+  value: unknown,
+  source: PersonSummary,
+  survivor: PersonSummary,
+  operationID: string,
+  etag: string | null,
+): value is PersonMergeReceipt => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const receipt = value as Partial<PersonMergeReceipt>;
+  const moved = receipt.moved;
+  if (!moved || typeof moved !== "object" || Array.isArray(moved)) return false;
+  const counts = moved as Partial<PersonMergeReceipt["moved"]>;
+  return (
+    receipt.absorbed_person_id === source.person_id &&
+    receipt.survivor_person_id === survivor.person_id &&
+    receipt.operation_id === operationID &&
+    typeof receipt.absorbed_display_name === "string" &&
+    typeof receipt.merge_id === "string" &&
+    receipt.merge_id.length > 0 &&
+    typeof receipt.created_at === "string" &&
+    receipt.created_at.length > 0 &&
+    receipt.survivor_revision_before === survivor.revision &&
+    typeof receipt.survivor_revision_after === "number" &&
+    Number.isSafeInteger(receipt.survivor_revision_after) &&
+    receipt.survivor_revision_after > survivor.revision &&
+    responseRevisionMatches(receipt.survivor_revision_after, etag) &&
+    mergeReceiptCounts.every(
+      (field) =>
+        typeof counts[field] === "number" &&
+        Number.isSafeInteger(counts[field]) &&
+        counts[field]! >= 0,
+    )
+  );
+};
 
 export class People {
   items = $state.raw<PersonSummary[]>([]);
@@ -160,15 +240,24 @@ export class People {
     const epoch = this.epoch;
     const display_name = name.trim();
     try {
+      let etag: string | null = null;
       const saved = await this.run(() =>
         renamePerson(
           person.person_id,
           { display_name },
           { "If-Match": `"${person.revision}"` },
-          { session: this.session, signal: request.signal },
+          {
+            session: this.session,
+            signal: request.signal,
+            onResponseHeaders: (headers) => {
+              etag = headers.get("ETag");
+            },
+          },
         ),
       );
       if (request.signal.aborted) return false;
+      if (!validRenameResponse(saved, person.person_id, display_name, person.revision, etag))
+        throw new Error("The rename response could not be confirmed.");
       this.place(epoch, person.person_id, {
         ...person,
         display_name: saved.display_name,
@@ -253,7 +342,8 @@ export class People {
     // The dialog belongs to this request while it shows the same pair.
     const owns = () => !request.signal.aborted && this.merge?.pair === selected.pair;
     try {
-      await this.run(() =>
+      let etag: string | null = null;
+      const receipt = await this.run(() =>
         mergePerson(
           attempt.survivor.person_id,
           {
@@ -262,10 +352,18 @@ export class People {
             operation_id: attempt.operation,
           },
           { "If-Match": `"${attempt.survivor.revision}"` },
-          { session: this.session, signal: request.signal },
+          {
+            session: this.session,
+            signal: request.signal,
+            onResponseHeaders: (headers) => {
+              etag = headers.get("ETag");
+            },
+          },
         ),
       );
       if (request.signal.aborted) return false;
+      if (!validMergeReceipt(receipt, source, survivor, attempt.operation, etag))
+        throw new Error("The merge response could not be confirmed.");
       this.merge = undefined;
       this.place(epoch, source.person_id);
       this.selected = [];
@@ -280,9 +378,14 @@ export class People {
         return false;
       }
       const next: PeopleMerge = { ...this.merge!, attempt: undefined, confirmed: false };
-      if (cause instanceof APIError && cause.status === 412) {
-        // Show both people's current details before asking again. A failed
-        // read keeps the earlier card; a person no longer visible ends the merge.
+      if (
+        cause instanceof APIError &&
+        (cause.status === 412 ||
+          (cause.status === 404 && cause.code === "not_found") ||
+          (cause.status === 409 && cause.code === "person_retired"))
+      ) {
+        // Refresh both selections before asking again. A failed read keeps the
+        // earlier card; a person no longer visible ends the merge.
         const current = await Promise.all(
           selected.pair.map((person) => this.refreshCard(person.person_id, request.signal, epoch)),
         );

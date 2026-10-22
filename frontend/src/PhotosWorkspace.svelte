@@ -223,7 +223,7 @@
     const filter = photos.personFilter;
     const person = inspectorFaces.people.find((person) => person.person_id === filter?.id);
     if (filter && person && filter.name !== person.display_name)
-      photos.personFilter = { id: filter.id, name: person.display_name };
+      photos.personFilter = { ...filter, name: person.display_name };
   });
   $effect(() => {
     const cullID = culling ? cull?.currentID : undefined;
@@ -1150,7 +1150,7 @@
                   onclick={() => void photos.resetQuery()}>Clear filters</Button
                 >
               {/if}
-              {#if photos.personFilter && photos.query.filters.person_ids?.includes(photos.personFilter.id)}
+              {#if photos.personFilter && (photos.personFilter.scope === undefined || photos.personFilter.scope === photos.hiddenAccess?.scope) && photos.query.filters.person_ids?.includes(photos.personFilter.id)}
                 <span>Person: {photos.personFilter.name}</span>
               {/if}
               {#if searchable && albums}<PhotoSmartSet {photos} {albums} {onnavigate} />{/if}

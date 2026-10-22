@@ -64,6 +64,73 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
   });
 };
 
+const hiddenOnlyPersonFixture = () => {
+  const personID = "00000000-0000-4000-8000-000000000001";
+  let locked = false;
+  const peopleReads: boolean[] = [];
+  const photoQueries: { hidden: boolean; filters: Record<string, unknown> }[] = [];
+  const unlocked = { configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 };
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden/unlock")) {
+      locked = false;
+      return Response.json(unlocked);
+    }
+    if (url.endsWith("/photos/hidden"))
+      return Response.json(locked ? { configured: true } : unlocked);
+    if (url.includes("/api/v1/people?")) {
+      const byID = new URL(url, location.href).searchParams.has("person_id");
+      if (byID) peopleReads.push(locked);
+      return Response.json({
+        items: locked
+          ? []
+          : [
+              {
+                person_id: personID,
+                display_name: "Ada",
+                display_name_folded: "ada",
+                revision: 1,
+                state: "curated",
+                created_at: "2026-01-01",
+                photo_summary: { library_count: 0, hidden_count: 1 },
+              },
+            ],
+      });
+    }
+    if (url.endsWith("/photos/assets/query")) {
+      const request = JSON.parse(String(init?.body));
+      photoQueries.push({ hidden: !!request.hidden, filters: request.query.filters ?? {} });
+      return Response.json({
+        items: request.hidden ? [photo(1)] : [],
+        total: request.hidden ? 1 : 0,
+      });
+    }
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  return {
+    personID,
+    peopleReads,
+    photoQueries,
+    lock() {
+      locked = true;
+    },
+  };
+};
+const startHiddenPeople = () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const fixture = hiddenOnlyPersonFixture();
+  render(App);
+  return fixture;
+};
+
 const map = vi.hoisted(() => ({
   props: undefined as
     | {
@@ -4283,60 +4350,43 @@ it.each([
   },
 );
 
-it("drops a Hidden person filter when Hidden locks between the People click and navigation", async () => {
-  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
-  storage();
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  const personID = "00000000-0000-4000-8000-000000000001";
-  let locked = false;
-  const hiddenQueries: unknown[] = [];
-  const unlocked = { configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 };
-  stubPhotoFetch(async (url, init) => {
-    if (url.endsWith("/photos/hidden/unlock")) {
-      locked = false;
-      return Response.json(unlocked);
-    }
-    if (url.endsWith("/photos/hidden"))
-      return Response.json(locked ? { configured: true } : unlocked);
-    if (url.includes("/api/v1/people?"))
-      return Response.json({
-        items: [
-          {
-            person_id: personID,
-            display_name: "Ada",
-            display_name_folded: "ada",
-            revision: 1,
-            state: "curated",
-            created_at: "2026-01-01",
-            photo_summary: { library_count: 0, hidden_count: 1 },
-          },
-        ],
-      });
-    if (url.endsWith("/photos/assets/query")) {
-      const request = JSON.parse(String(init?.body));
-      if (request.hidden) hiddenQueries.push(request.query.filters ?? {});
-      return Response.json({ items: [photo(1)], total: 1, facets: [] });
-    }
-    if (url.endsWith("/photos/albums")) return Response.json([]);
-    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
-  });
-  render(App);
+it("drops a pending Hidden person filter when the access scope changes", async () => {
+  const { personID, photoQueries, lock } = startHiddenPeople();
   const hiddenCount = await screen.findByRole("button", { name: "1 Hidden photo" });
-  locked = true;
+  lock();
   await fireEvent.click(hiddenCount);
   expect(location.pathname).toBe("/photos/hidden");
   await fireEvent.input(await screen.findByLabelText("Passcode", { exact: true }), {
     target: { value: "synthetic-passcode" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
-  await waitFor(() => expect(hiddenQueries.length).toBeGreaterThan(0));
-  expect(hiddenQueries).not.toContainEqual(expect.objectContaining({ person_ids: [personID] }));
+  await waitFor(() => expect(photoQueries.some((query) => query.hidden)).toBe(true));
+  expect(
+    photoQueries.filter((query) => query.hidden).map((query) => query.filters),
+  ).not.toContainEqual(expect.objectContaining({ person_ids: [personID] }));
+  expect(screen.queryByText("Person: Ada")).toBeNull();
+});
+
+it("clears a Hidden-only Library filter when the access scope changes", async () => {
+  const { personID, peopleReads, photoQueries, lock } = startHiddenPeople();
+  await fireEvent.click(await screen.findByRole("button", { name: "Ada 0 Library photos" }));
+  await screen.findByText("Person: Ada");
+  expect(location.pathname).toBe("/photos");
+  expect(photoQueries.at(-1)?.filters).toEqual({ person_ids: [personID] });
+
+  const readsBeforeLock = peopleReads.length;
+  const libraryBeforeLock = photoQueries.filter((query) => !query.hidden).length;
+  lock();
+  await fireEvent(document, new Event("visibilitychange"));
+
+  await waitFor(() => expect(peopleReads.length).toBeGreaterThan(readsBeforeLock));
+  await waitFor(() =>
+    expect(photoQueries.filter((query) => !query.hidden).length).toBeGreaterThan(libraryBeforeLock),
+  );
+  expect(peopleReads.at(-1)).toBe(true);
+  expect(photoQueries.filter((query) => !query.hidden).at(-1)?.filters).not.toHaveProperty(
+    "person_ids",
+  );
   expect(screen.queryByText("Person: Ada")).toBeNull();
 });
 

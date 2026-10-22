@@ -62,6 +62,62 @@ func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }
 
+func TestMergePersonsPreservesNewestDuplicateAssertionRecency(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
+	require.NoError(t, err)
+	third, err := s.CreatePerson(ctx, "Third", "operator")
+	require.NoError(t, err)
+	duplicate := browsePhotoNode(t, s, "duplicate.jpg", fakeHash("duplicate-evidence"), "image/jpeg")
+	newer := browsePhotoNode(t, s, "newer.jpg", fakeHash("newer-evidence"), "image/jpeg")
+	keptAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, survivor.PersonID, "")
+	require.NoError(t, err)
+	absorbedAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, absorbed.PersonID, "")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, newer.CurrentVersionID, third.PersonID, "")
+	require.NoError(t, err)
+	for assertionID, recordedAt := range map[string]string{
+		keptAssertion.AssertionID:     "2026-01-01T00:00:00Z",
+		absorbedAssertion.AssertionID: "2026-03-01T00:00:00Z",
+	} {
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE assertion_id=?`, recordedAt, assertionID)
+		require.NoError(t, err)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-02-01T00:00:00Z' WHERE person_id=?`, third.PersonID)
+	require.NoError(t, err)
+	before, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+	require.NoError(t, err)
+	require.Equal(t, absorbed.PersonID, before[0].PersonID)
+	require.Equal(t, third.PersonID, before[1].PersonID)
+
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	receipt, err := s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	require.Equal(t, []PersonMergeDeduplicatedAssertion{{
+		Assertion: PersonDocumentAssertion{
+			AssertionID: absorbedAssertion.AssertionID, ContentVersionID: duplicate.CurrentVersionID,
+			PersonID: absorbed.PersonID, Role: personAssertionRoleDepicted,
+			Action: personAssertionActionAssert, RecordedAt: "2026-03-01T00:00:00Z",
+			Revision: absorbedAssertion.Revision, PhotoMark: true,
+		},
+		RetainedAssertionID: keptAssertion.AssertionID,
+	}}, receipt.Moved.DeduplicatedAssertions)
+	merged, err := s.DocumentPersonAssertions(ctx, duplicate.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, merged, 1)
+	require.Equal(t, "2026-03-01T00:00:00Z", merged[0].RecordedAt)
+	after, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+	require.NoError(t, err)
+	require.Equal(t, survivor.PersonID, after[0].PersonID)
+	require.Equal(t, "2026-03-01T00:00:00Z", after[0].RecentRank)
+	require.Equal(t, third.PersonID, after[1].PersonID)
+}
+
 func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

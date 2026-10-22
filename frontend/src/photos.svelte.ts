@@ -327,7 +327,7 @@ export class Photos {
   query = $state.raw<Query>(photoQuery);
   // The active jump's month stays pending while pages load. Clearing it cancels the jump.
   seek = $state("");
-  personFilter = $state<{ id: string; name: string }>();
+  personFilter = $state<{ id: string; name: string; scope?: number }>();
   // queryResets counts accepted resetQuery calls; the search box remounts on it.
   queryResets = $state(0);
   timeline = $state<CaptureDayFacet | undefined>();

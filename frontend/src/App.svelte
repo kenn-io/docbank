@@ -911,7 +911,11 @@
       pendingPerson = undefined;
       return false;
     }
-    photos.personFilter = { id: personID, name };
+    photos.personFilter = {
+      id: personID,
+      name,
+      ...(hiddenAccess ? { scope: hiddenAccess.scope } : {}),
+    };
     pendingPerson = undefined;
     return true;
   }
@@ -919,6 +923,58 @@
     const scope = hiddenAccess?.scope;
     if (pendingPerson?.scope !== undefined && pendingPerson.scope !== scope)
       pendingPerson = undefined;
+  });
+  $effect(() => {
+    const scope = hiddenAccess?.scope;
+    const session = webSession;
+    const photos = activePhotos();
+    const filter = photos?.personFilter;
+    if (
+      scope === undefined ||
+      !session ||
+      !photos ||
+      !filter ||
+      filter.scope === scope ||
+      !photos.query.filters.person_ids?.includes(filter.id)
+    )
+      return;
+    const personID = filter.id;
+    const controller = new AbortController();
+    const owns = () =>
+      !controller.signal.aborted &&
+      activePhotos() === photos &&
+      photos.personFilter?.id === personID &&
+      photos.query.filters.person_ids?.includes(personID) &&
+      hiddenAccess?.scope === scope;
+    const clear = () => {
+      const filters = { ...photos.query.filters };
+      delete filters.person_ids;
+      photos.personFilter = undefined;
+      void photos.setQuery({ ...photos.query, filters });
+    };
+    const read = () => {
+      controller.signal.throwIfAborted();
+      return generated.listPeople(
+        { person_id: personID, limit: 1 },
+        { session, signal: controller.signal },
+      );
+    };
+    void (hiddenAccess ? hiddenAccess.run(read) : read())
+      .then((page) => {
+        if (!owns()) return;
+        const person = page.items[0];
+        if (!person) {
+          clear();
+          return;
+        }
+        photos.personFilter = { ...filter, name: person.display_name, scope };
+      })
+      .catch((cause: unknown) => {
+        if (!owns()) return;
+        handleFailure(cause);
+        clear();
+      });
+    return () => controller.abort();
   });
   $effect(() => {
     if (hiddenMode && hiddenWorkspace?.activePhotos() && pendingPerson) untrack(applyPersonPhotos);

@@ -68,6 +68,22 @@ it("keeps a write counted until its answer body is read", async () => {
   expect(mutationsInFlight()).toBe(0);
 });
 
+it("exposes successful JSON response headers to the caller", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ saved: true }, { headers: { ETag: '"7"' } }),
+  );
+  let etag = "";
+  const options = {
+    session: "tab",
+    onResponseHeaders: (headers: Headers) => {
+      etag = headers.get("ETag") ?? "";
+    },
+  } as never;
+
+  await expect(sessionJSON("/api/v1/people/by-id/ada", options)).resolves.toEqual({ saved: true });
+  expect(etag).toBe('"7"');
+});
+
 it("binds authorization failures to the session that issued the request", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify({ detail: "session expired" }), {
