@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import * as api from "../src/generated/docbank.js";
-import { captureThemes } from "./capture-themes.js";
+import { captureTheme } from "./capture-themes.js";
 import { photoFixture, repository, withPhotoAPI } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_PEOPLE_SCREENSHOT_DIR;
@@ -51,7 +51,7 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     await expect(people.getByRole("img")).toHaveCount(2);
     await expect(people.getByRole("button", { name: "Morgan Lee 0 Library photos" })).toBeVisible();
     await mkdir(output!, { recursive: true });
-    await captureThemes(page, output!, "after-people-cards");
+    await captureTheme(page, output!, "after-people-cards", "dark");
     await people.getByRole("button", { name: "Rename", exact: true }).first().click();
     const rename = page.getByRole("dialog", { name: "Rename Ada" });
     await rename.getByRole("textbox", { name: "Person name" }).fill("Ada Lovelace");
@@ -63,7 +63,7 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
     const merge = page.getByRole("dialog", { name: "Merge people" });
     await merge.getByRole("radio", { name: /Keep Grace Hopper/ }).check();
     await merge.getByRole("checkbox", { name: "Confirm merge" }).check();
-    await captureThemes(page, output!, "after-people-merge");
+    await captureTheme(page, output!, "after-people-merge", "dark");
     await merge.getByRole("button", { name: "Merge", exact: true }).click();
     await expect(merge).toBeHidden();
     await expect(
@@ -77,7 +77,7 @@ test("People cards, rename, merge, and Library navigation", async ({ page }) => 
       people.getByRole("button", { name: /Grace Hopper 2 Library photos/ }),
     ).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
-    await captureThemes(page, output!, "after-people-narrow");
+    await captureTheme(page, output!, "after-people-narrow", "dark");
   } finally {
     await fixture.dispose();
   }
