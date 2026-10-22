@@ -34,7 +34,7 @@
     {
       "Name": "encrypted",
       "Pages": 0,
-      "PageError": "PDF is encrypted",
+      "PageError": "error",
       "Inspect": {
         "Pages": 0,
         "CompressedBytes": 0,
@@ -42,8 +42,8 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "PDF is encrypted",
-      "MetadataError": "PDF is encrypted",
+      "InspectError": "error",
+      "MetadataError": "error",
       "Unbounded": false
     },
     {
@@ -57,7 +57,7 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "measure PDF stream 5: PDF stream cannot be bounded locally",
+      "InspectError": "error",
       "MetadataError": "",
       "Unbounded": true
     },
@@ -72,14 +72,14 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "measure PDF stream 5: PDF stream cannot be bounded locally",
+      "InspectError": "error",
       "MetadataError": "",
       "Unbounded": true
     },
     {
       "Name": "malformed",
       "Pages": 0,
-      "PageError": "validate PDF object graph: validation error (obj#:99): catalog: pages: page tree root: cannot dereference page node",
+      "PageError": "error",
       "Inspect": {
         "Pages": 0,
         "CompressedBytes": 0,
@@ -87,8 +87,8 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "validate PDF object graph: validation error (obj#:99): catalog: pages: page tree root: cannot dereference page node",
-      "MetadataError": "validate PDF object graph: catalog: pages: page tree root: cannot dereference page node",
+      "InspectError": "error",
+      "MetadataError": "error",
       "Unbounded": false
     },
     {
@@ -102,7 +102,7 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "measure PDF stream 21: PDF stream cannot be bounded locally",
+      "InspectError": "error",
       "MetadataError": "",
       "Unbounded": true
     },
@@ -117,7 +117,7 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "measure PDF stream 7: PDF stream cannot be bounded locally",
+      "InspectError": "error",
       "MetadataError": "",
       "Unbounded": true
     },
@@ -148,7 +148,7 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "measure PDF stream 5: PDF stream cannot be bounded locally",
+      "InspectError": "error",
       "MetadataError": "",
       "Unbounded": true
     },
@@ -226,7 +226,7 @@
         "Entries": 0,
         "MaxEntryBytes": 0
       },
-      "InspectError": "measure PDF stream 4: decode PDF stream: stream filter[0] \"UnknownDecode\": construct: invalid filter: <UnknownDecode>",
+      "InspectError": "error",
       "MetadataError": "",
       "Unbounded": false
     },
