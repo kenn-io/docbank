@@ -12239,10 +12239,10 @@ components:
       required:
         - library_count
       type: object
-      x-go-type: store.PersonPhotoSummary
+      x-go-type: api.PersonPhotoSummary
       x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PersonSplitReceipt:
       additionalProperties: false
       properties:

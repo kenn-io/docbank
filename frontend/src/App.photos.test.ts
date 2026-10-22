@@ -4646,7 +4646,17 @@ it("closes Hidden setup and reports an expired session after a 401 save", async 
   expect(hidden.size).toBe(0);
 });
 
-it.each(["absorbed", "survivor", "text", "unfiltered rename", "unfiltered merge"])(
+const personLibraryViews = [
+  "absorbed",
+  "absorbed behind Albums",
+  "absorbed behind album",
+  "survivor",
+  "text",
+  "unfiltered rename",
+  "unfiltered merge",
+];
+
+it.each(personLibraryViews)(
   "keeps the %s Library view current after renaming or merging in People",
   async (filter) => {
     history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
@@ -4711,7 +4721,7 @@ it.each(["absorbed", "survivor", "text", "unfiltered rename", "unfiltered merge"
     let survivorReads = 0;
     stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/albums")) return Response.json([photoAlbum()]);
       if (url.endsWith("/photos/assets/query")) {
         if (
           JSON.parse(String(init.body)).query.filters?.person_ids?.includes(grace.person_id) ||
@@ -4802,10 +4812,10 @@ it.each(["absorbed", "survivor", "text", "unfiltered rename", "unfiltered merge"
       await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
     }
     let pendingMerge: Promise<boolean> | undefined;
-    if (filter === "absorbed") {
+    if (filter.startsWith("absorbed")) {
       await fireEvent.click(
         await screen.findByRole("checkbox", {
-          name: `Select Ada Lovelace · ${new Date(ada.created_at).toLocaleDateString()}`,
+          name: `Select ${rows[0]!.display_name} · ${new Date(ada.created_at).toLocaleDateString()}`,
         }),
       );
       await fireEvent.click(
@@ -4830,7 +4840,11 @@ it.each(["absorbed", "survivor", "text", "unfiltered rename", "unfiltered merge"
       });
     }
     await waitFor(() => expect(finishMerge).toBeTypeOf("function"));
-    if (filter !== "absorbed") {
+    if (filter.startsWith("absorbed behind")) {
+      const album = filter === "absorbed behind album";
+      await fireEvent.click(screen.getByRole("button", { name: album ? /^Trip/ : /^Albums$/ }));
+      await screen.findByRole("heading", { name: album ? "Trip" : "Albums" });
+    } else if (filter !== "absorbed") {
       const readsBeforeNavigation = survivorReads;
       await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
       if (filter === "survivor") await screen.findByText("Person: Grace");
@@ -4842,6 +4856,7 @@ it.each(["absorbed", "survivor", "text", "unfiltered rename", "unfiltered merge"
       finishMerge();
       await pendingMerge;
     });
+    await waitFor(() => expect(library.loading).toBe(false));
     await waitFor(() => expect(survivorReads).toBe(readsBeforeMerge + 1));
     if (filter === "text") {
       expect(library.query.text).toBe("person:Grace");
@@ -4849,7 +4864,9 @@ it.each(["absorbed", "survivor", "text", "unfiltered rename", "unfiltered merge"
     }
     await waitFor(() => expect(library.query.filters.person_ids).toEqual([grace.person_id]));
     expect(library.personFilter).toEqual({ id: grace.person_id, name: "Grace" });
-    if (filter === "absorbed")
+    if (filter.startsWith("absorbed behind"))
+      await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+    if (filter.startsWith("absorbed"))
       await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
     await screen.findByText("Person: Grace");
   },
@@ -5094,6 +5111,68 @@ it("clears the live update alert once the event stream opens again", async () =>
   await act(() => failed(new Error("Failed to fetch")));
   expect(screen.queryByText("Failed to fetch")).toBeNull();
 });
+
+it.each(["lock", "navigate"])(
+  "expires a pending Hidden person filter after %s before the workspace mounts",
+  async (action) => {
+    history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+    storage();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const ada = person("00000000-0000-4000-8000-000000000001", {
+      display_name: "Ada",
+      photo_summary: { library_count: 0, hidden_count: 1 },
+    });
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+    const open = { configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 };
+    const accessState = vi.spyOn(HiddenAccess.prototype, "acceptState");
+    let navigating = false;
+    let locked = false;
+    let finishAccess!: (response: Response) => void;
+    const hiddenQueries: Query[] = [];
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) {
+        if (navigating) return new Promise<Response>((resolve) => (finishAccess = resolve));
+        return Response.json(locked ? { configured: true } : open);
+      }
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/assets/query")) {
+        const body = JSON.parse(String(init.body));
+        if (body.hidden) hiddenQueries.push(body.query);
+        return Response.json({ items: [], total: 0, facets: [] });
+      }
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    });
+    render(App);
+    const card = await screen.findByRole("button", { name: "1 Hidden photo" });
+    const access = accessState.mock.contexts.at(-1) as HiddenAccess;
+    navigating = true;
+    await fireEvent.click(card);
+    await waitFor(() => expect(finishAccess).toBeTypeOf("function"));
+    if (action === "lock") {
+      locked = true;
+      await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+      navigating = false;
+      finishAccess(Response.json({ configured: true }));
+      await screen.findByRole("button", { name: "Unlock" });
+    }
+    await fireEvent.click(screen.getByRole("button", { name: /^Albums$/ }));
+    await screen.findByRole("heading", { name: "Albums" });
+    navigating = false;
+    if (action === "navigate") finishAccess(Response.json({ configured: true }));
+    locked = false;
+    await fireEvent.click(screen.getByRole("button", { name: /^Hidden$/ }));
+    await waitFor(() => expect(hiddenQueries.length).toBeGreaterThan(0));
+    expect(hiddenQueries.every((query) => !query.filters.person_ids?.length)).toBe(true);
+    await screen.findByText("No hidden photos");
+    expect(screen.queryByText("Person: Ada")).toBeNull();
+  },
+);
 
 it.each([false, true])(
   "keeps a card's Library filter while Hidden access changes to unlocked=%s during navigation",

@@ -29367,7 +29367,7 @@ type PersonMergeReceipt = api.PersonMergeReceipt
 
 type PersonPage = api.PersonPage
 
-type PersonPhotoSummary = store.PersonPhotoSummary
+type PersonPhotoSummary = api.PersonPhotoSummary
 
 type PersonSplitReceipt = api.PersonSplitReceipt
 

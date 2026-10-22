@@ -272,12 +272,15 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	require.Len(t, first.Items, 1)
 	require.Equal(t, zoe.PersonID, first.Items[0].PersonID)
 	require.NotNil(t, first.Items[0].PhotoSummary)
+	require.Equal(t, int64(1), first.Items[0].PhotoSummary.LibraryCount)
+	require.Nil(t, first.Items[0].PhotoSummary.HiddenCount)
 	response, body = get(t, ts, path+"&cursor="+first.NextCursor, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var second api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Len(t, second.Items, 1)
 	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
+	require.Equal(t, int64(1), second.Items[0].PhotoSummary.LibraryCount)
 	for _, changed := range []struct {
 		query  string
 		unlock bool
