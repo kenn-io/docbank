@@ -296,7 +296,11 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	require.Equal(t, []string{people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID, people["zoe"].PersonID}, page(ctx, recent))
 	full, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false, recent)
 	require.NoError(t, err)
-	require.Equal(t, []string{full[0].PersonID, full[1].PersonID}, zoes)
+	require.Equal(t, people["Bob"].PersonID, full[0].PersonID)
+	require.Equal(t, people["Ada"].PersonID, full[1].PersonID)
+	for _, person := range full[2:] {
+		require.Empty(t, person.RecentRank)
+	}
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), recent)[:2])

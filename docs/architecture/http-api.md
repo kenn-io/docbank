@@ -1165,7 +1165,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, `/photos/people`, `/photos/hidden`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1447,11 +1447,11 @@ Active operator assertions other than `blind_copy` make names searchable on visi
 
 `photo_summary=true` adds each person's distinct `library_count`, a separate `hidden_count` while Hidden is unlocked, and an optional `face` with the exact current source version, normalized crop, rotation, and ready grid generation. Counts require a current, live, included source and count a paired RAW/JPEG asset once. The portrait uses a readable key face, including Hidden while unlocked, otherwise it prefers the newest assigned Library face. `face_hidden=true` identifies a Hidden portrait. The page lists only people with a visible photo: Library, or Hidden while unlocked. The browser serves this view at `/photos/people`.
 
-`recent_first=true` ranks name groups by the newest `recorded_at` among active, visible `depicted` assertions, then by folded name and ID. Namesakes share their group's rank and stay together. Naming a person on a new photo records a new assertion and moves the group up. Adding a face or whole-photo mark to an existing active assertion preserves its time. Merges preserve retained and moved assertion times. Locked Hidden evidence supplies no rank. People with no visible depicted evidence follow in name order. Cursors bind the query, projection, order, and browser Hidden scope. A refused cursor returns `422 people_cursor_expired`; restart from the first page.
+`recent_first=true` ranks name groups by the newest `recorded_at` among active, visible `depicted` assertions, then by folded name and ID. Namesakes share their group's rank and stay together. Naming a person on a new photo records a new assertion and moves the group up. Adding a face or whole-photo mark to an existing active assertion preserves its time. Merges preserve retained and moved assertion times. Locked Hidden evidence supplies no rank. People with no visible depicted evidence follow in name order. Cursors bind the query, projection, order, and Hidden scope for browser, photo-summary, and recent-first listings. A refused cursor returns `422 people_cursor_expired`; restart from the first page.
 
 Ranking and `photo_summary` start from the listed people's own assertions, so their cost depends on those people's evidence. Listing and ranking grow with the number of people matching the search prefix. Measure with `go test -tags fts5 ./internal/store -run '^$' -bench '^BenchmarkPeopleRecentAtVaultScale$' -benchtime=1s -count=1`.
 
-Browser rename and merge apply the same visibility rule inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. A merge replay checks the survivor's current visibility before returning its saved receipt after the absorbed person retires. While Hidden is locked, moved assertions on Hidden evidence, including deduplicated assertions saved in the receipt, require unlocking before replay. API-key writes keep their full scope.
+Browser rename and merge apply the same visibility rule inside the write transaction. A person the browser can't list, such as a sensitive-only person or a locked Hidden-only person, returns `404 not_found`. While Hidden is locked, browser merges require unlocking if either person has assertions or face candidate evidence on a Hidden photo. A merge replay checks the survivor's current visibility before returning its saved receipt after the absorbed person retires. While Hidden is locked, moved assertions on Hidden evidence, including deduplicated assertions saved in the receipt, require unlocking before replay. API-key writes keep their full scope.
 
 A face conflict returns `409 person_merge_conflict` with up to 20 visible `face_ids` and matching `face_version_ids`. Each version is the exact content version that holds the conflicting face, which may be a retained older version. The detail lists each face/version pair and says "more faces also conflict" when the list is truncated. `hidden_face_conflict` and `inaccessible_face_conflict` report conflicts the caller can't open.
 
@@ -2320,7 +2320,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, `/photos/people`, `/photos/hidden`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping

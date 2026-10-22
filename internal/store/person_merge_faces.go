@@ -8,11 +8,13 @@ import (
 	"strings"
 )
 
+type PersonFaceMergeConflict struct {
+	FaceID, ContentVersionID string
+}
+
 type PersonFaceMergeConflictError struct {
-	// FaceIDs and FaceVersionIDs pair each visible conflicting face with the
-	// exact content version it is on, which may be a retained older version.
-	FaceIDs              []string
-	FaceVersionIDs       []string
+	// Faces identifies each visible conflict on its exact version, including retained versions.
+	Faces                []PersonFaceMergeConflict
 	HiddenConflict       bool
 	InaccessibleConflict bool
 	More                 bool
@@ -21,8 +23,8 @@ type PersonFaceMergeConflictError struct {
 func (e *PersonFaceMergeConflictError) Error() string {
 	var message strings.Builder
 	message.WriteString("review contradictory face assignments and rejections before merging")
-	for i, id := range e.FaceIDs {
-		message.WriteString("; face " + id + " on version " + e.FaceVersionIDs[i])
+	for _, face := range e.Faces {
+		message.WriteString("; face " + face.FaceID + " on version " + face.ContentVersionID)
 	}
 	if e.More {
 		message.WriteString("; more faces also conflict")
@@ -71,9 +73,8 @@ func (s *Store) checkFaceMergeConflictsTx(ctx context.Context, tx *sql.Tx, a, b 
 			return err
 		}
 		found = true
-		if len(conflict.FaceIDs) < 20 {
-			conflict.FaceIDs = append(conflict.FaceIDs, id)
-			conflict.FaceVersionIDs = append(conflict.FaceVersionIDs, version)
+		if len(conflict.Faces) < 20 {
+			conflict.Faces = append(conflict.Faces, PersonFaceMergeConflict{FaceID: id, ContentVersionID: version})
 		} else {
 			conflict.More = true
 		}

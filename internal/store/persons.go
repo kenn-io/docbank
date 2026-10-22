@@ -338,7 +338,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 	people := []PersonSearchResult{}
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		hideLocked := false
-		if visibleOnly || options.PhotoSummary {
+		if visibleOnly || options.PhotoSummary || options.RecentFirst {
 			_, err := s.hiddenSession(ctx, tx)
 			if err != nil && !errors.Is(err, ErrHiddenLocked) {
 				return err

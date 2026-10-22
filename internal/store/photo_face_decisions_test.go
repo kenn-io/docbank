@@ -406,20 +406,20 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 			require.ErrorAs(t, err, &conflict)
 			require.Equal(t, test.hiddenConflict, conflict.HiddenConflict)
 			if hiddenFaceID != "" {
-				require.NotContains(t, conflict.FaceIDs, hiddenFaceID)
+				for _, face := range conflict.Faces {
+					require.NotEqual(t, hiddenFaceID, face.FaceID)
+				}
 				require.NotContains(t, err.Error(), hiddenFaceID)
 			}
-			require.Len(t, conflict.FaceIDs, test.visible)
+			require.Len(t, conflict.Faces, test.visible)
 			require.Equal(t, test.more, conflict.More)
 			if test.more {
 				require.Contains(t, err.Error(), "more faces also conflict")
 			}
 			require.Equal(t, test.inaccessible, conflict.InaccessibleConflict)
-			require.Len(t, conflict.FaceVersionIDs, test.visible)
 			if test.visible == 1 {
-				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
 				// A retained conflict names the replaced version, not the current one.
-				require.Equal(t, []string{n.CurrentVersionID}, conflict.FaceVersionIDs)
+				require.Equal(t, []PersonFaceMergeConflict{{FaceID: f.FaceID, ContentVersionID: n.CurrentVersionID}}, conflict.Faces)
 				require.Contains(t, err.Error(), "face "+f.FaceID+" on version "+n.CurrentVersionID)
 			}
 			if test.inaccessible {
@@ -434,7 +434,7 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 				require.NoError(t, err)
 				_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
 				require.ErrorAs(t, err, &conflict)
-				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
+				require.Equal(t, []PersonFaceMergeConflict{{FaceID: f.FaceID, ContentVersionID: n.CurrentVersionID}}, conflict.Faces)
 			}
 
 			if test.reactivated {

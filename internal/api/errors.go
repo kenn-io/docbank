@@ -214,8 +214,10 @@ var storeErrCodes = []struct {
 func FromStoreError(err error) error {
 	if conflict, ok := errors.AsType[*store.PersonFaceMergeConflictError](err); ok {
 		out := NewError(http.StatusConflict, "person_merge_conflict", conflict.Error())
-		out.FaceIDs = conflict.FaceIDs
-		out.FaceVersionIDs = conflict.FaceVersionIDs
+		for _, face := range conflict.Faces {
+			out.FaceIDs = append(out.FaceIDs, face.FaceID)
+			out.FaceVersionIDs = append(out.FaceVersionIDs, face.ContentVersionID)
+		}
 		out.HiddenFaceConflict = conflict.HiddenConflict
 		out.More = conflict.More
 		out.InaccessibleFaceConflict = conflict.InaccessibleConflict

@@ -70,6 +70,52 @@ func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
 	}
 }
 
+func TestBrowserMergeRequiresHiddenRejectionUnlock(t *testing.T) {
+	t.Parallel()
+	for _, rejectSurvivor := range []bool{false, true} {
+		t.Run(strconv.FormatBool(rejectSurvivor), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			left, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			right, err := s.CreatePerson(ctx, "Grace", "operator")
+			require.NoError(t, err)
+			for _, person := range []Person{left, right} {
+				photo := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
+				_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+				require.NoError(t, err)
+			}
+			hidden, face := faceForDecisionTest(t, s, "")
+			rejected := right
+			if rejectSurvivor {
+				rejected = left
+			}
+			decideFaceForTest(t, s, hidden, face.FaceID, rejected.PersonID, "reject")
+			before, _, _, err := s.PhotoFacePersonNames(ctx, hidden.CurrentVersionID)
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+			_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
+			require.ErrorIs(t, err, ErrHiddenLocked)
+			token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+			require.NoError(t, err)
+			unlocked := WithPhotoHiddenToken(ctx, token)
+			after, _, _, err := s.PhotoFacePersonNames(unlocked, hidden.CurrentVersionID)
+			require.NoError(t, err)
+			require.Equal(t, before, after, "a refused merge preserves the rejection and face revision")
+			_, err = s.MergePersons(WithVisiblePeopleOnly(unlocked), left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
+			require.NoError(t, err)
+			after, _, _, err = s.PhotoFacePersonNames(unlocked, hidden.CurrentVersionID)
+			require.NoError(t, err)
+			require.Equal(t, []string{left.PersonID}, after[0].RejectedPersonIDs)
+			require.Greater(t, after[0].Revision, before[0].Revision)
+		})
+	}
+}
+
 func TestBrowserPersonWritesRequireVisibility(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

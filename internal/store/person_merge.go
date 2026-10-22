@@ -257,8 +257,11 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 		return err
 	}
 	var hidden bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions assertion
-		WHERE assertion.person_id IN (?,?) AND NOT `+personVersionVisibleSQL("assertion.content_version_id")+`)`, survivorID, absorbedID).Scan(&hidden); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (
+		SELECT content_version_id FROM person_document_assertions WHERE person_id IN (?,?)
+		UNION
+		SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN (?,?)
+	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)`, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {
