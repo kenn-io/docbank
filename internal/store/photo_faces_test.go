@@ -55,7 +55,7 @@ func TestPersonFacePreviews(t *testing.T) {
 				require.NoError(t, err)
 				_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{assets[5].ID}}), Patch: PhotoAuthoredPatch{Rotation: new(90)}})
 				require.NoError(t, err)
-				rows, err := s.PersonFacePreviews(ctx, person.PersonID, generation.RecipeFingerprint, false)
+				rows, err := s.PersonFacePreviews(ctx, person.PersonID, generation.RecipeFingerprint, false, "", "")
 				require.NoError(t, err)
 				require.Equal(t, []PersonFacePreview{
 					{AssetID: assets[5].ID, ContentVersionID: nodes[5].CurrentVersionID, GenerationID: generation.GenerationID, Rotation: 90, Box: &box},
@@ -66,7 +66,7 @@ func TestPersonFacePreviews(t *testing.T) {
 			}
 			read := func() []PersonFacePreview {
 				t.Helper()
-				rows, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false)
+				rows, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false, "", "")
 				require.NoError(t, err)
 				return rows.Items
 			}
@@ -88,11 +88,11 @@ func TestPersonFacePreviews(t *testing.T) {
 			require.NoError(t, err)
 			rows = read()
 			require.Equal(t, []string{assets[5].ID, assets[4].ID, assets[1].ID}, []string{rows[0].AssetID, rows[1].AssetID, rows[2].AssetID})
-			_, err = s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", true)
+			_, err = s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", true, "", "")
 			require.ErrorIs(t, err, ErrHiddenLocked)
 			token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 			require.NoError(t, err)
-			page, err := s.PersonFacePreviews(WithPhotoHiddenToken(ctx, token), person.PersonID, "grid-recipe", true)
+			page, err := s.PersonFacePreviews(WithPhotoHiddenToken(ctx, token), person.PersonID, "grid-recipe", true, "", "")
 			require.NoError(t, err)
 			require.Equal(t, []PersonFacePreview{{AssetID: assets[2].ID, ContentVersionID: nodes[2].CurrentVersionID, Box: &faces[2].Box}}, page.Items)
 		})
@@ -119,10 +119,45 @@ func TestPersonFacePreviews(t *testing.T) {
 			require.NoError(t, err)
 			previews = append(previews, preview)
 		}
-		page, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false)
+		page, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false, "", "")
 		require.NoError(t, err)
 		require.Equal(t, []PersonFacePreview{previews[3], previews[2], previews[0]}, page.Items)
 	})
+}
+
+func TestPersonFacePreviewsCanSelectExactVersion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	var versions []string
+	var assets []string
+	var nodes []Node
+	var faceID string
+	for i := range 4 {
+		node := browsePhotoNode(t, s, fmt.Sprintf("portrait-%d.jpg", i), fakeHash(fmt.Sprintf("%02x", i+1)), "image/jpeg")
+		browsePhotoMetadata(t, s, node, fmt.Sprintf("preview-%d", i), exifCapture(fmt.Sprintf("2026-01-%02dT12:00:00Z", i+1)))
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		if i == 0 {
+			face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Y: .2, Width: .3, Height: .4}, person.PersonID)
+			require.NoError(t, err)
+			faceID = face.FaceID
+		} else {
+			_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+			require.NoError(t, err)
+		}
+		versions, assets, nodes = append(versions, node.CurrentVersionID), append(assets, asset.ID), append(nodes, node)
+	}
+	_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("ff"), 128, "image/jpeg")
+	require.NoError(t, err)
+
+	page, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false, versions[0], faceID)
+	require.NoError(t, err)
+	require.Equal(t, PersonFacePreviewPage{Items: []PersonFacePreview{{AssetID: assets[0], ContentVersionID: versions[0], Box: &document.FaceBox{X: .1, Y: .2, Width: .3, Height: .4}}}}, page)
+	_, err = s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false, "invalid", faceID)
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
 }
 
 func TestPersonFacePreviewsPreferAssignedSource(t *testing.T) {
@@ -139,7 +174,7 @@ func TestPersonFacePreviewsPreferAssignedSource(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MarkPersonInPhoto(ctx, jpeg.CurrentVersionID, person.PersonID, "")
 	require.NoError(t, err)
-	page, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false)
+	page, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false, "", "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Nil(t, page.Items[0].Box)
@@ -147,7 +182,7 @@ func TestPersonFacePreviewsPreferAssignedSource(t *testing.T) {
 	box := document.FaceBox{Width: .2, Height: .2}
 	_, _, err = s.CreatePhotoFace(ctx, source.CurrentVersionID, uuid.NewString(), box, person.PersonID)
 	require.NoError(t, err)
-	page, err = s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false)
+	page, err = s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false, "", "")
 	require.NoError(t, err)
 	require.Equal(t, []PersonFacePreview{{AssetID: asset.ID, ContentVersionID: source.CurrentVersionID, Box: &box}}, page.Items)
 }
@@ -177,7 +212,7 @@ func TestPersonPhotoPreviewSourceFollowsAssignment(t *testing.T) {
 	require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
 	_, _, err = s.ReplaceContent(ctx, source.ID, source.Revision, fakeHash("b2"), 20, "application/octet-stream")
 	require.NoError(t, err)
-	require.ErrorIs(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID), ErrNotFound)
+	require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
 }
 
 func TestWholePhotoMarkCreatesPersonAtomically(t *testing.T) {
@@ -918,9 +953,9 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	_, err = s.MarkPersonInPhoto(unlocked, nodes[2].CurrentVersionID, hiddenOnly.PersonID, "")
 	require.NoError(t, err)
 	// Excluded assets and missing sources contribute neither a count nor a face.
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, assets[3].ID)
+	_, err = s.SetPhotoAssetExcluded(ctx, assets[3].ID, assets[3].Revision, true)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET trashed_at='2026-01-01T00:00:00Z' WHERE id=?`, nodes[4].ID)
+	_, _, err = s.Trash(ctx, nodes[4].ID, nodes[4].Revision)
 	require.NoError(t, err)
 	options := PeopleSearchOptions{PhotoSummary: true, GridRecipe: "grid"}
 	rows, err := s.PeopleByDisplayName(unlocked, "", "", "", 100, true, options)

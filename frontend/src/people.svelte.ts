@@ -46,6 +46,7 @@ export class People {
   private epoch = 0;
   private writer?: AbortController;
   private disposed = false;
+  private cursorExpired = false;
   constructor(
     readonly session: string,
     readonly onauthfailure: (cause: unknown) => void,
@@ -82,6 +83,7 @@ export class People {
     }
     this.loading = true;
     this.error = "";
+    this.cursorExpired = false;
     try {
       const page = await this.run(() => {
         request.signal.throwIfAborted();
@@ -99,10 +101,19 @@ export class People {
         this.cursor = page.next_cursor;
       }
     } catch (cause) {
-      if (!request.signal.aborted) this.error = this.failure(cause);
+      if (!request.signal.aborted) {
+        this.error = this.failure(cause);
+        this.cursorExpired =
+          cause instanceof APIError &&
+          cause.status === 422 &&
+          cause.message === "invalid people cursor";
+      }
     } finally {
       if (!request.signal.aborted) this.loading = false;
     }
+  }
+  retry() {
+    return this.load(this.query, !!this.items.length && !this.cursorExpired);
   }
   // current reads one visible person by ID, or undefined when it is hidden,
   // merged away, or gone.
@@ -285,6 +296,18 @@ export class People {
         next.pair = [current[0] ?? selected.pair[0], current[1] ?? selected.pair[1]];
         next.notice = current.some(Boolean) ? "stale" : "";
       } else if (cause instanceof APIError && cause.code === "person_merge_conflict") {
+        const notices: string[] = [];
+        if (cause.message.includes("excluded or trashed photo")) {
+          notices.push("An excluded or trashed photo also needs review.");
+        }
+        if (cause.message.includes("locked Hidden photo")) {
+          notices.push("A locked Hidden photo also needs review.");
+        }
+        this.writeError = notices.length
+          ? notices.join(" ")
+          : cause.faces.length
+            ? ""
+            : "This merge has a face conflict that needs review.";
         next.conflicts = cause.faces;
       }
       this.merge = next;

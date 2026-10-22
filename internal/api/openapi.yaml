@@ -28267,6 +28267,22 @@ paths:
           name: hidden
           schema:
             type: boolean
+        - description: Restrict results to one source version
+          explode: false
+          in: query
+          name: content_version_id
+          schema:
+            description: Restrict results to one source version
+            format: uuid
+            type: string
+        - description: Restrict results to one assigned face
+          explode: false
+          in: query
+          name: face_id
+          schema:
+            description: Restrict results to one assigned face
+            format: uuid
+            type: string
       responses:
         "200":
           content:
@@ -28280,7 +28296,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Read up to three linked source-version photos in timeline order
+      summary: Read linked source-version photos or one exact assigned face
   /api/v1/photos/rejects/preflight:
     post:
       operationId: preflightPhotoRejects

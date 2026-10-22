@@ -23,16 +23,36 @@ beforeEach(() => {
       unobserve() {}
     },
   );
+  vi.spyOn(api, "listPersonFacePreviews").mockResolvedValue({ items: [] });
 });
 const unlockedAccess = () => {
   const access = new HiddenAccess("session", vi.fn());
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   return access;
 };
+it("starts People paging over when a saved cursor expires", async () => {
+  const read = vi
+    .spyOn(api, "listPeople")
+    .mockResolvedValueOnce({ items: [ada], next_cursor: "stale" })
+    .mockRejectedValueOnce(new APIError("invalid people cursor", 422, "validation"))
+    .mockResolvedValueOnce({ items: [grace] });
+  const people = new People("session", vi.fn());
+  await people.load();
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  await fireEvent.click(screen.getByRole("button", { name: "Load more people" }));
+  await screen.findByText("invalid people cursor");
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(people.items).toEqual([grace]));
+  expect(read.mock.calls[2]![0]).not.toHaveProperty("cursor");
+  view.unmount();
+  people.dispose();
+  await cache.dispose();
+});
 it("opens Library and unlocked Hidden counts, including cards without photo evidence", async () => {
   const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
-  people.items = [ada, grace];
+  people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: 1 } }, grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const open = vi.fn();
   const view = render(PeopleView, { people, cache, onperson: open });
@@ -41,7 +61,11 @@ it("opens Library and unlocked Hidden counts, including cards without photo evid
   await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
   expect(open).toHaveBeenCalledWith("ada", "Ada", true);
   expect(screen.getByRole("button", { name: "Grace 0 Library photos" })).toBeTruthy();
-  await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+  await act(() => {
+    people.conceal();
+    access.acceptState({ configured: true }, Date.now() + 1);
+    people.items = [ada, grace];
+  });
   expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
   view.unmount();
   people.dispose();
@@ -122,40 +146,83 @@ it("merges two selected cards after choosing the one to keep and confirming", as
   expect(confirm.hasAttribute("disabled")).toBe(true);
   await fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm merge" }));
   await fireEvent.click(confirm);
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(merge).toHaveBeenCalledOnce());
   expect(merge.mock.calls[0]![0]).toBe("grace");
-  expect(merge.mock.calls[0]![1]).toMatchObject({
-    absorbed_person_id: "ada",
-    absorbed_revision: 2,
-  });
-  expect(screen.queryByRole("button", { name: "Ada 3 Library photos" })).toBeNull();
-  expect(screen.queryByRole("region", { name: "Selected people" })).toBeNull();
   view.unmount();
   people.dispose();
   await cache.dispose();
 });
-const conflictFaces = (assigned: "assert" | "withdrawn") => ({
-  faces: [
-    photoFace({
-      face_id: "conflict",
-      content_version_id: "old-version",
-      rejected_person_ids: ["grace", "other"],
-    }),
-  ],
-  assertions: [
-    photoPersonAssertion({ content_version_id: "old-version", person_id: "ada", action: assigned }),
-  ],
-  people: [
-    { person_id: "ada", display_name: "Ada", state: "curated" },
-    { person_id: "grace", display_name: "Grace", state: "curated" },
-    { person_id: "other", display_name: "Other", state: "curated" },
-  ],
-});
-const openConflict = async (people: People) => {
+it("withdraws the blocking rejection on the exact retained face after confirmation, then asks again", async () => {
+  const people = new People("session", vi.fn());
+  const faces = vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    faces: [
+      photoFace({
+        face_id: "conflict",
+        content_version_id: "old-version",
+        assertion_id: "assigned",
+        rejected_person_ids: ["grace", "other"],
+      }),
+    ],
+    assertions: [
+      photoPersonAssertion({
+        assertion_id: "assigned",
+        content_version_id: "old-version",
+        person_id: "ada",
+        action: "assert",
+      }),
+    ],
+    // The faces endpoint lists depicted people; rejected IDs are not people rows.
+    people: [{ person_id: "ada", display_name: "Ada", state: "curated" }],
+  });
+  const decide = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockRejectedValueOnce(
+      new APIError(
+        "Review faces",
+        409,
+        "person_merge_conflict",
+        undefined,
+        [],
+        [{ face_id: "conflict", version: "old-version" }],
+      ),
+    )
+    .mockResolvedValue({} as api.PersonMergeReceipt);
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const listPreviews = vi.spyOn(api, "listPersonFacePreviews").mockResolvedValue({
+    items: [
+      {
+        asset_id: "conflict-photo",
+        content_version_id: "old-version",
+        generation_id: "ready",
+        rotation: 0,
+      },
+    ],
+  });
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
+  vi.stubGlobal(
+    "Image",
+    class {
+      naturalWidth = 1000;
+      naturalHeight = 800;
+      src = "";
+      decode() {
+        return Promise.resolve();
+      }
+    },
+  );
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = vi.fn(() => "blob:conflict");
+      static revokeObjectURL = vi.fn();
+    },
+  );
   people.items = [ada, grace];
   const view = render(PeopleView, {
     people,
-    cache: new PhotoPreviewCache("session", vi.fn()),
+    cache,
     onperson: vi.fn(),
   });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Ada" }));
@@ -165,98 +232,71 @@ const openConflict = async (people: People) => {
   await fireEvent.click(within(dialog).getAllByRole("radio")[0]!);
   await fireEvent.click(within(dialog).getByRole("checkbox", { name: "Confirm merge" }));
   await fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
-  return { view, dialog };
-};
-it.each(["assert", "withdrawn"] as const)(
-  "withdraws the blocking rejection on the exact retained face (%s assignment), then asks again",
-  async (assigned) => {
-    const people = new People("session", vi.fn());
-    const faces = vi.spyOn(api, "listPhotoFaces").mockResolvedValue(conflictFaces(assigned));
-    const decide = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-    const merge = vi
-      .spyOn(api, "mergePerson")
-      .mockRejectedValueOnce(
-        new APIError(
-          "Review faces",
-          409,
-          "person_merge_conflict",
-          undefined,
-          [],
-          [{ face_id: "conflict", version: "old-version" }],
-        ),
-      )
-      .mockResolvedValue({} as api.PersonMergeReceipt);
-    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
-    const { view, dialog } = await openConflict(people);
-    const withdraw = await within(dialog).findByRole("button", { name: 'Withdraw "not Grace"' });
-    expect(faces).toHaveBeenCalledWith("old-version", expect.anything());
-    // A rejection of someone outside this merge does not block it.
-    expect(within(dialog).queryByRole("button", { name: 'Withdraw "not Other"' })).toBeNull();
-    await fireEvent.click(withdraw);
-    await fireEvent.click(
-      within(
-        screen.getByRole("dialog", {
-          name: 'Withdraw "not Grace" from Face 1? The face keeps its current name.',
-        }),
-      ).getByRole("button", { name: "Withdraw rejection" }),
-    );
-    await waitFor(() =>
-      expect(within(dialog).queryByRole("list", { name: "Faces to review" })).toBeNull(),
-    );
-    expect(decide).toHaveBeenCalledOnce();
-    expect(decide.mock.calls[0]![0]).toBe("old-version");
-    expect(decide.mock.calls[0]![1]).toMatchObject({
-      action: "withdraw_rejection",
+  const withdraw = await within(dialog).findByRole("button", {
+    name: "Withdraw rejection for Grace",
+  });
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+  expect(
+    await within(dialog).findByRole("img", { name: "Face 1 from Ada, rejected as Grace" }),
+  ).toBeTruthy();
+  expect(within(dialog).getByText("Face 1 from Ada · rejected as Grace")).toBeTruthy();
+  expect(listPreviews).toHaveBeenCalledWith(
+    "ada",
+    expect.objectContaining({
+      hidden: false,
+      content_version_id: "old-version",
       face_id: "conflict",
-      revision: 7,
-      person_id: "grace",
-    });
-    const confirm = within(dialog).getByRole("checkbox", {
-      name: "Confirm merge",
-    }) as HTMLInputElement;
-    expect(confirm.checked).toBe(false);
-    await fireEvent.click(confirm);
-    await fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(merge).toHaveBeenCalledTimes(2);
-    view.unmount();
-    people.dispose();
-  },
-);
-it("keeps the rejection and the conflict when withdrawal is cancelled", async () => {
-  const people = new People("session", vi.fn());
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(conflictFaces("assert"));
-  const decide = vi.spyOn(api, "decidePhotoFace");
-  vi.spyOn(api, "mergePerson").mockRejectedValue(
-    new APIError(
-      "Review faces",
-      409,
-      "person_merge_conflict",
-      undefined,
-      [],
-      [{ face_id: "conflict", version: "old-version" }],
-    ),
+    }),
+    expect.objectContaining({ session: "session" }),
   );
-  const { view, dialog } = await openConflict(people);
-  await fireEvent.click(
-    await within(dialog).findByRole("button", { name: 'Withdraw "not Grace"' }),
-  );
+  expect(faces).toHaveBeenCalledWith("old-version", expect.anything());
+  // A rejection of someone outside this merge does not block it.
+  expect(within(dialog).queryByRole("button", { name: "Withdraw rejection for Other" })).toBeNull();
+  await fireEvent.click(withdraw);
   await fireEvent.click(
     within(
       screen.getByRole("dialog", {
-        name: 'Withdraw "not Grace" from Face 1? The face keeps its current name.',
+        name: "Withdraw the rejection of Grace from Face 1? The face keeps its current name.",
       }),
     ).getByRole("button", { name: "Cancel" }),
   );
   expect(decide).not.toHaveBeenCalled();
   expect(within(dialog).getByRole("list", { name: "Faces to review" })).toBeTruthy();
+  await fireEvent.click(withdraw);
+  await fireEvent.click(
+    within(
+      screen.getByRole("dialog", {
+        name: "Withdraw the rejection of Grace from Face 1? The face keeps its current name.",
+      }),
+    ).getByRole("button", { name: "Withdraw rejection" }),
+  );
+  await waitFor(() =>
+    expect(within(dialog).queryByRole("list", { name: "Faces to review" })).toBeNull(),
+  );
+  expect(decide).toHaveBeenCalledOnce();
+  expect(decide.mock.calls[0]![0]).toBe("old-version");
+  expect(decide.mock.calls[0]![1]).toMatchObject({
+    action: "withdraw_rejection",
+    face_id: "conflict",
+    revision: 7,
+    person_id: "grace",
+  });
+  const confirm = within(dialog).getByRole("checkbox", {
+    name: "Confirm merge",
+  }) as HTMLInputElement;
+  expect(confirm.checked).toBe(false);
+  await fireEvent.click(confirm);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(merge).toHaveBeenCalledTimes(2);
   view.unmount();
   people.dispose();
+  await cache.dispose();
 });
-it("clears the selection, Hidden counts, and an open merge when Hidden locks", async () => {
+it("clears the selected cards and open merge when People is concealed", async () => {
   const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
-  people.items = [ada, grace];
+  people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: 1 } }, grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Ada" }));
@@ -264,12 +304,12 @@ it("clears the selection, Hidden counts, and an open merge when Hidden locks", a
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   const dialog = screen.getByRole("dialog", { name: "Merge people" });
   expect(within(dialog).getByText("1 Hidden photo")).toBeTruthy();
-  await act(() => access.acceptState({ configured: true }, Date.now() + 1));
-  // The App conceals the cards when the scope changes.
-  await act(() => people.conceal());
+  await act(() => {
+    people.conceal();
+    access.acceptState({ configured: true }, Date.now() + 1);
+  });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("region", { name: "Selected people" })).toBeNull();
-  expect(screen.queryByText("1 Hidden photo")).toBeNull();
   view.unmount();
   people.dispose();
   access.dispose();

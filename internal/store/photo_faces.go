@@ -152,8 +152,30 @@ func personFacePreviewsQuery(hidden bool) string {
  FROM candidates WHERE crop_rank=1 ORDER BY sort_key DESC,asset_id ASC`
 }
 
-// PersonFacePreviews returns up to three exact source versions in timeline order.
-func (s *Store) PersonFacePreviews(ctx context.Context, personID, gridRecipe string, hidden bool) (PersonFacePreviewPage, error) {
+func personFacePreviewByFaceQuery(hidden bool) string {
+	return `SELECT a.asset_id,face.content_version_id,member.rotation,face.x,face.y,face.width,face.height,
+ CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN g.generation_id ELSE '' END
+ FROM photo_faces face
+ JOIN person_document_assertions assertion ON assertion.assertion_id=face.assertion_id
+ JOIN persons person ON person.person_id=assertion.person_id AND person.state<>'retired'
+ JOIN content_versions cv ON cv.version_id=face.content_version_id
+ JOIN nodes source_node ON source_node.id=cv.node_id
+ JOIN photo_files member ON member.node_id=source_node.id AND member.role IN ('image','raw')
+ JOIN photo_assets a ON a.asset_id=member.asset_id AND a.kind='photo'
+ JOIN photo_files f ON f.file_id=a.display_file_id
+ JOIN nodes n ON n.id=f.node_id
+ LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=?4
+ WHERE face.face_id=?2 AND face.content_version_id=?3 AND assertion.person_id=?1
+ AND assertion.role='depicted' AND assertion.action IN ('assert','withdrawn')
+ AND source_node.trashed_at IS NULL AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(hidden) + `
+ ORDER BY CASE member.role WHEN 'image' THEN 0 ELSE 1 END,member.file_id LIMIT 1`
+}
+
+// PersonFacePreviews reads the latest three linked photos or one exact assigned face.
+func (s *Store) PersonFacePreviews(ctx context.Context, personID, gridRecipe string, hidden bool, exactVersion, faceID string) (PersonFacePreviewPage, error) {
+	if (exactVersion == "") != (faceID == "") || exactVersion != "" && (validateUUIDv4(exactVersion) != nil || validateUUIDv4(faceID) != nil) {
+		return PersonFacePreviewPage{}, ErrInvalidPhotoFace
+	}
 	page := PersonFacePreviewPage{Items: []PersonFacePreview{}}
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		if hidden {
@@ -162,7 +184,11 @@ func (s *Store) PersonFacePreviews(ctx context.Context, personID, gridRecipe str
 			}
 		}
 		// Bound the asset page before expanding and ranking its crop candidates.
-		rows, err := tx.QueryContext(ctx, personFacePreviewsQuery(hidden), personID, gridRecipe)
+		query, args := personFacePreviewsQuery(hidden), []any{personID, gridRecipe}
+		if faceID != "" {
+			query, args = personFacePreviewByFaceQuery(hidden), []any{personID, faceID, exactVersion, gridRecipe}
+		}
+		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
