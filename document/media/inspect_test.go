@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/zlib"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -32,7 +33,7 @@ func TestInspectBindsFiniteTextToPolicyAndSource(t *testing.T) {
 	t.Parallel()
 	data := []byte("alpha\nbeta\n")
 	policy := inspectionPolicy(data, "notes.txt", "text/plain")
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible)
 	assert.Equal(t, "text", record.MediaFamily)
@@ -51,7 +52,7 @@ func TestInspectBindsFiniteTextToPolicyAndSource(t *testing.T) {
 	// Decoding never restores local authority, including over a record that
 	// already held it: the bytes described afterwards are the decoded ones.
 	foreign := []byte("gamma\n")
-	other, err := media.InspectCapability(bytes.NewReader(foreign),
+	other, err := media.InspectCapability(t.Context(), bytes.NewReader(foreign),
 		inspectionPolicy(foreign, "other.txt", "text/plain"))
 	require.NoError(t, err)
 	transferred, err := json.Marshal(other, json.Deterministic(true))
@@ -78,12 +79,12 @@ func TestInspectRejectsDeclaredSourceMismatchAndExcessiveUnits(t *testing.T) {
 	data := []byte("alpha\nbeta\n")
 	policy := inspectionPolicy(data, "notes.txt", "text/plain")
 	policy.ExpectedSHA256 = strings.Repeat("0", 64)
-	_, err := media.InspectCapability(bytes.NewReader(data), policy)
+	_, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.ErrorContains(t, err, "SHA-256")
 
 	policy = inspectionPolicy(data, "notes.txt", "text/plain")
 	policy.MaxTextLines = 1
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -91,7 +92,7 @@ func TestInspectRejectsDeclaredSourceMismatchAndExcessiveUnits(t *testing.T) {
 	jsonl := []byte("{\"a\":1}\n{\"b\":2}\n")
 	policy = inspectionPolicy(jsonl, "records.jsonl", "application/x-ndjson")
 	policy.MaxRecords = 1
-	record, err = media.InspectCapability(bytes.NewReader(jsonl), policy)
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(jsonl), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, int64(2), record.Measurements.Records)
@@ -147,7 +148,7 @@ func TestInspectBoundsZIPContainers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			record, err := media.InspectCapability(bytes.NewReader(tt.data), tt.policy(tt.data))
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(tt.data), tt.policy(tt.data))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
 			assert.Equal(t, tt.reason, record.Reason)
@@ -167,7 +168,7 @@ func TestInspectRejectsEncryptedZIPEntry(t *testing.T) {
 	require.NotEqual(t, -1, central)
 	data[central+8] |= 1
 
-	record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"))
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"))
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonEncryptedContainer, record.Reason)
@@ -191,7 +192,7 @@ func TestInspectRejectsMalformedAndExternallyReferentialContainerXML(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := zipBytes(t, validXLSXEntries(zipEntry{name: "xl/worksheets/sheet1.xml", body: tt.body}))
-			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -249,7 +250,7 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 			zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="chapter" href="chapter.xhtml"/></manifest><spine><itemref idref="chapter"/></spine></package>`},
 			zipEntry{name: "OPS/chapter.xhtml", body: chapter},
 		))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -305,7 +306,7 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 					tt.reference + `"/></body></html>`},
 				zipEntry{name: "OPS/Images/cover.png", body: "png"},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
@@ -379,7 +380,7 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 				zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml"` + attribute +
 					`><body><img src="` + tt.reference + `"/></body></html>`},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
@@ -394,7 +395,7 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 			zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
 				`<item id="c" href="../../outside"/></manifest><spine/></package>`},
 		))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -416,7 +417,7 @@ func TestInspectReportsUndetectableFormatsAsUnsupported(t *testing.T) {
 	} {
 		t.Run(spec[0], func(t *testing.T) {
 			t.Parallel()
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, spec[0], spec[1]))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -425,7 +426,7 @@ func TestInspectReportsUndetectableFormatsAsUnsupported(t *testing.T) {
 	}
 
 	// The same bytes under a detectable name stay inspectable.
-	record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "deck.pptx",
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "deck.pptx",
 		"application/vnd.openxmlformats-officedocument.presentationml.presentation"))
 	require.NoError(t, err)
 	assert.True(t, record.Eligible, record.Reason)
@@ -481,7 +482,7 @@ func TestInspectClassifiesPrologueByWhatItNames(t *testing.T) {
 				zipEntry{name: "OPS/text/style.css", body: "body{}"},
 				zipEntry{name: "OPS/styles/main.css", body: "body{}"},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
@@ -537,7 +538,7 @@ func TestInspectFollowsEPUBDeclaredMediaTypes(t *testing.T) {
 					tt.href + `" media-type="` + tt.mediaType + `"/></manifest><spine><itemref idref="c"/></spine></package>`},
 				zipEntry{name: "OPS/" + tt.entry, body: tt.body},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -561,7 +562,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
 			{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
 		})
-		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -590,7 +591,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			data := zipBytes(t, validXLSXEntries(zipEntry{name: tt.entry,
 				body: `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
 					`<Relationship Id="r1" Target="` + tt.target + `" Type="http://example.test/t"/></Relationships>`}))
-			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
@@ -620,7 +621,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				zipEntry{name: target, body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
 					`<img src="https://example.invalid/t.png"/></body></html>`},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -648,7 +649,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml" ` +
 					spelling.attribute + `><body><img src="../../../secret"/></body></html>`},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.Equal(t, spelling.eligible, record.Eligible, record.Reason)
@@ -669,7 +670,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				zipEntry{name: "OPS/text/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
 					`<body><img src="https://example.invalid/t.png"/></body></html>`},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -693,7 +694,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				zipEntry{name: target, body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
 					`<img src="https://example.invalid/t.png"/></body></html>`},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -712,7 +713,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			zipEntry{name: "OPS/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
 				`<img src="https://example.invalid/t.png"/></body></html>`},
 		))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -731,7 +732,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			zipEntry{name: "chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
 				`<img src="https://example.invalid/t.png"/></body></html>`},
 		))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -754,7 +755,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
 				{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
 			})
-			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -781,7 +782,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
 				{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
 			})
-			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -806,7 +807,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
 				{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
 			})
-			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -828,7 +829,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
 			{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
 		})
-		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 		require.NoError(t, err)
 		assert.True(t, record.Eligible, record.Reason)
@@ -845,7 +846,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			{name: "OPS/a.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>`},
 			{name: "OPS/alt.dat", body: `<package><manifest><item id="b" href="https://example.invalid/b.xhtml"/></manifest><spine><itemref idref="b"/></spine></package>`},
 		})
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -878,7 +879,7 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 				{name: "OPS/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
 					`<body><img src="https://example.invalid/t.png"/></body></html>`},
 			})
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -939,7 +940,7 @@ func TestInspectFollowsODFManifestDeclarations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := zipBytes(t, odf(tt.entry, tt.declaredPath, tt.declaredType, tt.body))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "sheet.ods",
 					"application/vnd.oasis.opendocument.spreadsheet"))
 			require.NoError(t, err)
@@ -969,7 +970,7 @@ func TestInspectCountsDeclaredOOXMLParts(t *testing.T) {
 		policy := inspectionPolicy(data, "book.xlsx",
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 		policy.MaxCells = 4
-		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), record.Measurements.Sheets)
 		assert.Equal(t, int64(5), record.Measurements.Cells)
@@ -993,7 +994,7 @@ func TestInspectCountsDeclaredOOXMLParts(t *testing.T) {
 			{name: "xl/worksheets/notes.xml", body: `<notes/>`},
 			{name: "xl/worksheets/_rels/sheet1.xml.rels", body: `<Relationships/>`},
 		})
-		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 		require.NoError(t, err)
 		require.True(t, record.Eligible, record.Reason)
@@ -1013,7 +1014,7 @@ func TestInspectCountsDeclaredOOXMLParts(t *testing.T) {
 			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
 			{name: "parts/data.bin", body: "opaque"},
 		})
-		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 		require.NoError(t, err)
 		require.True(t, record.Eligible, record.Reason)
@@ -1035,7 +1036,7 @@ func TestInspectCountsDeclaredOOXMLParts(t *testing.T) {
 		policy := inspectionPolicy(data, "deck.pptx",
 			"application/vnd.openxmlformats-officedocument.presentationml.presentation")
 		policy.MaxSlides = 1
-		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), record.Measurements.Slides)
 		assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -1059,7 +1060,7 @@ func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
 		zipEntry{name: "xl/worksheets/sheet1.xml", body: sheet},
 		zipEntry{name: "xl/_rels/workbook.xml.rels", body: relationships},
 	))
-	record, err := media.InspectCapability(bytes.NewReader(data),
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 		inspectionPolicy(data, "book.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
@@ -1077,7 +1078,7 @@ func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
 		zipEntry{name: "OPS/chapter.xhtml", body: chapter},
 		zipEntry{name: "OPS/Images/cover.png", body: "png"},
 	))
-	record, err = media.InspectCapability(bytes.NewReader(data),
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(data),
 		inspectionPolicy(data, "book.epub", "application/epub+zip"))
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
@@ -1114,7 +1115,7 @@ func TestInspectResolvesEPUBCSSReferences(t *testing.T) {
 				// measured rather than discarded.
 				zipEntry{name: "OPS/Styles/ /host.invalid/x", body: "decoy"},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible)
@@ -1134,13 +1135,13 @@ func TestInspectCountsODSRepeatedCells(t *testing.T) {
 	})
 	policy := inspectionPolicy(data, "book.ods", "application/vnd.oasis.opendocument.spreadsheet")
 	policy.MaxCells = 100_000
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	assert.Equal(t, int64(100_000), record.Measurements.Cells)
 
 	policy.MaxCells--
-	record, err = media.InspectCapability(bytes.NewReader(data), policy)
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -1190,7 +1191,7 @@ func TestInspectCountsODSRepeatsByTheTableAttribute(t *testing.T) {
 			policy := inspectionPolicy(data, "book.ods",
 				"application/vnd.oasis.opendocument.spreadsheet")
 			policy.MaxCells = 1_000_000
-			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			assert.Equal(t, tt.cells, record.Measurements.Cells)
 			assert.Equal(t, tt.cells <= policy.MaxCells, record.Eligible, record.Reason)
@@ -1208,7 +1209,7 @@ func TestInspectUsesEPUBContainerPackagePath(t *testing.T) {
 	policy := inspectionPolicy(data, "book.epub", "application/epub+zip")
 	policy.MaxResources = 1
 	policy.MaxSpineItems = 1
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -1258,7 +1259,7 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 					`<head><base href="` + tt.base + `"/></head>` +
 					`<body><img src="` + tt.reference + `"/></body></html>`},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
@@ -1292,7 +1293,7 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 					`<head><` + tt.element + ` href="` + tt.base + `"/></head>` +
 					`<body><img src="` + tt.reference + `"/></body></html>`},
 			))
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
@@ -1312,7 +1313,7 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 				`<head><base href="../../"><img src="../secret"/></base></head>` +
 				`<body/></html>`},
 		))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -1333,7 +1334,7 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 				`<head><base xmlns:x="http://example.test/x" x:href="assets/"/></head>` +
 				`<body><img src="../../../secret"/></body></html>`},
 		))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -1353,7 +1354,7 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 				`<head><link href="../secret"/><base href="../../"/></head>` +
 				`<body/></html>`},
 		))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
@@ -1382,7 +1383,7 @@ func TestInspectClassifiesRootedPathsByContainer(t *testing.T) {
 		t.Run("standalone "+tt.reference, func(t *testing.T) {
 			t.Parallel()
 			data := []byte(`<doc><image href="` + tt.reference + `"/></doc>`)
-			record, err := media.InspectCapability(bytes.NewReader(data),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 				inspectionPolicy(data, "doc.xml", "application/xml"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
@@ -1395,7 +1396,7 @@ func TestInspectClassifiesRootedPathsByContainer(t *testing.T) {
 		t.Parallel()
 		data := zipBytes(t, validXLSXEntries(zipEntry{name: "xl/worksheets/sheet1.xml",
 			body: `<worksheet><drawing r:href="/xl/styles.xml"/></worksheet>`}))
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "book.xlsx",
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 		require.NoError(t, err)
@@ -1448,7 +1449,7 @@ func TestInspectCountsFinitePresentationSpreadsheetAndEPUBUnits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := zipBytes(t, tt.entries)
-			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, tt.filename, tt.mediaType))
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, tt.filename, tt.mediaType))
 			require.NoError(t, err)
 			require.True(t, record.Eligible, record.Reason)
 			assert.Equal(t, tt.family, record.MediaFamily)
@@ -1472,7 +1473,7 @@ func TestInspectRejectsDeceptiveDeclaredFormatAndFilename(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			record, err := media.InspectCapability(bytes.NewReader(tt.data), inspectionPolicy(tt.data, tt.filename, tt.mediaType))
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(tt.data), inspectionPolicy(tt.data, tt.filename, tt.mediaType))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
 			assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1486,19 +1487,19 @@ func TestInspectBindsVisualAndStandaloneXMLIdentity(t *testing.T) {
 	for _, filename := range []string{"image.txt", "image.jpeg"} {
 		policy := inspectionPolicy(png, filename, "image/png")
 		policy.MaxPixels, policy.MaxFrames = 100, 2
-		record, err := media.InspectCapability(bytes.NewReader(png), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(png), policy)
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
 	}
 	policy := inspectionPolicy(png, "image.png", "image/png")
 	policy.MaxPixels, policy.MaxFrames = 100, 2
-	record, err := media.InspectCapability(bytes.NewReader(png), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(png), policy)
 	require.NoError(t, err)
 	assert.True(t, record.Eligible)
 
 	xml := []byte(`<!DOCTYPE root SYSTEM "file:///tmp/private.dtd"><root/>`)
-	record, err = media.InspectCapability(bytes.NewReader(xml), inspectionPolicy(xml, "record.xml", "application/xml"))
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(xml), inspectionPolicy(xml, "record.xml", "application/xml"))
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
@@ -1507,7 +1508,7 @@ func TestInspectBindsVisualAndStandaloneXMLIdentity(t *testing.T) {
 func TestInspectRejectsUnregisteredFamily(t *testing.T) {
 	t.Parallel()
 	data := []byte("legacy binary document")
-	record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "report.doc", "application/msword"))
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, "report.doc", "application/msword"))
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonUnboundedFamily, record.Reason)
@@ -1518,7 +1519,7 @@ func TestInspectBoundsPDFPagesAndWAVDuration(t *testing.T) {
 	pdf := syntheticPDFPages(2, "bounds")
 	pdfPolicy := inspectionPolicy(pdf, "report.pdf", "application/pdf")
 	pdfPolicy.MaxPages = 1
-	record, err := media.InspectCapability(bytes.NewReader(pdf), pdfPolicy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf), pdfPolicy)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), record.Measurements.Pages)
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -1526,7 +1527,7 @@ func TestInspectBoundsPDFPagesAndWAVDuration(t *testing.T) {
 	wav := wavBytes(8_000, 8_000)
 	wavPolicy := inspectionPolicy(wav, "sample.wav", "audio/wav")
 	wavPolicy.MaxDurationMS = 500
-	record, err = media.InspectCapability(bytes.NewReader(wav), wavPolicy)
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(wav), wavPolicy)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1_000), record.Measurements.DurationMS)
 	assert.Equal(t, media.CapabilityReasonVisualBounds, record.Reason)
@@ -1543,7 +1544,7 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		}, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
 		policy := inspectionPolicy(pdf, "report.pdf", "application/pdf")
 		policy.MaxPages = 1
-		record, err := media.InspectCapability(bytes.NewReader(pdf), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf), policy)
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), record.Measurements.Pages)
 		assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
@@ -1568,7 +1569,7 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 	t.Run("indirect stream length", func(t *testing.T) {
 		decoded := []byte("BT /F1 12 Tf 72 720 Td (bounded) Tj ET")
 		pdf := buildStreamPDF(t, decoded)
-		record, err := media.InspectCapability(bytes.NewReader(pdf),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf),
 			inspectionPolicy(pdf, "report.pdf", "application/pdf"))
 		require.NoError(t, err)
 		require.True(t, record.Eligible, record.Reason)
@@ -1579,7 +1580,7 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		pdf := buildStreamPDF(t, bytes.Repeat([]byte("expanded "), 100_000))
 		policy := inspectionPolicy(pdf, "report.pdf", "application/pdf")
 		policy.MaxExpandedBytes = 128
-		record, err := media.InspectCapability(bytes.NewReader(pdf), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf), policy)
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonExpandedBytes, record.Reason)
@@ -1598,7 +1599,7 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
 			})
-			record, err := media.InspectCapability(bytes.NewReader(pdf),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf),
 				inspectionPolicy(pdf, "report.pdf", "application/pdf"))
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
@@ -1647,7 +1648,7 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 				"<< /Type /EmbeddedFile /Length 4 >>\nstream\ndata\nendstream",
 				"<< /Type /NotAStream /Value 1 >>",
 			})
-			record, err := media.InspectCapability(bytes.NewReader(pdf),
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf),
 				inspectionPolicy(pdf, "report.pdf", "application/pdf"))
 			require.NoError(t, err)
 			assert.Equal(t, testCase.eligible, record.Eligible, record.Reason)
@@ -1665,7 +1666,7 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] >>",
 			"<< /Type /Annot /Subtype /Text /Rect [0 0 1 1] /F 4 >>",
 		})
-		record, err := media.InspectCapability(bytes.NewReader(pdf),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf),
 			inspectionPolicy(pdf, "report.pdf", "application/pdf"))
 		require.NoError(t, err)
 		assert.True(t, record.Eligible, record.Reason)
@@ -1709,7 +1710,7 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		_, _ = fmt.Fprintf(&pdf, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", xrefOffset)
 
 		data := pdf.Bytes()
-		record, err := media.InspectCapability(bytes.NewReader(data),
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data),
 			inspectionPolicy(data, "report.pdf", "application/pdf"))
 		require.NoError(t, err)
 		require.True(t, record.Eligible, record.Reason)
@@ -1735,7 +1736,7 @@ func TestInspectRejectsForgedWAVRateAndTrailingBytes(t *testing.T) {
 			wav := mutate(wavBytes(8_000, 8_000))
 			policy := inspectionPolicy(wav, "sample.wav", "audio/wav")
 			policy.MaxDurationMS = 2_000
-			record, err := media.InspectCapability(bytes.NewReader(wav), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(wav), policy)
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
 			assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1748,7 +1749,7 @@ func TestInspectRejectsPathLikePortableFilename(t *testing.T) {
 	data := []byte("alpha\n")
 	for _, filename := range []string{".", "..", `folder\notes.txt`, "folder/notes.txt"} {
 		policy := inspectionPolicy(data, filename, "text/plain")
-		_, err := media.InspectCapability(bytes.NewReader(data), policy)
+		_, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 		require.ErrorContains(t, err, "filename", filename)
 	}
 }
@@ -1758,7 +1759,7 @@ func TestInspectCountsOnlyPDFPageTreeObjects(t *testing.T) {
 	pdf := syntheticPDF("/Type /Page in a comment")
 	policy := inspectionPolicy(pdf, "report.pdf", "application/pdf")
 	policy.MaxPages = 1
-	record, err := media.InspectCapability(bytes.NewReader(pdf), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	assert.Equal(t, int64(1), record.Measurements.Pages)
@@ -1769,7 +1770,7 @@ func TestInspectRejectsExcessivelyDeepPDFPageTree(t *testing.T) {
 	pdf := syntheticDeepPDF(300)
 	policy := inspectionPolicy(pdf, "report.pdf", "application/pdf")
 	policy.MaxPages = 1
-	record, err := media.InspectCapability(bytes.NewReader(pdf), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(pdf), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1787,13 +1788,13 @@ func TestInspectBoundsVideoFramesFromValidatedSampleTables(t *testing.T) {
 	policy.MaxPixels = 16 * 16
 	policy.MaxFrames = 1
 	policy.MaxDurationMS = 1_000
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	assert.Equal(t, int64(1), record.Measurements.Frames)
 
 	policy.MaxFrames = 0
-	record, err = media.InspectCapability(bytes.NewReader(video), policy)
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonVisualBounds, record.Reason)
@@ -1813,7 +1814,7 @@ func TestInspectCapabilityRejectsVideoWithoutSampleToChunkAuthority(t *testing.T
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1832,7 +1833,7 @@ func TestInspectCapabilityRejectsVideoWithoutChunkOffsets(t *testing.T) {
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1851,7 +1852,7 @@ func TestInspectCapabilityRejectsVideoWithoutMediaData(t *testing.T) {
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1870,7 +1871,7 @@ func TestInspectCapabilityRejectsVideoChunkOutsideMediaData(t *testing.T) {
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1890,7 +1891,7 @@ func TestInspectCapabilityRejectsVideoSampleOutsideMediaData(t *testing.T) {
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1907,7 +1908,7 @@ func TestInspectCapabilityRejectsOverlappingVideoSamples(t *testing.T) {
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1924,7 +1925,7 @@ func TestInspectCapabilityRejectsSampleToChunkRunWithoutChunk(t *testing.T) {
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -1997,7 +1998,7 @@ func TestInspectCapabilityAcceptsVideoWith64BitChunkOffsets(t *testing.T) {
 	policy.MaxFrames = 2
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	assert.Equal(t, int64(2), record.Measurements.Frames)
@@ -2039,7 +2040,7 @@ func TestInspectCapabilityRejectsSamplesThatDoNotMatchVideoCodec(t *testing.T) {
 			policy.MaxFrames = 1
 			policy.MaxDurationMS = 1_000
 
-			record, err := media.InspectCapability(bytes.NewReader(testCase.data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(testCase.data), policy)
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
 			assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -2066,7 +2067,7 @@ func TestInspectCapabilityAcceptsMappedDecodableSupportedVideoCodecs(t *testing.
 			policy.MaxFrames = 1
 			policy.MaxDurationMS = 1_000
 
-			record, err := media.InspectCapability(bytes.NewReader(testCase.data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(testCase.data), policy)
 			require.NoError(t, err)
 			require.True(t, record.Eligible, record.Reason)
 			assert.Equal(t, "video", record.MediaFamily)
@@ -2084,7 +2085,7 @@ func TestInspectCapabilityRejectsHeaderOnlyVideoDeclaration(t *testing.T) {
 	policy.MaxFrames = 1
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(video), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -2130,7 +2131,7 @@ func TestInspectCapabilityProvesGeminiMP3Duration(t *testing.T) {
 	policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
 	policy.MaxDurationMS = 262
 
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	assert.Equal(t, "audio", record.MediaFamily)
@@ -2156,7 +2157,7 @@ func TestInspectAudioUsesBoundedMemory(t *testing.T) {
 			policy.MaxDurationMS = 24 * 60 * 60 * 1000
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
-			record, err := media.InspectCapability(bytes.NewReader(test.data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(test.data), policy)
 			runtime.ReadMemStats(&after)
 			require.NoError(t, err)
 			require.True(t, record.Eligible, record.Reason)
@@ -2185,17 +2186,17 @@ func TestInspectAudioValidatesCompleteStream(t *testing.T) {
 			t.Run("digest includes skipped payload", func(t *testing.T) {
 				changed := slices.Clone(test.data)
 				changed[len(changed)-1] ^= 1
-				_, err := media.InspectCapability(bytes.NewReader(changed), policy)
+				_, err := media.InspectCapability(t.Context(), bytes.NewReader(changed), policy)
 				require.ErrorContains(t, err, "SHA-256")
 			})
 			t.Run("truncated payload", func(t *testing.T) {
-				_, err := media.InspectCapability(bytes.NewReader(test.data[:len(test.data)-1]), policy)
+				_, err := media.InspectCapability(t.Context(), bytes.NewReader(test.data[:len(test.data)-1]), policy)
 				require.ErrorContains(t, err, "byte length")
 			})
 			t.Run("source ceiling", func(t *testing.T) {
 				policy.MaxSourceBytes = policy.ExpectedBytes
 				reader := io.MultiReader(bytes.NewReader(test.data), strings.NewReader("extra"))
-				record, err := media.InspectCapability(reader, policy)
+				record, err := media.InspectCapability(t.Context(), reader, policy)
 				require.NoError(t, err)
 				require.False(t, record.Eligible)
 				require.Equal(t, media.CapabilityReasonSourceBytes, record.Reason)
@@ -2203,12 +2204,12 @@ func TestInspectAudioValidatesCompleteStream(t *testing.T) {
 			t.Run("source read failure", func(t *testing.T) {
 				failure := errors.New("synthetic source read failure")
 				reader := io.MultiReader(bytes.NewReader(test.data[:12]), iotest.ErrReader(failure))
-				_, err := media.InspectCapability(reader, policy)
+				_, err := media.InspectCapability(t.Context(), reader, policy)
 				require.ErrorIs(t, err, failure)
 			})
 			t.Run("final bytes with read failure", func(t *testing.T) {
 				reader := iotest.DataErrReader(iotest.TimeoutReader(bytes.NewReader(test.data)))
-				_, err := media.InspectCapability(reader, policy)
+				_, err := media.InspectCapability(t.Context(), reader, policy)
 				require.ErrorIs(t, err, iotest.ErrTimeout)
 			})
 		})
@@ -2225,13 +2226,13 @@ func TestInspectCapabilityProvesRealMP3WithBoundedID3Tags(t *testing.T) {
 
 	barePolicy := inspectionPolicy(audio, "sample.mp3", "audio/mpeg")
 	barePolicy.MaxDurationMS = 1_000
-	bare, err := media.InspectCapability(bytes.NewReader(audio), barePolicy)
+	bare, err := media.InspectCapability(t.Context(), bytes.NewReader(audio), barePolicy)
 	require.NoError(t, err)
 	require.True(t, bare.Eligible, bare.Reason)
 
 	taggedPolicy := inspectionPolicy(tagged, "sample.mp3", "audio/mpeg")
 	taggedPolicy.MaxDurationMS = 1_000
-	withTags, err := media.InspectCapability(bytes.NewReader(tagged), taggedPolicy)
+	withTags, err := media.InspectCapability(t.Context(), bytes.NewReader(tagged), taggedPolicy)
 	require.NoError(t, err)
 	require.True(t, withTags.Eligible, withTags.Reason)
 	assert.Equal(t, bare.Measurements.DurationMS, withTags.Measurements.DurationMS)
@@ -2251,7 +2252,7 @@ func TestInspectCapabilityProvesRealMP3WithBoundedID3Tags(t *testing.T) {
 			candidate := append(append([]byte(nil), testCase.tag...), audio...)
 			policy := inspectionPolicy(candidate, "sample.mp3", "audio/mpeg")
 			policy.MaxDurationMS = 1_000
-			record, inspectErr := media.InspectCapability(bytes.NewReader(candidate), policy)
+			record, inspectErr := media.InspectCapability(t.Context(), bytes.NewReader(candidate), policy)
 			require.NoError(t, inspectErr)
 			assert.False(t, record.Eligible)
 			assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -2270,7 +2271,7 @@ func TestInspectCapabilityProvesGeminiQuickTimeVideo(t *testing.T) {
 	policy.MaxFrames = 1
 	policy.MaxDurationMS = 1_000
 
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	assert.Equal(t, "video", record.MediaFamily)
@@ -2286,7 +2287,7 @@ func TestInspectCapabilityRejectsMP4ClaimingQuickTimeIdentity(t *testing.T) {
 	policy.MaxFrames = 1
 	policy.MaxDurationMS = 500
 
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -2302,7 +2303,7 @@ func TestInspectCapabilityRejectsUnboundedOrOverlongGeminiMP3(t *testing.T) {
 		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
 		policy.MaxDurationMS = 1_000
 
-		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -2313,7 +2314,7 @@ func TestInspectCapabilityRejectsUnboundedOrOverlongGeminiMP3(t *testing.T) {
 		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
 		policy.MaxDurationMS = 1_000
 
-		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -2325,7 +2326,7 @@ func TestInspectCapabilityRejectsUnboundedOrOverlongGeminiMP3(t *testing.T) {
 		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
 		policy.MaxDurationMS = 1_000
 
-		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
@@ -2336,7 +2337,7 @@ func TestInspectCapabilityRejectsUnboundedOrOverlongGeminiMP3(t *testing.T) {
 		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
 		policy.MaxDurationMS = 100
 
-		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonVisualBounds, record.Reason)
@@ -2499,7 +2500,7 @@ func TestUploadCapabilityRejectsRechecksummedInspectionChanges(t *testing.T) {
 	data := mediatest.PNG(1, 1, color.Black)
 	policy := inspectionPolicy(data, "synthetic.png", "image/png")
 	policy.MaxPixels, policy.MaxFrames = 100, 10
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible)
 	_, local := record.UploadCapability().Facts()
@@ -2551,7 +2552,7 @@ func TestInspectCapabilityChecksVP9HighFrameMarkerBits(t *testing.T) {
 			policy.MaxPixels = 16 * 16
 			policy.MaxFrames = 1
 			policy.MaxDurationMS = 1_000
-			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			assert.Equal(t, tc.eligible, record.Eligible, record.Reason)
 		})
@@ -2647,7 +2648,7 @@ func TestInspectCapabilityRequiresLocalMP4DataReferences(t *testing.T) {
 			assert.Equal(t, int64(16), metadata.Width)
 			policy := inspectionPolicy(data, "synthetic.mp4", "video/mp4")
 			policy.MaxPixels, policy.MaxFrames, policy.MaxDurationMS = 16*16, 1, 1_000
-			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			assert.Equal(t, scenario == "local" || scenario == "local nonvisual first", record.Eligible)
 			_, authority := record.UploadCapability().Facts()
@@ -2670,31 +2671,44 @@ func TestInspectPasswordProtectedPDF(t *testing.T) {
 		source, err := mediatest.EncryptedPDF(user, "owner", 128)
 		require.NoError(t, err)
 		policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
-		record, err := media.InspectCapability(bytes.NewReader(source), policy)
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(source), policy)
 		require.NoError(t, err)
-		require.Equal(t, media.CapabilityReasonPDFPasswordRequired, record.Reason)
-		policy.PDFPasswords = []string{"wrong"}
-		record, err = media.InspectCapability(bytes.NewReader(source), policy)
-		require.NoError(t, err)
-		if user != "" {
-			require.Equal(t, media.CapabilityReasonPDFPasswordRequired, record.Reason)
-		} else {
-			require.True(t, record.Eligible)
+		require.Equal(t, media.CapabilityReasonEncryptedContainer, record.Reason)
+		policy.UnlockPDF = true
+		for _, passwords := range [][]string{nil, {"wrong"}} {
+			policy.PDFPasswords = passwords
+			record, err = media.InspectCapability(t.Context(), bytes.NewReader(source), policy)
+			require.NoError(t, err)
+			if user != "" {
+				require.Equal(t, media.CapabilityReasonPDFPasswordRequired, record.Reason)
+			} else {
+				require.True(t, record.Eligible)
+			}
 		}
 		policy.PDFPasswords = []string{"wrong", "open"}
-		record, err = media.InspectCapability(bytes.NewReader(source), policy)
+		record, err = media.InspectCapability(t.Context(), bytes.NewReader(source), policy)
 		require.NoError(t, err)
 		require.True(t, record.Eligible, "%+v", record)
 		require.Equal(t, int64(1), record.Measurements.Pages)
-		selected := "open"
-		if user == "" {
-			selected = ""
-		}
-		require.Equal(t, []string{selected}, record.UploadCapability().PDFPasswords())
+		selected, ok := record.UploadCapability().PDFPassword()
+		require.True(t, ok)
+		require.Equal(t, user, selected)
 		policy.PDFPasswords = []string{"owner"}
-		other, err := media.InspectCapability(bytes.NewReader(source), policy)
+		other, err := media.InspectCapability(t.Context(), bytes.NewReader(source), policy)
 		require.NoError(t, err)
 		require.True(t, other.Eligible)
 		require.Equal(t, record.Checksum, other.Checksum)
 	}
+}
+
+func TestInspectPasswordCancellation(t *testing.T) {
+	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
+	policy.UnlockPDF = true
+	policy.PDFPasswords = []string{"wrong", "open"}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = media.InspectCapability(ctx, bytes.NewReader(source), policy)
+	require.ErrorIs(t, err, context.Canceled)
 }

@@ -1905,19 +1905,10 @@ func UnlockPDF(ctx context.Context, data []byte, passwords []string, maxBytes in
 		if err := ctx.Err(); err != nil {
 			return nil, "", err
 		}
-		configuration := pdfConfiguration(len(data), PDFLimits{MaxExpandedBytes: maxBytes, MaxEntryBytes: maxBytes})
-		configuration.UserPW, configuration.OwnerPW = password, password
-		configuration.Eol = types.EolLF
-		var output bytes.Buffer
-		err := api.Decrypt(bytes.NewReader(data), &output, configuration)
-		if errors.Is(err, filter.ErrDecodeLimitExceeded) || int64(output.Len()) > maxBytes {
-			clear(output.Bytes())
-			return nil, "", ErrPDFExpandedBytes
-		}
+		output, err := DecryptPDF(ctx, data, password, maxBytes)
 		if err == nil {
-			return output.Bytes(), password, nil
+			return output, password, nil
 		}
-		clear(output.Bytes())
 		if errors.Is(err, pdfcpu.ErrWrongPassword) {
 			continue
 		}
@@ -1929,4 +1920,38 @@ func UnlockPDF(ctx context.Context, data []byte, passwords []string, maxBytes in
 		return nil, "", fmt.Errorf("decrypt PDF: %w", err)
 	}
 	return nil, "", ErrPDFEncrypted
+}
+
+// DecryptPDF decrypts once with the password selected by local inspection.
+func DecryptPDF(ctx context.Context, data []byte, password string, maxBytes int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	configuration := pdfConfiguration(len(data), PDFLimits{MaxExpandedBytes: maxBytes, MaxEntryBytes: maxBytes})
+	configuration.UserPW, configuration.OwnerPW = password, password
+	configuration.Eol = types.EolLF
+	output := pdfOutput{limit: maxBytes}
+	err := api.Decrypt(bytes.NewReader(data), &output, configuration)
+	if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+		err = ErrPDFExpandedBytes
+	}
+	if err != nil {
+		clear(output.buffer.Bytes())
+		return nil, err
+	}
+	return output.buffer.Bytes(), nil
+}
+
+// Reject overflow before retaining decrypted output.
+type pdfOutput struct {
+	buffer bytes.Buffer
+	limit  int64
+}
+
+func (output *pdfOutput) Write(data []byte) (int, error) {
+	if int64(len(data)) > output.limit-int64(output.buffer.Len()) {
+		return 0, ErrPDFExpandedBytes
+	}
+	_, _ = output.buffer.Write(data) // bytes.Buffer.Write always returns a nil error.
+	return len(data), nil
 }

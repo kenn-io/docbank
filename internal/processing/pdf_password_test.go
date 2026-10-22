@@ -20,14 +20,16 @@ type passwordCountingProvider struct {
 	supported bool
 }
 
-func (provider *passwordCountingProvider) PDFPasswords() ([]string, bool) {
+func (provider *passwordCountingProvider) PDFPasswords() ([]string, bool, error) {
 	provider.calls++
-	return nil, provider.supported
+	return nil, provider.supported, nil
 }
 
 func TestInspectionReadsPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	t.Parallel()
 	encrypted, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128)
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		name, mime string
@@ -40,6 +42,7 @@ func TestInspectionReadsPasswordsOnlyForEncryptedPDF(t *testing.T) {
 		{"audio.wav", "audio/wav", mediatest.WAV(), true, 0, media.CapabilityReasonEligible},
 		{"locked.pdf", "application/pdf", encrypted, false, 1, media.CapabilityReasonEncryptedContainer},
 		{"supported.pdf", "application/pdf", encrypted, true, 1, media.CapabilityReasonPDFPasswordRequired},
+		{"owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonEligible},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)

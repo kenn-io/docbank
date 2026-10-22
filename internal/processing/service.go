@@ -60,6 +60,7 @@ var (
 	ErrInvalidPurgeRequest       = errors.New("derivative purge request is invalid")
 	ErrInvalidConsentExpiry      = errors.New("processing consent expiry is invalid")
 	ErrRerankingUnavailable      = errors.New("reranking is not configured")
+	ErrPDFPasswordsFile          = errors.New("PDF passwords file unreadable")
 	ErrPDFPasswordRequired       = errors.New("PDF password required")
 	ErrSourceIneligible          = errors.New("source is not eligible for the rendition profile")
 )
@@ -671,7 +672,7 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	}
 	if profile.portable.Rendition != nil {
 		capability, err := inspectRenditionSource(ctx, service.blobs, node, version, profile)
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrPDFPasswordsFile) {
 			return Plan{}, err
 		}
 		if !capability.Eligible {
@@ -1911,7 +1912,7 @@ func (service *Service) prepareExecutableRendition(ctx context.Context, node sto
 		Waiter:  store.RenditionJobWaiter{ContentVersionID: version.ID},
 		Profile: profile.record, ExecutionIdentity: prepared.identity}
 	preflightExecution, err := service.renditions.Prepare(ctx, preflightWork, service.clock())
-	if errors.Is(err, ErrPDFPasswordRequired) {
+	if errors.Is(err, ErrPDFPasswordRequired) || errors.Is(err, ErrPDFPasswordsFile) {
 		return prepared, nil
 	}
 	if err != nil {
@@ -2039,7 +2040,7 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		return providerExecution{}, errors.New("processing profile has no rendition binding")
 	}
 	capability, err := inspectRenditionSource(ctx, blobs, node, version, profile)
-	if err != nil {
+	if err != nil && (withUpload || !errors.Is(err, ErrPDFPasswordsFile)) {
 		return providerExecution{}, err
 	}
 	if capability.Reason == media.CapabilityReasonPDFPasswordRequired && withUpload {
@@ -2137,29 +2138,35 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	if size != version.Size {
 		return media.CapabilityRecord{}, errors.Join(errors.New("inspection source size changed"), reader.Close())
 	}
-	capability, inspectErr := media.InspectCapability(reader, policy)
+	capability, inspectErr := media.InspectCapability(ctx, reader, policy)
 	closeErr := reader.Close()
 	if inspectErr != nil || closeErr != nil {
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
 	}
-	if capability.Reason == media.CapabilityReasonPDFPasswordRequired {
-		passwords, supported := []string(nil), false
-		if provider, ok := profile.provider.(interface{ PDFPasswords() ([]string, bool) }); ok {
-			passwords, supported = provider.PDFPasswords()
+	if capability.MediaFamily == "pdf" && capability.Reason == media.CapabilityReasonEncryptedContainer {
+		provider, ok := profile.provider.(interface {
+			PDFPasswords() ([]string, bool, error)
+		})
+		if !ok {
+			return capability, nil
 		}
+		passwords, supported, passwordErr := provider.PDFPasswords()
 		if !supported {
-			capability.Reason = media.CapabilityReasonEncryptedContainer
-		} else if len(passwords) > 0 {
-			reader, _, err := blobs.OpenStreamContext(ctx, version.BlobHash)
-			if err != nil {
-				return media.CapabilityRecord{}, err
-			}
-			policy.PDFPasswords = passwords
-			capability, inspectErr = media.InspectCapability(reader, policy)
-			closeErr = reader.Close()
-			if inspectErr != nil || closeErr != nil {
-				return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
-			}
+			return capability, nil
+		}
+		// Even an empty list can open owner-only encryption.
+		reader, _, err := blobs.OpenStreamContext(ctx, version.BlobHash)
+		if err != nil {
+			return media.CapabilityRecord{}, err
+		}
+		policy.UnlockPDF, policy.PDFPasswords = true, passwords
+		capability, inspectErr = media.InspectCapability(ctx, reader, policy)
+		closeErr = reader.Close()
+		if inspectErr != nil || closeErr != nil {
+			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
+		}
+		if capability.Reason == media.CapabilityReasonPDFPasswordRequired && passwordErr != nil {
+			return capability, fmt.Errorf("%w: %w", ErrPDFPasswordsFile, passwordErr)
 		}
 	}
 	return capability, nil

@@ -18,6 +18,11 @@ describe("document processing drawer", () => {
       ["private"],
       "pdf_password_required",
     );
+    expect(
+      await screen.findByText(
+        "Add this PDF's password to the configured password file, then run processing again.",
+      ),
+    ).toBeTruthy();
     const run = await screen.findByRole("button", { name: "Run processing" });
     await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(run);

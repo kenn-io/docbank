@@ -1071,12 +1071,12 @@ func TestMistralUnlocksPDF(t *testing.T) {
 	descriptor := renditionDescriptor(t, policy, manifest, "pdf")
 	fixture := renditionFixture(t, descriptor, source)
 
-	inspection, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
+	inspection, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
 		Filename: fixture.metadata.Filename, DeclaredMediaType: "application/pdf",
 		ExpectedBytes: int64(len(source)), ExpectedSHA256: fixture.metadata.SHA256,
 		DescriptorFingerprint: fixture.authorization.DescriptorFingerprint,
 		ProfileFingerprint:    strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64),
-		InputKind: document.RenditionInputOriginalFile, PDFPasswords: []string{"wrong", "open"},
+		InputKind: document.RenditionInputOriginalFile, UnlockPDF: true, PDFPasswords: []string{"wrong", "open"},
 		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
 		MaxNestingDepth: 1, MaxTextLines: 1000, MaxCharacters: 1 << 20, MaxRecords: 1000, MaxSlides: 100, MaxSheets: 100, MaxCells: 1000, MaxSpineItems: 100, MaxResources: 100, MaxPixels: 1000000, MaxFrames: 100, MaxDurationMS: 1000,
 	})

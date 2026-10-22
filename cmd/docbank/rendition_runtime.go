@@ -44,21 +44,17 @@ type configuredRenditionProvider struct {
 
 	allowedRenditionRequests map[string]struct{}
 	pdfPasswordsFile         string
-	pdfPasswordsSupported    bool
 }
 
-func (provider *configuredRenditionProvider) PDFPasswords() ([]string, bool) {
-	if !provider.pdfPasswordsSupported {
-		return nil, false
+func (provider *configuredRenditionProvider) PDFPasswords() ([]string, bool, error) {
+	if _, ok := provider.RenditionProvider.(interface{ SupportsPDFPasswords() }); !ok {
+		return nil, false, nil
 	}
 	if provider.pdfPasswordsFile == "" {
-		return nil, true
+		return nil, true, nil
 	}
 	passwords, err := config.ReadPDFPasswords(provider.pdfPasswordsFile)
-	if err != nil {
-		slog.Warn("read PDF passwords file", "error", err)
-	}
-	return passwords, true
+	return passwords, true, err
 }
 
 func (provider *configuredRenditionProvider) Render(
@@ -79,6 +75,11 @@ func (provider *configuredRenditionProvider) Render(
 func configureRenditionProviders(cfg config.Config) (
 	map[string]document.RenditionProvider, map[string]processing.RuntimeDisclosure, error,
 ) {
+	if cfg.Media.PDFPasswordsFile != "" {
+		if _, err := config.ReadPDFPasswords(cfg.Media.PDFPasswordsFile); err != nil {
+			slog.Warn("read PDF passwords file", "error", err)
+		}
+	}
 	providers := make(map[string]document.RenditionProvider)
 	disclosures := make(map[string]processing.RuntimeDisclosure)
 	registered := make(map[string]registeredRenditionProvider)
@@ -184,8 +185,7 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, err
 	}
 	bound := &configuredRenditionProvider{RenditionProvider: provider,
-		allowedRenditionRequests: requestFingerprints, pdfPasswordsFile: cfg.Media.PDFPasswordsFile,
-		pdfPasswordsSupported: configured.AdapterContract == config.MistralOCRAdapterContract || configured.AdapterContract == config.DoclingDocumentAdapterContract}
+		allowedRenditionRequests: requestFingerprints, pdfPasswordsFile: cfg.Media.PDFPasswordsFile}
 	registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
 	return bound, disclosure, nil
 }

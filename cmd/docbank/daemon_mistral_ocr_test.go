@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -186,11 +187,21 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 			defer func() { require.NoError(t, daemon.Close()) }()
 			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
 			attempts := []string{"", "wrong\n", "wrong space\nopen\n"}
+			if configured && runtime.GOOS != "windows" {
+				attempts = []string{"", "symlink", "broad", "wrong\n", "wrong space\nopen\n"}
+			}
 			if !configured {
 				attempts = attempts[:1]
 			}
+			var failedJobID string
 			for _, candidate := range attempts {
-				if candidate == "wrong\n" {
+				if candidate == "symlink" {
+					require.NoError(t, os.WriteFile(path+".target", []byte("open\n"), 0600))
+					require.NoError(t, os.Symlink(path+".target", path))
+				} else if candidate == "broad" {
+					require.NoError(t, os.WriteFile(path, []byte("open\n"), 0600))
+					require.NoError(t, os.Chmod(path, 0644))
+				} else if candidate == "wrong\n" {
 					file, err := safefileio.CreatePrivateFile(path)
 					require.NoError(t, err)
 					_, err = file.WriteString(candidate)
@@ -204,6 +215,9 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 				job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 				require.NoError(t, err)
 				wantState, wantFailure := "failed", "pdf_password_required"
+				if configured && (candidate == "" || candidate == "symlink" || candidate == "broad") {
+					wantFailure = "pdf_password_file_unreadable"
+				}
 				if strings.Contains(candidate, "open") {
 					wantState, wantFailure = "completed", ""
 				}
@@ -214,9 +228,17 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 					require.Equal(c, wantFailure, status.FailureCode)
 				}, 10*time.Second, 10*time.Millisecond)
 				if wantState == "failed" {
+					failedJobID = job.ID
 					require.Zero(t, requests.Load())
 				} else {
 					require.Equal(t, int64(1), requests.Load())
+					require.NotEqual(t, failedJobID, job.ID)
+					previous, err := daemon.ProcessingStatus(t.Context(), failedJobID)
+					require.NoError(t, err)
+					require.Equal(t, "failed", previous.State)
+				}
+				if candidate == "symlink" || candidate == "broad" {
+					require.NoError(t, os.Remove(path))
 				}
 			}
 			original, _, err := blobs.OpenStreamContext(t.Context(), written.Hash)

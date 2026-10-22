@@ -489,3 +489,6 @@ func renditionCandidate(format document.RenditionFormatCapability) (CandidateFor
 	}
 	return CandidateFormat{}, false
 }
+
+// SupportsPDFPasswords reports support for locally decrypted PDF input.
+func (*RenditionClient) SupportsPDFPasswords() {}

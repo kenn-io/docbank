@@ -160,13 +160,13 @@ and the pinned model before upload.
 
 Docling and Mistral processing can open encrypted PDFs using `[media].pdf_passwords_file` from [configuration](../configuration.md). Put one password per line in that owner-only file. LF and CRLF line endings work; blank lines are ignored, and spaces belong to the password. The file may contain up to 16 KiB.
 
-Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. A file that no listed password opens, or an encrypted PDF with no password file configured, creates a job that ends `failed` with `pdf_password_required`. Read it with `docbank processing status <job-id>`. Browser Run also creates this failed job.
+Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. A file that no listed password opens, or a PDF that needs a password with no password file configured, creates a job that ends `failed` with `pdf_password_required`. Read it with `docbank processing status <job-id>`. Browser Run also creates this failed job.
 
-Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. An unreadable file acts as an empty password list and produces a daemon log warning. Plain PDFs and audio continue processing.
+Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. An unreadable file produces a startup warning and `pdf_password_file_unreadable` in job status for PDFs that need a password. Fix the file path or owner-only permissions, then build again. Plain PDFs and audio continue processing.
 
 ### Design choices
 
-The pinned pdfcpu version cannot open AES-256 PDFs whose passwords contain spaces. These files report `pdf_password_required` even with the correct password until the pdfcpu upgrade. Older ciphers support spaces. Docbank tries an empty password first when the file lists passwords, so owner-only encryption can open without its owner password.
+The pinned pdfcpu version cannot open AES-256 PDFs whose passwords contain spaces. These files report `pdf_password_required` even with the correct password until the pdfcpu upgrade. Older ciphers support spaces. Docbank always tries an empty password first, so owner-only encryption opens even without a password file.
 
 ## Find similar documents
 

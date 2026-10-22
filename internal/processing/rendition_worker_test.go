@@ -8,7 +8,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"io"
 	"path/filepath"
 	"sync"
@@ -21,7 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -685,6 +683,7 @@ func TestRenditionWorkerFailsSourceRefusedAtRuntime(t *testing.T) {
 	}{
 		{"source", ErrSourceIneligible, store.RenditionFailureStaleAuthority},
 		{"password", ErrPDFPasswordRequired, store.RenditionFailurePDFPasswordRequired},
+		{"password file", ErrPDFPasswordsFile, store.RenditionFailurePDFPasswordsFile},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -1342,10 +1341,7 @@ func (runtime ineligibleWorkerRuntime) Prepare(
 	context.Context, store.RenditionJobWork, time.Time,
 ) (RenditionExecution, error) {
 	*runtime.prepareCalls++
-	if runtime.err != nil {
-		return RenditionExecution{}, runtime.err
-	}
-	return RenditionExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
+	return RenditionExecution{}, runtime.err
 }
 
 type expiringWorkerRuntime struct{ provider *workerProvider }

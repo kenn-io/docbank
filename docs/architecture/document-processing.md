@@ -422,9 +422,9 @@ already admissible sources unchanged. A queued source the lowered ceiling refuse
 profiles allow 4 GiB original sources;
 their 16 MiB transcript, caption and response limits remain separate.
 
-Docling and Mistral document runtimes read the operator's PDF password file only after inspection identifies an encrypted PDF. Inspection decrypts and validates an in-memory copy, then carries only the successful password in the process-local upload proof. Passwords stay outside JSON, policy fingerprints, and record checksums. The provider sends the decrypted copy and records its upload digest separately from the original source digest.
+Startup checks the configured PDF password file and warns if it cannot be read. During processing, Docling and Mistral document runtimes read it only after inspection identifies an encrypted PDF. Inspection decrypts and validates an in-memory copy, then carries only the successful password in the process-local upload proof. Passwords stay outside JSON, policy fingerprints, and record checksums. The provider sends the decrypted copy and records its upload digest separately from the original source digest.
 
-A locked PDF without a working password enters the job queue and fails there with `pdf_password_required`. Like `stale_authority`, this terminal failure permits a new build to reopen the queued job after the operator updates the password file. Other adapters retain the `encrypted_container` admission refusal.
+A locked PDF without a working password enters the job queue and fails there with `pdf_password_required`. An unreadable password file produces `pdf_password_file_unreadable` and a startup warning. A build with the same inspection checksum can reopen the failed queued job. Adding a working password changes the capability checksum, so the next build creates a new job and preserves the failed job. Other adapters retain the `encrypted_container` admission refusal.
 
 Audio retains its 24-hour duration and codec qualification bounds.
 WAV and MP3 inspection hash every byte while retaining parser headers and a

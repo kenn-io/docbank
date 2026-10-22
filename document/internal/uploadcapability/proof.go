@@ -19,27 +19,24 @@ type Facts struct {
 type Proof struct {
 	facts Facts
 	// Keep the selected password as a value so proofs remain comparable.
-	pdfPasswords   string
+	pdfPassword    string
 	hasPDFPassword bool
 	local          bool
 }
 
 // New is restricted to document's internal package boundary. The caller must
 // validate the locally inspected record before issuing a proof.
-func New(facts Facts, pdfPasswords []string) Proof {
+func New(facts Facts, pdfPassword *string) Proof {
 	proof := Proof{facts: facts, local: true}
-	if len(pdfPasswords) > 0 {
-		proof.pdfPasswords, proof.hasPDFPassword = pdfPasswords[0], true
+	if pdfPassword != nil {
+		proof.pdfPassword, proof.hasPDFPassword = *pdfPassword, true
 	}
 	return proof
 }
 
-// PDFPasswords returns a copy of the locally selected PDF password.
-func (proof Proof) PDFPasswords() []string {
-	if !proof.hasPDFPassword {
-		return nil
-	}
-	return []string{proof.pdfPasswords}
+// PDFPassword returns the password selected by local inspection.
+func (proof Proof) PDFPassword() (string, bool) {
+	return proof.pdfPassword, proof.hasPDFPassword
 }
 
 // Facts returns a copy and whether this proof was issued locally.

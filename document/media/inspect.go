@@ -71,10 +71,12 @@ const (
 // one exact source. Every supported family must have an enforceable bound.
 type InspectionPolicy struct {
 	PDFPasswords      []string `json:"-"`
-	Filename          string   `json:"filename"`
-	DeclaredMediaType string   `json:"declared_media_type"`
-	ExpectedBytes     int64    `json:"expected_bytes"`
-	ExpectedSHA256    string   `json:"expected_sha256"`
+	pdfPassword       *string
+	UnlockPDF         bool   `json:"-"`
+	Filename          string `json:"filename"`
+	DeclaredMediaType string `json:"declared_media_type"`
+	ExpectedBytes     int64  `json:"expected_bytes"`
+	ExpectedSHA256    string `json:"expected_sha256"`
 
 	DescriptorFingerprint string                      `json:"descriptor_fingerprint"`
 	ProfileFingerprint    string                      `json:"profile_fingerprint"`
@@ -151,7 +153,7 @@ type capabilityRecordIdentity CapabilityRecord
 
 // InspectCapability reads one bounded source, verifies its declared identity, and
 // returns a checksum-sealed finite capability decision.
-func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+func InspectCapability(ctx context.Context, reader io.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
 	if reader == nil {
 		return CapabilityRecord{}, errors.New("media: inspection source is required")
 	}
@@ -191,7 +193,10 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 	case strings.HasPrefix(baseType, "image/") || strings.HasPrefix(baseType, "video/"):
 		record = inspectVisualCapability(data, baseType, policy)
 	case baseType == "application/pdf" || ext == ".pdf":
-		record = inspectPDF(data, &policy)
+		record = inspectPDF(ctx, data, &policy)
+		if err := ctx.Err(); err != nil {
+			return CapabilityRecord{}, err
+		}
 	case strings.HasPrefix(baseType, "audio/"):
 		record = CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnboundedFamily,
 			MediaFamily: "audio", MediaType: baseType, Format: strings.TrimPrefix(ext, ".")}
@@ -1297,18 +1302,27 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 	return record
 }
 
-func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
+func inspectPDF(ctx context.Context, data []byte, policy *InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaFamily: "pdf", MediaType: "application/pdf", Format: "pdf"}
 	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{
 		MaxExpandedBytes: policy.MaxExpandedBytes,
 		MaxEntryBytes:    policy.MaxEntryBytes,
 		MaxEntries:       policy.MaxEntries,
 	})
-	if errors.Is(err, formatdetect.ErrPDFEncrypted) && len(policy.PDFPasswords) > 0 {
-		unlocked, password, unlockErr := formatdetect.UnlockPDF(context.Background(), data, policy.PDFPasswords, policy.MaxExpandedBytes)
+	if errors.Is(err, formatdetect.ErrPDFEncrypted) && policy.UnlockPDF {
+		var unlocked []byte
+		var password string
+		var unlockErr error
+		if policy.pdfPassword != nil {
+			password = *policy.pdfPassword
+			unlocked, unlockErr = formatdetect.DecryptPDF(ctx, data, password, policy.MaxExpandedBytes)
+		} else {
+			unlocked, password, unlockErr = formatdetect.UnlockPDF(ctx, data, policy.PDFPasswords, policy.MaxExpandedBytes)
+		}
 		err = unlockErr
 		if err == nil {
-			policy.PDFPasswords = []string{password}
+			policy.PDFPasswords = nil
+			policy.pdfPassword = new(password)
 			measurements, err = formatdetect.InspectPDF(unlocked, formatdetect.PDFLimits{
 				MaxExpandedBytes: policy.MaxExpandedBytes, MaxEntryBytes: policy.MaxEntryBytes, MaxEntries: policy.MaxEntries,
 			})
@@ -1318,7 +1332,10 @@ func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 	if err != nil {
 		switch {
 		case errors.Is(err, formatdetect.ErrPDFEncrypted):
-			record.Reason = CapabilityReasonPDFPasswordRequired
+			record.Reason = CapabilityReasonEncryptedContainer
+			if policy.UnlockPDF {
+				record.Reason = CapabilityReasonPDFPasswordRequired
+			}
 		case errors.Is(err, formatdetect.ErrPDFExpandedBytes):
 			record.Reason = CapabilityReasonExpandedBytes
 		case errors.Is(err, formatdetect.ErrPDFEntryBytes):

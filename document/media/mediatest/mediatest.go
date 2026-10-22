@@ -1,4 +1,4 @@
-// Package mediatest builds small synthetic media containers for
+// Package mediatest builds small deterministic synthetic media containers for
 // tests. The WebP and MP4 builders produce minimal headers that satisfy
 // signature and metadata detection; they are not decodable pictures and must
 // not be used as provider probe fixtures.

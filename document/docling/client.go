@@ -698,3 +698,6 @@ func partialSuccessWarnings(partial bool) []string {
 	}
 	return []string{"partial_success"}
 }
+
+// SupportsPDFPasswords reports support for locally decrypted PDF input.
+func (*Client) SupportsPDFPasswords() {}

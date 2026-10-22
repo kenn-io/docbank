@@ -933,6 +933,9 @@ func (worker *RenditionWorker) classifyAuthorityError(
 }
 
 func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim store.RenditionJobClaim, err error) error {
+	if errors.Is(err, ErrPDFPasswordsFile) {
+		return worker.markFailed(ctx, claim, store.RenditionFailurePDFPasswordsFile, worker.clock().UTC())
+	}
 	if errors.Is(err, ErrPDFPasswordRequired) {
 		return worker.markFailed(ctx, claim, store.RenditionFailurePDFPasswordRequired, worker.clock().UTC())
 	}

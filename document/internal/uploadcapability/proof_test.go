@@ -8,7 +8,7 @@ import (
 )
 
 func TestProofCannotCarryLocalAuthorityThroughJSON(t *testing.T) {
-	proof := New(Facts{Checksum: "synthetic"}, []string{"open"})
+	proof := New(Facts{Checksum: "synthetic"}, new("open"))
 	_, err := json.Marshal(proof)
 	require.Error(t, err)
 	err = json.Unmarshal([]byte(`{}`), &proof)
@@ -19,16 +19,16 @@ func TestProofCannotCarryLocalAuthorityThroughJSON(t *testing.T) {
 
 func TestProofKeepsSelectedPasswordPrivateAndComparable(t *testing.T) {
 	for _, password := range []string{"open", ""} {
-		passwords := []string{password}
-		proof := New(Facts{Checksum: "synthetic"}, passwords)
-		passwords[0] = "changed"
-		if proof != New(Facts{Checksum: "synthetic"}, []string{password}) {
+		candidate := password
+		proof := New(Facts{Checksum: "synthetic"}, &candidate)
+		candidate = "changed"
+		if proof != New(Facts{Checksum: "synthetic"}, &password) {
 			t.Fatal("equivalent inspection proofs differ")
 		}
-		selected := proof.PDFPasswords()
-		require.Equal(t, []string{password}, selected)
-		selected[0] = "changed"
-		require.Equal(t, []string{password}, proof.PDFPasswords())
+		selected, ok := proof.PDFPassword()
+		require.True(t, ok)
+		require.Equal(t, password, selected)
 	}
-	require.Nil(t, (Proof{}).PDFPasswords())
+	_, ok := (Proof{}).PDFPassword()
+	require.False(t, ok)
 }

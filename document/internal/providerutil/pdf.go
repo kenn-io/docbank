@@ -10,11 +10,11 @@ import (
 
 // UnlockPDF prepares an in-memory provider copy using local inspection evidence.
 func UnlockPDF(ctx context.Context, provider Provider, upload document.AuthorizedUpload, source []byte, maxBytes int64) ([]byte, string, error) {
-	passwords := document.UploadPDFPasswords(upload)
-	if len(passwords) == 0 {
+	password, encrypted := document.UploadPDFPassword(upload)
+	if !encrypted {
 		return source, "", nil
 	}
-	unlocked, _, err := formatdetect.UnlockPDF(ctx, source, passwords, maxBytes)
+	unlocked, err := formatdetect.DecryptPDF(ctx, source, password, maxBytes)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, "", ctx.Err()
