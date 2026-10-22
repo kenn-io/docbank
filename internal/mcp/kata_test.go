@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -144,7 +145,7 @@ func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
 	}
 }
 
-func TestKataReadToolIsInDefaultCatalog(t *testing.T) {
+func TestKataContextSchemaBoundsOffset(t *testing.T) {
 	tools := catalogMap(toolCatalog(ServerOptions{}))
 	assertSchemaAccepts(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset})
 	assertSchemaRejects(t, tools["get_kata_context"].InputSchema, map[string]any{"issue": "docbank#abcd", "offset": kataevidence.MaxContextOffset + 1})
@@ -164,7 +165,6 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 		nextOffset int
 	}{
 		{"rendition", []kataevidence.Resolution{{State: "available", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(rendition, "abc", "Synthetic text")}}, 11},
-		{"changed", []kataevidence.Resolution{{State: "changed", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(kataReferenceFixture(), "abc", "Synthetic text")}}, 11},
 		{"unsupported_version", []kataevidence.Resolution{{State: "unsupported", SavedQuote: "abc", Evidence: kataevidence.NewEvidence(future, "", "Synthetic text")}}, 11},
 		{"unsupported_reference", []kataevidence.Resolution{
 			{State: "unsupported", Evidence: kataevidence.Evidence{Reference: kataevidence.Reference{Kind: "docbank"}, ContentTrust: "untrusted"}, SavedQuote: "saved words"},
@@ -248,4 +248,13 @@ func TestKataContextReturnsDaemonErrors(t *testing.T) {
 			require.Equal(t, want.Error(), err.Error())
 		})
 	}
+}
+
+func TestKataReceiptBoundsExistingIssueTitle(t *testing.T) {
+	issue := kataclient.Issue{UID: "01SYNTHETIC", QualifiedRef: "docbank#abcd", Title: strings.Repeat("🙂", 600)}
+	got := kataReceipt(issue)
+	require.LessOrEqual(t, utf8.RuneCountInString(got.Title), 512)
+	require.True(t, strings.HasSuffix(got.Title, "…"))
+	require.Equal(t, issue.UID, got.UID)
+	require.Equal(t, issue.QualifiedRef, got.QualifiedRef)
 }

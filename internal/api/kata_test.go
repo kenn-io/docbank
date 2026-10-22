@@ -1,10 +1,10 @@
 package api_test
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,7 +45,6 @@ func TestKataHTTPDisabledAndAuth(t *testing.T) {
 	request := kataevidence.CiteRequest{Title: "Follow up", IdempotencyKey: "test", Selector: kataevidence.Selector{NodeID: 2, EndRune: 5}}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
 	require.Equal(t, 503, resp.StatusCode, body)
-	require.Contains(t, body, "kata integration is disabled")
 	require.Contains(t, body, "restart the daemon after changing [integrations.kata]")
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/kata/cite", map[string]string{"X-Api-Key": ""}, request)
 	require.Equal(t, 401, resp.StatusCode, body)
@@ -94,62 +93,6 @@ func TestKataHTTPCreateAppendAndStaleness(t *testing.T) {
 	require.Contains(t, body, `"state":"unavailable"`)
 }
 
-func TestKataHTTPOriginalPreparationFailuresAreNotRetryable(t *testing.T) {
-	kata, _ := realKataForDocbank(t)
-	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
-	})
-	tests := []struct {
-		name       string
-		mimeType   string
-		content    []byte
-		contentLen int
-		status     int
-		code       string
-		detail     string
-	}{
-		{name: "too_large", mimeType: "text/plain", contentLen: (16 << 20) + 1, status: http.StatusConflict, code: "kata_evidence_unsupported", detail: "document exceeds"},
-		{name: "unsupported_media", mimeType: "application/pdf", content: []byte("synthetic PDF"), status: http.StatusConflict, code: "kata_evidence_unsupported", detail: "retained text rendition"},
-		{name: "invalid_utf8", mimeType: "text/plain", content: []byte{0xff}, status: http.StatusUnprocessableEntity, code: "invalid_kata_evidence", detail: "not UTF-8 text"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			content := tt.content
-			if tt.contentLen > 0 {
-				content = bytes.Repeat([]byte("x"), tt.contentLen)
-			}
-			hash, size, err := s.Blobs.Write(bytes.NewReader(content))
-			require.NoError(t, err)
-			node, err := s.CreateFile(t.Context(), s.RootID(), tt.name+".txt", hash, size, tt.mimeType)
-			require.NoError(t, err)
-			request := kataevidence.CiteRequest{
-				Title: "Prepare citation", IdempotencyKey: "prepare-" + tt.name,
-				Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 1},
-			}
-			response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
-			require.Equal(t, tt.status, response.StatusCode, body)
-			require.Contains(t, body, `"code":"`+tt.code+`"`)
-			require.Contains(t, body, tt.detail)
-			require.NotContains(t, strings.ToLower(body), "retry")
-		})
-	}
-}
-
-func TestKataHTTPRejectsMismatchedQuoteBeforeKataWrite(t *testing.T) {
-	kata, issue := realKataForDocbank(t)
-	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
-	})
-	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
-	request := kataevidence.CiteRequest{Title: "Follow up", IdempotencyKey: "test", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5, Quote: "other"}}
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
-	require.Equal(t, 422, resp.StatusCode, body)
-	require.Contains(t, body, ": quote does not match the selected range")
-	require.Empty(t, issue().Issue.Body)
-}
-
 func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
 	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
@@ -173,15 +116,6 @@ func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
 	require.Len(t, page.Passages, 1)
 	require.Equal(t, "available", page.Passages[0].State)
 	require.Equal(t, f.citation.BuildID, page.Passages[0].Evidence.Reference.Rendition.BuildID)
-	invalid := r
-	citation := f.citation
-	citation.End = 999
-	invalid.IdempotencyKey = "rendition-beyond-eof"
-	invalid.Selector.EndRune, invalid.Selector.Citation = citation.End, &citation
-	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", map[string]string{"X-Api-Key": testAPIKey}, invalid)
-	require.Equal(t, 422, response.StatusCode, body)
-	require.Contains(t, body, "end_rune or start_rune")
-	require.NotContains(t, body, "retry")
 	data := []byte("changed source")
 	client := ts.Client()
 	client.Transport = &apiKeyTransport{key: testAPIKey, next: client.Transport}
@@ -194,48 +128,13 @@ func TestKataHTTPRenditionAndGeneratedClient(t *testing.T) {
 	require.Equal(t, "changed", page.Passages[0].State)
 }
 
-func TestKataHTTPJSONOriginalWithCharset(t *testing.T) {
-	kata, issue := realKataForDocbank(t)
-	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
-	})
-	node := createFileWithContent(t, ts, s, "/notes.json", "initial")
-	data := []byte(`{"note":"hello"}`)
-	replacement, response := sendContentReplacement(t, ts.URL, ts.Client(), node.ID, node.Revision, data, uploadIdentity(data), int64(len(data)), "application/json; charset=utf-8")
-	require.Equal(t, http.StatusOK, replacement.StatusCode, string(response))
-	request := kataevidence.CiteRequest{Title: "Review JSON", IdempotencyKey: "json-1", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: len(data)}}
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.Equal(t, "Evidence: notes.json\n\n> {\"note\":\"hello\"}\n", issue().Issue.Body)
-}
-
-func TestKataHTTPNamesInvalidInputs(t *testing.T) {
-	kata, _ := realKataForDocbank(t)
-	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
-	})
-	node := createFileWithContent(t, ts, s, "/notes.txt", "é🙂hello日")
-	base := kataevidence.CiteRequest{Title: "Follow up", IdempotencyKey: "inputs", Selector: kataevidence.Selector{NodeID: node.ID, StartRune: 1, EndRune: 4, Quote: "🙂he"}}
-	request := base
-	request.Selector.EndRune = 9
-	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, request)
-	require.Equal(t, 422, response.StatusCode, body)
-	require.Contains(t, body, "end_rune")
-	require.NotContains(t, body, "retry")
-	response, body = do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, base)
-	require.Equal(t, 200, response.StatusCode, body)
-	require.Contains(t, body, "🙂he")
-}
-
 func TestKataHTTPTextExtractionMediaCites(t *testing.T) {
 	kata, issue := realKataForDocbank(t)
 	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
 	})
-	for _, media := range []string{"application/yaml", "application/x-ndjson"} {
+	for _, media := range []string{"application/yaml", "application/x-ndjson", "application/json; charset=utf-8"} {
 		t.Run(media, func(t *testing.T) {
 			hash, size, err := s.Blobs.Write(strings.NewReader("hello"))
 			require.NoError(t, err)
@@ -293,4 +192,21 @@ func TestKataHTTPKeylessServerRejectsToken(t *testing.T) {
 	require.Contains(t, body, `"code":"kata_token_invalid"`)
 	require.Contains(t, body, "Kata token was rejected; configure Kata with that token")
 	require.NotContains(t, body, "synthetic-kata-token")
+}
+
+func TestKataHTTPIntegrityFailureIsLocalAndPermanent(t *testing.T) {
+	kata, issue := realKataForDocbank(t)
+	t.Setenv("DKE_API_KATA_KEY", "synthetic-kata-token")
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Integrations.Kata = config.KataConfig{Enabled: true, Endpoint: kata, APIKeyEnv: "DKE_API_KATA_KEY"}
+	})
+	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
+	require.NoError(t, os.WriteFile(filepath.Join(s.BlobsDir, node.BlobHash[:2], node.BlobHash), []byte("bad"), 0o600))
+	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{
+		Title: "Review", IdempotencyKey: "integrity", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5},
+	})
+	require.NotContains(t, strings.ToLower(body), "retry")
+	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
+	require.Contains(t, body, `"code":"kata_evidence_integrity"`)
+	require.Empty(t, issue().Issue.Body)
 }

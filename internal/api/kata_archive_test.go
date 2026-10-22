@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	// A second node with identical bytes still owns a separate cache entry.
 	selection.NodeID = other.ID
 	_, err = service.Archive.Prepare(t.Context(), selection)
-	require.Error(t, err)
+	require.ErrorIs(t, err, os.ErrNotExist)
 	resolutionAfterSwitch, err := service.Archive.Resolve(t.Context(), ref, "world")
 	require.NoError(t, err)
 	require.Equal(t, "failed", resolutionAfterSwitch.State)
@@ -60,6 +61,14 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	resolution, err := next.Archive.Resolve(t.Context(), ref, "world")
 	require.NoError(t, err)
 	require.Equal(t, "failed", resolution.State)
+	// Reload a successful original before checking the content-hash boundary.
+	_, _, err = blobs.Write(strings.NewReader("hello world"))
+	require.NoError(t, err)
+	service, err = kataService(deps, gate)
+	require.NoError(t, err)
+	selection.NodeID = node.ID
+	_, err = service.Archive.Prepare(t.Context(), selection)
+	require.NoError(t, err)
 	// A new content hash for the first node also requires a new read.
 	newHash, newSize, err := blobs.Write(strings.NewReader("hello again"))
 	require.NoError(t, err)
@@ -68,5 +77,41 @@ func TestKataContextOriginalCacheIsScopedToRequestAndSource(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(blobsDir, newHash[:2], newHash)))
 	selection.NodeID = node.ID
 	_, err = service.Archive.Prepare(t.Context(), selection)
-	require.Error(t, err)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestKataOriginalPreparationFailures(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	s, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blobs.Close() })
+	archive := kataArchive{deps: Deps{Store: s, Blobs: blobs}, gate: NewOperationGate(), originals: make(map[kataOriginalKey]kataOriginal)}
+	for _, tc := range []struct {
+		name     string
+		mimeType string
+		content  []byte
+		start    int
+		end      int
+		quote    string
+		detail   string
+	}{
+		{name: "too_large", mimeType: "text/plain", content: []byte(strings.Repeat("x", kataOriginalMaxBytes+1)), end: 1, detail: "document exceeds"},
+		{name: "unsupported_media", mimeType: "application/pdf", content: []byte("synthetic PDF"), end: 1, detail: "retained text rendition"},
+		{name: "invalid_utf8", mimeType: "text/plain", content: []byte{0xff}, end: 1, detail: "not UTF-8 text"},
+		{name: "end_beyond_text", mimeType: "text/plain", content: []byte("é🙂hello日"), start: 1, end: 9, quote: "🙂he", detail: "end_rune"},
+		{name: "quote_mismatch", mimeType: "text/plain", content: []byte("hello"), end: 5, quote: "other", detail: "quote does not match the selected range"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hash, size, err := blobs.Write(bytes.NewReader(tc.content))
+			require.NoError(t, err)
+			node, err := s.CreateFile(t.Context(), s.RootID(), tc.name+".txt", hash, size, tc.mimeType)
+			require.NoError(t, err)
+			_, err = archive.Prepare(t.Context(), kataevidence.Selector{NodeID: node.ID, StartRune: tc.start, EndRune: tc.end, Quote: tc.quote})
+			require.ErrorContains(t, err, tc.detail)
+		})
+	}
 }

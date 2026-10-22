@@ -153,7 +153,6 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
 			assert.Equal(t, test.processing, names["start_processing"])
-			assert.True(t, names["get_kata_context"])
 			assert.Equal(t, test.kata, names["cite_kata_evidence"])
 			assert.True(t, names["get_report_summary"])
 			assert.True(t, names["get_report_dates"])

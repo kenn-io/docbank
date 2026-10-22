@@ -94,17 +94,3 @@ func TestCiteContainsEveryQuoteLineEnding(t *testing.T) {
 		}
 	}
 }
-
-func TestCiteDistinctKeysKeepSimilarIssuesSeparate(t *testing.T) {
-	k := newTestKata(t, nil, "")
-	service := Service{Kata: k, Archive: &memoryArchive{}}
-	request := CiteRequest{Title: "Review", IdempotencyKey: "first", Selector: Selector{NodeID: 2, EndRune: 5}}
-	first, err := service.Cite(t.Context(), request)
-	require.NoError(t, err)
-	request.IdempotencyKey = "second"
-	second, err := service.Cite(t.Context(), request)
-	require.NoError(t, err)
-	require.NotEqual(t, first.UID, second.UID)
-	require.Equal(t, first.Body, second.Body)
-	require.Equal(t, 2, k.createdCount())
-}

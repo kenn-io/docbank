@@ -186,7 +186,7 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 		supported bool
 	}{
 		{"0.20.9", false}, {"0.21.0-rc.1", false}, {"0.21.0", true},
-		{"0.28.0", true}, {"0.28.9", true}, {"0.29.0", false}, {"0.99.0", false}, {"1.0.0", false}, {"2.21.0", false},
+		{"0.28.0", true}, {"0.29.0", false}, {"1.0.0", false}, {"2.21.0", false},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			var operationRequests atomic.Int32

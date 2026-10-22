@@ -156,6 +156,15 @@ func TestCiteCreateAndReplay(t *testing.T) {
 	r.Title = "Different request"
 	_, err = s.Cite(t.Context(), r)
 	require.ErrorContains(t, err, "idempotency")
+	t.Run("distinct_key", func(t *testing.T) {
+		a.prepareErr = nil
+		r.Title, r.IdempotencyKey = "Follow up", "create-2"
+		second, err := s.Cite(t.Context(), r)
+		require.NoError(t, err)
+		require.NotEqual(t, issue.UID, second.UID)
+		require.Equal(t, issue.Body, second.Body)
+		require.Equal(t, 2, k.createdCount())
+	})
 }
 
 func TestAppendPendingRetryPreservesOtherEvidence(t *testing.T) {
@@ -317,18 +326,6 @@ func TestContextUnsupportedNativeDoesNotHideOtherPassages(t *testing.T) {
 	}
 }
 
-func TestCiteRejectsInvalidRequests(t *testing.T) {
-	for _, request := range []CiteRequest{
-		{Selector: Selector{NodeID: 2, EndRune: 1001}, Title: "Too much", IdempotencyKey: "key"},
-		{Selector: Selector{NodeID: 2, StartRune: 5, EndRune: 3}, Title: "Backward", IdempotencyKey: "key"},
-		{Selector: Selector{NodeID: 2, EndRune: 5}, Title: "Missing key"},
-		{Selector: Selector{NodeID: 2, EndRune: 5}, Issue: "abcd", Title: "Append title"},
-	} {
-		_, err := (Service{}).Cite(t.Context(), request)
-		require.ErrorIs(t, err, ErrInvalid)
-	}
-}
-
 func TestCiteValidationNamesFields(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -337,6 +334,7 @@ func TestCiteValidationNamesFields(t *testing.T) {
 	}{
 		{"start", func(r *CiteRequest) { r.Selector.StartRune = -1 }, "start_rune must be nonnegative"},
 		{"end", func(r *CiteRequest) { r.Selector.EndRune = 1001 }, "end_rune must follow start_rune by at most 1000 code points"},
+		{"backward", func(r *CiteRequest) { r.Selector.StartRune, r.Selector.EndRune = 5, 3 }, "end_rune must follow start_rune by at most 1000 code points"},
 		{"quote", func(r *CiteRequest) { r.Selector.Quote = strings.Repeat("x", 1001) }, "quote must contain at most 1000 UTF-8 code points"},
 		{"expected_version", func(r *CiteRequest) { r.Selector.ExpectedVersion = "invalid" }, "expected_version requires a content version UUID"},
 		{"brief", func(r *CiteRequest) { r.Brief = strings.Repeat("x", 2001) }, "brief exceeds 2000 code points"},

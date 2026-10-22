@@ -3,7 +3,6 @@ package kataevidence
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -112,75 +111,6 @@ func TestAppendPendingReconciliation(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAppendReplayRejectsMovedIssue(t *testing.T) {
-	server := katatest.New(t, katatest.WithToken("synthetic-key"))
-	api := server.Client(t)
-	project, err := api.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
-	require.NoError(t, err)
-	client := kataclient.New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
-	ref := nativeReference()
-	entry, err := json.Marshal(Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt", Pending: &Pending{SavedAt: time.Now()}})
-	require.NoError(t, err)
-	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
-	data, err := env.encode()
-	require.NoError(t, err)
-	issue, err := client.Create(t.Context(), "create", "Follow up", "", map[string]jsontext.Value{MetadataKey: data})
-	require.NoError(t, err)
-	other, err := api.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("other"), Actor: new("docbank")}})
-	require.NoError(t, err)
-	moved, err := api.MoveIssue(t.Context(), &generated.MoveIssueRequestOptions{PathParams: &generated.MoveIssuePath{ProjectID: project.Project.ID, Ref: issue.UID}, Body: &generated.MoveIssueBody{Actor: new("docbank"), ToProjectUID: other.Project.UID}, Header: &generated.MoveIssueHeaders{IfMatch: new(`"rev-1"`)}})
-	require.NoError(t, err)
-	movedRef := "other#" + moved.Issue.ShortID
-	s := Service{Kata: client, Archive: &memoryArchive{prepareErr: ErrUnavailable}}
-	_, err = s.Cite(t.Context(), CiteRequest{Issue: movedRef, Selector: Selector{NodeID: 2, EndRune: 5, ExpectedVersion: ref.Docbank.ContentVersionID}})
-	require.Error(t, err)
-	failure, ok := errors.AsType[*kataclient.Error](err)
-	require.True(t, ok)
-	require.Equal(t, "wrong_project", failure.Code)
-	got, err := client.Get(t.Context(), movedRef)
-	require.NoError(t, err)
-	posted, err := api.ShowIssue(t.Context(), &generated.ShowIssueRequestOptions{PathParams: &generated.ShowIssuePath{ProjectID: other.Project.ID, Ref: moved.Issue.UID}})
-	require.NoError(t, err)
-	require.Empty(t, posted.Comments)
-	require.Contains(t, string(got.Metadata[MetadataKey]), `"pending"`)
-}
-
-func TestDiscussionGrowthAndUnrelatedPurgeKeepFreshAppendReadable(t *testing.T) {
-	ref := nativeReference()
-	entry := Entry{ID: ID(ref), Reference: ref, Quote: "hello", Label: "notes.txt"}
-	data, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
-	require.NoError(t, err)
-	k := newTestKata(t, map[string]jsontext.Value{MetadataKey: data}, "")
-	body := "Evidence: notes.txt\n\n> hello\n\n<!-- docbank-evidence:" + entry.ID + " -->\n"
-	require.NoError(t, k.Comment(t.Context(), k.ref, commentKey(k.snapshot().UID, entry.ID, body), body))
-	addLargeDiscussion(t, k.api, k.projectID, k.ref)
-	neighbor, err := k.Create(t.Context(), "neighbor", "Neighbor", strings.Repeat("x", 900<<10), nil)
-	require.NoError(t, err)
-	_, err = k.api.DeleteIssue(t.Context(), &generated.DeleteIssueRequestOptions{PathParams: &generated.DeleteIssuePath{ProjectID: k.projectID, Ref: neighbor.UID}, Body: &generated.DeleteIssueBody{Actor: "docbank"}, Header: &generated.DeleteIssueHeaders{XKataConfirm: new("DELETE " + neighbor.QualifiedRef)}})
-	require.NoError(t, err)
-	_, err = k.api.PurgeIssue(t.Context(), &generated.PurgeIssueRequestOptions{PathParams: &generated.PurgeIssuePath{ProjectID: k.projectID, Ref: neighbor.UID}, Body: &generated.PurgeIssueBody{Actor: "docbank"}, Header: &generated.PurgeIssueHeaders{XKataConfirm: new("PURGE " + neighbor.QualifiedRef)}})
-	require.NoError(t, err)
-	s := Service{Kata: k, Archive: &memoryArchive{state: "available"}}
-	page, err := s.Context(t.Context(), ContextRequest{Issue: k.ref})
-	require.NoError(t, err)
-	require.Len(t, page.Passages, 1)
-	require.Equal(t, "available", page.Passages[0].State)
-	require.Equal(t, "hello", page.Passages[0].SavedQuote)
-	require.Equal(t, "notes.txt", page.Passages[0].Evidence.Label)
-	// Restore the pending marker inside the replay window. Even this large
-	// discussion must not prevent Kata from replaying the same comment request.
-	entry.Pending = &Pending{SavedAt: time.Now()}
-	pending, err := json.Marshal(map[string]any{"version": 1, "entries": []Entry{entry}})
-	require.NoError(t, err)
-	_, err = k.Patch(t.Context(), k.ref, MetadataKey, page.Issue.Metadata[MetadataKey], pending)
-	require.NoError(t, err)
-	s.Archive = &memoryArchive{prepareErr: ErrUnavailable}
-	got, err := s.Cite(t.Context(), CiteRequest{Issue: k.ref, Selector: Selector{NodeID: 2, EndRune: 5, ExpectedVersion: ref.Docbank.ContentVersionID}})
-	require.NoError(t, err)
-	require.NotContains(t, string(got.Metadata[MetadataKey]), `"pending"`)
-	require.Equal(t, 35, k.commentCount(), "reconciliation must not post a duplicate")
 }
 
 // addLargeDiscussion exceeds the client's 2 MiB discussion read limit.

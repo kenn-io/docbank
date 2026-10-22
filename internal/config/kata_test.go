@@ -17,7 +17,8 @@ func TestKataConfigIsScoped(t *testing.T) {
 	cfg, err := Load(root)
 	require.NoError(t, err)
 	require.NoError(t, cfg.Validate())
-	_, err = (KataConfig{}).Resolve(root)
+	cfg.Integrations.Kata.Enabled = false
+	_, err = cfg.Integrations.Kata.Resolve(root)
 	require.ErrorContains(t, err, "kata integration is disabled")
 }
 

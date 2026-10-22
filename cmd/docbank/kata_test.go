@@ -61,7 +61,7 @@ func TestKataCitationRejectsMalformedAndOversizedFiles(t *testing.T) {
 	}
 }
 
-func TestKataContextPrintsEveryStatus(t *testing.T) {
+func TestKataContextPrintsPassagesAndPropagatesWriteErrors(t *testing.T) {
 	result := kataevidence.Context{Passages: []kataevidence.Resolution{
 		{State: "available", Evidence: kataevidence.Evidence{Reference: kataevidence.Reference{Docbank: &kataevidence.DocumentReference{NodeID: 2}}}, SavedQuote: "hello"},
 		{State: "unsupported"},
