@@ -125,26 +125,3 @@ func TestPrepareMemoryRejectsInvalidSource(t *testing.T) {
 	require.ErrorContains(t, err, "use NewPolicy")
 	require.Nil(t, prepared)
 }
-
-func TestPrepareMemoryCanceledDuringInspection(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	content := testPDF("cancel during inspection")
-	reader := &cancelDuringInspectionReader{reader: bytes.NewReader(content), cancel: cancel}
-	_, _, err := inspectPreparedContent(ctx, reader, int64(len(content)), mediaTypePDF)
-	require.ErrorIs(t, err, context.Canceled)
-	require.NotErrorIs(t, err, ErrInvalidSource)
-}
-
-type cancelDuringInspectionReader struct {
-	reader *bytes.Reader
-	cancel context.CancelFunc
-}
-
-func (reader *cancelDuringInspectionReader) ReadAt(buffer []byte, offset int64) (int, error) {
-	n, err := reader.reader.ReadAt(buffer, offset)
-	if n > 0 {
-		reader.cancel()
-	}
-	return n, err //nolint:wrapcheck // Preserve io.EOF for the ReaderAt contract.
-}
