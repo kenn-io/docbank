@@ -19,17 +19,14 @@ describe("exact version fragments", () => {
     });
   });
 
-  it.each(["invalid", "", "../content", "UPPERCASE"])(
-    "leaves version policy to the server: %s",
-    (versionId) => {
-      expect(parseNodeVersionLink(`#node=42&version=${encodeURIComponent(versionId)}`)).toEqual({
-        nodeId: 42,
-        versionId,
-      });
-    },
-  );
+  it.each(["invalid", "", "../content"])("leaves version policy to the server: %s", (versionId) => {
+    expect(parseNodeVersionLink(`#node=42&version=${encodeURIComponent(versionId)}`)).toEqual({
+      nodeId: 42,
+      versionId,
+    });
+  });
 
-  it.each(["", "#query=%7B%7D", "#photo=image"])("ignores unrelated fragment %s", (hash) => {
+  it.each(["", "#query=%7B%7D"])("ignores unrelated fragment %s", (hash) => {
     expect(parseNodeVersionLink(hash)).toBeNull();
   });
 

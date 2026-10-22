@@ -3,7 +3,6 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import App from "./App.svelte";
-import { root } from "./version-test-fixtures.js";
 
 const query = {
   v: 1,
@@ -38,6 +37,16 @@ it("opens full URL intent in the editor and keeps edits through save and reopeni
     configurable: true,
     value: vi.fn(),
   });
+  const root = {
+    id: 1,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  };
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/queries/parse")

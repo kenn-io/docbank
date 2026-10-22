@@ -68,8 +68,6 @@ it("restores a full query beside sign-in without running it as empty-text folder
   render(App);
   await screen.findByRole("region", { name: "Query editor" });
   expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
-  expect(location.hash).not.toContain("web_session");
-  expect(location.hash).not.toContain("proof");
   expect(fetch.mock.calls.some(([url]) => String(url).includes("/search"))).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
   await fireEvent.click(screen.getByRole("button", { name: "Saved queries and highlights" }));

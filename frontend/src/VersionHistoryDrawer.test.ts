@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("version history drawer", () => {
-  it("hides email PDF actions for a trashed node", async () => {
+  it("shows trashed-node actions and requires restore before downloads", async () => {
     const emailVersion = {
       ...version(createdVersionID, 1, "content_create", "a"),
       mime_type: "message/rfc822",
