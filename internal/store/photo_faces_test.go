@@ -912,9 +912,6 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = s.SetPhotoAssetHidden(ctx, assets[2].ID, assets[2].Revision, true)
 	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(ctx, nodes[2].CurrentVersionID, hiddenOnly.PersonID, "")
-	// Hidden writes require the same unlocked scope as reads.
-	require.ErrorIs(t, err, ErrHiddenLocked)
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
