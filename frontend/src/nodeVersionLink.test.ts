@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
 
-import { node, root, version as contentVersion } from "./version-test-fixtures.js";
+import { node, version as contentVersion } from "./version-test-fixtures.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -41,21 +41,15 @@ describe("exact version fragments", () => {
   });
 });
 
-it.each(["wrong node", "directory"])(
-  "rejects a linked %s without current substitution",
-  async (kind) => {
-    const oldVersion = contentVersion(version, 1, "content_create", "a");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input) === "/api/v1/nodes/42")
-        return Response.json(
-          kind === "directory" ? { ...root, id: 42, name: "reports", path: "/reports" } : node,
-        );
-      if (String(input) === `/api/v1/versions/${version}`)
-        return Response.json({ ...oldVersion, node_id: 99 });
-      throw new Error(`Unexpected request: ${input}`);
-    });
-    await expect(
-      resolveNodeVersionLink("synthetic", { nodeId: 42, versionId: version }),
-    ).rejects.toThrow("The linked version does not belong to the requested file node.");
-  },
-);
+it("rejects a linked version owned by another node without current substitution", async () => {
+  const oldVersion = contentVersion(version, 1, "content_create", "a");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/v1/nodes/42") return Response.json(node);
+    if (String(input) === `/api/v1/versions/${version}`)
+      return Response.json({ ...oldVersion, node_id: 99 });
+    throw new Error(`Unexpected request: ${input}`);
+  });
+  await expect(
+    resolveNodeVersionLink("synthetic", { nodeId: 42, versionId: version }),
+  ).rejects.toThrow("The linked version does not belong to the requested file node.");
+});

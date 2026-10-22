@@ -233,7 +233,6 @@
         kind: "versions";
         linked?: Awaited<ReturnType<typeof resolveNodeVersionLink>>;
         fromLink?: boolean;
-        receiptNode?: Node;
       }
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
@@ -938,11 +937,6 @@
   );
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
-  const versionHistoryNode = $derived.by(() => {
-    if (activePanel?.kind !== "versions") return undefined;
-    const node = activePanel.linked?.node ?? selected?.node;
-    return newestNode(node, [selected?.node, activePanel.receiptNode]);
-  });
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
@@ -1489,7 +1483,7 @@
       ) {
         return;
       }
-      applyTagReceipt(receipt, !assigned);
+      handleTagChanged(receipt, !assigned);
       shortcutNotice = assigned
         ? `Removed ${receipt.tag.name} from ${target.node.name}.`
         : `Added ${receipt.tag.name} to ${target.node.name}.`;
@@ -2733,21 +2727,6 @@
     void loadTagCatalog();
   }
 
-  function newestNode(node: Node | undefined, others: (Node | undefined)[]): Node | undefined {
-    for (const other of others)
-      if (node && other?.id === node.id && other.revision > node.revision) node = other;
-    return node;
-  }
-
-  function applyTagReceipt(receipt: TagAssignmentReceipt, assigned: boolean): void {
-    const panel = activePanel?.kind === "versions" && activePanel.fromLink ? activePanel : null;
-    const linkedID =
-      nodeVersionSelection && !("error" in nodeVersionSelection) && nodeVersionSelection.nodeId;
-    if (panel && linkedID === receipt.node.id)
-      panel.receiptNode = newestNode(receipt.node, [panel.receiptNode]);
-    handleTagChanged(receipt, assigned);
-  }
-
   function handleTagChanged(receipt: TagAssignmentReceipt, assigned: boolean): void {
     const selectedChanged = selectedID === receipt.node.id;
     const modalChanged = manageTagsTarget?.node.id === receipt.node.id;
@@ -2929,7 +2908,7 @@
     if (activePanel?.kind !== "versions" || !activePanel.fromLink) return;
     if (nodeVersionLoading) return;
     if (activePanel.linked?.version.id === version.id && !nodeVersionError) return;
-    const node = versionHistoryNode;
+    const node = activePanel.linked?.node;
     if (!node || node.id !== version.node_id) return;
     activePanel.linked = { node, version };
     nodeVersionError = "";
@@ -4591,7 +4570,7 @@
               {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
             </Modal>
           {:else if panel.linked}
-            {@const node = versionHistoryNode!}
+            {@const node = panel.linked.node}
             <VersionHistoryDrawer
               session={webSession}
               {node}
@@ -4872,7 +4851,7 @@
         assignedTotal={selectedTagsTotal}
         disabled={loading}
         onclose={() => (manageTagsTarget = null)}
-        onchanged={applyTagReceipt}
+        onchanged={handleTagChanged}
         onauthfailure={handleFailure}
       />
     {/if}
