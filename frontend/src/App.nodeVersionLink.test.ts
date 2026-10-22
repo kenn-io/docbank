@@ -350,6 +350,25 @@ it("puts ordinary drawer selections in history and preserves other hash keys", a
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
+it("closes row-opened version history when Back removes its address", async () => {
+  history.replaceState(null, "", "/#source=earlier");
+  history.pushState(null, "", `/#${credentials}source=example`);
+  api((url) =>
+    url.includes("/children")
+      ? Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 })
+      : undefined,
+  );
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Version history" }));
+  await within(await screen.findByRole("dialog")).findByText(currentID);
+  expect(location.hash).toBe(`#source=example&node=42&version=${currentID}`);
+
+  history.back();
+  await waitFor(() => expect(location.hash).toBe("#source=earlier"));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
 it("closes row-opened version history when a pending tag removal selects the next file", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
@@ -441,6 +460,7 @@ it("closes row-opened version history when a pending tag removal selects the nex
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByRole("cell", { name: "/reports/example.txt" })).toBeNull();
   expect(screen.getByLabelText("Document authority for other.txt")).toBeTruthy();
+  expect(location.hash).toBe("");
 });
 
 it("replaces an ordinary version drawer when a linked version opens in the same tab", async () => {

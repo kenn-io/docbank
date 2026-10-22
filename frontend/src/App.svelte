@@ -288,7 +288,7 @@
       nodeVersionError = "";
       nodeVersionLoading = false;
       if (!session || !selection) {
-        if (panel?.fromLink) activePanel = null;
+        if (panel) activePanel = null;
         return;
       }
       if (
@@ -2196,7 +2196,7 @@
         ) &&
         !(activePanel.kind === "versions" && activePanel.fromLink)
       )
-        activePanel = null;
+        closePanel(activePanel)();
     }
     selectedID = nodeID;
     selectedLiveNode = null;

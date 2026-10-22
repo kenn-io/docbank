@@ -739,14 +739,15 @@ introducing operation UUID, and the source version for a revert. The current
 head is marked. A revert is a new immutable version and does not erase or
 relabel the earlier one.
 
+Trashed files carry a **Trash** label. Restore the file before downloading a
+version.
+
 Choose **Download** in the complete-version panel to retrieve that version
 through the same private staging, progress, terminal verification, and one-use
 handoff as the current-content action. The version UUID, owning node, SHA-256
 identity, size, and current node revision must all agree before preparation
 begins. Historical versions do not keep a filename timeline, so the browser
 uses the live document's current name.
-Trashed files carry a **Trash** label. Restore the file before downloading a
-version.
 Version comparison remains a CLI or authenticated API workflow.
 
 The drawer reads at most the newest 1,000 versions and says when older history
