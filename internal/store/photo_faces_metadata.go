@@ -18,7 +18,7 @@ type metadataPhotoFace struct {
 	Revision         int64   `json:"revision" db:"revision"`
 	AssertionID      *string `json:"assertion_id" db:"assertion_id"`
 	CreatedAt        string  `json:"created_at" db:"created_at"`
-	NamedAt          *string `json:"named_at,omitzero" db:"named_at"`
+	NamedAt          *string `json:"named_at,omitempty" db:"named_at"`
 }
 
 var photoFaceMetadata = newMetadataTable(metadataTable[metadataPhotoFace]{record: metadataPhotoFace{Type: "photo_face"}, table: "photo_faces", suffix: "ORDER BY face_id", validate: func(v metadataPhotoFace) error {
