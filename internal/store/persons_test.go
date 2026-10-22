@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -356,7 +357,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 
 func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"reactivate", "second face", "create face", "whole-photo mark", "same person", "reassignment", "candidate"} {
+	for _, action := range []string{"reactivate", "second face", "create face", "whole-photo mark", "same person", "reassignment", "candidate", "rejection undo", "rejection redo"} {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
@@ -440,6 +441,19 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			if action == "create face" || action == "whole-photo mark" || action == "candidate" {
 				return
 			}
+			if action == "rejection undo" || action == "rejection redo" {
+				rejected := decideFaceForTest(t, s, node, face.FaceID, grace.PersonID, "reject")
+				undo, err := s.UndoPhotoFaceDecision(ctx, rejected.ReceiptID)
+				require.NoError(t, err)
+				if action == "rejection redo" {
+					_, err = s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
+					require.NoError(t, err)
+				}
+				rows, err = s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+				require.NoError(t, err)
+				require.Equal(t, ada.PersonID, rows[0].PersonID)
+				return
+			}
 			undone, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 			require.NoError(t, err)
 			require.NoError(t, validateFaceDecisionReceipt(undone, undone.ReceiptID))
@@ -453,4 +467,21 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.Equal(t, grace.PersonID, rows[0].PersonID)
 		})
 	}
+}
+
+func TestPeopleRecentSeeksDepictedAssertions(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	rows, err := s.db.QueryContext(t.Context(), `EXPLAIN QUERY PLAN SELECT `+personRecentSQL()+` FROM persons`, false)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.Contains(t, strings.Join(plan, "\n"), "(person_id=? AND role=? AND action=?)", "recency must seek depicted evidence without reading a contact's sender assertions")
 }

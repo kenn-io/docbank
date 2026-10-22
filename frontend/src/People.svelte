@@ -163,7 +163,14 @@
             onperson(person.person_id, person.display_name, !person.photo_summary?.library_count)}
         >
           {@render portrait(person)}
-          <strong>{person.display_name}</strong>
+          <strong
+            >{people.items.some(
+              (peer) =>
+                peer.person_id !== person.person_id && peer.display_name === person.display_name,
+            )
+              ? distinctLabel(person, people.items)
+              : person.display_name}</strong
+          >
           {@render counts(person)}
         </button>
         {#if unlocked && person.photo_summary?.hidden_count !== undefined}<button

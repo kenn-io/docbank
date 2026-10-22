@@ -2575,6 +2575,8 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
 
 CREATE INDEX IF NOT EXISTS person_document_assertions_person
     ON person_document_assertions(person_id, action, content_version_id);
+CREATE INDEX IF NOT EXISTS person_document_assertions_person_role
+    ON person_document_assertions(person_id, role, action, recorded_at);
 
 CREATE TABLE IF NOT EXISTS photo_faces (
     face_id TEXT PRIMARY KEY NOT NULL,
