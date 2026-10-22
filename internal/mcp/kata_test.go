@@ -128,6 +128,7 @@ func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
 		"kata_idempotency_conflict": 409, "kata_evidence_changed": 409, "kata_evidence_unavailable": 404,
 		"kata_evidence_limit": 409, "kata_evidence_unsupported": 409, "kata_timeout": 504,
 		"kata_request_failed": 502,
+		"kata_token_invalid":  403, "kata_evidence_integrity": 500,
 	} {
 		t.Run(code, func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +140,14 @@ func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
 			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
 			output := exportCall(t, server, "get_kata_context", map[string]any{"issue": "docbank#abcd"})
 			require.Equal(t, code, output["code"])
+			switch code {
+			case "kata_token_invalid":
+				require.Equal(t, "Kata token was rejected; configure Kata with that token", output["message"])
+			case "kata_evidence_integrity":
+				require.Equal(t, "Stored document failed verification; do not retry", output["message"])
+			case "kata_incompatible":
+				require.Equal(t, "Kata API schema 0.21.0 through 0.28.x is required.", output["message"])
+			}
 			require.NotContains(t, output["message"], "private")
 			require.NotContains(t, output["message"], "secret")
 		})

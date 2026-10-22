@@ -15,6 +15,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
 )
@@ -475,7 +476,8 @@ func stableDomainError(err error) (string, int) {
 	}
 	switch facts.Code {
 	case "kata_incompatible", "kata_unconfigured", "invalid_kata_evidence", "kata_idempotency_conflict", "kata_evidence_changed", "kata_evidence_unavailable",
-		"kata_evidence_unsupported", "kata_evidence_limit", "kata_timeout", "kata_request_failed", "kata_unauthorized", "kata_forbidden", "kata_issue_unavailable":
+		"kata_evidence_unsupported", "kata_evidence_limit", "kata_timeout", "kata_request_failed", "kata_unauthorized", "kata_forbidden", "kata_issue_unavailable",
+		"kata_token_invalid", "kata_evidence_integrity":
 		return facts.Code, 0
 	case "invalid_text_navigation", "text_navigation_limit",
 		"invalid_text_citation", "citation_unavailable", "citation_limit", "invalid_citation_range",
@@ -523,6 +525,10 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "kata_token_invalid":
+		return "Kata token was rejected; configure Kata with that token"
+	case "kata_evidence_integrity":
+		return "Stored document failed verification; do not retry"
 	case "kata_unauthorized":
 		return "Kata rejected the configured credential; update the Kata connection."
 	case "kata_forbidden":
@@ -530,7 +536,7 @@ func domainErrorMessage(code string) string {
 	case "kata_issue_unavailable":
 		return "Kata issue or project is unavailable."
 	case "kata_incompatible":
-		return "Kata API schema 0.21.0 or newer is required."
+		return "Kata API schema " + kataclient.SupportedSchemaRange() + " is required."
 	case "kata_unconfigured":
 		return "Enable and configure integrations.kata for the selected vault."
 	case "invalid_kata_evidence":

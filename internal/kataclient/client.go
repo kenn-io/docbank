@@ -44,9 +44,14 @@ type Error struct {
 	cause  error
 }
 
+// SupportedSchemaRange describes the Kata API schemas accepted by this client.
+func SupportedSchemaRange() string {
+	return fmt.Sprintf("0.21.0 through 0.%d.x", maxSupportedSchemaMinor)
+}
+
 func (e *Error) Error() string {
 	if e.Code == "incompatible_api" {
-		return fmt.Sprintf("unsupported Kata API schema: require 0.21.0 through 0.%d.x", maxSupportedSchemaMinor)
+		return "unsupported Kata API schema: require " + SupportedSchemaRange()
 	}
 	return fmt.Sprintf("Kata request failed (status %d, code %s)", e.Status, e.Code)
 }

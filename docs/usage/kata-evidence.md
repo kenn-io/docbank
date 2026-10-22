@@ -76,6 +76,7 @@ before looking up the source, even if it has since changed or disappeared.
 The marker search covers every project visible to the credential. If the issue
 moved outside `default_project`, the retry returns the same project error as an
 append. It keeps the moved issue and creates no replacement.
+A create retried after Kata's 7-day replay window, after its issue moved into a project that was then archived, can create a second issue.
 
 Append another passage:
 
@@ -135,7 +136,7 @@ operation error.
 | State | Meaning |
 | --- | --- |
 | `available` | The current original bytes and verified passage match, or the exact rendition remains current. |
-| `changed` | The document's content hash or selected rendition authority changed. |
+| `changed` | The cited file's content or selected rendition authority changed, even if the quoted range still reads the same. |
 | `unavailable` | The document was deleted or trashed, or the cited text is no longer retained. |
 | `unreachable` | The owning Docbank vault could not be reached. Retry later. |
 | `unsupported` | The reference version or shape is unsupported. |
