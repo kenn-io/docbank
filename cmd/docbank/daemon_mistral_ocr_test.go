@@ -238,7 +238,7 @@ func (transport mistralTestTransport) RoundTrip(request *http.Request) (*http.Re
 	forwarded := request.Clone(request.Context())
 	destination, err := url.Parse(transport.server.URL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse Mistral test server URL: %w", err)
 	}
 	forwarded.URL.Scheme, forwarded.URL.Host = destination.Scheme, destination.Host
 	return transport.server.Client().Transport.RoundTrip(forwarded)

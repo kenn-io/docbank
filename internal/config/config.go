@@ -983,11 +983,12 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
 		return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
 	}
-	if profile.AdapterContract == DoclingASRAdapterContract {
+	switch profile.AdapterContract {
+	case DoclingASRAdapterContract:
 		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
 			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
 		}
-	} else if profile.AdapterContract == DoclingDocumentAdapterContract {
+	case DoclingDocumentAdapterContract:
 		hasMarkdown := false
 		for _, role := range profile.RequestedArtifacts {
 			switch document.EvidenceArtifactRole(role) {
