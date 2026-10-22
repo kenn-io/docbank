@@ -139,6 +139,7 @@ Instructions for autonomous coding agents working in this repository.
    make a pull request merge-ready does not authorize ongoing CI monitoring.
 9. Pull requests must have a user-facing benefit or improve the developer
    experience, and the body must say which one.
+10. Write issues and pull requests in English.
 
 ## Releases
 
