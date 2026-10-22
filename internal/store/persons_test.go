@@ -377,6 +377,8 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2001-01-01T00:00:00.000000000Z' WHERE person_id=?`, ada.PersonID)
 			require.NoError(t, err)
+			_, err = s.db.ExecContext(ctx, `UPDATE photo_faces SET named_at='2001-01-01T00:00:00.000000000Z' WHERE face_id=?`, face.FaceID)
+			require.NoError(t, err)
 			if action == "reactivate" {
 				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "retract", FaceID: face.FaceID, Revision: face.Revision})
 				require.NoError(t, err)

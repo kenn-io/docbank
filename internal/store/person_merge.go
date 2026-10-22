@@ -130,9 +130,15 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		stored, err := personMergeReceiptTx(ctx, tx, operationID)
 		replayed, found, err := replayReceipt(stored, err, stored.RequestSHA256 == requestHash, ErrPersonMergeConflict)
-		if err != nil || found {
-			receipt = replayed
+		if err != nil {
 			return err
+		}
+		if found {
+			if err := s.fenceBrowserMergeReplayTx(ctx, tx, replayed); err != nil {
+				return err
+			}
+			receipt = replayed
+			return nil
 		}
 		if err := s.fenceVisiblePeopleTx(ctx, tx, survivorID, absorbedID); err != nil {
 			return err
@@ -253,6 +259,42 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 	var hidden bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions assertion
 		WHERE assertion.person_id IN (?,?) AND NOT `+personVersionVisibleSQL("assertion.content_version_id")+`)`, survivorID, absorbedID).Scan(&hidden); err != nil {
+		return err
+	}
+	if hidden {
+		return fmt.Errorf("%w: unlock Hidden and retry the merge", ErrHiddenLocked)
+	}
+	return nil
+}
+
+// A replay may outlive its browser's Hidden unlock and the absorbed person.
+func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, receipt PersonMergeReceipt) error {
+	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
+		return nil
+	}
+	if err := s.fenceVisiblePeopleTx(ctx, tx, receipt.SurvivorPersonID); err != nil {
+		return err
+	}
+	if _, err := s.hiddenSession(ctx, tx); !errors.Is(err, ErrHiddenLocked) {
+		return err
+	}
+	versions := make([]string, 0, len(receipt.Moved.DeduplicatedAssertions))
+	for _, removed := range receipt.Moved.DeduplicatedAssertions {
+		versions = append(versions, removed.Assertion.ContentVersionID)
+	}
+	ids, err := json.Marshal(receipt.Moved.AssertionIDs)
+	if err != nil {
+		return err
+	}
+	versionIDs, err := json.Marshal(versions)
+	if err != nil {
+		return err
+	}
+	var hidden bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (
+		SELECT content_version_id FROM person_document_assertions WHERE assertion_id IN (SELECT value FROM json_each(?))
+		UNION SELECT value FROM json_each(?)
+	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)`, string(ids), string(versionIDs)).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {

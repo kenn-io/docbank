@@ -100,8 +100,6 @@ it.each([
   "wrong source",
   "wrong operation",
   "missing merge ID",
-  "wrong revision before",
-  "invalid revision after",
   "wrong ETag",
 ])("reloads after merging with a %s receipt", async (result) => {
   const kept = { ...grace, revision: 5, photo_summary: { library_count: 3 } };
@@ -119,8 +117,6 @@ it.each([
               ? { operation_id: "00000000-0000-4000-8000-000000000098" }
               : {}),
             ...(result === "missing merge ID" ? { merge_id: "" } : {}),
-            ...(result === "wrong revision before" ? { survivor_revision_before: 3 } : {}),
-            ...(result === "invalid revision after" ? { survivor_revision_after: 4 } : {}),
           };
     return Response.json(body, { headers: { ETag: result === "wrong ETag" ? '"4"' : '"5"' } });
   });

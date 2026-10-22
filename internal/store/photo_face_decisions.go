@@ -505,16 +505,11 @@ func (s *Store) applyFaceDecisionTx(ctx context.Context, tx *sql.Tx, before *Pho
 	}
 	switch request.Action {
 	case faceDecisionName:
-		a, changed, err := ensurePersonAssertionTx(ctx, tx, face.ContentVersionID, request.PersonID, personAssertionRoleDepicted)
+		a, _, err := ensurePersonAssertionTx(ctx, tx, face.ContentVersionID, request.PersonID, personAssertionRoleDepicted)
 		if err != nil {
 			return err
 		}
-		if !changed && face.AssertionID != a.AssertionID {
-			if err := recordPersonNamingTx(ctx, tx, &a); err != nil {
-				return err
-			}
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=? WHERE face_id=? AND content_version_id=?`, a.AssertionID, face.FaceID, face.ContentVersionID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,named_at=? WHERE face_id=? AND content_version_id=?`, a.AssertionID, nowRFC3339(), face.FaceID, face.ContentVersionID); err != nil {
 			return err
 		}
 		return s.clearNamedFaceCandidatesTx(ctx, tx, before, face.FaceID, request.PersonID, request.Action)
@@ -897,7 +892,7 @@ func restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFac
 				return ErrStaleRevision
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='assert' AND ?=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'withdrawn' WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,recorded_at=?,revision=revision+1 WHERE assertion_id=?`, a.Action, a.PhotoMark, a.Revision, a.Action, a.Action, a.PhotoMark, a.RecordedAt, a.AssertionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='assert' AND ?=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'withdrawn' WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,revision=revision+1 WHERE assertion_id=?`, a.Action, a.PhotoMark, a.Revision, a.Action, a.Action, a.PhotoMark, a.AssertionID); err != nil {
 			return err
 		}
 	}
@@ -996,20 +991,7 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 			}
 			b.Revision = 1
 		}
-		// Naming again changes the time; undo restores the recorded before-state.
-		if b.RecordedAt != a.RecordedAt {
-			newFace := false
-			for j, face := range r.After.Faces {
-				if face.AssertionID == a.AssertionID && r.Before.Faces[j].AssertionID != a.AssertionID {
-					newFace = true
-					break
-				}
-			}
-			if a.Revision <= b.Revision || r.UndoOf == "" && (a.Action != personAssertionActionAssert || b.Action != personAssertionActionWithdrawn && (b.Action != personAssertionActionAssert || !newFace)) {
-				return ErrInvalidPhotoFace
-			}
-		}
-		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
+		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
 			return ErrInvalidPhotoFace
 		}
 	}

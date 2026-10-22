@@ -645,14 +645,12 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
-			now := nowRFC3339()
-			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',recorded_at=?,revision=revision+1 WHERE assertion_id=?`, now, existing.AssertionID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
 			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
-			existing.RecordedAt = now
 			existing.Action = personAssertionActionAssert
 			existing.Revision++
 			return existing, true, nil
@@ -674,16 +672,6 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: personID, Role: role, Action: personAssertionActionAssert, Revision: 1, RecordedAt: nowRFC3339()}
 	_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`, id, versionID, personID, role, assertion.RecordedAt)
 	return assertion, true, err
-}
-
-func recordPersonNamingTx(ctx context.Context, tx *sql.Tx, assertion *PersonDocumentAssertion) error {
-	now := nowRFC3339()
-	if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=?,revision=revision+1 WHERE assertion_id=?`, now, assertion.AssertionID); err != nil {
-		return err
-	}
-	assertion.RecordedAt = now
-	assertion.Revision++
-	return nil
 }
 
 func (s *Store) personCandidateVisibility(ctx context.Context, q metadataQuerier) (string, error) {

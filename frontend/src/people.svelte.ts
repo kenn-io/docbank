@@ -39,9 +39,6 @@ async function readReceipt(
     receipt.operation_id !== operationID ||
     receipt.absorbed_person_id !== source.person_id ||
     receipt.survivor_person_id !== survivor.person_id ||
-    receipt.survivor_revision_before !== survivor.revision ||
-    !Number.isSafeInteger(receipt.survivor_revision_after) ||
-    receipt.survivor_revision_after !== survivor.revision + 1 ||
     response.headers.get("ETag") !== `"${receipt.survivor_revision_after}"`
   )
     throw new Error("Invalid person merge response.");
