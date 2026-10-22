@@ -345,10 +345,8 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			}
 			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true, PhotoSummary: true, GridRecipe: "grid"})
 			require.NoError(t, err)
+			require.Len(t, rows, 1)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
-			require.Empty(t, rows[1].RecentRank)
-			require.Zero(t, rows[1].PhotoSummary.LibraryCount)
-			require.Nil(t, rows[1].PhotoSummary.Face)
 			// Older readable evidence ranks Bob when his newest photo is unavailable.
 			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")
 			_, err = s.MarkPersonInPhoto(ctx, older.CurrentVersionID, bob.PersonID, "")

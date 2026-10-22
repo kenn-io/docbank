@@ -253,12 +253,15 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	require.NoError(t, err)
 	zoe, err := s.CreatePerson(ctx, "Zoe", "operator")
 	require.NoError(t, err)
-	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic recent photo"))
-	require.NoError(t, err)
-	node, err := s.CreateFile(ctx, s.RootID(), "zoe.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, zoe.PersonID, "")
-	require.NoError(t, err)
+	// The People page lists only people in photos; Zoe's is newer.
+	for _, person := range []store.Person{ada, zoe} {
+		hash, size, err := s.Blobs.Write(strings.NewReader("synthetic photo of " + person.DisplayName))
+		require.NoError(t, err)
+		node, err := s.CreateFile(ctx, s.RootID(), person.DisplayName+".jpg", hash, size, "image/jpeg")
+		require.NoError(t, err)
+		_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+		require.NoError(t, err)
+	}
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 	path := "/api/v1/people?limit=1&photo_summary=true&recent_first=true"

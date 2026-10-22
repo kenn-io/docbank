@@ -311,6 +311,23 @@ type PeopleSearchOptions struct {
 	GridRecipe   string
 }
 
+// peopleCandidatesSQL narrows the matches to a typed name prefix and, for the
+// Photos page, to people with a visible depicted photo: Library photos, and
+// Hidden photos too while unlocked.
+func peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []any) {
+	clause, args := "", []any{}
+	if prefix != "" {
+		clause, args = `instr(display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(display_name_folded, ?) AND`, []any{prefix, prefix}
+	}
+	if photosOnly {
+		joins, where := personPhotoSource(unlocked)
+		clause += ` EXISTS(SELECT 1 FROM person_document_assertions assertion
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ AND assertion.person_id=persons.person_id AND assertion.action='assert' AND assertion.role='depicted') AND`
+	}
+	return clause, args
+}
+
 // PeopleByDisplayName returns active people in stable folded-name order, or
 // recent-first when requested.
 func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options PeopleSearchOptions) ([]PersonSearchResult, error) {
@@ -334,12 +351,8 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			rank = personRecentSQL()
 			args = append(args, hideLocked)
 		}
-		prefix := document.FoldPersonName(query)
-		candidates := ""
-		if prefix != "" {
-			candidates = `instr(display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(display_name_folded, ?) AND`
-			args = append(args, prefix, prefix)
-		}
+		candidates, filter := peopleCandidatesSQL(document.FoldPersonName(query), options.PhotoSummary, !hideLocked)
+		args = append(args, filter...)
 		args = append(args, visibleOnly, hideLocked, hideLocked,
 			afterName, options.AfterRecent, options.AfterRecent, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, rank, candidates), args...)
