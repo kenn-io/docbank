@@ -4282,7 +4282,7 @@ it.each([
     expect(screen.queryByRole("button", { name: `Select ${other.name}` })).toBeNull();
     if (hidden) {
       expect(locks).not.toHaveBeenCalled();
-      expect(screen.getByRole("button", { name: "Lock", exact: true })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Lock" })).toBeTruthy();
       expect(location.hash).toBe("");
     }
   },
