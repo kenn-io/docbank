@@ -60,7 +60,7 @@
     const portrait: Portrait = { abort: new AbortController(), releases: [] };
     const { signal } = portrait.abort;
     portraits.set(key, portrait);
-    void people.run(async () => {
+    void (async () => {
       try {
         signal.throwIfAborted();
         const image = await faceCrop(
@@ -75,7 +75,7 @@
         // A failed portrait keeps the person placeholder.
         if (!signal.aborted) people.failure(cause);
       }
-    });
+    })();
   }
   function syncPortraits(rows: PersonSummary[]) {
     const owners = new Map(rows.map((person) => [person.person_id, person]));

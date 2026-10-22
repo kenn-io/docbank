@@ -40,12 +40,33 @@ it("keeps the search text with the applied query when the view returns", async (
   people.dispose();
   await cache.dispose();
 });
-it("renames a person with Library photos", async () => {
+it("renames a person while their portrait preparation is pending", async () => {
   vi.spyOn(api, "listPeople").mockResolvedValue({
     items: [{ ...grace, display_name: "Grace Hopper", revision: 5 }],
   });
-  const people = new People("session", vi.fn());
-  people.items = [grace];
+  const access = new HiddenAccess("session", vi.fn());
+  const people = new People("session", vi.fn(), access);
+  people.items = [
+    {
+      ...grace,
+      photo_summary: {
+        ...grace.photo_summary!,
+        face: {
+          asset_id: "asset",
+          content_version_id: "version",
+          generation_id: "",
+          rotation: 0,
+        },
+      },
+    },
+  ];
+  const prepare = vi.spyOn(api, "preparePhotoPreview").mockImplementation(
+    (_id, _request, options) =>
+      new Promise((_resolve, reject) => {
+        const signal = options!.signal!;
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+  );
   const rename = vi
     .spyOn(api, "renamePerson")
     .mockImplementation(async (_id, _request, _headers) =>
@@ -53,17 +74,20 @@ it("renames a person with Library photos", async () => {
     );
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
   await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
   const dialog = screen.getByRole("dialog", { name: "Rename Grace" });
   await fireEvent.input(within(dialog).getByRole("textbox", { name: "Person name" }), {
     target: { value: "Grace Hopper" },
   });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+  await waitFor(() => expect(rename).toHaveBeenCalledOnce());
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(rename).toHaveBeenCalledOnce();
   expect(screen.getByRole("button", { name: "Grace Hopper 2 Library photos" })).toBeTruthy();
   view.unmount();
   people.dispose();
+  access.dispose();
   await cache.dispose();
 });
 it.each([false, true])("submits selected cards and reports a locked merge=%s", async (locked) => {
