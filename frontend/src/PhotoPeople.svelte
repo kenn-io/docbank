@@ -12,6 +12,7 @@
   import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { APIError } from "./api-transport.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
+  import { personDetail as detail } from "./personLabel.js";
   import { photoFaceCropStyle } from "./photoRotation.js";
   let {
     faces,
@@ -57,8 +58,6 @@
     newName: string;
     people: PersonSummary[];
   }>();
-  const detail = (person: PersonSummary) =>
-    person.identity_label || new Date(person.created_at).toLocaleDateString();
   let selection = $state("");
   let expanded = $state("");
   let previews = $state.raw<

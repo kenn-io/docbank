@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -302,7 +303,46 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	require.Equal(t, []string{people["Bob"].PersonID, cy.PersonID, people["zoe"].PersonID}, page(ctx, recent))
+	full, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false, recent)
+	require.NoError(t, err)
+	require.Equal(t, zoes, []string{full[0].PersonID, full[1].PersonID})
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), recent)[:2])
+}
+
+func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
+	t.Parallel()
+	for _, condition := range []string{"excluded", "trashed", "stale"} {
+		t.Run(condition, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			ada, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			bob, err := s.CreatePerson(ctx, "Bob", "operator")
+			require.NoError(t, err)
+			for index, person := range []Person{ada, bob} {
+				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
+				_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("2026-0%d-01T00:00:00Z", index+1), person.PersonID)
+				require.NoError(t, err)
+				if index == 1 {
+					switch condition {
+					case "excluded":
+						_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET excluded_at='2026-03-01' WHERE asset_id IN (SELECT asset_id FROM photo_files WHERE node_id=?)`, node.ID)
+					case "trashed":
+						_, err = s.db.ExecContext(ctx, `UPDATE nodes SET trashed_at='2026-03-01' WHERE id=?`, node.ID)
+					case "stale":
+						_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("d4"), 4, "image/jpeg")
+					}
+					require.NoError(t, err)
+				}
+			}
+			rows, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			require.NoError(t, err)
+			require.Equal(t, ada.PersonID, rows[0].PersonID)
+			require.Empty(t, rows[1].RecentRank)
+		})
+	}
 }

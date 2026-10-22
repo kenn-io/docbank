@@ -942,11 +942,11 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	rows, err = s.PeopleByDisplayName(ctx, "Ada", "", "", 100, true, options)
 	require.NoError(t, err)
 	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
-	// Unlocking keeps a readable Library portrait ahead of the Hidden key face.
+	// Unlocking restores the selected Hidden key face ahead of Library fallbacks.
 	rows, err = s.PeopleByDisplayName(unlocked, "Ada", "", "", 100, true, options)
 	require.NoError(t, err)
-	require.False(t, rows[0].PhotoSummary.FaceHidden)
-	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
+	require.True(t, rows[0].PhotoSummary.FaceHidden)
+	require.Equal(t, nodes[0].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 	require.Equal(t, int64(2), *rows[0].PhotoSummary.HiddenCount)
 	// A Hidden-only person gets a readable Hidden portrait only while unlocked.
 	_, _, err = s.CreatePhotoFace(unlocked, nodes[2].CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Y: .5, Width: .2, Height: .2}, hiddenOnly.PersonID)

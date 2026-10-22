@@ -234,3 +234,62 @@ it("reports sign-in expiry", async () => {
   expect(people.error).toBe("Sign in");
   people.dispose();
 });
+
+it("keeps renamed cards unique when they cross the saved cursor", async () => {
+  const renamed = { ...ada, display_name: "Zoe", revision: 3 };
+  vi.spyOn(api, "listPeople")
+    .mockResolvedValueOnce({ items: [ada], next_cursor: "next" })
+    .mockResolvedValueOnce({ items: [renamed] })
+    .mockResolvedValueOnce({ items: [grace, renamed] });
+  vi.spyOn(api, "renamePerson").mockResolvedValue({
+    ...renamed,
+    origin: "operator",
+    updated_at: "2026-01-02",
+  });
+  const people = new People("session", vi.fn());
+  await people.load();
+  await people.rename(ada, "Zoe");
+  await people.load("", true);
+  expect(people.items.map((row) => row.person_id)).toEqual(["ada", "grace"]);
+  people.dispose();
+});
+
+it("conceals merge names during a write and after its late failure", async () => {
+  let reject!: (cause: Error) => void;
+  vi.spyOn(api, "mergePerson").mockImplementation(
+    () =>
+      new Promise((_, fail) => {
+        reject = fail;
+      }),
+  );
+  const people = new People("session", vi.fn());
+  merging(people, ada, grace);
+  const pending = people.submitMerge();
+  people.conceal();
+  expect(people.merge).toBeUndefined();
+  reject(new Error("Offline"));
+  await pending;
+  expect(people.merge).toBeUndefined();
+  expect(people.busy).toBe(false);
+  people.dispose();
+});
+
+it("keeps names concealed when stale merge refreshes finish after a scope change", async () => {
+  const finish: ((page: api.PersonPage) => void)[] = [];
+  vi.spyOn(api, "mergePerson").mockRejectedValue(new APIError("Stale", 412, "stale_revision"));
+  vi.spyOn(api, "listPeople").mockImplementation(
+    () => new Promise((resolve) => finish.push(resolve)),
+  );
+  const people = new People("session", vi.fn());
+  merging(people, ada, grace);
+  const pending = people.submitMerge();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(finish).toHaveLength(2);
+  people.conceal();
+  finish[0]!({ items: [ada] });
+  finish[1]!({ items: [grace] });
+  await pending;
+  expect(people.merge).toBeUndefined();
+  people.dispose();
+});
