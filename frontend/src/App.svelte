@@ -2738,6 +2738,9 @@
     const selectedChanged = selectedID === receipt.node.id;
     const modalChanged = manageTagsTarget?.node.id === receipt.node.id;
     if (!selectedChanged && !modalChanged) return;
+    const linked = activePanel?.kind === "versions" ? activePanel.linked : undefined;
+    if (linked?.node.id === receipt.node.id && receipt.node.revision > linked.node.revision)
+      linked.node = receipt.node;
     if (modalChanged && manageTagsTarget) {
       manageTagsTarget = {
         ...manageTagsTarget,
@@ -2754,11 +2757,7 @@
     replaceRows(
       rows.map((row) =>
         row.node.id === receipt.node.id
-          ? {
-              ...row,
-              node: receipt.node,
-              path: receipt.node.path ?? row.path,
-            }
+          ? { ...row, node: receipt.node, path: receipt.node.path ?? row.path }
           : row,
       ),
       true,
