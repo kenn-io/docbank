@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/kataevidence"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -217,7 +218,7 @@ func (a kataArchive) originalText(ctx context.Context, node store.Node) (string,
 func (a kataArchive) readOriginal(ctx context.Context, node store.Node) (string, error) {
 	stream, size, err := a.deps.Blobs.OpenStreamContext(ctx, node.BlobHash)
 	if err != nil {
-		return "", err
+		return "", processing.CitationIntegrityError(err)
 	}
 	defer func() { _ = stream.Close() }()
 	if size != node.Size {
@@ -225,7 +226,7 @@ func (a kataArchive) readOriginal(ctx context.Context, node store.Node) (string,
 	}
 	data, err := io.ReadAll(io.LimitReader(stream, kataOriginalMaxBytes+1))
 	if err != nil {
-		return "", err
+		return "", processing.CitationIntegrityError(err)
 	}
 	if !stream.Verified() || int64(len(data)) != node.Size {
 		return "", document.ErrCitationIntegrity

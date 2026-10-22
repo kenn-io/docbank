@@ -100,21 +100,18 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 
 func kataProblem(err error) *Error {
 	if failure, ok := errors.AsType[*kataclient.Error](err); ok {
-		if failure.Code == "token_invalid" {
+		switch code := failure.Code; {
+		case code == "token_invalid":
 			return NewError(403, "kata_token_invalid", "Kata token was rejected; configure Kata with that token")
-		}
-		switch failure.Status {
-		case http.StatusUnauthorized:
+		case failure.Status == http.StatusUnauthorized:
 			return NewError(401, "kata_unauthorized", "Kata rejected the configured credential; update the Kata connection")
-		case http.StatusForbidden:
+		case failure.Status == http.StatusForbidden:
 			return NewError(403, "kata_forbidden", "Kata denied permission for this operation")
-		case http.StatusNotFound:
+		case failure.Status == http.StatusNotFound:
 			return NewError(404, "kata_issue_unavailable", "Kata issue or project is unavailable")
-		}
-		switch failure.Code {
-		case "incompatible_api":
+		case code == "incompatible_api":
 			return NewError(503, "kata_incompatible", failure.Error())
-		case "invalid_reference", "wrong_project", "project_unavailable":
+		case code == "invalid_reference", code == "wrong_project", code == "project_unavailable":
 			return NewError(422, "invalid_kata_evidence", "Kata issue reference is invalid, unavailable, or outside the configured project")
 		}
 	}
@@ -135,6 +132,8 @@ func kataProblem(err error) *Error {
 		return NewError(409, "kata_evidence_limit", err.Error())
 	case errors.Is(err, kataevidence.ErrUnsupported), errors.Is(err, kataevidence.ErrUnsupportedSource):
 		return NewError(409, "kata_evidence_unsupported", err.Error())
+	case errors.Is(err, document.ErrCitationIntegrity):
+		return NewError(500, "kata_evidence_integrity", "stored document failed verification")
 	case errors.Is(err, context.DeadlineExceeded):
 		return NewError(504, "kata_timeout", "Kata evidence operation timed out; retry creates with the same key")
 	default:
