@@ -23,8 +23,11 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/filter"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"golang.org/x/text/secure/precis"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -625,6 +628,9 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, erro
 	configuration := pdfConfiguration(len(data), limits)
 	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
 	if err != nil {
+		if errors.Is(err, pdfcpu.ErrWrongPassword) {
+			return nil, ErrPDFEncrypted
+		}
 		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
 			return nil, ErrPDFExpandedBytes
 		}
@@ -1891,4 +1897,36 @@ func readPrefix(reader io.ReaderAt, size, limit int64) ([]byte, error) {
 		return nil, errors.New("document bytes changed during signature read")
 	}
 	return buffer, nil
+}
+
+// UnlockPDF decrypts a bounded copy and returns the password that opened it.
+func UnlockPDF(ctx context.Context, data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
+	for _, password := range append([]string{""}, passwords...) {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
+		configuration := pdfConfiguration(len(data), PDFLimits{MaxExpandedBytes: maxBytes, MaxEntryBytes: maxBytes})
+		configuration.UserPW, configuration.OwnerPW = password, password
+		configuration.Eol = types.EolLF
+		var output bytes.Buffer
+		err := api.Decrypt(bytes.NewReader(data), &output, configuration)
+		if errors.Is(err, filter.ErrDecodeLimitExceeded) || int64(output.Len()) > maxBytes {
+			clear(output.Bytes())
+			return nil, "", ErrPDFExpandedBytes
+		}
+		if err == nil {
+			return output.Bytes(), password, nil
+		}
+		clear(output.Bytes())
+		if errors.Is(err, pdfcpu.ErrWrongPassword) {
+			continue
+		}
+		// pdfcpu v0.15.0 rejects some AES-256 password characters during preparation.
+		_, preparationErr := precis.NewIdentifier(precis.BidiRule, precis.Norm(norm.NFKC)).String(password)
+		if preparationErr != nil && errors.Is(err, preparationErr) {
+			continue
+		}
+		return nil, "", fmt.Errorf("decrypt PDF: %w", err)
+	}
+	return nil, "", ErrPDFEncrypted
 }

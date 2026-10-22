@@ -12,6 +12,21 @@ afterEach(() => {
 });
 
 describe("document processing drawer", () => {
+  it("runs processing when a PDF needs a password", async () => {
+    const view = renderProcessingResponse(
+      Promise.resolve(completedProcessingResponse()),
+      ["private"],
+      "pdf_password_required",
+    );
+    const run = await screen.findByRole("button", { name: "Run processing" });
+    await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(run);
+    await waitFor(() =>
+      expect(
+        view.fetchMock.mock.calls.some(([input]) => String(input) === "/api/v1/processing/jobs"),
+      ).toBe(true),
+    );
+  });
   it.each(["report", "error"])(
     "ignores a stale similar %s after a profile change",
     async (outcome) => {
@@ -1109,7 +1124,11 @@ function completedProcessingResponse(): Response {
   );
 }
 
-function renderProcessingResponse(response: Promise<Response>, profiles = ["private"]) {
+function renderProcessingResponse(
+  response: Promise<Response>,
+  profiles = ["private"],
+  reason?: string,
+) {
   let revoked = false;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -1135,6 +1154,7 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
         consent_required: revoked,
         consent_state: revoked ? "revoked" : "active",
         backup_consequence: "none",
+        rendition_ineligible_reason: reason,
       });
     if (path.startsWith("/api/v1/coverage?"))
       return Response.json({

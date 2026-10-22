@@ -575,7 +575,10 @@ Set the source ceiling for retained audio under `[media]`:
 ```toml
 [media]
 max_source_bytes = 4294967296 # 4 GiB; the default and maximum
+pdf_passwords_file = "pdf-passwords.txt" # optional; relative to the config root
 ```
+
+`pdf_passwords_file` supplies passwords for locked PDFs sent to Docling or Mistral. The file must be a current-user-owned regular file with Unix mode 0400 or 0600, or a private protected Windows ACL. It may contain up to 16 KiB. Put one password per line; blank lines are ignored, and spaces are preserved. Restart the daemon when first setting or changing this path. Edits to the file take effect on the next build. See [Password-protected PDFs](usage/document-processing.md#password-protected-pdfs).
 
 `max_source_bytes` accepts 1 through 4,294,967,296 bytes; zero selects the
 default. The daemon uses this ceiling for media HTTP uploads, shared staging

@@ -933,6 +933,9 @@ func (worker *RenditionWorker) classifyAuthorityError(
 }
 
 func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim store.RenditionJobClaim, err error) error {
+	if errors.Is(err, ErrPDFPasswordRequired) {
+		return worker.markFailed(ctx, claim, store.RenditionFailurePDFPasswordRequired, worker.clock().UTC())
+	}
 	// An inspection refusal depends only on the exact source and the configured
 	// limits, so an automatic retry repeats it. A lowered
 	// [media].max_source_bytes reaches already queued work this way. Stale

@@ -1921,3 +1921,25 @@ func TestPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestPDFPasswordFailureReopensQueuedJob(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
+	grantRenditionJobConsent(t, s, request)
+	job, _, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "password-worker", now, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, s.MarkRenditionJobFailed(t.Context(), claim, RenditionFailurePDFPasswordRequired, now))
+	failed, err := s.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, RenditionJobFailed, failed.State)
+	require.Equal(t, RenditionFailurePDFPasswordRequired, failed.FailureCode)
+	require.Equal(t, RenditionPhaseQueued, failed.Phase)
+	reopened, _, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, reopened.ID)
+	require.Equal(t, RenditionJobQueued, reopened.State)
+}

@@ -29,6 +29,9 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
+	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/upload"
 )
 
 //go:embed testdata/docling-pages.json
@@ -1356,4 +1359,73 @@ func writeRecordedJSON(t *testing.T, response http.ResponseWriter, value []byte)
 	response.Header().Set("Content-Type", "application/json")
 	_, err := response.Write(value)
 	require.NoError(t, err)
+}
+
+func TestDoclingUnlocksPDF(t *testing.T) {
+	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
+
+	inspection, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
+		Filename: fixture.metadata.Filename, DeclaredMediaType: "application/pdf",
+		ExpectedBytes: int64(len(source)), ExpectedSHA256: fixture.metadata.SHA256,
+		DescriptorFingerprint: fixture.authorization.DescriptorFingerprint,
+		ProfileFingerprint:    strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64),
+		InputKind: document.RenditionInputOriginalFile, PDFPasswords: []string{"wrong", "open"},
+		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
+		MaxNestingDepth: 1, MaxTextLines: 1000, MaxCharacters: 1 << 20, MaxRecords: 1000, MaxSlides: 100, MaxSheets: 100, MaxCells: 1000, MaxSpineItems: 100, MaxResources: 100, MaxPixels: 1000000, MaxFrames: 100, MaxDurationMS: 1000,
+	})
+	require.NoError(t, err)
+	require.True(t, inspection.Eligible)
+	sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(source)), Directory: t.TempDir()}, inspection, upload.UploadMetadata{Filename: fixture.metadata.Filename})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, sealed.Close()) }()
+	fixture.authorization.CapabilityRecordChecksum = sealed.Metadata().CapabilityRecordChecksum
+	fixture.authorization.ProviderMetadataChecksum = sealed.Metadata().ProviderMetadataChecksum
+	var sent []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/convert/file/async":
+			reader, err := r.MultipartReader()
+			if !assert.NoError(t, err) {
+				return
+			}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if !assert.NoError(t, err) {
+					return
+				}
+				if part.FileName() != "" {
+					sent, err = io.ReadAll(part)
+					if !assert.NoError(t, err) {
+						return
+					}
+				}
+			}
+			writeJSON(t, w, doclingTask("task-1", "success"))
+		case "/v1/result/task-1":
+			writeRecordedJSON(t, w, recordedPagesResponse)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := newClient(t, server.URL, fixture.descriptor, testSecrets{"docling-api": "synthetic-secret"}, server.Client())
+	result, err := document.RenderRendition(t.Context(), client, sealed, fixture.authorization)
+
+	require.NoError(t, err)
+	pages, err := media.CountPDFPages(sent)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), pages)
+	require.NotEqual(t, source, sent)
+	require.NotContains(t, string(sent), "/Encrypt")
+	digest := sha256.Sum256(sent)
+	require.Equal(t, fixture.metadata.SHA256, result.Receipt.SourceSHA256)
+	require.Equal(t, hex.EncodeToString(digest[:]), result.Receipt.UploadSHA256)
+	require.Equal(t, int64(len(sent)), result.Receipt.Usage.InputBytes)
 }

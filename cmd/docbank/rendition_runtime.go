@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"slices"
@@ -42,6 +43,22 @@ type configuredRenditionProvider struct {
 	document.RenditionProvider
 
 	allowedRenditionRequests map[string]struct{}
+	pdfPasswordsFile         string
+	pdfPasswordsSupported    bool
+}
+
+func (provider *configuredRenditionProvider) PDFPasswords() ([]string, bool) {
+	if !provider.pdfPasswordsSupported {
+		return nil, false
+	}
+	if provider.pdfPasswordsFile == "" {
+		return nil, true
+	}
+	passwords, err := config.ReadPDFPasswords(provider.pdfPasswordsFile)
+	if err != nil {
+		slog.Warn("read PDF passwords file", "error", err)
+	}
+	return passwords, true
 }
 
 func (provider *configuredRenditionProvider) Render(
@@ -167,7 +184,8 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, err
 	}
 	bound := &configuredRenditionProvider{RenditionProvider: provider,
-		allowedRenditionRequests: requestFingerprints}
+		allowedRenditionRequests: requestFingerprints, pdfPasswordsFile: cfg.Media.PDFPasswordsFile,
+		pdfPasswordsSupported: configured.AdapterContract == config.MistralOCRAdapterContract || configured.AdapterContract == config.DoclingDocumentAdapterContract}
 	registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
 	return bound, disclosure, nil
 }

@@ -1,4 +1,4 @@
-// Package mediatest builds small deterministic synthetic media containers for
+// Package mediatest builds small synthetic media containers for
 // tests. The WebP and MP4 builders produce minimal headers that satisfy
 // signature and metadata detection; they are not decodable pictures and must
 // not be used as provider probe fixtures.
@@ -16,6 +16,9 @@ import (
 	"io"
 	"math"
 	"slices"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // JPEG returns a solid JPEG of the given dimensions.
@@ -353,3 +356,13 @@ func SizedWAV(size int64) io.Reader {
 type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+// EncryptedPDF returns a synthetic encrypted one-page PDF.
+func EncryptedPDF(userPW, ownerPW string, keyBits int) ([]byte, error) {
+	configuration := model.NewAESConfiguration(userPW, ownerPW, keyBits)
+	var output bytes.Buffer
+	if err := api.Encrypt(bytes.NewReader(PDF()), &output, configuration); err != nil {
+		return nil, fmt.Errorf("encrypt synthetic PDF: %w", err)
+	}
+	return output.Bytes(), nil
+}

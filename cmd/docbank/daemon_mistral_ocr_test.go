@@ -2,22 +2,36 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/safefileio"
 )
 
 func mistralOCRProcessingConfig(t *testing.T) (config.Config, document.RenditionDescriptor) {
@@ -125,4 +139,127 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 		require.Equal(c, "retry_wait", status.State, "%+v", status)
 		require.Equal(c, "transient", status.FailureCode)
 	}, 20*time.Second, 20*time.Millisecond)
+}
+
+func TestMistralPasswordFileProcessing(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(strconv.FormatBool(configured), func(t *testing.T) {
+			cfg, _ := mistralOCRProcessingConfig(t)
+			path := filepath.Join(t.TempDir(), "passwords")
+			if configured {
+				cfg.Media.PDFPasswordsFile = path
+			}
+			t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
+			source, err := mediatest.EncryptedPDF("open", "owner", 256)
+			require.NoError(t, err)
+			var requests atomic.Int64
+			profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+			require.NoError(t, err)
+			bound, ok := profiles["documents"].RenditionProvider.(*configuredRenditionProvider)
+			require.True(t, ok)
+			adapter, err := resolveRenditionAdapter(cfg.RenditionProfiles["documents"])
+			require.NoError(t, err)
+			bound.RenditionProvider, err = adapter.newProvider(environmentCredentialSecrets{variables: map[string]string{"docling": "DOCBANK_TEST_MISTRAL_OCR_KEY"}}, &http.Client{Transport: passwordOCRTransport{t: t, source: source, requests: &requests}})
+			require.NoError(t, err)
+			root := t.TempDir()
+			catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, catalog.Close()) }()
+			blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, blobs.Close()) }()
+			written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
+			require.NoError(t, err)
+			encoding, err := written.EncodingName()
+			require.NoError(t, err)
+			node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "statement.pdf", written.Hash, written.Size, "application/pdf", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+			require.NoError(t, err)
+			service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: t.TempDir(), Lifecycle: t.Context()})
+			require.NoError(t, err)
+			defer func() { require.NoError(t, service.Shutdown(context.Background())) }()
+			cfg.Server.APIKey = "synthetic-key"
+			server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Processing: service})
+			defer server.Close()
+			endpoint := httptest.NewServer(server.Handler())
+			defer endpoint.Close()
+			daemon := daemonconn.New(endpoint.URL, cfg.Server.APIKey)
+			defer func() { require.NoError(t, daemon.Close()) }()
+			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
+			attempts := []string{"", "wrong\n", "wrong space\nopen\n"}
+			if !configured {
+				attempts = attempts[:1]
+			}
+			for _, candidate := range attempts {
+				if candidate == "wrong\n" {
+					file, err := safefileio.CreatePrivateFile(path)
+					require.NoError(t, err)
+					_, err = file.WriteString(candidate)
+					require.NoError(t, err)
+					require.NoError(t, file.Close())
+				} else if candidate != "" {
+					require.NoError(t, os.WriteFile(path, []byte(candidate), 0600))
+				}
+				plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+				require.NoError(t, err)
+				job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+				require.NoError(t, err)
+				wantState, wantFailure := "failed", "pdf_password_required"
+				if strings.Contains(candidate, "open") {
+					wantState, wantFailure = "completed", ""
+				}
+				require.EventuallyWithT(t, func(c *assert.CollectT) {
+					status, err := daemon.ProcessingStatus(t.Context(), job.ID)
+					require.NoError(c, err)
+					require.Equal(c, wantState, status.State)
+					require.Equal(c, wantFailure, status.FailureCode)
+				}, 10*time.Second, 10*time.Millisecond)
+				if wantState == "failed" {
+					require.Zero(t, requests.Load())
+				} else {
+					require.Equal(t, int64(1), requests.Load())
+				}
+			}
+			original, _, err := blobs.OpenStreamContext(t.Context(), written.Hash)
+			require.NoError(t, err)
+			archived, err := io.ReadAll(original)
+			require.NoError(t, err)
+			require.NoError(t, original.Close())
+			require.Equal(t, source, archived)
+			if !configured {
+				return
+			}
+			rendition, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
+			require.NoError(t, err)
+			var text bytes.Buffer
+			_, err = rendition.CopyVerified(&text)
+			require.NoError(t, err)
+			require.NoError(t, rendition.Close())
+			require.Contains(t, text.String(), "Password needle")
+		})
+	}
+}
+
+type passwordOCRTransport struct {
+	t        *testing.T
+	source   []byte
+	requests *atomic.Int64
+}
+
+func (transport passwordOCRTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.requests.Add(1)
+	var wire struct {
+		Document struct {
+			URL string `json:"document_url"`
+		} `json:"document"`
+	}
+	require.NoError(transport.t, json.UnmarshalRead(request.Body, &wire))
+	sent, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+	require.NoError(transport.t, err)
+	pages, err := media.CountPDFPages(sent)
+	require.NoError(transport.t, err)
+	require.Equal(transport.t, int64(1), pages)
+	require.NotEqual(transport.t, transport.source, sent)
+	require.NotContains(transport.t, string(sent), "/Encrypt")
+	body := fmt.Sprintf(`{"model":%q,"pages":[{"index":0,"markdown":"# Password needle","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, mistral.DefaultModel, len(sent))
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 }

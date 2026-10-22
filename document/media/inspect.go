@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
@@ -47,19 +48,20 @@ const (
 type CapabilityReason string
 
 const (
-	CapabilityReasonEligible           CapabilityReason = "eligible"
-	CapabilityReasonUnsupported        CapabilityReason = "unsupported_media_type"
-	CapabilityReasonUnboundedFamily    CapabilityReason = "unbounded_media_family"
-	CapabilityReasonMalformed          CapabilityReason = "malformed_input"
-	CapabilityReasonSourceBytes        CapabilityReason = "source_bytes_exceeded"
-	CapabilityReasonExpandedBytes      CapabilityReason = "expanded_bytes_exceeded"
-	CapabilityReasonEntryBytes         CapabilityReason = "entry_bytes_exceeded"
-	CapabilityReasonEntryCount         CapabilityReason = "entry_count_exceeded"
-	CapabilityReasonNestedContainer    CapabilityReason = "nested_container"
-	CapabilityReasonEncryptedContainer CapabilityReason = "encrypted_container"
-	CapabilityReasonExternalReference  CapabilityReason = "external_reference"
-	CapabilityReasonSemanticUnits      CapabilityReason = "semantic_units_exceeded"
-	CapabilityReasonVisualBounds       CapabilityReason = "visual_bounds_exceeded"
+	CapabilityReasonEligible            CapabilityReason = "eligible"
+	CapabilityReasonUnsupported         CapabilityReason = "unsupported_media_type"
+	CapabilityReasonUnboundedFamily     CapabilityReason = "unbounded_media_family"
+	CapabilityReasonMalformed           CapabilityReason = "malformed_input"
+	CapabilityReasonSourceBytes         CapabilityReason = "source_bytes_exceeded"
+	CapabilityReasonExpandedBytes       CapabilityReason = "expanded_bytes_exceeded"
+	CapabilityReasonEntryBytes          CapabilityReason = "entry_bytes_exceeded"
+	CapabilityReasonEntryCount          CapabilityReason = "entry_count_exceeded"
+	CapabilityReasonNestedContainer     CapabilityReason = "nested_container"
+	CapabilityReasonEncryptedContainer  CapabilityReason = "encrypted_container"
+	CapabilityReasonPDFPasswordRequired CapabilityReason = "pdf_password_required"
+	CapabilityReasonExternalReference   CapabilityReason = "external_reference"
+	CapabilityReasonSemanticUnits       CapabilityReason = "semantic_units_exceeded"
+	CapabilityReasonVisualBounds        CapabilityReason = "visual_bounds_exceeded"
 	// CapabilityReasonEmptySource marks a zero-byte source. InspectCapability
 	// rejects such a policy outright; callers report this reason instead.
 	CapabilityReasonEmptySource CapabilityReason = "empty_source"
@@ -68,10 +70,11 @@ const (
 // InspectionPolicy binds finite preflight limits and downstream authority to
 // one exact source. Every supported family must have an enforceable bound.
 type InspectionPolicy struct {
-	Filename          string `json:"filename"`
-	DeclaredMediaType string `json:"declared_media_type"`
-	ExpectedBytes     int64  `json:"expected_bytes"`
-	ExpectedSHA256    string `json:"expected_sha256"`
+	PDFPasswords      []string `json:"-"`
+	Filename          string   `json:"filename"`
+	DeclaredMediaType string   `json:"declared_media_type"`
+	ExpectedBytes     int64    `json:"expected_bytes"`
+	ExpectedSHA256    string   `json:"expected_sha256"`
 
 	DescriptorFingerprint string                      `json:"descriptor_fingerprint"`
 	ProfileFingerprint    string                      `json:"profile_fingerprint"`
@@ -188,7 +191,7 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 	case strings.HasPrefix(baseType, "image/") || strings.HasPrefix(baseType, "video/"):
 		record = inspectVisualCapability(data, baseType, policy)
 	case baseType == "application/pdf" || ext == ".pdf":
-		record = inspectPDF(data, policy)
+		record = inspectPDF(data, &policy)
 	case strings.HasPrefix(baseType, "audio/"):
 		record = CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnboundedFamily,
 			MediaFamily: "audio", MediaType: baseType, Format: strings.TrimPrefix(ext, ".")}
@@ -1294,17 +1297,28 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 	return record
 }
 
-func inspectPDF(data []byte, policy InspectionPolicy) CapabilityRecord {
+func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaFamily: "pdf", MediaType: "application/pdf", Format: "pdf"}
 	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{
 		MaxExpandedBytes: policy.MaxExpandedBytes,
 		MaxEntryBytes:    policy.MaxEntryBytes,
 		MaxEntries:       policy.MaxEntries,
 	})
+	if errors.Is(err, formatdetect.ErrPDFEncrypted) && len(policy.PDFPasswords) > 0 {
+		unlocked, password, unlockErr := formatdetect.UnlockPDF(context.Background(), data, policy.PDFPasswords, policy.MaxExpandedBytes)
+		err = unlockErr
+		if err == nil {
+			policy.PDFPasswords = []string{password}
+			measurements, err = formatdetect.InspectPDF(unlocked, formatdetect.PDFLimits{
+				MaxExpandedBytes: policy.MaxExpandedBytes, MaxEntryBytes: policy.MaxEntryBytes, MaxEntries: policy.MaxEntries,
+			})
+			clear(unlocked)
+		}
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, formatdetect.ErrPDFEncrypted):
-			record.Reason = CapabilityReasonEncryptedContainer
+			record.Reason = CapabilityReasonPDFPasswordRequired
 		case errors.Is(err, formatdetect.ErrPDFExpandedBytes):
 			record.Reason = CapabilityReasonExpandedBytes
 		case errors.Is(err, formatdetect.ErrPDFEntryBytes):

@@ -22,5 +22,5 @@ func (record CapabilityRecord) UploadCapability() document.UploadCapability {
 		Pixels:                measurements.Pixels, Frames: measurements.Frames, DurationMS: measurements.DurationMS, Pages: measurements.Pages,
 		MaxSourceBytes: policy.MaxSourceBytes, MaxPixels: policy.MaxPixels, MaxFrames: policy.MaxFrames,
 		MaxDurationMS: policy.MaxDurationMS, MaxPages: policy.MaxPages,
-	})
+	}, policy.PDFPasswords)
 }

@@ -166,7 +166,13 @@
   }
 
   async function execute(): Promise<void> {
-    if (!plan || plan.rendition_ineligible_reason || !node.current_version_id) return;
+    if (
+      !plan ||
+      (plan.rendition_ineligible_reason &&
+        plan.rendition_ineligible_reason !== "pdf_password_required") ||
+      !node.current_version_id
+    )
+      return;
     cancelProcessing();
     const active = new AbortController();
     processingController = active;
@@ -500,7 +506,10 @@
         <Button
           size="sm"
           tone="info"
-          disabled={running || loading || !!plan.rendition_ineligible_reason}
+          disabled={running ||
+            loading ||
+            (!!plan.rendition_ineligible_reason &&
+              plan.rendition_ineligible_reason !== "pdf_password_required")}
           onclick={() => void execute()}
         >
           {#if running}<Spinner size={14} /> Running…{:else}<ActivityIcon

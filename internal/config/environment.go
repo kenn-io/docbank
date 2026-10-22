@@ -105,3 +105,28 @@ func validSecret(value string) bool {
 	}
 	return true
 }
+
+// ReadPDFPasswords reads an owner-only password file, preserving spaces.
+func ReadPDFPasswords(path string) ([]string, error) {
+	file, err := openSecret(path)
+	if err != nil {
+		return nil, fmt.Errorf("open PDF passwords file: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, (16<<10)+1))
+	closeErr := file.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("read PDF passwords file: %w", err)
+	}
+	defer clear(data)
+	if len(data) > 16<<10 {
+		return nil, errors.New("PDF passwords file exceeds 16 KiB")
+	}
+	var passwords []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line != "" {
+			passwords = append(passwords, line)
+		}
+	}
+	return passwords, nil
+}

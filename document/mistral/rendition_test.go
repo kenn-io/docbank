@@ -22,7 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/renderpdf"
+	"go.kenn.io/docbank/document/upload"
 )
 
 var _ document.RenditionProvider = (*RenditionClient)(nil)
@@ -1058,4 +1061,57 @@ func testMultipagePDF(pages int) []byte {
 	_, _ = fmt.Fprintf(&output,
 		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
 	return output.Bytes()
+}
+
+func TestMistralUnlocksPDF(t *testing.T) {
+	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	policy := testPolicy(t, 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	descriptor := renditionDescriptor(t, policy, manifest, "pdf")
+	fixture := renditionFixture(t, descriptor, source)
+
+	inspection, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
+		Filename: fixture.metadata.Filename, DeclaredMediaType: "application/pdf",
+		ExpectedBytes: int64(len(source)), ExpectedSHA256: fixture.metadata.SHA256,
+		DescriptorFingerprint: fixture.authorization.DescriptorFingerprint,
+		ProfileFingerprint:    strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64),
+		InputKind: document.RenditionInputOriginalFile, PDFPasswords: []string{"wrong", "open"},
+		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
+		MaxNestingDepth: 1, MaxTextLines: 1000, MaxCharacters: 1 << 20, MaxRecords: 1000, MaxSlides: 100, MaxSheets: 100, MaxCells: 1000, MaxSpineItems: 100, MaxResources: 100, MaxPixels: 1000000, MaxFrames: 100, MaxDurationMS: 1000,
+	})
+	require.NoError(t, err)
+	require.True(t, inspection.Eligible)
+	sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(source)), Directory: t.TempDir()}, inspection, upload.UploadMetadata{Filename: fixture.metadata.Filename})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, sealed.Close()) }()
+	fixture.authorization.CapabilityRecordChecksum = sealed.Metadata().CapabilityRecordChecksum
+	fixture.authorization.ProviderMetadataChecksum = sealed.Metadata().ProviderMetadataChecksum
+	var sent []byte
+
+	client, err := NewRenditionProvider(Profile{Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor, SecretBinding: "mistral-ocr"}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var wire struct {
+			Document struct {
+				URL string `json:"document_url"`
+			} `json:"document"`
+		}
+		require.NoError(t, json.UnmarshalRead(r.Body, &wire))
+		sent, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+		require.NoError(t, err)
+		response := fmt.Sprintf(`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"# Synthetic","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(sent))
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: r}, nil
+	})})
+	require.NoError(t, err)
+	result, err := document.RenderRendition(t.Context(), client, sealed, fixture.authorization)
+
+	require.NoError(t, err)
+	pages, err := media.CountPDFPages(sent)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), pages)
+	require.NotEqual(t, source, sent)
+	require.NotContains(t, string(sent), "/Encrypt")
+	digest := sha256.Sum256(sent)
+	require.Equal(t, fixture.metadata.SHA256, result.Receipt.SourceSHA256)
+	require.Equal(t, hex.EncodeToString(digest[:]), result.Receipt.UploadSHA256)
+	require.Equal(t, int64(len(sent)), result.Receipt.Usage.InputBytes)
 }
