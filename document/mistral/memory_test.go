@@ -7,7 +7,7 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,7 +19,7 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 	original := testPDF("synthetic memory input")
 	policy := testPolicy(t, 1024, 10)
 	staged := prepareTestDocument(t, policy, original)
-	temporary := t.TempDir()
+	temporary := filepath.Join(t.TempDir(), "nonexistent")
 	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(name, temporary)
 	}
@@ -52,9 +52,6 @@ func TestPrepareMemoryProcessesBytesWithoutDisk(t *testing.T) {
 	uploaded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(decoded.Document.URL, "data:"+mediaTypePDF+";base64,"))
 	require.NoError(t, err)
 	assert.Equal(t, original, uploaded)
-	entries, err := os.ReadDir(temporary)
-	require.NoError(t, err)
-	assert.Empty(t, entries)
 
 	retained := prepared.contents
 	require.Equal(t, original, retained)
