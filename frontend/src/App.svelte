@@ -600,7 +600,7 @@
       ? albumPhotos
       : mapMode
         ? mapPhotos
-        : photoPath === "/photos/albums"
+        : photoPath === "/photos/albums" || photoPath === "/photos/people"
           ? undefined
           : state?.photos;
     if (photos?.hiding || photos?.trashing || (photoConcealed && photos?.loading)) return;
