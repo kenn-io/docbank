@@ -26924,7 +26924,7 @@ type ListPeopleQuery struct {
 	Limit  *int    `json:"limit,omitempty"`
 	Cursor *string `json:"cursor,omitempty"`
 
-	// PhotoSummary Add Library photo counts and one Library card portrait.
+	// PhotoSummary Add Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
 	PhotoSummary *bool `json:"photo_summary,omitempty"`
 
 	// RecentFirst Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.

@@ -93,9 +93,17 @@ it.each([false, true])("submits selected cards and reports a locked merge=%s", a
     });
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Select Ada" }));
+  await fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: `Select Ada · ${new Date(ada.created_at).toLocaleDateString()}`,
+    }),
+  );
   expect(screen.getByRole("button", { name: "Merge" }).hasAttribute("disabled")).toBe(true);
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Select Grace" }));
+  await fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: `Select Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+    }),
+  );
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   const dialog = screen.getByRole("dialog", { name: "Merge people" });
   // Both cards show their Library evidence side by side.
@@ -121,8 +129,16 @@ it("clears the selected cards and open merge when People is concealed", async ()
   people.items = [{ ...ada, photo_summary: { library_count: 3 } }, grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Select Ada" }));
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Select Grace" }));
+  await fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: `Select Ada · ${new Date(ada.created_at).toLocaleDateString()}`,
+    }),
+  );
+  await fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: `Select Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+    }),
+  );
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   const dialog = screen.getByRole("dialog", { name: "Merge people" });
   expect(within(dialog).getByText("3 Library photos")).toBeTruthy();
@@ -196,9 +212,18 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   const detail = new Date(same.created_at).toLocaleDateString();
-  const checkboxes = screen.getAllByRole("checkbox", { name: "Select Alex" });
+  const checkboxes = [
+    screen.getByRole("checkbox", { name: `Select Alex · ${detail} · alex-1` }),
+    screen.getByRole("checkbox", { name: `Select Alex · ${detail} · alex-2` }),
+    screen.getByRole("checkbox", { name: "Select Alex · alex@example.org" }),
+  ];
   await fireEvent.click(checkboxes[0]!);
   await fireEvent.click(checkboxes[1]!);
+  expect(
+    within(screen.getByRole("region", { name: "Selected people" })).getByText(
+      `Alex · ${detail} · alex-1 and Alex · ${detail} · alex-2 selected`,
+    ),
+  ).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   let dialog = screen.getByRole("dialog", { name: "Merge people" });
   await fireEvent.click(
@@ -211,7 +236,7 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
   ).toBeTruthy();
   await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await fireEvent.click(checkboxes[1]!);
-  await fireEvent.click(screen.getAllByRole("checkbox", { name: "Select Alex" })[2]!);
+  await fireEvent.click(checkboxes[2]!);
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
   dialog = screen.getByRole("dialog", { name: "Merge people" });
   expect(within(dialog).getByRole("radio", { name: `Keep Alex · ${detail}` })).toBeTruthy();

@@ -721,14 +721,14 @@ it.each(["exact", "absent", "broad", "case"])(
     });
     const grouped = result === "broad" || result === "case";
     const query = result === "broad" ? "Al" : "Alex";
-    const person = (index: number): api.PersonSummary => ({
-      person_id: `person-${index}`,
-      display_name: "Alex",
-      display_name_folded: "alex",
-      state: "curated",
-      revision: 1,
-      created_at: "2026-01-01T00:00:00Z",
-    });
+    const people = Array.from({ length: 300 }, (_, index) =>
+      personSummary(`person-${index}`, {
+        display_name: "Alex",
+        display_name_folded: "alex",
+        revision: 1,
+        created_at: "2026-01-01T00:00:00Z",
+      }),
+    );
     let finish!: (page: api.PersonPage) => void;
     let attempts = 0;
     const lost = vi.fn();
@@ -739,7 +739,7 @@ it.each(["exact", "absent", "broad", "case"])(
         if (!cursor)
           return {
             items: Array.from({ length: 100 }, (_, index) => ({
-              ...person(index),
+              ...people[index]!,
               ...(grouped
                 ? {}
                 : {
@@ -781,7 +781,7 @@ it.each(["exact", "absent", "broad", "case"])(
     if (result === "case") {
       await act(() =>
         finish({
-          items: Array.from({ length: 100 }, (_, i) => person(100 + i)),
+          items: Array.from({ length: 100 }, (_, i) => people[100 + i]!),
           next_cursor: "last",
           same_name_continues: true,
         }),
@@ -801,16 +801,16 @@ it.each(["exact", "absent", "broad", "case"])(
           result === "absent"
             ? []
             : result === "exact"
-              ? [person(100)]
+              ? [people[100]!]
               : [
                   ...(result === "case"
                     ? Array.from({ length: 100 }, (_, i) => ({
-                        ...person(200 + i),
+                        ...people[200 + i]!,
                         display_name: "ALEX",
                       }))
-                    : [person(100)]),
+                    : [people[100]!]),
                   ...(result === "broad"
-                    ? [{ ...person(101), display_name: "Alice", display_name_folded: "alice" }]
+                    ? [{ ...people[101]!, display_name: "Alice", display_name_folded: "alice" }]
                     : []),
                 ],
         next_cursor: result === "broad" ? "more" : undefined,

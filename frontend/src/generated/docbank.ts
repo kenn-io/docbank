@@ -9329,7 +9329,7 @@ query?: string;
 limit?: number;
 cursor?: string;
 /**
- * Add Library photo counts and one Library card portrait.
+ * Add Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
  */
 photo_summary?: boolean;
 /**
