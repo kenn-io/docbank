@@ -70,12 +70,10 @@ describe("version history drawer", () => {
     );
     const close = vi.fn();
 
-    const drawer = render(VersionHistoryDrawer, {
+    render(VersionHistoryDrawer, {
       session: "short-lived",
-      pinnedVersion: versions[0],
       node: { ...node, current_version_id: replacedVersionID },
       path: "/Reports/quarterly-report.txt",
-      onselect: vi.fn(),
       onclose: close,
       onauthfailure: vi.fn(),
     });
@@ -90,7 +88,11 @@ describe("version history drawer", () => {
     expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/nodes/42/versions?limit=1000&offset=0");
 
-    await drawer.rerender({ pinnedVersion: versions[2] });
+    const createdHeading = screen.getByText("Created");
+    const createdButton = createdHeading.closest("button");
+    expect(createdButton).toBeTruthy();
+    await fireEvent.click(createdButton!);
+
     expect(screen.getByText("a".repeat(64))).toBeTruthy();
     expect(screen.queryByText("Revert source")).toBeNull();
     expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
@@ -128,12 +130,10 @@ describe("version history drawer", () => {
         });
       });
 
-    const drawer = render(VersionHistoryDrawer, {
+    render(VersionHistoryDrawer, {
       session: "short-lived",
-      pinnedVersion: versions[0],
       node,
       path: "/Reports/quarterly-report.txt",
-      onselect: vi.fn(),
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
     });
@@ -143,12 +143,11 @@ describe("version history drawer", () => {
     await vi.waitFor(() => expect(downloadSignal).toBeTruthy());
 
     await fireEvent.click(screen.getByText("Created").closest("button")!);
-    await drawer.rerender({ pinnedVersion: versions[1] });
 
     await vi.waitFor(() => expect(downloadSignal?.aborted).toBe(true));
   });
 
-  it("waits for the parent to accept the newest version and later clicks", async () => {
+  it("keeps the pinned version until the parent accepts a linked selection", async () => {
     const newest = version(currentVersionID, 3, "content_replace", "c");
     const older = version(createdVersionID, 1, "content_create", "a");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -159,19 +158,21 @@ describe("version history drawer", () => {
       session: "short-lived",
       node,
       path: "/Reports/example.txt",
+      pinnedVersion: older,
       onselect,
       onclose: vi.fn(),
       onauthfailure: vi.fn(),
     });
     await screen.findByText("2 retained versions");
-    expect(onselect).toHaveBeenCalledWith(newest);
+    expect(onselect).not.toHaveBeenCalled();
+    expect(screen.getByText(createdVersionID)).toBeTruthy();
+    expect(screen.queryByText(currentVersionID)).toBeNull();
+    await fireEvent.click(screen.getByText("Replaced").closest("button")!);
+    expect(onselect).toHaveBeenCalledExactlyOnceWith(newest);
+    expect(screen.getByText(createdVersionID)).toBeTruthy();
     expect(screen.queryByText(currentVersionID)).toBeNull();
     await drawer.rerender({ pinnedVersion: newest });
     expect(screen.getByText(currentVersionID)).toBeTruthy();
-    await fireEvent.click(screen.getByText("Created").closest("button")!);
-    expect(onselect).toHaveBeenLastCalledWith(older);
     expect(screen.queryByText(createdVersionID)).toBeNull();
-    await drawer.rerender({ pinnedVersion: older });
-    expect(screen.getByText(createdVersionID)).toBeTruthy();
   });
 });

@@ -288,7 +288,7 @@
       nodeVersionError = "";
       nodeVersionLoading = false;
       if (!session || !selection) {
-        if (panel) activePanel = null;
+        if (panel?.fromLink) activePanel = null;
         return;
       }
       if (
@@ -2904,19 +2904,15 @@
   }
 
   function selectLinkedVersion(version: generated.ContentVersion): void {
-    if (activePanel?.kind !== "versions") return;
+    if (activePanel?.kind !== "versions" || !activePanel.fromLink) return;
     if (activePanel.linked?.version.id === version.id && !nodeVersionLoading && !nodeVersionError)
       return;
     const node = versionHistoryNode;
     if (!node || node.id !== version.node_id) return;
-    const initial = !activePanel.linked;
     activePanel.linked = { node, version };
-    if (initial) photoNavigation.replace(history.state, nodeVersionURL(version));
-    else {
-      const state = { ...history.state };
-      delete state.photoReturn;
-      pushPhotoHistory(state, nodeVersionURL(version));
-    }
+    const state = { ...history.state };
+    delete state.photoReturn;
+    pushPhotoHistory(state, nodeVersionURL(version));
     nodeVersionHash = location.hash;
   }
 
@@ -2930,7 +2926,7 @@
   function closePanel(panel: Panel | null): () => void {
     return () => {
       if (activePanel === panel) {
-        if (panel?.kind === "versions") {
+        if (panel?.kind === "versions" && panel.fromLink) {
           photoNavigation.replace(history.state, nodeVersionURL());
           nodeVersionHash = location.hash;
         }
@@ -4567,23 +4563,31 @@
         {/key}
       {/if}
       {#if panel.kind === "versions"}
-        {#if panel.fromLink && !panel.linked && (nodeVersionLoading || nodeVersionError)}
-          <Modal title="Linked content version" onclose={closePanel(panel)}>
-            {#if nodeVersionError}<p role="alert">{nodeVersionError}</p>
-            {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
-          </Modal>
-        {:else if panel.linked || (!snapshotActive && selected?.node.kind === "file")}
-          {@const node = versionHistoryNode!}
+        {#if panel.fromLink}
+          {#if !panel.linked && (nodeVersionLoading || nodeVersionError)}
+            <Modal title="Linked content version" onclose={closePanel(panel)}>
+              {#if nodeVersionError}<p role="alert">{nodeVersionError}</p>
+              {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
+            </Modal>
+          {:else if panel.linked}
+            {@const node = versionHistoryNode!}
+            <VersionHistoryDrawer
+              session={webSession}
+              {node}
+              path={node.path ?? node.name}
+              pinnedVersion={panel.linked.version}
+              resolving={nodeVersionLoading}
+              unavailable={nodeVersionError}
+              onselect={selectLinkedVersion}
+              onclose={closePanel(panel)}
+              onauthfailure={handleFailure}
+            />
+          {/if}
+        {:else if !snapshotActive && selected?.node.kind === "file"}
           <VersionHistoryDrawer
             session={webSession}
-            {node}
-            path={panel.linked
-              ? (node.path ?? (selected?.node.id === node.id ? selected.path : node.name))
-              : selected!.path}
-            pinnedVersion={panel.linked?.version}
-            resolving={panel.fromLink && nodeVersionLoading}
-            unavailable={panel.fromLink ? nodeVersionError : ""}
-            onselect={selectLinkedVersion}
+            node={selected.node}
+            path={selected.path}
             onclose={closePanel(panel)}
             onauthfailure={handleFailure}
           />

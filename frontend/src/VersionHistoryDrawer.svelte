@@ -28,7 +28,7 @@
     pinnedVersion?: ContentVersion;
     resolving?: boolean;
     unavailable?: string;
-    onselect: (version: ContentVersion) => void;
+    onselect?: (version: ContentVersion) => void;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
@@ -46,11 +46,18 @@
   }: Props = $props();
 
   let page = $state<ContentVersionPage | null>(null);
+  let selectedVersionID = $state("");
   let loading = $state(true);
   let error = $state("");
   let generation = 0;
 
-  const selectedVersion = $derived(resolving || unavailable ? undefined : pinnedVersion);
+  const selectedVersion = $derived(
+    onselect
+      ? resolving || unavailable
+        ? undefined
+        : pinnedVersion
+      : page?.items.find((version) => version.id === selectedVersionID),
+  );
 
   onMount(() => {
     void load();
@@ -71,12 +78,12 @@
       );
       if (request !== generation) return;
       page = next;
-      if (!pinnedVersion && next.items[0]) onselect(next.items[0]);
+      if (!onselect) selectedVersionID = next.items[0]?.id ?? "";
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
-        if (!pinnedVersion) onclose();
+        if (!onselect) onclose();
         return;
       }
       error = cause instanceof Error ? cause.message : String(cause);
@@ -153,7 +160,7 @@
                 level="default"
                 padding="sm"
                 selected={version.id === selectedVersion?.id}
-                onclick={() => onselect(version)}
+                onclick={() => (onselect ? onselect(version) : (selectedVersionID = version.id))}
                 ariaLabel={`${transitionLabel(version.transition_kind)} at ${formatDate(version.recorded_at)}`}
                 eyebrow={transitionLabel(version.transition_kind)}
                 meta={formatDate(version.recorded_at)}

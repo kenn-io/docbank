@@ -728,9 +728,10 @@ newest version appears first. Each entry identifies whether the content was
 created, replaced, or restored from a prior version, along with its recorded
 time, node revision, logical size, and version UUID.
 
-The address includes `#node=<node ID>&version=<version UUID>`. Share it to open
-that exact version, including versions older than the newest 1,000 listed in
-the drawer. Browser Back and Forward restore the selected version. Missing,
+Open a link with `#node=<node ID>&version=<version UUID>` to inspect that exact
+version, including versions older than the newest 1,000 listed in the drawer.
+For drawers opened from these links, selecting a version updates the address,
+and browser Back and Forward restore the selected version. Missing,
 purged, or mismatched links show an unavailable message.
 
 Selecting an entry shows its complete record: full version UUID, SHA-256
