@@ -60,15 +60,13 @@ it.each(["valid", "empty", "wrong person", "invalid revision", "wrong ETag"])(
             ...(result === "wrong person" ? { person_id: "someone-else" } : {}),
             ...(result === "invalid revision" ? { revision: 0 } : {}),
           };
-    const rename = vi
-      .spyOn(api, "renamePerson")
-      .mockResolvedValue(
-        Response.json(body, {
-          headers: {
-            ETag: result === "wrong ETag" ? '"4"' : result === "invalid revision" ? '"0"' : '"3"',
-          },
-        }),
-      );
+    const rename = vi.spyOn(api, "renamePerson").mockResolvedValue(
+      Response.json(body, {
+        headers: {
+          ETag: result === "wrong ETag" ? '"4"' : result === "invalid revision" ? '"0"' : '"3"',
+        },
+      }),
+    );
     const changed = vi.fn();
     const people = new People("session", vi.fn(), undefined, changed);
     people.items = [ada];
