@@ -7,14 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testExtractorFingerprint = "d325514d29d8e8ec9d0ce14c44beade5efeba49f6d9083baebf525118f45f83e"
-
 func TestLookupRequiresTheExactQualifiedTuple(t *testing.T) {
 	query := Query{
 		CatalogID:        "pdf",
 		Capability:       CapabilityMetadata,
 		Evidence:         "TestExtractSourceMetadataUsesAuthoritativePDFInfo",
-		ImplementationID: testExtractorFingerprint,
+		ImplementationID: sourceMetadataExtractorID,
 		InputKind:        InputOriginalFile,
 	}
 	qualification, found := Lookup(query)

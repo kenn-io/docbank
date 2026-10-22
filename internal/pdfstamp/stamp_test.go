@@ -20,7 +20,7 @@ func validRecipe(t *testing.T) Recipe {
 		FontName: "Helvetica", FontSizePoints: 9, Color: "#000000", Opacity: 1,
 		Units: "point", RotationPolicy: "follow_page",
 		EngineIdentity: EngineIdentity{
-			Name: "pdfcpu", Version: "v0.16.3", API: "AddWatermarksMap",
+			Name: "pdfcpu", Version: QualifiedPDFCPUEngineVersion, API: "AddWatermarksMap",
 			Options: []string{"onTop=true", "update=restamp"},
 		},
 	}

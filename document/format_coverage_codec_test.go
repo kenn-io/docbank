@@ -8,9 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/formatqualification"
 )
-
-const qualifiedMetadataFingerprint = "d325514d29d8e8ec9d0ce14c44beade5efeba49f6d9083baebf525118f45f83e"
 
 func TestFormatCoverageCanonicalRoundTripAndRejections(t *testing.T) {
 	record := validFormatCoverageRecord()
@@ -155,6 +154,13 @@ func TestDecodeFormatCoverageReturnsDeepCanonicalCopy(t *testing.T) {
 }
 
 func validFormatCoverageRecord() FormatCoverageV1 {
+	metadataQualification := formatqualification.LookupEvidence(formatqualification.EvidenceQuery{
+		CatalogID: "pdf", Capability: formatqualification.CapabilityMetadata,
+		Evidence: "TestExtractSourceMetadataUsesAuthoritativePDFInfo",
+	})
+	if len(metadataQualification) != 1 {
+		panic("expected one registered PDF metadata qualification")
+	}
 	capabilities := completeCapabilityStates(CapabilityUnsupported)
 	capabilities[CapabilityMetadata] = CapabilityStateV1{
 		State: CapabilityQualified, Evidence: "TestExtractSourceMetadataUsesAuthoritativePDFInfo",
@@ -170,7 +176,7 @@ func validFormatCoverageRecord() FormatCoverageV1 {
 		}},
 		GeneratedBy: CoverageSourcesV1{
 			BoundProviders: []string{}, CatalogRows: 1,
-			ExtractorID: qualifiedMetadataFingerprint,
+			ExtractorID: metadataQualification[0].ImplementationID,
 		},
 		Pending: []PendingFormatV1{},
 	}

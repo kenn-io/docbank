@@ -13,7 +13,11 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-const RecipeContractV1 = "bates-stamp/v1"
+const (
+	RecipeContractV1 = "bates-stamp/v1"
+	// QualifiedPDFCPUEngineVersion is the pdfcpu version qualified for Bates stamping.
+	QualifiedPDFCPUEngineVersion = "v0.16.3"
+)
 
 var supportedPositions = map[string]bool{
 	"top-left": true, "top-center": true, "top-right": true,
@@ -86,9 +90,9 @@ func (r Recipe) Validate() error {
 		return errors.New("bates-stamp/v1 requires the follow_page rotation policy")
 	}
 	wantOptions := []string{"onTop=true", "update=restamp"}
-	if r.EngineIdentity.Name != "pdfcpu" || r.EngineIdentity.Version != "v0.16.3" ||
+	if r.EngineIdentity.Name != "pdfcpu" || r.EngineIdentity.Version != QualifiedPDFCPUEngineVersion ||
 		r.EngineIdentity.API != "AddWatermarksMap" || !slices.Equal(r.EngineIdentity.Options, wantOptions) {
-		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.16.3 engine")
+		return fmt.Errorf("bates-stamp/v1 requires the qualified pdfcpu %s engine", QualifiedPDFCPUEngineVersion)
 	}
 	return nil
 }
