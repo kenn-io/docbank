@@ -153,6 +153,7 @@ func TestPersonFacePreviewsCanSelectExactVersion(t *testing.T) {
 	_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("ff"), 128, "image/jpeg")
 	require.NoError(t, err)
 
+	require.NoError(t, s.PersonPhotoPreviewSource(ctx, assets[0], versions[0], person.PersonID))
 	page, err := s.PersonFacePreviews(ctx, person.PersonID, "grid-recipe", false, versions[0], faceID)
 	require.NoError(t, err)
 	require.Equal(t, PersonFacePreviewPage{Items: []PersonFacePreview{{AssetID: assets[0], ContentVersionID: versions[0], Box: &document.FaceBox{X: .1, Y: .2, Width: .3, Height: .4}}}}, page)
@@ -208,9 +209,6 @@ func TestPersonPhotoPreviewSourceFollowsAssignment(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorIs(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, other.PersonID), ErrNotFound)
 	_, err = s.DecidePhotoFace(ctx, source.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, PersonID: person.PersonID, Revision: face.Revision + 2})
-	require.NoError(t, err)
-	require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
-	_, _, err = s.ReplaceContent(ctx, source.ID, source.Revision, fakeHash("b2"), 20, "application/octet-stream")
 	require.NoError(t, err)
 	require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
 }

@@ -261,7 +261,7 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
 
-func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
+func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
@@ -283,11 +283,14 @@ func TestPeoplePageProjectionAndBrowserEdits(t *testing.T) {
 	var first api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
 	require.Len(t, first.Items, 1)
+	require.Equal(t, zoe.PersonID, first.Items[0].PersonID)
 	require.NotNil(t, first.Items[0].PhotoSummary)
 	response, body = get(t, ts, path+"&cursor="+first.NextCursor, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var second api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
+	require.Len(t, second.Items, 1)
+	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
 	for _, changed := range []struct {
 		query  string
 		unlock bool

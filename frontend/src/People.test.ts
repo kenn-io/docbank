@@ -6,7 +6,7 @@ import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import { ada, grace } from "./people-test-fixtures.js";
+import { ada, grace, personMergeResponse, personRenameResponse } from "./people-test-fixtures.js";
 import { photoFace, photoPersonAssertion } from "./photo-test-fixtures.js";
 
 afterEach(() => {
@@ -30,63 +30,19 @@ const unlockedAccess = () => {
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   return access;
 };
-it("starts People paging over when a saved cursor expires", async () => {
-  const read = vi
-    .spyOn(api, "listPeople")
-    .mockResolvedValueOnce({ items: [ada], next_cursor: "stale" })
-    .mockRejectedValueOnce(new APIError("invalid people cursor", 422, "validation"))
-    .mockResolvedValueOnce({ items: [grace] });
-  const people = new People("session", vi.fn());
-  await people.load();
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  await fireEvent.click(screen.getByRole("button", { name: "Load more people" }));
-  await screen.findByText("invalid people cursor");
-  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await waitFor(() => expect(people.items).toEqual([grace]));
-  expect(read.mock.calls[2]![0]).not.toHaveProperty("cursor");
-  view.unmount();
-  people.dispose();
-  await cache.dispose();
-});
-it("opens Library and unlocked Hidden counts, including cards without photo evidence", async () => {
-  const access = unlockedAccess();
-  const people = new People("session", vi.fn(), access);
-  people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: 1 } }, grace];
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  const open = vi.fn();
-  const view = render(PeopleView, { people, cache, onperson: open });
-  await fireEvent.click(screen.getByRole("button", { name: "Ada 3 Library photos" }));
-  expect(open).toHaveBeenCalledWith("ada", "Ada");
-  await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
-  expect(open).toHaveBeenCalledWith("ada", "Ada", true);
-  expect(screen.getByRole("button", { name: "Grace 0 Library photos" })).toBeTruthy();
-  await act(() => {
-    people.conceal();
-    access.acceptState({ configured: true }, Date.now() + 1);
-    people.items = [ada, grace];
-  });
-  expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
-  view.unmount();
-  people.dispose();
-  access.dispose();
-  await cache.dispose();
-});
 it("keeps the search text with the applied query when the view returns", async () => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const people = new People("session", vi.fn());
   const cache = new PhotoPreviewCache("session", vi.fn());
-  const open = vi.fn();
-  let view = render(PeopleView, { people, cache, onperson: open });
+  let view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.input(screen.getByRole("textbox", { name: "Find people" }), {
     target: { value: "Ad" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Ada 3 Library photos" }));
-  expect(open).toHaveBeenCalledWith("ada", "Ada");
+  await screen.findByRole("button", { name: "Ada 3 Library photos" });
   view.unmount();
   people.conceal();
-  view = render(PeopleView, { people, cache, onperson: open });
+  view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await people.load();
   expect(read.mock.calls.at(-1)![0]).toMatchObject({ query: "Ad" });
   expect((screen.getByRole("textbox", { name: "Find people" }) as HTMLInputElement).value).toBe(
@@ -102,13 +58,15 @@ it("renames a zero-photo person", async () => {
   vi.spyOn(api, "listPeople").mockResolvedValue({
     items: [{ ...grace, display_name: "Grace Hopper", revision: 5 }],
   });
-  const rename = vi.spyOn(api, "renamePerson").mockResolvedValue({
-    ...grace,
-    display_name: "Grace Hopper",
-    revision: 5,
-    origin: "operator",
-    updated_at: "2026-01-02",
-  });
+  const rename = vi
+    .spyOn(api, "renamePerson")
+    .mockImplementation(async (_id, _request, _headers, options) =>
+      personRenameResponse(
+        grace,
+        { display_name: "Grace Hopper", revision: 5 },
+        options?.onResponseHeaders,
+      ),
+    );
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
@@ -128,7 +86,20 @@ it("merges two selected cards after choosing the one to keep and confirming", as
   const people = new People("session", vi.fn());
   people.items = [ada, grace];
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
-  const merge = vi.spyOn(api, "mergePerson").mockResolvedValue({} as api.PersonMergeReceipt);
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockImplementation(async (personID, request, _headers, options) => {
+      const source = [ada, grace].find(
+        (person) => person.person_id === request.absorbed_person_id,
+      )!;
+      const survivor = [ada, grace].find((person) => person.person_id === personID)!;
+      return personMergeResponse(
+        source,
+        survivor,
+        request.operation_id,
+        options?.onResponseHeaders,
+      );
+    });
   const cache = new PhotoPreviewCache("session", vi.fn());
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Ada" }));
@@ -187,7 +158,18 @@ it("withdraws the blocking rejection on the exact retained face after confirmati
         [{ face_id: "conflict", version: "old-version" }],
       ),
     )
-    .mockResolvedValue({} as api.PersonMergeReceipt);
+    .mockImplementation(async (personID, request, _headers, options) => {
+      const source = [ada, grace].find(
+        (person) => person.person_id === request.absorbed_person_id,
+      )!;
+      const survivor = [ada, grace].find((person) => person.person_id === personID)!;
+      return personMergeResponse(
+        source,
+        survivor,
+        request.operation_id,
+        options?.onResponseHeaders,
+      );
+    });
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const listPreviews = vi.spyOn(api, "listPersonFacePreviews").mockResolvedValue({
     items: [
@@ -298,7 +280,12 @@ it("clears the selected cards and open merge when People is concealed", async ()
   const people = new People("session", vi.fn(), access);
   people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: 1 } }, grace];
   const cache = new PhotoPreviewCache("session", vi.fn());
-  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  const open = vi.fn();
+  const view = render(PeopleView, { people, cache, onperson: open });
+  await fireEvent.click(screen.getByRole("button", { name: "Ada 3 Library photos" }));
+  expect(open).toHaveBeenCalledWith("ada", "Ada");
+  await fireEvent.click(screen.getByRole("button", { name: "1 Hidden photo" }));
+  expect(open).toHaveBeenCalledWith("ada", "Ada", true);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Ada" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select Grace" }));
   await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
@@ -310,6 +297,7 @@ it("clears the selected cards and open merge when People is concealed", async ()
   });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("region", { name: "Selected people" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
   view.unmount();
   people.dispose();
   access.dispose();

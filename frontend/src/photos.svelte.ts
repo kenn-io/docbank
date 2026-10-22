@@ -331,7 +331,7 @@ export class Photos {
   }
   baseQuery = $state.raw<Query>(photoQuery);
   query = $state.raw<Query>(photoQuery);
-  personFilter = $state<{ id: string; name: string }>();
+  personFilter = $state<{ id: string; name: string; scope?: number }>();
   // queryResets counts accepted resetQuery calls; the search box remounts on it.
   queryResets = $state(0);
   timeline = $state<CaptureDayFacet | undefined>();

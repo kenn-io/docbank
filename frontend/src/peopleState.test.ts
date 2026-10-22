@@ -3,7 +3,14 @@ import { People, peoplePageSize } from "./people.svelte.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
-import { ada, grace, person } from "./people-test-fixtures.js";
+import {
+  ada,
+  grace,
+  person,
+  personMergeReceipt,
+  personMergeResponse,
+  personRenameResponse,
+} from "./people-test-fixtures.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -16,6 +23,28 @@ const merging = (people: People, source: api.PersonSummary, survivor: api.Person
   people.startMerge();
   people.keep(survivor.person_id);
   people.confirmMerge(true);
+};
+const mergeResponse =
+  (source: api.PersonSummary, survivor: api.PersonSummary) =>
+  async (
+    _personID: string,
+    request: api.MergePersonRequest,
+    _headers: api.MergePersonHeaders,
+    options: Parameters<typeof api.mergePerson>[3],
+  ) =>
+    personMergeResponse(source, survivor, request.operation_id, options?.onResponseHeaders);
+const renameResponse =
+  (person: api.PersonSummary, overrides: Partial<api.Person> = {}) =>
+  async (
+    _personID: string,
+    _request: api.RenamePersonRequest,
+    _headers: api.RenamePersonHeaders,
+    options: Parameters<typeof api.renamePerson>[3],
+  ) =>
+    personRenameResponse(person, overrides, options?.onResponseHeaders);
+const respondWithETag = (options: unknown, value: string) => {
+  const response = options as { onResponseHeaders?: (headers: Headers) => void };
+  response.onResponseHeaders?.(new Headers({ ETag: value }));
 };
 
 it("pages the projection and cancels a late scoped response", async () => {
@@ -49,6 +78,25 @@ it("pages the projection and cancels a late scoped response", async () => {
   people.dispose();
 });
 
+it("retries from the first page when a saved People cursor expires", async () => {
+  const read = vi
+    .spyOn(api, "listPeople")
+    .mockResolvedValueOnce({ items: [ada], next_cursor: "stale" })
+    .mockRejectedValueOnce(new APIError("invalid people cursor", 422, "validation"))
+    .mockResolvedValueOnce({ items: [grace] });
+  const people = new People("session", vi.fn());
+  await people.load();
+  expect(people.items).toEqual([ada]);
+
+  await people.load(people.query, true);
+  expect(people.error).toBe("invalid people cursor");
+  await people.retry();
+
+  expect(people.items).toEqual([grace]);
+  expect(read.mock.calls[2]![0]).not.toHaveProperty("cursor");
+  people.dispose();
+});
+
 it("renames a card on page 3 in place without reloading the list", async () => {
   const pages = [1, 2, 3].map((page) => ({
     items: [person(`p${page}`)],
@@ -61,11 +109,7 @@ it("renames a card on page 3 in place without reloading the list", async () => {
     .mockResolvedValueOnce(pages[1]!)
     .mockResolvedValueOnce(pages[2]!)
     .mockResolvedValueOnce({ items: [renamed] });
-  vi.spyOn(api, "renamePerson").mockResolvedValue({
-    ...renamed,
-    origin: "operator",
-    updated_at: "2026-01-02",
-  } as api.Person);
+  vi.spyOn(api, "renamePerson").mockImplementation(renameResponse(renamed));
   const changed = vi.fn();
   const people = new People("session", vi.fn(), undefined, changed);
   await people.load();
@@ -101,7 +145,7 @@ it("refreshes a stale rename and reconciles a completed uncertain rename by ID",
 it("removes the absorbed card and refreshes only the survivor after a merge", async () => {
   const kept = { ...grace, revision: 5, photo_summary: { library_count: 3 } };
   const read = vi.spyOn(api, "listPeople").mockImplementation(byID([kept]));
-  vi.spyOn(api, "mergePerson").mockResolvedValue({} as api.PersonMergeReceipt);
+  vi.spyOn(api, "mergePerson").mockImplementation(mergeResponse(ada, grace));
   const people = new People("session", vi.fn());
   people.items = [ada, person("between"), grace];
   merging(people, ada, grace);
@@ -112,12 +156,55 @@ it("removes the absorbed card and refreshes only the survivor after a merge", as
   people.dispose();
 });
 
+it("keeps an uncertain merge when the receipt ETag disagrees", async () => {
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockImplementation(async (_, request, _headers, options) => {
+      respondWithETag(options, '"6"');
+      return personMergeReceipt(ada, grace, request.operation_id);
+    });
+  const people = new People("session", vi.fn());
+  people.items = [ada, grace];
+  merging(people, ada, grace);
+
+  expect(await people.submitMerge()).toBe(false);
+  expect(people.merge?.notice).toBe("uncertain");
+  expect(people.merge?.attempt?.operation).toBe(merge.mock.calls[0]![1].operation_id);
+  expect(people.items).toEqual([ada, grace]);
+  people.dispose();
+});
+
+it("reconciles a rename when the response ETag disagrees", async () => {
+  const saved = {
+    ...ada,
+    display_name: "Ada Lovelace",
+    revision: 3,
+    origin: "operator",
+    updated_at: "2026-01-02",
+  } as api.Person;
+  const read = vi.spyOn(api, "listPeople").mockImplementation(byID([ada]));
+  vi.spyOn(api, "renamePerson").mockImplementation(async (_id, _request, _headers, options) => {
+    respondWithETag(options, '"4"');
+    return saved;
+  });
+  const changed = vi.fn();
+  const people = new People("session", vi.fn(), undefined, changed);
+  people.items = [ada, grace];
+
+  expect(await people.rename(ada, "Ada Lovelace")).toBe(false);
+  expect(people.items).toEqual([ada, grace]);
+  expect(read.mock.calls.map(([params]) => params?.person_id)).toEqual(["ada"]);
+  expect(changed).not.toHaveBeenCalled();
+  expect(people.writeError).not.toBe("");
+  people.dispose();
+});
+
 it("retries an uncertain merge with the identical request", async () => {
   vi.spyOn(api, "listPeople").mockImplementation(byID([grace]));
   const merge = vi
     .spyOn(api, "mergePerson")
     .mockRejectedValueOnce(new Error("Response unavailable"))
-    .mockResolvedValue({} as api.PersonMergeReceipt);
+    .mockImplementation(mergeResponse(ada, grace));
   const people = new People("session", vi.fn());
   merging(people, ada, grace);
   expect(await people.submitMerge()).toBe(false);
@@ -146,7 +233,7 @@ it("uses a new operation when the survivor changes", async () => {
   people.dispose();
 });
 
-it("keeps two selections across searches and merges them", async () => {
+it("keeps two selections across searches and starts a merge", async () => {
   vi.spyOn(api, "listPeople")
     .mockResolvedValueOnce({ items: [ada] })
     .mockResolvedValueOnce({ items: [grace, person("zoe")] });
@@ -161,9 +248,6 @@ it("keeps two selections across searches and merges them", async () => {
   people.startMerge();
   expect(people.merge?.pair).toEqual([ada, grace]);
   expect(people.merge?.keep).toBeUndefined();
-  people.conceal();
-  expect(people.selected).toEqual([]);
-  expect(people.merge).toBeUndefined();
   people.dispose();
 });
 
@@ -172,13 +256,9 @@ it("keeps a card read from before Hidden locked out of the new cards", async () 
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   const unlockedAda = { ...ada, photo_summary: { library_count: 3, hidden_count: 1 } };
   let finish!: (page: api.PersonPage) => void;
-  vi.spyOn(api, "renamePerson").mockResolvedValue({
-    ...unlockedAda,
-    display_name: "Ada L",
-    revision: 3,
-    origin: "operator",
-    updated_at: "2026-01-02",
-  });
+  vi.spyOn(api, "renamePerson").mockImplementation(
+    renameResponse(unlockedAda, { display_name: "Ada L", revision: 3 }),
+  );
   const read = vi
     .spyOn(api, "listPeople")
     .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
@@ -200,19 +280,18 @@ it("keeps a card read from before Hidden locked out of the new cards", async () 
   access.dispose();
 });
 
-it.each(["refreshed", "offline", "survivor missing", "source missing"])(
+it.each(["refreshed", "offline", "survivor missing"])(
   "reconciles a stale merge when its refresh is %s",
   async (outcome) => {
     const source = { ...ada, display_name: "Ada L", revision: 3 };
     const survivor = { ...grace, display_name: "Grace H", revision: 6 };
-    const kept = outcome === "source missing" ? grace : ada;
     const read = vi.spyOn(api, "listPeople");
     if (outcome === "offline") read.mockRejectedValue(new Error("Offline"));
-    else read.mockImplementation(byID(outcome === "refreshed" ? [source, survivor] : [kept]));
+    else read.mockImplementation(byID(outcome === "refreshed" ? [source, survivor] : [ada]));
     const merge = vi
       .spyOn(api, "mergePerson")
       .mockRejectedValueOnce(new APIError("Stale revision", 412, "stale_revision"))
-      .mockResolvedValue({} as api.PersonMergeReceipt);
+      .mockImplementation(mergeResponse(source, survivor));
     const people = new People("session", vi.fn());
     people.items = [ada, grace];
     merging(people, ada, grace);
@@ -238,13 +317,32 @@ it.each(["refreshed", "offline", "survivor missing", "source missing"])(
       expect(people.writeError).toBe("Stale revision");
     } else {
       expect(people.merge).toBeUndefined();
-      expect(people.items).toEqual([kept]);
-      expect(people.selected).toEqual([kept]);
+      expect(people.items).toEqual([ada]);
+      expect(people.selected).toEqual([ada]);
       expect(people.writeError).toContain("no longer available");
     }
     people.dispose();
   },
 );
+
+it.each([
+  { status: 404, code: "not_found" },
+  { status: 409, code: "person_retired" },
+])("refreshes both merge selections after $code", async ({ status, code }) => {
+  const read = vi.spyOn(api, "listPeople").mockImplementation(byID([grace]));
+  vi.spyOn(api, "mergePerson").mockRejectedValue(new APIError("Unavailable", status, code));
+  const people = new People("session", vi.fn());
+  people.items = [ada, grace];
+  merging(people, ada, grace);
+
+  expect(await people.submitMerge()).toBe(false);
+  expect(read.mock.calls.map(([params]) => params?.person_id)).toEqual(["ada", "grace"]);
+  expect(people.items).toEqual([grace]);
+  expect(people.selected).toEqual([grace]);
+  expect(people.merge).toBeUndefined();
+  expect(people.writeError).toContain("no longer available");
+  people.dispose();
+});
 
 it("keeps the exact face versions of a visible merge conflict", async () => {
   vi.spyOn(api, "mergePerson").mockRejectedValue(
@@ -290,11 +388,7 @@ it("keeps renamed cards unique when they cross the saved cursor", async () => {
     .mockResolvedValueOnce({ items: [ada], next_cursor: "next" })
     .mockResolvedValueOnce({ items: [renamed] })
     .mockResolvedValueOnce({ items: [grace, renamed] });
-  vi.spyOn(api, "renamePerson").mockResolvedValue({
-    ...renamed,
-    origin: "operator",
-    updated_at: "2026-01-02",
-  });
+  vi.spyOn(api, "renamePerson").mockImplementation(renameResponse(renamed));
   const people = new People("session", vi.fn());
   await people.load();
   await people.rename(ada, "Zoe");

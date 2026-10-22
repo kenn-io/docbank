@@ -39,12 +39,13 @@ export function isCurrentSessionError(cause: unknown, activeSession: string): bo
 
 export interface SessionOptions extends RequestInit {
   session?: string;
+  onResponseHeaders?: (headers: Headers) => void;
 }
 
 // Orval's transport hook adds the scoped credential and preserves problem details.
 export async function sessionResponse<_T>(
   url: string,
-  { session = "", ...init }: SessionOptions,
+  { session = "", onResponseHeaders, ...init }: SessionOptions,
   allowNotModified = false,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
@@ -83,6 +84,7 @@ export async function sessionResponse<_T>(
     requestSessionByError.set(error, session);
     throw error;
   }
+  onResponseHeaders?.(response.headers);
   return response;
 }
 
