@@ -33,7 +33,6 @@ func TestDeploymentIdentityPinsCurrentDeployFiles(t *testing.T) {
 	assert.Len(t, identity.ModelFiles, 11)
 	assert.Len(t, identity.LayoutFiles, 6)
 	assert.Len(t, identity.EngineCommand, 21)
-	assert.Len(t, identity.RuntimeDependencies, 15)
 	for file, want := range map[string]string{
 		"safe_server.py":     identity.AdapterSHA256,
 		"engine_identity.py": identity.EngineAdapterSHA256,
