@@ -265,9 +265,10 @@ mutexes on the real clock.
 
 All repository workflows use GitHub-hosted runners. The main CI workflow uses
 Ubuntu 24.04 for Linux jobs and Windows Server 2025 for Windows amd64. Windows
-arm64 uses `windows-11-vs2026-arm` with two package shards. Pull requests call
-`ci.yml` from `main`, so changes to that workflow take effect for pull requests
-after merge. Workflow validation runs against the proposed workflow changes.
+arm64 uses `windows-11-vs2026-arm`. Each Windows architecture runs four package
+shards. Pull requests call `ci.yml` from `main`, so changes to that workflow take
+effect for pull requests after merge. Workflow validation runs against the
+proposed workflow changes.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
 by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
