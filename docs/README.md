@@ -113,6 +113,62 @@ Run commands from the repository root:
 Screenshot generation is a separate reviewed workflow. It never runs during a
 documentation build or deployment.
 
+### Does this page need a screenshot?
+
+Every published image is captured from a real daemon by the Playwright harness
+in `frontend/screenshots/`. One failing capture blocks the whole set from
+publishing, and each image must be inspected again whenever the interface
+under it changes. Add one only when the reader needs to see the interface to
+act on the page.
+
+A screenshot earns its place when:
+
+- the reader must find a control in a dense layout or on a narrow screen;
+- the result is visual, such as a grid, map, comparison, or color assignment;
+- the page is an entry point (README, product page, or tour) and the image
+  shows what Docbank does.
+
+Use text instead when:
+
+- the step names a control by its label. **Export page CSV** in bold is enough.
+- the content is text, such as headers, receipts, CLI output, JSON, or an
+  error. Put it in a code block so it stays searchable and easy to update.
+- the image would show a confirmation or simple form that repeats the
+  paragraph above it.
+- it differs from an image already on the page by one field, state, or
+  viewport.
+- the facts are a comparison of options or states. Use a table.
+
+### What does a new published image need?
+
+Before adding a name to `scripts/docs-assets.txt`, make sure the image has:
+
+1. **An owning page.** Embed it in the page that owns the fact, in the
+   change that adds it. Other pages may reuse it. An image no page embeds
+   does not belong in the manifest.
+2. **A reader question.** The alt text says what the reader sees. The
+   surrounding text answers the question without the image.
+3. **A spec in the default run.** `make docs-screenshots` must produce it with
+   the environment `frontend/screenshots/run.mjs` sets. Opt-in proof specs do
+   not run in CI or the default run, so they stop working unnoticed; never
+   feed the published set from one. Prefer adding a capture to an existing
+   spec that already seeds the right vault.
+4. **A small synthetic fixture.** Seed only the data the image shows. Wait for
+   visible end states; a capture that depends on catching work mid-progress
+   fails on fast machines.
+5. **A runtime bound.** The complete default run takes about two minutes, and
+   most captures take a few seconds. Keep a new spec under 20 seconds, and
+   explain in the pull request when it needs more.
+
+When a page stops embedding an image, remove it from the manifest and drop its
+capture call in the same change.
+
+The screenshot that [pull requests changing the web app or TUI](../AGENTS.md#git-rules)
+must include is separate. It shows reviewers the changed interface and never
+enters the published set.
+
+### Publish a new set
+
 1. Run `make docs-screenshots`. The harness starts a real daemon with a
    temporary synthetic vault and writes the complete capture set beneath
    `.superpowers/screenshots/`.

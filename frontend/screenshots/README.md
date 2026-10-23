@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-23
 ---
 
 # Documentation screenshots
@@ -28,6 +28,10 @@ The command builds the frontend and Docbank binary in `bin/`, seeds owner-privat
 synthetic vaults, captures the real interfaces, stops its daemons, and removes
 the vaults. `DOCBANK_TELEMETRY_ENABLED=0` disables telemetry for every spec.
 Do not run another build while a capture is using the binary or embedded assets.
+
+Before adding a published image, check it against
+[Does this page need a screenshot?](../../docs/README.md#does-this-page-need-a-screenshot)
+and the requirements that follow it.
 
 ## Review and publish the complete set
 
