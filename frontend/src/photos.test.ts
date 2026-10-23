@@ -3438,7 +3438,7 @@ it.each(["semantic", "hybrid"] as const)(
   },
 );
 
-it.each(["fallback", "metadata transition", "late counts after recovery"])(
+it.each(["fallback", "metadata transition", "date drill-down", "late counts after recovery"])(
   "keeps the right live timeline across %s between ranked and fallback results",
   async (transition) => {
     const late = transition === "late counts after recovery";
@@ -3497,6 +3497,7 @@ it.each(["fallback", "metadata transition", "late counts after recovery"])(
       photos.setView("timeline");
       fallback = true;
       if (transition === "metadata transition") await photos.setQuery({ ...photoQuery });
+      else if (transition === "date drill-down") await photos.selectDate("2024-02-29");
       else await photos.refresh();
       await vi.waitFor(() => expect(photos.timeline?.total).toBe(7));
       expect(counts).toHaveBeenCalledOnce();
