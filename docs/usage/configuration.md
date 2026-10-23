@@ -86,6 +86,15 @@ profile selects stays staged. See the [audio configuration reference](../configu
 for disclosure-fingerprint calculation and the restriction on sharing a descriptor
 across deployments.
 
+For document conversion, configure Docling with
+`adapter_contract = "docbank-docling-document/v1"` or Mistral OCR with
+`adapter_contract = "docbank-mistral-ocr/v1"`. Mistral accepts PDFs and requires
+a capability manifest, the EU endpoint, and
+a request timeout of at most ten minutes. Re-probe after a model re-pin,
+then recompute the descriptor and disclosure fingerprints. See the
+[Docling](../configuration.md#document-conversion-with-docling) and
+[Mistral](../configuration.md#document-ocr-with-mistral) configuration references.
+
 The embedded Go API follows the same boundary: `ProcessingOptions` receives
 provider values and their secret handling directly, while
 `document.ProcessingProfileV1` remains immutable non-secret policy. A caller

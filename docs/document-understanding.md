@@ -819,9 +819,10 @@ when it contains a large embedded image.
 The receipt records both source and normalized identities, the PDF hash, the
 page count, the policy, and the runtime identities. `Result.Source` is a
 fresh `application/pdf` source. The receipt does not authorize upload. The
-Mistral adapter reuses this receipt for its configured office route. No daemon
-option or CLI operation is added. Native office authority remains separate
-when the render policy is absent.
+Mistral adapter reuses this receipt for its configured office route, which
+remains Go-only. The daemon runs the PDF rendition route through a configured
+[Mistral OCR profile](configuration.md#document-ocr-with-mistral). Native office
+authority remains separate when the render policy is absent.
 
 ## Package boundary
 

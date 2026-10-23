@@ -536,7 +536,7 @@ func renditionAuthorizationIdentity(
 		MediaFamily:              authorization.MediaFamily, MediaType: authorization.MediaType,
 		InputKind:                authorization.InputKind,
 		DiscloseFilename:         authorization.DiscloseFilename,
-		AllowedArtifactRoles:     slices.Clone(authorization.AllowedArtifactRoles),
+		AllowedArtifactRoles:     append([]EvidenceArtifactRole{}, authorization.AllowedArtifactRoles...),
 		MaxProviderMarkdownBytes: authorization.MaxProviderMarkdownBytes,
 		MaxArtifactBytes:         authorization.MaxArtifactBytes, MaxArtifacts: authorization.MaxArtifacts,
 		MaxTotalResultBytes: authorization.MaxTotalResultBytes,

@@ -322,20 +322,29 @@ func voyageRuntimeProfile(profile config.EmbeddingProfileConfig, modelInput docu
 }
 
 func voyageDirectFilePolicy(profile config.EmbeddingProfileConfig) (voyage.Policy, voyage.CapabilityManifest, error) {
-	file, err := os.Open(profile.Runtime.CapabilityManifest)
+	manifest, err := loadCapabilityManifest(profile.Runtime.CapabilityManifest, "voyage", voyage.DecodeCapabilityManifest)
 	if err != nil {
-		return voyage.Policy{}, voyage.CapabilityManifest{}, errors.New("voyage capability manifest is unavailable")
-	}
-	manifest, decodeErr := voyage.DecodeCapabilityManifest(file)
-	closeErr := file.Close()
-	if decodeErr != nil || closeErr != nil {
-		return voyage.Policy{}, voyage.CapabilityManifest{}, errors.Join(decodeErr, closeErr)
+		return voyage.Policy{}, voyage.CapabilityManifest{}, err
 	}
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: profile.Model, Dimension: profile.Dimensions,
 		Media:         media.Policy{MaxBytes: profile.MaxInputBytes, AllowStill: true, AllowVideo: true},
 		MaxBatchItems: profile.MaxBatchItems, MaxRequestBytes: profile.Runtime.MaxRequestBytes,
 		MaxResponseBytes: profile.MaxResponseBytes})
 	return policy, manifest, err
+}
+
+func loadCapabilityManifest[T any](path, provider string, decode func(io.Reader) (T, error)) (T, error) {
+	var zero T
+	file, err := os.Open(path)
+	if err != nil {
+		return zero, fmt.Errorf("%s capability manifest is unavailable", provider)
+	}
+	manifest, decodeErr := decode(file)
+	closeErr := file.Close()
+	if decodeErr != nil || closeErr != nil {
+		return zero, errors.Join(decodeErr, closeErr)
+	}
+	return manifest, nil
 }
 
 func finalizeVoyageEmbeddingDescriptor(profile voyage.EmbeddingProfile) (voyage.EmbeddingProfile, error) {

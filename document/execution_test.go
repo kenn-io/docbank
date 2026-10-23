@@ -140,6 +140,32 @@ func TestRenditionExecutionIdentityRequiresDisclosedFilename(t *testing.T) {
 	require.ErrorContains(t, err, "disclosed filename")
 }
 
+func TestRenditionExecutionSnapshotWithoutArtifacts(t *testing.T) {
+	metadata := validAuthorizedUploadMetadata()
+	evidence, err := NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+	rendition, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000,
+	})
+	require.NoError(t, err)
+	authorization := validRenditionAuthorization(validRenditionDescriptor(t), metadata)
+	authorization.AllowedArtifactRoles = nil
+	authorization.MaxArtifacts = 0
+	authorization.MaxArtifactBytes = 0
+	identity, err := NewRenditionExecutionIdentityV1(metadata, authorization, evidence, rendition)
+	require.NoError(t, err)
+	encoded, _, err := CanonicalRenditionExecutionIdentityV1(identity)
+	require.NoError(t, err)
+	persisted, err := ParseRenditionExecutionIdentityV1(encoded)
+	require.NoError(t, err)
+	snapshot, err := NewRenditionExecutionSnapshotV1(persisted, authorization)
+	require.NoError(t, err)
+	encoded, err = CanonicalRenditionExecutionSnapshotV1(snapshot)
+	require.NoError(t, err)
+	_, err = ParseRenditionExecutionSnapshotV1(encoded)
+	require.NoError(t, err)
+}
+
 func TestSealRenditionExecutionAtClassifiesBoundaryFailures(t *testing.T) {
 	descriptor := validRenditionDescriptor(t)
 	evidence, err := NewEvidencePolicy(100_000)

@@ -221,6 +221,15 @@ retained Markdown is available through the rendition read API and lexical
 search. Original bytes stay unchanged. PDF output can retain exact page
 locations; other supported formats report degraded provenance.
 
+## Convert PDFs with Mistral OCR
+
+Configure a [Mistral OCR rendition profile](../configuration.md#document-ocr-with-mistral)
+with an authenticated capability manifest, then select it from a processing
+profile. `docbank processing profiles` lists the executable profile. Use the
+same `processing plan` and consented `processing build` flow as Docling to
+retain searchable Markdown from PDFs. The plan discloses Mistral's EU endpoint
+and the pinned model before upload.
+
 ## Find similar documents
 
 Choose a file's **Find similar** row action in the web app. The processing
@@ -255,7 +264,7 @@ useful shapes:
   See
   [local EPUB extraction](../document-understanding.md#extract-epub-locally)
   for limits and counting rules.
-- **Hosted provider.** A configured embedding runtime, or an embedded caller's
+- **Hosted provider.** A configured Mistral OCR or embedding runtime, or an embedded caller's
   rendition or embedding provider, may cross a hosted-provider trust boundary.
   The reviewed plan identifies the provider and the input class it receives:
   the original file, a rendition chunk, an original-file embedding input, or

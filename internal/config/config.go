@@ -21,8 +21,10 @@ import (
 	"golang.org/x/net/idna"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/httpboundary"
 	"go.kenn.io/docbank/internal/storenamespace"
@@ -257,10 +259,11 @@ type EmbeddingRuntimeConfig struct {
 type RenditionRuntimeConfig struct {
 	ProviderEgressConfig
 
-	RequestTimeout  Duration `toml:"request_timeout"`
-	TotalTimeout    Duration `toml:"total_timeout"`
-	PollInterval    Duration `toml:"poll_interval"`
-	MaxPollAttempts int      `toml:"max_poll_attempts"`
+	CapabilityManifest string   `toml:"capability_manifest"`
+	RequestTimeout     Duration `toml:"request_timeout"`
+	TotalTimeout       Duration `toml:"total_timeout"`
+	PollInterval       Duration `toml:"poll_interval"`
+	MaxPollAttempts    int      `toml:"max_poll_attempts"`
 }
 
 type CredentialBindingConfig struct {
@@ -466,12 +469,21 @@ func loadTOML(root string) (Config, error) {
 	if err := resolveWatches(&c); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
-	for name, profile := range c.EmbeddingProfiles {
-		if profile.Runtime == nil || profile.Runtime.CapabilityManifest == "" || filepath.IsAbs(profile.Runtime.CapabilityManifest) {
-			continue
+	var manifests []*string
+	for _, profile := range c.EmbeddingProfiles {
+		if profile.Runtime != nil {
+			manifests = append(manifests, &profile.Runtime.CapabilityManifest)
 		}
-		profile.Runtime.CapabilityManifest = filepath.Clean(filepath.Join(root, profile.Runtime.CapabilityManifest))
-		c.EmbeddingProfiles[name] = profile
+	}
+	for _, profile := range c.RenditionProfiles {
+		if profile.Runtime != nil {
+			manifests = append(manifests, &profile.Runtime.CapabilityManifest)
+		}
+	}
+	for _, manifest := range manifests {
+		if *manifest != "" && !filepath.IsAbs(*manifest) {
+			*manifest = filepath.Clean(filepath.Join(root, *manifest))
+		}
 	}
 	return c, nil
 }
@@ -751,8 +763,9 @@ var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]
 var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 const (
-	DoclingASRAdapterContract      = "docbank-docling-asr/v1"
-	DoclingDocumentAdapterContract = "docbank-docling-document/v1"
+	MistralOCRAdapterContract      = mistral.DocumentAdapterContract
+	DoclingASRAdapterContract      = docling.ASRAdapterContract
+	DoclingDocumentAdapterContract = docling.DocumentAdapterContract
 )
 
 func validateProcessingProfiles(c Config) error {
@@ -924,7 +937,7 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 			return fmt.Errorf("%s max_transcript_chars is invalid: %w", prefix, err)
 		}
 	}
-	if profile.AdapterContract == DoclingDocumentAdapterContract && profile.MaxTranscriptChars != 0 {
+	if (profile.AdapterContract == DoclingDocumentAdapterContract || profile.AdapterContract == MistralOCRAdapterContract) && profile.MaxTranscriptChars != 0 {
 		return fmt.Errorf("%s max_transcript_chars is only supported for ASR", prefix)
 	}
 
@@ -955,8 +968,14 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract {
+		return fmt.Errorf("%s runtime is supported only for %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract)
+	}
+	if profile.AdapterContract == MistralOCRAdapterContract {
+		return validateMistralRuntime(profile, prefix)
+	}
+	if runtime.CapabilityManifest != "" {
+		return fmt.Errorf("%s capability_manifest is only supported for Mistral", prefix)
 	}
 	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
@@ -1006,6 +1025,49 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		return fmt.Errorf("%s runtime request and poll bounds are invalid", prefix)
 	}
 	return nil
+}
+
+func validateMistralRuntime(profile RenditionProfileConfig, prefix string) error {
+	runtime := profile.Runtime
+	if profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
+		return fmt.Errorf("%s Mistral runtime requires hosted_provider", prefix)
+	}
+	if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactMarkdown) {
+		return fmt.Errorf("%s Mistral runtime requires exactly provider_markdown", prefix)
+	}
+	if runtime.CapabilityManifest == "" || !filepath.IsAbs(runtime.CapabilityManifest) {
+		return fmt.Errorf("%s Mistral runtime requires an absolute capability_manifest", prefix)
+	}
+	if _, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix); err != nil {
+		return err
+	}
+	if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 10*time.Minute || runtime.TotalTimeout != 0 || runtime.PollInterval != 0 || runtime.MaxPollAttempts != 0 {
+		return fmt.Errorf("%s Mistral runtime requires request_timeout > 0 and <= 10 minutes and zero poll bounds", prefix)
+	}
+	if _, err := profile.MistralPolicy(); err != nil {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	return nil
+}
+
+// MistralPolicy constructs the daemon's PDF policy for validation and execution.
+func (profile RenditionProfileConfig) MistralPolicy() (mistral.Policy, error) {
+	runtime := profile.Runtime
+	normalize, err := document.NewNormalizePolicy(25_000_000)
+	if err != nil {
+		return mistral.Policy{}, err
+	}
+	policy, err := mistral.NewPolicy(mistral.PolicyConfig{Region: mistral.RegionEU, Model: mistral.DefaultModel,
+		Retention: mistral.RetentionStandard, Training: mistral.TrainingDefaultOptOut, MaxDocumentBytes: profile.MaxDocumentBytes,
+		MaxResponseBytes: profile.MaxResponseBytes, MaxUnits: profile.MaxUnits,
+		ExtractHeader: false, ExtractFooter: false, NormalizePolicy: normalize})
+	if err != nil {
+		return mistral.Policy{}, err
+	}
+	if runtime.Endpoint != strings.TrimSuffix(policy.Values().Endpoint, "/v1/ocr") {
+		return mistral.Policy{}, errors.New("mistral runtime endpoint differs from policy origin")
+	}
+	return policy, nil
 }
 
 var privateRenditionNetworks = []netip.Prefix{
