@@ -37,26 +37,11 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Path:    "/api/v1/processing/source-fences/resolve",
 		Summary: "Resolve exact current live document search authority",
 	}, func(ctx context.Context, input *sourceFenceInput) (*sourceFenceOutput, error) {
-		if d.Processing == nil {
-			return nil, processingUnavailable()
-		}
-		var filters *store.SearchOptions
-		if input.Body.Filters != nil {
-			filters = &store.SearchOptions{TagID: input.Body.Filters.TagID,
-				MIMEType: input.Body.Filters.MIMEType, UnderNodeID: input.Body.Filters.UnderNodeID,
-				ModifiedSince: input.Body.Filters.ModifiedSince, ModifiedBefore: input.Body.Filters.ModifiedBefore}
-		}
-		resolved, err := d.Processing.ResolveSourceFence(ctx, processing.SourceFenceResolveRequest{
-			ContentVersionIDs: input.Body.ContentVersionIDs, Filters: filters,
-		})
+		result, err := resolveDocumentSourceFence(ctx, d.Processing, input.Body)
 		if err != nil {
-			return nil, fromProcessingError(err)
+			return nil, err
 		}
-		return &sourceFenceOutput{Body: DocumentSourceFenceResolution{
-			Fence: ResolvedDocumentSourceFence{VaultUID: resolved.Fence.VaultUID,
-				ContentVersionIDs: resolved.Fence.ContentVersionIDs},
-			FenceFingerprint: resolved.FenceFingerprint, ObservedScopeCount: resolved.ObservedScopeCount,
-		}}, nil
+		return &sourceFenceOutput{Body: result}, nil
 	})
 
 	type profilesOutput struct{ Body []ProcessingProfileSummary }
@@ -439,15 +424,8 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		OperationID: "validateDocumentSearch", Method: http.MethodPost,
 		Path: "/api/v1/search/validate", Summary: "Validate document-search semantics without executing a search",
 	}, func(ctx context.Context, input *searchValidationInput) (*searchValidationOutput, error) {
-		if d.Processing == nil {
-			return nil, processingUnavailable()
-		}
-		err := d.Processing.ValidateSearch(ctx, processing.SearchRequest{Query: input.Body.Query,
-			ContentFirst: input.Body.ContentFirst,
-			Mode:         input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
-			BindingID: input.Body.BindingID, Explain: input.Body.Explain, Rerank: input.Body.Rerank})
-		if err != nil {
-			return nil, fromProcessingError(err)
+		if err := validateDocumentSearch(ctx, d.Processing, input.Body); err != nil {
+			return nil, err
 		}
 		return &searchValidationOutput{Body: DocumentSearchValidation{Valid: true}}, nil
 	})
@@ -456,20 +434,11 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Path: "/api/v1/search", Summary: "Search exact source-fenced document versions",
 		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
-		if d.Processing == nil {
-			return nil, processingUnavailable()
-		}
-		report, err := d.Processing.Search(ctx, processing.SearchRequest{Query: input.Body.Query,
-			ContentFirst: input.Body.ContentFirst,
-			Mode:         input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
-			BindingID: input.Body.BindingID, Explain: input.Body.Explain,
-			Rerank: input.Body.Rerank, MediaSources: toMediaSearchSources(input.Body.MediaSources),
-			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID,
-				ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
+		report, err := searchDocuments(ctx, d.Processing, input.Body)
 		if err != nil {
-			return nil, fromProcessingError(err)
+			return nil, err
 		}
-		return &searchOutput{Body: fromDocumentSearchReport(report, input.Body.Explain)}, nil
+		return &searchOutput{Body: report}, nil
 	})
 }
 
@@ -835,4 +804,58 @@ func fromProcessingError(err error) error {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
+}
+
+func resolveDocumentSourceFence(ctx context.Context, service *processing.Service, input DocumentSourceFenceResolveRequest) (DocumentSourceFenceResolution, error) {
+	if service == nil {
+		return DocumentSourceFenceResolution{}, processingUnavailable()
+	}
+	var filters *store.SearchOptions
+	if input.Filters != nil {
+		filters = &store.SearchOptions{TagID: input.Filters.TagID,
+			MIMEType: input.Filters.MIMEType, UnderNodeID: input.Filters.UnderNodeID,
+			ModifiedSince: input.Filters.ModifiedSince, ModifiedBefore: input.Filters.ModifiedBefore}
+	}
+	resolved, err := service.ResolveSourceFence(ctx, processing.SourceFenceResolveRequest{
+		ContentVersionIDs: input.ContentVersionIDs, Filters: filters,
+	})
+	if err != nil {
+		return DocumentSourceFenceResolution{}, fromProcessingError(err)
+	}
+	return DocumentSourceFenceResolution{
+		Fence: ResolvedDocumentSourceFence{VaultUID: resolved.Fence.VaultUID,
+			ContentVersionIDs: resolved.Fence.ContentVersionIDs},
+		FenceFingerprint: resolved.FenceFingerprint, ObservedScopeCount: resolved.ObservedScopeCount,
+	}, nil
+}
+
+func validateDocumentSearch(ctx context.Context, service *processing.Service, input DocumentSearchValidationRequest) error {
+	if service == nil {
+		return processingUnavailable()
+	}
+	err := service.ValidateSearch(ctx, processing.SearchRequest{Query: input.Query,
+		ContentFirst: input.ContentFirst,
+		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
+		BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank})
+	if err != nil {
+		return fromProcessingError(err)
+	}
+	return nil
+}
+
+func searchDocuments(ctx context.Context, service *processing.Service, input DocumentSearchRequest) (DocumentSearchReport, error) {
+	if service == nil {
+		return DocumentSearchReport{}, processingUnavailable()
+	}
+	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query,
+		ContentFirst: input.ContentFirst,
+		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
+		BindingID: input.BindingID, Explain: input.Explain,
+		Rerank: input.Rerank, MediaSources: toMediaSearchSources(input.MediaSources),
+		Fence: processing.SourceFence{VaultUID: input.Fence.VaultUID,
+			ContentVersionIDs: input.Fence.ContentVersionIDs}})
+	if err != nil {
+		return DocumentSearchReport{}, fromProcessingError(err)
+	}
+	return fromDocumentSearchReport(report, input.Explain), nil
 }

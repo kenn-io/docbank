@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/upload"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
@@ -131,18 +132,20 @@ type StoreBinding struct {
 // may be open concurrently when their roots do not overlap and their processing
 // upload directories are distinct.
 type Vault struct {
-	vaultRoot        string
-	root             *os.Root
-	lock             *home.Lock
-	spoolLock        *home.Lock
-	metadata         *store.Store
-	blobs            *blob.Store
-	processing       *internalprocessing.Service
-	processingCancel context.CancelFunc
-	processingWG     sync.WaitGroup
-	processingErrMu  sync.Mutex
-	processingErr    error
-	emailSpoolParent string
+	vaultRoot         string
+	root              *os.Root
+	lock              *home.Lock
+	spoolLock         *home.Lock
+	metadata          *store.Store
+	blobs             *blob.Store
+	documentReads     *api.DocumentReader
+	documentReadsOnce sync.Once
+	processing        *internalprocessing.Service
+	processingCancel  context.CancelFunc
+	processingWG      sync.WaitGroup
+	processingErrMu   sync.Mutex
+	processingErr     error
+	emailSpoolParent  string
 
 	lifecycle    sync.RWMutex
 	mutation     sync.Mutex

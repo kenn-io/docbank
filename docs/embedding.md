@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-22
 title: Embed in Go
 description: Run one or more Docbank vaults inside a Go application, each with its own root, using CGO or pure-Go SQLite.
 ---
@@ -13,6 +13,74 @@ checks, storage rules, and exclusive vault lock as standalone Docbank.
 
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
+
+## Run native MCP reads
+
+`Vault.CallReadTool` runs `get_vault_info`, `list_documents`, and
+`search_documents` on the vault your application already owns. It uses the same
+handlers, schemas, authenticated cursors, search source-fence resolver, result
+bounds and private-cache metadata as the standalone tools. It starts no
+listener, discovers no daemon and reads no owner credentials.
+
+Register only the tools your application admits. For example:
+
+```go
+import (
+    "context"
+
+    sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+    docbankmcp "go.kenn.io/docbank/mcp"
+)
+
+tool, err := docbankmcp.ReadTool("list_documents")
+if err != nil {
+    return err
+}
+server.AddTool(tool, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+    // Application-owned admission returns the authorized vault UUID and a
+    // release function. Hold that authority fence through the operation.
+    vaultID, release, err := admitVaultRead(ctx)
+    if err != nil {
+        return nil, err
+    }
+    defer release()
+    return vault.CallReadTool(ctx, vaultID, req)
+})
+```
+
+The admitted `vaultID` is a standard-library `uuid.UUID`. The application
+resolves it from current permissions on every call; it must not simply copy an
+untrusted tool argument. A zero ID or an ID for another vault returns
+`docbank.ErrReadScope` before any document read. `CallReadTool` validates both
+arguments and output, including checks beyond the JSON schemas, so this
+lower-level SDK registration is supported.
+
+This initial execution contract requires access to the **whole vault**. Tool
+filters narrow results within that vault; they are not document permissions.
+For separate readers, select separate vaults or grant whole-vault access.
+Partial-library and document-level grants require a future scoped execution
+contract. The application owns authentication, expiry and revocation and must
+hold its admission fence through each call, including cursor continuations.
+The vault's lifecycle lock keeps it open until admitted operations return.
+
+Search requires a configured processing `profile` and exactly one of
+`content_version_ids` or `filters`. The native resolver rejects a population
+over 4,096 current versions with `scope_too_large` and its observed count;
+it never truncates the scope. Narrow the filters and retry. Empty selections
+still validate the query and profile. Vault info reports logical inventory for
+the admitted vault. Exact-document retrieval is outside this execution subset.
+Cursors belong to the reader's vault and process lifetime; restart listing
+after reopening the vault. Responses retain `cacheScope: private` and
+`ttlMs: 0`.
+
+### Reuse other read definitions
+
+`ReadTool(name)` returns an independent copy of the selected native read-only
+definition, including nested schemas, annotations and metadata. Schemas use
+`map[string]any`. Unknown names and write operations return an error. Looking
+up a definition opens no vault and registers no tools. Definitions outside the
+three supported operations need their own execution; a read-only annotation
+does not grant authority or enforce resource scope.
 
 ## Inspect format coverage
 
