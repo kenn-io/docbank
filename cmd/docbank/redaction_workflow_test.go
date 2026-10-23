@@ -119,7 +119,8 @@ func TestNativePDFPreparationCLI(t *testing.T) {
 	require.Equal(t, "[REDACTED] KEEP SECRET\f", string(sidecar))
 	output := filepath.Join(t.TempDir(), "redacted.pdf")
 	artifact, original := writeRedactionPDF(t, output, pdfproduction.Source{
-		Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: node.BlobHash}, plan)
+		Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: node.BlobHash, StagingDirectory: t.TempDir(),
+	}, plan)
 	saved, err := os.ReadFile(output)
 	require.NoError(t, err)
 	verifyRedactionPDF(t, saved, sidecar, artifact)

@@ -37,7 +37,7 @@ func TestAlignRepeatedNativeTextKeepsDistinctPositions(t *testing.T) {
 	require.NoError(t, err)
 	evidence := evidenceFor(t, "same same")
 
-	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
+	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
 	require.NoError(t, err)
 	require.Equal(t, "same same", strings.TrimSpace(m.Text))
 	require.GreaterOrEqual(t, len(m.Atoms), 8)
@@ -145,7 +145,7 @@ func TestAlignNativeParagraphGeometryAndWhitespace(t *testing.T) {
 			}, policy)
 			require.NoError(t, err)
 			m, err := Align(t.Context(), AlignmentInput{
-				PDF:   pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf)},
+				PDF:   pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf), StagingDirectory: t.TempDir()},
 				Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum,
 			})
 			if example.wantError {
@@ -187,7 +187,7 @@ func TestNativeMultiColumnContentOrderUsesDistinctPositions(t *testing.T) {
 	source := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001", SHA256: sum(data), Size: int64(len(data))}
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
-	inspected, err := pdfproduction.InspectNativeText(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data)}, []document.PageFrameV1{frame}, nil)
+	inspected, err := pdfproduction.InspectNativeText(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data), StagingDirectory: t.TempDir()}, []document.PageFrameV1{frame}, nil)
 	require.NoError(t, err)
 	_, frameSHA, err := document.MarshalPageFrameV1(frame)
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestAlignFailsClosedOnSourceAndFrameMismatch(t *testing.T) {
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 90)
 	require.NoError(t, err)
 	evidence := evidenceFor(t, "visible")
-	_, err = Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: strings.Repeat("f", 64)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
+	_, err = Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: strings.Repeat("f", 64), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
 	require.Error(t, err)
 }
 
@@ -231,7 +231,7 @@ func TestAlignRejectsHiddenNativeTextAndRetainsExplicitGap(t *testing.T) {
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
 	evidence := evidenceFor(t, "visible")
-	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
+	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
 	require.NoError(t, err)
 	require.NotContains(t, m.Text, "SECRET")
 	require.NotEmpty(t, m.Gaps)
@@ -289,7 +289,7 @@ func TestAlignRejectsNativeTextCoveredByLaterOpaquePaint(t *testing.T) {
 	require.NoError(t, err)
 	evidence := evidenceFor(t, "visible")
 
-	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
+	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
 	require.NoError(t, err)
 	require.NotContains(t, m.Text, "SECRET")
 	require.Contains(t, m.Text, "visible")
@@ -357,7 +357,7 @@ func TestAlignDoesNotLetOverlappingGlyphInSameObjectProveCoveredGlyphVisible(t *
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
 	evidence := evidenceFor(t, "B")
-	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(payload), Size: int64(len(payload)), SHA256: sum(payload)},
+	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(payload), Size: int64(len(payload)), SHA256: sum(payload), StagingDirectory: t.TempDir()},
 		Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum,
 		Units: []redaction.Unit{{ID: "paragraph:b", Kind: "paragraph", Spans: []redaction.Span{{Start: 1, End: 2}}}}})
 	require.NoError(t, err)
@@ -445,7 +445,7 @@ func TestAlignRejectsActualTextSubstitutionAsVisibleAuthority(t *testing.T) {
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
 	evidence := evidenceFor(t, "visible")
-	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
+	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
 	require.NoError(t, err)
 	require.NotContains(t, m.Text, "shown")
 	require.NotContains(t, m.Text, "different")
@@ -484,7 +484,7 @@ func TestAlignRejectsWrongRetainedEvidenceDigest(t *testing.T) {
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
 	evidence := evidenceFor(t, "visible")
-	_, err = Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: strings.Repeat("f", 64)})
+	_, err = Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: strings.Repeat("f", 64)})
 	var problem *Problem
 	require.ErrorAs(t, err, &problem)
 	require.Equal(t, "bound_evidence_mismatch", problem.Code)
@@ -505,7 +505,7 @@ func TestAlignScanRequiresTrustedRetainedPixelAuthority(t *testing.T) {
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
 	evidence := scanEvidenceFor(t, "scanned words")
-	_, err = Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
+	_, err = Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
 	var problem *Problem
 	require.ErrorAs(t, err, &problem)
 	require.Equal(t, "mapping_incomplete", problem.Code)
@@ -661,9 +661,9 @@ func TestEvidenceBoxesUseExactCheckedScaling(t *testing.T) {
 func TestRenderTextRenditionDeterministicUnicodeAndSemanticUnits(t *testing.T) {
 	text := strings.Repeat("Speaker 1 [00:00:01] café 給与 line with deterministic wrapping.\n", 90)
 	units := []redaction.Unit{{ID: "turn:0-1000:0", Kind: "transcript_turn", Spans: []redaction.Span{{Start: 0, End: int64(len(text))}}}}
-	firstPDF, firstMap, err := RenderTextRendition(t.Context(), text, units)
+	firstPDF, firstMap, err := RenderTextRendition(t.Context(), t.TempDir(), text, units)
 	require.NoError(t, err)
-	secondPDF, secondMap, err := RenderTextRendition(t.Context(), text, units)
+	secondPDF, secondMap, err := RenderTextRendition(t.Context(), t.TempDir(), text, units)
 	require.NoError(t, err)
 	require.Equal(t, firstPDF, secondPDF)
 	require.Equal(t, firstMap, secondMap)
@@ -687,7 +687,7 @@ func TestRenderTextRenditionReleasesCompletedPages(t *testing.T) {
 		// Collect the previous rendition's discarded map and validation data.
 		// Only cleanup between pages is under test with automatic GC disabled.
 		debug.FreeOSMemory()
-		_, textMap, err := RenderTextRendition(t.Context(), text, nil)
+		_, textMap, err := RenderTextRendition(t.Context(), t.TempDir(), text, nil)
 		require.NoError(t, err)
 		require.Equal(t, text, textMap.Text)
 	}
@@ -696,7 +696,7 @@ func TestRenderTextRenditionReleasesCompletedPages(t *testing.T) {
 func TestRenderTextRenditionPreservesWhitespaceOffsets(t *testing.T) {
 	for _, text := range []string{"a\tb", "a\r\nb", "a\rb"} {
 		t.Run(fmt.Sprintf("%q", text), func(t *testing.T) {
-			_, m, err := RenderTextRendition(t.Context(), text, nil)
+			_, m, err := RenderTextRendition(t.Context(), t.TempDir(), text, nil)
 			require.NoError(t, err)
 			require.Equal(t, text, m.Text)
 			require.Len(t, m.Atoms, 2)
@@ -718,7 +718,7 @@ func TestRenderTranscriptKeepsSpeakerTimestampTurnsAcrossPagesAndUnicodeClusters
 		{ID: "transcript_turn:alice-000001", Kind: "transcript_turn", Spans: []redaction.Span{{Start: 0, End: int64(len(first))}}},
 		{ID: "transcript_turn:bob-000002", Kind: "transcript_turn", Spans: []redaction.Span{{Start: int64(len(first)), End: int64(len(text))}}},
 	}
-	_, textMap, err := RenderTextRendition(t.Context(), text, units)
+	_, textMap, err := RenderTextRendition(t.Context(), t.TempDir(), text, units)
 	require.NoError(t, err)
 	require.Equal(t, units[0].Spans, textMap.Units[0].Spans)
 	require.Greater(t, len(textMap.Units[1].Spans), 1)
@@ -740,7 +740,7 @@ func TestRenderTranscriptKeepsSpeakerTimestampTurnsAcrossPagesAndUnicodeClusters
 
 func TestRenderTextSplitsLongParagraphSpansAtPageBoundaries(t *testing.T) {
 	text := strings.Repeat("one continuous paragraph without blank lines ", 120)
-	_, textMap, err := RenderTextRendition(t.Context(), text, nil)
+	_, textMap, err := RenderTextRendition(t.Context(), t.TempDir(), text, nil)
 	require.NoError(t, err)
 	require.Greater(t, len(textMap.Pages), 1)
 	require.Len(t, textMap.Units, 1)
@@ -754,7 +754,7 @@ func TestRenderTextSplitsLongParagraphSpansAtPageBoundaries(t *testing.T) {
 
 func TestRenderTextSkipsWhitespaceOnlyParagraphUnits(t *testing.T) {
 	text := "Para one.\n\n \n\nPara two."
-	pdf, textMap, err := RenderTextRendition(t.Context(), text, nil)
+	pdf, textMap, err := RenderTextRendition(t.Context(), t.TempDir(), text, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, pdf)
 	require.Len(t, textMap.Units, 2)
@@ -766,11 +766,11 @@ func TestRenderTextSkipsWhitespaceOnlyParagraphUnits(t *testing.T) {
 }
 
 func TestRenderTextRenditionRejectsEmptyInvalidAndUnsupportedUnits(t *testing.T) {
-	_, _, err := RenderTextRendition(t.Context(), "", nil)
+	_, _, err := RenderTextRendition(t.Context(), t.TempDir(), "", nil)
 	var problem *Problem
 	require.ErrorAs(t, err, &problem)
 	require.Equal(t, "unsupported_rendition", problem.Code)
-	_, _, err = RenderTextRendition(t.Context(), "abc", []redaction.Unit{{ID: "x", Kind: "email_message", Spans: []redaction.Span{{Start: 0, End: 2}, {Start: 1, End: 3}}}})
+	_, _, err = RenderTextRendition(t.Context(), t.TempDir(), "abc", []redaction.Unit{{ID: "x", Kind: "email_message", Spans: []redaction.Span{{Start: 0, End: 2}, {Start: 1, End: 3}}}})
 	require.Error(t, err)
 }
 
@@ -788,7 +788,7 @@ func TestRenderTextRenditionEnforcesAggregateLimitsAndCancellation(t *testing.T)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, err := renderTextRendition(t.Context(), test.text, nil, test.limits)
+			_, _, err := renderTextRendition(t.Context(), t.TempDir(), test.text, nil, test.limits)
 			var problem *Problem
 			require.ErrorAs(t, err, &problem)
 			require.Equal(t, "rendition_limit_exceeded", problem.Code)
@@ -796,7 +796,7 @@ func TestRenderTextRenditionEnforcesAggregateLimitsAndCancellation(t *testing.T)
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, _, err := RenderTextRendition(canceled, "must not render", nil)
+	_, _, err := RenderTextRendition(canceled, t.TempDir(), "must not render", nil)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -808,7 +808,7 @@ func TestRenderTextRenditionBoundsUnitsBeforeLayout(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			// This unsupported glyph would fail layout if unit bounds ran later.
-			_, _, err := RenderTextRendition(t.Context(), "\U0010ffff", []redaction.Unit{unit})
+			_, _, err := RenderTextRendition(t.Context(), t.TempDir(), "\U0010ffff", []redaction.Unit{unit})
 			var problem *Problem
 			require.ErrorAs(t, err, &problem)
 			require.Equal(t, "rendition_limit_exceeded", problem.Code)
@@ -817,7 +817,7 @@ func TestRenderTextRenditionBoundsUnitsBeforeLayout(t *testing.T) {
 	limits := qualifiedTextRenditionLimits
 	limits.MaxMapBytes = 512
 	unit := redaction.Unit{ID: strings.Repeat("x", 256), Kind: "paragraph", Spans: []redaction.Span{{End: 1}}}
-	_, _, err := renderTextRendition(t.Context(), "\U0010ffff", []redaction.Unit{unit, unit}, limits)
+	_, _, err := renderTextRendition(t.Context(), t.TempDir(), "\U0010ffff", []redaction.Unit{unit, unit}, limits)
 	var problem *Problem
 	require.ErrorAs(t, err, &problem)
 	require.Equal(t, "rendition_limit_exceeded", problem.Code)
@@ -847,19 +847,20 @@ func TestRenderImageRenditionUsesExactRetainedPixelsAndPhysicalFrame(t *testing.
 	input := ImageRenditionInput{Frame: frame, Recipe: recipe, Image: imageReceipt, ImageReceipt: receiptBytes, OpenImage: func(context.Context, document.PageImageV1) (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(pixels)), nil
 	}}
-	first, err := RenderImageRendition(t.Context(), input)
+	first, err := RenderImageRendition(t.Context(), t.TempDir(), input)
 	require.NoError(t, err)
-	second, err := RenderImageRendition(t.Context(), input)
+	second, err := RenderImageRendition(t.Context(), t.TempDir(), input)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	require.True(t, bytes.Contains(first, []byte("/MediaBox [0 0 7.2 9.5976]")))
-	combined, err := RenderImageSetRendition(t.Context(), []ImageRenditionInput{input, input})
+	combined, err := RenderImageSetRendition(t.Context(), t.TempDir(), []ImageRenditionInput{input, input})
 	require.NoError(t, err)
 	engine, err := pdfproduction.NewPDFium(pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
 	raster, err := engine.Render(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(combined),
-		Size: int64(len(combined)), SHA256: sum(combined)}, redaction.Page{Number: 2,
+		Size: int64(len(combined)), SHA256: sum(combined), StagingDirectory: t.TempDir(),
+	}, redaction.Page{Number: 2,
 		FrameSHA256: frameSHA, Width: frame.Width, Height: frame.Height}, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	require.Equal(t, img.Pix, raster.Pixels.Pix)
@@ -880,7 +881,7 @@ func TestRenderImageRenditionUsesExactRetainedPixelsAndPhysicalFrame(t *testing.
 					return io.NopCloser(bytes.NewReader(pixels)), nil
 				}
 				start := time.Now()
-				_, err := RenderImageRendition(ctx, bound)
+				_, err := RenderImageRendition(ctx, t.TempDir(), bound)
 				require.Error(t, err)
 				require.Equal(t, time.Minute, time.Since(start))
 			})
@@ -898,13 +899,13 @@ func TestRenderImageRenditionUsesExactRetainedPixelsAndPhysicalFrame(t *testing.
 		require.NoError(t, err)
 		changed.ImageReceipt, _, err = document.MarshalPageImageV1(changed.Image)
 		require.NoError(t, err)
-		_, err = RenderImageRendition(t.Context(), changed)
+		_, err = RenderImageRendition(t.Context(), t.TempDir(), changed)
 		require.ErrorIs(t, err, errUnsupportedRendition)
 		require.ErrorIs(t, ValidateImageRenditionFrame(t.Context(), changed.Frame), errUnsupportedRendition)
 	}
 
 	input.ImageReceipt = append(bytes.Clone(receiptBytes), ' ')
-	_, err = RenderImageRendition(t.Context(), input)
+	_, err = RenderImageRendition(t.Context(), t.TempDir(), input)
 	require.ErrorAs(t, err, &problem)
 	require.Equal(t, "bound_evidence_mismatch", problem.Code)
 }
@@ -929,7 +930,7 @@ func alignNativeFixture(t *testing.T, pdf []byte, visibleEvidence string) redact
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
 	evidence := evidenceFor(t, visibleEvidence)
-	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf)}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
+	m, err := Align(t.Context(), AlignmentInput{PDF: pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf), StagingDirectory: t.TempDir()}, Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum})
 	require.NoError(t, err)
 	return m
 }

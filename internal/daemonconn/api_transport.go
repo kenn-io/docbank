@@ -24,12 +24,18 @@ func (c *Connection) apiWithResponse(response **http.Response) *apiclient.Client
 	return apiclient.NewClient(apiTransport{connection: c, response: response})
 }
 
+// apiWithResponseLimit changes only this operation's bounded problem decoder.
+func (c *Connection) apiWithResponseLimit(response **http.Response, limit int64) *apiclient.Client {
+	return apiclient.NewClient(apiTransport{connection: c, response: response, errorLimit: limit})
+}
+
 // apiTransport is the generator's transport hook. Route, parameter and body
 // definitions belong to the generated client; this hook supplies JSON v2,
 // daemon credentials, outcome classification and caller-owned response streams.
 type apiTransport struct {
 	connection *Connection
 	response   **http.Response
+	errorLimit int64
 }
 
 func (t apiTransport) OwnsResponseBody() bool { return t.response != nil }
@@ -90,7 +96,11 @@ func (t apiTransport) ExecuteRequest(ctx context.Context, req *http.Request, ope
 		operationPath == "/api/v1/photos/assets/{asset_id}/previews/{generation_id}"
 	if (resp.StatusCode < 200 || resp.StatusCode > 299) && !notModified {
 		defer func() { _ = resp.Body.Close() }()
-		return nil, decodeError(resp)
+		limit := t.errorLimit
+		if limit == 0 {
+			limit = maxErrorResponseBytes
+		}
+		return nil, decodeErrorLimit(resp, limit)
 	}
 	result := &runtime.Response{StatusCode: resp.StatusCode, Headers: resp.Header, Raw: resp}
 	if runtime.IsStreamingResponse(ctx) || runtime.IsStreamingResponse(req.Context()) {

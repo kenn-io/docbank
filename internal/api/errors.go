@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -18,6 +19,7 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
+	Redaction                *redaction.Problem  `json:"redaction,omitempty"`
 	BackupForget             *BackupForgetReport `json:"backup_forget,omitempty"`
 	BackupPrune              *BackupPruneReport  `json:"backup_prune,omitempty"`
 	Title                    string              `json:"title"`

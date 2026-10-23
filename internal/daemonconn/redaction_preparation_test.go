@@ -28,7 +28,8 @@ func preparationRequest() processing.RedactionPreparationRequest {
 			SHA256: strings.Repeat("a", 64), Size: 20}}}
 }
 
-func TestRedactionPreparationClientBindings(t *testing.T) {
+func redactionClientPreparation(t *testing.T) processing.RedactionPreparation {
+	t.Helper()
 	runtime := redactiontest.PageRuntime(t)
 	data := redactiontest.PDF(t, []string{"SECRET KEEP SECRET"}, "")
 	request := preparationRequest()
@@ -38,10 +39,18 @@ func TestRedactionPreparationClientBindings(t *testing.T) {
 	require.NoError(t, err)
 	prepared, err := production.PrepareNativePDF(t.Context(), production.NativePreparationInput{
 		PDF: pdfproduction.Source{Reader: bytes.NewReader(data), SHA256: request.Selection.Source.SHA256,
-			Size: int64(len(data))}, Inspection: inspection, PageRuntimeFingerprint: runtime.Fingerprint()})
+			Size: int64(len(data)), StagingDirectory: t.TempDir(),
+		}, Inspection: inspection, PageRuntimeFingerprint: runtime.Fingerprint()})
 	require.NoError(t, err)
 	expected := processing.RedactionPreparation{Contract: "native-pdf-preparation/v1",
 		Selection: request.Selection, NativePreparation: prepared}
+
+	return expected
+}
+
+func TestRedactionPreparationClientBindings(t *testing.T) {
+	expected := redactionClientPreparation(t)
+	request := processing.RedactionPreparationRequest{Selection: expected.Selection}
 	encoded, err := json.Marshal(expected)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(encoded, &expected))

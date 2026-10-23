@@ -131,7 +131,7 @@ type Service struct {
 	mediaEvidence       *retrieval.MediaEvidenceResolver
 	runsMu              sync.Mutex
 	runs                int
-	preparationActive   bool
+	nativePDFOperation  string
 	stopping            bool
 	stop                context.CancelFunc
 	drained             chan struct{}

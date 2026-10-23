@@ -128,3 +128,19 @@ func ValidateNativePreparation(result NativePreparation) error {
 	}
 	return redaction.ValidateMap(result.Map)
 }
+
+// ValidateNativePreparationDerivation checks that submitted geometry follows
+// from its observations. Only fresh inspection can authenticate those observations.
+func ValidateNativePreparationDerivation(value NativePreparation) error {
+	if err := ValidateNativePreparation(value); err != nil {
+		return err
+	}
+	rebuilt, err := assembleNativePreparation(value.Frames, value.Evidence)
+	if err != nil {
+		return err
+	}
+	if rebuilt.Map.SHA256 != value.Map.SHA256 {
+		return errors.New("native preparation map differs from its observations")
+	}
+	return nil
+}

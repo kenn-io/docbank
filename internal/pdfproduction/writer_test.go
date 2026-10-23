@@ -31,7 +31,8 @@ func TestPDFiumLocalRender(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	page := redaction.Page{Number: 1, FrameSHA256: digest([]byte("frame")), Width: 85000, Height: 110000}
-	raster, err := engine.Render(t.Context(), Source{bytes.NewReader(pdf), int64(len(pdf)), digest(pdf)}, page, qualificationRecipe())
+	raster, err := engine.Render(t.Context(), Source{t.TempDir(),
+		bytes.NewReader(pdf), int64(len(pdf)), digest(pdf)}, page, qualificationRecipe())
 	require.NoError(t, err)
 	require.Equal(t, image.Rect(0, 0, 2550, 3300), raster.Pixels.Bounds())
 	require.Equal(t, 300, raster.DPI)
@@ -94,14 +95,14 @@ func TestFreshWriterUsesInchTenThousandGeometry(t *testing.T) {
 	artifact.OpenPNG = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(encoded)), nil }
 
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	require.Contains(t, output.String(), "/MediaBox [0 0 612 792]")
 }
 
 func TestFreshUnicodePDF(t *testing.T) {
 	artifact := unicodeArtifact(t)
 	var output bytes.Buffer
-	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	// PDFium independently interprets the PDF font program and ToUnicode CMap.
 	// The expected Unicode is manually authored, not serialized by production code.
 	pool, err := webassembly.Init(webassembly.Config{FSConfig: wazero.NewFSConfig(), MaxTotal: 1})

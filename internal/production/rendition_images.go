@@ -54,24 +54,24 @@ func validateImageRenditionDimensions(frame document.PageFrameV1, width, height 
 
 // RenderImageRendition wraps exact retained page pixels in the qualified fresh
 // PDF writer. It neither resamples pixels nor invents physical density.
-func RenderImageRendition(ctx context.Context, input ImageRenditionInput) ([]byte, error) {
-	return RenderImageSetRendition(ctx, []ImageRenditionInput{input})
+func RenderImageRendition(ctx context.Context, stagingDirectory string, input ImageRenditionInput) ([]byte, error) {
+	return RenderImageSetRendition(ctx, stagingDirectory, []ImageRenditionInput{input})
 }
 
 // RenderImageSetRendition creates the deterministic image-only PDF actually
 // presented to an OCR provider. Every page callback reopens the exact retained
 // PNG, so construction remains bounded to one page.
-func RenderImageSetRendition(ctx context.Context, inputs []ImageRenditionInput) ([]byte, error) {
-	return renderImageSetRendition(ctx, inputs, qualifiedTextRenditionLimits.MaxOutputBytes)
+func RenderImageSetRendition(ctx context.Context, stagingDirectory string, inputs []ImageRenditionInput) ([]byte, error) {
+	return renderImageSetRendition(ctx, stagingDirectory, inputs, qualifiedTextRenditionLimits.MaxOutputBytes)
 }
 
 // RenderImageSetRenditionBounded caps the complete deterministic provider
 // upload at the immutable profile's document limit.
-func RenderImageSetRenditionBounded(ctx context.Context, inputs []ImageRenditionInput, maxOutputBytes int64) ([]byte, error) {
-	return renderImageSetRendition(ctx, inputs, maxOutputBytes)
+func RenderImageSetRenditionBounded(ctx context.Context, stagingDirectory string, inputs []ImageRenditionInput, maxOutputBytes int64) ([]byte, error) {
+	return renderImageSetRendition(ctx, stagingDirectory, inputs, maxOutputBytes)
 }
 
-func renderImageSetRendition(ctx context.Context, inputs []ImageRenditionInput, maxOutputBytes int64) ([]byte, error) {
+func renderImageSetRendition(ctx context.Context, stagingDirectory string, inputs []ImageRenditionInput, maxOutputBytes int64) ([]byte, error) {
 	if len(inputs) == 0 || len(inputs) > document.MaxDocumentPages {
 		return nil, &Problem{Code: problemBoundEvidenceMismatch}
 	}
@@ -81,7 +81,7 @@ func renderImageSetRendition(ctx context.Context, inputs []ImageRenditionInput, 
 	var output bytes.Buffer
 	recipe := pdfproduction.QualifiedRecipe()
 	recipe.MaxStagingBytes = min(recipe.MaxStagingBytes, maxOutputBytes)
-	if err := pdfproduction.WriteRendition(ctx, &output, &imagePageSequence{inputs: inputs}, recipe); err != nil {
+	if err := pdfproduction.WriteRendition(ctx, &output, &imagePageSequence{inputs: inputs}, pdfproduction.PDFWriteOptions{Recipe: recipe, StagingDirectory: stagingDirectory, MaxBytes: recipe.MaxStagingBytes}); err != nil {
 		if errors.Is(err, pdfproduction.ErrOutputLimit) {
 			return nil, &Problem{Code: problemRenditionLimitExceeded}
 		}

@@ -61,7 +61,7 @@ func TestTaskBRotatedCroppedHiddenObjectsProduceFreshOutput(t *testing.T) {
 	engine, err := NewPDFium(recipe)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	raster, err := engine.Render(t.Context(), Source{Reader: bytes.NewReader(source), Size: int64(len(source)), SHA256: digest(source)}, page, recipe)
+	raster, err := engine.Render(t.Context(), Source{Reader: bytes.NewReader(source), Size: int64(len(source)), SHA256: digest(source), StagingDirectory: t.TempDir()}, page, recipe)
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
@@ -77,8 +77,8 @@ func TestTaskBRotatedCroppedHiddenObjectsProduceFreshOutput(t *testing.T) {
 	runBox := redaction.Box{Page: 1, FrameSHA256: page.FrameSHA256, X0: 60000, Y0: 10000, X1: 95000, Y1: 16000}
 	plan, artifact := taskBFreshArtifact(t, page, burned.Pixels, []redaction.Box{mask}, []redaction.Run{{Kind: "text", Text: "𠮷 retained", Page: 1, SourceSpan: &redaction.Span{End: 13}, Boxes: []redaction.Box{runBox}, FontSizeMilliPoints: 11000}}, recipe)
 	var output bytes.Buffer
-	require.NoError(t, WriteFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, plan, recipe))
-	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor([]PageArtifact{artifact}), recipe))
+	require.NoError(t, WriteFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, plan, PDFWriteOptions{Recipe: recipe, StagingDirectory: t.TempDir(), MaxBytes: recipe.MaxStagingBytes}))
+	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor(t, []PageArtifact{artifact}), recipe))
 	require.Equal(t, "𠮷 retained", extractIndependent(t, output.Bytes()))
 	for _, canary := range []string{"TASK-B-HIDDEN-CANARY", "/ActualText", "/EmbeddedFile", "/Metadata", "/Rotate", "/CropBox"} {
 		require.NotContains(t, output.String(), canary)
@@ -115,8 +115,8 @@ func TestTaskBImageOnlyFullPageMaskFreshOutput(t *testing.T) {
 	marker := redaction.Run{Kind: "redaction", Text: "[REDACTED]", Page: 1, Boxes: []redaction.Box{mask}, FontSizeMilliPoints: 11000}
 	plan, artifact := taskBFreshArtifact(t, page, burned.Pixels, []redaction.Box{mask}, []redaction.Run{marker}, recipe)
 	var output bytes.Buffer
-	require.NoError(t, WriteFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, plan, recipe))
-	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor([]PageArtifact{artifact}), recipe))
+	require.NoError(t, WriteFresh(t.Context(), &output, &artifactSequence{pages: []PageArtifact{artifact}}, plan, PDFWriteOptions{Recipe: recipe, StagingDirectory: t.TempDir(), MaxBytes: recipe.MaxStagingBytes}))
+	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), verificationFor(t, []PageArtifact{artifact}), recipe))
 	require.Equal(t, "[REDACTED]", extractIndependent(t, output.Bytes()))
 	writeTaskBEvidence(t, "image-only-full-mask.pdf", output.Bytes())
 }
@@ -129,7 +129,7 @@ func taskBImageOnlyRaster(t *testing.T) (redaction.Recipe, redaction.Page, Raste
 	engine, err := NewPDFium(recipe)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
-	raster, err := engine.Render(t.Context(), Source{Reader: bytes.NewReader(source), Size: int64(len(source)), SHA256: digest(source)}, page, recipe)
+	raster, err := engine.Render(t.Context(), Source{Reader: bytes.NewReader(source), Size: int64(len(source)), SHA256: digest(source), StagingDirectory: t.TempDir()}, page, recipe)
 	require.NoError(t, err)
 	return recipe, page, raster
 }
@@ -156,14 +156,14 @@ func TestTaskBQualifiedLimitsAndSinglePageBuffering(t *testing.T) {
 	recipe.PageTimeoutSeconds = 1
 	sequence := &blockingTaskBSequence{}
 	var output bytes.Buffer
-	err := writeFresh(t.Context(), &output, sequence, recipe)
+	err := writeFresh(t.Context(), &output, sequence, PDFWriteOptions{Recipe: recipe, StagingDirectory: t.TempDir(), MaxBytes: recipe.MaxStagingBytes})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 
 	first := unicodeArtifact(t)
 	second := renumberArtifact(t, first, 2)
 	tracked := &taskBStrictPageSequence{pages: []PageArtifact{first, second}}
 	output.Reset()
-	require.NoError(t, writeFresh(t.Context(), &output, tracked, qualificationRecipe()))
+	require.NoError(t, writeFresh(t.Context(), &output, tracked, PDFWriteOptions{Recipe: qualificationRecipe(), StagingDirectory: t.TempDir(), MaxBytes: qualificationRecipe().MaxStagingBytes}))
 	require.False(t, tracked.open, "the final page reader must close before EOF is requested")
 }
 

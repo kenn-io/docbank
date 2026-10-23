@@ -17,10 +17,9 @@ import (
 func init() { rootCmd.AddCommand(newRedactionCommand()) }
 
 func newRedactionCommand() *cobra.Command {
-	command := &cobra.Command{Use: "redaction", Short: "Inspect PDF redaction evidence",
+	command := &cobra.Command{Use: "redaction", Short: "Review and redact retained PDFs",
 		GroupID: groupProductions,
-		Long: "prepare captures evidence from an exact retained native PDF.\n" +
-			"It applies no masks and creates no output PDF or retained job."}
+		Long:    "Prepare an exact retained native PDF, resolve explicit masks, then render\nthe reviewed result as one verified ZIP."}
 	var version string
 	var jsonOutput bool
 	prepare := &cobra.Command{Use: "prepare <path-or-id>", Short: "Inspect one retained native PDF",
@@ -57,7 +56,7 @@ func newRedactionCommand() *cobra.Command {
 		}}
 	prepare.Flags().StringVar(&version, "version", "", "retained content version (defaults to current)")
 	prepare.Flags().BoolVar(&jsonOutput, "json", false, "print JSON including original text")
-	command.AddCommand(prepare)
+	command.AddCommand(prepare, newRedactionResolveCommand(), newRedactionRenderCommand())
 	return command
 }
 

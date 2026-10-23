@@ -43,25 +43,6 @@ export interface AssignTagPathRequest {
   path: string;
 }
 
-export interface Box {
-  frame_sha256: string;
-  page: number;
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-}
-
-export interface Span {
-  end: number;
-  start: number;
-}
-
-export interface Atom {
-  boxes: Box[];
-  span: Span;
-}
-
 export type AttachPhotoFileRequestRole = typeof AttachPhotoFileRequestRole[keyof typeof AttachPhotoFileRequestRole];
 
 
@@ -617,6 +598,38 @@ export interface ErrorPosition {
   offset: number;
 }
 
+export interface PDFRedactionBox {
+  frame_sha256: string;
+  page: number;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+export interface PDFRedactionSpan {
+  end: number;
+  start: number;
+}
+
+export interface PDFRedactionSelector {
+  boxes?: PDFRedactionBox[];
+  kind: string;
+  map_sha256: string;
+  pages?: number[];
+  span?: PDFRedactionSpan;
+  unit_id?: string;
+}
+
+export interface PDFRedactionProblem {
+  code: string;
+  decision_ids: string[];
+  expanded: PDFRedactionSelector;
+  expanded_boxes?: PDFRedactionBox[];
+  expanded_map_sha256?: string;
+  expanded_spans?: PDFRedactionSpan[];
+}
+
 export interface Error {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -632,6 +645,7 @@ export interface Error {
   more?: boolean;
   observed_scope_count?: number;
   position?: ErrorPosition;
+  redaction?: PDFRedactionProblem;
   status: number;
   title: string;
 }
@@ -3235,12 +3249,6 @@ export interface GCReport {
   untracked_files: number;
 }
 
-export interface Gap {
-  anchor: number;
-  box: Box;
-  unordered?: boolean;
-}
-
 export interface GcRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4008,6 +4016,11 @@ export interface NativePDFEvidence {
   source: PageSource;
 }
 
+export interface NativePDFSelection {
+  node_id: number;
+  source: PageSource;
+}
+
 export interface NodePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4046,6 +4059,90 @@ export interface OutputProblems {
   next: number;
   plan_id: string;
   total: number;
+}
+
+export interface PDFRedactionAtom {
+  boxes: PDFRedactionBox[];
+  span: PDFRedactionSpan;
+}
+
+export interface PDFRedactionGap {
+  anchor: number;
+  box: PDFRedactionBox;
+  unordered?: boolean;
+}
+
+export interface PDFRedactionPage {
+  frame_sha256: string;
+  height: number;
+  number: number;
+  span: PDFRedactionSpan;
+  width: number;
+}
+
+export interface PDFRedactionRecipe {
+  contract: string;
+  dpi: number;
+  font_sha256: string;
+  max_axis: number;
+  max_pixels: number;
+  max_staging_bytes: number;
+  padding_pixels: number;
+  page_timeout_seconds: number;
+  qualified_peak_rss_bytes: number;
+  renderer_sha256: string;
+  wasm_memory_bytes: number;
+  writer_version: string;
+}
+
+export interface PDFRedactionRedactionRegion {
+  boxes: PDFRedactionBox[];
+  decision_ids: string[];
+  label: string;
+}
+
+export interface PDFRedactionRun {
+  anchor: number;
+  boxes: PDFRedactionBox[];
+  font_size_milli_points: number;
+  kind: string;
+  page: number;
+  source_span: PDFRedactionSpan;
+  text: string;
+}
+
+export interface PDFRedactionResolved {
+  contract: string;
+  gaps: PDFRedactionGap[];
+  map_sha256: string;
+  page_count: number;
+  pages: PDFRedactionPage[];
+  recipe_sha256: string;
+  redact_boxes: PDFRedactionBox[];
+  regions: PDFRedactionRedactionRegion[];
+  removed: PDFRedactionSpan[];
+  runs: PDFRedactionRun[];
+  sha256: string;
+  uncertain_decision_ids: string[];
+}
+
+export interface PDFRedactionUnit {
+  boxes: PDFRedactionBox[];
+  id: string;
+  kind: string;
+  spans: PDFRedactionSpan[];
+}
+
+export interface PDFRedactionTextMap {
+  atoms: PDFRedactionAtom[];
+  contract: string;
+  evidence_sha256: string;
+  gaps: PDFRedactionGap[];
+  pages: PDFRedactionPage[];
+  pdf_sha256: string;
+  sha256: string;
+  text: string;
+  units: PDFRedactionUnit[];
 }
 
 export interface PackageBrowseVolume {
@@ -4408,14 +4505,6 @@ export interface PackageTimelineInputPage {
      */
   limit: number;
   next_after_row_id?: string;
-}
-
-export interface Page {
-  frame_sha256: string;
-  height: number;
-  number: number;
-  span: Span;
-  width: number;
 }
 
 export interface PageBinding {
@@ -6871,23 +6960,10 @@ export interface QueryPreview {
   query_fingerprint: string;
 }
 
-export interface Unit {
-  boxes: Box[];
+export interface RedactionMask {
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
   id: string;
-  kind: string;
-  spans: Span[];
-}
-
-export interface TextMap {
-  atoms: Atom[];
-  contract: string;
-  evidence_sha256: string;
-  gaps: Gap[];
-  pages: Page[];
-  pdf_sha256: string;
-  sha256: string;
-  text: string;
-  units: Unit[];
+  selector: PDFRedactionSelector;
 }
 
 export interface RedactionPreparation {
@@ -6897,7 +6973,7 @@ export interface RedactionPreparation {
   evidence: NativePDFEvidence;
   evidence_sha256: string;
   frames: PageFrameV1[];
-  map: TextMap;
+  map: PDFRedactionTextMap;
   selection: PageBinding;
 }
 
@@ -6905,6 +6981,34 @@ export interface RedactionPreparationRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   selection: PageBinding;
+}
+
+export interface RedactionRenderRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  masks: RedactionMask[];
+  preparation: RedactionPreparation;
+  review_sha256: string;
+}
+
+export interface RedactionResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  masks: RedactionMask[];
+  preparation: RedactionPreparation;
+}
+
+export interface RedactionReview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  contract: string;
+  decisions_sha256: string;
+  observed_node_revision: number;
+  preparation_sha256: string;
+  recipe: PDFRedactionRecipe;
+  resolved: PDFRedactionResolved;
+  selection: NativePDFSelection;
+  sha256: string;
 }
 
 export interface RegisterBlobStoreRequest {
@@ -8692,6 +8796,7 @@ export type GetExportJobEventsDefault = {
   more?: boolean;
   observed_scope_count?: number;
   position?: ErrorPosition;
+  redaction?: PDFRedactionProblem;
   status: number;
   title: string;
 };
@@ -18428,6 +18533,120 @@ return sessionJSON<RedactionPreparation>(getPrepareNativePDFWithBlobUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
     body: prepareNativePDFBody
+  }
+);}
+
+
+
+export const getRenderNativePDFUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/render`
+}
+
+/**
+ * @summary Render and verify a reviewed native PDF into one ZIP
+ */
+export const renderNativePDF = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Blob>(getRenderNativePDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
+  }
+);}
+
+
+
+export const getResolveNativePDFWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/resolve`
+}
+
+/**
+ * @summary Review explicit masks against a freshly inspected retained PDF
+ */
+export const resolveNativePDFWithJson = async (redactionResolveRequest: NonReadonly<RedactionResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionReview> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionReview>(getResolveNativePDFWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionResolveRequest)
+  }
+);}
+
+
+
+export const getResolveNativePDFWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/resolve`
+}
+
+/**
+ * @summary Review explicit masks against a freshly inspected retained PDF
+ */
+export const resolveNativePDFWithBlob = async (resolveNativePDFBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionReview> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionReview>(getResolveNativePDFWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: resolveNativePDFBody
   }
 );}
 

@@ -63,6 +63,8 @@ func timeoutExempt(method, path string) bool {
 		return true
 	}
 	switch path {
+	case "/api/v1/redaction/render":
+		return method == http.MethodPost
 	case "/api/v1/push/uploads":
 		return method == http.MethodPost
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/packages/exports", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
@@ -364,6 +366,9 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {
+				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+					panic(v)
+				}
 				logger.Error("panic in handler", "path", r.URL.Path, "panic", v)
 				writeError(w, NewError(http.StatusInternalServerError, "internal", "internal server error"))
 			}

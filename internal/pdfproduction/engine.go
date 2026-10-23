@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -21,9 +22,10 @@ import (
 )
 
 type Source struct {
-	Reader io.ReaderAt
-	Size   int64
-	SHA256 string
+	StagingDirectory string
+	Reader           io.ReaderAt
+	Size             int64
+	SHA256           string
 }
 type Raster struct {
 	burned *burnProof
@@ -46,6 +48,9 @@ type PageSequence interface {
 	Next(ctx context.Context) (PageArtifact, error)
 }
 type VerificationInput struct {
+	// PDFSHA256, when supplied, binds verification to the caller's publication digest.
+	PDFSHA256                        string
+	StagingDirectory                 string
 	Pages                            []redaction.Page
 	NextText                         func(context.Context) (int, []byte, error)
 	NextPageArtifact                 func(context.Context) (PageArtifact, error)
@@ -211,11 +216,14 @@ type frozenPDF struct {
 // The caller's mutable reader is never consulted again. The later publisher
 // must likewise own and publish the exact immutable staged artifact it submits
 // to VerifyFresh, bound by size/digest, not reopen a mutable original afterward.
-func freezeFresh(ctx context.Context, reader io.ReaderAt, size, budget int64) (snapshot *frozenPDF, result error) {
-	if reader == nil || size <= 0 || size > min(maxPDFFileBytes, maxPayloadBytes, budget) {
+func freezeFresh(ctx context.Context, reader io.ReaderAt, size int64, options PDFWriteOptions) (snapshot *frozenPDF, result error) {
+	if reader == nil || size <= 0 || size > min(maxPDFFileBytes, maxPayloadBytes, options.MaxBytes, options.Recipe.MaxStagingBytes) {
 		return nil, errors.New("invalid final PDF snapshot bounds")
 	}
-	file, err := os.CreateTemp("", "docbank-verify-*.pdf")
+	if err := validateStagingDirectory(options.StagingDirectory); err != nil {
+		return nil, err
+	}
+	file, err := os.CreateTemp(options.StagingDirectory, "docbank-verify-*.pdf")
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +275,10 @@ func stageSource(ctx context.Context, s Source, budget int64) (file *os.File, re
 	if s.Size > budget {
 		return nil, errors.New("PDF source exceeds private staging budget")
 	}
-	file, err := os.CreateTemp("", "docbank-source-*.pdf")
+	if err := validateStagingDirectory(s.StagingDirectory); err != nil {
+		return nil, err
+	}
+	file, err := os.CreateTemp(s.StagingDirectory, "docbank-source-*.pdf")
 	if err != nil {
 		return nil, err
 	}
@@ -286,4 +297,25 @@ func stageSource(ctx context.Context, s Source, budget int64) (file *os.File, re
 		return file, errors.New("PDF source hash mismatch")
 	}
 	return file, nil
+}
+
+// PDFWriteOptions keeps local resource ownership separate from recipe identity.
+type PDFWriteOptions struct {
+	Recipe           redaction.Recipe
+	StagingDirectory string
+	MaxBytes         int64
+}
+
+func validateStagingDirectory(directory string) error {
+	if !filepath.IsAbs(directory) {
+		return errors.New("PDF staging directory must be absolute")
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("PDF staging owner is not a directory")
+	}
+	return nil
 }

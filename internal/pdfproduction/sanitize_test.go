@@ -91,7 +91,7 @@ func TestSanitizedNativeAndScanThreeTargetsEndorsementsAndIndependentOCR(t *test
 			engine, err := NewPDFium(r)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, engine.Close()) }()
-			raster, err := engine.Render(t.Context(), Source{Reader: bytes.NewReader(original.Bytes()), Size: int64(original.Len()), SHA256: digest(original.Bytes())}, page, r)
+			raster, err := engine.Render(t.Context(), Source{Reader: bytes.NewReader(original.Bytes()), Size: int64(original.Len()), SHA256: digest(original.Bytes()), StagingDirectory: t.TempDir()}, page, r)
 			require.NoError(t, err)
 			if scan {
 				scanArtifact := a
@@ -99,8 +99,8 @@ func TestSanitizedNativeAndScanThreeTargetsEndorsementsAndIndependentOCR(t *test
 				scanArtifact.LayoutSHA256 = mustDigest(t, scanArtifact.Layout)
 				encodeArtifact(t, &scanArtifact, raster.Pixels)
 				var wrapper bytes.Buffer
-				require.NoError(t, WriteRendition(t.Context(), &wrapper, &artifactSequence{pages: []PageArtifact{scanArtifact}}, r))
-				raster, err = engine.Render(t.Context(), Source{Reader: bytes.NewReader(wrapper.Bytes()), Size: int64(wrapper.Len()), SHA256: digest(wrapper.Bytes())}, page, r)
+				require.NoError(t, WriteRendition(t.Context(), &wrapper, &artifactSequence{pages: []PageArtifact{scanArtifact}}, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
+				raster, err = engine.Render(t.Context(), Source{Reader: bytes.NewReader(wrapper.Bytes()), Size: int64(wrapper.Len()), SHA256: digest(wrapper.Bytes()), StagingDirectory: t.TempDir()}, page, r)
 				require.NoError(t, err)
 			}
 			require.NoError(t, engine.Close())
@@ -120,8 +120,8 @@ func TestSanitizedNativeAndScanThreeTargetsEndorsementsAndIndependentOCR(t *test
 			require.NoError(t, err)
 			encodeArtifact(t, &a, final.Pixels)
 			var pdf bytes.Buffer
-			require.NoError(t, WriteFresh(t.Context(), &pdf, &artifactSequence{pages: []PageArtifact{a}}, p, r))
-			require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(pdf.Bytes()), int64(pdf.Len()), verificationFor([]PageArtifact{a}), r))
+			require.NoError(t, WriteFresh(t.Context(), &pdf, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
+			require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(pdf.Bytes()), int64(pdf.Len()), verificationFor(t, []PageArtifact{a}), r))
 			extracted := extractIndependent(t, pdf.Bytes())
 			require.Equal(t, 1, strings.Count(extracted, "SECRET"))
 			require.Equal(t, 3, strings.Count(extracted, "keep"))
@@ -209,7 +209,7 @@ func TestSanitizedWriterRequiresPlanBeforePageWork(t *testing.T) {
 			mutate(&p)
 			seq := &artifactSequence{pages: []PageArtifact{a}}
 			var out bytes.Buffer
-			require.Error(t, WriteFresh(t.Context(), &out, seq, p, r))
+			require.Error(t, WriteFresh(t.Context(), &out, seq, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 			require.Zero(t, seq.index)
 			require.Empty(t, out.Bytes())
 		})
@@ -220,7 +220,7 @@ func TestSanitizedWriterRejectsOversizedPageTextBeforeConsumingPages(t *testing.
 	p, a, r := sanitizedFixture(t, strings.Repeat("x", maxTextBytes+1))
 	seq := &artifactSequence{pages: []PageArtifact{a}}
 	var out bytes.Buffer
-	require.Error(t, WriteFresh(t.Context(), &out, seq, p, r))
+	require.Error(t, WriteFresh(t.Context(), &out, seq, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 	require.Zero(t, seq.index)
 }
 
@@ -229,7 +229,7 @@ func TestSanitizedWriterRejectsRunSubstitutionAndMutatedMaskPixels(t *testing.T)
 	a.Runs = append([]redaction.Run(nil), a.Runs...)
 	a.Runs[0].Text = "evil evil"
 	var out bytes.Buffer
-	require.Error(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, r))
+	require.Error(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 	require.Empty(t, out.Bytes())
 	p, a, r = sanitizedFixture(t, "secret")
 	mask := p.Runs[0].Boxes[0]
@@ -239,14 +239,14 @@ func TestSanitizedWriterRejectsRunSubstitutionAndMutatedMaskPixels(t *testing.T)
 	sealPlan(t, &p)
 	a.Runs = p.Runs
 	a.ResolvedSHA256 = p.SHA256
-	require.Error(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, r))
+	require.Error(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 	require.Empty(t, out.Bytes())
 	raster, _ := whiteRaster(t)
 	raster.Page = a.Layout.Source
 	burned, err := Burn(raster, p.RedactBoxes, r)
 	require.NoError(t, err)
 	encodeArtifact(t, &a, burned.Pixels)
-	require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, r))
+	require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 }
 
 func TestSanitizedWriterMultiBoxSingleOccurrenceAndPrivateHashes(t *testing.T) {
@@ -259,11 +259,11 @@ func TestSanitizedWriterMultiBoxSingleOccurrenceAndPrivateHashes(t *testing.T) {
 	a.Runs = p.Runs
 	a.ResolvedSHA256 = p.SHA256
 	var out bytes.Buffer
-	require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, r))
+	require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 	require.NotContains(t, out.String(), p.SHA256)
 	require.NotContains(t, out.String(), a.LayoutSHA256)
 	require.NotContains(t, out.String(), "/DocbankResolved")
-	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), verificationFor([]PageArtifact{a}), r))
+	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), verificationFor(t, []PageArtifact{a}), r))
 }
 
 func TestSanitizedWriterWhitespaceUnicodeAnd600DPI(t *testing.T) {
@@ -277,12 +277,12 @@ func TestSanitizedWriterWhitespaceUnicodeAnd600DPI(t *testing.T) {
 		t.Run(text, func(t *testing.T) {
 			p, a, r := sanitizedFixture(t, text)
 			var out bytes.Buffer
-			require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, r))
+			require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 			txt, err := redaction.Text(p)
 			require.NoError(t, err)
 			require.Equal(t, text+"\f", string(txt))
 			require.Equal(t, example.extracted, extractIndependent(t, out.Bytes()))
-			require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), verificationFor([]PageArtifact{a}), r))
+			require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), verificationFor(t, []PageArtifact{a}), r))
 		})
 	}
 	p, a, _ := sanitizedFixture(t, "keep")
@@ -301,8 +301,8 @@ func TestSanitizedWriterWhitespaceUnicodeAnd600DPI(t *testing.T) {
 	require.NoError(t, err)
 	encodeArtifact(t, &a, raster.Pixels)
 	var out bytes.Buffer
-	require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, r))
-	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), verificationFor([]PageArtifact{a}), r))
+	require.NoError(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
+	require.NoError(t, VerifyFreshWithRecipe(t.Context(), bytes.NewReader(out.Bytes()), int64(out.Len()), verificationFor(t, []PageArtifact{a}), r))
 }
 
 func extractIndependent(t *testing.T, data []byte) string {

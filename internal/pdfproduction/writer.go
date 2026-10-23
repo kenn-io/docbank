@@ -82,7 +82,14 @@ func (w *objectWriter) stream(id int, dict string, data []byte) {
 // writeFresh privately stages a fresh object graph. Nothing reaches out until
 // every descriptor, PNG identity, and page sequence has been validated. At most
 // one decoded page is retained, plus bounded xref/page-reference indexes.
-func writeFresh(ctx context.Context, out io.Writer, pages PageSequence, recipe redaction.Recipe) (result error) {
+func writeFresh(ctx context.Context, out io.Writer, pages PageSequence, options PDFWriteOptions) (result error) {
+	recipe := options.Recipe
+	if options.MaxBytes <= 0 {
+		return ErrOutputLimit
+	}
+	if err := validateStagingDirectory(options.StagingDirectory); err != nil {
+		return err
+	}
 	if err := validateRecipe(recipe); err != nil {
 		return err
 	}
@@ -97,16 +104,22 @@ func writeFresh(ctx context.Context, out io.Writer, pages PageSequence, recipe r
 		return err
 	}
 	defer stop()
+	var completed bool
+	defer func() {
+		if !completed {
+			result = errors.Join(result, context.Cause(ctx))
+		}
+	}()
 	font, err := sfnt.Parse(fontBytes)
 	if err != nil {
 		return fmt.Errorf("qualified Unicode font unavailable: %w", err)
 	}
-	file, err := os.CreateTemp("", "docbank-fresh-*.pdf")
+	file, err := os.CreateTemp(options.StagingDirectory, "docbank-fresh-*.pdf")
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, file.Close(), os.Remove(file.Name())) }()
-	w := &objectWriter{out: file, limit: min(maxPayloadBytes, maxPDFFileBytes, recipe.MaxStagingBytes), offsets: []int64{0, 0, 0, 0, 0}}
+	w := &objectWriter{out: file, limit: min(maxPayloadBytes, maxPDFFileBytes, recipe.MaxStagingBytes, options.MaxBytes), offsets: []int64{0, 0, 0, 0, 0}}
 	w.printf("%%PDF-1.7\n%%\xe2\xe3\xcf\xd3\n")
 	w.object(1, "<< /Type /Catalog /Pages 2 0 R >>")
 	w.stream(3, fmt.Sprintf("/Length1 %d", len(fontBytes)), fontBytes)
@@ -166,7 +179,8 @@ func writeFresh(ctx context.Context, out io.Writer, pages PageSequence, recipe r
 		return err
 	}
 	_, err = io.Copy(out, contextReader{ctx, file})
-	return err
+	completed = true
+	return errors.Join(err, context.Cause(ctx))
 }
 
 // A descriptor and its PNG share one page deadline. In particular, do not

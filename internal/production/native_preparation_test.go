@@ -92,3 +92,15 @@ func TestNativePreparationBindings(t *testing.T) {
 		})
 	}
 }
+
+func TestNativePreparationDerivation(t *testing.T) {
+	frames, evidence := nativePreparationFixture(t)
+	result, err := assembleNativePreparation(frames, evidence)
+	require.NoError(t, err)
+	require.NoError(t, ValidateNativePreparationDerivation(result))
+	result.Map.Atoms[0].Boxes[0].X1++
+	_, result.Map.SHA256, err = redaction.CanonicalTextMap(result.Map)
+	require.NoError(t, err)
+	require.NoError(t, ValidateNativePreparation(result), "the edited map is structurally valid and resealed")
+	require.Error(t, ValidateNativePreparationDerivation(result), "geometry must derive from the supplied observations")
+}

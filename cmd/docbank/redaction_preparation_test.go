@@ -101,7 +101,7 @@ func qualifyRedactionSource(t *testing.T, fixture redactionFixture, runtime *pag
 	}, policy)
 	require.NoError(t, err)
 	source := pdfproduction.Source{
-		Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256,
+		Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256, StagingDirectory: t.TempDir(),
 	}
 	// The PDF worker's RSS ceiling counts the whole test binary, so return the
 	// freed heap from the daemon, earlier tests, and the text read to the OS before measuring.

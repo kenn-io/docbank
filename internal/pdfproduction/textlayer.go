@@ -20,7 +20,8 @@ import (
 
 // WriteFresh accepts one canonical document authority before consuming any
 // artifacts. Page callbacks cannot substitute runs, frames, masks or recipes.
-func WriteFresh(ctx context.Context, out io.Writer, pages PageSequence, plan redaction.Resolved, recipe redaction.Recipe) error {
+func WriteFresh(ctx context.Context, out io.Writer, pages PageSequence, plan redaction.Resolved, options PDFWriteOptions) error {
+	recipe := options.Recipe
 	if err := validateRecipe(recipe); err != nil {
 		return err
 	}
@@ -50,7 +51,7 @@ func WriteFresh(ctx context.Context, out io.Writer, pages PageSequence, plan red
 		return err
 	}
 	frozen.SHA256 = sha
-	return writeFresh(ctx, out, &resolvedSequence{pages: pages, plan: frozen, recipe: recipe}, recipe)
+	return writeFresh(ctx, out, &resolvedSequence{pages: pages, plan: frozen, recipe: recipe}, options)
 }
 
 func preflightResolved(ctx context.Context, p redaction.Resolved) error {
@@ -95,8 +96,8 @@ func preflightResolved(ctx context.Context, p redaction.Resolved) error {
 
 // WriteRendition constructs bounded source renditions before a redaction plan
 // exists. Its output is source evidence, never a sanitized production receipt.
-func WriteRendition(ctx context.Context, out io.Writer, pages PageSequence, recipe redaction.Recipe) error {
-	return writeFresh(ctx, out, pages, recipe)
+func WriteRendition(ctx context.Context, out io.Writer, pages PageSequence, options PDFWriteOptions) error {
+	return writeFresh(ctx, out, pages, options)
 }
 
 type resolvedSequence struct {

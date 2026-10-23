@@ -64,11 +64,11 @@ type renderedTextPage struct {
 	glyphStart, glyphEnd int
 }
 
-func RenderTextRendition(ctx context.Context, text string, units []redaction.Unit) ([]byte, redaction.TextMap, error) {
-	return renderTextRendition(ctx, text, units, qualifiedTextRenditionLimits)
+func RenderTextRendition(ctx context.Context, stagingDirectory string, text string, units []redaction.Unit) ([]byte, redaction.TextMap, error) {
+	return renderTextRendition(ctx, stagingDirectory, text, units, qualifiedTextRenditionLimits)
 }
 
-func renderTextRendition(ctx context.Context, text string, units []redaction.Unit, limits textRenditionLimits) ([]byte, redaction.TextMap, error) {
+func renderTextRendition(ctx context.Context, stagingDirectory string, text string, units []redaction.Unit, limits textRenditionLimits) ([]byte, redaction.TextMap, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, redaction.TextMap{}, err
 	}
@@ -141,7 +141,7 @@ func renderTextRendition(ctx context.Context, text string, units []redaction.Uni
 	sequence := &textPageSequence{text: text, face: face, pages: pages, glyphs: glyphs, mapPages: m.Pages}
 	recipe := pdfproduction.QualifiedRecipe()
 	recipe.MaxStagingBytes = min(recipe.MaxStagingBytes, limits.MaxOutputBytes)
-	if err := pdfproduction.WriteRendition(ctx, &output, sequence, recipe); err != nil {
+	if err := pdfproduction.WriteRendition(ctx, &output, sequence, pdfproduction.PDFWriteOptions{Recipe: recipe, StagingDirectory: stagingDirectory, MaxBytes: recipe.MaxStagingBytes}); err != nil {
 		if errors.Is(err, pdfproduction.ErrOutputLimit) {
 			return nil, redaction.TextMap{}, &Problem{Code: problemRenditionLimitExceeded}
 		}

@@ -210,6 +210,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if _, err := emailmime.RecoverStale(sigCtx, layout.BlobTmpDir()); err != nil {
 		return fmt.Errorf("recovering email decoder spool: %w", err)
 	}
+	if err := processing.RecoverNativePDFSpool(sigCtx, layout.BlobTmpDir()); err != nil {
+		return fmt.Errorf("recovering native PDF staging: %w", err)
+	}
 	if cfg.EmailPDF != nil && runtime.GOOS == "linux" {
 		if err := emailpdf.RecoverStale(sigCtx, layout.EmailPDFSpoolDir()); err != nil {
 			logger.Warn("email PDF staging retained; recovery will retry on the next start", "error", err)

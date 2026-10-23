@@ -15,16 +15,29 @@ import (
 )
 
 func (service *Service) capturePreparationSource(ctx context.Context, selection store.PageBinding) ([]byte, error) {
-	view, err := service.catalog.ContentVersionViewByID(ctx, selection.NodeID, selection.Source.VersionID)
+	selected := NativePDFSelection{NodeID: selection.NodeID, Source: selection.Source}
+	view, err := service.loadNativePDFVersion(ctx, selected)
 	if err != nil {
 		return nil, err
-	}
-	if view.Node.IsDir() || view.Node.TrashedAt != nil {
-		return nil, store.ErrNotFound
 	}
 	if view.Node.Revision != selection.Revision {
 		return nil, store.ErrStaleRevision
 	}
+	return service.readNativePDFSource(ctx, selected, view)
+}
+
+func (service *Service) loadNativePDFVersion(ctx context.Context, selection NativePDFSelection) (store.ContentVersionView, error) {
+	view, err := service.catalog.ContentVersionViewByID(ctx, selection.NodeID, selection.Source.VersionID)
+	if err != nil {
+		return view, err
+	}
+	if view.Node.IsDir() || view.Node.TrashedAt != nil {
+		return view, store.ErrNotFound
+	}
+	return view, nil
+}
+
+func (service *Service) readNativePDFSource(ctx context.Context, selection NativePDFSelection, view store.ContentVersionView) ([]byte, error) {
 	if view.Version.BlobHash != selection.Source.SHA256 || view.Version.Size != selection.Source.Size {
 		return nil, ErrRedactionPreparationInvalid
 	}

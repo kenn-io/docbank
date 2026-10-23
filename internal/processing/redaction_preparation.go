@@ -92,30 +92,12 @@ func (service *Service) prepareNativePDF(ctx context.Context, request RedactionP
 	if service == nil || runtime == nil || !pagerender.SupportedPlatform() {
 		return result, ErrRedactionPreparationUnavailable
 	}
-	runCtx, finish, err := service.beginRun(ctx)
+	op, err := service.beginNativePDFOperation(ctx, "prepare")
 	if err != nil {
-		return result, ErrRedactionPreparationUnavailable
+		return result, err
 	}
-	defer finish()
-	service.runsMu.Lock()
-	if service.lifecycle.Err() != nil {
-		service.runsMu.Unlock()
-		return result, ErrRedactionPreparationUnavailable
-	}
-	if service.preparationActive {
-		service.runsMu.Unlock()
-		return result, ErrRedactionPreparationBusy
-	}
-	service.preparationActive = true
-	service.runsMu.Unlock()
-	defer func() {
-		service.runsMu.Lock()
-		service.preparationActive = false
-		service.runsMu.Unlock()
-		if ctx.Err() == nil && service.lifecycle.Err() != nil {
-			result, resultErr = RedactionPreparation{}, ErrRedactionPreparationUnavailable
-		}
-	}()
+	defer func() { resultErr = errors.Join(resultErr, op.Close()) }()
+	runCtx := op.ctx
 	var data []byte
 	err = service.gate.CaptureContext(runCtx, func() error {
 		data, err = service.capturePreparationSource(runCtx, request.Selection)
@@ -130,7 +112,7 @@ func (service *Service) prepareNativePDF(ctx context.Context, request RedactionP
 		return result, preparationFailure(err)
 	}
 	prepared, err := production.PrepareNativePDF(runCtx, production.NativePreparationInput{
-		PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)),
+		PDF: pdfproduction.Source{StagingDirectory: op.directory, Reader: bytes.NewReader(data), Size: int64(len(data)),
 			SHA256: request.Selection.Source.SHA256},
 		Inspection: inspection, PageRuntimeFingerprint: runtime.Fingerprint(),
 	})
