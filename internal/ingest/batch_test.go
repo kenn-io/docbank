@@ -135,6 +135,7 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 		{"success", true}, {"sync failure", true}, {"cancel", true},
 	} {
 		test := func(t *testing.T) {
+			t.Helper()
 			ing := newTestIngester(t)
 			// These contents use distinct publication stripes, so the test can
 			// hold all 32 writers at the directory sync together.
