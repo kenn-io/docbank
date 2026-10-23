@@ -121,6 +121,12 @@ publishing, and each image must be inspected again whenever the interface
 under it changes. Add one only when the reader needs to see the interface to
 act on the page.
 
+Never generate a screenshot that no page embeds. "Embedded" means a page in
+`docs/`, `website/`, or the root `README.md` shows the image. That rule covers
+every capture a spec writes, including viewport variants, alternate themes,
+and intermediate states. When a spec needs to check a state that no page
+shows, write an assertion instead of a capture.
+
 A screenshot earns its place when:
 
 - the reader must find a control in a dense layout or on a narrow screen;
@@ -144,8 +150,8 @@ Use text instead when:
 Before adding a name to `scripts/docs-assets.txt`, make sure the image has:
 
 1. **An owning page.** Embed it in the page that owns the fact, in the
-   change that adds it. Other pages may reuse it. An image no page embeds
-   does not belong in the manifest.
+   same change that adds the capture and the manifest entry. Other pages may
+   reuse it.
 2. **A reader question.** The alt text says what the reader sees. The
    surrounding text answers the question without the image.
 3. **A spec in the default run.** `make docs-screenshots` must produce it with
@@ -160,8 +166,9 @@ Before adding a name to `scripts/docs-assets.txt`, make sure the image has:
    most captures take a few seconds. Keep a new spec under 20 seconds, and
    explain in the pull request when it needs more.
 
-When a page stops embedding an image, remove it from the manifest and drop its
-capture call in the same change.
+When the last page stops embedding an image, remove its manifest entry and
+its capture call in the same change. Keep any assertion that still guards
+behavior.
 
 The screenshot that [pull requests changing the web app or TUI](../AGENTS.md#git-rules)
 must include is separate. It shows reviewers the changed interface and never
