@@ -3485,7 +3485,7 @@ it.each([
         : {
             items: [photo(1)],
             total: 1,
-            facets: [rankedFacet],
+            facets: fallback ? [] : [rankedFacet],
             relevance_available: true,
             ...(fallback
               ? {
@@ -3514,7 +3514,10 @@ it.each([
     } else if (transition.endsWith("after recovery")) {
       photos.setView("timeline");
       await photos.loadMore();
-      await vi.waitFor(() => expect(photos.timeline?.total).toBe(7));
+      await vi.waitFor(() => {
+        expect(photos.timeline?.total).toBe(7);
+        expect(photos.facets).toEqual([metadataFacet]);
+      });
       if (transition === "clearing a date after recovery") {
         await photos.selectDate("2024-02-29");
         fallback = false;
