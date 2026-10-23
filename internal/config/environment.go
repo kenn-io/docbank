@@ -38,6 +38,10 @@ func applyEnvironment(c Config) (Config, error) {
 	if selected {
 		c.Server.APIKey = key
 	}
+	return applyMCPEnvironment(c), nil
+}
+
+func applyMCPEnvironment(c Config) Config {
 	if value := os.Getenv("DOCBANK_MCP_HTTP_ALLOWED_HOSTS"); value != "" {
 		c.MCP.HTTP.AllowedHosts = strings.Split(value, ",")
 		for i := range c.MCP.HTTP.AllowedHosts {
@@ -61,7 +65,7 @@ func applyEnvironment(c Config) (Config, error) {
 		c.MCP.HTTP.CredentialBinding = "credential:" + name
 		c.CredentialBindings[name] = CredentialBindingConfig{EnvironmentVariable: "DOCBANK_MCP_HTTP_TOKEN"}
 	}
-	return c, nil
+	return c
 }
 
 // EnvironmentSecret resolves NAME or NAME_FILE, rejecting conflicting nonempty

@@ -80,7 +80,7 @@ func (r *reportTools) download(
 	}()
 	current, err := r.lease.acquire(ctx)
 	if err != nil {
-		return output, err
+		return output, daemonAcquisitionError(err)
 	}
 	budget := r.budget.Child()
 	defer func() { _ = budget.Close() }()

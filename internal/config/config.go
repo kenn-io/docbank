@@ -435,25 +435,13 @@ func Load(root string) (Config, error) {
 	return applyEnvironment(c)
 }
 
-// loadTOML reads and resolves the vault-local configuration without applying
-// process startup environment overrides.
-func loadTOML(root string) (Config, error) {
+// parse decodes the whole file, rejecting syntax errors and unknown keys.
+// It does not resolve paths, apply environment overrides, or validate policy.
+func parse(root string) (Config, error) {
 	c := Default()
-	path := filepath.Join(root, "config.toml")
-	file, err := openConfig(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return c, nil
-	}
+	path, md, err := decodeFile(root, &c)
 	if err != nil {
-		return Config{}, fmt.Errorf("loading %s: %w", path, err)
-	}
-	md, decodeErr := toml.NewDecoder(file).Decode(&c)
-	closeErr := file.Close()
-	if decodeErr != nil {
-		return Config{}, fmt.Errorf("loading %s: %w", path, decodeErr)
-	}
-	if closeErr != nil {
-		return Config{}, fmt.Errorf("loading %s: %w", path, closeErr)
+		return Config{}, err
 	}
 	if undec := md.Undecoded(); len(undec) > 0 {
 		return Config{}, fmt.Errorf("loading %s: unknown key %q (typo?)", path, undec[0].String())
@@ -461,6 +449,101 @@ func loadTOML(root string) (Config, error) {
 	if key, ok := unsupportedEmbedderKey(md); ok {
 		return Config{}, fmt.Errorf("loading %s: %q is not supported by the pinned embedding adapter", path, key)
 	}
+	return c, nil
+}
+
+// parseSections parses the whole file as TOML but decodes only the named
+// top-level tables into their destinations, rejecting unknown keys inside
+// them. Other sections are left for the daemon to check at startup.
+func parseSections(root string, sections map[string]any) error {
+	var tables map[string]toml.Primitive
+	path, md, err := decodeFile(root, &tables)
+	if err != nil {
+		return err
+	}
+	for name, table := range tables {
+		if dest := sectionDestination(sections, name); dest != nil {
+			if err := md.PrimitiveDecode(table, dest); err != nil {
+				return fmt.Errorf("loading %s: %w", path, err)
+			}
+		}
+	}
+	for _, key := range md.Undecoded() {
+		if sectionDestination(sections, key[0]) != nil {
+			return fmt.Errorf("loading %s: unknown key %q (typo?)", path, key.String())
+		}
+	}
+	return nil
+}
+
+func sectionDestination(sections map[string]any, name string) any {
+	for section, dest := range sections {
+		if strings.EqualFold(section, name) {
+			return dest
+		}
+	}
+	return nil
+}
+
+// decodeFile decodes <root>/config.toml into v. A missing file leaves v
+// unchanged.
+func decodeFile(root string, v any) (string, toml.MetaData, error) {
+	path := filepath.Join(root, "config.toml")
+	file, err := openConfig(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return path, toml.MetaData{}, nil
+	}
+	if err != nil {
+		return path, toml.MetaData{}, fmt.Errorf("loading %s: %w", path, err)
+	}
+	md, decodeErr := toml.NewDecoder(file).Decode(v)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return path, toml.MetaData{}, fmt.Errorf("loading %s: %w", path, decodeErr)
+	}
+	if closeErr != nil {
+		return path, toml.MetaData{}, fmt.Errorf("loading %s: %w", path, closeErr)
+	}
+	return path, md, nil
+}
+
+// WebEnabled reads the web launcher setting, checking only [web].
+func WebEnabled(root string) (bool, error) {
+	c := Default()
+	if err := parseSections(root, map[string]any{"web": &c.Web}); err != nil {
+		return false, err
+	}
+	return c.Web.Enabled, nil
+}
+
+// LoadMCPHTTP reads MCP HTTP policy without daemon startup overrides,
+// checking only [mcp] and [credential_bindings].
+func LoadMCPHTTP(root string) (Config, error) {
+	c := Default()
+	sections := map[string]any{"mcp": &c.MCP, "credential_bindings": &c.CredentialBindings}
+	if err := parseSections(root, sections); err != nil {
+		return Config{}, err
+	}
+	c = applyMCPEnvironment(c)
+	if err := validateMCPConfig(c); err != nil {
+		return Config{}, err
+	}
+	if reference := c.MCP.HTTP.CredentialBinding; reference != "" {
+		name := strings.TrimPrefix(reference, "credential:")
+		if err := validateCredentialBinding(name, c.CredentialBindings[name]); err != nil {
+			return Config{}, err
+		}
+	}
+	return c, nil
+}
+
+// loadTOML resolves all vault-local configuration without startup overrides.
+func loadTOML(root string) (Config, error) {
+	c, err := parse(root)
+	if err != nil {
+		return Config{}, err
+	}
+	path := filepath.Join(root, "config.toml")
 	if err := resolveBackupRepo(root, &c.Backup); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
@@ -769,13 +852,20 @@ const (
 	DoclingDocumentAdapterContract = docling.DocumentAdapterContract
 )
 
+func validateCredentialBinding(name string, binding CredentialBindingConfig) error {
+	if err := validateProfileName(name, fmt.Sprintf("[credential_bindings.%s]", name)); err != nil {
+		return err
+	}
+	if !environmentVariablePattern.MatchString(binding.EnvironmentVariable) {
+		return fmt.Errorf("[credential_bindings.%s] environment_variable must be a variable name", name)
+	}
+	return nil
+}
+
 func validateProcessingProfiles(c Config) error {
 	for name, binding := range c.CredentialBindings {
-		if err := validateProfileName(name, fmt.Sprintf("[credential_bindings.%s]", name)); err != nil {
+		if err := validateCredentialBinding(name, binding); err != nil {
 			return err
-		}
-		if !environmentVariablePattern.MatchString(binding.EnvironmentVariable) {
-			return fmt.Errorf("[credential_bindings.%s] environment_variable must be a variable name", name)
 		}
 	}
 	for name, profile := range c.RenditionProfiles {

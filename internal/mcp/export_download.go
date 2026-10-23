@@ -70,7 +70,7 @@ func downloadExport(
 	}()
 	current, err := lease.acquire(ctx)
 	if err != nil {
-		return output, err
+		return output, daemonAcquisitionError(err)
 	}
 	receipt, err := current.daemonconn.DownloadExportArchiveTo(ctx, input.JobID, stage.File)
 	if err != nil {

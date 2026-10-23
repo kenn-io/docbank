@@ -33,9 +33,13 @@ import (
 const ensureTimeout = 30 * time.Second
 
 const (
-	daemonStartProblemPrefix      = "DOCBANK_DAEMON_START_PROBLEM="
-	daemonStartProblemVaultLocked = "vault_locked"
+	daemonStartProblemPrefix        = "DOCBANK_DAEMON_START_PROBLEM="
+	daemonStartProblemVaultLocked   = "vault_locked"
+	daemonStartProblemConfigInvalid = "config_invalid"
 )
+
+// ErrDaemonConfigInvalid marks a configuration rejected during daemon startup.
+var ErrDaemonConfigInvalid = errors.New("daemon config invalid")
 
 // ErrTransientDaemonAcquisition marks a daemon that disappeared after
 // discovery but before its ownership-proven client was ready. A caller may
@@ -65,10 +69,16 @@ func (e *daemonStartError) Unwrap() error { return e.cause }
 // across a process boundary, so the launcher restores the small stable subset
 // needed by callers before it returns the human error.
 func WriteDaemonStartProblem(w io.Writer, err error) error {
-	if !errors.Is(err, home.ErrVaultLocked) {
+	var code string
+	switch {
+	case errors.Is(err, home.ErrVaultLocked):
+		code = daemonStartProblemVaultLocked
+	case errors.Is(err, ErrDaemonConfigInvalid):
+		code = daemonStartProblemConfigInvalid
+	default:
 		return nil
 	}
-	if _, err := fmt.Fprintln(w, daemonStartProblemPrefix+daemonStartProblemVaultLocked); err != nil {
+	if _, err := fmt.Fprintln(w, daemonStartProblemPrefix+code); err != nil {
 		return fmt.Errorf("writing daemon startup problem: %w", err)
 	}
 	return nil
@@ -541,7 +551,11 @@ func daemonStartFailure(output *os.File, summary string) error {
 	}
 	detail, cause := parseDaemonStartOutput(string(data))
 	message := summary
-	if detail != "" {
+	if errors.Is(cause, ErrDaemonConfigInvalid) {
+		if start := strings.Index(detail, ErrDaemonConfigInvalid.Error()+":"); start >= 0 {
+			message = detail[start:]
+		}
+	} else if detail != "" {
 		message += ": " + detail
 	}
 	if cause != nil {
@@ -558,6 +572,8 @@ func parseDaemonStartOutput(output string) (string, error) {
 		switch strings.TrimSpace(line) {
 		case daemonStartProblemPrefix + daemonStartProblemVaultLocked:
 			cause = home.ErrVaultLocked
+		case daemonStartProblemPrefix + daemonStartProblemConfigInvalid:
+			cause = ErrDaemonConfigInvalid
 		default:
 			kept = append(kept, line)
 		}
