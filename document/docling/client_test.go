@@ -24,6 +24,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1388,6 +1390,18 @@ func TestDoclingUnlocksPDF(t *testing.T) {
 						return
 					}
 				}
+			}
+			pdf, err := api.ReadAndValidate(bytes.NewReader(sent), &model.Configuration{
+				Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
+				Limits: model.DefaultResourceLimits(),
+			})
+			if !assert.NoError(t, err) {
+				http.Error(w, "upload must open without a password", http.StatusBadRequest)
+				return
+			}
+			if !assert.Nil(t, pdf.Encrypt) {
+				http.Error(w, "upload must be decrypted", http.StatusBadRequest)
+				return
 			}
 			writeJSON(t, w, doclingTask("task-1", "success"))
 		case "/v1/result/task-1":

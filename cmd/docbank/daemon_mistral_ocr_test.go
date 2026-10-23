@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -223,8 +225,16 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	require.Equal(t, "failed", previous.State)
 	transport.mu.Lock()
 	requests = transport.requests
+	uploaded := transport.uploaded
 	transport.mu.Unlock()
 	require.Equal(t, 1, requests)
+	require.NotEqual(t, source, uploaded)
+	pdf, err := pdfapi.ReadAndValidate(bytes.NewReader(uploaded), &model.Configuration{
+		Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
+		Limits: model.DefaultResourceLimits(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, pdf.Encrypt)
 
 	original, _, err := blobs.OpenStreamContext(t.Context(), written.Hash)
 	require.NoError(t, err)
