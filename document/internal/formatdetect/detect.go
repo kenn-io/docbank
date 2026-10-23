@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -1901,7 +1902,7 @@ func readPrefix(reader io.ReaderAt, size, limit int64) ([]byte, error) {
 
 // UnlockPDF decrypts a bounded copy and returns the password that opened it.
 func UnlockPDF(data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
-	for _, password := range append([]string{""}, passwords...) {
+	for _, password := range pdfPasswordCandidates(passwords) {
 		output, err := DecryptPDF(data, password, maxBytes)
 		if err == nil {
 			return output, password, nil
@@ -1918,6 +1919,36 @@ func UnlockPDF(data []byte, passwords []string, maxBytes int64) ([]byte, string,
 	}
 	return nil, "", ErrPDFEncrypted
 }
+
+// pdfPasswordCandidates adds the PDFDocEncoding bytes that legacy RC4 and AES-128 handlers compare.
+func pdfPasswordCandidates(passwords []string) []string {
+	candidates := []string{""}
+	for _, password := range passwords {
+		candidates = append(candidates, password)
+		encoded := make([]byte, 0, len(password))
+		for _, character := range password {
+			if value, ok := pdfDocBytes()[character]; ok {
+				encoded = append(encoded, value)
+			}
+		}
+		if len(encoded) == utf8.RuneCountInString(password) && string(encoded) != password {
+			candidates = append(candidates, string(encoded))
+		}
+	}
+	return candidates
+}
+
+// pdfDocBytes inverts pdfcpu's PDFDocEncoding decoder, which unescapes a lone backslash away.
+var pdfDocBytes = sync.OnceValue(func() map[rune]byte {
+	encoding := map[rune]byte{'\\': '\\'}
+	for value := range 256 {
+		decoded, err := types.HexLiteralToString(types.NewHexLiteral([]byte{byte(value)}))
+		if character, size := utf8.DecodeRuneInString(decoded); err == nil && size == len(decoded) && character != utf8.RuneError {
+			encoding[character] = byte(value)
+		}
+	}
+	return encoding
+})
 
 // DecryptPDF decrypts once with the password selected by local inspection.
 func DecryptPDF(data []byte, password string, maxBytes int64) ([]byte, error) {

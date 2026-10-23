@@ -171,7 +171,7 @@ Add a working password to the file, then build again. The daemon reads the file 
 
 ### Design choices
 
-The pinned pdfcpu v0.15.0 password preparation rejects spaces, non-ASCII punctuation such as curly quotes or `£`, and emoji in AES-256 passwords. These files report `pdf_password_required` even with the correct password until the pdfcpu upgrade. Older ciphers support spaces. With a password file configured, Docbank tries an empty password first, even when the file is empty or contains only blank lines, so owner-only PDFs open. Without a configured file, Docbank tries no passwords, and every encrypted PDF reports `pdf_password_required`.
+The pinned pdfcpu v0.15.0 password preparation rejects spaces, non-ASCII punctuation such as curly quotes or `£`, and emoji in AES-256 passwords. These files report `pdf_password_required` even with the correct password until the pdfcpu upgrade. Older RC4 and AES-128 ciphers support spaces and PDFDocEncoding characters such as `£`, because Docbank also tries each password converted from UTF-8 to PDFDocEncoding. With a password file configured, Docbank tries an empty password first, even when the file is empty or contains only blank lines, so owner-only PDFs open. Without a configured file, Docbank tries no passwords, and every encrypted PDF reports `pdf_password_required`.
 
 ## Find similar documents
 
