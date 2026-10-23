@@ -21,13 +21,13 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 		blank           bool
 		partial         bool
 		markdown        string
-		checkSubmission bool
+		blankProvenance bool
 	}{
 		{name: "first range", pages: PageRange{First: 1, Last: 2}},
-		{name: "blank first range", pages: PageRange{First: 1, Last: 2}, blank: true},
 		{name: "whitespace Markdown blank range", pages: PageRange{First: 1, Last: 2}, blank: true, markdown: " \t\n"},
-		{name: "later range", pages: PageRange{First: 51, Last: 52}, partial: true, checkSubmission: true},
+		{name: "later range", pages: PageRange{First: 51, Last: 52}, partial: true},
 		{name: "blank later range", pages: PageRange{First: 51, Last: 52}, blank: true},
+		{name: "blank text provenance", pages: PageRange{First: 51, Last: 52}, blankProvenance: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
@@ -39,6 +39,9 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 					texts = append(texts, pageText("page "+strconv.FormatInt(page, 10), page))
 				}
 			}
+			if testCase.blankProvenance {
+				texts = append(texts, pageText(" \t\n", 53))
+			}
 			markdown := "# range\n"
 			if testCase.blank {
 				markdown = testCase.markdown
@@ -49,7 +52,7 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 				status = "partial_success"
 				response["errors"] = []any{map[string]any{"page_no": 52}}
 			}
-			result, err := renderRange(t, fixture, testCase.pages, status, response, testCase.checkSubmission)
+			result, err := renderRange(t, fixture, testCase.pages, status, response)
 			require.NoError(t, err)
 			assert.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
 			assertRangeMarker(t, result.Evidence, testCase.pages)
@@ -80,7 +83,9 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 				}
 			}
 			if testCase.partial {
-				assert.Equal(t, int64(52), result.Evidence.Units[1].Locator.Start)
+				assert.Empty(t, result.Evidence.Units[0].Omissions)
+				require.Len(t, result.Evidence.Units[1].Omissions, 1)
+				assert.Equal(t, "provider_output", result.Evidence.Units[1].Omissions[0].Field)
 			}
 		})
 	}
@@ -101,7 +106,6 @@ func TestRenderPageRangeRejectsContradictorySelection(t *testing.T) {
 		{name: "wrong registry keys", pages: selected, content: rangeContent([]int64{52, 53}, pageText("page 51", 51))},
 		{name: "empty registry", pages: selected, content: rangeContent([]int64{}, pageText("page 51", 51))},
 		{name: "provenance outside registry", pages: selected, content: rangeContent([]int64{51, 52}, pageText("page 50", 50))},
-		{name: "provenance with missing registry", pages: selected, content: rangeContent(nil, pageText("page 53", 53))},
 		{name: "missing schema", pages: selected},
 		{name: "unsupported major", pages: selected, content: func() map[string]any {
 			content := rangeContent([]int64{51, 52}, pageText("page 51", 51))
@@ -109,14 +113,14 @@ func TestRenderPageRangeRejectsContradictorySelection(t *testing.T) {
 			return content
 		}()},
 		{name: "provenance with unknown field", pages: PageRange{First: 2, Last: 3}, content: func() map[string]any {
-			content := rangeContent(nil, pageText("outside selection", 1))
+			content := rangeContent([]int64{2, 3}, pageText("outside selection", 1))
 			content["future_content"] = []any{}
 			return content
 		}()},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
-			_, err := renderRange(t, fixture, testCase.pages, "success", rangeResponse("# fallback\n", testCase.content), false)
+			_, err := renderRange(t, fixture, testCase.pages, "success", rangeResponse("# fallback\n", testCase.content))
 			requireMalformed(t, err)
 		})
 	}
@@ -124,26 +128,14 @@ func TestRenderPageRangeRejectsContradictorySelection(t *testing.T) {
 
 func TestRenderPageRangeFallsBackToMarkdownLikeRender(t *testing.T) {
 	pages := PageRange{First: 51, Last: 52}
-	for _, testCase := range []struct {
-		name    string
-		content map[string]any
-	}{
-		{name: "blank text provenance", content: rangeContent(nil, pageText(" \t\n", 53), pageText("page 51", 51))},
-		{name: "table only", content: func() map[string]any {
-			content := rangeContent([]int64{51, 52})
-			content["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "table cell"}}}}}
-			return content
-		}()},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
-			result, err := renderRange(t, fixture, pages, "success", rangeResponse("# fallback\n", testCase.content), false)
-			require.NoError(t, err)
-			assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
-			assert.Equal(t, "# fallback\n", result.Evidence.Units[0].Text)
-			assertRangeMarker(t, result.Evidence, pages)
-		})
-	}
+	content := rangeContent([]int64{51, 52})
+	content["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "table cell"}}}}}
+	fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
+	result, err := renderRange(t, fixture, pages, "success", rangeResponse("# fallback\n", content))
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
+	assert.Equal(t, "# fallback\n", result.Evidence.Units[0].Text)
+	assertRangeMarker(t, result.Evidence, pages)
 }
 
 func TestRenderPageRangeRejectsInvalidRequestsBeforeUpload(t *testing.T) {
@@ -181,18 +173,16 @@ func TestRenderPageRangeRejectsInvalidRequestsBeforeUpload(t *testing.T) {
 	}
 }
 
-// renderRange serves one Docling job and optionally checks its submission.
+// renderRange serves one Docling job and checks its submitted page range.
 func renderRange(
-	t *testing.T, fixture fixture, pages PageRange, taskStatus string, response map[string]any, checkSubmission bool,
+	t *testing.T, fixture fixture, pages PageRange, taskStatus string, response map[string]any,
 ) (document.RenditionResult, error) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case convertPath:
-			if checkSubmission {
-				assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"},
-					[]string{strconv.FormatInt(pages.First, 10), strconv.FormatInt(pages.Last, 10)})
-			}
+			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"},
+				[]string{strconv.FormatInt(pages.First, 10), strconv.FormatInt(pages.Last, 10)})
 			writeJSON(t, writer, doclingTask("range", taskStatus))
 		case resultPath + "range":
 			writeJSON(t, writer, response)
