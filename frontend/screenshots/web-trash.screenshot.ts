@@ -21,21 +21,15 @@ const binary = path.join(
 const screenshotDirectory = process.env.DOCBANK_SCREENSHOT_DIR;
 if (!screenshotDirectory) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
 const screenshotPathFor = (name: string): string => path.join(screenshotDirectory, name);
-const screenshotPath = screenshotPathFor("web-trash-confirmation.png");
-const restoreScreenshotPath = screenshotPathFor("web-trash-restore-confirmation.png");
-const tagAssignmentScreenshotPath = screenshotPathFor("web-tag-assignment.png");
 const tagCatalogScreenshotPath = screenshotPathFor("web-tag-catalog.png");
-const tagFilterScreenshotPath = screenshotPathFor("web-tag-filter.png");
 const auditEvidenceScreenshotPath = screenshotPathFor("web-audit-evidence.png");
 const storageScreenshotPath = screenshotPathFor("web-multi-store-storage.png");
 const tuiStorageScreenshotPath = screenshotPathFor("tui-multi-store-storage.png");
 const vaultBrowserScreenshotPath = screenshotPathFor("web-vault-browser.png");
 const pageSelectionScreenshotPath = screenshotPathFor("web-page-selection.png");
-const pageSelectionMobileScreenshotPath = screenshotPathFor("web-page-selection-mobile.png");
 const searchResultsScreenshotPath = screenshotPathFor("web-search-results.png");
 const retainedVersionScreenshotPath = screenshotPathFor("web-retained-version-download.png");
 const visiblePageCSVScreenshotPath = screenshotPathFor("web-visible-page-csv.png");
-const packedStorageScreenshotPath = screenshotPathFor("web-storage-status.png");
 
 async function expectDockInViewport(page: Page, dock: Locator): Promise<void> {
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
@@ -127,23 +121,16 @@ test.describe("Docbank web screenshots", () => {
   test.beforeAll(async () => {
     workspace = await mkdtemp(path.join(tmpdir(), "docbank-screenshot-"));
     vault = path.join(workspace, "vault");
-    await mkdir(path.dirname(screenshotPath), { recursive: true, mode: 0o700 });
     await mkdir(path.dirname(visiblePageCSVScreenshotPath), { recursive: true, mode: 0o700 });
-    await rm(screenshotPath, { force: true });
-    await rm(restoreScreenshotPath, { force: true });
-    await rm(tagAssignmentScreenshotPath, { force: true });
     await rm(tagCatalogScreenshotPath, { force: true });
-    await rm(tagFilterScreenshotPath, { force: true });
     await rm(auditEvidenceScreenshotPath, { force: true });
     await rm(storageScreenshotPath, { force: true });
     await rm(tuiStorageScreenshotPath, { force: true });
     await rm(vaultBrowserScreenshotPath, { force: true });
     await rm(pageSelectionScreenshotPath, { force: true });
     await rm(visiblePageCSVScreenshotPath, { force: true });
-    await rm(pageSelectionMobileScreenshotPath, { force: true });
     await rm(searchResultsScreenshotPath, { force: true });
     await rm(retainedVersionScreenshotPath, { force: true });
-    await rm(packedStorageScreenshotPath, { force: true });
     await mkdir(processingScreenshotDirectory, { recursive: true, mode: 0o700 });
     await rm(processingPlanScreenshotPath, { force: true });
     await rm(processingResultScreenshotPath, { force: true });
@@ -741,11 +728,6 @@ trust_boundary = "local_process"
       name: "Physical storage status",
     });
     await expect(packedStorage).toContainText("1 immutable pack contains");
-    await page.screenshot({
-      path: packedStorageScreenshotPath,
-      fullPage: true,
-      animations: "disabled",
-    });
     await packedStorage.getByRole("button", { name: "Close storage status" }).click();
 
     await page.getByRole("button", { name: "Verify permanent audit evidence" }).click();
@@ -787,11 +769,6 @@ trust_boundary = "local_process"
     });
     await tagFilter.click();
     await expect(page.getByRole("option", { name: "matter/acme/reviewed (0)" })).toBeVisible();
-    await page.screenshot({
-      path: tagFilterScreenshotPath,
-      fullPage: true,
-      animations: "disabled",
-    });
     await page.getByRole("option", { name: "All tags" }).click();
 
     await page.getByRole("cell", { name: "Reports", exact: true }).dblclick();
@@ -813,11 +790,6 @@ trust_boundary = "local_process"
     await expect(tags).toContainText("Added matter/acme/reviewed.");
     await expect(tags.getByRole("status", { name: "Loading" })).toHaveCount(0);
     await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0);
-    await page.screenshot({
-      path: tagAssignmentScreenshotPath,
-      fullPage: true,
-      animations: "disabled",
-    });
     await tags.getByRole("button", { name: "Done" }).click();
 
     await page.getByRole("button", { name: "Process and retrieve" }).click();
@@ -865,11 +837,6 @@ trust_boundary = "local_process"
     await expect(confirmation).toContainText(
       "This does not empty trash, reclaim stored bytes, or erase permanent audited history.",
     );
-    await page.screenshot({
-      path: screenshotPath,
-      fullPage: true,
-      animations: "disabled",
-    });
 
     await confirmation.getByRole("button", { name: "Move to trash" }).click();
     await expect(confirmation).not.toBeVisible();
@@ -885,11 +852,6 @@ trust_boundary = "local_process"
     await expect(restore).toContainText(
       "It does not roll back versions or alter permanent audited history.",
     );
-    await page.screenshot({
-      path: restoreScreenshotPath,
-      fullPage: true,
-      animations: "disabled",
-    });
   });
 
   test("selection dock stays visible and leaves the last row reachable", async ({ page }) => {
@@ -939,11 +901,6 @@ trust_boundary = "local_process"
     await third.click({ modifiers: ["Shift"] });
     await expect(dock).toBeHidden();
     await first.click();
-
-    await page.screenshot({
-      path: pageSelectionMobileScreenshotPath,
-      animations: "disabled",
-    });
 
     for (const index of [9, 99]) {
       await page

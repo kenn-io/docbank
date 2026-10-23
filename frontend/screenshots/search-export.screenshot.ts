@@ -84,10 +84,6 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await expect(drawer.getByText(/2 scoped · 2 searchable · 0 missing text/)).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toBeVisible();
     await drawer.getByText("Current export", { exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: path.join(screenshots!, "web-search-export-result.png"),
-      animations: "disabled",
-    });
 
     await drawer.getByRole("button", { name: "Use as draft" }).first().click();
     await expect(drawer.getByText(/Loaded the .* request/)).toBeVisible();

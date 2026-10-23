@@ -24,7 +24,6 @@ web-mailbox-import.png
 web-multi-store-storage.png
 web-natural-1440.png
 web-navigation-mobile.png
-web-page-selection-mobile.png
 web-page-selection.png
 web-photo-albums.png
 web-photo-compare.png
@@ -43,17 +42,10 @@ web-query-bar.png
 web-recent-exports.png
 web-retained-version-download.png
 web-saved-queries.png
-web-search-export-result.png
 web-search-results.png
 web-signin.png
 web-similar-1440.png
-web-snapshot-pager-narrow.png
 web-snapshot-workspace.png
-web-storage-status.png
-web-tag-assignment.png
 web-tag-catalog.png
-web-tag-filter.png
-web-trash-confirmation.png
-web-trash-restore-confirmation.png
 web-vault-browser.png
 web-visible-page-csv.png

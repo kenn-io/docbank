@@ -640,10 +640,6 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
         exact: true,
       }),
     ).toBeVisible();
-    await page.screenshot({
-      path: path.join(screenshots!, "web-snapshot-pager-narrow.png"),
-      animations: "disabled",
-    });
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Previous page", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
