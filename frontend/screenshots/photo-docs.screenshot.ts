@@ -25,6 +25,12 @@ async function openLibrary(page: Page, run: (...args: string[]) => Promise<strin
   await expect(page.locator(".photo-cell img").first()).toBeVisible();
 }
 
+// Library opens with its filter panel collapsed; the docs show the facets.
+async function openFilters(page: Page) {
+  const filters = page.getByRole("button", { name: /^Filters/ });
+  if ((await filters.getAttribute("aria-expanded")) !== "true") await filters.click();
+}
+
 async function selectFirst(page: Page, count: number) {
   for (let index = 0; index < count; index++) {
     await page.locator(".photo-cell").nth(index).getByRole("checkbox").click();
@@ -39,6 +45,7 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
   try {
     await fixture.seed(150, "-map", "-rejects", "-current-metadata");
     await openLibrary(page, fixture.run);
+    await openFilters(page);
     await expect(page.getByRole("group", { name: "Camera facet" })).toBeVisible();
     await capture(page, "web-photo-library.png");
 
@@ -59,7 +66,7 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
 
     await openLibrary(page, fixture.run);
     await page.getByRole("searchbox", { name: "Search photos" }).fill("Nikon");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Search photos" }).press("Enter");
     await page.getByRole("button", { name: "Save search" }).click();
     await page.getByRole("textbox", { name: "Search name" }).fill("Nikon walks");
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -86,7 +93,8 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
     await page.getByRole("button", { name: "Exit compare", exact: true }).click();
 
     await openLibrary(page, fixture.run);
-    await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+    await page.getByRole("button", { name: "More photo actions" }).click();
+    await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
     const rejects = page.getByRole("dialog", { name: "Move rejects to trash" });
     await expect(rejects.getByRole("button", { name: /^Move [1-9]\d* to trash$/ })).toBeVisible();
     await page.screenshot({ path: path.join(output, "web-photo-rejects.png") });
