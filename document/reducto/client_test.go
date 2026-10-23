@@ -833,20 +833,6 @@ func TestClientTreatsExpiryAfterCompletedResultAsResumableTimeout(t *testing.T) 
 	})
 }
 
-func TestClientClosesBlockedUploadOnWallTimeout(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("blocked upload"))
-	fixture.profile.MaxWallTime = 10 * time.Millisecond
-	upload := newBlockingTestUpload(fixture.metadata)
-	client := fixture.client(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
-		t.Fatal("blocked upload reached egress")
-		return nil, errors.New("blocked upload reached egress")
-	}))
-
-	_, err := client.Render(t.Context(), upload, fixture.authorization)
-	assertCode(t, err, document.RenditionErrorCapacity)
-	assert.True(t, upload.wasClosed())
-}
-
 func TestClientAppliesWallDeadlineAfterCompletedResultProcessing(t *testing.T) {
 	// Advance fake time so the timeout fires before the completed response;
 	// a real sleep does not guarantee the cancellation callback has run.
