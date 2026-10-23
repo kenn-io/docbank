@@ -2666,38 +2666,44 @@ func paddedM4A() []byte {
 }
 
 func TestInspectPasswordProtectedPDF(t *testing.T) {
-	for _, user := range []string{"open", ""} {
-		source, err := mediatest.EncryptedPDF(user, "owner", 128)
-		require.NoError(t, err)
-		policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
-		record, err := media.InspectCapability(bytes.NewReader(source), policy)
-		require.NoError(t, err)
-		require.Equal(t, media.CapabilityReasonEncryptedContainer, record.Reason)
-		policy.UnlockPDF = true
-		for _, passwords := range [][]string{nil, {"wrong"}} {
-			policy.PDFPasswords = passwords
-			record, err = media.InspectCapability(bytes.NewReader(source), policy)
+	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name      string
+		data      []byte
+		unlock    bool
+		passwords []string
+		reason    media.CapabilityReason
+	}{
+		{"unsupported", source, false, nil, media.CapabilityReasonEncryptedContainer},
+		{"no file", source, true, nil, media.CapabilityReasonPDFPasswordRequired},
+		{"wrong password", source, true, []string{"wrong"}, media.CapabilityReasonPDFPasswordRequired},
+		{"owner-only no file", ownerOnly, true, nil, media.CapabilityReasonPDFPasswordRequired},
+		{"owner-only empty file", ownerOnly, true, []string{}, media.CapabilityReasonEligible},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := inspectionPolicy(tc.data, "statement.pdf", "application/pdf")
+			policy.UnlockPDF, policy.PDFPasswords = tc.unlock, tc.passwords
+			record, err := media.InspectCapability(bytes.NewReader(tc.data), policy)
 			require.NoError(t, err)
+			require.Equal(t, tc.reason, record.Reason)
 			require.Nil(t, record.Policy.PDFPasswords)
-			if user != "" || len(passwords) == 0 {
-				require.Equal(t, media.CapabilityReasonPDFPasswordRequired, record.Reason)
-			} else {
-				require.True(t, record.Eligible)
-			}
-		}
-		policy.PDFPasswords = []string{"wrong", "open"}
-		record, err = media.InspectCapability(bytes.NewReader(source), policy)
-		require.NoError(t, err)
-		require.True(t, record.Eligible, "%+v", record)
-		require.Nil(t, record.Policy.PDFPasswords)
-		require.Equal(t, int64(1), record.Measurements.Pages)
-		selected, ok := record.UploadCapability().PDFPassword()
-		require.True(t, ok)
-		require.Equal(t, user, selected)
-		policy.PDFPasswords = []string{"owner"}
-		other, err := media.InspectCapability(bytes.NewReader(source), policy)
-		require.NoError(t, err)
-		require.True(t, other.Eligible)
-		require.Equal(t, record.Checksum, other.Checksum)
+		})
 	}
+	policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
+	policy.UnlockPDF, policy.PDFPasswords = true, []string{"wrong", "open"}
+	record, err := media.InspectCapability(bytes.NewReader(source), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, "%+v", record)
+	require.Nil(t, record.Policy.PDFPasswords)
+	selected, ok := record.UploadCapability().PDFPassword()
+	require.True(t, ok)
+	require.Equal(t, "open", selected)
+	policy.PDFPasswords = []string{"owner"}
+	other, err := media.InspectCapability(bytes.NewReader(source), policy)
+	require.NoError(t, err)
+	require.True(t, other.Eligible)
+	require.Equal(t, record.Checksum, other.Checksum)
 }

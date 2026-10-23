@@ -15,16 +15,26 @@ import (
 )
 
 func TestUnlockPDF(t *testing.T) {
-	for _, user := range []string{"open", ""} {
-		source, err := mediatest.EncryptedPDF(user, "owner", 256)
-		require.NoError(t, err)
-		plain, _, err := formatdetect.UnlockPDF(source, []string{"wrong space", "open"}, 1<<20)
-		require.NoError(t, err)
-		pages, err := formatdetect.CountPDFPages(plain)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), pages)
-		_, err = formatdetect.InspectPDF(source, formatdetect.PDFLimits{MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000})
-		require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
+	for _, tc := range []struct {
+		name, user string
+		passwords  []string
+		keyBits    int
+	}{
+		{"user password", "open", []string{"wrong", "open"}, 256},
+		{"empty user password", "", nil, 256},
+		{"owner password", "open", []string{"owner"}, 128},
+		// Legacy PDF handlers compare PDFDocEncoding A3 for the UTF-8 password £.
+		{"PDFDocEncoding", "\xa3", []string{"£"}, 128},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := mediatest.EncryptedPDF(tc.user, "owner", tc.keyBits)
+			require.NoError(t, err)
+			plain, _, err := formatdetect.UnlockPDF(source, tc.passwords, 1<<20)
+			require.NoError(t, err)
+			pages, err := formatdetect.CountPDFPages(plain)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), pages)
+		})
 	}
 	source, err := mediatest.EncryptedPDF("open", "owner", 128)
 	require.NoError(t, err)

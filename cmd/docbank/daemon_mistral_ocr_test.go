@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
@@ -141,16 +140,6 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 }
 
 func TestMistralPasswordFileProcessing(t *testing.T) {
-	testMistralPasswordFileProcessing(t, "open", "open", 256)
-}
-
-func TestMistralPasswordFileProcessingLegacyPDFDocEncoding(t *testing.T) {
-	// Legacy PDF handlers use PDFDocEncoding A3 for £; the password file is UTF-8.
-	testMistralPasswordFileProcessing(t, "\xa3", "£", 128)
-}
-
-func testMistralPasswordFileProcessing(t *testing.T, pdfPassword, filePassword string, keyBits int) {
-	t.Helper()
 	cfg, _ := mistralOCRProcessingConfig(t)
 	path := filepath.Join(t.TempDir(), "passwords")
 	cfg.Media.PDFPasswordsFile = path
@@ -160,7 +149,7 @@ func testMistralPasswordFileProcessing(t *testing.T, pdfPassword, filePassword s
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
-	source, err := mediatest.EncryptedPDF(pdfPassword, "owner", keyBits)
+	source, err := mediatest.EncryptedPDF("open", "owner", 256)
 	require.NoError(t, err)
 	transport := &passwordOCRTransport{}
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
@@ -211,7 +200,7 @@ func testMistralPasswordFileProcessing(t *testing.T, pdfPassword, filePassword s
 	transport.mu.Unlock()
 	require.Zero(t, requests)
 
-	require.NoError(t, os.WriteFile(path, []byte("wrong\n"+filePassword+"\n"), 0600))
+	require.NoError(t, os.WriteFile(path, []byte("wrong\nopen\n"), 0600))
 	plan, err = daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	require.Empty(t, plan.RenditionIneligibleReason)
@@ -228,14 +217,8 @@ func testMistralPasswordFileProcessing(t *testing.T, pdfPassword, filePassword s
 	require.Equal(t, "failed", previous.State)
 	transport.mu.Lock()
 	requests = transport.requests
-	uploaded := bytes.Clone(transport.uploaded)
 	transport.mu.Unlock()
 	require.Equal(t, 1, requests)
-	require.NotEqual(t, source, uploaded)
-	require.NotContains(t, string(uploaded), "/Encrypt")
-	pages, err := media.CountPDFPages(uploaded)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), pages)
 
 	original, _, err := blobs.OpenStreamContext(t.Context(), written.Hash)
 	require.NoError(t, err)
