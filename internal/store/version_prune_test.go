@@ -300,69 +300,82 @@ func TestPruneContentVersionRequeuesSharedStagedJobAndRetainsRoot(t *testing.T) 
 	assert.Equal(t, secondWaiter.ID, work.Waiter.ID)
 }
 
-func TestPruneContentVersionRequeuesFailedSharedStagedJob(t *testing.T) {
+func TestPruneContentVersionRequeuesSafeFailedSharedJob(t *testing.T) {
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
-	ctx := t.Context()
-	profile := catalogProcessingProfile(t, false)
-	firstRequest := renditionJobTestRequest(versions[0], profile)
-	secondRequest := renditionJobTestRequest(versions[1], profile)
-	secondRequest.Authorization.Principal = "operator:remaining-failed-waiter"
-	grantRenditionJobConsent(t, s, firstRequest)
-	grantRenditionJobConsent(t, s, secondRequest)
-	job, firstWaiter, err := s.EnqueueRenditionJob(ctx, firstRequest)
-	require.NoError(t, err)
-	_, secondWaiter, err := s.EnqueueRenditionJob(ctx, secondRequest)
-	require.NoError(t, err)
-	now := time.Now().UTC().Add(time.Second)
-	claim, err := s.ClaimRenditionJob(
-		ctx, job.ID, "worker:failed-staged-prune", now, time.Minute)
-	require.NoError(t, err)
-	work, err := s.RenditionJobWorkByClaim(ctx, claim, now.Add(time.Second))
-	require.NoError(t, err)
-	selectedRequest := firstRequest
-	selectedPath := "/synthetic-source-a.pdf"
-	remainingWaiter := secondWaiter
-	if work.Waiter.ID == secondWaiter.ID {
-		selectedRequest = secondRequest
-		selectedPath = "/synthetic-source-b.pdf"
-		remainingWaiter = firstWaiter
+	for _, tc := range []struct {
+		code  RenditionFailureCode
+		phase RenditionJobPhase
+	}{
+		{RenditionFailureConsent, RenditionPhaseBuildStaged},
+		{RenditionFailureStaleAuthority, RenditionPhaseBuildStaged},
+		{RenditionFailurePDFPasswordRequired, RenditionPhaseQueued},
+	} {
+		t.Run(string(tc.code), func(t *testing.T) {
+			s, versions := newRenditionCatalogFixture(t)
+			ctx := t.Context()
+			profile := catalogProcessingProfile(t, false)
+			firstRequest := renditionJobTestRequest(versions[0], profile)
+			secondRequest := renditionJobTestRequest(versions[1], profile)
+			secondRequest.Authorization.Principal = "operator:remaining-failed-waiter"
+			grantRenditionJobConsent(t, s, firstRequest)
+			grantRenditionJobConsent(t, s, secondRequest)
+			job, firstWaiter, err := s.EnqueueRenditionJob(ctx, firstRequest)
+			require.NoError(t, err)
+			_, secondWaiter, err := s.EnqueueRenditionJob(ctx, secondRequest)
+			require.NoError(t, err)
+			now := time.Now().UTC().Add(time.Second)
+			claim, err := s.ClaimRenditionJob(
+				ctx, job.ID, "worker:failed-staged-prune", now, time.Minute)
+			require.NoError(t, err)
+			work, err := s.RenditionJobWorkByClaim(ctx, claim, now.Add(time.Second))
+			require.NoError(t, err)
+			selectedRequest := firstRequest
+			selectedPath := "/synthetic-source-a.pdf"
+			remainingWaiter := secondWaiter
+			if work.Waiter.ID == secondWaiter.ID {
+				selectedRequest = secondRequest
+				selectedPath = "/synthetic-source-b.pdf"
+				remainingWaiter = firstWaiter
+			}
+			if tc.phase == RenditionPhaseBuildStaged {
+				_, err = s.BeginRenditionProvider(
+					ctx, claim, work.Waiter.ID, now.Add(time.Second),
+					renditionJobTestSnapshot(selectedRequest))
+				require.NoError(t, err)
+				build := catalogRenditionBuild(s, profile)
+				build.ID = job.ID
+				require.NoError(t, s.StageRenditionJobBuild(
+					ctx, claim, build, now.Add(2*time.Second)))
+			}
+			require.NoError(t, s.MarkRenditionJobFailed(
+				ctx, claim, tc.code, now.Add(3*time.Second)))
+
+			node, err := s.NodeByPath(ctx, selectedPath)
+			require.NoError(t, err)
+			node, _, err = s.ReplaceContent(
+				ctx, node.ID, node.Revision, testSHA256([]byte("failed staged prune current")),
+				28, "application/pdf")
+			require.NoError(t, err)
+			_, err = s.PruneContentVersions(ctx, node.ID, node.Revision,
+				VersionPruneSelector{VersionIDs: []string{selectedRequest.ContentVersionID}}, true)
+			require.NoError(t, err)
+
+			current, err := s.RenditionJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, RenditionJobQueued, current.State)
+			assert.Equal(t, tc.phase, current.Phase)
+			assert.Empty(t, current.FailureCode)
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &exported))
+			reclaimed, err := s.ClaimRenditionJob(
+				ctx, job.ID, "worker:remaining-failed-staged", now.Add(4*time.Second), time.Minute)
+			require.NoError(t, err)
+			reclaimedWork, err := s.RenditionJobWorkByClaim(
+				ctx, reclaimed, now.Add(4*time.Second))
+			require.NoError(t, err)
+			assert.Equal(t, remainingWaiter.ID, reclaimedWork.Waiter.ID)
+		})
 	}
-	_, err = s.BeginRenditionProvider(
-		ctx, claim, work.Waiter.ID, now.Add(time.Second),
-		renditionJobTestSnapshot(selectedRequest))
-	require.NoError(t, err)
-	build := catalogRenditionBuild(s, profile)
-	build.ID = job.ID
-	require.NoError(t, s.StageRenditionJobBuild(
-		ctx, claim, build, now.Add(2*time.Second)))
-	require.NoError(t, s.MarkRenditionJobFailed(
-		ctx, claim, RenditionFailureConsent, now.Add(3*time.Second)))
-
-	node, err := s.NodeByPath(ctx, selectedPath)
-	require.NoError(t, err)
-	node, _, err = s.ReplaceContent(
-		ctx, node.ID, node.Revision, testSHA256([]byte("failed staged prune current")),
-		28, "application/pdf")
-	require.NoError(t, err)
-	_, err = s.PruneContentVersions(ctx, node.ID, node.Revision,
-		VersionPruneSelector{VersionIDs: []string{selectedRequest.ContentVersionID}}, true)
-	require.NoError(t, err)
-
-	current, err := s.RenditionJobByID(ctx, job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, RenditionJobQueued, current.State)
-	assert.Equal(t, RenditionPhaseBuildStaged, current.Phase)
-	assert.Empty(t, current.FailureCode)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	reclaimed, err := s.ClaimRenditionJob(
-		ctx, job.ID, "worker:remaining-failed-staged", now.Add(4*time.Second), time.Minute)
-	require.NoError(t, err)
-	reclaimedWork, err := s.RenditionJobWorkByClaim(
-		ctx, reclaimed, now.Add(4*time.Second))
-	require.NoError(t, err)
-	assert.Equal(t, remainingWaiter.ID, reclaimedWork.Waiter.ID)
 }
 
 func TestPruneContentVersionClearsDeletedAuthorityFromTerminalFailedJob(t *testing.T) {

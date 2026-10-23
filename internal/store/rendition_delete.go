@@ -160,8 +160,8 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 		if err != nil {
 			return fmt.Errorf("loading rendition job with deleted authority: %w", err)
 		}
-		safeFailure := affectedJob.failureCode == RenditionFailureConsent ||
-			affectedJob.failureCode == RenditionFailureStaleAuthority
+		safeFailure := affectedJob.failureCode == RenditionFailureConsent || affectedJob.failureCode == RenditionFailureStaleAuthority ||
+			affectedJob.failureCode == RenditionFailurePDFPasswordRequired
 		safePhase := affectedJob.phase == RenditionPhaseQueued ||
 			affectedJob.phase == RenditionPhaseBuildStaged ||
 			affectedJob.phase == RenditionPhaseGenerationStaged ||
