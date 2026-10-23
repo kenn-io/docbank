@@ -124,6 +124,11 @@ func TestRenderPageRangeFallsBackToMarkdownLikeRender(t *testing.T) {
 		content map[string]any
 	}{
 		{name: "missing registry", content: rangeContent(nil, pageText("page 51", 51))},
+		{name: "table only", content: func() map[string]any {
+			content := rangeContent([]int64{51, 52})
+			content["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "table cell"}}}}}
+			return content
+		}()},
 		{name: "unsupported major with array registry", content: map[string]any{
 			"schema_name": "DoclingDocument", "version": "2.0.0", "pages": []any{51, 52},
 		}},

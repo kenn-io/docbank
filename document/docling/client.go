@@ -445,7 +445,7 @@ func (client *Client) buildResult(
 		return document.RenditionResult{}, provider.Malformed(
 			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
-	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily, first, allowBlankRange)
+	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily, first, allowBlankRange && len(providerMarkdown) == 0)
 	if !usable {
 		if len(providerMarkdown) == 0 || len(providerMarkdown) > run.authorization.MaxProviderMarkdownBytes {
 			return document.RenditionResult{}, provider.Malformed("Docling result has no usable bounded evidence", nil)
