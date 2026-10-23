@@ -72,7 +72,7 @@ func TestClientRendersDoclingPagesAndRequestsBothFormats(t *testing.T) {
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/convert/file/async":
 			assert.Equal(t, "synthetic-secret", request.Header.Get("X-Api-Key"))
-			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"})
+			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"}, nil)
 			writeJSON(t, response, doclingTask("task-1", "pending"))
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/status/poll/task-1":
 			if polls.Add(1) == 1 {
@@ -114,7 +114,7 @@ func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case convertPath:
-			assertDoclingSubmission(t, request, redactedMetadata, fixture.source, []string{"md", "json"})
+			assertDoclingSubmission(t, request, redactedMetadata, fixture.source, []string{"md", "json"}, nil)
 			writeJSON(t, response, doclingTask("redacted", "success"))
 		case resultPath + "redacted":
 			writeJSON(t, response, doclingResultResponse("provider-generated.pdf", "# report\n", []any{
@@ -175,7 +175,7 @@ func TestClientOmitsUnauthorizedProviderMarkdown(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case convertPath:
-					assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"json"})
+					assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"json"}, nil)
 					writeJSON(t, response, doclingTask("json-only", "success"))
 				case resultPath + "json-only":
 					writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# not authorized\n", []any{
@@ -245,7 +245,7 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			raw, err := json.Marshal(testCase.raw)
 			require.NoError(t, err)
-			evidence, _, usable := mapEvidence(raw, "pdf")
+			evidence, _, usable := mapEvidence(raw, "pdf", 1)
 			assert.Equal(t, testCase.want, usable)
 			if usable {
 				require.Len(t, evidence.Units, 2)
@@ -263,7 +263,7 @@ func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
 		"tables": []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "cell text"}}}}},
 	})
 	require.NoError(t, err)
-	evidence, _, usable := mapEvidence(raw, "pdf")
+	evidence, _, usable := mapEvidence(raw, "pdf", 1)
 	require.True(t, usable)
 	assert.Equal(t, document.EvidencePartial, evidence.Completeness)
 	assert.Equal(t, []document.SourceEvidenceOmissionV1{{
@@ -1005,7 +1005,7 @@ func TestMapEvidenceOnlyClaimsEstablishedNaturalProvenance(t *testing.T) {
 		{family: "ebook"}, {family: "structured"}, {family: "source"}, {family: "text"}, {family: "mail"},
 	} {
 		t.Run(testCase.family, func(t *testing.T) {
-			evidence, _, usable := mapEvidence(raw, testCase.family)
+			evidence, _, usable := mapEvidence(raw, testCase.family, 1)
 			assert.Equal(t, testCase.usable, usable)
 			if usable {
 				assert.Equal(t, testCase.kind, evidence.UnitKind)
@@ -1272,7 +1272,8 @@ func newClientWithBounds(t *testing.T, origin string, descriptor document.Rendit
 }
 
 func assertDoclingSubmission(
-	t *testing.T, request *http.Request, metadata document.AuthorizedUploadMetadata, source []byte, wantFormats []string,
+	t *testing.T, request *http.Request, metadata document.AuthorizedUploadMetadata, source []byte,
+	wantFormats, wantRange []string,
 ) {
 	t.Helper()
 	mediaType, params, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
@@ -1286,7 +1287,7 @@ func assertDoclingSubmission(
 	gotSource, err := io.ReadAll(file)
 	require.NoError(t, err)
 	assert.Equal(t, source, gotSource)
-	formats := make([]string, 0, 2)
+	fields := map[string][]string{}
 	for {
 		part, partErr := reader.NextPart()
 		if errors.Is(partErr, io.EOF) {
@@ -1295,16 +1296,13 @@ func assertDoclingSubmission(
 		require.NoError(t, partErr)
 		value, readErr := io.ReadAll(part)
 		require.NoError(t, readErr)
-		switch part.FormName() {
-		case "to_formats":
-			formats = append(formats, string(value))
-		case "target_type":
-			assert.Equal(t, "inbody", string(value))
-		default:
-			t.Errorf("unexpected form field %q", part.FormName())
-		}
+		fields[part.FormName()] = append(fields[part.FormName()], string(value))
 	}
-	assert.Equal(t, wantFormats, formats)
+	want := map[string][]string{"to_formats": wantFormats, "target_type": {"inbody"}}
+	if wantRange != nil {
+		want["page_range"] = wantRange
+	}
+	assert.Equal(t, want, fields)
 }
 
 type resultOption func(map[string]any)

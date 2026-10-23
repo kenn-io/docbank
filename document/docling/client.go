@@ -41,6 +41,8 @@ const (
 	MaxResponseBytes = int64(512 << 20)
 	// MaxDocumentBytes is the largest document upload accepted by Docling clients.
 	MaxDocumentBytes = int64(1 << 30)
+	// PageRangeOmissionField names the field omission carried by every page-range result.
+	PageRangeOmissionField = "page_range"
 )
 
 var _ document.RenditionProvider = (*Client)(nil)
@@ -143,6 +145,45 @@ func (client *Client) Descriptor() document.RenditionDescriptor {
 func (client *Client) Render(
 	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
 ) (document.RenditionResult, error) {
+	return client.render(ctx, upload, authorization, PageRange{})
+}
+
+// PageRange selects inclusive, one-based PDF pages. Last must not exceed the
+// caller's inspected page count.
+type PageRange struct{ First, Last int64 }
+
+// RenderPageRange renders the selected PDF pages through document.RenderRendition,
+// consuming upload. Units keep their original page locators, and the evidence
+// always carries a PageRangeOmissionField omission because it is never the
+// whole document.
+func (client *Client) RenderPageRange(
+	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
+	pages PageRange,
+) (document.RenditionResult, error) {
+	return document.RenderRendition(ctx, pageRangeProvider{Client: client, pages: pages}, upload, authorization)
+}
+
+type pageRangeProvider struct {
+	*Client
+
+	pages PageRange
+}
+
+func (ranged pageRangeProvider) Render(
+	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	if ranged.pages.First < 1 || ranged.pages.Last < ranged.pages.First || authorization.MediaFamily != "pdf" {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
+			"Docling page ranges require ordered positive bounds on a PDF", nil)
+	}
+	return ranged.render(ctx, upload, authorization, ranged.pages)
+}
+
+// render runs one Docling job; a zero PageRange converts the whole document.
+func (client *Client) render(
+	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
+	pages PageRange,
+) (document.RenditionResult, error) {
 	run, err := client.startRender(ctx, upload, authorization)
 	if err != nil {
 		return document.RenditionResult{}, err
@@ -152,11 +193,83 @@ func (client *Client) Render(
 	if run.includeMarkdown {
 		fields = [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
 	}
+	if pages != (PageRange{}) {
+		fields = append(fields, [2]string{"page_range", strconv.FormatInt(pages.First, 10)},
+			[2]string{"page_range", strconv.FormatInt(pages.Last, 10)})
+	}
 	task, result, err := client.convert(run, fields)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	return client.buildResult(run, task, result)
+	if pages == (PageRange{}) {
+		return client.buildResult(run, task, result, 1)
+	}
+	return client.buildPageRangeResult(run, task, result, pages)
+}
+
+// buildPageRangeResult verifies that the output stays inside the selection,
+// builds it exactly like Render, then marks it as a partial selection.
+func (client *Client) buildPageRangeResult(
+	run *rendering, task taskResponse, result doclingResult, pages PageRange,
+) (document.RenditionResult, error) {
+	if err := checkSelection(result.document, pages); err != nil {
+		return document.RenditionResult{}, err
+	}
+	rendition, err := client.buildResult(run, task, result, pages.First)
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	evidence := &rendition.Evidence
+	evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{
+		Kind: document.EvidenceOmissionField, Field: PageRangeOmissionField,
+		Reason: "selected pages " + strconv.FormatInt(pages.First, 10) + ".." + strconv.FormatInt(pages.Last, 10),
+	})
+	if evidence.UnitKind == document.EvidenceUnitPage && pages.First > 1 {
+		// Partial page evidence must name the locator gap before its first unit.
+		evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{
+			Kind: document.EvidenceOmissionUnit, Reason: "pages precede the requested range",
+			Locator: &document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: pages.First - 1,
+			},
+		})
+	}
+	if evidence.Completeness == document.EvidenceComplete {
+		evidence.Completeness = document.EvidencePartial
+	}
+	return rendition, nil
+}
+
+// checkSelection rejects a page registry that is not exactly the selection and
+// any text provenance outside it, so no fallback hides a contradictory result.
+// Only recognized Docling 1.x documents are checked; others fall back like Render.
+func checkSelection(raw jsontext.Value, pages PageRange) error {
+	if !recognizedDoclingDocument(raw) {
+		return nil
+	}
+	var wire struct {
+		Pages map[string]jsontext.Value `json:"pages"`
+		Texts []doclingText             `json:"texts"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return provider.Malformed("Docling page range result cannot be checked", err)
+	}
+	if wire.Pages != nil && int64(len(wire.Pages)) != pages.Last-pages.First+1 {
+		return provider.Malformed("Docling page registry does not match the selected range", nil)
+	}
+	for key := range wire.Pages {
+		page, err := strconv.ParseInt(key, 10, 64)
+		if err != nil || page < pages.First || page > pages.Last || strconv.FormatInt(page, 10) != key {
+			return provider.Malformed("Docling page registry does not match the selected range", nil)
+		}
+	}
+	for _, text := range wire.Texts {
+		for _, provenance := range text.Prov {
+			if provenance.PageNo < pages.First || provenance.PageNo > pages.Last {
+				return provider.Malformed("Docling text provenance is outside the selected range", nil)
+			}
+		}
+	}
+	return nil
 }
 
 func (client *Client) startRender(
@@ -321,7 +434,7 @@ func (client *Client) awaitResult(run *rendering, taskID string) (doclingResult,
 }
 
 func (client *Client) buildResult(
-	run *rendering, task taskResponse, result doclingResult,
+	run *rendering, task taskResponse, result doclingResult, first int64,
 ) (document.RenditionResult, error) {
 	partialSuccess := task.status == "partial_success" || result.status == "partial_success"
 	providerMarkdown := result.markdown
@@ -332,7 +445,7 @@ func (client *Client) buildResult(
 		return document.RenditionResult{}, provider.Malformed(
 			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
-	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily)
+	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily, first)
 	if !usable {
 		if len(providerMarkdown) == 0 || len(providerMarkdown) > run.authorization.MaxProviderMarkdownBytes {
 			return document.RenditionResult{}, provider.Malformed("Docling result has no usable bounded evidence", nil)
@@ -475,7 +588,7 @@ func parseTask(body []byte) (taskResponse, error) {
 	return taskResponse{id: wire.ID, status: wire.Status}, nil
 }
 
-func mapEvidence(raw jsontext.Value, family string) (document.SourceEvidenceV1, []byte, bool) {
+func mapEvidence(raw jsontext.Value, family string, first int64) (document.SourceEvidenceV1, []byte, bool) {
 	var topLevel map[string]jsontext.Value
 	if json.Unmarshal(raw, &topLevel) != nil {
 		return document.SourceEvidenceV1{}, nil, false
@@ -512,7 +625,7 @@ func mapEvidence(raw jsontext.Value, family string) (document.SourceEvidenceV1, 
 	if !natural {
 		return document.SourceEvidenceV1{}, nil, false
 	}
-	indexes, pages, ok := doclingPageTexts(wire.Pages, wire.Texts)
+	indexes, pages, ok := doclingPageTexts(wire.Pages, wire.Texts, first)
 	if !ok {
 		return document.SourceEvidenceV1{}, nil, false
 	}
@@ -557,10 +670,11 @@ type doclingText struct {
 	} `json:"prov"`
 }
 
-// doclingPageTexts builds the contiguous one-based page registry and assigns
-// every non-blank text to the single page its provenance names.
+// doclingPageTexts builds the page registry contiguous from first and assigns
+// every non-blank text to the single page its provenance names. Blank pages
+// are usable only inside a later page range.
 func doclingPageTexts(
-	rawPages map[string]jsontext.Value, texts []doclingText,
+	rawPages map[string]jsontext.Value, texts []doclingText, first int64,
 ) ([]int64, map[int64][]string, bool) {
 	pages := make(map[int64][]string, len(rawPages))
 	for key := range rawPages {
@@ -576,7 +690,7 @@ func doclingPageTexts(
 	}
 	slices.Sort(indexes)
 	for index, page := range indexes {
-		if page != int64(index+1) {
+		if page != first+int64(index) {
 			return nil, nil, false
 		}
 	}
@@ -603,7 +717,18 @@ func doclingPageTexts(
 		pages[page] = append(pages[page], text.Text)
 		hasMappedText = true
 	}
-	return indexes, pages, hasMappedText
+	return indexes, pages, hasMappedText || first > 1
+}
+
+// recognizedDoclingDocument reports whether raw names a supported DoclingDocument
+// schema, without decoding fields whose shape may change across majors.
+func recognizedDoclingDocument(raw jsontext.Value) bool {
+	var header struct {
+		SchemaName string `json:"schema_name"`
+		Version    string `json:"version"`
+	}
+	return len(raw) != 0 && json.Unmarshal(raw, &header) == nil &&
+		header.SchemaName == "DoclingDocument" && supportedDoclingMajor(header.Version)
 }
 
 func supportedDoclingMajor(version string) bool {
