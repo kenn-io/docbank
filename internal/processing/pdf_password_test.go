@@ -81,9 +81,9 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			require.Equal(t, tc.reason, capability.Reason)
 			require.Equal(t, tc.calls, provider.calls)
 			if tc.reason == media.CapabilityReasonPDFPasswordRequired {
-				_, err = prepareProviderExecution(t.Context(), fixture.blobs, t.TempDir(), node, version, profile, time.Now, false)
+				_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, false)
 				require.NoError(t, err)
-				_, err = prepareProviderExecution(t.Context(), fixture.blobs, t.TempDir(), node, version, profile, time.Now, true)
+				_, err = prepareProviderExecution(t.Context(), fixture.catalog, fixture.blobs, t.TempDir(), node, version, profile, time.Now, true)
 				require.ErrorIs(t, err, ErrPDFPasswordRequired)
 			}
 		})

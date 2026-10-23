@@ -252,13 +252,23 @@
 <style>
   .ai-match {
     position: absolute;
-    inset: auto var(--space-2) var(--space-2);
+    inset: auto 3rem var(--space-2) var(--space-2);
     z-index: 1;
     background: var(--bg-surface);
     color: var(--text-primary);
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
     font-size: 0.75rem;
+  }
+  .stack-count {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    padding: 4px 8px;
   }
   .photo-cell {
     position: relative;

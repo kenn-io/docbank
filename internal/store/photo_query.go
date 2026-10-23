@@ -252,6 +252,11 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
+			if request.Stacks {
+				if err := groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds, request.SourceMetadataFingerprint); err != nil {
+					return err
+				}
+			}
 			return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 		}
 		primary, comparison := "ASC", ">"
@@ -295,7 +300,7 @@ func (s *Store) ListPhotoAssets(
 					args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
 				}
 				args = append(args, limit-len(result))
-				pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
+				pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+`,0 FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
 					` ORDER BY `+order+` LIMIT ?`, args...)
 				if err != nil {
 					return nil, err
@@ -313,21 +318,12 @@ func (s *Store) ListPhotoAssets(
 					break
 				}
 			}
-			args = append(args, request.PageSize+1-len(page.Items))
-			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+`,0 FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
-				` ORDER BY `+order+` LIMIT ?`, args...)
-			if err != nil {
-				return err
-			}
-			rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
-			if err != nil {
-				return err
-			}
-			items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing})
-			if err != nil {
-				return err
-			}
-			page.Items = append(page.Items, items...)
+			return result, nil
+		}
+		if stackSort {
+			err = s.listPhotoStackPage(ctx, q, scope, settings.BurstGapSeconds, primary == "DESC", request.PageSize, boundary, identity, readRaw, &page, request.SourceMetadataFingerprint)
+		} else {
+			page.Items, err = readRaw(boundary, request.PageSize+1)
 			if len(page.Items) > request.PageSize {
 				page.Items = page.Items[:request.PageSize]
 				position := page.Items[len(page.Items)-1].position

@@ -797,10 +797,11 @@ func fromProcessingError(err error) error {
 		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, http.StatusUnprocessableEntity, "similar_search_too_large", "similar search scope exceeds the scoring budget; narrow the source scope"},
 	} {
 		if errors.Is(err, item.target) {
+			detail := item.detail
 			if failure, ok := errors.AsType[*processing.RuntimeUnavailableError](err); ok {
-				item.detail += ": " + failure.Cause.Error()
+				detail += ": " + failure.Cause.Error()
 			}
-			return NewError(item.status, item.code, detailPrefix+item.detail)
+			return NewError(item.status, item.code, detailPrefix+cmp.Or(detail, err.Error()))
 		}
 	}
 	if scopeError, ok := errors.AsType[*store.ProcessingSourceFenceScopeError](err); ok {

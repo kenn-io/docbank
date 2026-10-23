@@ -1061,8 +1061,14 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != vision.AdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, vision.AdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract {
+		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract)
+	}
+	if profile.AdapterContract == MistralOCRAdapterContract {
+		return validateMistralRuntime(profile, prefix)
+	}
+	if runtime.CapabilityManifest != "" {
+		return fmt.Errorf("%s capability_manifest is only supported for Mistral", prefix)
 	}
 	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {

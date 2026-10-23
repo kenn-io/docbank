@@ -11121,6 +11121,53 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	return responseParser(ctx, resp)
 }
 
+// GroupPhotoStacks Group explicit photos into bursts
+func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GroupPhotoStacksResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/stacks/group",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GroupPhotoStacksResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GroupPhotoStacksResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GroupPhotoStacksResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GroupPhotoStacksErrorResponse](resp, "GroupPhotoStacksErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/stacks/group")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RespondPhotoSuggestion Accept selected fields or dismiss a photo proposal
 func (c *Client) RespondPhotoSuggestion(ctx context.Context, options *RespondPhotoSuggestionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RespondPhotoSuggestionResponse, error) {
 	var err error
@@ -22481,6 +22528,34 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// GroupPhotoStacksRequestOptions is the options needed to make a request to GroupPhotoStacks.
+type GroupPhotoStacksRequestOptions struct {
+	Body *GroupPhotoStacksBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GroupPhotoStacksRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GroupPhotoStacksRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GroupPhotoStacksRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GroupPhotoStacksRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RespondPhotoSuggestionRequestOptions is the options needed to make a request to RespondPhotoSuggestion.
 type RespondPhotoSuggestionRequestOptions struct {
 	PathParams *RespondPhotoSuggestionPath
@@ -26296,6 +26371,8 @@ type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
+type GroupPhotoStacksBody = GroupPhotoStacksRequest
+
 type RespondPhotoSuggestionBody = PhotoSuggestionResponse
 
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
@@ -27770,6 +27847,10 @@ type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
 
+type GroupPhotoStacksResponseJSON = api.GroupPhotoStacksResponse
+
+type GroupPhotoStacksErrorResponse = Error
+
 type RespondPhotoSuggestionResponse = store.PhotoSuggestion
 
 type RespondPhotoSuggestionErrorResponse = Error
@@ -29113,6 +29194,17 @@ type PhotoCheckoutStatus = store.PhotoCheckoutStatus
 
 type PhotoCheckoutYears = store.PhotoCheckoutYears
 
+type PhotoCheckpointHeader struct {
+	FormatVersion int64   `json:"formatVersion"`
+	Revision      *string `json:"revision,omitempty"`
+	SourceID      *string `json:"sourceID,omitempty"`
+}
+
+type PhotoCheckpointIdentity struct {
+	Revision string `json:"revision"`
+	SourceID string `json:"sourceID"`
+}
+
 type PhotoDescription = document.PhotoDescription
 
 type PhotoExportSelection = bundle.PhotoExportSelection
@@ -29189,6 +29281,10 @@ type PhotoRepresentativeChange = store.PhotoRepresentativeChange
 type PhotoSettings = api.PhotoSettings
 
 type PhotoSidecarProvenance = store.PhotoSidecarProvenance
+
+type PhotoStack = api.PhotoStack
+
+type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
 
 type PhotoSuggestion = store.PhotoSuggestion
 

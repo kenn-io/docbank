@@ -39,6 +39,7 @@ func check(err error) {
 
 func main() {
 	suggestions := flag.Bool("suggestions", false, "Include synthetic photo suggestions")
+	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
 	rejects := flag.Bool("rejects", false, "Include confirmed rejects")

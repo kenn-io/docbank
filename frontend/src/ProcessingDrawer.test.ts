@@ -1,6 +1,6 @@
 import * as actions from "./action-events.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
 import * as processingAPI from "./receipts.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";

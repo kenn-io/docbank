@@ -13516,6 +13516,30 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoCheckpointHeader:
+      additionalProperties: false
+      properties:
+        formatVersion:
+          format: int64
+          type: integer
+        revision:
+          type: string
+        sourceID:
+          type: string
+      required:
+        - formatVersion
+      type: object
+    PhotoCheckpointIdentity:
+      additionalProperties: false
+      properties:
+        revision:
+          type: string
+        sourceID:
+          type: string
+      required:
+        - sourceID
+        - revision
+      type: object
     PhotoDescription:
       additionalProperties: false
       properties:
@@ -14563,6 +14587,85 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoStack:
+      additionalProperties: false
+      properties:
+        asset_ids:
+          description: Members in ascending capture order.
+          items:
+            type: string
+          maxItems: 500
+          minItems: 2
+          type: array
+        representative_id:
+          format: uuid
+          type: string
+      required:
+        - asset_ids
+        - representative_id
+      type: object
+      x-go-type: api.PhotoStack
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoStackDecisionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoStackDecisionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 500
+          minItems: 2
+          type: array
+          uniqueItems: true
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
+        current_id:
+          format: uuid
+          type: string
+        decision:
+          enum:
+            - current
+            - all
+            - selected
+            - representative
+          type: string
+        hidden:
+          type: boolean
+        selected_ids:
+          items:
+            type: string
+          maxItems: 500
+          type: array
+          uniqueItems: true
+        targets:
+          items:
+            $ref: "#/components/schemas/PhotoAuthoredEditTarget"
+          maxItems: 2000
+          minItems: 1
+          type: array
+      required:
+        - burst_gap_seconds
+        - asset_ids
+        - targets
+        - decision
+        - current_id
+      type: object
+      x-go-type: api.PhotoStackDecisionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoSuggestion:
       additionalProperties: false
       properties:
@@ -27961,7 +28064,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Set or reset the photo display preference
+      summary: Set photo settings
+  /api/v1/photos/stacks/group:
+    post:
+      operationId: groupPhotoStacks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupPhotoStacksRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupPhotoStacksResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Group explicit photos into bursts
   /api/v1/photos/suggestions/{suggestion_id}/response:
     post:
       operationId: respondPhotoSuggestion

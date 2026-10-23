@@ -116,7 +116,7 @@ func photoAuthoredBrowserRequestAllowed(r *http.Request) bool {
 			parts := strings.Split(after, "/")
 			return len(parts) == 2 && parts[1] == "response" && r.Method == http.MethodPost
 		}
-		if r.URL.Path == "/api/v1/photos/authored/edit" || r.URL.Path == "/api/v1/photos/authored/prepare" {
+		if r.URL.Path == "/api/v1/photos/authored/stack" || r.URL.Path == "/api/v1/photos/authored/edit" || r.URL.Path == "/api/v1/photos/authored/prepare" {
 			return r.Method == http.MethodPost
 		}
 		if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/authored/"); ok {

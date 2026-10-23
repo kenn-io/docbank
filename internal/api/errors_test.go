@@ -92,15 +92,19 @@ func TestRuntimeUnavailableMapsToAGenericReadinessError(t *testing.T) {
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		err  error
-		code string
+		err    error
+		code   string
+		detail string
 	}{
-		{processing.ErrRenditionFailed, "rendition_failed"},
-		{processing.ErrRenditionOperatorRequired, "rendition_operator_required"},
-		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large"},
+		{processing.ErrRenditionFailed, "rendition_failed", ""},
+		{fmt.Errorf("%w: read PDF passwords: open PDF passwords file: permission denied", processing.ErrRenditionOperatorRequired), "rendition_operator_required", "rendition job requires operator resolution: read PDF passwords: open PDF passwords file: permission denied"},
+		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large", ""},
 	} {
 		mapped := &Error{}
 		require.ErrorAs(t, fromProcessingError(test.err), &mapped)
 		assert.Equal(t, test.code, mapped.Code)
+		if test.detail != "" {
+			assert.Equal(t, test.detail, mapped.Detail)
+		}
 	}
 }

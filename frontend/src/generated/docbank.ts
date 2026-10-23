@@ -5586,6 +5586,8 @@ export interface PhotoPreparedTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
+  current_content_version_id?: string;
+  display_file_id: string;
   file_id: string;
   file_name: string;
   node_id: number;
@@ -5614,6 +5616,8 @@ export interface PhotoAuthoredPrepareRequest {
   hidden?: boolean;
   query?: SavedQueryV1Schema;
   skip_unavailable?: boolean;
+  /** Prepare up to 2,000 live files for a complete stack decision. */
+  stack?: boolean;
 }
 
 export interface WorkspaceFacetValue {
@@ -6307,6 +6311,41 @@ export interface PhotoSettings {
   /** @minimum 1 */
   revision: number;
   updated_at?: string;
+}
+
+export type PhotoStackDecisionRequestDecision = typeof PhotoStackDecisionRequestDecision[keyof typeof PhotoStackDecisionRequestDecision];
+
+
+export const PhotoStackDecisionRequestDecision = {
+  current: 'current',
+  all: 'all',
+  selected: 'selected',
+  representative: 'representative',
+} as const;
+
+export interface PhotoStackDecisionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minItems 2
+     * @maxItems 500
+     */
+  asset_ids: string[];
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds: number;
+  current_id: string;
+  decision: PhotoStackDecisionRequestDecision;
+  hidden?: boolean;
+  /** @maxItems 500 */
+  selected_ids?: string[];
+  /**
+     * @minItems 1
+     * @maxItems 2000
+     */
+  targets: PhotoAuthoredEditTarget[];
 }
 
 export type PhotoSuggestionResponseResponse = typeof PhotoSuggestionResponseResponse[keyof typeof PhotoSuggestionResponseResponse];
@@ -17865,6 +17904,44 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
+  }
+);}
+
+
+
+export const getGroupPhotoStacksUrl = () => {
+
+
+
+
+  return `/api/v1/photos/stacks/group`
+}
+
+/**
+ * @summary Group explicit photos into bursts
+ */
+export const groupPhotoStacks = async (groupPhotoStacksRequest: NonReadonly<GroupPhotoStacksRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<GroupPhotoStacksResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<GroupPhotoStacksResponse>(getGroupPhotoStacksUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(groupPhotoStacksRequest)
   }
 );}
 

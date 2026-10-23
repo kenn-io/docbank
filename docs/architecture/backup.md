@@ -85,6 +85,7 @@ watched-source cursors, tags, and extracted text. Photo suggestion records keep
 dismissals and per-field resolution without suggestion text; restore
 regenerates unresolved fields under fresh consent. Builds without photo
 description support reject the `photo_suggestion` record.
+Photo files retain `flag_owner`, which holds `return` when a Return decision owns the flag and is empty otherwise, so explicit flag choices and Undo keep their meaning after restore.
 Snapshots also preserve people, their identifiers and merge/split history,
 custodian assignments, document assertions, and match candidates. Restore
 rebuilds document–person links from those records after rebuilding document
