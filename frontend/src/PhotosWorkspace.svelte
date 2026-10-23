@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import PhotoSearchStatus from "./PhotoSearchStatus.svelte";
   import { reportAction } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
@@ -164,8 +165,10 @@
     try {
       const captured = resume
         ? await review.restore()
-        : await review.start(photos.query, (message) =>
-            cullConfirmation!.confirm(message, "Replace"),
+        : await review.start(
+            photos.fallbackReason ? { ...photos.query, mode: "lexical" } : photos.query,
+            (message) => cullConfirmation!.confirm(message, "Replace"),
+            photos.snapshotID || undefined,
           );
       if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
         photos.culling = true;
@@ -252,6 +255,7 @@
     const refreshing = photos.loading;
     if (refreshing) photos.cancelPending();
     const rotations = photos.metadataChanged(receipt);
+    if (rotations.stacksUnresolved) await photos.refreshStackRepresentatives();
     const displayFileID = editor.asset?.display_file_id ?? direct?.display_file_id;
     if (direct && rotations.has(direct.display_file_id))
       direct = { ...direct, rotation: rotations.get(direct.display_file_id)! };
@@ -265,7 +269,7 @@
       reload = { id: photoID };
     }
     if (refreshList && (refreshing || (photos.started && photos.reloadsAfter(rotations))))
-      await refresh();
+      await (photos.snapshotID ? retryNavigation() : refresh());
   }
   async function suggestionRefresh(
     receipt?: PhotoAuthoredReceipt,
@@ -696,11 +700,12 @@
   });
   const exportSelection = $derived(photos.scope());
   const exportSelectionCount = $derived(exportSelection.asset_ids?.length ?? photos.total);
-  function exportPhotos(selected = false): void {
-    const ids = selected ? (exportSelection.asset_ids ?? []) : [];
+  async function exportPhotos(selected = false): Promise<void> {
+    const scope = await photos.actionScope(selected);
+    if (!scope) return;
     onexport?.({
       label: selected ? "Selected photos" : title,
-      photos: { query: photos.query, asset_ids: ids, hidden: photos.hidden },
+      photos: { ...scope, hidden: photos.hidden },
       total: selected ? exportSelectionCount : photos.total,
     });
   }
@@ -880,6 +885,17 @@
     {cache}
     onclose={() => void closeReview()}
   />{/if}
+{#snippet searchStatus()}
+  <PhotoSearchStatus
+    status={{
+      fallback_reason: photos.query.text.trim() ? photos.fallbackReason : undefined,
+      truncated: photos.truncated,
+      coverage_incomplete: photos.coverageIncomplete,
+    }}
+    total={photos.total}
+    located={mapMode}
+  />
+{/snippet}
 {#snippet vaultReason()}Vault identity unavailable. Reload to retry.{/snippet}
 <main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
   {#if mapMode && !tiles.tile_url}
@@ -901,8 +917,10 @@
               : ""}</span
           >
         </div>{/if}
+      {@render searchStatus()}
       {#if photos.mapCapped}<p class="photo-search-limit" role="status">
-          Showing the newest {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}
+          Showing the {photos.query.sort?.field === "relevance" ? "best" : "newest"}
+          {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}
           located photos. Narrow your search or date to see the rest.
         </p>{/if}
       <div class="map-tabs">
@@ -1161,7 +1179,7 @@
           </div>
           {#if !mapMode}<div class="photo-stack-controls browser-toolbar">
               {#if photos.groupingIncomplete}<p role="status">
-                  Some camera details are missing or outdated. Stacks can change once they update.
+                  Some photo details or image vectors are missing. Stacks can change as processing finishes.
                 </p>{/if}
               <label class="burst-gap"
                 >Burst gap (seconds) <input
@@ -1184,6 +1202,7 @@
               Select up to {maxPhotoExportMembers} photos to export.
             </p>{/if}
           {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
+          {#if searchable}{@render searchStatus()}{/if}
           {#if !mapMode && photos.date}
             <div class="photo-date-selection">
               <Button size="sm" onclick={() => void photos.selectDate()}>Clear date</Button>
@@ -1210,17 +1229,19 @@
                   }}>Open album</a
                 >{/if}
             </div>{/if}
-          {#if photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
+          {#if (photos.query.mode === "lexical" || photos.fallbackReason) && photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
             <p class="photo-search-limit">
-              Showing the best 250 of {photos.total.toLocaleString()} matches. Refine the search or sort
-              by capture date to see all.
+              Showing the best 250 of {photos.total.toLocaleString()} matches. {photos.fallbackReason
+                ? "Choose Metadata and sort by capture date to see all."
+                : "Refine the search or sort by capture date to see all."}
             </p>
           {/if}
           {#if !mapMode && photos.error}
             <div class="photo-error" role="alert">
               <span>{photos.error}</span><Button
                 size="sm"
-                onclick={() => void photos.retry(preserve)}>Retry</Button
+                onclick={() => void photos.retry(preserve)}
+                >{photos.refreshRequired ? "Refresh" : "Retry"}</Button
               >
             </div>
           {/if}

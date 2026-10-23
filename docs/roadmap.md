@@ -71,7 +71,8 @@ New imports do not automatically run OCR or prepare semantic search. The
 default configuration has no processing profiles, and search without them uses
 names and locally extracted text. With a configured embedding binding, Auto
 search in the web app and TUI uses Hybrid. Saving a query with hybrid-search
-settings does not run it. Frozen query snapshots support lexical mode only.
+settings does not run it. Documents frozen query snapshots support lexical mode.
+Photos snapshots also support semantic and hybrid search.
 
 ## What can the web app and terminal browser do?
 

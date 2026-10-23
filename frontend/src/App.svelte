@@ -739,8 +739,11 @@
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted)
+        if (current && !controller.signal.aborted) {
           await acceptPhotoAccess(result, configuredVersion);
+          const photos = activePhotos();
+          if (photos?.culling) await photos.cull?.checkSettings();
+        }
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -2426,6 +2429,7 @@
       )
         continue;
       const rotations = photos.metadataChanged(receipt);
+      if (rotations.stacksUnresolved) void photos.refreshStackRepresentatives();
       const preparedChanged = photos.authored.targets.some((target) =>
         receipt.after.some((file) => file.file_id === target.file_id),
       );

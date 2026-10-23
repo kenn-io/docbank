@@ -14,11 +14,12 @@ const maxWorkspaceQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // WorkspaceQueryCreateRequest opens one exact, daemon-lifetime query snapshot.
 type WorkspaceQueryCreateRequest struct {
-	Photos   bool         `json:"photos,omitempty"`
-	Query    QueryPayload `json:"query"`
-	Profile  string       `json:"profile,omitempty" maxLength:"128"`
-	PageSize int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
+	Photos     bool         `json:"photos,omitempty"`
+	SnapshotID string       `json:"snapshot_id,omitempty"`
+	Query      QueryPayload `json:"query"`
+	Profile    string       `json:"profile,omitempty" maxLength:"128"`
+	PageSize   int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
+	Facets     []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
 }
 
 // WorkspaceQueryPageRequest reads one page using only the opaque cursor minted
@@ -30,8 +31,8 @@ type WorkspaceQueryPageRequest struct {
 // SavedQueryRunRequest supplies execution options without allowing callers to
 // replace the revision-fenced saved QueryV1 definition.
 type SavedQueryRunRequest struct {
-	ReplacesSnapshotID string   `json:"replaces_snapshot_id,omitempty" maxLength:"32" doc:"Owned photo snapshot to keep while building its replacement"`
 	Photos             bool     `json:"photos,omitempty"`
+	ReplacesSnapshotID string   `json:"replaces_snapshot_id,omitempty" maxLength:"32" doc:"Owned photo snapshot to keep while building its replacement"`
 	Profile            string   `json:"profile,omitempty" maxLength:"128"`
 	PageSize           int      `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
 	Facets             []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
@@ -120,6 +121,8 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 
 // WorkspaceQueryResponse carries complete frozen metadata and one row page.
 type WorkspaceQueryResponse struct {
+	PhotoSearchStatus
+
 	Query               QueryPayload               `json:"query"`
 	Dependencies        []WorkspaceQueryDependency `json:"dependencies"`
 	QueryFingerprint    string                     `json:"query_fingerprint" pattern:"^sha256:[0-9a-f]{64}$"`
@@ -177,7 +180,8 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		return WorkspaceQueryResponse{}, err
 	}
 	out := WorkspaceQueryResponse{
-		Query: QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
+		PhotoSearchStatus: fromStorePhotoSearchStatus(page.PhotoRanking),
+		Query:             QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
 		QueryFingerprint: page.QueryFingerprint, MemberHash: page.MemberHash,
 		SnapshotFingerprint: page.SnapshotFingerprint,
 		Generation:          WorkspaceQueryGeneration{Kind: page.Generation.Kind, GenerationID: page.Generation.GenerationID},

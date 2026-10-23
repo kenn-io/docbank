@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,10 +69,17 @@ func TestConfigureEmbeddingRuntimesDefersMissingCredentialUntilSelectedOperation
 	t.Setenv(environmentName, "")
 	cfg, descriptor := syntheticLoopbackOpenAIConfig(t, server.URL, environmentName)
 
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	duplicate := cfg.EmbeddingProfiles["semantic"]
+	duplicate.Chunk.MaxTokens = 64
+	cfg.EmbeddingProfiles["alternate-chunks"] = duplicate
+	require.NoError(t, cfg.Validate())
+
+	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err, "an unused hosted profile must not require its secret during daemon startup")
 	provider := bundle.providers["semantic"]
 	require.NotNil(t, provider)
+	require.Equal(t, descriptor, provider.Descriptor())
+	require.Equal(t, descriptor, bundle.providers["alternate-chunks"].Descriptor())
 	_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{
 		Key: "document-1", Role: document.EmbeddingRoleDocument,
 		Kind: document.EmbeddingInputRenditionChunk, Text: "passage",
@@ -85,25 +91,6 @@ func TestConfigureEmbeddingRuntimesDefersMissingCredentialUntilSelectedOperation
 	for _, private := range []string{"credential:semantic", environmentName, "synthetic-secret"} {
 		assert.NotContains(t, err.Error(), private)
 	}
-}
-
-func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	t.Cleanup(server.Close)
-	t.Setenv("DOCBANK_TEST_EMBEDDING_KEY", "synthetic-secret")
-	cfg, final := syntheticLoopbackOpenAIConfig(t, server.URL, "DOCBANK_TEST_EMBEDDING_KEY")
-
-	duplicate := cfg.EmbeddingProfiles["semantic"]
-	duplicate.Chunk.MaxTokens = 64
-	cfg.EmbeddingProfiles["alternate-chunks"] = duplicate
-	require.NoError(t, cfg.Validate())
-	t.Setenv("DOCBANK_TEST_EMBEDDING_KEY", "")
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
-	require.NoError(t, err)
-	assert.True(t, bundle.registry.Ready())
-	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
-	classification, _ := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
-	assert.Equal(t, processing.EmbeddingProviderCapacity, classification)
 }
 
 func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName string) (config.Config, document.EmbeddingDescriptor) {
@@ -143,7 +130,7 @@ func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName strin
 	return cfg, final
 }
 
-func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *testing.T) {
+func TestConfigureEmbeddingRuntimesConfiguresCapabilityAttestedVoyageOriginal(t *testing.T) {
 	t.Setenv("DOCBANK_TEST_VOYAGE_KEY", "synthetic-secret")
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: voyage.DefaultModel, Dimension: voyage.DefaultDimension,
 		Media: media.Policy{MaxBytes: 1 << 20, AllowStill: true, AllowVideo: true}, MaxBatchItems: 8,
@@ -191,9 +178,10 @@ func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *
 	cfg.EmbeddingProfiles["voyage"] = profile
 	require.NoError(t, cfg.Validate())
 
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
+	require.NotNil(t, bundle.providers["voyage"])
+	require.Equal(t, final, bundle.providers["voyage"].Descriptor())
 }
 
 func TestRecoverEmbeddingRuntimeSpoolRemovesOnlyAbandonedUploadState(t *testing.T) {
@@ -209,12 +197,6 @@ func TestRecoverEmbeddingRuntimeSpoolRemovesOnlyAbandonedUploadState(t *testing.
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(unrelated)
 	require.NoError(t, err)
-}
-
-type unavailableEmbeddingBlobs struct{}
-
-func (unavailableEmbeddingBlobs) OpenContext(context.Context, string) (io.ReadSeekCloser, error) {
-	return nil, errors.New("unexpected blob read")
 }
 
 type embeddingReady bool
@@ -246,12 +228,15 @@ func TestEmbeddingRuntimeClassifiesAuthorizationFailures(t *testing.T) {
 	}
 }
 
-func TestEmbeddingRuntimeClassifiesMalformedOpenAIResponses(t *testing.T) {
+func TestEmbeddingRuntimeClassifiesOpenAIResponseFailures(t *testing.T) {
 	for _, err := range []error{openaicompat.ErrMalformedResponse, fmt.Errorf("schema mismatch: %w", openaicompat.ErrMalformedResponse)} {
 		classification, delay := classifyOpenAIEmbeddingError(err)
 		require.Equal(t, processing.EmbeddingProviderInvalidResponse, classification)
 		require.Zero(t, delay)
 	}
+	classification, delay := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
+	require.Equal(t, processing.EmbeddingProviderCapacity, classification)
+	require.Zero(t, delay)
 }
 
 func TestEmbeddingRuntimeClassifiesMalformedVoyageResponses(t *testing.T) {

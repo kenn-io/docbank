@@ -12,6 +12,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 const (
@@ -330,7 +332,8 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
 	buildCtx, cancel := context.WithCancel(ctx)
-	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
+	protected := request.ReplacesSnapshotID
+	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, protected)
 	if err != nil {
 		cancel()
 		return preparedQuerySnapshot{}, err
@@ -470,7 +473,7 @@ func (s *QuerySnapshotService) Page(
 	if payload.SnapshotID != snapshotID || payload.QueryFingerprint != metadata.QueryFingerprint ||
 		payload.SortField != metadata.Query.Sort.Field || payload.SortDirection != metadata.Query.Sort.Direction ||
 		payload.PageSize != metadata.PageSize || payload.Offset < 0 || payload.Offset >= int64(len(cached.rows)) ||
-		payload.Offset%int64(metadata.PageSize) != 0 {
+		(!metadata.GroupPhotoStacks && payload.Offset%int64(metadata.PageSize) != 0) {
 		return SnapshotPage{}, ErrSnapshotCursor
 	}
 	page, err := s.renderPage(&cached, payload.Offset)
@@ -833,7 +836,10 @@ func (s *QuerySnapshotService) renderPage(cached *cachedQuerySnapshot, start int
 		return SnapshotPage{}, fmt.Errorf("decoding cached query snapshot metadata: %w", err)
 	}
 	projection.SerializedBytes = cached.serializedBytes
-	end := min(start+int64(projection.PageSize), int64(len(cached.rows)))
+	end, err := photoSnapshotPageEnd(cached, projection, start)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
 	projection.Rows = make([]SnapshotRow, end-start)
 	for i := start; i < end; i++ {
 		if err := json.Unmarshal(cached.rows[i], &projection.Rows[i-start]); err != nil {
@@ -844,9 +850,17 @@ func (s *QuerySnapshotService) renderPage(cached *cachedQuerySnapshot, start int
 		SnapshotProjection: projection, Snapshot: true, SnapshotID: cached.id,
 		CreatedAt: cached.created, ExpiresAt: s.expiry(cached),
 	}
-	var err error
 	if start > 0 {
 		previous := max(start-int64(projection.PageSize), 0)
+		if projection.GroupPhotoStacks {
+			for position := int64(0); position < start; {
+				previous = position
+				position, err = photoSnapshotPageEnd(cached, projection, position)
+				if err != nil {
+					return SnapshotPage{}, err
+				}
+			}
+		}
 		page.PrevCursor, err = s.encodeCursor(cached.owner, s.cursorPayload(cached, projection, "prev", previous))
 		if err != nil {
 			return SnapshotPage{}, err
@@ -970,4 +984,186 @@ func (s *QuerySnapshotService) stats() snapshotCacheStats {
 		CachedBytes: s.cachedBytes, ReservedBytes: s.reservedBytes,
 		ActiveBuilders: int64(len(s.builds)),
 	}
+}
+
+// FirstPage reuses an admitted owner-bound snapshot without running its query again.
+func (s *QuerySnapshotService) FirstPage(ctx context.Context, owner, snapshotID string) (SnapshotPage, error) {
+	if err := ctx.Err(); err != nil {
+		return SnapshotPage{}, err
+	}
+	cached, err := s.lookup(owner, snapshotID)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	page, err := s.renderPage(&cached, 0)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
+		return SnapshotPage{}, err
+	}
+	return page, nil
+}
+
+// PhotoPage binds continuation inputs to the admitted view, including its projection.
+func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor string, request SnapshotRequest) (SnapshotPage, error) {
+	cached, err := s.lookup(owner, id)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	var first SnapshotProjection
+	if err := json.Unmarshal(cached.metadata, &first); err != nil {
+		return SnapshotPage{}, err
+	}
+	request, err = normalizeQuerySnapshotRequest(request)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	fingerprint, err := query.Fingerprint(request.Query)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	coverage, err := normalizeCoverageSelection(request.Coverage)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if fingerprint != first.QueryFingerprint || coverage != first.Coverage || request.PageSize != first.PageSize || request.GroupPhotoStacks != first.GroupPhotoStacks || request.PhotoProjection != first.PhotoProjection {
+		return SnapshotPage{}, ErrSnapshotCursor
+	}
+	if cursor == "" {
+		return s.FirstPage(ctx, owner, id)
+	}
+	return s.Page(ctx, owner, id, cursor)
+}
+
+func photoSnapshotPageEnd(cached *cachedQuerySnapshot, projection SnapshotProjection, start int64) (int64, error) {
+	end := min(start+int64(projection.PageSize), int64(len(cached.rows)))
+	if projection.GroupPhotoStacks && end < int64(len(cached.rows)) && end > start {
+		var boundary SnapshotRow
+		if err := json.Unmarshal(cached.rows[end-1], &boundary); err != nil {
+			return 0, err
+		}
+		for _, stack := range projection.PhotoStacks {
+			if !slices.Contains(stack.AssetIDs, boundary.AssetID) {
+				continue
+			}
+			for end < int64(len(cached.rows)) {
+				var next SnapshotRow
+				if err := json.Unmarshal(cached.rows[end], &next); err != nil {
+					return 0, err
+				}
+				if !slices.Contains(stack.AssetIDs, next.AssetID) {
+					break
+				}
+				end++
+			}
+			break
+		}
+	}
+	return end, nil
+}
+
+// PhotoStackRepresentatives reselects choices within accepted groups, preserving their membership.
+func (s *QuerySnapshotService) PhotoStackRepresentatives(ctx context.Context, owner, id string) ([]PhotoStack, error) {
+	cached, err := s.lookup(owner, id)
+	if err != nil {
+		return nil, err
+	}
+	var projection SnapshotProjection
+	if err := json.Unmarshal(cached.metadata, &projection); err != nil {
+		return nil, err
+	}
+	if !projection.Photos {
+		return nil, ErrSnapshotCursor
+	}
+	return s.photoStackRepresentatives(ctx, projection.PhotoStacks)
+}
+
+func (s *QuerySnapshotService) photoStackRepresentatives(ctx context.Context, groups []PhotoStack) ([]PhotoStack, error) {
+	var stacks []PhotoStack
+	err := s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		stacks, err = photoStackRepresentativesTx(ctx, tx, groups)
+		return err
+	})
+	return stacks, err
+}
+
+func photoStackRepresentativesTx(ctx context.Context, tx metadataQuerier, groups []PhotoStack) (stacks []PhotoStack, err error) {
+	var ids []string
+	for _, stack := range groups {
+		ids = append(ids, stack.AssetIDs...)
+	}
+	inputs := map[string]photoStackFrame{}
+	if err := queryInChunks(ctx, tx, `SELECT a.asset_id,`+photoStackChoiceColumns+` FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(false)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
+		var frame photoStackFrame
+		err := rows.Scan(&frame.AssetID, &frame.Rank, &frame.Picked, &frame.Rejected)
+		inputs[frame.AssetID] = frame
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	for _, stack := range groups {
+		frames := make([]photoStackFrame, len(stack.AssetIDs))
+		for i, id := range stack.AssetIDs {
+			frames[i] = inputs[id]
+		}
+		if frames = slices.DeleteFunc(frames, func(frame photoStackFrame) bool { return frame.AssetID == "" }); len(frames) >= 2 {
+			stacks = append(stacks, newPhotoStack(frames))
+		}
+	}
+	return stacks, nil
+}
+
+func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, members []SnapshotMember, recipes map[string]string) ([]PhotoBrowseRow, error) {
+	if err := validatePhotoSnapshotMembersTx(ctx, tx, members); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(members)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT `+photoBrowseSelect+`,'',0 FROM `+photoBrowseDisplayFrom+` JOIN json_each(?) frozen ON json_extract(frozen.value,'$.asset_id')=a.asset_id WHERE `+photoBrowseLiveDisplay+` ORDER BY CAST(frozen.key AS INTEGER)`, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	photos, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
+	if err == nil && recipes != nil {
+		err = s.hydratePhotoPreviews(ctx, tx, PhotoBrowseRequest{Recipes: recipes}, photos)
+	}
+	return photos, err
+}
+
+// CurrentPhotoPage reads display values and representatives while retaining the accepted order and groups.
+func (s *QuerySnapshotService) CurrentPhotoPage(ctx context.Context, snapshot SnapshotPage, recipes map[string]string) (PhotoBrowsePage, error) {
+	page := PhotoBrowsePage{Total: snapshot.Total, RelevanceAvailable: true, BurstGapSeconds: snapshot.PhotoBurstGapSeconds, GroupingIncomplete: snapshot.PhotoGroupingIncomplete}
+	for _, facet := range snapshot.Facets {
+		if facet.Dimension != "capture_day" {
+			page.Facets = append(page.Facets, facet)
+		}
+	}
+	err := s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
+		onPage := make(map[string]bool, len(snapshot.Rows))
+		for _, row := range snapshot.Rows {
+			onPage[row.AssetID] = true
+		}
+		var err error
+		page.Items, err = s.store.currentPhotoRowsTx(ctx, tx, snapshotMembers(snapshot.Rows), recipes)
+		if err != nil {
+			return err
+		}
+		for i, row := range snapshot.Rows {
+			page.Items[i].MatchedAISuggestion = row.SuggestionMatch
+		}
+		var groups []PhotoStack
+		for _, stack := range snapshot.PhotoStacks {
+			if slices.ContainsFunc(stack.AssetIDs, func(id string) bool { return !onPage[id] }) {
+				continue
+			}
+			groups = append(groups, stack)
+		}
+		page.Stacks, err = photoStackRepresentativesTx(ctx, tx, groups)
+		return err
+	})
+	return page, err
 }

@@ -7427,7 +7427,7 @@ components:
           minimum: 1
           type: integer
         grouping_incomplete:
-          description: Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change.
+          description: Grouping uses folder, camera, capture time, and current image vectors. Missing details or pending image work can change groups. Ranked pages keep each captured group together.
           type: boolean
         groups:
           description: Bursts of two or more submitted photos, in request order; other available photos are single.
@@ -7441,6 +7441,8 @@ components:
           items:
             type: string
           type: array
+        vector_generation_id:
+          type: string
       required:
         - burst_gap_seconds
         - groups
@@ -12837,11 +12839,15 @@ components:
           format: uri
           readOnly: true
           type: string
+        actual_mode:
+          type: string
         burst_gap_seconds:
           format: int64
           maximum: 30
           minimum: 1
           type: integer
+        coverage_incomplete:
+          type: boolean
         facets:
           items:
             additionalProperties: false
@@ -12878,8 +12884,10 @@ components:
               - values
             type: object
           type: array
+        fallback_reason:
+          type: string
         grouping_incomplete:
-          description: Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change.
+          description: Grouping uses folder, camera, capture time, and current image vectors. Missing details or pending image work can change groups. Ranked pages keep each captured group together.
           type: boolean
         items:
           items:
@@ -12889,19 +12897,29 @@ components:
           items:
             $ref: "#/components/schemas/PhotoMapRow"
           type: array
+        member_hash:
+          type: string
         next_cursor:
           type: string
         relevance_available:
           type: boolean
+        requested_mode:
+          type: string
+        snapshot_id:
+          type: string
         stacks:
           description: Bursts among items when stacks were requested; other items are single photos.
           items:
             $ref: "#/components/schemas/PhotoStack"
           type: array
+        timeline:
+          $ref: "#/components/schemas/SnapshotFacet"
         total:
           format: int64
           minimum: 0
           type: integer
+        truncated:
+          type: boolean
       required:
         - items
         - total
@@ -12957,6 +12975,8 @@ components:
           type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
+        snapshot_id:
+          type: string
         stacks:
           description: Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows.
           type: boolean
@@ -14037,6 +14057,9 @@ components:
           type:
             - string
             - "null"
+        display_file_id:
+          format: uuid
+          type: string
         file_modified_time:
           description: Set only when the file modified time, not a capture date, placed the photo.
           format: date-time
@@ -14082,6 +14105,7 @@ components:
       required:
         - rotation
         - asset_id
+        - display_file_id
         - revision
         - name
         - capture_time
@@ -14458,6 +14482,13 @@ components:
           format: uri
           readOnly: true
           type: string
+        asset_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 1000
+          type: array
+          uniqueItems: true
         coverage:
           $ref: "#/components/schemas/WorkspaceQueryCoverage"
         hidden:
@@ -14560,6 +14591,8 @@ components:
         updated_at:
           format: date-time
           type: string
+        vector_generation_id:
+          type: string
       required:
         - burst_gap_seconds
         - revision
@@ -14587,6 +14620,47 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoSnapshotStacksRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSnapshotStacksRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        snapshot_id:
+          pattern: ^[0-9a-f]{32}$
+          type: string
+      required:
+        - snapshot_id
+      type: object
+      x-go-type: api.PhotoSnapshotStacksRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoSnapshotStacksResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSnapshotStacksResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        stacks:
+          items:
+            $ref: "#/components/schemas/PhotoStack"
+          type: array
+      required:
+        - stacks
+      type: object
+      x-go-type: api.PhotoSnapshotStacksResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoStack:
       additionalProperties: false
       properties:
@@ -18270,6 +18344,69 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SnapshotFacet:
+      additionalProperties: false
+      properties:
+        available:
+          type: boolean
+        dimension:
+          type: string
+        missing:
+          format: int64
+          type:
+            - integer
+            - "null"
+        other:
+          format: int64
+          type:
+            - integer
+            - "null"
+        reason:
+          type: string
+        total:
+          format: int64
+          type:
+            - integer
+            - "null"
+        values:
+          items:
+            $ref: "#/components/schemas/SnapshotFacetValue"
+          type: array
+      required:
+        - dimension
+        - available
+        - reason
+        - total
+        - values
+        - missing
+        - other
+      type: object
+      x-go-type: store.SnapshotFacet
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    SnapshotFacetValue:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        key:
+          type: string
+        label:
+          type: string
+        selected:
+          type: boolean
+      required:
+        - key
+        - label
+        - count
+        - selected
+      type: object
+      x-go-type: store.SnapshotFacetValue
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     Sort:
       additionalProperties: false
       properties:
@@ -20530,6 +20667,8 @@ components:
           type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
+        snapshot_id:
+          type: string
       required:
         - query
       type: object
@@ -20605,8 +20744,12 @@ components:
           format: uri
           readOnly: true
           type: string
+        actual_mode:
+          type: string
         coverage:
           $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        coverage_incomplete:
+          type: boolean
         created_at:
           format: date-time
           type: string
@@ -20654,6 +20797,8 @@ components:
             type: object
           maxItems: 8
           type: array
+        fallback_reason:
+          type: string
         generation:
           $ref: "#/components/schemas/WorkspaceQueryGeneration"
         member_hash:
@@ -20680,6 +20825,8 @@ components:
         query_fingerprint:
           pattern: ^sha256:[0-9a-f]{64}$
           type: string
+        requested_mode:
+          type: string
         rows:
           items:
             $ref: "#/components/schemas/WorkspaceQueryRow"
@@ -20701,6 +20848,8 @@ components:
           format: int64
           minimum: 0
           type: integer
+        truncated:
+          type: boolean
       required:
         - query
         - dependencies
@@ -26998,6 +27147,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Browse matching photo assets
+  /api/v1/photos/assets/query/stacks:
+    post:
+      operationId: refreshPhotoSnapshotStacks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoSnapshotStacksRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoSnapshotStacksResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read current representatives for accepted photo stacks
   /api/v1/photos/assets/timeline:
     post:
       operationId: getPhotoTimeline

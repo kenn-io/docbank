@@ -112,3 +112,85 @@ func photoSnapshotLibraryMembersTx(ctx context.Context, tx rowQuerier, encoded [
 	}
 	return nil
 }
+
+func rankedPhotoSnapshotPopulation(ranking *PhotoRanking) (compiledQueryFragment, error) {
+	encoded, err := json.Marshal(ranking.Members)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	return compiledQueryFragment{sql: `SELECT n.id node_id,v.version_id content_version_id,a.asset_id,CAST(rank.key AS INTEGER)+1 photo_position FROM json_each(?) rank JOIN photo_assets a ON a.asset_id=json_extract(rank.value,'$.asset_id') ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) + ` WHERE n.id=json_extract(rank.value,'$.node_id') AND v.version_id=json_extract(rank.value,'$.content_version_id') AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` ORDER BY CAST(rank.key AS INTEGER)`, args: []any{string(encoded)}}, nil
+}
+
+// CapturePhotoSnapshot gives Cull the complete rows from the accepted ranked set.
+func (s *QuerySnapshotService) CapturePhotoSnapshot(ctx context.Context, owner, id string, request SnapshotRequest) (SnapshotPage, error) {
+	first, err := s.FirstPage(ctx, owner, id)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if !first.Photos {
+		return SnapshotPage{}, ErrInvalidSnapshotRequest
+	}
+	rows, err := s.copyPhotoSnapshotRows(ctx, owner, id)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	ranking := PhotoRanking{RequestedMode: first.Query.Mode, ActualMode: queryModeLexical}
+	if first.PhotoRanking != nil {
+		ranking = *first.PhotoRanking
+	}
+	ranking.Members = snapshotMembers(rows)
+	request.photoCaptureRows = rows
+	request.Query, request.Photos, request.PhotoRanking = first.Query, true, &ranking
+	request.Coverage = first.Coverage
+	request.PhotoProjection = "cull"
+	request.GroupPhotoStacks = false
+	return s.Create(ctx, owner, request)
+}
+
+func materializePhotoCapture(ctx context.Context, q metadataQuerier, rows []SnapshotRow, options snapshotMaterializeOptions, projection *SnapshotProjection) error {
+	live, err := options.PhotoStore.currentPhotoRowsTx(ctx, q, snapshotMembers(rows), nil)
+	if err == nil && int64(len(rows)) > options.MaxRows {
+		err = ErrQuerySnapshotTooLarge
+	} else if err == nil {
+		err = chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2)
+	}
+	if err != nil {
+		return err
+	}
+	for i, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		row.Flag = new(live[i].Flag)
+		encoded, err := json.Marshal(row)
+		if err == nil && int64(len(encoded)) > options.MaxRowBytes {
+			err = ErrQuerySnapshotTooLarge
+		} else if err == nil {
+			err = chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, int64(len(encoded))+1)
+		}
+		if err != nil {
+			return err
+		}
+		projection.Rows = append(projection.Rows, row)
+		projection.TotalBytes += row.Size
+	}
+	projection.Total = int64(len(rows))
+	return nil
+}
+
+func (s *QuerySnapshotService) copyPhotoSnapshotRows(ctx context.Context, owner, id string) ([]SnapshotRow, error) {
+	cached, err := s.lookup(owner, id)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]SnapshotRow, len(cached.rows))
+	for i, encoded := range cached.rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(encoded, &rows[i]); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
+}

@@ -21,6 +21,10 @@ func TestPhotoBrowserPermissions(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/v1/photos/assets/query", true}, {http.MethodGet, preview, true},
 		{http.MethodPost, "/api/v1/photos/assets/flags", true},
+		{http.MethodPost, "/api/v1/photos/assets/query/stacks", true},
+		{http.MethodGet, "/api/v1/photos/assets/query/stacks", false},
+		{http.MethodPost, "/api/v1/photos/assets/query/stacks?extra=1", false},
+		{http.MethodPost, "/api/v1/photos/assets/query/stacks/extra", false},
 		{http.MethodGet, "/api/v1/photos/assets/flags", false},
 		{http.MethodPost, "/api/v1/photos/assets/flags?extra=1", false},
 		{http.MethodPost, base + "/trash", true},
@@ -56,11 +60,12 @@ func TestPhotoCursor(t *testing.T) {
 	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	service := newDocumentCursorTestService(&now)
 	position := store.PhotoBrowsePosition{Total: 7, Key: "capture.jpg", AssetID: "00000000-0000-4000-8000-000000000001", QueryIdentity: strings.Repeat("a", 64)}
-	cursor, err := service.encodePhotoCursor(position)
+	cursor, err := service.encodePhotoCursor(position, "provider_unavailable")
 	require.NoError(t, err)
 	decoded, err := service.decodePhotoCursor(cursor)
 	require.NoError(t, err)
-	require.Equal(t, position, decoded)
+	require.Equal(t, position, decoded.Position)
+	require.Equal(t, "provider_unavailable", decoded.FallbackReason)
 	for _, invalid := range []string{cursor + "a", strings.Repeat("a", MaxDocumentCursorBytes+1), "bad", cursor + "."} {
 		_, err := service.decodePhotoCursor(invalid)
 		require.ErrorIs(t, err, store.ErrInvalidPhotoCursor)

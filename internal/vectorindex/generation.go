@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
@@ -71,6 +72,8 @@ type Neighbor struct {
 
 // Generation is a completely validated disposable vector-index generation.
 type Generation struct {
+	rowLookupOnce sync.Once
+	rowLookup     map[RowIdentity]int
 	manifest      Manifest
 	vectorSpaceID string
 	metric        string
@@ -258,8 +261,30 @@ func (generation *Generation) Bytes() []byte {
 
 func (generation *Generation) vector(row int) []float32 {
 	start := row * generation.dimension
-	return generation.vectors[start : start+generation.dimension]
+	return generation.vectors[start : start+generation.dimension : start+generation.dimension]
 }
+
+// RowVectors returns read-only views of exact stored rows for catalog identities.
+// Callers must not modify the rows. Each view retains its immutable generation's
+// vector storage and has no spare capacity.
+func (generation *Generation) RowVectors(identities []RowIdentity) map[RowIdentity][]float32 {
+	generation.rowLookupOnce.Do(func() {
+		generation.rowLookup = make(map[RowIdentity]int, len(generation.rows))
+		for i, identity := range generation.rows {
+			generation.rowLookup[identity] = i
+		}
+	})
+	result := make(map[RowIdentity][]float32, len(identities))
+	for _, identity := range identities {
+		if i, ok := generation.rowLookup[identity]; ok {
+			result[identity] = generation.vector(i)
+		}
+	}
+	return result
+}
+
+// VectorSpaceID returns the validated vector-space identity without copying the manifest.
+func (generation *Generation) VectorSpaceID() string { return generation.vectorSpaceID }
 
 // Metadata returns the validated authority identity, descriptor, and shape
 // required to fence a persisted generation and supply exact search bounds.
@@ -415,7 +440,7 @@ func (generation *Generation) scoreRow(query []float32, index int) Neighbor {
 	neighbor := Neighbor{RowIdentity: generation.rows[index]}
 	switch generation.metric {
 	case document.VectorMetricCosine:
-		neighbor.Score = cosine(query, generation.vector(index))
+		neighbor.Score = Cosine(query, generation.vector(index))
 	case document.VectorMetricDotProduct:
 		neighbor.Score = dot(query, generation.vector(index))
 	case document.VectorMetricL2:
@@ -818,7 +843,9 @@ func dot(left, right []float32) float64 {
 	return result
 }
 
-func cosine(left, right []float32) float64 {
+// Cosine returns the cosine similarity of equal-length vectors.
+// Both vectors must be finite and non-zero.
+func Cosine(left, right []float32) float64 {
 	dotProduct, leftNorm, rightNorm := 0.0, 0.0, 0.0
 	for index := range left {
 		leftValue, rightValue := float64(left[index]), float64(right[index])

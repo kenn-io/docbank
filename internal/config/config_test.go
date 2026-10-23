@@ -1155,6 +1155,43 @@ func TestMediaSourceCeilingConfig(t *testing.T) {
 	}
 }
 
+func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		adapter, endpoint, wantError string
+		chunkPolicy                  bool
+	}{
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "", false},
+		{"docbank-voyage-embeddings/v1", "https://api.voyageai.com/v1", "image input requires the standard embedding bridge", false},
+		{"docbank-standard-embedding-bridge/v1", "http://embedding.example.invalid", "image input must not define chunk policy or max input tokens", true},
+	} {
+		t.Run(tc.adapter+tc.wantError, func(t *testing.T) {
+			t.Parallel()
+			cfg := validProcessingConfig()
+			cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_EMBEDDING_PRIMARY_KEY"}}
+			profile := cfg.EmbeddingProfiles["semantic"]
+			profile.InputKind = "image"
+			if !tc.chunkPolicy {
+				profile.MaxInputTokens, profile.Chunk = 0, EmbeddingChunkConfig{}
+			}
+			profile.ModelInput = EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)}
+			profile.CompatibilityID = "nomic/search/v1"
+			profile.TrustBoundary = "operator_network"
+			profile.Runtime = &EmbeddingRuntimeConfig{AdapterContract: tc.adapter, Endpoint: tc.endpoint, ModelRevision: "v1", RequestTimeout: Duration(time.Second), MaxRequestBytes: 1 << 20, AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
+			cfg.EmbeddingProfiles["semantic"] = profile
+			if tc.wantError != "" {
+				require.ErrorContains(t, cfg.Validate(), tc.wantError)
+				return
+			}
+			require.NoError(t, cfg.Validate())
+			portable, err := cfg.ProcessingProfile("archive")
+			require.NoError(t, err)
+			require.Equal(t, document.EmbeddingInputImage, portable.Document.Embeddings[0].InputKind)
+		})
+	}
+
+}
+
 func TestMistralOCRRuntime(t *testing.T) {
 	valid := func() Config {
 		c := validRenditionRuntimeConfig(t)

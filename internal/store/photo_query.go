@@ -253,7 +253,7 @@ func (s *Store) ListPhotoAssets(
 				return err
 			}
 			if request.Stacks {
-				if err := groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds, request.SourceMetadataFingerprint); err != nil {
+				if err := s.groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds, request.SourceMetadataFingerprint); err != nil {
 					return err
 				}
 			}
@@ -333,7 +333,7 @@ func (s *Store) ListPhotoAssets(
 		if err != nil {
 			return err
 		}
-		if err := markSuggestionOnlyMatches(ctx, q, compiled, generation.ID, coverage, request.Hidden, page.Items); err != nil {
+		if err := markSuggestionOnlyMatches(ctx, q, compiled, generation.ID, coverage, request.Hidden, page.Items, false); err != nil {
 			return err
 		}
 		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
@@ -515,7 +515,7 @@ func photoTextOperands(compiled CompiledQuery) (names, content string) {
 // is evaluated without suggestion text.
 func markSuggestionOnlyMatches(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery,
-	generation string, coverage CoverageSelection, hidden bool, items []PhotoBrowseRow,
+	generation string, coverage CoverageSelection, hidden bool, items []PhotoBrowseRow, hybrid bool,
 ) error {
 	if _, content := photoTextOperands(compiled); content == "" || len(items) == 0 {
 		return nil
@@ -523,38 +523,51 @@ func markSuggestionOnlyMatches(
 	if suggestions, err := photoSuggestionsExist(ctx, q); err != nil || !suggestions {
 		return err
 	}
-	compiled.withoutSuggestion = true
-	scope, err := newPhotoBrowseScope(ctx, q, compiled, generation, coverage, hidden)
+	matching := func(withoutSuggestion bool) (map[string]bool, error) {
+		compiled.withoutSuggestion = withoutSuggestion
+		scope, err := newPhotoBrowseScope(ctx, q, compiled, generation, coverage, hidden)
+		if err != nil {
+			return nil, err
+		}
+		args := make([]any, len(items))
+		for i, item := range items {
+			args[i] = item.AssetID
+		}
+		statement, args, err := scope.bind(`SELECT a.asset_id FROM photo_assets a WHERE `+scope.match.sql+` AND a.asset_id IN (`+placeholders(len(items))+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := q.QueryContext(ctx, statement, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		matches := map[string]bool{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			matches[id] = true
+		}
+		return matches, rows.Err()
+	}
+	plain, err := matching(true)
 	if err != nil {
 		return err
 	}
-	args := make([]any, len(items))
-	for i, item := range items {
-		args[i] = item.AssetID
-	}
-	statement, args, err := scope.bind(`SELECT a.asset_id FROM photo_assets a WHERE `+scope.match.sql+` AND a.asset_id IN (`+placeholders(len(items))+`)`, args...)
-	if err != nil {
-		return err
-	}
-	rows, err := q.QueryContext(ctx, statement, args...)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	plain := map[string]bool{}
-	for rows.Next() {
-		var assetID string
-		if err := rows.Scan(&assetID); err != nil {
+	var lexical map[string]bool
+	if hybrid {
+		lexical, err = matching(false)
+		if err != nil {
 			return err
 		}
-		plain[assetID] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
 	}
 	for i := range items {
-		items[i].MatchedAISuggestion = !plain[items[i].AssetID]
+		id := items[i].AssetID
+		items[i].MatchedAISuggestion = !plain[id] && (lexical == nil || lexical[id])
 	}
+
 	return nil
 }
 

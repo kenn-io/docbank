@@ -41,6 +41,7 @@ type EmbeddingInputKind string
 
 const (
 	EmbeddingInputOriginalFile   EmbeddingInputKind = "original_file"
+	EmbeddingInputImage          EmbeddingInputKind = "image"
 	EmbeddingInputRenditionChunk EmbeddingInputKind = "rendition_chunk"
 )
 
@@ -598,9 +599,9 @@ func validateEmbeddingBinding(binding EmbeddingBindingV1, hasRendition bool) err
 		}
 	}
 	switch binding.InputKind {
-	case EmbeddingInputOriginalFile:
+	case EmbeddingInputOriginalFile, EmbeddingInputImage:
 		if binding.Chunk != nil {
-			return errors.New("original_file input must not define chunk policy")
+			return errors.New("file input must not define chunk policy")
 		}
 		if binding.MaxInputTokens != 0 {
 			return errors.New("original_file input must not define max input tokens")
@@ -619,7 +620,7 @@ func validateEmbeddingBinding(binding EmbeddingBindingV1, hasRendition bool) err
 			return fmt.Errorf("max input tokens must be between 1 and %d", maxEmbeddingChunkTokens)
 		}
 	default:
-		return fmt.Errorf("input kind %q must be original_file or rendition_chunk", binding.InputKind)
+		return fmt.Errorf("input kind %q must be original_file, image, or rendition_chunk", binding.InputKind)
 	}
 	if binding.Activation != EmbeddingOptional && binding.Activation != EmbeddingRequired {
 		return fmt.Errorf("activation %q must be optional or required", binding.Activation)

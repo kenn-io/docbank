@@ -3,6 +3,7 @@ import {
   getPhotoTimeline,
   readWorkspaceQueryPage,
   type WorkspaceQueryCreateRequestFacetsItem,
+  type PhotoBrowsePage,
 } from "./generated/docbank.js";
 import { sha256Digest } from "./crypto.js";
 import {
@@ -15,6 +16,7 @@ import {
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
+  snapshot_id?: string;
   photos?: boolean;
   profile?: string;
   page_size?: 50 | 100 | 250;
@@ -58,7 +60,12 @@ export interface SnapshotRow {
   excerpt?: string;
 }
 
-export interface WorkspaceQueryResponse {
+type PhotoSearchStatus = Pick<
+  PhotoBrowsePage,
+  "requested_mode" | "actual_mode" | "fallback_reason" | "truncated" | "coverage_incomplete"
+>;
+
+export interface WorkspaceQueryResponse extends PhotoSearchStatus {
   query: Query;
   dependencies: { kind: "tag" | "collection" | "saved" | "person"; id: string; revision: number }[];
   query_fingerprint: string;
@@ -570,6 +577,20 @@ function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query)
   };
 }
 
+function photoSearchStatus(raw: Record<string, unknown>): PhotoSearchStatus {
+  const status: PhotoSearchStatus = {};
+  for (const field of ["requested_mode", "actual_mode", "fallback_reason"] as const) {
+    if (raw[field] !== undefined) status[field] = string(raw[field], field);
+  }
+  for (const field of ["truncated", "coverage_incomplete"] as const) {
+    if (raw[field] !== undefined) {
+      if (typeof raw[field] !== "boolean") malformed(`${field} must be a boolean`);
+      status[field] = raw[field];
+    }
+  }
+  return status;
+}
+
 async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<SnapshotPage> {
   const raw = record(value, "receipt");
   keys(
@@ -593,7 +614,16 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
       "created_at",
       "expires_at",
     ],
-    ["$schema", "previous_cursor", "next_cursor"],
+    [
+      "$schema",
+      "previous_cursor",
+      "next_cursor",
+      "requested_mode",
+      "actual_mode",
+      "fallback_reason",
+      "truncated",
+      "coverage_incomplete",
+    ],
     "receipt",
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0)
@@ -640,6 +670,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
     malformed("expiry exceeds the snapshot lifetime");
   return {
     ...evidence,
+    ...photoSearchStatus(raw),
     query_fingerprint: queryFingerprint,
     member_hash: memberHash,
     snapshot_fingerprint: snapshotFingerprint,
@@ -768,7 +799,7 @@ export async function createSnapshot(
   const normalized = normalizedOptions(options);
   const canonical = canonicalQuery(query);
   const response = await createWorkspaceQuery(
-    { query: JSON.parse(canonical), ...normalized },
+    { query: JSON.parse(canonical), ...normalized, snapshot_id: options.snapshot_id },
     { session, signal },
   );
   const result = await parseSnapshot(await boundedJSON(response), query);

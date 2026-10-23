@@ -74,7 +74,7 @@ func materializeSnapshotFacets(
 		var err error
 		switch {
 		case dimension == "capture_day":
-			facet, err = materializeCaptureDayFacet(facetCtx, q, compiled, generationID, coverage, options.FacetMemberLimit)
+			facet, err = materializeCaptureDayFacet(facetCtx, q, compiled, generationID, coverage, options.FacetMemberLimit, options.PhotoMemberIDs)
 		case options.MaterializeFacet != nil:
 			facet, err = options.MaterializeFacet(facetCtx, dimension)
 		default:
@@ -200,13 +200,16 @@ func materializeSnapshotFacet(
 // not photos, so large libraries still get a timeline.
 func materializeCaptureDayFacet(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string,
-	coverage CoverageSelection, dayLimit int64,
+	coverage CoverageSelection, dayLimit int64, memberIDs ...[]string,
 ) (SnapshotFacet, error) {
 	// The counts below cover Library photos only, so duplicate eligibility must too.
 	compiled.photoHidden = false
 	match, err := photoBrowseMatch(compiled, generation, coverage)
 	if err != nil {
 		return SnapshotFacet{}, err
+	}
+	if len(memberIDs) > 0 && memberIDs[0] != nil {
+		match = joinCompiledFragments([]compiledQueryFragment{match, photoMemberFence(memberIDs[0])}, " AND ")
 	}
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
 		sql: `SELECT COALESCE(pl.day,''),COUNT(*) FROM ` + photoBrowseDisplayFrom +
@@ -632,6 +635,9 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 			match = trueCompiledFragment()
 		}
 	}
+	if options.PhotoMemberIDs != nil {
+		match = joinCompiledFragments([]compiledQueryFragment{match, photoMemberFence(options.PhotoMemberIDs)}, " AND ")
+	}
 	albumJoin, albumValues := "", `'', ''`
 	if slices.Contains(dimensions, compiledSetField) {
 		albumJoin = ` LEFT JOIN photo_set_members sm ON sm.asset_id=a.asset_id LEFT JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`
@@ -829,4 +835,9 @@ func wholeCaptureYear(value query.Query) string {
 		return ""
 	}
 	return value.Filters.CaptureAfter[:4]
+}
+
+func photoMemberFence(ids []string) compiledQueryFragment {
+	encoded, _ := json.Marshal(ids)
+	return compiledQueryFragment{sql: `a.asset_id IN (SELECT value FROM json_each(?))`, args: []any{string(encoded)}}
 }

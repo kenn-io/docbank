@@ -33,9 +33,14 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if service == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
-		page, err := service.Create(ctx, owner, store.SnapshotRequest{
-			Photos: in.Body.Photos, Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
-		})
+		var page store.SnapshotPage
+		if in.Body.Photos && in.Body.SnapshotID != "" {
+			page, err = service.CapturePhotoSnapshot(ctx, owner, in.Body.SnapshotID, store.SnapshotRequest{PageSize: in.Body.PageSize, Facets: in.Body.Facets})
+		} else {
+			request := store.SnapshotRequest{PhotoProjection: "cull", Photos: in.Body.Photos, Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets}
+
+			page, err = service.Create(ctx, owner, request)
+		}
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}

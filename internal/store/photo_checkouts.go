@@ -152,7 +152,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			return nil, estimate, err
 		}
 	}
-	base := query.Query{V: 1, Syntax: "simple", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}
+	base := query.Query{V: 1, Syntax: "simple", Mode: queryModeLexical, Sort: query.Sort{Field: "name", Direction: "asc"}}
 	var queries []query.Query
 	if selection.All {
 		queries = append(queries, base)

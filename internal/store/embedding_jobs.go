@@ -285,7 +285,7 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 		j.authorization_grant_id,j.authorization_incarnation_id,j.authorization_revocation_fence
 		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
 		WHERE j.content_version_id=? AND j.profile_fingerprint=?
-		AND (j.input_kind='original_file' OR EXISTS (
+		AND (j.input_kind IN ('original_file','image') OR EXISTS (
 			SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
 			AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id
 		))`
@@ -481,6 +481,11 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 	}
 	if err != nil {
 		return err
+	}
+	if work.Binding.InputKind == document.EmbeddingInputImage {
+		if err := validateImageEmbeddingGenerationTx(ctx, tx, work.InputGeneration, work.Binding.Name); err != nil {
+			return err
+		}
 	}
 	if !reflect.DeepEqual(current, work) {
 		return ErrEmbeddingJobFenced
@@ -748,6 +753,9 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 			return ErrEmbeddingJobFenced
 		}
 		return err
+	}
+	if binding.InputKind == document.EmbeddingInputImage {
+		return validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name)
 	}
 	if binding.InputKind == document.EmbeddingInputOriginalFile {
 		if generation.GenerationChecksum != sourceHash || len(generation.Inputs) != 1 ||

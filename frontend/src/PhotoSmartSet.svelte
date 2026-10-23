@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PhotoSearchStatus from "./PhotoSearchStatus.svelte";
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { Button, Modal, TextInput } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
@@ -193,6 +194,7 @@
 
 <div class:has-frozen={!!frozen} class="smart-actions" aria-label="Search actions">
   {#if frozen}
+    <PhotoSearchStatus status={frozen.snapshot} total={frozen.run.total} />
     <div class="frozen-summary" role="status">
       <strong>Frozen results</strong>
       <span

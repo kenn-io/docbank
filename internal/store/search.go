@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	querypkg "go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
 	"go.kenn.io/kit/search/lexical"
 	"go.kenn.io/kit/search/sqlitefts"
@@ -92,6 +93,28 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	opts, err = s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
+	}
+	if opts.PhotoScope != nil {
+		request := *opts.PhotoScope
+		if opts.PhotoLexicalQuery == nil {
+			return nil, false, ErrInvalidPhotoQuery
+		}
+		request.Query = *opts.PhotoLexicalQuery
+		request.Query.Mode = queryModeLexical
+		request.Query.Sort = querypkg.Sort{Field: "relevance", Direction: "desc"}
+		request.PageSize = min(limit+1, MaxPhotoMapPageSize)
+		request.Stacks = false
+		request.Recipes = nil
+		request.Facets = nil
+		page, err := s.ListPhotoAssets(ctx, request, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		hits := make([]ExplainedLexicalCandidate, 0, min(limit, len(page.Items)))
+		for _, row := range page.Items[:min(limit, len(page.Items))] {
+			hits = append(hits, ExplainedLexicalCandidate{Node: Node{ID: row.NodeID, CurrentVersionID: row.ContentVersionID, Name: row.Name}, EvidenceKind: "node_name"})
+		}
+		return hits, page.Total > int64(limit), nil
 	}
 	fq := ftsQuery(query)
 	if fq == "" {
@@ -331,6 +354,11 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	PhotoScope *PhotoBrowseRequest
+	// PhotoLexicalQuery retains the authored syntax independently of the vector filter scope.
+	PhotoLexicalQuery *querypkg.Query
+	photoFilter       compiledQueryFragment
+	photoLexical      compiledQueryFragment
 	SelectedBuilds    []SearchSelectedBuild
 	TagID             string
 	MIMEType          string
@@ -511,8 +539,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				return ErrVectorIndexSourceStale
 			}
 		}
-		args := append([]any{string(encoded)}, filterArgs...)
-		args = append(args, semanticProfileFingerprint, semanticBindingID)
+		args := slices.Concat([]any{string(encoded)}, filterArgs, normalized.photoLexical.args, []any{semanticProfileFingerprint, semanticBindingID})
 		rows, queryErr := tx.QueryContext(ctx, `WITH requested AS (
 			SELECT CAST(key AS INTEGER) AS position,
 			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
@@ -531,7 +558,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		WHERE NOT EXISTS (
 			SELECT 1 FROM json_each(scoped.evidence) evidence
 			WHERE CASE json_extract(evidence.value,'$.kind')
-			WHEN 'node_name' THEN scoped.current_name IS NOT json_extract(evidence.value,'$.node_name')
+			`+nameEvidenceSQL(normalized.photoLexical)+`
 			WHEN 'content_blob' THEN NOT (
 				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
 				json_extract(evidence.value,'$.blob_hash')=scoped.blob_hash)
@@ -553,7 +580,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				 AND es.profile_fingerprint=? AND es.binding_id=?
 				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
 				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
-				 AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`))
+				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`)))
 			ELSE 1 END
 		) ORDER BY scoped.position`, args...)
 		if queryErr != nil {
@@ -777,7 +804,7 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 		WHERE n.kind='file' AND n.trashed_at IS NULL
 		  AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=?
 		  AND eh.vector_space_id=?
-		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`) `+filterSQL,
+		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`)) `+filterSQL,
 		args...).Scan(&complete)
 	return required, complete, err
 }
@@ -913,7 +940,7 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 		WHERE es.vector_space_id=?
 		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
 		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
-		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`)
+		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`))
 		  `+filterSQL, args...)
 	if err != nil {
 		return nil, err
@@ -2189,6 +2216,39 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
+// photoSearchFragment compiles one photo query as lexical node membership.
+func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoBrowseRequest) (compiledQueryFragment, error) {
+	request.Query.Mode = queryModeLexical
+	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: queryer})
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	generation, err := readActiveLexicalGeneration(ctx, queryer)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return compiledQueryFragment{}, err
+	}
+	metadata, ok := queryer.(metadataQuerier)
+	if !ok {
+		return compiledQueryFragment{}, ErrInvalidPhotoQuery
+	}
+	scope, err := newPhotoBrowseScope(ctx, metadata, compiled, generation.ID, request.Coverage, request.Hidden)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	statement, args, err := scope.bind(`SELECT n.id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where())
+	return compiledQueryFragment{sql: statement, args: args}, err
+}
+
+// nameEvidenceSQL marks a filename match stale once the name changes or, for
+// a photo search, the node no longer matches the authored query.
+func nameEvidenceSQL(photoLexical compiledQueryFragment) string {
+	stale := `WHEN 'node_name' THEN scoped.current_name IS NOT json_extract(evidence.value,'$.node_name')`
+	if photoLexical.sql != "" {
+		stale += ` OR scoped.node_id NOT IN (` + photoLexical.sql + `)`
+	}
+	return stale
+}
+
 // NormalizeSearchOptions validates scope identities and returns canonical filters.
 func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
 	return s.normalizeSearchOptionsWithQuerier(ctx, s.db, opts)
@@ -2197,6 +2257,20 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 func (s *Store) normalizeSearchOptionsWithQuerier(
 	ctx context.Context, queryer rowQuerier, opts SearchOptions,
 ) (SearchOptions, error) {
+	if opts.PhotoScope != nil {
+		request := *opts.PhotoScope
+		request.Query.Syntax = "advanced"
+		var err error
+		if opts.photoFilter, err = photoSearchFragment(ctx, queryer, request); err != nil {
+			return SearchOptions{}, err
+		}
+		if opts.PhotoLexicalQuery != nil {
+			request.Query = *opts.PhotoLexicalQuery
+			if opts.photoLexical, err = photoSearchFragment(ctx, queryer, request); err != nil {
+				return SearchOptions{}, err
+			}
+		}
+	}
 	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
 		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions",
 			MaxSearchSourceFenceIDs)
@@ -2337,6 +2411,10 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses []string
 		args    []any
 	)
+	if opts.photoFilter.sql != "" {
+		clauses = append(clauses, `AND n.id IN (`+opts.photoFilter.sql+`)`)
+		args = append(args, opts.photoFilter.args...)
+	}
 	if len(opts.ContentVersionIDs) != 0 {
 		encoded, err := json.Marshal(opts.ContentVersionIDs)
 		if err != nil {
@@ -2547,3 +2625,5 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 	result.Args = append(result.Args, args...)
 	return result, nil
 }
+
+const queryModeLexical = "lexical"

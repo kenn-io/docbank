@@ -191,6 +191,7 @@
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
     const changes = photos.metadataChanged(receipt);
+    if (changes.stacksUnresolved) await photos.refreshStackRepresentatives();
     if (photos.started && photos.reloadsAfter(changes)) void photos.refresh();
     reconcile(receipt.after, receipt.representatives);
     if (
@@ -461,7 +462,7 @@
         <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
       </header>
       {#if cull.run?.groupingIncomplete}<p role="status">
-          Some camera details are missing or outdated. Stacks can change once they update.
+          Some photo details or image vectors are missing. Stacks can change as processing finishes.
           <Button
             size="sm"
             disabled={busy || cull.busy || cull.stale || cull.stackLoading}

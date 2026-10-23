@@ -254,7 +254,7 @@ func ValidateEmbeddingProviderResult(descriptor EmbeddingDescriptor, inputs []Em
 var ErrEmbeddingInvalidResult = errors.New("embedding result does not match authorized input")
 
 // ExecuteEmbedding is the validated execution entry point for core callers.
-// It takes ownership of original-file uploads and closes them before returning.
+// It takes ownership of file uploads and closes them before returning.
 // The provider receives its own copy of the validated inputs; the result is
 // checked against the retained authorized snapshot the provider never sees.
 func ExecuteEmbedding(
@@ -297,7 +297,7 @@ func ExecuteEmbedding(
 			continue
 		}
 		providerMetadata := metadata[index]
-		if !authorization.DiscloseFilename {
+		if !authorization.DiscloseFilename || authorized[index].Kind == EmbeddingInputImage {
 			providerMetadata.Filename = ""
 		}
 		sealed := newSealedAuthorizedUpload(ctx, owned, providerMetadata)
@@ -419,7 +419,7 @@ func validateEmbeddingDescriptorFields(descriptor EmbeddingDescriptor) error {
 			return fmt.Errorf("%s: %w", field.name, err)
 		}
 	}
-	if len(descriptor.InputKinds) == 0 || len(descriptor.InputKinds) > 2 {
+	if len(descriptor.InputKinds) == 0 || len(descriptor.InputKinds) > 3 {
 		return errors.New("embedding descriptor input kinds are invalid")
 	}
 	for index, kind := range descriptor.InputKinds {
@@ -510,15 +510,25 @@ func validateEmbeddingInputs(
 		if err := validateEmbeddingInputAuxiliaries(input); err != nil {
 			return err
 		}
-		if input.Kind == EmbeddingInputOriginalFile {
+		if input.Kind == EmbeddingInputOriginalFile || input.Kind == EmbeddingInputImage {
 			if nilInterface(input.Source) || input.Text != "" {
+				if input.Kind == EmbeddingInputImage {
+					return errors.New("image embedding input requires authorized upload")
+				}
 				return errors.New("original-file embedding input requires authorized upload")
 			}
 			metadata := input.Source.Metadata()
 			if err := validateAuthorizedUploadMetadata(metadata); err != nil {
 				return fmt.Errorf("embedding upload metadata: %w", err)
 			}
-			if metadata.InputKind != RenditionInputOriginalFile {
+			expectedKind := RenditionInputOriginalFile
+			if input.Kind == EmbeddingInputImage {
+				expectedKind = RenditionInputDerivedUpload
+			}
+			if metadata.InputKind != expectedKind || (input.Kind == EmbeddingInputImage && (metadata.MediaFamily != "image" || metadata.MediaType != "image/jpeg")) {
+				if input.Kind == EmbeddingInputImage {
+					return errors.New("image embedding input must use derived JPEG upload metadata")
+				}
 				return errors.New("original-file embedding input must use original file upload metadata")
 			}
 			if second := input.Source.Metadata(); second != metadata {
@@ -559,7 +569,7 @@ func validateEmbeddingInputs(
 }
 
 func validateEmbeddingInputAuxiliaries(input EmbeddingInput) error {
-	if input.Kind == EmbeddingInputQueryText || input.Kind == EmbeddingInputOriginalFile {
+	if input.Kind == EmbeddingInputQueryText || (input.Kind == EmbeddingInputOriginalFile || input.Kind == EmbeddingInputImage) {
 		if len(input.HeadingPath) != 0 || len(input.SourceSpans) != 0 {
 			return errors.New("embedding input auxiliary fields are document-only")
 		}
@@ -628,7 +638,7 @@ func validModelInputMode(mode ModelInputMode) bool {
 	return mode == ModelInputModeText || mode == ModelInputModeDocument || mode == ModelInputModeQuery
 }
 func validEmbeddingDocumentInputKind(kind EmbeddingInputKind) bool {
-	return kind == EmbeddingInputOriginalFile || kind == EmbeddingInputRenditionChunk
+	return kind == EmbeddingInputOriginalFile || kind == EmbeddingInputRenditionChunk || kind == EmbeddingInputImage
 }
 
 // IsValidVectorMetric reports whether metric is part of the durable vector contract vocabulary.

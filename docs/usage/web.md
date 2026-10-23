@@ -1111,6 +1111,7 @@ accepts that credential for the following operations:
 | Prepare, edit, or undo photo metadata (`POST /api/v1/photos/authored/prepare`, `/api/v1/photos/authored/edit`, `/api/v1/photos/authored/{receipt_id}/undo`) | Edits bind up to 1,000 live files to their asset, file and node revisions. Each edit target may also supply `content_version_id`, which fences the asset's displayed version whichever member is edited. A replaced version or a different display file returns HTTP 412 `stale_revision`. Fields and keywords share one transaction and receipt. Undo requires matching revisions; hidden photos also require an unlocked Hidden view. |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
 | Create and page a frozen query snapshot | Uses complete validated query intent. Handles remain bound to this session and daemon lifetime. |
+| Read current representatives for accepted photo stacks (`POST /api/v1/photos/assets/query/stacks`) | Uses this browser session's frozen groups without changing their members or rank. |
 | Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and confirmation. Retries preserve the original operation identities. |
 
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights)

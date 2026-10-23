@@ -44,10 +44,11 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	BurstGapSeconds int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
-	Preference      *string `json:"preference,omitzero" enum:"raw,image"`
-	Revision        int64   `json:"revision" minimum:"1"`
-	UpdatedAt       string  `json:"updated_at,omitzero" format:"date-time"`
+	VectorGenerationID string  `json:"vector_generation_id,omitempty"`
+	BurstGapSeconds    int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	Preference         *string `json:"preference,omitzero" enum:"raw,image"`
+	Revision           int64   `json:"revision" minimum:"1"`
+	UpdatedAt          string  `json:"updated_at,omitzero" format:"date-time"`
 }
 
 type CreatePhotoAssetRequest struct {
@@ -127,7 +128,8 @@ type GroupPhotoStacksRequest struct {
 }
 
 type GroupPhotoStacksResponse struct {
-	GroupingIncomplete bool       `json:"grouping_incomplete,omitempty" doc:"Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change."`
+	VectorGenerationID string     `json:"vector_generation_id,omitempty"`
+	GroupingIncomplete bool       `json:"grouping_incomplete,omitempty" doc:"Grouping uses folder, camera, capture time, and current image vectors. Missing details or pending image work can change groups. Ranked pages keep each captured group together."`
 	BurstGapSeconds    int        `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
 	Groups             [][]string `json:"groups" doc:"Bursts of two or more submitted photos, in request order; other available photos are single."`
 	UnavailableIDs     []string   `json:"unavailable_ids" doc:"Submitted photos that are no longer live in this library."`

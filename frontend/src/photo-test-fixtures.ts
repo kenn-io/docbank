@@ -205,6 +205,7 @@ export function photoMetadataResponse(
 export function mapPhoto(id: number): PhotoMapRow {
   const {
     asset_id,
+    display_file_id,
     revision,
     name,
     capture_time,
@@ -216,6 +217,7 @@ export function mapPhoto(id: number): PhotoMapRow {
   } = photo(id);
   return {
     asset_id,
+    display_file_id,
     revision,
     name,
     capture_time,

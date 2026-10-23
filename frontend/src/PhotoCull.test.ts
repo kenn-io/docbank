@@ -1096,6 +1096,7 @@ it("keeps a frame the pass excludes out of the stack that Keep all decides", asy
   });
   await act(() => cull.regroup());
   expect(group.mock.lastCall![0].asset_ids).toEqual(pass);
+  expect(cull.run!.checkpoint.pass).toEqual(pass);
   await fireEvent.click(await readyButton("Keep all"));
   await waitFor(() => expect(decide).toHaveBeenCalledOnce());
   expect(decide.mock.calls[0]![0]).toMatchObject({ asset_ids: pass, decision: "all" });
@@ -1106,7 +1107,7 @@ it("keeps individual decisions available while camera details update", async () 
   await act(() => {
     cull.run = { ...cull.run!, groups: [], burstGapSeconds: 2, groupingIncomplete: true };
   });
-  await screen.findByText(/Some camera details are missing or outdated/);
+  await screen.findByText(/Some photo details or image vectors are missing/);
   await readyButton("Pick (P)");
   expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
   const settings = vi.mocked(api.getPhotoSettings);
@@ -1117,7 +1118,7 @@ it("keeps individual decisions available while camera details update", async () 
   group.mockResolvedValueOnce({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
   await fireEvent.click(await readyButton("Retry grouping"));
   await waitFor(() => expect(cull.run?.groupingIncomplete).toBeFalsy());
-  expect(screen.queryByText(/Some camera details are missing or outdated/)).toBeNull();
+  expect(screen.queryByText(/Some photo details or image vectors are missing/)).toBeNull();
 });
 
 it("Return visits interleaved stacks and singletons once", async () => {

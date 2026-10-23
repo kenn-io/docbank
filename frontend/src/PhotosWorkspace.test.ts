@@ -267,6 +267,30 @@ it("keeps empty-library guidance when clearing filters", async () => {
   await cache.dispose();
 });
 
+it("hides the unsupported-query reason while a meaning search has no text", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  stubPhotoFetch(vi.fn(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))));
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const reason = /No searchable text or unsupported syntax/;
+  photos.query = { ...photos.query, mode: "semantic", text: "" };
+  photos.fallbackReason = "unsupported_query";
+  await tick();
+  expect(screen.queryByText(reason)).toBeNull();
+  photos.query = { ...photos.query, text: "pick" };
+  await screen.findByText(reason);
+  photos.dispose();
+  await cache.dispose();
+});
+
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
@@ -1606,7 +1630,14 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   await cache.dispose();
 });
 
-it("explains the relevance limit and hides it for complete results or capture dates", async () => {
+it("explains the relevance limit, hiding it for complete results or capture dates and rewording it when fallback disables the sort", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   photos.items = [photo(1)];
@@ -1621,11 +1652,31 @@ it("explains the relevance limit and hides it for complete results or capture da
   const note =
     "Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.";
   await screen.findByText(note);
+  photos.query = { ...photos.query, mode: "semantic" };
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.query = { ...photos.query, mode: "lexical" };
   photos.total = 1;
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.total = 5000;
   photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.query = {
+    ...photos.query,
+    mode: "semantic",
+    text: "sunset",
+    sort: { field: "relevance", direction: "desc" },
+  };
+  photos.fallbackReason = "provider_unavailable";
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Sort photos: Relevance" })).toHaveProperty(
+      "disabled",
+      true,
+    ),
+  );
+  await screen.findByText(
+    "Showing the best 250 of 5,000 matches. Choose Metadata and sort by capture date to see all.",
+  );
+  expect(screen.queryByText(note)).toBeNull();
   photos.dispose();
   await cache.dispose();
 });
@@ -2000,7 +2051,7 @@ it("shows the Map limit notice only for capped results and bounds loading progre
   await waitFor(() => expect(screen.queryByText(/^Showing the newest /)).toBeNull());
   photos.cursor = undefined;
   await tick();
-  expect(screen.queryByText(/^Showing the newest /)).toBeNull();
+  expect(screen.getByText(/^Showing the newest 19,999 of 21,000 located photos/)).toBeTruthy();
   photos.dispose();
 });
 
@@ -3068,7 +3119,76 @@ it("explains paused grouping beside the Library stack controls", async () => {
   photos.started = true;
   photos.groupingIncomplete = true;
   render(PhotosWorkspace, { photos, cache: new PhotoPreviewCache("scoped", vi.fn()) });
-  await screen.findByText(/Some camera details are missing or outdated/);
+  await screen.findByText(/Some photo details or image vectors are missing/);
   expect(screen.getByRole("spinbutton", { name: "Burst gap (seconds)" })).toBeTruthy();
+  photos.dispose();
+});
+
+it("forwards the accepted photo action scope to export", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  const scope = { query: photoQuery, asset_ids: ["photo-1"] };
+  vi.spyOn(photos, "actionScope").mockResolvedValue(scope);
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, cache, onexport });
+  await fireEvent.click(screen.getByRole("button", { name: "Export photos" }));
+  await vi.waitFor(() =>
+    expect(onexport).toHaveBeenCalledWith(
+      expect.objectContaining({ photos: expect.objectContaining(scope) }),
+    ),
+  );
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("renders Map search status for a fallback", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos(
+    "scoped",
+    vi.fn(),
+    false,
+    {
+      ...photoQuery,
+      mode: "semantic",
+      text: "sunset",
+      sort: { field: "relevance", direction: "desc" },
+    },
+    { projection: "map" },
+  );
+  photos.items = [mapPhoto(1), mapPhoto(2)];
+  photos.total = 2;
+  photos.started = true;
+  photos.truncated = false;
+  photos.fallbackReason = "provider_unavailable";
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, {
+    photos,
+    mapMode: true,
+    tiles: {
+      tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
+      host: "tiles.example.org",
+      attribution: "Example",
+      max_zoom: 19,
+    },
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  // Nothing is capped, so the only status is the fallback; its wording belongs to PhotoSearchStatus.test.ts.
+  expect(screen.getByRole("status")).toBeTruthy();
   photos.dispose();
 });

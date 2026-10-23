@@ -1,10 +1,21 @@
 import type { Query, QuerySort } from "./query.js";
 
-export function photoSearchSort(query: Pick<Query, "text" | "syntax">): QuerySort {
+export function photoSearchSort(
+  query: Pick<Query, "text" | "syntax"> & Partial<Pick<Query, "mode">>,
+): QuerySort {
   return {
-    field: query.syntax === "simple" && query.text.trim() ? "relevance" : "capture_time",
+    field:
+      query.text.trim() && ((query.mode && query.mode !== "lexical") || query.syntax === "simple")
+        ? "relevance"
+        : "capture_time",
     direction: "desc",
   };
+}
+
+export function rankedOrder(query: Query): Query {
+  return query.mode !== "lexical" && query.text.trim()
+    ? { ...query, sort: { field: "relevance", direction: "desc" } }
+    : query;
 }
 
 export function isFilterSet(value: unknown): boolean {

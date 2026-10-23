@@ -126,6 +126,12 @@ The first request to a provider checks it with a synthetic image, and a failed c
 
 Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
 
+## Embed photos for meaning search
+
+An image embedding binding uses `input_kind = "image"` and the `docbank-standard-embedding-bridge/v1` adapter. Its descriptor must support image documents and text queries in the same vector space. The bridge receives a verified, stripped grid JPEG through derived-upload authority, with an empty filename. Original image bytes and embedded metadata stay in the vault.
+
+After consent, existing embedding reconciliation discovers eligible photo versions in bounded pages. Jobs use the existing retry, fencing, vector-generation activation, and retirement paths. Visibility, current content, preview identity, purge state, and consent are checked before upload and publication. Export and backup retain image authority with the existing embedding catalog. Configure the bridge's limits to match the provider; image inference runs through the configured bridge.
+
 ## Review and render a native PDF
 
 Save the preparation, supply explicit masks, then inspect the review before rendering:

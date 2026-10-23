@@ -174,7 +174,7 @@ it("reports completed photo searches while blank and canceled searches stay sile
   await fireEvent.input(search, { target: { value: "Nikon" } });
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() =>
-    expect(action).toHaveBeenCalledExactlyOnceWith("scoped", "search_run", "text"),
+    expect(action).toHaveBeenCalledExactlyOnceWith("scoped", "search_run", "lexical"),
   );
   action.mockClear();
   fetcher.mockClear();
@@ -189,4 +189,20 @@ it("reports completed photo searches while blank and canceled searches stay sile
     await submit.mock.results[0].value;
   });
   expect(action).not.toHaveBeenCalled();
+});
+
+it.each(["semantic", "hybrid"] as const)("reports a completed %s photo search by its mode", async (mode) => {
+  const action = vi.mocked(actions.reportAction);
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))));
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  render(PhotoSearch, { photos });
+  const label = mode === "semantic" ? "Meaning" : "Hybrid";
+  await fireEvent.click(screen.getByRole("combobox", { name: "Find by: Metadata" }));
+  await fireEvent.click(await screen.findByRole("option", { name: label }));
+  const search = screen.getByRole("searchbox", { name: "Search photos" });
+  await fireEvent.input(search, { target: { value: "sunset" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(action).toHaveBeenCalledExactlyOnceWith("scoped", "search_run", mode));
+  photos.dispose();
 });

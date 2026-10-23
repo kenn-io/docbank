@@ -10,6 +10,7 @@ import (
 )
 
 type PhotoRejectsRequest struct {
+	AssetIDs []string               `json:"asset_ids,omitempty" maxItems:"1000" uniqueItems:"true" format:"uuid"`
 	Query    QueryPayload           `json:"query"`
 	Hidden   bool                   `json:"hidden,omitempty"`
 	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
@@ -38,7 +39,7 @@ func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		result, err := d.Store.PreflightPhotoRejects(ctx, store.PhotoRejectsRequest{
-			Query:  value,
+			Query: value, AssetIDs: in.Body.AssetIDs,
 			Hidden: in.Body.Hidden,
 			Coverage: store.CoverageSelection{
 				Configuration:      in.Body.Coverage.Configuration,
