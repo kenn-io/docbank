@@ -107,7 +107,7 @@
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import { parseQuery, type Query } from "./query.js";
   import { readQueryHighlights } from "./queryHighlights.js";
-  import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
+  import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
   import TagLabel from "./TagLabel.svelte";
   import TagPicker from "./TagPicker.svelte";
@@ -119,6 +119,7 @@
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
   import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
+  import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError } from "./api-transport.js";
   import {
     changeNodeTag,
@@ -216,7 +217,6 @@
     | {
         kind:
           | "history"
-          | "versions"
           | "provenance"
           | "jobs"
           | "auditEvidence"
@@ -230,6 +230,11 @@
           | "tagCatalog"
           | "telemetry"
           | "photoImport";
+      }
+    | {
+        kind: "versions";
+        linked?: Awaited<ReturnType<typeof resolveNodeVersionLink>>;
+        fromLink?: boolean;
       }
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
@@ -263,6 +268,71 @@
   };
 
   let webSession = $state("");
+  let nodeVersionHash = $state(location.hash);
+  const nodeVersionSelection = $derived(parseNodeVersionLink(nodeVersionHash));
+  const nodeVersionKey = $derived(
+    nodeVersionSelection &&
+      ("error" in nodeVersionSelection
+        ? "invalid"
+        : JSON.stringify([nodeVersionSelection.nodeId, nodeVersionSelection.versionId])),
+  );
+  const invalidNodeVersionLink =
+    "Invalid node/version link. Use a positive node ID and a version UUID.";
+  let nodeVersionError = $state("");
+  let nodeVersionLoading = $state(false);
+
+  $effect(() => {
+    const session = webSession;
+    void nodeVersionKey;
+    return untrack(() => {
+      const selection = nodeVersionSelection;
+      const panel = activePanel?.kind === "versions" ? activePanel : null;
+      nodeVersionError = "";
+      nodeVersionLoading = false;
+      if (!session || !selection) {
+        if (panel?.fromLink) activePanel = null;
+        return;
+      }
+      if (
+        !("error" in selection) &&
+        panel?.linked?.node.id === selection.nodeId &&
+        panel.linked.version.id === selection.versionId
+      )
+        return;
+      const sameNode = !("error" in selection) && panel?.linked?.node.id === selection.nodeId;
+      activePanel = sameNode ? panel! : { kind: "versions" as const };
+      activePanel.fromLink = true;
+      const target = activePanel;
+      if ("error" in selection) {
+        nodeVersionError = invalidNodeVersionLink;
+        return;
+      }
+      const controller = new AbortController();
+      let current = true;
+      nodeVersionLoading = true;
+      void resolveNodeVersionLink(session, selection, controller.signal)
+        .then((resolved) => {
+          if (current && activePanel === target) target.linked = resolved;
+        })
+        .catch((cause: unknown) => {
+          if (!current || activePanel !== target) return;
+          if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+          else if (cause instanceof APIError && cause.status === 404)
+            nodeVersionError = "The linked node or version is missing or purged.";
+          else
+            nodeVersionError =
+              cause instanceof Error ? cause.message : "The linked version is unavailable.";
+        })
+        .finally(() => {
+          if (current) nodeVersionLoading = false;
+        });
+      return () => {
+        current = false;
+        controller.abort();
+      };
+    });
+  });
+
   const photoUndo = $derived.by(() => {
     void webSession;
     return new PhotoUndoState();
@@ -340,8 +410,12 @@
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
   let dragOver = $state("");
-  const hashWithoutPhoto = () =>
-    new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash;
+  const hashWithoutPhoto = () => {
+    const params = new URLSearchParams(location.hash.slice(1));
+    params.delete("photo");
+    const fragment = params.toString();
+    return fragment ? `#${fragment}` : "";
+  };
   let hiddenPhotoActionError = $state("");
   let hiddenWorkspace = $state<HiddenPhotos>();
   const shortcutManager = createShortcutManager();
@@ -377,6 +451,7 @@
   onMount(() => photoNavigation.listen());
   function pushPhotoHistory(state: Record<string, unknown> | null, url: string) {
     photoNavigation.push(state, url);
+    nodeVersionHash = location.hash;
   }
   function guardPhotoUnload(event: BeforeUnloadEvent) {
     if (!photoMode || !retainedPhotoEditor()?.dirty) return;
@@ -385,6 +460,7 @@
   }
   function syncPhotoLocation() {
     if (photoNavigation.blocked()) return;
+    nodeVersionHash = location.hash;
     clearPhotoNotice();
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "",
       path = location.pathname;
@@ -435,11 +511,15 @@
       history.back();
     else {
       const url = new URL(location.href);
-      url.hash = id ? `photo=${encodeURIComponent(id)}` : "";
+      const params = new URLSearchParams(url.hash.slice(1));
+      if (id) params.set("photo", id);
+      else params.delete("photo");
+      url.hash = params.toString();
       if (mode === "open")
         pushPhotoHistory({ photoReturn: activePhotos()?.viewerReturn }, url.href);
       else photoNavigation.replace(history.state, url.href);
     }
+    nodeVersionHash = location.hash;
     photoID = id;
     return true;
   }
@@ -1131,11 +1211,13 @@
 
     mounted = true;
     const session = takeFragmentSession();
-    if (photoMode && photoID) {
+    nodeVersionHash = location.hash;
+    if (!nodeVersionSelection && photoMode && photoID) {
       const url = new URL(location.href);
       url.hash = `photo=${encodeURIComponent(photoID)}`;
       photoNavigation.replace(history.state, url.href);
-    } else if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
+    } else if (!nodeVersionSelection && savedQueryDraft) replaceQueryURL(savedQueryDraft);
+    nodeVersionHash = location.hash;
     photoNavigation.accept();
     if (session) activateBrowserSession(session);
     else
@@ -1463,7 +1545,13 @@
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
-    replaceQueryURL(null);
+    const url = new URL(location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    url.hash = new URLSearchParams(
+      [...params].filter(([key]) => key === "node" || key === "version"),
+    ).toString();
+    history.replaceState(history.state, "", url.href);
+    nodeVersionHash = location.hash;
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;
@@ -2125,9 +2213,12 @@
       invalidateTagHotkeyMutation();
       if (
         activePanel &&
-        ["history", "versions", "provenance", "processing", "rendition"].includes(activePanel.kind)
+        ["history", "versions", "provenance", "processing", "rendition"].includes(
+          activePanel.kind,
+        ) &&
+        !(activePanel.kind === "versions" && activePanel.fromLink)
       )
-        activePanel = null;
+        closePanel(activePanel)();
     }
     selectedID = nodeID;
     selectedLiveNode = null;
@@ -2815,6 +2906,37 @@
     };
   }
 
+  function replaceQueryURL(query: Query | null): void {
+    writeQueryURL(query);
+    nodeVersionHash = location.hash;
+  }
+
+  function nodeVersionURL(version?: generated.ContentVersion): string {
+    const url = new URL(location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    if (version) {
+      params.set("node", String(version.node_id));
+      params.set("version", version.id);
+    } else {
+      params.delete("node");
+      params.delete("version");
+    }
+    url.hash = params.toString();
+    return url.href;
+  }
+
+  function selectLinkedVersion(version: generated.ContentVersion): void {
+    if (activePanel?.kind !== "versions" || !activePanel.fromLink) return;
+    if (nodeVersionLoading) return;
+    if (activePanel.linked?.version.id === version.id && !nodeVersionError) return;
+    const node = activePanel.linked?.node;
+    if (!node || node.id !== version.node_id) return;
+    activePanel.linked = { node, version };
+    nodeVersionError = "";
+    const { photoReturn: _, ...state } = history.state ?? {};
+    pushPhotoHistory(state, nodeVersionURL(version));
+  }
+
   function keepQueryDraft(query: Query): void {
     replaceQueryURL(query);
     savedQueryDraft = query;
@@ -2825,6 +2947,10 @@
   function closePanel(panel: Panel | null): () => void {
     return () => {
       if (activePanel === panel) {
+        if (panel?.kind === "versions" && panel.fromLink) {
+          photoNavigation.replace(history.state, nodeVersionURL());
+          nodeVersionHash = location.hash;
+        }
         activePanel = null;
         if (photoID)
           void tick().then(() => document.querySelector<HTMLElement>(".photo-loupe")?.focus());
@@ -4476,14 +4602,36 @@
           />
         {/key}
       {/if}
-      {#if !snapshotActive && panel.kind === "versions" && selected?.node.kind === "file"}
-        <VersionHistoryDrawer
-          session={webSession}
-          node={selected.node}
-          path={selected.path}
-          onclose={closePanel(panel)}
-          onauthfailure={handleFailure}
-        />
+      {#if panel.kind === "versions"}
+        {#if panel.fromLink}
+          {#if !panel.linked && (nodeVersionLoading || nodeVersionError)}
+            <Modal title="Linked content version" onclose={closePanel(panel)}>
+              {#if nodeVersionError}<p role="alert">{nodeVersionError}</p>
+              {:else}<p><Spinner size={16} /> Loading linked version…</p>{/if}
+            </Modal>
+          {:else if panel.linked}
+            {@const node = panel.linked.node}
+            <VersionHistoryDrawer
+              session={webSession}
+              {node}
+              path={node.path ?? node.name}
+              pinnedVersion={panel.linked.version}
+              resolving={nodeVersionLoading}
+              unavailable={nodeVersionError}
+              onselect={selectLinkedVersion}
+              onclose={closePanel(panel)}
+              onauthfailure={handleFailure}
+            />
+          {/if}
+        {:else if !snapshotActive && selected?.node.kind === "file"}
+          <VersionHistoryDrawer
+            session={webSession}
+            node={selected.node}
+            path={selected.path}
+            onclose={closePanel(panel)}
+            onauthfailure={handleFailure}
+          />
+        {/if}
       {/if}
       {#if panel.kind === "provenance" && currentInspectorNode?.kind === "file"}
         <ProvenanceDrawer

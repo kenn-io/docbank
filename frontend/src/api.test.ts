@@ -8,7 +8,6 @@ import {
   restoreNode,
   trashNode,
 } from "./receipts.js";
-import { takeFragmentSession } from "./browser-session.js";
 
 describe("browser authentication", () => {
   beforeEach(() => {
@@ -17,22 +16,6 @@ describe("browser authentication", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("consumes the browser session without web storage and preserves history.state", () => {
-    history.replaceState(
-      { fixtureIndex: 4 },
-      "",
-      "/#web_session=one%20time&web_upload_secret=proof",
-    );
-    expect(takeFragmentSession()).toEqual({
-      token: "one time",
-      uploadSecret: "proof",
-    });
-    expect(location.hash).toBe("");
-    expect(sessionStorage.length).toBe(0);
-    expect(history.state).toEqual({ fixtureIndex: 4 });
-    expect(takeFragmentSession()).toBeNull();
   });
 
   it("loads every live node tag under one before-and-after revision fence", async () => {

@@ -722,17 +722,26 @@ atomic publication, and parent-directory sync.
 
 ## Inspect immutable versions
 
-Choose **Version history** on any file to inspect every retained version
+Choose **Version history** on any file to inspect retained versions
 without losing the current folder, search results, or selected document. The
 newest version appears first. Each entry identifies whether the content was
 created, replaced, or restored from a prior version, along with its recorded
 time, node revision, logical size, and version UUID.
+
+Open a link with `#node=<node ID>&version=<version UUID>` to inspect that exact
+version, including versions older than the newest 1,000 listed in the drawer.
+For drawers opened from these links, selecting a version updates the address,
+and browser Back and Forward restore the selected version. Missing,
+purged, or mismatched links show an unavailable message.
 
 Selecting an entry shows its complete record: full version UUID, SHA-256
 content identity, exact byte count, media type, canonical timestamp,
 introducing operation UUID, and the source version for a revert. The current
 head is marked. A revert is a new immutable version and does not erase or
 relabel the earlier one.
+
+Trashed files carry a **Trash** label. Restore the file before downloading a
+version.
 
 Choose **Download** in the complete-version panel to retrieve that version
 through the same private staging, progress, terminal verification, and one-use

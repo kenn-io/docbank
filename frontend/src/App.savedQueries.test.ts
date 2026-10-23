@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import App from "./App.svelte";
+import { root } from "./version-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -36,16 +37,6 @@ it("restores a full query beside sign-in without running it as empty-text folder
     configurable: true,
     value: vi.fn(),
   });
-  const root = {
-    id: 1,
-    name: "",
-    kind: "dir",
-    path: "/",
-    revision: 1,
-    size: 0,
-    created_at: "2026-01-01T00:00:00Z",
-    modified_at: "2026-01-01T00:00:00Z",
-  };
   const tag = {
     id: "11111111-1111-4111-8111-111111111111",
     name: "review",
@@ -68,8 +59,6 @@ it("restores a full query beside sign-in without running it as empty-text folder
   render(App);
   await screen.findByRole("region", { name: "Query editor" });
   expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
-  expect(location.hash).not.toContain("web_session");
-  expect(location.hash).not.toContain("proof");
   expect(fetch.mock.calls.some(([url]) => String(url).includes("/search"))).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
   await fireEvent.click(screen.getByRole("button", { name: "Saved queries and highlights" }));

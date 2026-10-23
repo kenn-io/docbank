@@ -426,6 +426,34 @@ live prior versions, then trash. A result's path is present only for a live
 node. No result means no content version currently references the hash, even
 if GC has not yet swept the unreferenced bytes.
 
+### Open an exact version in the browser
+
+Link to the authenticated web application's root origin with a node ID and
+immutable version UUID in the fragment:
+
+```text
+https://docbank.example/#node=42&version=11111111-1111-4111-8111-111111111111
+```
+
+Use the browser sign-in origin configured by the operator. It can differ from
+the API endpoint. Host the application at the origin root; its API requests
+use root-relative paths. Never put an API key in the link or use an
+unauthenticated content URL.
+
+After sign-in, Docbank fetches the node and version directly. The version
+drawer shows that exact version's metadata, including versions older than the
+newest 1,000 entries. Live nodes offer the existing verified download. Trashed
+nodes keep their Trash label and metadata but must be restored before their
+versions can be downloaded. Docbank does not substitute the current version.
+Links survive reload and browser back and forward navigation. After session
+expiry, signing in with an API key in the same tab preserves the selection.
+Running `docbank web` opens a new session URL without the node/version
+fragment; reopen the link after signing in.
+
+Invalid links, missing or purged records, and versions belonging to another
+node show an unavailable selection. Query and photo links continue to work
+independently.
+
 ### Verify one stored file
 
 For a server-side check of one blob, send the revision from the node response:
