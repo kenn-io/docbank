@@ -187,6 +187,8 @@ earlier input's committed version. Concurrent edits still fail the revision chec
 targets observed as absent use exact creation without name suffixes. No sync or
 SQLite commit policy changes for either path.
 
+The overlap test uses `testing/synctest` to wait until all 32 writers block at directory sync before it checks metadata, so filesystem latency cannot trigger a barrier timeout.
+
 The importer serializes progress callbacks and waits for every writer before
 returning, including on cancellation. The caller's mutation lease covers this
 whole interval. Loose-duplicate cleanup also waits for the group's preparations;

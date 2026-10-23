@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -133,7 +134,8 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 		{"success", false}, {"sync failure", false}, {"cancel", false},
 		{"success", true}, {"sync failure", true}, {"cancel", true},
 	} {
-		t.Run(fmt.Sprintf("%s/replace=%t", tc.outcome, tc.replace), func(t *testing.T) {
+		test := func(t *testing.T) {
+			t.Helper()
 			ing := newTestIngester(t)
 			// These contents use distinct publication stripes, so the test can
 			// hold all 32 writers at the directory sync together.
@@ -156,7 +158,6 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			entered := make(chan struct{}, 32)
 			release := make(chan struct{})
 			var releaseOnce sync.Once
 			var calls, active atomic.Int32
@@ -166,7 +167,6 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			pack.SyncDir = func(dir string) error {
 				if filepath.Base(dir) == "blobs" && calls.Add(1) <= 32 {
 					active.Add(1)
-					entered <- struct{}{}
 					<-release
 					active.Add(-1)
 				}
@@ -192,18 +192,9 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				releaseOnce.Do(func() { close(release) })
 				<-done
 			})
-			// Allow slow CI filesystem I/O while bounding a stalled publication.
-			const publicationTimeout = 30 * time.Second
-			waitStarted := time.Now()
-			deadline := time.NewTimer(publicationTimeout)
-			defer deadline.Stop()
-			for i := range 32 {
-				select {
-				case <-entered:
-				case <-deadline.C:
-					t.Fatalf("only %d writes reached durable publication concurrently after %s; active writers: %d", i, time.Since(waitStarted), active.Load())
-				}
-			}
+			// Filesystem I/O remains runnable; Wait returns once all workers block.
+			synctest.Wait()
+			require.EqualValues(t, 32, active.Load(), "all writers must reach durable publication concurrently")
 			parentPath := "/inbox/" + filepath.Base(source)
 			parent, err := ing.Store.NodeByPath(t.Context(), parentPath)
 			require.NoError(t, err)
@@ -217,7 +208,6 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			} else {
 				assert.Empty(t, children, "blocked publication must not grant metadata authority")
 			}
-			assert.EqualValues(t, 32, active.Load())
 			if tc.outcome == "cancel" {
 				cancel()
 			}
@@ -277,6 +267,9 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, versionCount, total)
 			}
+		}
+		t.Run(fmt.Sprintf("%s/replace=%t", tc.outcome, tc.replace), func(t *testing.T) {
+			synctest.Test(t, test)
 		})
 	}
 }
