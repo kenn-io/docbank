@@ -48,10 +48,12 @@
     "VLLM_USAGE_SOURCE": "production-docker-image"
   },
   "adapter_sha256": "8d9f2beb16235df29395842ce585db477af11884a4681365cfb49fa5b19a258a",
-  "image_recipe_sha256": "64e1c5f821484d1ed68e2d4d421710ac70366ea29df496b284f68144c5557cb9",
-  "dependency_lock_sha256": "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed",
+  "image_recipe_sha256": "ca09d1fcfa508d8d292e09039683cb9ed533df4b0fb70b428e0d8ebeea04e944",
+  "dependency_lock_sha256": "cbd3827baa03f29b929a5c635da2a2bbea43b5170fad5f3e3b9a6aee8146bd6d",
   "pipeline_config_sha256": "f299e93f6f928640d4aa7faceb79ed24c978f71ca33195a36dd8bc9f4855c5b0",
   "runtime_dependencies": [
+    {"name": "pip", "version": "26.2.2"},
+    {"name": "certifi", "version": "2026.10.19"},
     {"name": "transformers", "version": "5.15.1"},
     {"name": "huggingface-hub", "version": "1.28.0"},
     {"name": "hf-xet", "version": "1.6.0"},

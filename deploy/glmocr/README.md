@@ -26,6 +26,11 @@ Transformers build is required for PP-DocLayoutV3 and GLM-OCR architecture
 support. The build imports the SDK, PyTorch, PyMuPDF, and Transformers before
 publishing the image.
 
+The image updates Ubuntu's CA package and pins pip `26.2.2` and certifi
+`2026.10.19` for the eMudhra certificate-trust fixes. A checksum-pinned pip
+wheel bootstraps the virtual environment without using the base image's old
+ensurepip wheel or pip client. Model downloads use this rebuilt image too.
+
 `safe_server.py` is the public service boundary. It accepts one bounded PDF or
 image data URI, decodes it into a mode-`0600` file on the container's private
 tmpfs, deletes it after parsing, and never logs request data. It reports backend
@@ -46,18 +51,29 @@ image is rebuilt.
 
 ## Install
 
-Choose an owner-private model directory outside a source checkout. These
-commands download only the two pinned public model repositories:
+Choose an owner-private model directory outside a source checkout, then copy
+this deployment and build its patched download client before fetching models:
 
 ```bash
 umask 077
 export GLMOCR_MODEL_ROOT=/var/lib/docbank-glmocr/models
 sudo install -d -m 0700 -o "$USER" -g "$USER" "$GLMOCR_MODEL_ROOT"
+sudo install -d -m 0755 /opt/docbank-glmocr
+sudo cp Dockerfile compose.yaml config.yaml deployment.json engine_identity.py \
+  requirements.lock safe_server.py /opt/docbank-glmocr/
+GLMOCR_MODEL_ROOT=/var/lib/docbank-glmocr/models \
+  sudo --preserve-env=GLMOCR_MODEL_ROOT \
+  docker compose --project-directory /opt/docbank-glmocr build
+```
 
+Download only the two pinned public model repositories through the rebuilt
+image:
+
+```bash
 docker run --rm \
   -v "$GLMOCR_MODEL_ROOT:/models" \
   --entrypoint hf \
-  vllm/vllm-openai@sha256:4f986370d7737abacc70ac17f86695acd1dc7892a02ad89ac132639d5afee0d0 \
+  docbank-glmocr:8b8f214e1837 \
   download zai-org/GLM-OCR \
   --revision ca5d8b3e287e52589e37c28385d9655ee4372f9d \
   --local-dir /models/glm-ocr
@@ -65,22 +81,11 @@ docker run --rm \
 docker run --rm \
   -v "$GLMOCR_MODEL_ROOT:/models" \
   --entrypoint hf \
-  vllm/vllm-openai@sha256:4f986370d7737abacc70ac17f86695acd1dc7892a02ad89ac132639d5afee0d0 \
+  docbank-glmocr:8b8f214e1837 \
   download PaddlePaddle/PP-DocLayoutV3_safetensors \
   --revision 97d101e6db2642e162a1d05392d1b0231c91033e \
   --local-dir /models/pp-doclayout-v3
-```
 
-Copy this directory to `/opt/docbank-glmocr`, build it, and validate the
-effective Compose configuration:
-
-```bash
-sudo install -d -m 0755 /opt/docbank-glmocr
-sudo cp Dockerfile compose.yaml config.yaml deployment.json engine_identity.py \
-  requirements.lock safe_server.py /opt/docbank-glmocr/
-GLMOCR_MODEL_ROOT=/var/lib/docbank-glmocr/models \
-  sudo --preserve-env=GLMOCR_MODEL_ROOT \
-  docker compose --project-directory /opt/docbank-glmocr build
 GLMOCR_MODEL_ROOT=/var/lib/docbank-glmocr/models \
   sudo --preserve-env=GLMOCR_MODEL_ROOT \
   docker compose --project-directory /opt/docbank-glmocr config --quiet
