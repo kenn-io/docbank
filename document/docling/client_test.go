@@ -245,7 +245,7 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			raw, err := json.Marshal(testCase.raw)
 			require.NoError(t, err)
-			evidence, _, usable := mapEvidence(raw, "pdf", 1)
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
 			assert.Equal(t, testCase.want, usable)
 			if usable {
 				require.Len(t, evidence.Units, 2)
@@ -263,7 +263,7 @@ func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
 		"tables": []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "cell text"}}}}},
 	})
 	require.NoError(t, err)
-	evidence, _, usable := mapEvidence(raw, "pdf", 1)
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
 	require.True(t, usable)
 	assert.Equal(t, document.EvidencePartial, evidence.Completeness)
 	assert.Equal(t, []document.SourceEvidenceOmissionV1{{
@@ -1005,7 +1005,7 @@ func TestMapEvidenceOnlyClaimsEstablishedNaturalProvenance(t *testing.T) {
 		{family: "ebook"}, {family: "structured"}, {family: "source"}, {family: "text"}, {family: "mail"},
 	} {
 		t.Run(testCase.family, func(t *testing.T) {
-			evidence, _, usable := mapEvidence(raw, testCase.family, 1)
+			evidence, _, usable := mapEvidence(raw, testCase.family, 1, false)
 			assert.Equal(t, testCase.usable, usable)
 			if usable {
 				assert.Equal(t, testCase.kind, evidence.UnitKind)

@@ -21,6 +21,7 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 		blank bool
 	}{
 		{name: "first range", pages: PageRange{First: 1, Last: 2}},
+		{name: "blank first range", pages: PageRange{First: 1, Last: 2}, blank: true},
 		{name: "later range", pages: PageRange{First: 51, Last: 52}},
 		{name: "blank later range", pages: PageRange{First: 51, Last: 52}, blank: true},
 	} {

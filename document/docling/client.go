@@ -202,7 +202,7 @@ func (client *Client) render(
 		return document.RenditionResult{}, err
 	}
 	if pages == (PageRange{}) {
-		return client.buildResult(run, task, result, 1)
+		return client.buildResult(run, task, result, 1, false)
 	}
 	return client.buildPageRangeResult(run, task, result, pages)
 }
@@ -215,7 +215,7 @@ func (client *Client) buildPageRangeResult(
 	if err := checkSelection(result.document, pages); err != nil {
 		return document.RenditionResult{}, err
 	}
-	rendition, err := client.buildResult(run, task, result, pages.First)
+	rendition, err := client.buildResult(run, task, result, pages.First, true)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -434,7 +434,7 @@ func (client *Client) awaitResult(run *rendering, taskID string) (doclingResult,
 }
 
 func (client *Client) buildResult(
-	run *rendering, task taskResponse, result doclingResult, first int64,
+	run *rendering, task taskResponse, result doclingResult, first int64, allowBlankRange bool,
 ) (document.RenditionResult, error) {
 	partialSuccess := task.status == "partial_success" || result.status == "partial_success"
 	providerMarkdown := result.markdown
@@ -445,7 +445,7 @@ func (client *Client) buildResult(
 		return document.RenditionResult{}, provider.Malformed(
 			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
-	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily, first)
+	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily, first, allowBlankRange)
 	if !usable {
 		if len(providerMarkdown) == 0 || len(providerMarkdown) > run.authorization.MaxProviderMarkdownBytes {
 			return document.RenditionResult{}, provider.Malformed("Docling result has no usable bounded evidence", nil)
@@ -588,7 +588,7 @@ func parseTask(body []byte) (taskResponse, error) {
 	return taskResponse{id: wire.ID, status: wire.Status}, nil
 }
 
-func mapEvidence(raw jsontext.Value, family string, first int64) (document.SourceEvidenceV1, []byte, bool) {
+func mapEvidence(raw jsontext.Value, family string, first int64, allowBlankRange bool) (document.SourceEvidenceV1, []byte, bool) {
 	var topLevel map[string]jsontext.Value
 	if json.Unmarshal(raw, &topLevel) != nil {
 		return document.SourceEvidenceV1{}, nil, false
@@ -625,7 +625,7 @@ func mapEvidence(raw jsontext.Value, family string, first int64) (document.Sourc
 	if !natural {
 		return document.SourceEvidenceV1{}, nil, false
 	}
-	indexes, pages, ok := doclingPageTexts(wire.Pages, wire.Texts, first)
+	indexes, pages, ok := doclingPageTexts(wire.Pages, wire.Texts, first, allowBlankRange)
 	if !ok {
 		return document.SourceEvidenceV1{}, nil, false
 	}
@@ -672,9 +672,9 @@ type doclingText struct {
 
 // doclingPageTexts builds the page registry contiguous from first and assigns
 // every non-blank text to the single page its provenance names. Blank pages
-// are usable only inside a later page range.
+// are usable only inside an explicit page range.
 func doclingPageTexts(
-	rawPages map[string]jsontext.Value, texts []doclingText, first int64,
+	rawPages map[string]jsontext.Value, texts []doclingText, first int64, allowBlankRange bool,
 ) ([]int64, map[int64][]string, bool) {
 	pages := make(map[int64][]string, len(rawPages))
 	for key := range rawPages {
@@ -717,7 +717,7 @@ func doclingPageTexts(
 		pages[page] = append(pages[page], text.Text)
 		hasMappedText = true
 	}
-	return indexes, pages, hasMappedText || first > 1
+	return indexes, pages, hasMappedText || allowBlankRange
 }
 
 // recognizedDoclingDocument reports whether raw names a supported DoclingDocument
