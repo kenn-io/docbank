@@ -1208,7 +1208,9 @@ The install ID lives in `telemetry-install.json` at the vault root (see the
 [layout](#vault-location) above). The daemon creates it the first time it runs
 unless telemetry is turned off. Each vault has its own ID.
 
-Only release builds send telemetry, and it stays off in CI. To opt out, set
+Only release builds send telemetry, because they set the PostHog project key at
+link time. Builds without the key, including source builds, send nothing.
+Telemetry also stays off in CI. To opt out, set
 `DOCBANK_TELEMETRY_ENABLED=0`, `TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` in the
 environment that starts the daemon, then run `docbank daemon restart`. A CLI
 command that starts the daemon automatically passes its own environment, so

@@ -5,9 +5,6 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "..", "..");
 
-// Every spec's daemon inherits this, so harness runs never count as installs.
-process.env.DOCBANK_TELEMETRY_ENABLED = "0";
-
 export default defineConfig({
   testDir: ".",
   testMatch: /.*\.screenshot\.ts/,
