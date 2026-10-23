@@ -134,6 +134,19 @@
     onregion?.({ ...keyboardPoint, width: 0.15, height: 0.15 });
   }
 
+  // A touch double tap on a grid tile opens this viewer on its first tap, so
+  // its second click and dblclick land here. Zoom only for a double click
+  // whose first click also landed here.
+  let clickedHere = false;
+  let strayDoubleClick = false;
+  function countClick(event: MouseEvent) {
+    if (event.detail === 1) clickedHere = true;
+    strayDoubleClick = event.detail > 1 && !clickedHere;
+  }
+  function dropStrayDoubleClick(event: MouseEvent) {
+    if (strayDoubleClick) event.stopImmediatePropagation();
+    strayDoubleClick = false;
+  }
   let viewport: HTMLElement | undefined;
   function panZoom(element: HTMLElement) {
     viewport = element;
@@ -171,6 +184,8 @@
   class:region-mode={regionMode}
   onpointerdowncapture={startRegion}
   onpointerupcapture={endRegion}
+  onclickcapture={countClick}
+  ondblclickcapture={dropStrayDoubleClick}
   {@attach panZoom}
 >
   {#if regionMode}<button

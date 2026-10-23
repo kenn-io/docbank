@@ -285,7 +285,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await page
       .locator(".photo-image")
       .nth(1)
-      .click({ modifiers: ["Control"] });
+      .click({ modifiers: ["ControlOrMeta"] });
     await page.getByRole("button", { name: "Compare", exact: true }).click();
     const compare = page.getByRole("dialog", { name: "Compare photos" });
     await expect(compare.locator(".frames img")).toHaveCount(2);
@@ -333,7 +333,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       await page
         .locator(".photo-image")
         .nth(i)
-        .click({ modifiers: ["Control"] });
+        .click({ modifiers: ["ControlOrMeta"] });
     await page.getByRole("button", { name: "Compare", exact: true }).click();
     await expect(compare.locator(".frames img")).toHaveCount(6);
     await captureThemes(page, "web-photo-compare-six");

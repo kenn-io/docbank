@@ -255,17 +255,16 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
       .getByRole("button", { name: /^Actions for / })
       .click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
-    await expect(page.getByRole("alert")).toHaveText(
-      "1 photo failed: Synthetic stale photo revision",
-    );
+    const unhideFailure = page
+      .getByRole("alert")
+      .getByText("1 photo failed: Synthetic stale photo revision", { exact: true });
+    await expect(unhideFailure).toBeVisible();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/v1/photos/hidden") && response.request().method() === "GET",
     );
-    await expect(page.getByRole("alert")).toHaveText(
-      "1 photo failed: Synthetic stale photo revision",
-    );
+    await expect(unhideFailure).toBeVisible();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await expect(page.locator(".photo-pill")).toHaveCount(0);
     await page.screenshot({
@@ -641,16 +640,36 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         if (loaded === 1750) {
           let resumePage!: () => void;
           let requested!: () => void;
+          let requestedPage!: () => void;
           const continued = new Promise<void>((resolve) => (resumePage = resolve));
           const pending = new Promise<void>((resolve) => (requested = resolve));
+          const continuation = new Promise<void>((resolve) => (requestedPage = resolve));
+          const shownRows = new Set(loadedRows);
+          const heldRoutes: Promise<void>[] = [];
           await page.route("**/api/v1/photos/assets/query", async (route) => {
-            if (!route.request().postDataJSON().facets?.length) {
-              await route.continue();
-              return;
+            if (route.request().postDataJSON().facets?.length) {
+              requested();
+              const handled = continued.then(() => route.continue());
+              heldRoutes.push(handled);
+              return handled;
             }
-            requested();
-            await continued;
-            await route.continue();
+            const url = new URL(route.request().url());
+            const host = url.host;
+            url.hostname = "127.0.0.1";
+            const response = await route.fetch({
+              url: url.href,
+              headers: { ...(await route.request().allHeaders()), host },
+            });
+            // The restored grid ends inside the scroll threshold, so it asks again
+            // for the page left waiting. Hold that page until the restore is checked.
+            const { items } = (await response.json()) as { items: { asset_id: string }[] };
+            if (items.some((row) => !shownRows.has(row.asset_id))) {
+              requestedPage();
+              const handled = continued.then(() => route.fulfill({ response }));
+              heldRoutes.push(handled);
+              return handled;
+            }
+            await route.fulfill({ response });
           });
           await page.getByRole("button", { name: "Documents", exact: true }).click();
           release();
@@ -671,7 +690,10 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           await expect
             .poll(() => scroll.locator("img").count())
             .toBe(await page.locator("[data-asset]").count());
+          await continuation;
           resumePage();
+          // Removing the last route resumes paused requests, so finish the held ones first.
+          await Promise.all(heldRoutes);
           await page.unroute("**/api/v1/photos/assets/query");
         }
         release();
@@ -1146,7 +1168,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     assetID = (await opening.getAttribute("data-asset"))!;
     const firstLoadedID = assetID;
     const button = scroll.locator(`[data-asset="${assetID}"] .photo-image`);
-    const separate = scroll.locator("[data-asset]").nth(1);
+    const separate = scroll.locator(`[data-asset]:not([data-asset="${assetID}"])`).first();
     const separateID = (await separate.getAttribute("data-asset"))!;
     await separate.getByRole("checkbox").click();
     await button.dblclick();
@@ -1183,6 +1205,9 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await expect(button).toBeFocused();
     await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
     await scroll.evaluate((element) => (element.scrollTop = 1200));
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     const forwardID = await scroll.evaluate(
       (element) =>
         [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
@@ -1212,6 +1237,9 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await page.keyboard.press("Escape");
     await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
     await scroll.evaluate((element) => (element.scrollTop = 400));
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     const aID = await scroll.evaluate(
       (element) =>
         [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
@@ -1245,6 +1273,9 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
       .poll(() => scroll.evaluate((element) => element.scrollTop))
       .toBeCloseTo(aPosition, 0);
     await scroll.evaluate((element) => (element.scrollTop = 1200));
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     const cID = await scroll.evaluate(
       (element) =>
         [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
