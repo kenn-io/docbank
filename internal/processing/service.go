@@ -2154,7 +2154,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return capability, nil
 		}
 		if passwordErr != nil {
-			return media.CapabilityRecord{}, fmt.Errorf("read PDF passwords: %w", passwordErr)
+			return media.CapabilityRecord{}, fmt.Errorf("%w: read PDF passwords: %w", ErrRenditionOperatorRequired, passwordErr)
 		}
 		reader, _, err := blobs.OpenStreamContext(ctx, version.BlobHash)
 		if err != nil {

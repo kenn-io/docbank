@@ -184,6 +184,12 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	daemon := daemonconn.New(endpoint.URL, cfg.Server.APIKey)
 	defer func() { require.NoError(t, daemon.Close()) }()
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
+	t.Run("refused password file", func(t *testing.T) {
+		require.NoError(t, os.Rename(path, path+".away"))
+		_, refusal := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+		require.NoError(t, os.Rename(path+".away", path))
+		require.ErrorContains(t, refusal, "open PDF passwords file")
+	})
 	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	stream, err := daemon.StartProcessingStream(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
