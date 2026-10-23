@@ -117,7 +117,7 @@ func (in originalContentInput) readChunk(stream *daemonconn.ContentStream) (data
 	if stream.BlobHash != in.BlobHash || stream.Size != in.Size {
 		return nil, errors.New("original content stream does not match the selection")
 	}
-	// shortcut: The daemon serves whole originals, so each window rereads its prefix.
+	// shortcut: The daemon serves whole originals, so each window reads the file.
 	// Keep this bounded; add daemon range reads if large-file use warrants it.
 	if _, err = io.CopyN(io.Discard, stream, in.Offset); err != nil {
 		return nil, err
@@ -126,11 +126,14 @@ func (in originalContentInput) readChunk(stream *daemonconn.ContentStream) (data
 	if _, err = io.ReadFull(stream, data); err != nil {
 		return nil, err
 	}
-	if in.Offset+int64(len(data)) == in.Size {
-		var extra [1]byte
-		if _, err = io.ReadFull(stream, extra[:]); !errors.Is(err, io.EOF) {
-			return nil, errors.New("original content stream exceeds the selected size")
-		}
+	// Consume the bounded remainder before closing so the ownership-proven
+	// connection survives for the selection recheck and subsequent requests.
+	if _, err = io.CopyN(io.Discard, stream, in.Size-in.Offset-int64(len(data))); err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	if _, err = io.ReadFull(stream, extra[:]); !errors.Is(err, io.EOF) {
+		return nil, errors.New("original content stream exceeds the selected size")
 	}
 	return data, nil
 }
