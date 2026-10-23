@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
@@ -456,6 +457,9 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_bates_selector", 0
 	}
 	facts, ok := daemonProblemFacts(err)
+	if native, isNative := errors.AsType[*api.Error](err); isNative {
+		facts, ok = daemonconn.ProblemFacts{Code: native.Code, ObservedScopeCount: native.ObservedScopeCount}, true
+	}
 	if !ok {
 		facts, ok = daemonconn.ExtractProblemFacts(err)
 	}

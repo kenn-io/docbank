@@ -10,7 +10,6 @@ import (
 	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -36,15 +35,7 @@ func readToolHandler(
 		}
 		result, err := executeReadTool(ctx, lease, plans, name, validator, request.Params.Arguments)
 		if err != nil {
-			logOperationError(logger, name, err)
-			if domain, ok := domainToolError(err); ok {
-				return domain, nil
-			}
-			if invalid, ok := errors.AsType[*jsonrpc.Error](err); ok &&
-				invalid.Code == jsonrpc.CodeInvalidParams {
-				return nil, invalid
-			}
-			return nil, sanitizedRPCError(err)
+			return readToolFailure(logger, name, err)
 		}
 		return result, nil
 	}
@@ -66,11 +57,11 @@ func executeReadTool(
 	case textCitationTool.name:
 		output, err = resolveTextCitation(ctx, lease, raw)
 	case "get_vault_info":
-		output, err = getVaultInfo(ctx, lease, raw)
+		output, err = getVaultInfo(ctx, daemonDocumentSession(lease), raw)
 	case "list_documents":
-		output, links, err = listDocuments(ctx, lease, raw)
+		output, links, err = listDocuments(ctx, daemonDocumentSession(lease), raw)
 	case "search_documents":
-		output, links, err = searchDocuments(ctx, lease, raw)
+		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw)
 	case "get_document":
 		output, links, err = getDocument(ctx, lease, raw)
 	case "list_document_versions":
@@ -317,13 +308,13 @@ type vaultInfoOutput struct {
 	TrackedBlobBytes    int64  `json:"tracked_blob_bytes"`
 }
 
-func getVaultInfo(ctx context.Context, lease *daemonLease, raw []byte) (vaultInfoOutput, error) {
+func getVaultInfo(ctx context.Context, session documentReadSession, raw []byte) (vaultInfoOutput, error) {
 	var input struct{}
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return vaultInfoOutput{}, err
 	}
-	info, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.VaultInfo, error) {
-		return c.API().VaultInfo(ctx)
+	info, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (api.VaultInfo, error) {
+		return c.VaultInfo(ctx)
 	})
 	if err != nil {
 		return vaultInfoOutput{}, err
@@ -349,7 +340,7 @@ type listDocumentsOutput struct {
 }
 
 func listDocuments(
-	ctx context.Context, lease *daemonLease, raw []byte,
+	ctx context.Context, session documentReadSession, raw []byte,
 ) (listDocumentsOutput, []*sdkmcp.ResourceLink, error) {
 	var input listDocumentsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
@@ -359,18 +350,18 @@ func listDocuments(
 		page api.DocumentPage
 		info api.VaultInfo
 	}
-	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PathPrefix: input.PathPrefix,
 			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor})
 		if callErr != nil {
 			return response{}, callErr
 		}
-		info, callErr := c.API().VaultInfo(ctx)
+		info, callErr := c.VaultInfo(ctx)
 
 		if callErr != nil {
 			return response{}, callErr
 		}
-		return response{page: page, info: *info}, nil
+		return response{page: page, info: info}, nil
 	})
 	if err != nil {
 		return listDocumentsOutput{}, nil, err
@@ -428,18 +419,20 @@ type searchDocumentsOutput struct {
 }
 
 func searchDocuments(
-	ctx context.Context, lease *daemonLease, raw []byte,
+	ctx context.Context, session documentReadSession, raw []byte,
 ) (searchDocumentsOutput, []*sdkmcp.ResourceLink, error) {
 	var input searchDocumentsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
+	input.Mode = effectiveSearchMode(input.Mode)
+
 	type response struct {
 		resolution api.DocumentSourceFenceResolution
 		report     api.DocumentSearchReport
 		documents  []api.DocumentSummary
 	}
-	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		resolution, callErr := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
 		if callErr != nil {

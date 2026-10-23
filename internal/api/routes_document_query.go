@@ -80,31 +80,12 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 		PageSize   int    `query:"page_size" default:"50" minimum:"1" maximum:"250"`
 		Cursor     string `query:"cursor"`
 	}) (*response, error) {
-		query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
-			PathPrefix: input.PathPrefix, Sort: store.DocumentCatalogSort(input.Sort),
-			Direction: store.DocumentCatalogDirection(input.Direction), PageSize: input.PageSize,
-		})
+		page, err := service.ListDocuments(ctx, DocumentQuery{PathPrefix: input.PathPrefix,
+			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor})
 		if err != nil {
-			return nil, FromStoreError(err)
+			return nil, err
 		}
-		var boundary *store.DocumentCatalogPosition
-		traversal := store.DocumentCatalogTraversalNext
-		if input.Cursor != "" {
-			position, cursorTraversal, decodeErr := service.decodeCursor(input.Cursor, query)
-			if decodeErr != nil {
-				return nil, FromStoreError(decodeErr)
-			}
-			boundary, traversal = &position, cursorTraversal
-		}
-		page, err := service.store.ListDocuments(ctx, query, boundary, traversal)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		wire, err := service.toDocumentPage(page)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		return &response{Body: wire}, nil
+		return &response{Body: page}, nil
 	})
 	type resolveResponse struct {
 		Body DocumentSummaryResolveResponse
@@ -115,18 +96,11 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 	}, func(ctx context.Context, input *struct {
 		Body DocumentSummaryResolveRequest
 	}) (*resolveResponse, error) {
-		identities := make([]store.DocumentCatalogIdentity, len(input.Body.Identities))
-		for index, identity := range input.Body.Identities {
-			identities[index] = store.DocumentCatalogIdentity{NodeID: identity.NodeID,
-				ContentVersionID: identity.ContentVersionID, Path: identity.Path}
-		}
-		items, err := service.store.ResolveDocumentSummaries(ctx, identities)
+		items, err := service.ResolveDocumentSummaries(ctx, input.Body)
 		if err != nil {
-			return nil, FromStoreError(err)
+			return nil, err
 		}
-		return &resolveResponse{Body: DocumentSummaryResolveResponse{
-			Items: documentSummariesFromStore(items),
-		}}, nil
+		return &resolveResponse{Body: DocumentSummaryResolveResponse{Items: items}}, nil
 	})
 }
 
@@ -304,4 +278,45 @@ func (service *documentQueryService) verifyCursorEnvelope(raw string) ([]byte, e
 		return nil, errors.New("authentication failed")
 	}
 	return payload, nil
+}
+
+func (service *documentQueryService) ListDocuments(ctx context.Context, input DocumentQuery) (DocumentPage, error) {
+	query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
+		PathPrefix: input.PathPrefix, Sort: store.DocumentCatalogSort(input.Sort),
+		Direction: store.DocumentCatalogDirection(input.Direction), PageSize: input.PageSize,
+	})
+	if err != nil {
+		return DocumentPage{}, FromStoreError(err)
+	}
+	var boundary *store.DocumentCatalogPosition
+	traversal := store.DocumentCatalogTraversalNext
+	if input.Cursor != "" {
+		position, cursorTraversal, decodeErr := service.decodeCursor(input.Cursor, query)
+		if decodeErr != nil {
+			return DocumentPage{}, FromStoreError(decodeErr)
+		}
+		boundary, traversal = &position, cursorTraversal
+	}
+	page, err := service.store.ListDocuments(ctx, query, boundary, traversal)
+	if err != nil {
+		return DocumentPage{}, FromStoreError(err)
+	}
+	wire, err := service.toDocumentPage(page)
+	if err != nil {
+		return DocumentPage{}, FromStoreError(err)
+	}
+	return wire, nil
+}
+
+func (service *documentQueryService) ResolveDocumentSummaries(ctx context.Context, input DocumentSummaryResolveRequest) ([]DocumentSummary, error) {
+	identities := make([]store.DocumentCatalogIdentity, len(input.Identities))
+	for index, identity := range input.Identities {
+		identities[index] = store.DocumentCatalogIdentity{NodeID: identity.NodeID,
+			ContentVersionID: identity.ContentVersionID, Path: identity.Path}
+	}
+	items, err := service.store.ResolveDocumentSummaries(ctx, identities)
+	if err != nil {
+		return nil, FromStoreError(err)
+	}
+	return documentSummariesFromStore(items), nil
 }

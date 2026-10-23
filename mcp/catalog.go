@@ -13,10 +13,10 @@ import (
 // an error.
 //
 // This is a definition only: it does not open a vault, start a daemon, register
-// a handler, validate calls, or authorize access. Callers own those
-// responsibilities and must implement the selected tool's documented behavior,
-// including semantic validation and response bounds. Use the SDK's generic
-// AddTool function to validate inputs and outputs against these schemas.
+// a handler, validate calls, or authorize access. The host owns admission and
+// transport; docbank.Vault.CallReadTool executes its supported subset with native
+// validation and result bounds. Other tools need caller-supplied execution.
+
 func ReadTool(name string) (*sdkmcp.Tool, error) {
 	return internalmcp.ReadTool(name)
 }
