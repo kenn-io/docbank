@@ -3438,10 +3438,29 @@ it.each(["semantic", "hybrid"] as const)(
   },
 );
 
-it.each(["fallback", "metadata transition", "date drill-down", "late counts after recovery"])(
+it.each([
+  "fallback",
+  "metadata transition",
+  "date drill-down",
+  "late counts after recovery",
+  "clearing a date after recovery",
+  "date drill-down after recovery",
+])(
   "keeps the right live timeline across %s between ranked and fallback results",
   async (transition) => {
     const late = transition === "late counts after recovery";
+    const metadataFacet = {
+      dimension: "camera",
+      available: true,
+      total: 7,
+      values: [{ key: "metadata", label: "Metadata", count: 7, selected: false }],
+    };
+    const rankedFacet = {
+      dimension: "camera",
+      available: true,
+      total: 1,
+      values: [{ key: "ranked", label: "Ranked", count: 1, selected: false }],
+    };
     const timeline = {
       dimension: "capture_day",
       available: true,
@@ -3459,14 +3478,14 @@ it.each(["fallback", "metadata transition", "date drill-down", "late counts afte
           })
         : Promise.resolve({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts),
     );
-    let fallback = late;
+    let fallback = late || transition.endsWith("after recovery");
     vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
       request.facets?.length
-        ? { items: [], total: 7, facets: [], relevance_available: true }
+        ? { items: [], total: 7, facets: [metadataFacet], relevance_available: true }
         : {
             items: [photo(1)],
             total: 1,
-            facets: [],
+            facets: [rankedFacet],
             relevance_available: true,
             ...(fallback
               ? {
@@ -3492,6 +3511,24 @@ it.each(["fallback", "metadata transition", "date drill-down", "late counts afte
       finish({ facets: [timeline] } as unknown as snapshots.PhotoTimelineCounts);
       await vi.waitFor(() => expect(photos.timelineLoading).toBe(false));
       expect(photos.timeline).toEqual({ ...timeline, total: 1 });
+    } else if (transition.endsWith("after recovery")) {
+      photos.setView("timeline");
+      await photos.loadMore();
+      await vi.waitFor(() => expect(photos.timeline?.total).toBe(7));
+      if (transition === "clearing a date after recovery") {
+        await photos.selectDate("2024-02-29");
+        fallback = false;
+        await photos.selectDate();
+        expect(photos.snapshotID).toBe("ranked");
+        expect(photos.timeline).toEqual({ ...timeline, total: 1 });
+        expect(photos.facets).toEqual([rankedFacet]);
+      } else {
+        fallback = false;
+        await photos.selectDate("2024-02-29");
+        expect(photos.timeline).toBeUndefined();
+        expect(photos.facets).toEqual([]);
+        expect(counts).toHaveBeenCalledOnce();
+      }
     } else {
       await photos.loadMore();
       photos.setView("timeline");
