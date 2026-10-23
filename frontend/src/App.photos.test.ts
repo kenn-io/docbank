@@ -1137,7 +1137,7 @@ it.each([false, true])(
 
 async function failStatusReads(reads: () => number, count: number) {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  for (const target = reads() + count; reads() < target; ) {
+  for (const target = reads() + count; reads() < target;) {
     const before = reads();
     await fireEvent(document, new Event("visibilitychange"));
     await waitFor(() => expect(reads()).toBeGreaterThan(before), { timeout: 5000 });
@@ -3045,12 +3045,12 @@ it("discards shared photo Undo when signing into a replacement web session", asy
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
   });
   const resumed = vi.spyOn(Photos.prototype, "resume");
-  vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockImplementation(
-    async function (this: PhotoAuthoredEditor) {
-      this.receiptID = "last-edit";
-      this.undoState.summary = "1 file updated: rating";
-    },
-  );
+  vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockImplementation(async function (
+    this: PhotoAuthoredEditor,
+  ) {
+    this.receiptID = "last-edit";
+    this.undoState.summary = "1 file updated: rating";
+  });
   render(App);
   const signIn = async () => {
     await fireEvent.input(await screen.findByLabelText("API key"), {

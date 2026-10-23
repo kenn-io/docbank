@@ -256,13 +256,13 @@ it.each(["preview", "original"] as const)(
       return url;
     });
     vi.spyOn(props.photos, "original").mockResolvedValue("blob:broken-original");
-    vi.spyOn(HTMLImageElement.prototype, "decode").mockImplementation(
-      function (this: HTMLImageElement) {
-        return this.src === "blob:synthetic-1"
-          ? Promise.resolve()
-          : Promise.reject(new Error("Decode failed"));
-      },
-    );
+    vi.spyOn(HTMLImageElement.prototype, "decode").mockImplementation(function (
+      this: HTMLImageElement,
+    ) {
+      return this.src === "blob:synthetic-1"
+        ? Promise.resolve()
+        : Promise.reject(new Error("Decode failed"));
+    });
     const view = render(PhotoLoupe, { ...props, items: [] });
     await screen.findByText("Grid preview");
     await screen.findByText("Decode failed");
@@ -281,13 +281,13 @@ it.each(["preview", "original"] as const)(
       );
     }
     if (operation === "preview") {
-      vi.mocked(HTMLImageElement.prototype.decode).mockImplementation(
-        function (this: HTMLImageElement) {
-          return brokenURLs.has(this.src)
-            ? Promise.reject(new Error("Decode failed"))
-            : Promise.resolve();
-        },
-      );
+      vi.mocked(HTMLImageElement.prototype.decode).mockImplementation(function (
+        this: HTMLImageElement,
+      ) {
+        return brokenURLs.has(this.src)
+          ? Promise.reject(new Error("Decode failed"))
+          : Promise.resolve();
+      });
       const retry = screen.getByRole("button", { name: "Retry preview" }) as HTMLButtonElement;
       await waitFor(() => expect(retry.disabled).toBe(false));
       await fireEvent.click(retry);
@@ -538,13 +538,13 @@ it("loads the new photo's large preview after an obsolete original finishes deco
   const { props, preview } = setup();
   let finish!: () => void;
   vi.spyOn(props.photos, "original").mockResolvedValue("blob:original");
-  vi.spyOn(HTMLImageElement.prototype, "decode").mockImplementation(
-    function (this: HTMLImageElement) {
-      return this.src === "blob:original"
-        ? new Promise<void>((resolve) => (finish = resolve))
-        : Promise.resolve();
-    },
-  );
+  vi.spyOn(HTMLImageElement.prototype, "decode").mockImplementation(function (
+    this: HTMLImageElement,
+  ) {
+    return this.src === "blob:original"
+      ? new Promise<void>((resolve) => (finish = resolve))
+      : Promise.resolve();
+  });
   const view = render(PhotoLoupe, { ...props, items: [] });
   await screen.findByText("Fit preview");
   await fireEvent.click(screen.getByRole("button", { name: "View original" }));

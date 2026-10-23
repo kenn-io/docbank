@@ -55,8 +55,8 @@ it.each(
     if (retry) edit.mockRejectedValueOnce(new APIError("Service unavailable", 503, "unavailable"));
     const rows = [photo(1), photo(2)];
     const { cull, photos, container } = await reviewPhoto(rows[0], true);
-    vi.mocked(photos.lookup).mockImplementation(
-      async (id) => rows.find((row) => row.asset_id === id)!,
+    vi.mocked(photos.lookup).mockImplementation(async (id) =>
+      rows.find((row) => row.asset_id === id)!,
     );
     await act(() => {
       cull.run = {
@@ -99,8 +99,8 @@ it("navigates with keyboard focus after activating Undo", async () => {
   const rows = [photo(1), photo(2), photo(3)];
   const { cull, photos, onclose } = await reviewPhoto(rows[0], true);
   vi.spyOn(photos, "metadataChanged").mockReturnValue(new Map());
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   await act(() => {
     cull.run = {
@@ -149,8 +149,8 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
     rows.filter((row) => ids.includes(row.asset_id)),
   );
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   await act(() => {
     cull.run = {
@@ -351,8 +351,8 @@ it("Escape cancels only the scope confirmation and allows a later S", async () =
 it("refreshes current and cached rows when a new pass starts on the same photo", async () => {
   const { cull, photos } = await reviewPhoto();
   const rows = [photo(1), photo(2)];
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
     rows.filter((row) => ids.includes(row.asset_id)),
@@ -876,8 +876,8 @@ it("clears selected frames when All changes to Unflagged with the same photos", 
   const rows = [photo(1), photo(2), photo(3)];
   const ids = rows.map((row) => row.asset_id);
   const { cull, photos } = await reviewPhoto(rows[0]!);
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.mocked(photos.lookupMany).mockResolvedValue(rows);
   vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({ items: rows });
@@ -1027,8 +1027,8 @@ it("sends Keep all, selected, and representative through one receipt path and un
   });
   const { cull, photos } = await reviewPhoto();
   vi.spyOn(photos, "metadataChanged").mockReturnValue(new Map());
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
     rows.filter((row) => ids.includes(row.asset_id)),
@@ -1081,8 +1081,8 @@ it("keeps a frame the pass excludes out of the stack that Keep all decides", asy
     burst_gap_seconds: 2,
   }));
   const { cull, photos } = await reviewPhoto(rows[1]);
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
     rows.filter((row) => ids.includes(row.asset_id)),

@@ -1410,11 +1410,11 @@ it("downloads the selected visible subset in displayed order without another req
     return `blob:visible-page-${downloaded.length}`;
   });
   const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
-    function (this: HTMLAnchorElement) {
-      clicked.push({ download: this.download, href: this.href });
-    },
-  );
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push({ download: this.download, href: this.href });
+  });
   render(App);
 
   await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));

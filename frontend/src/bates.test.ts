@@ -272,11 +272,11 @@ it("starts, reads, lists, and prepares a verified publication", async () => {
     items: [{ artifact_id: published.artifact_id }],
   });
   const clicked: { href: string; download: string }[] = [];
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
-    function (this: HTMLAnchorElement) {
-      clicked.push({ href: this.getAttribute("href") ?? "", download: this.download });
-    },
-  );
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push({ href: this.getAttribute("href") ?? "", download: this.download });
+  });
   await downloadBatesExport("session", published);
   expect(clicked).toEqual([
     { href: "/api/daemon/web-download/file?ticket=one-use", download: "CASE000001.pdf" },

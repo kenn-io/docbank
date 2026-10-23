@@ -88,20 +88,20 @@ it.each([false, true])(
     );
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        const cell = this.closest<HTMLElement>(".cell");
-        const scroll = this.closest<HTMLElement>(".photo-scroll");
-        return cell && scroll
-          ? new DOMRect(
-              0,
-              Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop,
-              Number.parseFloat(cell.style.width),
-              Number.parseFloat(cell.style.height),
-            )
-          : new DOMRect(0, 0, 1000, 400);
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const cell = this.closest<HTMLElement>(".cell");
+      const scroll = this.closest<HTMLElement>(".photo-scroll");
+      return cell && scroll
+        ? new DOMRect(
+            0,
+            Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop,
+            Number.parseFloat(cell.style.width),
+            Number.parseFloat(cell.style.height),
+          )
+        : new DOMRect(0, 0, 1000, 400);
+    });
     const items = Array.from({ length: 60 }, (_, index) =>
       mapMode ? mapPhoto(index + 1) : photo(index + 1),
     );
@@ -650,20 +650,20 @@ it("retains visible cells and pending previews across a prepend larger than the 
   );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-    function (this: HTMLElement) {
-      const cell = this.closest<HTMLElement>(".cell");
-      const scroll = this.closest<HTMLElement>(".photo-scroll");
-      return cell && scroll
-        ? new DOMRect(
-            0,
-            Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop,
-            Number.parseFloat(cell.style.width),
-            Number.parseFloat(cell.style.height),
-          )
-        : new DOMRect(0, 0, 1000, 400);
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const cell = this.closest<HTMLElement>(".cell");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    return cell && scroll
+      ? new DOMRect(
+          0,
+          Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop,
+          Number.parseFloat(cell.style.width),
+          Number.parseFloat(cell.style.height),
+        )
+      : new DOMRect(0, 0, 1000, 400);
+  });
   vi.stubGlobal(
     "URL",
     class extends URL {
@@ -859,21 +859,21 @@ it.each([
   );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-    function (this: HTMLElement) {
-      const cell = this.closest<HTMLElement>(".cell");
-      const scroll = this.closest<HTMLElement>(".photo-scroll");
-      const contentOffset = cell?.closest(".photo-month")?.querySelector("h2") ? 56 : 12;
-      return cell && scroll
-        ? new DOMRect(
-            0,
-            Number.parseFloat(cell.style.top) + contentOffset - scroll.scrollTop,
-            Number.parseFloat(cell.style.width),
-            Number.parseFloat(cell.style.height),
-          )
-        : new DOMRect(0, 0, 1000, 400);
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const cell = this.closest<HTMLElement>(".cell");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    const contentOffset = cell?.closest(".photo-month")?.querySelector("h2") ? 56 : 12;
+    return cell && scroll
+      ? new DOMRect(
+          0,
+          Number.parseFloat(cell.style.top) + contentOffset - scroll.scrollTop,
+          Number.parseFloat(cell.style.width),
+          Number.parseFloat(cell.style.height),
+        )
+      : new DOMRect(0, 0, 1000, 400);
+  });
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   if (relevance)
@@ -2867,8 +2867,8 @@ it.each([false, true])(
       await photoCullStorage("vault").replace(this.run);
       return true;
     });
-    vi.spyOn(photos, "lookup").mockImplementation(
-      async (id) => rows.find((row) => row.asset_id === id)!,
+    vi.spyOn(photos, "lookup").mockImplementation(async (id) =>
+      rows.find((row) => row.asset_id === id)!,
     );
     vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
     const before = preparedPhoto(1);
@@ -2916,33 +2916,33 @@ it("reloads durable culls and retains their draft only for the same vault", asyn
   const photos = new Photos("scoped", vi.fn());
   photos.items = rows;
   photos.started = true;
-  vi.spyOn(photos, "lookup").mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.spyOn(photos, "lookup").mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   let durableID = rows[0]!.asset_id;
   vi.spyOn(PhotoCull.prototype, "probe").mockImplementation(async function (this: PhotoCull) {
     this.saved = true;
   });
-  const restore = vi
-    .spyOn(PhotoCull.prototype, "restore")
-    .mockImplementation(async function (this: PhotoCull) {
-      this.run = {
-        ids: [durableID],
-        checkpoint: {
-          runID: durableID,
-          revision: 0,
-          pass: [durableID],
-          position: 0,
-          visited: [],
-          skipped: [],
-          unavailable: [],
-          scope: "all",
-          autoAdvance: true,
-        },
-      };
-      return true;
-    });
+  const restore = vi.spyOn(PhotoCull.prototype, "restore").mockImplementation(async function (
+    this: PhotoCull,
+  ) {
+    this.run = {
+      ids: [durableID],
+      checkpoint: {
+        runID: durableID,
+        revision: 0,
+        pass: [durableID],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all",
+        autoAdvance: true,
+      },
+    };
+    return true;
+  });
   const props = {
     photos,
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
@@ -2988,8 +2988,8 @@ async function captureWorkspace() {
   photos.items = rows;
   photos.total = rows.length;
   photos.started = true;
-  vi.spyOn(photos, "lookup").mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.spyOn(photos, "lookup").mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });

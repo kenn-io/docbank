@@ -479,7 +479,7 @@ export function rasterSize(bytes: Uint8Array): { width: number; height: number; 
     height = view.getUint32(20);
     mime = "image/png";
   } else if (bytes[0] === 255 && bytes[1] === 216) {
-    for (let offset = 2; offset + 4 < bytes.length; ) {
+    for (let offset = 2; offset + 4 < bytes.length;) {
       if (bytes[offset++] !== 255) break;
       while (bytes[offset] === 255) offset++;
       const marker = bytes[offset++];
