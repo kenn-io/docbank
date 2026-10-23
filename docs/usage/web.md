@@ -990,6 +990,8 @@ Sign in again after a reload or daemon restart. If a later request finds the
 session expired or revoked, Docbank clears that tab's selection and open
 dialogs and returns it to sign-in.
 
+![The Open your Docbank page asking for an API key](https://docbank.ai/assets/generated/web-signin.png)
+
 1. Set a fixed API port and a strong API key in `$DOCBANK_HOME/config.toml`.
    With `public_origin`, the key must be at least 32 characters; generate one
    with `openssl rand -hex 32`. Protect this file as a credential. Configure

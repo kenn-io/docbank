@@ -10,6 +10,201 @@ pre-1.0, so public interfaces may still evolve, but vaults created by v0.9.0 and
 later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
+## [v0.16.0](https://github.com/kenn-io/docbank/releases/tag/v0.16.0) — 2026-10-23
+
+Docbank 0.16.0 builds with Go 1.27.3, which stops trusting a small set of
+intermediate certificates (CVE-2026-111943). Upgrade to get the fix; if you
+build from source, use Go 1.27.3 or newer. Applications that embed Docbank must
+change the import path from `go.kenn.io/docbank` to
+`go.kenn.io/docbank/docbank`; the package name stays `docbank`.
+
+### Upgrading
+
+- The first open after upgrading from v0.15.1 or v0.15.2 rebuilds the vault
+  database and keeps a `.schema-v29.bak` recovery copy beside it. Leave room for
+  the extra copy.
+- Backups made by 0.16.0 use metadata format v2 and cannot be restored by
+  v0.15.x. Backups from earlier releases still restore on 0.16.0.
+- After the upgrade, Docbank re-extracts source metadata, re-reads camera
+  serials, and regenerates built-in photo previews once in the background. Burst
+  stacks treat photos as having no camera serial until that finishes.
+- If you run the optional Linux page runtime, rebuild `docbank-page-inspect` and
+  update its `[page_runtime.inspector] sha256` pin for inspector protocol v2.
+- If you run the GLM-OCR service, rebuild its image. Docbank 0.16.0 rejects the
+  previous image's deployment fingerprint.
+- Scripts that parse `hits` from `docbank search --json` should pass
+  `--mode lexical`. With query-capable embeddings configured, plain search now
+  returns the hybrid report.
+
+### New features
+
+- Add photos from the Photos view by picking a folder or files. The browser
+  uploads them itself, so this works when signed in to a Docbank on another
+  machine. RAW, JPEG, and XMP files that share a name in the same folder become
+  one photo. To resume an interrupted import, choose Resume import in the same
+  browser and pick the same files again.
+- Open a photo in a viewer over the Library with Enter or a double-click. Step
+  through results with the arrow keys or thumbnail rail, zoom in, read camera
+  and exposure details, and view the verified original of JPEG, PNG, or WebP
+  photos.
+- Browse photos by year, month, or day in Timeline. `docbank photos timeline`
+  prints per-day counts as JSON.
+- Search photos by filename, camera, lens, location, caption, creator,
+  copyright, rating, flag, and label. Filters show counts across every match,
+  and RAW/JPEG pairs appear as one tile.
+- Save a photo search as a smart set, then freeze its results into an album that
+  keeps its photos when the search changes.
+- Sort, rename, star, duplicate, and choose covers for albums in the web app.
+  Add photos with the picker, by dragging onto an album, or with the `B` key,
+  and remove them with Remove from album. Deleting an album keeps its photos in
+  Library.
+- Edit ratings, flags, color labels, captions, creator, copyright, rotation, and
+  keywords for one photo or a selection, with undo. Each file in a RAW/JPEG pair
+  keeps its own values, and unedited files take rating, flag, label, caption,
+  creator, copyright, and rotation from imported XMP sidecars.
+- Cull a Library or album full screen with P, X, and U for pick, reject, and
+  unflagged. Progress survives a browser restart, and compare mode shows 2 to 8
+  photos with linked zoom.
+- Stack burst shots taken from the same import folder and camera within a 1 to
+  30 second gap (default 2). In Cull, Keep current, Keep all, or Keep selected
+  decides every frame in a stack at once, with one undo.
+- Move rejected photos to trash after previewing them. Trash and restore keep
+  RAW, JPEG, and sidecar files together, and trashed photos keep their album
+  memberships.
+- Hide photos behind a passcode. An unlock lasts five minutes, Hidden locks
+  again when you switch tabs or close the page, and five wrong passcodes within
+  a minute lock it for five minutes.
+- Browse GPS-tagged photos on a map with numbered clusters, for the whole
+  library or one album. Configure `[web.map_tiles]` to enable it; the daemon
+  fetches tiles, so the provider's keyed URL never reaches the browser.
+- Export the current view or a selection of up to 16 photos as JPEG or PNG in a
+  verified ZIP. Choose quality, long edge, and whether to keep metadata; GPS
+  removal is on by default.
+- Copy photos into an empty folder on the daemon host for editing with
+  `docbank photos checkout create`, by asset, album, year range, or `--all` with
+  `--byte-limit`. `docbank photos checkout commit` saves edited copies as new
+  versions, and `docbank photos checkout scan` previews the commit.
+- Record face boxes, or mark a person as present in the whole photo. Faces link
+  to the same people records documents use, and `person:` search finds matching
+  photos and documents.
+- Filter photos by measured quality with terms such as `brightness_min:0.4` and
+  `color_blue_min:0.5`. Focus and blur scores measure only coarse contrast, and
+  unscored photos match `unevaluated:true`.
+- Archive a local folder into a Docbank vault on another machine with
+  `docbank push`. Later runs upload only changed files as new versions, local
+  deletions never delete archived copies, and `--watch` keeps pushing as files
+  change.
+- Sign in to the web app with the configured API key when Docbank runs behind an
+  HTTPS proxy with `[web] public_origin` set. The key must be at least 32
+  characters. Each browser tab gets its own session, which expires after 24
+  hours by default (`[web] session_lifetime`), and `docbank web sessions` lists
+  and revokes them.
+- Run Docbank on a trusted container network with environment variables and
+  mounted key files such as `DOCBANK_BIND_ADDR`, `DOCBANK_ALLOWED_HOSTS`, and
+  `DOCBANK_API_KEY_FILE`. The MCP listener needs its own token from
+  `DOCBANK_MCP_HTTP_TOKEN_FILE`, and Docbank still listens only on loopback by
+  default.
+- Redact native PDFs with `docbank redaction prepare`, `resolve`, and `render`,
+  which writes a ZIP with `redacted.pdf`, `redacted.txt`, and `receipt.json`.
+  Every page area Docbank cannot map to text must be masked. Redaction needs
+  Linux amd64 with the page runtime configured and accepts PDFs up to 64 MiB and
+  16 pages.
+- Plain `docbank search` uses hybrid ranking automatically when query-capable
+  embeddings are configured, and prints the reason if a hybrid attempt falls
+  back to lexical search. `--agent` prints one line per hit, and `--fuzzy` adds
+  filename and path matches with one typo.
+- Convert PDFs, images, text files, and supported office documents through a
+  configured Docling service with the existing plan, consent, and build
+  commands.
+- Index extracted document text, including Docling Markdown, with Voyage text
+  embeddings for semantic and hybrid search.
+- Import AAC and ALAC M4A recordings, with supplied transcripts and captions.
+  WAV, MP3, and M4A uploads and supplied-transcript processing accept recordings
+  up to 4 GiB; lower the limit with `[media].max_source_bytes`.
+- Read a document's original bytes, up to 32 MiB, through MCP with
+  `read_document_content`. Each read is tied to the version's size and SHA-256,
+  so you can verify the assembled file.
+- Reopen a saved quotation after the document changed with
+  `resolve_text_citation`, and page through the surrounding Markdown with
+  `get_text_outline` and `read_text_section`.
+- Remove recovery points with `docbank backup forget` and reclaim storage with
+  `backup prune`. `backup create` and `backup list` show what each snapshot
+  contains, including photos, albums, and checkouts.
+- Copy individual files out of a backup from embedded Go applications without
+  restoring the vault, even after the original vault is gone.
+- Free a live report slot with `docbank search-export release` or the MCP
+  `release_report` tool, enabled with `docbank mcp --allow-report-writes`.
+- Pause and resume photo imports, previews, and storage work from the Background
+  jobs drawer or `docbank jobs`, and run 1 to 4 previews at once. Pauses persist
+  across daemon restarts.
+- Process an in-memory document through the `document/mistral` Go package with
+  `PrepareMemory`, so decrypted PDFs never touch disk.
+
+### Improvements
+
+- Import locally, re-import with `--replace`, and run `docbank push` on up to 32
+  files at a time; `--watch` still pushes one file at a time. In the project's
+  Linux measurements, a new CLI import of 1,259 files went from about 31 seconds
+  to about 6. Re-imports skip duplicates under 64 KiB (previously 4 KiB) without
+  staging them.
+- Restart the daemon faster: later restarts skip text that is already
+  searchable. On vaults with older document versions or past extraction
+  failures, restarts were about 4.7 times faster in the project's Linux
+  measurement.
+- Load duplicate pages, large-folder and content searches, document and
+  collection lists, quality reports, tag lookups, trash, albums, and saved-query
+  runs faster in large vaults.
+- Place photos without a capture date in the grid, Timeline, and date filters at
+  their file's earliest recorded modified time, labeled File modified.
+- Hide groups with no values in the documents Refine sidebar.
+- Find commands faster in `docbank --help`, which groups them by task, and in
+  subcommand help, which now includes examples.
+- See in the processing plan when Docbank will refuse to send a file to the
+  provider. Starting that plan fails with a 422 error, and the web drawer
+  disables consent.
+- Turn off anonymous telemetry with `DO_NOT_TRACK=1`. CI runs and non-release
+  builds send none, and usage reports count additions, searches, and explicit
+  opens.
+- Supplied-transcript and supplied-captions profiles accept 4 GiB recordings,
+  which changes their profile identity. Earlier consent stops applying, queued
+  work from before the upgrade fails, and earlier transcripts count as uncovered
+  until reprocessed.
+- Install Ubuntu's fixed CA package, pip 26.2.2, and certifi 2026.10.19 in the
+  GLM-OCR image for the eMudhra fix.
+- Print daemon error messages once in CLI output.
+
+### Bug fixes
+
+- Generate previews for photos with embedded color profiles, including
+  Photoshop's Uncalibrated tag. Display P3 and Adobe RGB photos convert to sRGB.
+- Preview JPEGs above 100 megapixels at one-eighth scale instead of failing, up
+  to 1,000 megapixels for progressive and 200 for baseline JPEGs.
+- Show PNG photos upright when they store rotation after the image data.
+- Accept PDFs with harmless trailing data after `%%EOF`, and reject PDFs with a
+  forged cross-reference pointer after a payload.
+- Email, PDF export, and audit commands no longer fail intermittently when the
+  daemon replies before the CLI finishes its ownership check.
+- Windows commands no longer slow down as the lock registry grows.
+- Clean up old search data after a backup restore or an upgrade from v0.15.0 or
+  v0.15.1.
+- Renewing consent within the same clock tick, or after the clock moves
+  backward, starts a new job instead of reusing the old consent's job.
+- Vault shutdown waits for canceled writes to roll back, so deleting a vault's
+  files right after closing it no longer fails on Windows, and cached search
+  results become unavailable before shutdown returns.
+- Docling ASR applies the same network rule as Docling document conversion. With
+  `trust_boundary = "operator_network"`, allowed networks must be loopback,
+  private, or shared (including `100.64.0.0/10`); a config that allows a public
+  network no longer starts and should switch to `hosted_provider` with HTTPS.
+
+### Contributors
+
+Thank you to [Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk),
+[Rod Boev (@rodboev)](https://github.com/rodboev),
+[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.16.0.
+See the [full contribution history](https://github.com/kenn-io/docbank/compare/v0.15.2...v0.16.0).
+
 ## [v0.15.2](https://github.com/kenn-io/docbank/releases/tag/v0.15.2) — 2026-10-09
 
 ### New features

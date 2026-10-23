@@ -107,6 +107,8 @@ details. Wheel, pinch, or double-click to zoom. Use Reset zoom to reset. Escape
 returns to the scroll position and focus left on entering the viewer, including
 when Forward reopens it.
 
+![A photo open in the viewer with its metadata panel](https://docbank.ai/assets/generated/web-photo-viewer.png)
+
 The viewer shows the cached grid preview first, then a fit preview. Zoom loads
 a large preview while preserving the zoom. It prepares only two neighboring
 fit previews in each direction. A failed upgrade keeps the useful image. Retry
@@ -155,6 +157,8 @@ The **⋯** menu holds Move rejects, Export, and Refresh previews, plus Rename a
 
 The title row holds the photo count, Sort, Grid and Timeline, Group, Density, Cull, Resume cull when saved, the **⋯** menu, and **Add photos** in Library. At 640px and below, the title row wraps as needed, and Group, Density, Cull, and Resume cull move into **⋯**. A floating **Loading photos…** pill appears while a page loads.
 
+![Photos Library with refine facets, year buttons, and the photo grid](https://docbank.ai/assets/generated/web-photo-library.png)
+
 Choose **Timeline** to see counts for every recorded capture day in the current
 scope, including days beyond the loaded grid. The year ribbon shows each year's
 total and relative density. Choose a year, month, or day to open its photos.
@@ -163,6 +167,8 @@ selection and starts at the top. A failed date change keeps the previous photos,
 date, selection, and scroll position. **Retry** requests the chosen range again.
 **Clear date** restores the full scope. Counts stay tied to the full
 scope until you refresh.
+
+![Timeline with photo counts by year, month, and day above the grid](https://docbank.ai/assets/generated/web-photo-timeline.png)
 
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
@@ -216,6 +222,8 @@ Choose Save search to save the applied search. Albums lists saved queries whose 
 
 Choose Freeze results after saving a smart set. A freeze uses the smart set's saved sort, with asset ID breaking ties, not the current browsing order. Smart sets saved from Photos store name ascending, so their freezes order photos by name. A smart set saved in Documents keeps its own sort; a `path` sort freezes by name ascending. Frozen runs contain Library photos only. The frozen result includes all matches, including those beyond the first 250 relevance results. Its count and expiry appear beside Save as album and remain available when you return from Albums. Saving the album preserves the frozen asset membership and result order and clears the freeze, even if the live query's matches have changed. Frozen results expire with the daemon's snapshot session; the album persists.
 
+![A saved photo search shown as a smart set, with Freeze results](https://docbank.ai/assets/generated/web-photo-smart-set.png)
+
 A frozen result can contain at most 250,000 assets. Larger freeze requests fail before saving a run receipt. A freeze also fails without a receipt if any matching photo leaves Library before the run is saved. Expired snapshots and assets that are missing, hidden, excluded, or trashed also fail before creating an album. Authored-field, tag, content, and display-file edits keep the frozen asset membership. If results expire while naming an album, choose Freeze again; the album name stays in the form.
 
 ## Hidden photos
@@ -225,6 +233,8 @@ Open a photo's actions menu or right-click it and choose Hide. If Hidden has no 
 Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership; their included count covers only visible photos. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
 
 Enter the passcode in Hidden to unlock for five minutes. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Already admitted exports retain their rendered copies and remain downloadable until export retention expires. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. Once a window has opened Photos, hiding its tab queues a keepalive lock after pending Hidden writes, including an in-flight unlock. Leaving blanks every Photos view, closes open photos, removes their URL links, and clears cached previews. Library and the open album's photo list reload when you return; a failed load keeps those lists blank with an error and Retry. The Albums index keeps its album list. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. A failed lock shows an error and Retry lock in any workspace. Hidden stays concealed until a lock succeeds. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation succeeds. Hidden conceals after any failed check. Library, Map, Albums, and each open album share the Library access checks. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+
+![Hidden, locked, asking for its passcode](https://docbank.ai/assets/generated/web-photo-hidden.png)
 
 Hidden supports direct links at `/photos/hidden#photo=<asset-id>` after unlock. Viewer navigation, larger previews and supported originals use the active Library or Hidden scope. Locking or concealing the view closes its viewer and removes displayed bytes.
 
@@ -431,6 +441,8 @@ Albums group photo assets without moving their files. Manage albums in the
 web app, CLI, or HTTP API.
 
 In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to star it, choose **Rename album**, **Duplicate album…**, or **Delete album…** in **⋯**, or sort its photos by Added, Captured, or Imported. Timeline, date choices, and the photo viewer work inside an album and stay within its photos. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
+
+![Albums with a saved smart set and an album card](https://docbank.ai/assets/generated/web-photo-albums.png)
 
 To use the newest ready photo as the cover again, run `docbank photos albums cover <album-id>` or use the HTTP API.
 
@@ -742,11 +754,15 @@ Apply or clear staged metadata edits before changing the selection, search, sort
 
 Choose **Export all N photos** in the **⋯** menu for the whole current scope, or **Export selection** for selected photos. In Map, use **Export selection**; it includes selected photos outside the current map area. The [export drawer](export-bundles.md#export-photos) prepares JPEG or PNG copies with your size, metadata, and GPS choices, then delivers a verified ZIP. RAW display members export embedded previews and carry that label. GPS removal leaves descriptive location names intact. With metadata enabled, current catalog tags on the display file replace embedded keywords only when that file has at least one tag; companion-file tags are excluded. Conflicting XMP orientation stops preparation with metadata enabled; turn metadata off to export the viewed pixels. A changed or unavailable photo stops preparation with an error naming it; the linked guide lists preparation and metadata limits.
 
+![The photo export drawer for three selected photos](https://docbank.ai/assets/generated/web-photo-export.png)
+
 ## Move photos to trash
 
 Select photos in Library and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. A changed photo revision refuses the action; failed photos remain selected for retry. Each photo is atomic; a selection runs sequentially and can make partial progress. Changing the selection changes the next action's targets. A failed photo outside the loaded grid keeps its captured revision; load and select it again before accepting a newer revision.
 
 Choose **Move rejects** in Photos' **⋯** menu to preview the complete current scope, including photos beyond the loaded page. The preview counts eligible photos and files, lists up to 20 mixed pairs with their total count, and counts photos that stay in Docbank. Every original member, including individually trashed originals, must have the stored `reject` flag; sidecars follow their photo. The preview returns exact targets in asset ID order, limited to 1,000 live member files. A photo that would exceed the limit waits for the next batch. Confirmation moves those photos atomically. A missing target, changed asset or member node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Changes elsewhere in the scope, including album membership, leave the previewed targets valid. Larger scopes still show complete counts and how many photos will move now. Preview and confirm again for the rest. Select up to 64 photos and choose **Selected photos** in the modal to narrow the scope. Hidden scope requires an active unlock at preview and confirmation. An audit refusal names the blocked photo and file and leaves the entire batch in Docbank. Close the dialog, select up to 64 other photos, and choose **Selected photos** to move them.
+
+![Move rejects preview counting the photos that will move to trash](https://docbank.ai/assets/generated/web-photo-rejects.png)
 
 Moving rejects preserves the loaded range, browsing position, and surviving selections. If reloading fails, the grid stays available. Retry reloads the range and reconciles selections.
 
@@ -766,19 +782,27 @@ Map opened from an album plots that album's GPS photos. Otherwise, it plots GPS 
 
 Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank. Choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer. Escape returns focus to the marker or its cluster and retains the map position. The map also keeps its position when an access check conceals and refreshes it. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
 
+![Map with photo clusters beside the photos in view](https://docbank.ai/assets/generated/photo-map-enabled-1440-dark.png)
+
 Map uses album membership when opened from an album. Otherwise it inherits Library's text, filters and date. It sorts by capture date, then adds GPS eligibility. Each visit starts a fresh result and selection. Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. When more match, Map says how many it's showing. Narrow the search, filters or date to see older photos. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
 
 ## Cull and compare
 
 Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. A decision changes both files of a RAW and JPEG pair. When the pair's flags or ratings differ, it changes only the shown file and says so. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
 
+![Full-screen Cull with flag, skip, and filmstrip controls](https://docbank.ai/assets/generated/web-photo-cull.png)
+
 ### Burst stacks
 
 Library groups adjacent capture times from the same import folder, camera make, model, and body serial number. Photos with no recorded serial group with other photos with no serial; known serials stay separate. A flat **Choose files** selection shares one folder identity. A collapsed stack shows its representative and a count. Selecting it selects every frame. Expand it to select frames separately.
 
+![Library showing collapsed burst stacks, each with a frame count](https://docbank.ai/assets/generated/web-photo-stacks.png)
+
 Set **Burst gap (seconds)** from 1 to 30 to regroup existing photos. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read; background extraction retries them. A notice says groups can change after details update, and Cull refreshes them when you choose **Retry grouping** or change the burst gap.
 
 In Cull, use H/L to move between stacks and J/K to move within a stack. Check frames in the filmstrip and choose **Keep selected** to retain those frames. Flags owned by another decision stay unchanged. Navigation preserves the checked frames; starting a new pass or regrouping clears them. A Cull stack holds only frames in the current pass, so a frame the pass excludes keeps its flag. **Keep all** picks every frame in the stack. **Keep current (Return)** picks the viewed frame and rejects the rest. Later Return decisions replace earlier Return assignments only for frames still owned by Return. Stack decisions update every live member file together, including paired originals, with one receipt and one Undo.
+
+![Cull on a burst stack with Keep current, Keep all, and Keep selected](https://docbank.ai/assets/generated/web-photo-cull-stack.png)
 
 Choose **Choose representative** to change which frame represents the stack while preserving every frame's flags. A rejected frame in a mixed stack cannot become its representative. Choose a picked or unflagged frame, or change its flag first.
 
@@ -804,3 +828,5 @@ Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl
 **Resume cull** restores the saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Each daemon restart gives local `docbank web` a new browser address, so saved progress from the previous address no longer appears; [signing in on a server or container](web.md#sign-in-on-a-server-or-container) keeps one address. Earlier progress stays in browser storage until site data is cleared. Starting another cull asks before replacing saved progress. Storage failures appear when you choose Cull or Resume. If another tab changes the saved progress, close and resume the latest pass. At completion, Docbank checks the captured set once; flag changes or Undo check it again, and **Previous** cancels a check in progress. **Review unflagged remainder** appears when unflagged photos remain anywhere in the captured set, including skipped and never-viewed photos. Missing or newly hidden photos are counted as unavailable. Cull is not offered in Hidden.
 
 Select 2–8 photos and choose **Compare** in the selection bar. Zoom, pan, and arrow-key navigation move the panes together. **Z** toggles 1:1 for each displayed preview. Choose **Manual closeup**, then click a face or draw a region on a full frame. Matching crop tiles appear below the full frames; **Clear closeup** removes them. The closeup uses your chosen location rather than automatic face detection.
+
+![Compare showing three photos side by side](https://docbank.ai/assets/generated/web-photo-compare.png)
