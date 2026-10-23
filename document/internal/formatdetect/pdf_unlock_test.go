@@ -19,17 +19,24 @@ func TestUnlockPDF(t *testing.T) {
 		name, user string
 		passwords  []string
 		keyBits    int
+		wantErr    error
 	}{
-		{"user password", "open", []string{"wrong", "open"}, 256},
-		{"empty user password", "", nil, 256},
-		{"owner password", "open", []string{"owner"}, 128},
+		{"user password", "open", []string{"wrong", "open"}, 256, nil},
+		{"empty user password", "", nil, 256, nil},
+		{"owner password", "open", []string{"owner"}, 128, nil},
+		{"AES-256 password with space", "open pass", []string{"open pass"}, 256, formatdetect.ErrPDFEncrypted},
+		{"AES-128 password with space", "open pass", []string{"open pass"}, 128, nil},
 		// Legacy PDF handlers compare PDFDocEncoding A3 for the UTF-8 password £.
-		{"PDFDocEncoding", "\xa3", []string{"£"}, 128},
+		{"PDFDocEncoding", "\xa3", []string{"£"}, 128, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, err := mediatest.EncryptedPDF(tc.user, "owner", tc.keyBits)
 			require.NoError(t, err)
 			plain, _, err := formatdetect.UnlockPDF(source, tc.passwords, 1<<20)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
 			require.NoError(t, err)
 			pages, err := formatdetect.CountPDFPages(plain)
 			require.NoError(t, err)
