@@ -19,12 +19,16 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
       webURL.pathname = "/photos";
       await page.goto(webURL.href);
       const scroll = page.getByTestId("photo-scroll");
-      for (const loaded of [250, 500, 749]) {
-        await expect(
-          page.getByText(`749 photos · ${loaded} loaded`, { exact: true }),
-        ).toBeVisible();
-        if (loaded < 749)
-          await scroll.evaluate((element) => (element.scrollTop = element.scrollHeight));
+      await expect(page.getByText("749 photos", { exact: true })).toBeVisible();
+      while (await page.getByRole("button", { name: "Load more", exact: true }).count()) {
+        const response = page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/photos/assets/query") &&
+            Boolean(response.request().postDataJSON().cursor),
+        );
+        await page.getByRole("button", { name: "Load more", exact: true }).click();
+        await response;
+        await expect(page.getByText("Loading photos…", { exact: true })).toHaveCount(0);
       }
       const select = async (name: string) => {
         const checkbox = page.getByRole("checkbox", { name: `Select photo ${name}`, exact: true });
@@ -44,7 +48,8 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
         throw new Error(`Photo was not mounted: ${name}`);
       };
       await scroll.evaluate((element) => (element.scrollTop = 0));
-      await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+      await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
       const modal = page.getByRole("dialog", { name: "Move rejects to trash" });
       await modal.getByText("You can restore these photos from Trash.", { exact: true }).waitFor();
       for (const theme of ["light", "dark"]) {
@@ -63,7 +68,8 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
         .first()
         .check();
       await page.getByRole("button", { name: "Select loaded photos", exact: true }).click();
-      await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+      await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
       await modal.getByText("You can restore these photos from Trash.", { exact: true }).waitFor();
       for (const theme of ["light", "dark"]) {
         await page.evaluate((value) => {
@@ -78,7 +84,8 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
       await modal.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
       await page.getByRole("button", { name: "Clear selection", exact: true }).click();
       await select("Synthetic-photo-00001.jpg");
-      await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+      await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
       await modal
         .getByRole("combobox", { name: "Rejects scope: Current view", exact: true })
         .click();
@@ -99,7 +106,8 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
       await select("Synthetic-photo-00003.jpg");
       const beforeMoveTop = await scroll.evaluate((element) => element.scrollTop);
       expect(beforeMoveTop).toBeGreaterThan(0);
-      await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+      await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
       await modal
         .getByRole("combobox", { name: "Rejects scope: Current view", exact: true })
         .click();
@@ -120,7 +128,7 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
       await expect(scroll).toBeVisible();
       const retainedTop = await scroll.evaluate((element) => element.scrollTop);
       expect(retainedTop).toBeGreaterThan(0);
-      await expect(page.locator(".library-title span")).toBeVisible();
+      await expect(page.locator(".toolbar-actions > span")).toBeVisible();
       for (const theme of ["light", "dark"]) {
         await page.evaluate((value) => {
           localStorage.setItem("docbank-theme", value);
@@ -132,7 +140,7 @@ test("Move rejects recovers position and selection after a failed refresh", asyn
         });
       }
       await page.getByRole("button", { name: "Retry", exact: true }).click();
-      await expect(page.getByText("748 photos · 748 loaded", { exact: true })).toBeVisible();
+      await expect(page.getByText("748 photos", { exact: true })).toBeVisible();
       await expect(page.getByText("2 selected photos", { exact: true })).toBeVisible();
       await expect
         .poll(() => scroll.evaluate((element) => element.scrollTop))

@@ -466,6 +466,7 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])(
     });
     vi.stubGlobal("fetch", fetcher);
     render(HiddenPhotos, props());
+    await fireEvent.click(await screen.findByRole("button", { name: "Filters" }));
     await fireEvent.click(
       await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }),
     );
@@ -487,7 +488,8 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])(
     } else if (kind === "denial") {
       denied = true;
       hidden = state(false);
-      await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+      await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
     } else if (kind === "expire") {
       vi.spyOn(Date, "now").mockReturnValue(Date.now() + 300_001);
     } else {

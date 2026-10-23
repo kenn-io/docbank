@@ -63,10 +63,13 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
       }
     };
     if (count > 16) {
-      await expect(page.getByRole("button", { name: "Export photos", exact: true })).toBeDisabled();
       await expect(
         page.getByText("Select up to 16 photos to export.", { exact: true }),
       ).toBeVisible();
+      await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+      await expect(page.getByRole("menuitem", { name: /^Export all/ })).toBeDisabled();
+      await page.keyboard.press("Escape");
+
       await capture("scope-limit");
       await page
         .locator("[data-asset]")
@@ -173,7 +176,8 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     await expect(page.getByRole("dialog", { name: "Verified export", exact: true })).toBeHidden();
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     if (count > 16) return;
-    await page.getByRole("button", { name: "Export photos", exact: true }).click();
+    await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Export all/ }).click();
     await page.getByRole("combobox", { name: /^Photo format/ }).click();
     await page.getByRole("option", { name: "PNG", exact: true }).click();
     await page.getByRole("checkbox", { name: "Include image metadata", exact: true }).uncheck();

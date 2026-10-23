@@ -1,8 +1,14 @@
+<script module lang="ts">
+  // Map keeps Library's text and filters, so search and filter counts live in Library and Hidden.
+  export const searchablePhotoView = (albumID: string, mapMode: boolean) => !albumID && !mapMode;
+</script>
+
 <script lang="ts">
   import { reportAction } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import {
     Button,
     EmptyState,
@@ -11,17 +17,21 @@
     MenuTrigger,
     MenuContent,
     MenuItem,
+    MenuRadioGroup,
+    MenuRadioItem,
+    MenuSeparator,
+    MEDIA,
     Modal,
     TextInput,
     SelectDropdown,
-    SearchInput,
+    Chip,
     Spinner,
     Notice,
     type ShortcutManager,
   } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
-  import { photoSearchSort } from "./photoSearch.js";
+  import { activeFilterCount, isFilterSet } from "./photoSearch.js";
   import {
     mapPhotoLimit,
     maxComparePhotos,
@@ -41,6 +51,9 @@
   } from "./generated/docbank.js";
   import PhotoLoupe from "./PhotoLoupe.svelte";
   import PhotoTimeline from "./PhotoTimeline.svelte";
+  import SlidersHorizontalIcon from "@lucide/svelte/icons/sliders-horizontal";
+  import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
+  import PlusIcon from "@lucide/svelte/icons/plus";
   import type { PhotoMapRow } from "./generated/docbank.js";
   import FacetSidebar from "./FacetSidebar.svelte";
   import type { ExportInput } from "./exportState.js";
@@ -188,6 +201,10 @@
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
   const actionDisabled = $derived(photos.loading || photos.hiding || photos.trashing);
+  const narrow = new MediaQuery(MEDIA.compact);
+  const cullDisabled = $derived(
+    actionDisabled || !cull || cull.capturing || !vaultID || !photos.total,
+  );
   const editCount = $derived(
     photoID ? 1 : editor.count || (photos.allResults ? photos.total : photos.selectedIDs.size),
   );
@@ -639,16 +656,12 @@
           : photos.grouping,
     ),
   );
-  // Map keeps Library's text and filters, so search and filter counts live in Library and Hidden.
-  const searchable = $derived(!albumID && !mapMode);
+  const searchable = $derived(searchablePhotoView(albumID, mapMode));
+  const activeFilters = $derived(activeFilterCount(photos.baseQuery.filters));
   const filtered = $derived(
     searchable &&
       (Boolean(photos.baseQuery.text.trim()) ||
-        Object.values(photos.baseQuery.filters ?? {}).some((value) =>
-          Array.isArray(value)
-            ? value.length > 0
-            : value !== undefined && value !== false && value !== "",
-        )),
+        Object.values(photos.baseQuery.filters ?? {}).some(isFilterSet)),
   );
   const ordered = $derived(photos.items);
   const outsideSelection = $derived(
@@ -687,17 +700,25 @@
       : groups.flatMap((group) => group.items.map((item) => item.asset_id)),
   );
   const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
+  const count = $derived(mapMode ? shown.length : photos.total);
+  const photoCount = $derived(
+    !photos.started
+      ? photos.loading
+        ? "Loading…"
+        : ""
+      : `${count.toLocaleString()} photo${count === 1 ? "" : "s"}`,
+  );
+  const filtersID = $props.id();
+  const photoDate = $derived(
+    !mapMode && photos.started && photos.date
+      ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}`
+      : "",
+  );
   const densityOptions = [
     { value: "compact", label: "Compact" },
     { value: "comfortable", label: "Comfortable" },
     { value: "large", label: "Large" },
   ];
-  let search = $state(untrack(() => photos.baseQuery.text));
-  let syntax = $state(untrack(() => photos.baseQuery.syntax));
-  $effect(() => {
-    search = photos.query.text;
-    syntax = photos.query.syntax;
-  });
   const sortOptions = $derived([
     { value: "capture_time", label: "Capture date" },
     ...(photos.relevanceAvailable || photos.query.sort.field === "relevance"
@@ -847,6 +868,7 @@
     {cache}
     onclose={() => void closeReview()}
   />{/if}
+{#snippet vaultReason()}Vault identity unavailable. Reload to retry.{/snippet}
 <main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
   {#if mapMode && !tiles.tile_url}
     <EmptyState
@@ -904,13 +926,27 @@
     >
       {#snippet libraryGrid()}
         <div class="library-grid">
-          <div class="photo-toolbar browser-toolbar">
-            <div class="library-title">
+          <div class="photo-bar browser-toolbar">
+            <div class="photo-crumbs">
+              {#if searchable}<IconButton
+                  size="sm"
+                  title="Filters"
+                  tone={photos.filtersOpen ? "info" : "neutral"}
+                  ariaLabel={activeFilters
+                    ? `Filters, ${activeFilters} active filter${activeFilters === 1 ? "" : "s"}`
+                    : "Filters"}
+                  ariaExpanded={photos.filtersOpen}
+                  ariaControls={filtersID}
+                  onclick={() => photos.toggleFilters()}
+                >
+                  <SlidersHorizontalIcon size="14" aria-hidden="true" />
+                  {#if activeFilters}<Chip size="xs" tone="info">{activeFilters}</Chip>{/if}
+                </IconButton>{/if}
               {#if albumID}<button
                   type="button"
                   class="album-back"
                   onclick={() => onnavigate("/photos/albums")}>Albums</button
-                >{/if}
+                ><span aria-hidden="true">›</span>{/if}
               {#if renaming && renameAlbum}<form
                   onsubmit={(event) => {
                     event.preventDefault();
@@ -935,60 +971,43 @@
               {:else}<h1>
                   {mapMode ? "Photos in view" : albumID ? (album?.name ?? "Album") : title}
                 </h1>{/if}
-              {#if !mapMode || photos.started}<span
-                  >{mapMode
-                    ? shown.length.toLocaleString() + " photos"
-                    : !photos.started
-                      ? photos.loading
-                        ? "Loading photos"
-                        : "Photos"
-                      : searchable && photos.view === "grid" && !photos.date
-                        ? `${photos.items.length.toLocaleString()} loaded`
-                        : `${photos.total.toLocaleString()} photos`}{!mapMode && photos.date
-                    ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}`
-                    : ""}{!mapMode &&
-                  photos.started &&
-                  !(searchable && photos.view === "grid" && !photos.date)
-                    ? ` · ${photos.items.length.toLocaleString()} loaded`
-                    : ""}</span
-                >{/if}
+              {#if filtered}<Button
+                  size="sm"
+                  disabled={actionDisabled}
+                  onclick={() => void photos.resetQuery()}>Clear filters</Button
+                >
+              {/if}
+              {#if searchable && albums}<PhotoSmartSet {photos} {albums} {onnavigate} />{/if}
+              {#if cull?.progress}<span role="status">{cull.progress}</span>{/if}
+              {#if cull?.error}<span role="alert">{cull.error}</span>{/if}
             </div>
             <div class="toolbar-actions">
-              {#if !mapMode && !photos.hidden}
-                <Button
-                  size="sm"
-                  disabled={actionDisabled || !cull || cull.capturing || !vaultID || !photos.total}
-                  title={vaultID ? undefined : "Vault identity unavailable. Reload to retry."}
-                  onclick={() => void startCull()}>Cull</Button
-                >
-                {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}
-                    >Cancel capture</Button
+              <span title={`${photoCount}${photoDate}`}>
+                <span class="photo-count-value">{photoCount}</span>{#if photoDate}<span
+                    class="photo-count-date">{photoDate}</span
                   >{/if}
-                {#if cull?.saved}<Button
-                    size="sm"
-                    disabled={actionDisabled || cull.capturing}
-                    onclick={() => void startCull(true)}>Resume cull</Button
-                  >{/if}
-                <Button
-                  size="sm"
-                  disabled={selectionCount < 2 ||
-                    selectionCount > maxComparePhotos ||
-                    photos.allResults}
-                  title={`Select 2–${maxComparePhotos} photos to compare`}
-                  onclick={compare}>Compare</Button
-                >
-                {#if selectionCount > maxComparePhotos}<span
-                    >Select 2–{maxComparePhotos} photos to compare.</span
-                  >{/if}
-                {#if cull?.progress}<span role="status">{cull.progress}</span>{/if}
-                {#if cull?.error}<span role="alert">{cull.error}</span>{/if}
-              {/if}
-              {#if !mapMode && !photos.hidden && !albumID}<Button
-                  size="sm"
-                  disabled={!onadd}
-                  title={uploadChannelError || undefined}
-                  onclick={onadd}>Add photos</Button
-                >{/if}
+              </span>
+              {#if albumID}<SelectDropdown
+                  title="Sort photos"
+                  value={photos.query.sort?.field ?? "added_time"}
+                  options={albumSortOptions}
+                  onchange={(value) =>
+                    void photos.setSort({
+                      field: value as "added_time" | "capture_time" | "import_time",
+                      direction: "desc",
+                    })}
+                />
+              {:else if searchable}<SelectDropdown
+                  title="Sort photos"
+                  disabled={actionDisabled}
+                  value={photos.query.sort?.field}
+                  options={sortOptions}
+                  onchange={(value) =>
+                    void photos.setSort({
+                      field: value as "capture_time" | "relevance",
+                      direction: "desc",
+                    })}
+                />{/if}
               {#if !mapMode && !photos.hidden}<nav class="photo-views" aria-label="Photo views">
                   <button
                     type="button"
@@ -1002,167 +1021,157 @@
                     onclick={() => photos.setView("timeline")}>Timeline</button
                   >
                 </nav>{/if}
-              <div class="photo-options">
-                {#if albumID}<SelectDropdown
-                    title="Sort photos"
-                    value={photos.query.sort?.field ?? "added_time"}
-                    options={albumSortOptions}
-                    onchange={(value) =>
-                      void photos.setSort({
-                        field: value as "added_time" | "capture_time" | "import_time",
-                        direction: "desc",
-                      })}
-                  />{/if}
-                {#if !albumID || photos.query.sort?.field === "capture_time"}<SelectDropdown
-                    title="Group photos"
-                    disabled={photos.query.sort?.field !== "capture_time"}
-                    value={photos.grouping}
-                    options={groupingOptions}
-                    onchange={(value) =>
-                      relayout(() => (photos.grouping = value as "months" | "sessions"))}
-                  />{/if}
-                <SelectDropdown
+              {#if !narrow.current && (!albumID || photos.query.sort?.field === "capture_time")}<SelectDropdown
+                  title="Group photos"
+                  disabled={photos.query.sort?.field !== "capture_time"}
+                  value={photos.grouping}
+                  options={groupingOptions}
+                  onchange={(value) =>
+                    relayout(() => (photos.grouping = value as "months" | "sessions"))}
+                />{/if}
+              {#if !narrow.current}<SelectDropdown
                   title="Grid density"
                   value={photos.density}
                   options={densityOptions}
                   onchange={(value) => relayout(() => photos.setDensity(value as Density))}
-                />
-              </div>
-              {#if album && albums}
-                <IconButton
+                />{/if}
+              {#if album && albums}<IconButton
+                  size="sm"
                   ariaLabel={album.starred ? "Unstar album" : "Star album"}
                   title={album.starred ? "Unstar album" : "Star album"}
                   ariaPressed={album.starred}
                   disabled={albums.busy || renaming}
                   onclick={() => void albums!.update(album!, { starred: !album!.starred })}
-                  ><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton
-                >
-                <Menu align="end"
-                  ><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}
-                    >More</MenuTrigger
-                  ><MenuContent ariaLabel="Album actions"
-                    ><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem
-                      onselect={() => openModal("duplicate")}>Duplicate…</MenuItem
-                    ><MenuItem tone="danger" onselect={() => openModal("delete")}
-                      >Delete album…</MenuItem
-                    ></MenuContent
-                  ></Menu
-                >
-              {/if}{#if !mapMode}<Button
-                  size="sm"
-                  disabled={photos.loading ||
-                    photos.total === 0 ||
-                    photos.total > maxPhotoExportMembers}
-                  onclick={() => exportPhotos()}>Export photos</Button
+                  ><StarIcon size="14" fill={album.starred ? "currentColor" : "none"} /></IconButton
                 >{/if}
-              <Button
-                size="sm"
-                disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy}
-                onclick={() => void refreshView()}>Refresh previews</Button
-              >
-              {#if !mapMode && photos.groupingIncomplete}<p role="status">
-                  Some camera details are missing or outdated. Stacks can change once they update.
-                </p>{/if}
-              {#if !mapMode}<label class="burst-gap"
-                  >Burst gap (seconds) <input
-                    aria-label="Burst gap (seconds)"
-                    type="number"
-                    min="1"
-                    max="30"
-                    value={photos.burstGapSeconds}
-                    disabled={photos.loading || editor.busy}
-                    onchange={async (event) => {
-                      const input = event.currentTarget;
-                      await photos.setBurstGap(input.valueAsNumber, preserve);
-                      input.value = String(photos.burstGapSeconds);
-                      onactionerror?.(photos.actionError);
-                    }}
-                  /></label
-                >{/if}
-              {#if !mapMode}<Button
+              {#if !mapMode && !photos.hidden}
+                {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}
+                    >Cancel capture</Button
+                  >{/if}
+                {#if !narrow.current}<Button
+                    size="sm"
+                    disabled={cullDisabled}
+                    title={vaultID ? undefined : "Vault identity unavailable. Reload to retry."}
+                    onclick={() => void startCull()}>Cull</Button
+                  >
+                  {#if cull?.saved}<Button
+                      size="sm"
+                      disabled={actionDisabled || cull.capturing}
+                      onclick={() => void startCull(true)}>Resume cull</Button
+                    >{/if}
+                {/if}
+              {/if}
+              <Menu align="end">
+                <MenuTrigger ariaLabel="More photo actions"><EllipsisIcon size="16" /></MenuTrigger>
+                <MenuContent ariaLabel="More photo actions">
+                  {#if narrow.current}
+                    {#if !mapMode && !photos.hidden}<MenuItem
+                        disabled={cullDisabled}
+                        trailing={vaultID ? undefined : vaultReason}
+                        onselect={() => void startCull()}>Cull</MenuItem
+                      >
+                      {#if cull?.saved}<MenuItem
+                          disabled={actionDisabled || cull.capturing}
+                          onselect={() => void startCull(true)}>Resume cull</MenuItem
+                        >{/if}
+                    {/if}
+                    {#if !albumID || photos.query.sort?.field === "capture_time"}<MenuRadioGroup
+                        ariaLabel="Group photos"
+                        value={photos.grouping}
+                        onchange={(value) =>
+                          relayout(() => (photos.grouping = value as "months" | "sessions"))}
+                        >{#each groupingOptions as option (option.value)}<MenuRadioItem
+                            value={option.value}
+                            disabled={photos.query.sort?.field !== "capture_time"}
+                            >{option.label}</MenuRadioItem
+                          >{/each}</MenuRadioGroup
+                      >{/if}
+                    <MenuRadioGroup
+                      ariaLabel="Grid density"
+                      value={photos.density}
+                      onchange={(value) => relayout(() => photos.setDensity(value as Density))}
+                      >{#each densityOptions as option (option.value)}<MenuRadioItem
+                          value={option.value}>{option.label}</MenuRadioItem
+                        >{/each}</MenuRadioGroup
+                    >
+                    <MenuSeparator />
+                  {/if}
+                  {#if !mapMode}
+                    <MenuItem
+                      disabled={actionDisabled || photos.rejectsLoading}
+                      onselect={() => {
+                        if (!editor.canChangeTarget()) return;
+                        rejectsOpen = true;
+                        void photos.previewRejects();
+                      }}>Move rejects</MenuItem
+                    >
+                    <MenuItem
+                      disabled={photos.loading ||
+                        photos.total === 0 ||
+                        photos.total > maxPhotoExportMembers}
+                      onselect={() => exportPhotos()}
+                      >{photos.total > maxPhotoExportMembers
+                        ? `Export all (limit ${maxPhotoExportMembers} photos)`
+                        : photos.total === 1
+                          ? "Export 1 photo"
+                          : `Export all ${photos.total.toLocaleString()} photos`}</MenuItem
+                    >
+                  {/if}
+                  <MenuItem
+                    disabled={actionDisabled || albums?.busy}
+                    onselect={() => void refreshView()}>Refresh previews</MenuItem
+                  >
+                  {#if album && albums}
+                    <MenuItem disabled={albums.busy || renaming} onselect={beginRename}
+                      >Rename album</MenuItem
+                    >
+                    <MenuItem
+                      disabled={albums.busy || renaming}
+                      onselect={() => openModal("duplicate")}>Duplicate album…</MenuItem
+                    >
+                    <MenuItem
+                      tone="danger"
+                      disabled={albums.busy || renaming}
+                      onselect={() => openModal("delete")}>Delete album…</MenuItem
+                    >
+                  {/if}
+                </MenuContent>
+              </Menu>
+              {#if !mapMode && !photos.hidden && !albumID}<Button
                   size="sm"
-                  disabled={photos.loading ||
-                    photos.hiding ||
-                    photos.trashing ||
-                    photos.rejectsLoading}
-                  onclick={() => {
-                    if (!editor.canChangeTarget()) return;
-                    rejectsOpen = true;
-                    void photos.previewRejects();
-                  }}>Move rejects</Button
+                  tone="info"
+                  surface="solid"
+                  disabled={!onadd}
+                  title={uploadChannelError || undefined}
+                  onclick={onadd}><PlusIcon size="14" aria-hidden="true" />Add photos</Button
                 >{/if}
             </div>
           </div>
+          {#if !mapMode}<div class="photo-stack-controls browser-toolbar">
+              {#if photos.groupingIncomplete}<p role="status">
+                  Some camera details are missing or outdated. Stacks can change once they update.
+                </p>{/if}
+              <label class="burst-gap"
+                >Burst gap (seconds) <input
+                  aria-label="Burst gap (seconds)"
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={photos.burstGapSeconds}
+                  disabled={photos.loading || editor.busy}
+                  onchange={async (event) => {
+                    const input = event.currentTarget;
+                    await photos.setBurstGap(input.valueAsNumber, preserve);
+                    input.value = String(photos.burstGapSeconds);
+                    onactionerror?.(photos.actionError);
+                  }}
+                /></label
+              >
+            </div>{/if}
           {#if photos.total > maxPhotoExportMembers}<p class="photo-export-limit">
               Select up to {maxPhotoExportMembers} photos to export.
             </p>{/if}
           {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
-          {#if searchable}
-            <form
-              class="photo-search"
-              onsubmit={(event) => {
-                event.preventDefault();
-                const text = search.trim();
-                const pending = photos.setQuery({
-                  ...photos.baseQuery,
-                  text: search,
-                  syntax,
-                  sort: photoSearchSort({ text: search, syntax }),
-                });
-                void pending?.then((accepted) => {
-                  if (accepted && text) reportAction(photos.session, "search_run", "text");
-                });
-              }}
-            >
-              <SelectDropdown
-                title="Search syntax"
-                value={syntax}
-                options={[
-                  { value: "simple", label: "Text" },
-                  { value: "advanced", label: "Filters" },
-                ]}
-                onchange={(value) => (syntax = value as "simple" | "advanced")}
-              />
-              <SearchInput
-                disabled={photos.loading || photos.hiding || photos.trashing}
-                ariaLabel="Search photos"
-                placeholder="Search photos"
-                bind:value={search}
-              />
-              <Button
-                type="submit"
-                size="sm"
-                disabled={photos.loading || photos.hiding || photos.trashing}>Search</Button
-              >
-              <SelectDropdown
-                disabled={photos.loading || photos.hiding || photos.trashing}
-                title="Sort photos"
-                value={photos.query.sort?.field}
-                options={sortOptions}
-                onchange={(value) =>
-                  void photos.setSort({
-                    field: value as "capture_time" | "relevance",
-                    direction: "desc",
-                  })}
-              />
-              {#if filtered}
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={photos.loading || photos.hiding || photos.trashing}
-                  onclick={() => {
-                    search = "";
-                    void photos.setQuery({
-                      ...photos.baseQuery,
-                      text: "",
-                      filters: {},
-                      sort: { field: "capture_time", direction: "desc" },
-                    });
-                  }}>Clear filters</Button
-                >
-              {/if}
-            </form>
-          {/if}
           {#if !mapMode && photos.date}
             <div class="photo-date-selection">
               <Button size="sm" onclick={() => void photos.selectDate()}>Clear date</Button>
@@ -1204,8 +1213,8 @@
             </div>
           {/if}
           <div class="photo-browser">
-            {#if searchable}
-              <div class="photo-facets">
+            {#if searchable && photos.filtersOpen}
+              <div id={filtersID} class="photo-facets">
                 {#if photos.facetsLoading}<div class="photo-loading" role="status">
                     <Spinner size={14} />Loading counts…
                   </div>{/if}
@@ -1225,19 +1234,6 @@
               </div>
             {/if}
             <div class="photo-results">
-              {#if searchable}
-                <div class="photo-results-toolbar">
-                  <div class="photo-results-summary">
-                    <h2>Search results</h2>
-                    <span
-                      >{photos.loading && !photos.items.length
-                        ? "Loading…"
-                        : `${photos.total.toLocaleString()} photos`}</span
-                    >
-                  </div>
-                  {#if albums}<PhotoSmartSet {photos} {albums} {onnavigate} />{/if}
-                </div>
-              {/if}
               {#if !photoID && editor.error}<Notice tone="error" message={editor.error} />{/if}
               {#if !photoID && editor.receiptID}<Notice
                   tone="success"
@@ -1320,8 +1316,13 @@
                     >{/if}
                 </EmptyState>
               {/if}
-              {#if !mapMode}<div class="photo-loading" role="status">
-                  {#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button
+              <div role="status">
+                {#if !mapMode && photos.loading}<div class="photo-pill kit-popover-card">
+                    <Spinner size={14} />Loading photos…
+                  </div>{/if}
+              </div>
+              {#if !mapMode && photos.cursor && !photos.error}<div class="photo-loading">
+                  {#if !photos.loading}<Button
                       size="sm"
                       onclick={() => void photos.loadMore(preserve)}>Load more</Button
                     >{/if}
@@ -1361,6 +1362,16 @@
                 (!mapMode && (photos.loading || (photos.allResults && !editor.targets.length)))}
             >
               {#snippet photoActions()}
+                {#if !mapMode && !photos.hidden}<Button
+                    size="sm"
+                    disabled={selectionCount < 2 ||
+                      selectionCount > maxComparePhotos ||
+                      photos.allResults}
+                    title={`Select 2–${maxComparePhotos} photos to compare`}
+                    onclick={compare}>Compare</Button
+                  >{#if selectionCount > maxComparePhotos}<span
+                      >Select 2–{maxComparePhotos} photos to compare.</span
+                    >{/if}{/if}
                 {#if selectedStack}
                   <Button
                     size="sm"
@@ -1627,6 +1638,7 @@
     }
   }
   .library-grid {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -1641,14 +1653,6 @@
     min-height: 0;
     overflow: hidden;
     background: var(--bg-surface);
-  }
-  .photo-search {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-5);
-    border-bottom: 1px solid var(--border-default);
   }
   .photo-search-limit {
     margin: 0;
@@ -1680,38 +1684,27 @@
     border-left: 1px solid var(--border-default);
   }
   .photo-results {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
     min-width: 0;
     min-height: 0;
   }
-  .photo-results-toolbar {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--space-2) var(--space-7);
-    border-bottom: 1px solid var(--border-default);
-  }
-  .photo-results-summary {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .photo-results-summary h2 {
-    margin: 0;
-    font-size: var(--font-size-sm);
-    color: var(--text-primary);
-  }
-  .photo-results-summary span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    white-space: nowrap;
-  }
   @media (max-width: 640px) {
+    .photo-crumbs {
+      flex-basis: 100%;
+    }
+    .photo-bar .toolbar-actions {
+      flex-basis: 100%;
+      flex-wrap: wrap;
+    }
+    .photo-bar .toolbar-actions > :global(*) {
+      flex-shrink: 0;
+    }
+    .photo-bar .toolbar-actions > span {
+      white-space: nowrap;
+    }
     .photos-workspace:has(.grid-inspector) {
       overflow: auto;
     }
@@ -1734,23 +1727,11 @@
       width: auto;
       max-height: 180px;
     }
-    .photo-results-toolbar {
-      align-items: flex-start;
-      flex-direction: column;
-    }
     .grid-inspector {
       width: auto;
       min-height: 0;
       max-height: 50dvh;
       flex-shrink: 0;
-    }
-  }
-  .photo-toolbar {
-    border-bottom: 1px solid var(--border-default);
-  }
-  @media (max-width: 640px) {
-    .photo-results-toolbar {
-      padding-inline: var(--space-6);
     }
   }
   .photo-date-selection {
@@ -1760,20 +1741,6 @@
     padding: var(--space-2) var(--space-5);
     font-size: var(--font-size-sm);
     color: var(--text-primary);
-  }
-  .library-title h1 {
-    margin: 0 0 4px;
-    font-size: var(--font-size-lg);
-    color: var(--text-primary);
-  }
-  .library-title span {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-  }
-  .photo-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
   }
   .photo-views {
     display: flex;
@@ -1797,15 +1764,6 @@
   .photo-notice a {
     color: var(--accent-blue);
   }
-  .album-back {
-    border: 0;
-    padding: 0;
-    background: transparent;
-    color: var(--accent-blue);
-    font-size: var(--font-size-xs);
-    cursor: pointer;
-    margin-bottom: 5px;
-  }
   form,
   .modal-actions {
     display: flex;
@@ -1817,20 +1775,8 @@
     justify-content: flex-end;
     margin-top: var(--space-4);
   }
-  @media (max-width: 640px) {
-    .photo-toolbar {
-      flex-wrap: wrap;
-      gap: var(--space-3);
-    }
-  }
-  .photo-export-limit {
-    margin: 0;
-    padding: var(--space-2) var(--space-5);
-    font-size: var(--font-size-sm);
-    color: var(--text-muted);
-  }
-  .photo-loading {
-    height: 38px;
+  .photo-loading,
+  .photo-pill {
     flex-shrink: 0;
     display: flex;
     gap: var(--space-2);
@@ -1839,5 +1785,74 @@
     padding: var(--space-2);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+  .photo-loading {
+    height: 38px;
+  }
+  .photo-pill {
+    position: absolute;
+    left: 50%;
+    bottom: var(--space-5);
+    transform: translateX(-50%);
+    border-radius: 999px;
+    z-index: 4;
+  }
+  .photo-export-limit {
+    margin: 0;
+    padding: var(--space-2) var(--space-5);
+    font-size: var(--font-size-sm);
+    color: var(--text-muted);
+  }
+  .photo-bar,
+  .photo-stack-controls {
+    padding-left: var(--space-5);
+    padding-right: var(--space-7);
+  }
+  .photo-bar {
+    border-bottom: 1px solid var(--border-default);
+  }
+  .photo-stack-controls {
+    justify-content: flex-start;
+  }
+  .photo-stack-controls p {
+    flex-basis: 100%;
+    margin: 0;
+  }
+  /* The shared mobile rule hides toolbar counts; here the count states the chosen date. */
+  .photo-bar .toolbar-actions > span {
+    display: inline-flex;
+  }
+  .photo-count-value {
+    flex-shrink: 0;
+  }
+  .photo-count-date {
+    white-space: pre;
+  }
+  .photo-bar .toolbar-actions :global(.kit-select-dropdown) {
+    width: auto;
+    min-width: 0;
+  }
+  .photo-crumbs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    min-width: 0;
+    color: var(--text-muted);
+  }
+  .photo-crumbs h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .album-back {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--accent-blue);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
   }
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { reportAction } from "./action-events.js";
+  import PhotoSearch from "./PhotoSearch.svelte";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -77,7 +78,7 @@
   import { photoNavigationGuard } from "./photoNavigation.js";
   import { PhotoUndoState } from "./photoAuthored.svelte.js";
   import { mapTiles } from "./photoMap.js";
-  import PhotosWorkspace from "./PhotosWorkspace.svelte";
+  import PhotosWorkspace, { searchablePhotoView } from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
   import HiddenSetupModal from "./HiddenSetupModal.svelte";
   import PhotoActionError from "./PhotoActionError.svelte";
@@ -444,6 +445,13 @@
   }
   let photoState = $state<PhotoWorkspace>();
   let photoValidated = $state(false);
+  // Library views render only once access is validated; Hidden checks its own access.
+  const photoSearchable = $derived(
+    photoMode &&
+      photoPath !== "/photos/albums" &&
+      searchablePhotoView(albumID, mapMode) &&
+      (hiddenMode || photoValidated),
+  );
   let photoAccessError = $state("");
   let photoChangeID: string | undefined;
   let revalidatedChangeID: string | undefined | null = null;
@@ -3189,6 +3197,17 @@
                 <SlidersHorizontalIcon size="14" aria-hidden="true" />Edit query
               </Button>
             </div>
+          {:else if photoSearchable && activePhotos()}
+            <div
+              class="search-controls"
+              inert={!!photoID || !!activePhotos()?.culling || !!activePhotos()?.comparing}
+            >
+              {#key activePhotos()}
+                {#key activePhotos()?.queryResets}
+                  <PhotoSearch photos={activePhotos()!} />
+                {/key}
+              {/key}
+            </div>
           {/if}
         {/snippet}
         {#snippet right()}
@@ -4852,7 +4871,7 @@
     width: min(820px, 100%);
   }
 
-  .search-controls .search {
+  .search-controls :global(.search) {
     min-width: 0;
     flex: 1;
   }
@@ -4867,7 +4886,7 @@
       width: 100%;
     }
 
-    .search-controls .search {
+    .search-controls :global(.search) {
       flex-basis: 100%;
     }
   }
