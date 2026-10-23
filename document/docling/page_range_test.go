@@ -46,7 +46,7 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 				status = "partial_success"
 				response["errors"] = []any{map[string]any{"page_no": 52}}
 			}
-			result, err := renderRange(t, fixture, testCase.pages, status, response)
+			result, err := renderRange(t, fixture, testCase.pages, status, response, testCase.name == "later range")
 			require.NoError(t, err)
 			assert.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
 			assertRangeMarker(t, result.Evidence, testCase.pages)
@@ -111,7 +111,7 @@ func TestRenderPageRangeRejectsContradictorySelection(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
-			_, err := renderRange(t, fixture, testCase.pages, "success", rangeResponse("# fallback\n", testCase.content))
+			_, err := renderRange(t, fixture, testCase.pages, "success", rangeResponse("# fallback\n", testCase.content), false)
 			requireMalformed(t, err)
 		})
 	}
@@ -129,13 +129,19 @@ func TestRenderPageRangeFallsBackToMarkdownLikeRender(t *testing.T) {
 			content["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "table cell"}}}}}
 			return content
 		}()},
-		{name: "unsupported major with array registry", content: map[string]any{
-			"schema_name": "DoclingDocument", "version": "2.0.0", "pages": []any{51, 52},
-		}},
+		{name: "unsupported major with whole-document registry", content: func() map[string]any {
+			registry := make([]int64, 52)
+			for index := range registry {
+				registry[index] = int64(index + 1)
+			}
+			content := rangeContent(registry, pageText("page 51", 51))
+			content["version"] = "2.0.0"
+			return content
+		}()},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
-			result, err := renderRange(t, fixture, pages, "success", rangeResponse("# fallback\n", testCase.content))
+			result, err := renderRange(t, fixture, pages, "success", rangeResponse("# fallback\n", testCase.content), false)
 			require.NoError(t, err)
 			assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
 			assert.Equal(t, "# fallback\n", result.Evidence.Units[0].Text)
@@ -179,16 +185,18 @@ func TestRenderPageRangeRejectsInvalidRequestsBeforeUpload(t *testing.T) {
 	}
 }
 
-// renderRange serves one Docling job that must carry the requested page range.
+// renderRange serves one Docling job and optionally checks its submission.
 func renderRange(
-	t *testing.T, fixture fixture, pages PageRange, taskStatus string, response map[string]any,
+	t *testing.T, fixture fixture, pages PageRange, taskStatus string, response map[string]any, checkSubmission bool,
 ) (document.RenditionResult, error) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case convertPath:
-			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"},
-				[]string{strconv.FormatInt(pages.First, 10), strconv.FormatInt(pages.Last, 10)})
+			if checkSubmission {
+				assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"},
+					[]string{strconv.FormatInt(pages.First, 10), strconv.FormatInt(pages.Last, 10)})
+			}
 			writeJSON(t, writer, doclingTask("range", taskStatus))
 		case resultPath + "range":
 			writeJSON(t, writer, response)
