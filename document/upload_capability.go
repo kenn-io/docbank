@@ -17,3 +17,8 @@ func uploadCapability(upload AuthorizedUpload) UploadCapability {
 	}
 	return UploadCapability{}
 }
+
+// UploadPDFPassword returns the password carried by local inspection evidence.
+func UploadPDFPassword(upload AuthorizedUpload) (string, bool) {
+	return uploadCapability(upload).PDFPassword()
+}

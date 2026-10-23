@@ -2,22 +2,34 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/safefileio"
 )
 
 func mistralOCRProcessingConfig(t *testing.T) (config.Config, document.RenditionDescriptor) {
@@ -125,4 +137,92 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 		require.Equal(c, "retry_wait", status.State, "%+v", status)
 		require.Equal(c, "transient", status.FailureCode)
 	}, 20*time.Second, 20*time.Millisecond)
+}
+
+func TestMistralPasswordFileProcessing(t *testing.T) {
+	cfg, _ := mistralOCRProcessingConfig(t)
+	path := filepath.Join(t.TempDir(), "passwords")
+	cfg.Media.PDFPasswordsFile = path
+	file, err := safefileio.CreatePrivateFile(path)
+	require.NoError(t, err)
+	_, err = file.WriteString("wrong\nopen\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
+	source, err := mediatest.EncryptedPDF("open", "owner", 256)
+	require.NoError(t, err)
+	transport := &passwordOCRTransport{}
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	bound, ok := profiles["documents"].RenditionProvider.(*configuredRenditionProvider)
+	require.True(t, ok)
+	adapter, err := resolveRenditionAdapter(cfg.RenditionProfiles["documents"])
+	require.NoError(t, err)
+	bound.RenditionProvider, err = adapter.newProvider(environmentCredentialSecrets{variables: map[string]string{"docling": "DOCBANK_TEST_MISTRAL_OCR_KEY"}}, &http.Client{Transport: transport})
+	require.NoError(t, err)
+	root := t.TempDir()
+	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, catalog.Close()) }()
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, blobs.Close()) }()
+	written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "statement.pdf", written.Hash, written.Size, "application/pdf", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+	require.NoError(t, err)
+	service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: t.TempDir(), Lifecycle: t.Context()})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, service.Shutdown(context.Background())) }()
+	cfg.Server.APIKey = "synthetic-key"
+	server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Processing: service})
+	defer server.Close()
+	endpoint := httptest.NewServer(server.Handler())
+	defer endpoint.Close()
+	daemon := daemonconn.New(endpoint.URL, cfg.Server.APIKey)
+	defer func() { require.NoError(t, daemon.Close()) }()
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	require.Empty(t, plan.RenditionIneligibleReason)
+	completed, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+	require.NoError(t, err)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := daemon.ProcessingStatus(t.Context(), completed.ID)
+		require.NoError(c, err)
+		require.Equal(c, "completed", status.State)
+	}, 10*time.Second, 10*time.Millisecond)
+	transport.mu.Lock()
+	requests := transport.requests
+	transport.mu.Unlock()
+	require.Equal(t, 1, requests)
+}
+
+type passwordOCRTransport struct {
+	mu       sync.Mutex
+	requests int
+	uploaded []byte
+}
+
+func (transport *passwordOCRTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	var wire struct {
+		Document struct {
+			URL string `json:"document_url"`
+		} `json:"document"`
+	}
+	if err := json.UnmarshalRead(request.Body, &wire); err != nil {
+		return nil, err
+	}
+	uploaded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+	if err != nil {
+		return nil, fmt.Errorf("decode OCR upload: %w", err)
+	}
+	transport.mu.Lock()
+	transport.requests++
+	transport.uploaded = uploaded
+	transport.mu.Unlock()
+	response := fmt.Sprintf(`{"model":%q,"pages":[{"index":0,"markdown":"# Password needle","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1}}`, mistral.DefaultModel)
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
 }

@@ -933,11 +933,11 @@ func (worker *RenditionWorker) classifyAuthorityError(
 }
 
 func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim store.RenditionJobClaim, err error) error {
-	// An inspection refusal depends only on the exact source and the configured
-	// limits, so an automatic retry repeats it. A lowered
-	// [media].max_source_bytes reaches already queued work this way. Stale
-	// authority stops retries yet lets a new plan re-admit the same job once
-	// the limits allow the source again.
+	// Stale authority and a missing PDF password stop retries, yet a new plan
+	// re-admits the same job once the limits or password file allow the source again.
+	if errors.Is(err, ErrPDFPasswordRequired) {
+		return worker.markFailed(ctx, claim, store.RenditionFailurePDFPasswordRequired, worker.clock().UTC())
+	}
 	if errors.Is(err, ErrRenditionRuntimeStale) || errors.Is(err, ErrSourceIneligible) {
 		return worker.markFailed(ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
 	}

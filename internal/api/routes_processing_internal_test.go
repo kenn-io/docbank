@@ -46,4 +46,13 @@ func TestProcessingTerminalEventSeparatesStatusReadFailure(t *testing.T) {
 	require.NotNil(t, event.Error)
 	assert.Equal(t, "processing_status_unavailable", event.Error.Code)
 	assert.True(t, event.Terminal)
+
+	// A terminal rendition error preserves the password refusal reported by the worker.
+	event = processingTerminalEvent(job, processing.ErrRenditionFailed,
+		processing.Status{State: "failed", FailureCode: "pdf_password_required"}, nil)
+	require.NotNil(t, event.Status)
+	assert.Equal(t, "failed", event.Status.State)
+	assert.Equal(t, "pdf_password_required", event.Status.FailureCode)
+	assert.Equal(t, "status", event.Type)
+	assert.True(t, event.Terminal)
 }

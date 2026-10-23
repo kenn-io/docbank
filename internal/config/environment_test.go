@@ -181,3 +181,46 @@ func writePrivateSecret(t *testing.T, path, contents string) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 }
+
+func TestReadPDFPasswords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "passwords")
+	file, err := safefileio.CreatePrivateFile(path)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    []string
+		problem string
+	}{
+		{"lines and whitespace", "open\n\ncorrect horse\r\n spaced \n", []string{"open", "correct horse", " spaced "}, ""},
+		{"empty file", "", []string{}, ""},
+		{"maximum password count", strings.Repeat("x\n", 128), strings.Split(strings.TrimSuffix(strings.Repeat("x\n", 128), "\n"), "\n"), ""},
+		{"too many passwords", strings.Repeat("x\n", 129), nil, "128 passwords"},
+		{"maximum password length", strings.Repeat("x", 16<<10), []string{strings.Repeat("x", 16<<10)}, ""},
+		{"password too long", strings.Repeat("x", (16<<10)+1), nil, "16 KiB"},
+		{"byte order mark", "\ufeffopen\n", nil, "BOM"},
+		{"invalid UTF-8", "open\xff\n", nil, "UTF-8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0600))
+			got, err := ReadPDFPasswords(path)
+			if tc.problem != "" {
+				require.ErrorContains(t, err, tc.problem)
+				require.NotContains(t, err.Error(), tc.content)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.want, got)
+			}
+		})
+	}
+}
+
+func TestPDFPasswordsPathResolvesAgainstConfigRoot(t *testing.T) {
+	clearServerEnvironment(t)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[media]\npdf_passwords_file='passwords'\n"), 0600))
+	cfg, err := Load(root)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(root, "passwords"), cfg.Media.PDFPasswordsFile)
+}

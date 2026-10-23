@@ -24,11 +24,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
+	"go.kenn.io/docbank/document/media/mediatest"
 )
 
 //go:embed testdata/docling-pages.json
@@ -1356,4 +1359,66 @@ func writeRecordedJSON(t *testing.T, response http.ResponseWriter, value []byte)
 	response.Header().Set("Content-Type", "application/json")
 	_, err := response.Write(value)
 	require.NoError(t, err)
+}
+
+func TestDoclingUnlocksPDF(t *testing.T) {
+	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
+
+	sealed := mediatest.AuthorizePDF(t, source, fixture.metadata, &fixture.authorization)
+	var sent []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/convert/file/async":
+			reader, err := r.MultipartReader()
+			if !assert.NoError(t, err) {
+				return
+			}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if !assert.NoError(t, err) {
+					return
+				}
+				if part.FileName() != "" {
+					sent, err = io.ReadAll(part)
+					if !assert.NoError(t, err) {
+						return
+					}
+				}
+			}
+			pdf, err := api.ReadAndValidate(bytes.NewReader(sent), &model.Configuration{
+				Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
+				Limits: model.DefaultResourceLimits(),
+			})
+			if !assert.NoError(t, err) {
+				http.Error(w, "upload must open without a password", http.StatusBadRequest)
+				return
+			}
+			if !assert.Nil(t, pdf.Encrypt) {
+				http.Error(w, "upload must be decrypted", http.StatusBadRequest)
+				return
+			}
+			writeJSON(t, w, doclingTask("task-1", "success"))
+		case "/v1/result/task-1":
+			writeRecordedJSON(t, w, recordedPagesResponse)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := newClient(t, server.URL, fixture.descriptor, testSecrets{"docling-api": "synthetic-secret"}, server.Client())
+	result, err := document.RenderRendition(t.Context(), client, sealed, fixture.authorization)
+
+	require.NoError(t, err)
+	require.NotEqual(t, source, sent)
+	digest := sha256.Sum256(sent)
+	require.Equal(t, fixture.metadata.SHA256, result.Receipt.SourceSHA256)
+	require.Equal(t, hex.EncodeToString(digest[:]), result.Receipt.UploadSHA256)
+	require.Equal(t, int64(len(sent)), result.Receipt.Usage.InputBytes)
 }

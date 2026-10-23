@@ -79,6 +79,7 @@ type rendering struct {
 	metadata        document.AuthorizedUploadMetadata
 	authorization   document.RenditionAuthorization
 	source          []byte
+	uploadSHA256    string
 	includeMarkdown bool
 	started         time.Time
 }
@@ -148,6 +149,7 @@ func (client *Client) Render(
 		return document.RenditionResult{}, err
 	}
 	defer run.operation.Cancel()
+	defer clear(run.source)
 	fields := [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}
 	if run.includeMarkdown {
 		fields = [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
@@ -179,8 +181,18 @@ func (client *Client) startRender(
 		operation.Cancel()
 		return nil, err
 	}
+	original := source
+	source, uploadSHA256, err := providerutil.DecryptUpload(provider, upload, source, client.maxDocumentBytes)
+	if uploadSHA256 != "" || err != nil {
+		clear(original)
+	}
+	if err != nil {
+		operation.Cancel()
+		return nil, err
+	}
 	return &rendering{
-		operation: operation, metadata: metadata, authorization: authorization, source: source,
+		uploadSHA256: uploadSHA256,
+		operation:    operation, metadata: metadata, authorization: authorization, source: source,
 		includeMarkdown: client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0,
 		started:         time.Now().UTC(),
 	}, nil
@@ -369,7 +381,8 @@ func (client *Client) buildResult(
 	}
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
 		Descriptor: client.descriptor, Authorization: run.authorization, SourceSHA256: run.metadata.SHA256,
-		OperationID: "docling-" + task.id, StartedAt: run.started, CompletedAt: time.Now().UTC(),
+		UploadSHA256: run.uploadSHA256,
+		OperationID:  "docling-" + task.id, StartedAt: run.started, CompletedAt: time.Now().UTC(),
 		Warnings: partialSuccessWarnings(partialSuccess),
 		Usage:    run.usage.Rendition(int64(len(run.source)), int64(len(evidence.Units))),
 	})

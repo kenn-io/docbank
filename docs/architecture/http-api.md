@@ -252,7 +252,12 @@ When the profile has a rendition stage, the daemon inspects the source locally
 before it answers. If inspection refuses the source,
 `rendition_ineligible_reason` names the inspector's reason, such as
 `unbounded_media_family` or `semantic_units_exceeded`, and starting the plan
-fails with `rendition_source_ineligible`. Each flow identifies the provider,
+fails with `rendition_source_ineligible`, except for locked PDFs. When no
+configured password opens a PDF, or no password file is configured, starting
+creates a job that ends `failed` with `failure_code=pdf_password_required`.
+If the configured password file is refused, planning or starting returns
+409 `rendition_operator_required` with the refusal.
+Each flow identifies the provider,
 capability, trust boundary, input classes, any filename disclosure, and a
 `runtime_disclosure` object. Review it before granting consent or starting
 work. The runtime disclosure contains:
@@ -863,11 +868,11 @@ envelope. Common processing codes are:
 | 428 | `processing_consent_required` | No matching grant; review and grant consent |
 | 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
-| 409 | `rendition_operator_required` | Processing needs operator intervention |
+| 409 | `rendition_operator_required` | Processing needs operator intervention; planning or starting a locked PDF includes the refusal when the configured password file is refused |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
 | 422 | `rendition_failed` | Required rendition work failed |
-| 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why |
+| 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why. A locked PDF that no configured password opens instead creates a job that ends `failed` with `failure_code=pdf_password_required` |
 | 404 | `not_found` | Requested node, version, job, or active rendition is absent |
 | 503 | `processing_unavailable` | The processing service is not configured |
 | 500 | `processing_failed` | An otherwise unclassified processing failure |

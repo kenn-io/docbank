@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/renderpdf"
 )
 
@@ -1058,4 +1059,38 @@ func testMultipagePDF(pages int) []byte {
 	_, _ = fmt.Fprintf(&output,
 		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
 	return output.Bytes()
+}
+
+func TestMistralUnlocksPDF(t *testing.T) {
+	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	policy := testPolicy(t, 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	descriptor := renditionDescriptor(t, policy, manifest, "pdf")
+	fixture := renditionFixture(t, descriptor, source)
+
+	sealed := mediatest.AuthorizePDF(t, source, fixture.metadata, &fixture.authorization)
+	var sent []byte
+
+	client, err := NewRenditionProvider(Profile{Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor, SecretBinding: "mistral-ocr"}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var wire struct {
+			Document struct {
+				URL string `json:"document_url"`
+			} `json:"document"`
+		}
+		require.NoError(t, json.UnmarshalRead(r.Body, &wire))
+		sent, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+		require.NoError(t, err)
+		response := fmt.Sprintf(`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"# Synthetic","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(sent))
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: r}, nil
+	})})
+	require.NoError(t, err)
+	result, err := document.RenderRendition(t.Context(), client, sealed, fixture.authorization)
+
+	require.NoError(t, err)
+	require.NotEqual(t, source, sent)
+	digest := sha256.Sum256(sent)
+	require.Equal(t, fixture.metadata.SHA256, result.Receipt.SourceSHA256)
+	require.Equal(t, hex.EncodeToString(digest[:]), result.Receipt.UploadSHA256)
+	require.Equal(t, int64(len(sent)), result.Receipt.Usage.InputBytes)
 }

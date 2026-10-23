@@ -422,6 +422,10 @@ already admissible sources unchanged. A queued source the lowered ceiling refuse
 profiles allow 4 GiB original sources;
 their 16 MiB transcript, caption and response limits remain separate.
 
+During processing, Docling and Mistral document runtimes read the configured PDF password file only after inspection identifies an encrypted PDF. Inspection decrypts and validates an in-memory copy, then carries only the successful password in the process-local upload proof. Passwords stay outside JSON, policy fingerprints, and record checksums. The provider sends the decrypted copy and records its upload digest separately from the original source digest.
+
+A locked PDF without a working password enters the job queue and fails there with `pdf_password_required`. A build with the same inspection checksum can reopen the failed queued job. Adding a working password changes the capability checksum, so the next build creates a new job and preserves the failed job. Other adapters retain the `encrypted_container` admission refusal.
+
 Audio retains its 24-hour duration and codec qualification bounds.
 WAV and MP3 inspection hash every byte while retaining parser headers and a
 fixed copy buffer. WAV chunk skipping uses `int64` counts, including on 32-bit

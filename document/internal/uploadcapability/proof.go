@@ -18,12 +18,26 @@ type Facts struct {
 // no authority. Facts contain no filename, even when filename disclosure is allowed.
 type Proof struct {
 	facts Facts
-	local bool
+	// Keep the selected password as a value so proofs remain comparable.
+	pdfPassword    string
+	hasPDFPassword bool
+	local          bool
 }
 
 // New is restricted to document's internal package boundary. The caller must
 // validate the locally inspected record before issuing a proof.
-func New(facts Facts) Proof { return Proof{facts: facts, local: true} }
+func New(facts Facts, pdfPassword *string) Proof {
+	proof := Proof{facts: facts, local: true}
+	if pdfPassword != nil {
+		proof.pdfPassword, proof.hasPDFPassword = *pdfPassword, true
+	}
+	return proof
+}
+
+// PDFPassword returns the password selected by local inspection.
+func (proof Proof) PDFPassword() (string, bool) {
+	return proof.pdfPassword, proof.hasPDFPassword
+}
 
 // Facts returns a copy and whether this proof was issued locally.
 func (proof Proof) Facts() (Facts, bool) { return proof.facts, proof.local }

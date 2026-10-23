@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxSecretBytes = 4096
@@ -104,4 +105,32 @@ func validSecret(value string) bool {
 		}
 	}
 	return true
+}
+
+// ReadPDFPasswords reads an owner-only password file, preserving spaces.
+func ReadPDFPasswords(path string) ([]string, error) {
+	file, err := openSecret(path)
+	if err != nil {
+		return nil, fmt.Errorf("open PDF passwords file: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, (16<<10)+1))
+	closeErr := file.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("read PDF passwords file: %w", err)
+	}
+	defer clear(data)
+	if len(data) > 16<<10 || !utf8.Valid(data) || strings.HasPrefix(string(data), "\ufeff") {
+		return nil, errors.New("PDF passwords file must be valid UTF-8 without a BOM and at most 16 KiB")
+	}
+	passwords := []string{}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line != "" {
+			passwords = append(passwords, line)
+			if len(passwords) > 128 {
+				return nil, errors.New("PDF passwords file lists more than 128 passwords")
+			}
+		}
+	}
+	return passwords, nil
 }

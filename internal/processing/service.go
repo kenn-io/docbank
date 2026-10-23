@@ -60,6 +60,7 @@ var (
 	ErrInvalidPurgeRequest       = errors.New("derivative purge request is invalid")
 	ErrInvalidConsentExpiry      = errors.New("processing consent expiry is invalid")
 	ErrRerankingUnavailable      = errors.New("reranking is not configured")
+	ErrPDFPasswordRequired       = errors.New("PDF password required")
 	ErrSourceIneligible          = errors.New("source is not eligible for the rendition profile")
 )
 
@@ -1910,6 +1911,9 @@ func (service *Service) prepareExecutableRendition(ctx context.Context, node sto
 		Waiter:  store.RenditionJobWaiter{ContentVersionID: version.ID},
 		Profile: profile.record, ExecutionIdentity: prepared.identity}
 	preflightExecution, err := service.renditions.Prepare(ctx, preflightWork, service.clock())
+	if errors.Is(err, ErrPDFPasswordRequired) {
+		return prepared, nil
+	}
 	if err != nil {
 		return preparedRendition{}, fmt.Errorf("preparing rendition execution: %w", err)
 	}
@@ -2038,7 +2042,10 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 	if err != nil {
 		return providerExecution{}, err
 	}
-	if !capability.Eligible {
+	if capability.Reason == media.CapabilityReasonPDFPasswordRequired && withUpload {
+		return providerExecution{}, ErrPDFPasswordRequired
+	}
+	if !capability.Eligible && capability.Reason != media.CapabilityReasonPDFPasswordRequired {
 		return providerExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 	}
 	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
@@ -2134,6 +2141,31 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	closeErr := reader.Close()
 	if inspectErr != nil || closeErr != nil {
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
+	}
+	if capability.MediaFamily == "pdf" && capability.Reason == media.CapabilityReasonEncryptedContainer {
+		provider, ok := profile.provider.(interface {
+			PDFPasswords() ([]string, bool, error)
+		})
+		if !ok {
+			return capability, nil
+		}
+		passwords, supported, passwordErr := provider.PDFPasswords()
+		if !supported {
+			return capability, nil
+		}
+		if passwordErr != nil {
+			return media.CapabilityRecord{}, fmt.Errorf("%w: read PDF passwords: %w", ErrRenditionOperatorRequired, passwordErr)
+		}
+		reader, _, err := blobs.OpenStreamContext(ctx, version.BlobHash)
+		if err != nil {
+			return media.CapabilityRecord{}, err
+		}
+		policy.UnlockPDF, policy.PDFPasswords = true, passwords
+		capability, inspectErr = media.InspectCapability(reader, policy)
+		closeErr = reader.Close()
+		if inspectErr != nil || closeErr != nil {
+			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
+		}
 	}
 	return capability, nil
 }

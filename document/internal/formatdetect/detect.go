@@ -19,12 +19,16 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/filter"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"golang.org/x/text/secure/precis"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -625,6 +629,9 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, erro
 	configuration := pdfConfiguration(len(data), limits)
 	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
 	if err != nil {
+		if errors.Is(err, pdfcpu.ErrWrongPassword) {
+			return nil, ErrPDFEncrypted
+		}
 		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
 			return nil, ErrPDFExpandedBytes
 		}
@@ -1891,4 +1898,85 @@ func readPrefix(reader io.ReaderAt, size, limit int64) ([]byte, error) {
 		return nil, errors.New("document bytes changed during signature read")
 	}
 	return buffer, nil
+}
+
+// UnlockPDF decrypts a bounded copy and returns the password that opened it.
+func UnlockPDF(data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
+	for _, password := range pdfPasswordCandidates(passwords) {
+		output, err := DecryptPDF(data, password, maxBytes)
+		if err == nil {
+			return output, password, nil
+		}
+		if errors.Is(err, pdfcpu.ErrWrongPassword) {
+			continue
+		}
+		// pdfcpu v0.15.0 rejects some AES-256 password characters during preparation.
+		_, preparationErr := precis.NewIdentifier(precis.BidiRule, precis.Norm(norm.NFKC)).String(password)
+		if preparationErr != nil && errors.Is(err, preparationErr) {
+			continue
+		}
+		return nil, "", fmt.Errorf("decrypt PDF: %w", err)
+	}
+	return nil, "", ErrPDFEncrypted
+}
+
+// pdfPasswordCandidates adds the PDFDocEncoding bytes that legacy RC4 and AES-128 handlers compare.
+func pdfPasswordCandidates(passwords []string) []string {
+	candidates := []string{""}
+	for _, password := range passwords {
+		candidates = append(candidates, password)
+		encoded := make([]byte, 0, len(password))
+		for _, character := range password {
+			if value, ok := pdfDocBytes()[character]; ok {
+				encoded = append(encoded, value)
+			}
+		}
+		if len(encoded) == utf8.RuneCountInString(password) && string(encoded) != password {
+			candidates = append(candidates, string(encoded))
+		}
+	}
+	return candidates
+}
+
+// pdfDocBytes inverts pdfcpu's PDFDocEncoding decoder, which unescapes a lone backslash away.
+var pdfDocBytes = sync.OnceValue(func() map[rune]byte {
+	encoding := map[rune]byte{'\\': '\\'}
+	for value := range 256 {
+		decoded, err := types.HexLiteralToString(types.NewHexLiteral([]byte{byte(value)}))
+		if character, size := utf8.DecodeRuneInString(decoded); err == nil && size == len(decoded) && character != utf8.RuneError {
+			encoding[character] = byte(value)
+		}
+	}
+	return encoding
+})
+
+// DecryptPDF decrypts once with the password selected by local inspection.
+func DecryptPDF(data []byte, password string, maxBytes int64) ([]byte, error) {
+	configuration := pdfConfiguration(len(data), PDFLimits{MaxExpandedBytes: maxBytes, MaxEntryBytes: maxBytes})
+	configuration.UserPW, configuration.OwnerPW = password, password
+	configuration.Eol = types.EolLF
+	output := pdfOutput{limit: maxBytes}
+	err := api.Decrypt(bytes.NewReader(data), &output, configuration)
+	if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+		err = ErrPDFExpandedBytes
+	}
+	if err != nil {
+		clear(output.buffer.Bytes())
+		return nil, err
+	}
+	return output.buffer.Bytes(), nil
+}
+
+// Reject overflow before retaining decrypted output.
+type pdfOutput struct {
+	buffer bytes.Buffer
+	limit  int64
+}
+
+func (output *pdfOutput) Write(data []byte) (int, error) {
+	if int64(len(data)) > output.limit-int64(output.buffer.Len()) {
+		return 0, ErrPDFExpandedBytes
+	}
+	_, _ = output.buffer.Write(data) // bytes.Buffer.Write always returns a nil error.
+	return len(data), nil
 }

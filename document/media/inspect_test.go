@@ -2664,3 +2664,46 @@ func paddedM4A() []byte {
 	binary.BigEndian.PutUint32(padded[mdat:mdat+4], (16<<20)+12)
 	return padded
 }
+
+func TestInspectPasswordProtectedPDF(t *testing.T) {
+	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	require.NoError(t, err)
+	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name      string
+		data      []byte
+		unlock    bool
+		passwords []string
+		reason    media.CapabilityReason
+	}{
+		{"unsupported", source, false, nil, media.CapabilityReasonEncryptedContainer},
+		{"no file", source, true, nil, media.CapabilityReasonPDFPasswordRequired},
+		{"wrong password", source, true, []string{"wrong"}, media.CapabilityReasonPDFPasswordRequired},
+		{"owner-only no file", ownerOnly, true, nil, media.CapabilityReasonPDFPasswordRequired},
+		{"owner-only empty file", ownerOnly, true, []string{}, media.CapabilityReasonEligible},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := inspectionPolicy(tc.data, "statement.pdf", "application/pdf")
+			policy.UnlockPDF, policy.PDFPasswords = tc.unlock, tc.passwords
+			record, err := media.InspectCapability(bytes.NewReader(tc.data), policy)
+			require.NoError(t, err)
+			require.Equal(t, tc.reason, record.Reason)
+			require.Nil(t, record.Policy.PDFPasswords)
+		})
+	}
+	policy := inspectionPolicy(source, "statement.pdf", "application/pdf")
+	policy.UnlockPDF, policy.PDFPasswords = true, []string{"wrong", "open"}
+	record, err := media.InspectCapability(bytes.NewReader(source), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, "%+v", record)
+	require.Nil(t, record.Policy.PDFPasswords)
+	selected, ok := record.UploadCapability().PDFPassword()
+	require.True(t, ok)
+	require.Equal(t, "open", selected)
+	policy.PDFPasswords = []string{"owner"}
+	other, err := media.InspectCapability(bytes.NewReader(source), policy)
+	require.NoError(t, err)
+	require.True(t, other.Eligible)
+	require.Equal(t, record.Checksum, other.Checksum)
+}

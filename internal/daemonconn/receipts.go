@@ -379,6 +379,7 @@ func (c *Connection) Close() error {
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{
 	"rendition_failed":                store.ErrRenditionJobTerminal,
+	"pdf_password_required":           store.ErrRenditionJobTerminal,
 	"rendition_operator_required":     store.ErrRenditionJobOperatorRequired,
 	"search_query_required":           store.ErrSearchQueryRequired,
 	"not_found":                       store.ErrNotFound,

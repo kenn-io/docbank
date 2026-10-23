@@ -42,6 +42,19 @@ type configuredRenditionProvider struct {
 	document.RenditionProvider
 
 	allowedRenditionRequests map[string]struct{}
+	pdfPasswordsFile         string
+	pdfPasswords             bool
+}
+
+func (provider *configuredRenditionProvider) PDFPasswords() ([]string, bool, error) {
+	if !provider.pdfPasswords {
+		return nil, false, nil
+	}
+	if provider.pdfPasswordsFile == "" {
+		return nil, true, nil
+	}
+	passwords, err := config.ReadPDFPasswords(provider.pdfPasswordsFile)
+	return passwords, true, err
 }
 
 func (provider *configuredRenditionProvider) Render(
@@ -167,12 +180,13 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		return nil, disclosure, err
 	}
 	bound := &configuredRenditionProvider{RenditionProvider: provider,
-		allowedRenditionRequests: requestFingerprints}
+		allowedRenditionRequests: requestFingerprints, pdfPasswordsFile: cfg.Media.PDFPasswordsFile, pdfPasswords: adapter.pdfPasswords}
 	registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
 	return bound, disclosure, nil
 }
 
 type resolvedRenditionAdapter struct {
+	pdfPasswords          bool
 	descriptor            document.RenditionDescriptor
 	secretBinding         string
 	model                 string
@@ -190,6 +204,7 @@ func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolved
 		}
 		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
 			model:                 mistral.DefaultModel,
+			pdfPasswords:          true,
 			disclosureFingerprint: mistral.DisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
 			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
 				return mistral.NewRenditionProvider(profile, secrets, client)
@@ -210,6 +225,7 @@ func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolved
 			return resolvedRenditionAdapter{}, err
 		}
 		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
+			pdfPasswords:          true,
 			disclosureFingerprint: docling.DocumentDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
 			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
 				return docling.New(profile, secrets, client)

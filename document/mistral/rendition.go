@@ -152,11 +152,20 @@ func (client *RenditionClient) Render(
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
-	candidate, localUnits, err := client.verifySource(source, metadata)
+	source, uploadSHA256, err := providerutil.DecryptUpload(renditionProvider, upload, source, client.policy.values.MaxDocumentBytes)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	providerResult, err := client.process(operation, source, metadata, candidate, localUnits,
+	defer clear(source)
+	sentMetadata := metadata
+	if uploadSHA256 != "" {
+		sentMetadata.SHA256, sentMetadata.ByteLength = uploadSHA256, int64(len(source))
+	}
+	candidate, localUnits, err := client.verifySource(source, sentMetadata)
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	providerResult, err := client.process(operation, source, sentMetadata, candidate, localUnits,
 		min(client.policy.values.MaxResponseBytes, int64(authorization.MaxTotalResultBytes)))
 	if err != nil {
 		return document.RenditionResult{}, err
@@ -183,8 +192,7 @@ func (client *RenditionClient) Render(
 	if len(markdown) > authorization.MaxProviderMarkdownBytes {
 		return document.RenditionResult{}, renditionProvider.Malformed("Mistral OCR Markdown exceeds authorization", nil)
 	}
-	inputBytes := metadata.ByteLength
-	uploadSHA256 := ""
+	inputBytes := int64(len(source))
 	if providerResult.ConversionReceipt != nil {
 		inputBytes = providerResult.ConversionReceipt.PDFBytes
 		uploadSHA256 = providerResult.ConversionReceipt.PDFSHA256

@@ -272,7 +272,8 @@ type CredentialBindingConfig struct {
 
 // MediaConfig limits original media sources independently of transcript bytes.
 type MediaConfig struct {
-	MaxSourceBytes int64 `toml:"max_source_bytes"`
+	MaxSourceBytes   int64  `toml:"max_source_bytes"`
+	PDFPasswordsFile string `toml:"pdf_passwords_file"`
 }
 
 type MediaOriginConfig struct {
@@ -469,20 +470,20 @@ func loadTOML(root string) (Config, error) {
 	if err := resolveWatches(&c); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
-	var manifests []*string
+	relativePaths := []*string{&c.Media.PDFPasswordsFile}
 	for _, profile := range c.EmbeddingProfiles {
 		if profile.Runtime != nil {
-			manifests = append(manifests, &profile.Runtime.CapabilityManifest)
+			relativePaths = append(relativePaths, &profile.Runtime.CapabilityManifest)
 		}
 	}
 	for _, profile := range c.RenditionProfiles {
 		if profile.Runtime != nil {
-			manifests = append(manifests, &profile.Runtime.CapabilityManifest)
+			relativePaths = append(relativePaths, &profile.Runtime.CapabilityManifest)
 		}
 	}
-	for _, manifest := range manifests {
-		if *manifest != "" && !filepath.IsAbs(*manifest) {
-			*manifest = filepath.Clean(filepath.Join(root, *manifest))
+	for _, configuredPath := range relativePaths {
+		if *configuredPath != "" && !filepath.IsAbs(*configuredPath) {
+			*configuredPath = filepath.Clean(filepath.Join(root, *configuredPath))
 		}
 	}
 	return c, nil
