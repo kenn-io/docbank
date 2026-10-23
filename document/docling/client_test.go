@@ -1323,6 +1323,17 @@ func doclingResultResponse(filename, markdown string, texts []any, options ...re
 	return doclingResultResponseWithInnerFilename(filename, filename, markdown, texts, options...)
 }
 
+func doclingDocumentContent(filename string, texts []any, pages map[string]any) map[string]any {
+	content := map[string]any{
+		"schema_name": "DoclingDocument", "version": "1.7.0",
+		"origin": map[string]any{"filename": filename}, "texts": texts,
+	}
+	if pages != nil {
+		content["pages"] = pages
+	}
+	return content
+}
+
 func doclingResultResponseWithInnerFilename(
 	filename, innerFilename, markdown string, texts []any, options ...resultOption,
 ) map[string]any {
@@ -1330,10 +1341,7 @@ func doclingResultResponseWithInnerFilename(
 		"status": "success", "processing_time": 0.01, "errors": []string{},
 		"document": map[string]any{
 			"filename": filename, "md_content": markdown,
-			"json_content": map[string]any{
-				"schema_name": "DoclingDocument", "version": "1.7.0",
-				"origin": map[string]any{"filename": innerFilename}, "pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}}, "texts": texts,
-			},
+			"json_content": doclingDocumentContent(innerFilename, texts, map[string]any{"1": map[string]any{}, "2": map[string]any{}}),
 			"html_content": "", "text_content": "",
 		},
 	}

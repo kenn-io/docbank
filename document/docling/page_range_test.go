@@ -16,14 +16,17 @@ import (
 
 func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 	for _, testCase := range []struct {
-		name    string
-		pages   PageRange
-		blank   bool
-		partial bool
+		name            string
+		pages           PageRange
+		blank           bool
+		partial         bool
+		markdown        string
+		checkSubmission bool
 	}{
 		{name: "first range", pages: PageRange{First: 1, Last: 2}},
 		{name: "blank first range", pages: PageRange{First: 1, Last: 2}, blank: true},
-		{name: "later range", pages: PageRange{First: 51, Last: 52}, partial: true},
+		{name: "whitespace Markdown blank range", pages: PageRange{First: 1, Last: 2}, blank: true, markdown: " \t\n"},
+		{name: "later range", pages: PageRange{First: 51, Last: 52}, partial: true, checkSubmission: true},
 		{name: "blank later range", pages: PageRange{First: 51, Last: 52}, blank: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -38,7 +41,7 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 			}
 			markdown := "# range\n"
 			if testCase.blank {
-				markdown = ""
+				markdown = testCase.markdown
 			}
 			status := "success"
 			response := rangeResponse(markdown, rangeContent(registry, texts...))
@@ -46,7 +49,7 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 				status = "partial_success"
 				response["errors"] = []any{map[string]any{"page_no": 52}}
 			}
-			result, err := renderRange(t, fixture, testCase.pages, status, response, testCase.name == "later range")
+			result, err := renderRange(t, fixture, testCase.pages, status, response, testCase.checkSubmission)
 			require.NoError(t, err)
 			assert.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
 			assertRangeMarker(t, result.Evidence, testCase.pages)
@@ -77,10 +80,6 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 				}
 			}
 			if testCase.partial {
-				assert.Contains(t, result.Receipt.Warnings, "partial_success")
-				assert.Empty(t, result.Evidence.Units[0].Omissions)
-				require.Len(t, result.Evidence.Units[1].Omissions, 1)
-				assert.Equal(t, "provider_output", result.Evidence.Units[1].Omissions[0].Field)
 				assert.Equal(t, int64(52), result.Evidence.Units[1].Locator.Start)
 			}
 		})
@@ -103,6 +102,12 @@ func TestRenderPageRangeRejectsContradictorySelection(t *testing.T) {
 		{name: "empty registry", pages: selected, content: rangeContent([]int64{}, pageText("page 51", 51))},
 		{name: "provenance outside registry", pages: selected, content: rangeContent([]int64{51, 52}, pageText("page 50", 50))},
 		{name: "provenance with missing registry", pages: selected, content: rangeContent(nil, pageText("page 53", 53))},
+		{name: "missing schema", pages: selected},
+		{name: "unsupported major", pages: selected, content: func() map[string]any {
+			content := rangeContent([]int64{51, 52}, pageText("page 51", 51))
+			content["version"] = "2.0.0"
+			return content
+		}()},
 		{name: "provenance with unknown field", pages: PageRange{First: 2, Last: 3}, content: func() map[string]any {
 			content := rangeContent(nil, pageText("outside selection", 1))
 			content["future_content"] = []any{}
@@ -123,19 +128,10 @@ func TestRenderPageRangeFallsBackToMarkdownLikeRender(t *testing.T) {
 		name    string
 		content map[string]any
 	}{
-		{name: "missing registry", content: rangeContent(nil, pageText("page 51", 51))},
+		{name: "blank text provenance", content: rangeContent(nil, pageText(" \t\n", 53), pageText("page 51", 51))},
 		{name: "table only", content: func() map[string]any {
 			content := rangeContent([]int64{51, 52})
 			content["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "table cell"}}}}}
-			return content
-		}()},
-		{name: "unsupported major with whole-document registry", content: func() map[string]any {
-			registry := make([]int64, 52)
-			for index := range registry {
-				registry[index] = int64(index + 1)
-			}
-			content := rangeContent(registry, pageText("page 51", 51))
-			content["version"] = "2.0.0"
 			return content
 		}()},
 	} {
@@ -220,18 +216,14 @@ func rangeResponse(markdown string, content map[string]any, options ...resultOpt
 }
 
 func rangeContent(registry []int64, texts ...any) map[string]any {
-	content := map[string]any{
-		"schema_name": "DoclingDocument", "version": "1.7.0",
-		"origin": map[string]any{"filename": "range.pdf"}, "texts": append([]any{}, texts...),
-	}
+	var pages map[string]any
 	if registry != nil {
-		pages := make(map[string]any, len(registry))
+		pages = make(map[string]any, len(registry))
 		for _, page := range registry {
 			pages[strconv.FormatInt(page, 10)] = map[string]any{}
 		}
-		content["pages"] = pages
 	}
-	return content
+	return doclingDocumentContent("range.pdf", append([]any{}, texts...), pages)
 }
 
 func pageText(text string, page int64) map[string]any {

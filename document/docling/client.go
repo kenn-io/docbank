@@ -241,10 +241,10 @@ func (client *Client) buildPageRangeResult(
 
 // checkSelection rejects a page registry that is not exactly the selection and
 // any text provenance outside it, so no fallback hides a contradictory result.
-// Only recognized Docling 1.x documents are checked; others fall back like Render.
+// Only recognized Docling 1.x documents can establish the selected page bounds.
 func checkSelection(raw jsontext.Value, pages PageRange) error {
 	if !recognizedDoclingDocument(raw) {
-		return nil
+		return provider.Malformed("Docling page range result requires a supported document schema", nil)
 	}
 	var wire struct {
 		Pages map[string]jsontext.Value `json:"pages"`
@@ -264,7 +264,7 @@ func checkSelection(raw jsontext.Value, pages PageRange) error {
 	}
 	for _, text := range wire.Texts {
 		for _, provenance := range text.Prov {
-			if provenance.PageNo < pages.First || provenance.PageNo > pages.Last {
+			if strings.TrimSpace(text.Text) != "" && (provenance.PageNo < pages.First || provenance.PageNo > pages.Last) {
 				return provider.Malformed("Docling text provenance is outside the selected range", nil)
 			}
 		}
@@ -445,7 +445,7 @@ func (client *Client) buildResult(
 		return document.RenditionResult{}, provider.Malformed(
 			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
-	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily, first, allowBlankRange && len(providerMarkdown) == 0)
+	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily, first, allowBlankRange && len(bytes.TrimSpace(providerMarkdown)) == 0)
 	if !usable {
 		if len(providerMarkdown) == 0 || len(providerMarkdown) > run.authorization.MaxProviderMarkdownBytes {
 			return document.RenditionResult{}, provider.Malformed("Docling result has no usable bounded evidence", nil)

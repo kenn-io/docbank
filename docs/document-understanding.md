@@ -86,18 +86,23 @@ Bounds must be positive and ordered, and the input must be a PDF. Docbank
 doesn't count pages: keep `Last` at or below the page count from inspection, or
 the call fails.
 
+Range results require a supported `DoclingDocument` 1.x schema. Missing or
+unsupported schemas fail as malformed evidence before Markdown fallback.
 When the result has a page registry, its keys must be exactly `First..Last`.
-Every text provenance page must also fall inside the selection, including when
-the registry is missing or null. Any other result fails as malformed evidence
-and isn't retried. Page units keep their original page numbers.
+Every nonblank text's provenance page must also fall inside the selection,
+including when the registry is missing or null. Blank text is ignored.
+Contradictory selections fail as malformed evidence and aren't retried.
+Page units keep their original page numbers.
 
 Every range result carries a field omission named by
 `docling.PageRangeOmissionField` (`page_range`), so callers can't mistake it
 for the whole document. Structured ranges report partial coverage. A range
 after page 1 also names the preceding pages as a unit omission. When structured
-page evidence is unusable, bounded provider Markdown falls back with degraded
-provenance exactly as in `Render`. Callers own range scheduling, retries, and
-aggregation.
+page evidence in a supported schema is unusable, bounded provider Markdown
+falls back with degraded provenance. Blank selections retain page units when
+Markdown is empty or whitespace-only. Whole-document `Render` also permits
+Markdown fallback for missing or unsupported schemas. Callers own range
+scheduling, retries, and aggregation.
 
 ## Extract EPUB locally
 
