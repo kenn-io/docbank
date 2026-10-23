@@ -28,9 +28,12 @@ var schemaV0150SQL string
 //go:embed testdata/schema-v0.15.1.sql
 var schemaV0151SQL string
 
+//go:embed testdata/schema-v0.16.0.sql
+var schemaV0160SQL string
+
 // releasedSchemaFixtures holds the exact schema.sql of every release from
 // v0.15.0 on, keyed by storage schema version.
-var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL}
+var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL, 41: schemaV0160SQL}
 
 // firstFixtureStorageSchemaVersion is the oldest schema in
 // releasedSchemaFixtures. Older releases have their own upgrade tests.
