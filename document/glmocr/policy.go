@@ -33,12 +33,12 @@ const (
 	DefaultVLLMVersion          = "0.19.0"
 	DefaultEngineAdapterSHA256  = "a2d7233c75ba1d1e73d8a60702afb3b26ecfc3ff0c05e508794fcf6ad77277c6"
 	DefaultAdapterSHA256        = "8d9f2beb16235df29395842ce585db477af11884a4681365cfb49fa5b19a258a"
-	DefaultImageRecipeSHA256    = "64e1c5f821484d1ed68e2d4d421710ac70366ea29df496b284f68144c5557cb9"
-	DefaultDependencyLockSHA256 = "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed"
+	DefaultImageRecipeSHA256    = "ca09d1fcfa508d8d292e09039683cb9ed533df4b0fb70b428e0d8ebeea04e944"
+	DefaultDependencyLockSHA256 = "cbd3827baa03f29b929a5c635da2a2bbea43b5170fad5f3e3b9a6aee8146bd6d"
 
 	// DefaultDeploymentFingerprint identifies the complete validated local
 	// inference deployment described by DefaultDeploymentIdentity.
-	DefaultDeploymentFingerprint = "322c711c06d3818bbe9dac37e7042c9367f5de84ff660b0f5ae50f60e6317670"
+	DefaultDeploymentFingerprint = "8b8f214e1837e3d864da3d45fb6547ec5c9c78c53ac43424dce5d0d37aa215eb"
 
 	MaxDocumentBytes = int64(64 << 20)
 	MaxResponseBytes = int64(512 << 20)
@@ -146,6 +146,7 @@ func DefaultDeploymentIdentity() DeploymentIdentity {
 		ImageRecipeSHA256: DefaultImageRecipeSHA256, DependencyLockSHA256: DefaultDependencyLockSHA256,
 		PipelineConfigSHA256: DefaultPipelineSHA256,
 		RuntimeDependencies: []RuntimeDependency{
+			{Name: "pip", Version: "26.2.2"}, {Name: "certifi", Version: "2026.10.19"},
 			{Name: "transformers", Version: "5.15.1"}, {Name: "huggingface-hub", Version: "1.28.0"},
 			{Name: "hf-xet", Version: "1.6.0"}, {Name: "safetensors", Version: "0.8.0"},
 			{Name: "portalocker", Version: "3.2.0"}, {Name: "PyMuPDF", Version: "1.27.2.3"},
