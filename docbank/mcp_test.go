@@ -8,6 +8,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,8 +116,17 @@ func TestVaultReadTools(t *testing.T) {
 	assert.EqualValues(t, 3, info["content_versions"])
 	_, err = call("list_documents", map[string]any{"page_size": -1})
 	require.Error(t, err)
-	_, err = call("get_document", map[string]any{})
-	require.Error(t, err)
+	unsupportedArgs, err := json.Marshal(map[string]any{
+		"node_id": nextItem["node_id"], "content_version_id": nextItem["content_version_id"],
+	})
+	require.NoError(t, err)
+	result, err := vault.CallReadTool(ctx, scope, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{
+		Name: "get_document", Arguments: unsupportedArgs,
+	}})
+	var rpcError *jsonrpc.Error
+	require.ErrorAs(t, err, &rpcError)
+	assert.EqualValues(t, jsonrpc.CodeInvalidParams, rpcError.Code)
+	assert.Nil(t, result)
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = vault.CallReadTool(canceled, scope, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "list_documents", Arguments: []byte(`{}`)}})

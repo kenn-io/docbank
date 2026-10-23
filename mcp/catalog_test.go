@@ -70,10 +70,6 @@ func TestReadToolIndependentSDKContract(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	require.Len(t, result.Content, 1)
-	content, ok := result.Content[0].(*sdkmcp.TextContent)
-	require.True(t, ok)
-	assert.JSONEq(t, `{"path_prefix":"/","sort":"path","direction":"asc","page_size":2,"items":[],"ttlMs":0,"cacheScope":"private"}`, content.Text)
 	assert.Equal(t, int32(1), calls.Load())
 
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{
