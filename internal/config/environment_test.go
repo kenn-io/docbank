@@ -188,25 +188,29 @@ func TestReadPDFPasswords(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	for _, tc := range []struct {
-		content  string
-		want     []string
-		tooLarge bool
+		content string
+		want    []string
+		problem string
 	}{
-		{"open\n\ncorrect horse\r\n spaced \n", []string{"open", "correct horse", " spaced "}, false},
-		{"", []string{}, false}, {strings.Repeat("x\n", 128), strings.Split(strings.TrimSuffix(strings.Repeat("x\n", 128), "\n"), "\n"), false},
-		{strings.Repeat("x\n", 129), nil, true},
-		{strings.Repeat("x", 16<<10), []string{strings.Repeat("x", 16<<10)}, false},
-		{strings.Repeat("x", (16<<10)+1), nil, true},
+		{"open\n\ncorrect horse\r\n spaced \n", []string{"open", "correct horse", " spaced "}, ""},
+		{"", []string{}, ""}, {strings.Repeat("x\n", 128), strings.Split(strings.TrimSuffix(strings.Repeat("x\n", 128), "\n"), "\n"), ""},
+		{strings.Repeat("x\n", 129), nil, "128 passwords"},
+		{strings.Repeat("x", 16<<10), []string{strings.Repeat("x", 16<<10)}, ""},
+		{strings.Repeat("x", (16<<10)+1), nil, "16 KiB"},
+		{"\ufeffopen\n", nil, "BOM"},
+		{"open\xff\n", nil, "UTF-8"},
 	} {
-		require.NoError(t, os.WriteFile(path, []byte(tc.content), 0600))
-		got, err := ReadPDFPasswords(path)
-		if tc.tooLarge {
-			require.Error(t, err)
-			require.NotContains(t, err.Error(), tc.content)
-		} else {
-			require.NoError(t, err)
-			require.Equal(t, tc.want, got)
-		}
+		t.Run(tc.problem, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0600))
+			got, err := ReadPDFPasswords(path)
+			if tc.problem != "" {
+				require.ErrorContains(t, err, tc.problem)
+				require.NotContains(t, err.Error(), tc.content)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.want, got)
+			}
+		})
 	}
 }
 

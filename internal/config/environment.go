@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxSecretBytes = 4096
@@ -118,8 +119,8 @@ func ReadPDFPasswords(path string) ([]string, error) {
 		return nil, fmt.Errorf("read PDF passwords file: %w", err)
 	}
 	defer clear(data)
-	if len(data) > 16<<10 {
-		return nil, errors.New("PDF passwords file exceeds 16 KiB")
+	if len(data) > 16<<10 || !utf8.Valid(data) || strings.HasPrefix(string(data), "\ufeff") {
+		return nil, errors.New("PDF passwords file must be valid UTF-8 without a BOM and at most 16 KiB")
 	}
 	passwords := []string{}
 	for line := range strings.SplitSeq(string(data), "\n") {
