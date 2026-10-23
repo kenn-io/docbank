@@ -1989,15 +1989,13 @@ it("refreshes visible People cards when another tab changes photo access", async
         ],
       });
     }
-    if (url === "/api/v1/photos/assets/query")
-      return Response.json({ detail: "use a person ID" }, { status: 422 });
+    if (url === "/api/v1/photos/assets/query") return Response.json({ items: [], total: 0 });
     return original(input, init);
   });
   render(App);
   await screen.findByRole("cell", { name: "zeta.txt" });
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-  await screen.findByText("use a person ID");
-  await fireEvent.click(screen.getByRole("button", { name: "People" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "People" }));
   await screen.findByText("2 Library photos");
   const initialReads = peopleReads;
   changeID = "after";
@@ -2028,10 +2026,7 @@ it.each(["Albums", "Map", "People"])(
         return new Response(JSON.stringify({ configured: false }));
       if (url === "/api/v1/photos/albums") return new Response("[]");
       if (url.startsWith("/api/v1/people?")) return Response.json({ items: [] });
-      if (url === "/api/v1/photos/assets/query")
-        return view === "Map"
-          ? Response.json({ items: [], total: 0 })
-          : Response.json({ detail: "use a person ID" }, { status: 422 });
+      if (url === "/api/v1/photos/assets/query") return Response.json({ items: [], total: 0 });
       return original(input, init);
     });
     render(App);
@@ -2046,12 +2041,7 @@ it.each(["Albums", "Map", "People"])(
       expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
     );
     await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-    if (view !== "Map") await screen.findByText("use a person ID");
     await fireEvent.click(await screen.findByRole("button", { name: view }));
-    if (view !== "Map") {
-      expect(await screen.findByRole("main", { name: view })).toBeTruthy();
-      expect(screen.queryByRole("alert")).toBeNull();
-    }
     await fireEvent.keyDown(window, { key: "1" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 

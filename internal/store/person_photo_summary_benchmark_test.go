@@ -52,6 +52,15 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts int) {
 		}
 		return nil
 	}))
+	// Email contacts are senders of message versions, not photos.
+	require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for index := range 200 {
+			if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("message-%03d.eml", index), fmt.Sprintf("%064x", heavyPhotos+index+1), 128, "message/rfc822"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
 	ids := make([]string, people)
 	require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		insert, err := tx.PrepareContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,'operator','curated',?,?)`)
@@ -67,11 +76,11 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts int) {
 			}
 		}
 		// Email contacts have hundreds of sender assertions but no depicted
-		// evidence. Reuse synthetic versions to bound fixture setup and disk use.
+		// evidence. Reuse synthetic message versions to bound fixture setup and disk use.
 		_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at)
  SELECT persons.person_id || ':' || cv.version_id,cv.version_id,persons.person_id,'sender','assert','','2001-01-01T00:00:00.000000000Z'
  FROM (SELECT person_id FROM persons ORDER BY display_name_folded LIMIT ? OFFSET ?) persons
- CROSS JOIN (SELECT version_id FROM content_versions LIMIT 200) cv`, contacts, evidencePeople)
+ CROSS JOIN (SELECT version_id FROM content_versions WHERE mime_type='message/rfc822' LIMIT 200) cv`, contacts, evidencePeople)
 		return err
 	}))
 	// Tens of thousands of depicted assertions make the recent-first walk's
@@ -125,7 +134,6 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts int) {
 		tail         bool
 		unranked     bool
 	}{
-		{name: "page-25-default", limit: 25},
 		{name: "page-24-name"},
 		{name: "page-24-recent", recentFirst: true},
 		{name: "page-24-name-summary", photoSummary: true},

@@ -11,109 +11,111 @@ import (
 
 func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
 	t.Parallel()
-	for _, hiddenSurvivor := range []bool{false, true} {
-		t.Run(strconv.FormatBool(hiddenSurvivor), func(t *testing.T) {
-			for _, client := range []string{"browser", "unlocked browser", "api key"} {
-				t.Run(client, func(t *testing.T) {
-					s := newTestStore(t)
-					ctx := t.Context()
-					left, err := s.CreatePerson(ctx, "Ada", "operator")
-					require.NoError(t, err)
-					right, err := s.CreatePerson(ctx, "Grace", "operator")
-					require.NoError(t, err)
-					for _, person := range []Person{left, right} {
-						photo := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
-						_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+	t.Run("assertion", func(t *testing.T) {
+		t.Parallel()
+		for _, hiddenSurvivor := range []bool{false, true} {
+			t.Run(strconv.FormatBool(hiddenSurvivor), func(t *testing.T) {
+				for _, client := range []string{"browser", "unlocked browser", "api key"} {
+					t.Run(client, func(t *testing.T) {
+						s := newTestStore(t)
+						ctx := t.Context()
+						left, err := s.CreatePerson(ctx, "Ada", "operator")
 						require.NoError(t, err)
-					}
-					hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("hidden"), "image/jpeg")
-					owner := right
-					if hiddenSurvivor {
-						owner = left
-					}
-					_, err = s.MarkPersonInPhoto(ctx, hidden.CurrentVersionID, owner.PersonID, "")
-					require.NoError(t, err)
-					asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
-					require.NoError(t, err)
-					require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-					require.NoError(t, err)
-					write := ctx
-					if client != "api key" {
-						write = WithVisiblePeopleOnly(ctx)
-					}
-					if client == "unlocked browser" {
-						token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+						right, err := s.CreatePerson(ctx, "Grace", "operator")
 						require.NoError(t, err)
-						write = WithPhotoHiddenToken(write, token)
-					}
-					_, err = s.MergePersons(write, left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
-					if client == "browser" {
-						require.ErrorIs(t, err, ErrHiddenLocked)
-						require.ErrorContains(t, err, "unlock Hidden and retry the merge")
-						assertions, err := s.DocumentPersonAssertions(ctx, hidden.CurrentVersionID)
+						for _, person := range []Person{left, right} {
+							photo := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
+							_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+							require.NoError(t, err)
+						}
+						hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("hidden"), "image/jpeg")
+						owner := right
+						if hiddenSurvivor {
+							owner = left
+						}
+						_, err = s.MarkPersonInPhoto(ctx, hidden.CurrentVersionID, owner.PersonID, "")
 						require.NoError(t, err)
-						require.Len(t, assertions, 1)
-						require.Equal(t, owner.PersonID, assertions[0].PersonID)
-						person, _, err := s.PersonByID(ctx, right.PersonID)
+						asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
 						require.NoError(t, err)
-						require.Equal(t, right.Revision, person.Revision)
-					} else {
+						require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+						_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 						require.NoError(t, err)
-						assertions, err := s.DocumentPersonAssertions(ctx, hidden.CurrentVersionID)
-						require.NoError(t, err)
-						require.Equal(t, left.PersonID, assertions[0].PersonID)
-					}
-				})
-			}
-		})
-	}
-}
-
-func TestBrowserMergeRequiresHiddenRejectionUnlock(t *testing.T) {
-	t.Parallel()
-	for _, rejectSurvivor := range []bool{false, true} {
-		t.Run(strconv.FormatBool(rejectSurvivor), func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			left, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			right, err := s.CreatePerson(ctx, "Grace", "operator")
-			require.NoError(t, err)
-			for _, person := range []Person{left, right} {
-				photo := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
-				_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+						write := ctx
+						if client != "api key" {
+							write = WithVisiblePeopleOnly(ctx)
+						}
+						if client == "unlocked browser" {
+							token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+							require.NoError(t, err)
+							write = WithPhotoHiddenToken(write, token)
+						}
+						_, err = s.MergePersons(write, left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
+						if client == "browser" {
+							require.ErrorIs(t, err, ErrHiddenLocked)
+							require.ErrorContains(t, err, "unlock Hidden and retry the merge")
+							assertions, err := s.DocumentPersonAssertions(ctx, hidden.CurrentVersionID)
+							require.NoError(t, err)
+							require.Len(t, assertions, 1)
+							require.Equal(t, owner.PersonID, assertions[0].PersonID)
+							person, _, err := s.PersonByID(ctx, right.PersonID)
+							require.NoError(t, err)
+							require.Equal(t, right.Revision, person.Revision)
+						} else {
+							require.NoError(t, err)
+							assertions, err := s.DocumentPersonAssertions(ctx, hidden.CurrentVersionID)
+							require.NoError(t, err)
+							require.Equal(t, left.PersonID, assertions[0].PersonID)
+						}
+					})
+				}
+			})
+		}
+	})
+	t.Run("rejection", func(t *testing.T) {
+		t.Parallel()
+		for _, rejectSurvivor := range []bool{false, true} {
+			t.Run(strconv.FormatBool(rejectSurvivor), func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				left, err := s.CreatePerson(ctx, "Ada", "operator")
 				require.NoError(t, err)
-			}
-			hidden, face := faceForDecisionTest(t, s, "")
-			rejected := right
-			if rejectSurvivor {
-				rejected = left
-			}
-			decideFaceForTest(t, s, hidden, face.FaceID, rejected.PersonID, "reject")
-			before, _, _, err := s.PhotoFacePersonNames(ctx, hidden.CurrentVersionID)
-			require.NoError(t, err)
-			asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
-			require.NoError(t, err)
-			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-			require.NoError(t, err)
-			_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
-			require.ErrorIs(t, err, ErrHiddenLocked)
-			token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
-			require.NoError(t, err)
-			unlocked := WithPhotoHiddenToken(ctx, token)
-			after, _, _, err := s.PhotoFacePersonNames(unlocked, hidden.CurrentVersionID)
-			require.NoError(t, err)
-			require.Equal(t, before, after, "a refused merge preserves the rejection and face revision")
-			_, err = s.MergePersons(WithVisiblePeopleOnly(unlocked), left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
-			require.NoError(t, err)
-			after, _, _, err = s.PhotoFacePersonNames(unlocked, hidden.CurrentVersionID)
-			require.NoError(t, err)
-			require.Equal(t, []string{left.PersonID}, after[0].RejectedPersonIDs)
-			require.Greater(t, after[0].Revision, before[0].Revision)
-		})
-	}
+				right, err := s.CreatePerson(ctx, "Grace", "operator")
+				require.NoError(t, err)
+				for _, person := range []Person{left, right} {
+					photo := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
+					_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+					require.NoError(t, err)
+				}
+				hidden, face := faceForDecisionTest(t, s, "")
+				rejected := right
+				if rejectSurvivor {
+					rejected = left
+				}
+				decideFaceForTest(t, s, hidden, face.FaceID, rejected.PersonID, "reject")
+				before, _, _, err := s.PhotoFacePersonNames(ctx, hidden.CurrentVersionID)
+				require.NoError(t, err)
+				asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+				require.NoError(t, err)
+				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+				require.NoError(t, err)
+				_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
+				require.ErrorIs(t, err, ErrHiddenLocked)
+				token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+				require.NoError(t, err)
+				unlocked := WithPhotoHiddenToken(ctx, token)
+				after, _, _, err := s.PhotoFacePersonNames(unlocked, hidden.CurrentVersionID)
+				require.NoError(t, err)
+				require.Equal(t, before, after, "a refused merge preserves the rejection and face revision")
+				_, err = s.MergePersons(WithVisiblePeopleOnly(unlocked), left.PersonID, right.PersonID, uuid.NewString(), left.Revision, right.Revision)
+				require.NoError(t, err)
+				after, _, _, err = s.PhotoFacePersonNames(unlocked, hidden.CurrentVersionID)
+				require.NoError(t, err)
+				require.Equal(t, []string{left.PersonID}, after[0].RejectedPersonIDs)
+				require.Greater(t, after[0].Revision, before[0].Revision)
+			})
+		}
+	})
 }
 
 func TestBrowserPersonWritesRequireVisibility(t *testing.T) {

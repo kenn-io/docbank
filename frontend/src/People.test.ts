@@ -63,6 +63,11 @@ it("submits a person rename from the dialog", async () => {
   await waitFor(() => expect(rename).toHaveBeenCalledOnce());
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(rename).toHaveBeenCalledOnce();
+  expect(rename.mock.calls[0]!.slice(0, 3)).toEqual([
+    "grace",
+    { display_name: "Grace Hopper" },
+    { "If-Match": `"${grace.revision}"` },
+  ]);
   expect(screen.getByRole("button", { name: "Grace Hopper 2 Library photos" })).toBeTruthy();
   view.unmount();
   people.dispose();
@@ -110,37 +115,10 @@ it.each([false, true])("submits selected cards and reports a locked merge=%s", a
   await fireEvent.click(confirm);
   await waitFor(() => expect(merge).toHaveBeenCalledOnce());
   expect(merge.mock.calls[0]![0]).toBe("grace");
+  expect(merge.mock.calls[0]![1].absorbed_person_id).toBe("ada");
   if (locked) expect(await screen.findByText("unlock Hidden and retry the merge")).toBeTruthy();
   view.unmount();
   people.dispose();
-  await cache.dispose();
-});
-it("closes the open merge when Hidden access locks", async () => {
-  const access = unlockedAccess();
-  const people = new People("session", vi.fn(), access);
-  people.items = [ada, grace];
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
-  await fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: `Select Ada · ${new Date(ada.created_at).toLocaleDateString()}`,
-    }),
-  );
-  await fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: `Select Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
-    }),
-  );
-  await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
-  const dialog = screen.getByRole("dialog", { name: "Merge people" });
-  expect(within(dialog).getByText("3 Library photos")).toBeTruthy();
-  await act(() => {
-    access.acceptState({ configured: true }, Date.now() + 1);
-  });
-  expect(screen.queryByRole("dialog")).toBeNull();
-  view.unmount();
-  people.dispose();
-  access.dispose();
   await cache.dispose();
 });
 it("keeps portraits through in-place updates and releases them when cards clear", async () => {
@@ -271,7 +249,7 @@ it("labels namesakes by detail, and by ID only when the details match", async ()
 it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () => {
   const access = unlockedAccess();
   const people = new People("session", vi.fn(), access);
-  people.items = [{ ...grace, photo_summary: { library_count: 0, hidden_count: 1 } }];
+  people.items = [ada, { ...grace, photo_summary: { library_count: 0, hidden_count: 1 } }];
   const cache = new PhotoPreviewCache("session", vi.fn());
   const open = vi.fn();
   const view = render(PeopleView, { people, cache, onperson: open });
@@ -279,7 +257,22 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
   await fireEvent.click(screen.getByRole("button", { name: "Grace 0 Library photos" }));
   expect(open).toHaveBeenLastCalledWith("grace", "Grace", true);
+  // An open merge closes along with the Hidden counts.
+  await fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: `Select Ada · ${new Date(ada.created_at).toLocaleDateString()}`,
+    }),
+  );
+  await fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: `Select Grace · ${new Date(grace.created_at).toLocaleDateString()}`,
+    }),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+  const dialog = screen.getByRole("dialog", { name: "Merge people" });
+  expect(within(dialog).getByText("3 Library photos")).toBeTruthy();
   await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
   view.unmount();
   people.dispose();
