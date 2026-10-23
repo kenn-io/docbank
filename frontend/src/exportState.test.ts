@@ -283,11 +283,11 @@ it("validates download filenames and retains completed exports through ticket re
   let ticketStatus = 503;
   const requestedNames: string[] = [],
     offeredNames: string[] = [];
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
-    function (this: HTMLAnchorElement) {
-      offeredNames.push(this.download);
-    },
-  );
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    offeredNames.push(this.download);
+  });
   h.fetcher.mockImplementation(async (url, init) => {
     const path = String(url);
     if (path.endsWith("/jobs")) {

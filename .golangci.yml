@@ -208,6 +208,9 @@ linters:
         - .Err(
 
   exclusions:
+    # Frontend packages can include examples in Go; they are not Docbank source.
+    paths:
+      - ^frontend/node_modules/
     rules:
       # Tests legitimately repeat fixture strings
       - linters: [goconst]

@@ -145,13 +145,14 @@ it("cancels a replacement mid-read without an unhandled rejection", async () => 
   const expected = await store.saved();
   const controller = new AbortController();
   const get = IDBObjectStore.prototype.get;
-  vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(
-    function (this: IDBObjectStore, key) {
-      const request = get.call(this, key);
-      controller.abort();
-      return request;
-    },
-  );
+  vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(function (
+    this: IDBObjectStore,
+    key,
+  ) {
+    const request = get.call(this, key);
+    controller.abort();
+    return request;
+  });
   const unhandled = vi.fn();
   process.on("unhandledRejection", unhandled);
   try {
