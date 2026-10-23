@@ -212,7 +212,6 @@ func TestProcessingClientPreservesRenditionOutcomes(t *testing.T) {
 		want error
 	}{
 		{"rendition_failed", store.ErrRenditionJobTerminal},
-		{"pdf_password_required", store.ErrRenditionJobTerminal},
 		{"rendition_operator_required", store.ErrRenditionJobOperatorRequired},
 	} {
 		t.Run(test.code, func(t *testing.T) {

@@ -188,19 +188,21 @@ func TestReadPDFPasswords(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	for _, tc := range []struct {
+		name    string
 		content string
 		want    []string
 		problem string
 	}{
-		{"open\n\ncorrect horse\r\n spaced \n", []string{"open", "correct horse", " spaced "}, ""},
-		{"", []string{}, ""}, {strings.Repeat("x\n", 128), strings.Split(strings.TrimSuffix(strings.Repeat("x\n", 128), "\n"), "\n"), ""},
-		{strings.Repeat("x\n", 129), nil, "128 passwords"},
-		{strings.Repeat("x", 16<<10), []string{strings.Repeat("x", 16<<10)}, ""},
-		{strings.Repeat("x", (16<<10)+1), nil, "16 KiB"},
-		{"\ufeffopen\n", nil, "BOM"},
-		{"open\xff\n", nil, "UTF-8"},
+		{"lines and whitespace", "open\n\ncorrect horse\r\n spaced \n", []string{"open", "correct horse", " spaced "}, ""},
+		{"empty file", "", []string{}, ""},
+		{"maximum password count", strings.Repeat("x\n", 128), strings.Split(strings.TrimSuffix(strings.Repeat("x\n", 128), "\n"), "\n"), ""},
+		{"too many passwords", strings.Repeat("x\n", 129), nil, "128 passwords"},
+		{"maximum password length", strings.Repeat("x", 16<<10), []string{strings.Repeat("x", 16<<10)}, ""},
+		{"password too long", strings.Repeat("x", (16<<10)+1), nil, "16 KiB"},
+		{"byte order mark", "\ufeffopen\n", nil, "BOM"},
+		{"invalid UTF-8", "open\xff\n", nil, "UTF-8"},
 	} {
-		t.Run(tc.problem, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0600))
 			got, err := ReadPDFPasswords(path)
 			if tc.problem != "" {

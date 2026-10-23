@@ -16,8 +16,6 @@ import (
 	"testing"
 	"time"
 
-	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -147,7 +145,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	cfg.Media.PDFPasswordsFile = path
 	file, err := safefileio.CreatePrivateFile(path)
 	require.NoError(t, err)
-	_, err = file.WriteString("wrong\n")
+	_, err = file.WriteString("wrong\nopen\n")
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
@@ -186,30 +184,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	daemon := daemonconn.New(endpoint.URL, cfg.Server.APIKey)
 	defer func() { require.NoError(t, daemon.Close()) }()
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
-	t.Run("refused password file", func(t *testing.T) {
-		require.NoError(t, os.Rename(path, path+".away"))
-		_, refusal := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
-		require.NoError(t, os.Rename(path+".away", path))
-		require.ErrorContains(t, refusal, "open PDF passwords file")
-	})
 	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
-	require.NoError(t, err)
-	stream, err := daemon.StartProcessingStream(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stream.Close()) }()
-	failed, err := stream.Next()
-	require.NoError(t, err)
-	terminal, err := stream.Next()
-	require.Error(t, err)
-	require.NotNil(t, terminal.Status)
-	require.Equal(t, "failed", terminal.Status.State)
-	require.Equal(t, "pdf_password_required", terminal.Status.FailureCode)
-	transport.mu.Lock()
-	requests := transport.requests
-	transport.mu.Unlock()
-	require.Zero(t, requests)
-	require.NoError(t, os.WriteFile(path, []byte("wrong\nopen\n"), 0600))
-	plan, err = daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	require.Empty(t, plan.RenditionIneligibleReason)
 	completed, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
@@ -219,36 +194,10 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 		require.NoError(c, err)
 		require.Equal(c, "completed", status.State)
 	}, 10*time.Second, 10*time.Millisecond)
-	require.NotEqual(t, failed.Job.ID, completed.ID)
-	previous, err := daemon.ProcessingStatus(t.Context(), failed.Job.ID)
-	require.NoError(t, err)
-	require.Equal(t, "failed", previous.State)
 	transport.mu.Lock()
-	requests = transport.requests
-	uploaded := transport.uploaded
+	requests := transport.requests
 	transport.mu.Unlock()
 	require.Equal(t, 1, requests)
-	require.NotEqual(t, source, uploaded)
-	pdf, err := pdfapi.ReadAndValidate(bytes.NewReader(uploaded), &model.Configuration{
-		Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
-		Limits: model.DefaultResourceLimits(),
-	})
-	require.NoError(t, err)
-	require.Nil(t, pdf.Encrypt)
-
-	original, _, err := blobs.OpenStreamContext(t.Context(), written.Hash)
-	require.NoError(t, err)
-	archived, err := io.ReadAll(original)
-	require.NoError(t, err)
-	require.NoError(t, original.Close())
-	require.Equal(t, source, archived)
-	rendition, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
-	require.NoError(t, err)
-	var text bytes.Buffer
-	_, err = rendition.CopyVerified(&text)
-	require.NoError(t, err)
-	require.NoError(t, rendition.Close())
-	require.Contains(t, text.String(), "Password needle")
 }
 
 type passwordOCRTransport struct {

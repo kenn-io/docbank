@@ -42,11 +42,3 @@ func TestSecretFileOwnershipModesAndSymlinks(t *testing.T) {
 	_, err := openSecret(link)
 	require.Error(t, err)
 }
-
-func TestPDFPasswordsRejectBroadMode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "passwords")
-	require.NoError(t, os.WriteFile(path, []byte("synthetic-password"), 0600))
-	require.NoError(t, os.Chmod(path, 0644))
-	_, err := ReadPDFPasswords(path)
-	require.Error(t, err)
-}

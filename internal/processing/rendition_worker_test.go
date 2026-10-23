@@ -684,7 +684,7 @@ func TestRenditionWorkerFailsSourceRefusedAtRuntime(t *testing.T) {
 		code store.RenditionFailureCode
 	}{
 		{"source", fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes), store.RenditionFailureStaleAuthority},
-		{"password", ErrPDFPasswordRequired, store.RenditionFailurePDFPasswordRequired},
+		{"password removed after admission and restored unchanged", ErrPDFPasswordRequired, store.RenditionFailurePDFPasswordRequired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -710,6 +710,7 @@ func TestRenditionWorkerFailsSourceRefusedAtRuntime(t *testing.T) {
 			processed, err := worker.RunOne(t.Context())
 			require.NoError(t, err)
 			assert.False(t, processed, "a refused source must not retry on its own")
+			// Restoring the same password yields the original capability checksum and job ID.
 			readmitted, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 			require.NoError(t, err)
 			require.Equal(t, job.ID, readmitted.ID)

@@ -34,6 +34,12 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	require.NoError(t, err)
 	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128)
 	require.NoError(t, err)
+	container := syntheticOOXMLFamily(t, "ppt/presentation.xml")
+	// Mark the first ZIP entry encrypted in both headers, as in the media inspection test.
+	container[6] |= 1
+	central := bytes.Index(container, []byte("PK\x01\x02"))
+	require.NotEqual(t, -1, central)
+	container[central+8] |= 1
 	passwordErr := errors.New("password file read failed")
 	for _, tc := range []struct {
 		name, mime string
@@ -45,7 +51,7 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 		passwords  []string
 	}{
 		{"plain.pdf", "application/pdf", mediatest.PDF(), true, 0, media.CapabilityReasonEligible, nil, nil},
-		{"audio.wav", "audio/wav", mediatest.WAV(), true, 0, media.CapabilityReasonEligible, nil, nil},
+		{"encrypted.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", container, true, 0, media.CapabilityReasonEncryptedContainer, nil, nil},
 		{"locked.pdf", "application/pdf", encrypted, false, 1, media.CapabilityReasonEncryptedContainer, nil, nil},
 		{"supported.pdf", "application/pdf", encrypted, true, 1, media.CapabilityReasonPDFPasswordRequired, nil, nil},
 		{"empty-passwords-owner-only.pdf", "application/pdf", ownerOnly, true, 1, media.CapabilityReasonEligible, nil, []string{}},
@@ -67,6 +73,7 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
+				require.ErrorIs(t, err, ErrRenditionOperatorRequired)
 				require.Equal(t, tc.calls, provider.calls)
 				return
 			}

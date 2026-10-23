@@ -21,6 +21,7 @@ func TestUnlockPDF(t *testing.T) {
 		keyBits    int
 		wantErr    error
 	}{
+		{"wrong password", "open", []string{"wrong"}, 128, formatdetect.ErrPDFEncrypted},
 		{"user password", "open", []string{"wrong", "open"}, 256, nil},
 		{"empty user password", "", nil, 256, nil},
 		{"owner password", "open", []string{"owner"}, 128, nil},
@@ -43,11 +44,7 @@ func TestUnlockPDF(t *testing.T) {
 			require.Equal(t, int64(1), pages)
 		})
 	}
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
-	require.NoError(t, err)
-	_, _, err = formatdetect.UnlockPDF(source, []string{"wrong"}, 1<<20)
-	require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
-	_, _, err = formatdetect.UnlockPDF([]byte("broken PDF"), []string{"wrong", "open"}, 1<<20)
+	_, _, err := formatdetect.UnlockPDF([]byte("broken PDF"), []string{"wrong", "open"}, 1<<20)
 	require.Error(t, err)
 	require.NotErrorIs(t, err, formatdetect.ErrPDFEncrypted)
 }
