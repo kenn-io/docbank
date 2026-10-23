@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json/v2"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -245,6 +247,27 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
 
+// hiddenScopeContext schedules a real lock when the request first reads its
+// Hidden token. Context has no standard hook for coordinating Value reads.
+type hiddenScopeContext struct {
+	context.Context
+
+	token string
+	reads int
+	lock  func()
+}
+
+func (ctx *hiddenScopeContext) Value(key any) any {
+	value := ctx.Context.Value(key)
+	if token, ok := value.(string); ok && token == ctx.token {
+		ctx.reads++
+		if ctx.reads == 1 {
+			ctx.lock()
+		}
+	}
+	return value
+}
+
 func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -314,6 +337,26 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	require.NotContains(t, body, "photo_summary")
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
+	// A lock during the request still yields a cursor the locked client can follow.
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	requestCtx := &hiddenScopeContext{
+		Context: store.WithPhotoHiddenToken(ctx, token), token: token,
+		lock: func() { require.NoError(t, s.LockPhotoHidden(ctx)) },
+	}
+	lockPath := "/api/v1/people?limit=1&photo_summary=true"
+	request := httptest.NewRequestWithContext(requestCtx, http.MethodGet, ts.URL+lockPath, nil)
+	request.Header.Set("X-Api-Key", testAPIKey)
+	recorder := httptest.NewRecorder()
+	s.Server.Handler().ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var locking api.PersonPage
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &locking))
+	require.Len(t, locking.Items, 1)
+	require.NotEmpty(t, locking.NextCursor)
+	require.Nil(t, locking.Items[0].PhotoSummary.HiddenCount, "the lock landed before the page read its scope")
+	response, body = get(t, ts, lockPath+"&cursor="+locking.NextCursor, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
 
 // Browser merge conflicts identify the exact face version to review.

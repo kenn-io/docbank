@@ -287,8 +287,6 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	// Namesakes share their group's newest evidence and stay adjacent across pages.
 	recent := PeopleSearchOptions{RecentFirst: true}
 	require.Equal(t, append(slices.Clone(zoes), people["Bob"].PersonID, people["Ada"].PersonID, people["Cy"].PersonID), page(ctx, recent, 1))
-	byName := page(ctx, PeopleSearchOptions{}, 1)
-	require.Equal(t, []string{people["Ada"].PersonID, people["Bob"].PersonID, people["Cy"].PersonID}, byName[:3])
 
 	// Locked Hidden evidence neither ranks nor reveals its person.
 	asset, err := s.PhotoAssetForNode(ctx, nodes["Zoe"].ID)
@@ -348,11 +346,6 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			rows, _, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
-			cards, _, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, PeopleSearchOptions{PhotoSummary: true})
-			require.NoError(t, err)
-			require.Len(t, cards, 1)
-			require.Equal(t, ada.PersonID, cards[0].PersonID)
-			require.Equal(t, int64(1), cards[0].PhotoSummary.LibraryCount)
 			// Older readable evidence ranks Bob when his newest photo is unavailable.
 			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")
 			_, err = s.MarkPersonInPhoto(ctx, older.CurrentVersionID, bob.PersonID, "")

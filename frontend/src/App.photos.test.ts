@@ -4361,13 +4361,146 @@ const personLibraryViews = [
   "absorbed behind album",
   "survivor",
   "text",
-  "inspector rename",
-  "inspector merge",
 ];
 
-it.each(personLibraryViews)(
-  "refreshes the %s photo filter or inspector after People edits",
-  async (filter) => {
+it.each(personLibraryViews)("refreshes the %s photo filter after People edits", async (filter) => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    revision: 1,
+    photo_summary: { library_count: 1 },
+  });
+  const grace = person("00000000-0000-4000-8000-000000000002", {
+    display_name: "Grace",
+    revision: 1,
+    photo_summary: { library_count: 1 },
+  });
+  let rows = [ada, grace];
+  vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
+  vi.spyOn(api, "renamePerson").mockImplementation(async (_id, request) => {
+    const renamed = { ...ada, display_name: request.display_name, revision: 2 };
+    rows = [renamed, grace];
+    return personResponse(renamed);
+  });
+  let finishMerge!: () => void;
+  vi.spyOn(api, "mergePerson").mockImplementation(async (_id, request) => {
+    await new Promise<void>((resolve) => (finishMerge = resolve));
+    rows = [grace];
+    return personMergeReceipt(
+      { ...ada, display_name: "Ada Lovelace" },
+      grace,
+      request.operation_id,
+    );
+  });
+  const item = photo(1);
+  let survivorReads = 0;
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([photoAlbum()]);
+    if (url.endsWith("/photos/assets/query")) {
+      if (
+        JSON.parse(String(init.body)).query.filters?.person_ids?.includes(grace.person_id) ||
+        JSON.parse(String(init.body)).query.text === "person:Grace"
+      )
+        survivorReads++;
+      return Response.json({ items: [item], total: 1, facets: [] });
+    }
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+    );
+  });
+  const query = vi.spyOn(Photos.prototype, "setQuery");
+  const peopleLoad = vi.spyOn(People.prototype, "load");
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Ada 1 Library photo" }));
+  await screen.findByText("Person: Ada");
+  const library = query.mock.contexts.at(-1) as Photos;
+  expect(library.query.filters.person_ids).toEqual([ada.person_id]);
+  await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  await screen.findByRole("button", { name: "Ada 1 Library photo" });
+  if (filter === "absorbed") {
+    const people = peopleLoad.mock.contexts.at(-1) as People;
+    await act(async () => {
+      await people.rename(ada, "Ada Lovelace");
+    });
+    await screen.findByRole("button", { name: "Ada Lovelace 1 Library photo" });
+    expect(library.personFilter).toEqual({ id: ada.person_id, name: "Ada Lovelace" });
+    await fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace 1 Library photo" }));
+    await screen.findByText("Person: Ada Lovelace");
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  }
+  if (filter === "survivor") {
+    await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
+    await screen.findByText("Person: Grace");
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  }
+  if (filter === "text") {
+    await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Clear filters" }));
+    await waitFor(() => expect(library.loading).toBe(false));
+    await fireEvent.input(await screen.findByRole("searchbox", { name: "Search photos" }), {
+      target: { value: "person:Grace" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+    await waitFor(() => expect(library.query.text).toBe("person:Grace"));
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  }
+  let pendingMerge: Promise<boolean> | undefined;
+  const people = peopleLoad.mock.contexts.at(-1) as People;
+  people.toggle(rows[0]!);
+  people.toggle(grace);
+  people.startMerge();
+  people.keep(grace.person_id);
+  people.confirmMerge(true);
+  await act(() => {
+    pendingMerge = people.submitMerge();
+  });
+  await waitFor(() => expect(finishMerge).toBeTypeOf("function"));
+  if (filter.startsWith("absorbed behind")) {
+    const album = filter === "absorbed behind album";
+    await fireEvent.click(screen.getByRole("button", { name: album ? /^Trip/ : /^Albums$/ }));
+    await screen.findByRole("heading", { name: album ? "Trip" : "Albums" });
+  } else if (filter !== "absorbed") {
+    const readsBeforeNavigation = survivorReads;
+    await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
+    if (filter === "survivor") await screen.findByText("Person: Grace");
+    await waitFor(() => expect(survivorReads).toBeGreaterThan(readsBeforeNavigation));
+    await waitFor(() => expect(library.loading).toBe(false));
+  }
+  const readsBeforeMerge = survivorReads;
+  await act(async () => {
+    finishMerge();
+    await pendingMerge;
+  });
+  await waitFor(() => expect(library.loading).toBe(false));
+  await waitFor(() => expect(survivorReads).toBe(readsBeforeMerge + 1));
+  if (filter === "text") {
+    expect(library.query.text).toBe("person:Grace");
+    return;
+  }
+  await waitFor(() => expect(library.query.filters.person_ids).toEqual([grace.person_id]));
+  expect(library.personFilter).toEqual({ id: grace.person_id, name: "Grace" });
+  if (filter.startsWith("absorbed behind"))
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  if (filter.startsWith("absorbed"))
+    await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
+  await screen.findByText("Person: Grace");
+});
+
+it.each(["rename", "merge"])(
+  "refreshes the inspector's face reads after a People %s",
+  async (edit) => {
     history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
     storage();
     vi.stubGlobal(
@@ -4389,19 +4522,17 @@ it.each(personLibraryViews)(
     });
     let rows = [ada, grace];
     vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
-    let finishRename!: () => void;
+    let finish!: () => void;
     let saved = false;
     vi.spyOn(api, "renamePerson").mockImplementation(async (_id, request) => {
-      if (filter === "inspector rename")
-        await new Promise<void>((resolve) => (finishRename = resolve));
+      await new Promise<void>((resolve) => (finish = resolve));
       saved = true;
       const renamed = { ...ada, display_name: request.display_name, revision: 2 };
       rows = [renamed, grace];
       return personResponse(renamed);
     });
-    let finishMerge!: () => void;
     vi.spyOn(api, "mergePerson").mockImplementation(async (_id, request) => {
-      await new Promise<void>((resolve) => (finishMerge = resolve));
+      await new Promise<void>((resolve) => (finish = resolve));
       rows = [grace];
       saved = true;
       return personMergeReceipt(
@@ -4416,148 +4547,61 @@ it.each(personLibraryViews)(
       assertions: [
         photoPersonAssertion({
           content_version_id: item.content_version_id,
-          person_id: saved && filter === "inspector merge" ? grace.person_id : ada.person_id,
+          person_id: saved && edit === "merge" ? grace.person_id : ada.person_id,
         }),
       ],
       people: [
         {
-          person_id: saved && filter === "inspector merge" ? grace.person_id : ada.person_id,
+          person_id: saved && edit === "merge" ? grace.person_id : ada.person_id,
           display_name: saved ? "Grace" : "Ada",
           state: "curated",
         },
       ],
     }));
-    let survivorReads = 0;
     stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
       if (url.endsWith("/photos/albums")) return Response.json([photoAlbum()]);
-      if (url.endsWith("/photos/assets/query")) {
-        if (
-          JSON.parse(String(init.body)).query.filters?.person_ids?.includes(grace.person_id) ||
-          JSON.parse(String(init.body)).query.text === "person:Grace"
-        )
-          survivorReads++;
+      if (url.endsWith("/photos/assets/query"))
         return Response.json({ items: [item], total: 1, facets: [] });
-      }
       return (
         photoMetadataResponse(url, init) ??
         Response.json({ items: [], nodes: [], tags: [], profiles: [] })
       );
     });
-    const query = vi.spyOn(Photos.prototype, "setQuery");
     const peopleLoad = vi.spyOn(People.prototype, "load");
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
     render(App);
-    if (filter.startsWith("inspector")) {
-      await screen.findByRole("button", { name: "Ada 1 Library photo" });
-      const people = peopleLoad.mock.contexts.at(-1) as People;
-      let pending!: Promise<boolean>;
-      await act(() => {
-        if (filter === "inspector rename") pending = people.rename(ada, "Grace");
-        else {
-          people.toggle(ada);
-          people.toggle(grace);
-          people.startMerge();
-          people.keep(grace.person_id);
-          people.confirmMerge(true);
-          pending = people.submitMerge();
-        }
-      });
-      await waitFor(() =>
-        expect(filter === "inspector rename" ? finishRename : finishMerge).toBeTypeOf("function"),
-      );
-      await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
-      await fireEvent.click(await screen.findByRole("button", { name: `Select ${item.name}` }));
-      await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-      await screen.findByRole("button", {
-        name: "Find or create a person: Ada",
-      });
-      const readsBeforeSave = faceReads.mock.calls.length;
-      await act(async () => {
-        if (filter === "inspector rename") finishRename();
-        else finishMerge();
-        await pending;
-      });
-      await screen.findByRole("button", {
-        name: "Find or create a person: Grace",
-      });
-      expect(faceReads.mock.calls.length).toBeGreaterThan(readsBeforeSave);
-      return;
-    }
-    await fireEvent.click(await screen.findByRole("button", { name: "Ada 1 Library photo" }));
-    await screen.findByText("Person: Ada");
-    const library = query.mock.contexts.at(-1) as Photos;
-    expect(library.query.filters.person_ids).toEqual([ada.person_id]);
-    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
     await screen.findByRole("button", { name: "Ada 1 Library photo" });
-    if (filter === "absorbed") {
-      const people = peopleLoad.mock.contexts.at(-1) as People;
-      await act(async () => {
-        await people.rename(ada, "Ada Lovelace");
-      });
-      await screen.findByRole("button", { name: "Ada Lovelace 1 Library photo" });
-      expect(library.personFilter).toEqual({ id: ada.person_id, name: "Ada Lovelace" });
-      await fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace 1 Library photo" }));
-      await screen.findByText("Person: Ada Lovelace");
-      await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
-    }
-    if (filter === "survivor") {
-      await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
-      await screen.findByText("Person: Grace");
-      await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
-    }
-    if (filter === "text") {
-      await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
-      await fireEvent.click(await screen.findByRole("button", { name: "Clear filters" }));
-      await waitFor(() => expect(library.loading).toBe(false));
-      await fireEvent.input(await screen.findByRole("searchbox", { name: "Search photos" }), {
-        target: { value: "person:Grace" },
-      });
-      await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
-      await waitFor(() => expect(library.query.text).toBe("person:Grace"));
-      await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
-    }
-    let pendingMerge: Promise<boolean> | undefined;
     const people = peopleLoad.mock.contexts.at(-1) as People;
-    people.toggle(rows[0]!);
-    people.toggle(grace);
-    people.startMerge();
-    people.keep(grace.person_id);
-    people.confirmMerge(true);
+    let pending!: Promise<boolean>;
     await act(() => {
-      pendingMerge = people.submitMerge();
+      if (edit === "rename") pending = people.rename(ada, "Grace");
+      else {
+        people.toggle(ada);
+        people.toggle(grace);
+        people.startMerge();
+        people.keep(grace.person_id);
+        people.confirmMerge(true);
+        pending = people.submitMerge();
+      }
     });
-    await waitFor(() => expect(finishMerge).toBeTypeOf("function"));
-    if (filter.startsWith("absorbed behind")) {
-      const album = filter === "absorbed behind album";
-      await fireEvent.click(screen.getByRole("button", { name: album ? /^Trip/ : /^Albums$/ }));
-      await screen.findByRole("heading", { name: album ? "Trip" : "Albums" });
-    } else if (filter !== "absorbed") {
-      const readsBeforeNavigation = survivorReads;
-      await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
-      if (filter === "survivor") await screen.findByText("Person: Grace");
-      await waitFor(() => expect(survivorReads).toBeGreaterThan(readsBeforeNavigation));
-      await waitFor(() => expect(library.loading).toBe(false));
-    }
-    const readsBeforeMerge = survivorReads;
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: `Select ${item.name}` }));
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    await screen.findByRole("button", {
+      name: "Find or create a person: Ada",
+    });
+    const readsBeforeSave = faceReads.mock.calls.length;
     await act(async () => {
-      finishMerge();
-      await pendingMerge;
+      finish();
+      await pending;
     });
-    await waitFor(() => expect(library.loading).toBe(false));
-    await waitFor(() => expect(survivorReads).toBe(readsBeforeMerge + 1));
-    if (filter === "text") {
-      expect(library.query.text).toBe("person:Grace");
-      return;
-    }
-    await waitFor(() => expect(library.query.filters.person_ids).toEqual([grace.person_id]));
-    expect(library.personFilter).toEqual({ id: grace.person_id, name: "Grace" });
-    if (filter.startsWith("absorbed behind"))
-      await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
-    if (filter.startsWith("absorbed"))
-      await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
-    await screen.findByText("Person: Grace");
+    await screen.findByRole("button", {
+      name: "Find or create a person: Grace",
+    });
+    expect(faceReads.mock.calls.length).toBeGreaterThan(readsBeforeSave);
   },
 );
 
