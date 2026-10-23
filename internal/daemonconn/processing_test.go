@@ -212,6 +212,7 @@ func TestProcessingClientPreservesRenditionOutcomes(t *testing.T) {
 		want error
 	}{
 		{"rendition_failed", store.ErrRenditionJobTerminal},
+		{"pdf_password_required", store.ErrRenditionJobTerminal},
 		{"rendition_operator_required", store.ErrRenditionJobOperatorRequired},
 	} {
 		t.Run(test.code, func(t *testing.T) {
@@ -239,6 +240,7 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 		{"failed", "stale_authority", nil},
 		{"abandoned", "stale_authority", nil},
 		{"failed", "rendition_failed", store.ErrRenditionJobTerminal},
+		{"failed", "pdf_password_required", store.ErrRenditionJobTerminal},
 		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired},
 		{"failed", "processing_consent_expired", daemonconn.ErrProcessingConsent},
 		{"partial", "authorization", nil},

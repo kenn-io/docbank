@@ -483,7 +483,7 @@ func processingTerminalEvent(job processing.Job, runErr error, status processing
 		if status.State != "operator_required" {
 			status.State = "failed"
 		}
-		if problem, ok := errors.AsType[*Error](fromProcessingError(runErr)); ok && (problem.Code != "rendition_failed" || status.FailureCode == "") {
+		if problem, ok := errors.AsType[*Error](fromProcessingError(runErr)); ok && (problem.Code != "rendition_failed" || status.FailureCode != "pdf_password_required") {
 			status.FailureCode = problem.Code
 		}
 	}
