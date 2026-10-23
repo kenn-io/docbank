@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +26,12 @@ await rm(staging, { recursive: true, force: true });
 await rm(captures, { recursive: true, force: true });
 await mkdir(staging, { recursive: true, mode: 0o700 });
 await mkdir(captures, { recursive: true, mode: 0o700 });
+// Some screens show the absolute path of a seeded import folder. The default
+// temporary directory on macOS is per-user (/var/folders/...), so captures
+// use a fresh directory under /tmp instead.
+const scratch = await mkdtemp(
+  path.join(process.platform === "win32" ? tmpdir() : "/tmp", "docbank-screenshots-"),
+);
 
 const playwrightCLI = path.join(frontendRoot, "node_modules", "@playwright", "test", "cli.js");
 const result = spawnSync(
@@ -43,6 +50,9 @@ const result = spawnSync(
     stdio: "inherit",
     env: {
       ...process.env,
+      TMPDIR: scratch,
+      TMP: scratch,
+      TEMP: scratch,
       DOCBANK_SCREENSHOT_DIR: captures,
       DOCBANK_QUERY_BAR_SCREENSHOT_DIR: captures,
       DOCBANK_TERM_REPORT_SCREENSHOT_DIR: captures,
@@ -54,6 +64,7 @@ const result = spawnSync(
     },
   },
 );
+await rm(scratch, { recursive: true, force: true });
 if (result.error) throw result.error;
 if (result.status !== 0) {
   await rm(staging, { recursive: true, force: true });
