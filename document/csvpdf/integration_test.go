@@ -62,7 +62,7 @@ func TestConvertedSourceUsesExistingPDFProcessing(t *testing.T) {
 		pdf, decodeErr := base64.StdEncoding.DecodeString(strings.TrimPrefix(payload.Document.URL, "data:application/pdf;base64,"))
 		require.NoError(t, decodeErr)
 		require.True(t, bytes.Equal(converted.PDF(), pdf))
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"café κόσμος Привет"}],"usage_info":{"pages_processed":1}}`))}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"model":"mistral-ocr-4-1","pages":[{"index":0,"markdown":"café κόσμος Привет"}],"usage_info":{"pages_processed":1}}`))}, nil
 	})}})
 	require.NoError(t, err)
 	result, err := client.Process(t.Context(), prepared, authorization)

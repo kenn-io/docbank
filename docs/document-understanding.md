@@ -288,6 +288,10 @@ replace the manifest before processing documents. Also rerun the probe if
 validation reports that a registered format "does not explain its unverified
 bound". Review application consent against the resulting policy fingerprint.
 
+A release that changes the pinned model rejects manifests recorded for the old
+model, so rerun the probe and review consent.
+`invalid_model` on every result means Mistral no longer serves the pinned model.
+
 DOCX, DOC, ODT, RTF, PPT, XLS, ODS, and XLSX share one production route. Set
 `PolicyConfig.RenderPDF` to a validated `renderpdf.Policy` and supply PDF
 capability evidence in the same manifest. `Policy.Authorize` keeps the

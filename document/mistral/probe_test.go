@@ -155,6 +155,7 @@ func TestRunCapabilityProbeClassifiesSanitizedFailures(t *testing.T) {
 		wantReason string
 	}{
 		{name: "provider rejection", mode: "provider_4xx", wantStatus: ProbeStatusRejected, wantReason: "provider_4xx"},
+		{name: "invalid model", mode: "invalid_model", wantStatus: ProbeStatusRejected, wantReason: "invalid_model"},
 		{name: "transient exhaustion", mode: "transient_exhausted", wantStatus: ProbeStatusFailed, wantReason: "transient_exhausted"},
 		{name: "empty output", mode: "empty_output", wantStatus: ProbeStatusFailed, wantReason: "empty_output"},
 		{name: "missing sentinel", mode: "sentinel_missing", wantStatus: ProbeStatusFailed, wantReason: "sentinel_missing"},
@@ -228,6 +229,8 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	}
 	if candidate.ID == "pdf" {
 		switch transport.failureMode {
+		case "invalid_model":
+			return probeHTTPResponse(request, http.StatusBadRequest, invalidModelBody), nil
 		case "provider_4xx":
 			return probeHTTPResponse(request, http.StatusBadRequest, `{}`), nil
 		case "transient_exhausted":

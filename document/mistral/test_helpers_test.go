@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/kit/safefileio"
 )
 
-const testSuccessfulResponse = `{"model":"mistral-ocr-4-0","pages":[{"index":0}],"usage_info":{"pages_processed":1}}`
+const testSuccessfulResponse = `{"model":"mistral-ocr-4-1","pages":[{"index":0}],"usage_info":{"pages_processed":1}}`
 
 func testPolicy(t *testing.T, maxDocumentBytes int64, maxUnits int) Policy {
 	t.Helper()

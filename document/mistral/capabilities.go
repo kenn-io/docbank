@@ -41,6 +41,7 @@ const (
 )
 
 const (
+	reasonInvalidModel           = "invalid_model"
 	reasonBoundFixtureOutOfRange = "bound_fixture_out_of_range"
 	reasonBoundRequestFailed     = probecontract.ReasonBoundRequestFailed
 	reasonBoundUnitsMismatch     = probecontract.ReasonBoundUnitsMismatch
@@ -54,6 +55,7 @@ var boundUnverifiedReasonCodes = []string{
 
 var failureReasonCodes = []string{
 	"empty_output",
+	reasonInvalidModel,
 	"invalid_or_local_failure",
 	"provider_4xx",
 	"response_too_large",
