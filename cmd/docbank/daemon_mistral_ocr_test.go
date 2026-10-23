@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
@@ -139,6 +141,16 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 }
 
 func TestMistralPasswordFileProcessing(t *testing.T) {
+	testMistralPasswordFileProcessing(t, "open", "open", 256)
+}
+
+func TestMistralPasswordFileProcessingLegacyPDFDocEncoding(t *testing.T) {
+	// Legacy PDF handlers use PDFDocEncoding A3 for £; the password file is UTF-8.
+	testMistralPasswordFileProcessing(t, "\xa3", "£", 128)
+}
+
+func testMistralPasswordFileProcessing(t *testing.T, pdfPassword, filePassword string, keyBits int) {
+	t.Helper()
 	cfg, _ := mistralOCRProcessingConfig(t)
 	path := filepath.Join(t.TempDir(), "passwords")
 	cfg.Media.PDFPasswordsFile = path
@@ -148,7 +160,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
-	source, err := mediatest.EncryptedPDF("open", "owner", 256)
+	source, err := mediatest.EncryptedPDF(pdfPassword, "owner", keyBits)
 	require.NoError(t, err)
 	transport := &passwordOCRTransport{}
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
@@ -199,9 +211,10 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	transport.mu.Unlock()
 	require.Zero(t, requests)
 
-	require.NoError(t, os.WriteFile(path, []byte("wrong\nopen\n"), 0600))
+	require.NoError(t, os.WriteFile(path, []byte("wrong\n"+filePassword+"\n"), 0600))
 	plan, err = daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
+	require.Empty(t, plan.RenditionIneligibleReason)
 	completed, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
@@ -215,8 +228,14 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	require.Equal(t, "failed", previous.State)
 	transport.mu.Lock()
 	requests = transport.requests
+	uploaded := bytes.Clone(transport.uploaded)
 	transport.mu.Unlock()
 	require.Equal(t, 1, requests)
+	require.NotEqual(t, source, uploaded)
+	require.NotContains(t, string(uploaded), "/Encrypt")
+	pages, err := media.CountPDFPages(uploaded)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), pages)
 
 	original, _, err := blobs.OpenStreamContext(t.Context(), written.Hash)
 	require.NoError(t, err)
@@ -236,14 +255,25 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 type passwordOCRTransport struct {
 	mu       sync.Mutex
 	requests int
+	uploaded []byte
 }
 
 func (transport *passwordOCRTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if _, err := io.Copy(io.Discard, request.Body); err != nil {
+	var wire struct {
+		Document struct {
+			URL string `json:"document_url"`
+		} `json:"document"`
+	}
+	if err := json.UnmarshalRead(request.Body, &wire); err != nil {
+		return nil, err
+	}
+	uploaded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+	if err != nil {
 		return nil, err
 	}
 	transport.mu.Lock()
 	transport.requests++
+	transport.uploaded = uploaded
 	transport.mu.Unlock()
 	response := fmt.Sprintf(`{"model":%q,"pages":[{"index":0,"markdown":"# Password needle","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1}}`, mistral.DefaultModel)
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
