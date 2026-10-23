@@ -295,7 +295,7 @@ func (s *Store) EnqueueRenditionJob(
 			authorization_revocation_fence=NULL,failure_code=NULL,updated_at=?
 			WHERE job_id=? AND state='failed'
 			  AND phase IN ('queued','build_staged','generation_staged')
-			  AND failure_code IN ('consent','stale_authority','pdf_password_required')`, now, now, jobID); err != nil {
+			  AND failure_code IN ('consent','stale_authority')`, now, now, jobID); err != nil {
 			return fmt.Errorf("requeueing safe rendition authority failure: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET

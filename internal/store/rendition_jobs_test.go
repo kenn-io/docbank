@@ -477,6 +477,13 @@ func TestEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t *testing.T) {
 			},
 			wantErr: ErrRenditionJobTerminal, wantState: RenditionJobFailed,
 		},
+		{
+			name: "password required",
+			finish: func(s *Store, claim RenditionJobClaim, at time.Time) error {
+				return s.MarkRenditionJobFailed(t.Context(), claim, RenditionFailurePDFPasswordRequired, at)
+			},
+			wantErr: ErrRenditionJobTerminal, wantState: RenditionJobFailed,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s, versions := newRenditionCatalogFixture(t)

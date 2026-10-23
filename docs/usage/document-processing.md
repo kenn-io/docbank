@@ -127,7 +127,9 @@ text/Markdown, and PNG/JPEG images through your Docling Serve deployment.
 DOCX remains blocked by local inspection; this profile does not admit HTML,
 TIFF, legacy Office, audio, or video. When local inspection refuses a file,
 its plan shows the reason on an `ineligible:` line and `processing build`
-fails with `rendition_source_ineligible`.
+fails with `rendition_source_ineligible`. A locked PDF instead ends with
+`pdf_password_required` when no configured password opens it or no password
+file is configured.
 
 Import the original, inspect its plan, and consent to the exact destination:
 
@@ -154,13 +156,16 @@ with an authenticated capability manifest, then select it from a processing
 profile. `docbank processing profiles` lists the executable profile. Use the
 same `processing plan` and consented `processing build` flow as Docling to
 retain searchable Markdown from PDFs. The plan discloses Mistral's EU endpoint
-and the pinned model before upload.
+and the pinned model before upload. Local refusals end builds with
+`rendition_source_ineligible`, except locked PDFs, which end with
+`pdf_password_required` when no configured password opens them or no password
+file is configured.
 
 ## Password-protected PDFs
 
 Docling and Mistral processing can open encrypted PDFs using `[media].pdf_passwords_file` from [configuration](../configuration.md). Put one password per line in that owner-only file. LF and CRLF line endings work; blank lines are ignored, and spaces belong to the password. The file must be UTF-8 without a byte-order mark and may contain up to 16 KiB and 128 passwords.
 
-Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. When no password opens the PDF, or no password file is configured, the browser drawer shows `pdf_password_required` as the reason and disables Run. CLI and API builds create a job that ends `failed` with `pdf_password_required`. Read it with `docbank processing status <job-id>`.
+Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. When no password opens the PDF, or no password file is configured, the browser drawer shows "pdf password required" as the reason and disables Run. CLI and API builds create a job that ends `failed` with `pdf_password_required`. Read it with `docbank processing status <job-id>`.
 
 Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. If the file can't be read, planning or building a locked PDF reports the error, and queued jobs retry until the file is fixed. Plain PDFs and audio keep processing.
 

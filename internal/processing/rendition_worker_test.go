@@ -682,7 +682,6 @@ func TestRenditionWorkerFailsSourceRefusedAtRuntime(t *testing.T) {
 		code store.RenditionFailureCode
 	}{
 		{"source", ErrSourceIneligible, store.RenditionFailureStaleAuthority},
-		{"password", ErrPDFPasswordRequired, store.RenditionFailurePDFPasswordRequired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)

@@ -269,7 +269,7 @@ func (transport *passwordOCRTransport) RoundTrip(request *http.Request) (*http.R
 	}
 	uploaded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode OCR upload: %w", err)
 	}
 	transport.mu.Lock()
 	transport.requests++

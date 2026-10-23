@@ -29,9 +29,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/document/upload"
 )
 
 //go:embed testdata/docling-pages.json
@@ -1366,22 +1364,7 @@ func TestDoclingUnlocksPDF(t *testing.T) {
 	require.NoError(t, err)
 	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
 
-	inspection, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
-		Filename: fixture.metadata.Filename, DeclaredMediaType: "application/pdf",
-		ExpectedBytes: int64(len(source)), ExpectedSHA256: fixture.metadata.SHA256,
-		DescriptorFingerprint: fixture.authorization.DescriptorFingerprint,
-		ProfileFingerprint:    strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64),
-		InputKind: document.RenditionInputOriginalFile, UnlockPDF: true, PDFPasswords: []string{"wrong", "open"},
-		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
-		MaxNestingDepth: 1, MaxTextLines: 1000, MaxCharacters: 1 << 20, MaxRecords: 1000, MaxSlides: 100, MaxSheets: 100, MaxCells: 1000, MaxSpineItems: 100, MaxResources: 100, MaxPixels: 1000000, MaxFrames: 100, MaxDurationMS: 1000,
-	})
-	require.NoError(t, err)
-	require.True(t, inspection.Eligible)
-	sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(source)), Directory: t.TempDir()}, inspection, upload.UploadMetadata{Filename: fixture.metadata.Filename})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, sealed.Close()) }()
-	fixture.authorization.CapabilityRecordChecksum = sealed.Metadata().CapabilityRecordChecksum
-	fixture.authorization.ProviderMetadataChecksum = sealed.Metadata().ProviderMetadataChecksum
+	sealed := mediatest.AuthorizePDF(t, source, fixture.metadata, &fixture.authorization)
 	var sent []byte
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
