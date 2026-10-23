@@ -1391,15 +1391,14 @@ export class Photos {
       this.total = total;
       this.countStale = false;
       this.relevanceAvailable = staged.relevanceAvailable;
-      if (staged.snapshotID) {
-        this.timelineController.abort();
-        this.timelineLoading = false;
-      } else if (this.snapshotID) this.timeline = undefined;
+      if (!staged.snapshotID !== !this.snapshotID) [this.timeline, this.facets] = [undefined, []];
+      if (staged.snapshotID) this.timelineController.abort();
+      this.timelineLoading &&= !staged.snapshotID;
       this.snapshotID = staged.snapshotID;
       this.fallbackReason = staged.fallbackReason;
       this.truncated = staged.truncated;
       this.coverageIncomplete = staged.coverageIncomplete;
-      if (mode !== "date" && !this.date) {
+      if (!(mode === "date" ? date : this.date)) {
         this.facets = staged.facets;
         if (staged.snapshotID) this.timeline = staged.timeline;
       }
