@@ -32,6 +32,7 @@ import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as snapshots from "./snapshots.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
+import { PhotoPreviewCache } from "./photoPreviewCache.js";
 
 const savedImportCheckpoints = vi.hoisted(
   () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
@@ -715,6 +716,100 @@ it("renders no hidden photo buttons after a failed leave lock and return", async
     expect(screen.queryByText("Hidden did not lock. Lock unavailable")).toBeNull(),
   );
   await screen.findByRole("button", { name: "Unlock" });
+});
+
+it("conceals People after a failed Hidden lock until retry succeeds", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
+    "Image",
+    class {
+      src = "";
+      naturalWidth = 1000;
+      naturalHeight = 800;
+      decode() {
+        return Promise.resolve();
+      }
+    },
+  );
+  URL.createObjectURL = vi.fn(() => "blob:synthetic-person");
+  URL.revokeObjectURL = vi.fn();
+  vi.spyOn(api, "preparePhotoPreview").mockResolvedValue({
+    state: "ready",
+    generation_id: "ready",
+  });
+  vi.spyOn(PhotoPreviewCache.prototype, "get").mockResolvedValue(new Blob(["synthetic"]));
+  const hiddenPerson = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    photo_summary: {
+      library_count: 0,
+      hidden_count: 1,
+      face_hidden: true,
+      face: {
+        asset_id: "asset",
+        content_version_id: "version",
+        generation_id: "ready",
+        rotation: 0,
+      },
+    },
+  });
+  const publicPerson = person("00000000-0000-4000-8000-000000000002", {
+    display_name: "Grace",
+    photo_summary: { library_count: 1 },
+  });
+  let unlocked = false;
+  let locks = 0;
+  const directory = vi.spyOn(api, "listPeople").mockImplementation(async () => ({
+    items: unlocked ? [hiddenPerson, publicPerson] : [publicPerson],
+  }));
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden/unlock")) unlocked = true;
+    if (url.endsWith("/photos/hidden/lock")) {
+      if (++locks === 1) return Response.json({ detail: "Lock unavailable" }, { status: 503 });
+      unlocked = false;
+    }
+    if (url.endsWith("/photos/hidden") || url.endsWith("/photos/hidden/unlock"))
+      return Response.json({
+        configured: true,
+        ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}),
+      });
+    return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Unlock" });
+  await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), {
+    target: { value: "synthetic-passcode" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await screen.findByText("No hidden photos");
+  await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  await screen.findByRole("img", { name: "Face of Ada" });
+  await fireEvent.click(screen.getByRole("button", { name: /^Hidden$/ }));
+  await screen.findByText("No hidden photos");
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByText("Hidden did not lock. Lock unavailable");
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  const readsBeforeReturn = directory.mock.calls.length;
+  await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  await screen.findByRole("heading", { name: "People" });
+  await waitFor(() => expect(screen.queryByText("Loading people…")).toBeNull());
+  expect(screen.queryByText("Ada", { exact: true })).toBeNull();
+  expect(screen.queryByRole("img", { name: "Face of Ada" })).toBeNull();
+  expect(directory.mock.calls.length).toBe(readsBeforeReturn);
+  await fireEvent.click(screen.getByRole("button", { name: "Retry lock" }));
+  await screen.findByRole("button", { name: "Grace 1 Library photo" });
+  expect(directory.mock.calls.length).toBeGreaterThan(readsBeforeReturn);
+  expect(screen.queryByRole("img", { name: "Face of Ada" })).toBeNull();
+  expect(screen.queryByText("Hidden did not lock. Lock unavailable")).toBeNull();
 });
 
 it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lock"])(

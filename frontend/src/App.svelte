@@ -678,7 +678,11 @@
   $effect(() => {
     const people = peopleView;
     const visible =
-      photoMode && photoPath === "/photos/people" && photoValidated && !photoConcealed;
+      photoMode &&
+      photoPath === "/photos/people" &&
+      photoValidated &&
+      !photoConcealed &&
+      !hiddenAccess?.lockError;
     void hiddenAccess?.scope;
     if (!people) return;
     untrack(() => {
