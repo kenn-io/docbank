@@ -50,7 +50,7 @@ jobs:
           go test -tags fts5 -v -p 1 \
             ./internal/production/ ./internal/pdfproduction/ ./internal/processing/ \
             ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestInspectNativeTextFromInspection|TestRedaction|TestNativeRedactionRender)' -count=1
-          if ! go test -tags fts5 -json ./cmd/docbank/ -run '^TestNativePDF(Preparation|Redaction)CLI$' -count=1 > /tmp/native-redaction-proof.jsonl; then
+          if ! go test -tags fts5 -json ./cmd/docbank/ -run '^TestNativePDF(Preparation|Redaction|RedactionRecovery)CLI$' -count=1 > /tmp/native-redaction-proof.jsonl; then
             cat /tmp/native-redaction-proof.jsonl
             exit 1
           fi
@@ -58,7 +58,8 @@ jobs:
           python3 -I - /tmp/native-redaction-proof.jsonl <<'PY'
           import json, sys
           events = [json.loads(line) for line in open(sys.argv[1])]
-          for name in ("TestNativePDFPreparationCLI", "TestNativePDFRedactionCLI"):
+          for name in ("TestNativePDFPreparationCLI", "TestNativePDFRedactionCLI",
+                       "TestNativePDFRedactionRecoveryCLI"):
               outcomes = [event["Action"] for event in events
                           if event.get("Test") == name and event["Action"] in ("pass", "fail", "skip")]
               if outcomes != ["pass"]:
