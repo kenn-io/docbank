@@ -448,6 +448,9 @@ func (m Model) processingLines(width int) []string {
 	estimate := fmt.Sprintf(" Estimate: %d source bytes · %d provider call(s) · %d vector space(s)",
 		plan.Estimate.SourceBytes, plan.Estimate.ProviderCalls, plan.Estimate.VectorSpaces)
 	lines = appendWrapped(lines, estimate, width, lipgloss.NewStyle())
+	if plan.Estimate.Scope != "" {
+		lines = appendWrapped(lines, " Scope: "+plan.Estimate.Scope, width, lipgloss.NewStyle())
+	}
 	lines = appendWrapped(lines, " Backup consequence: "+plan.BackupConsequence, width, m.styles.muted)
 	lines = appendWrapped(lines, " Provider configuration remains CLI or API only; processing consent requires explicit confirmation.", width, m.styles.muted)
 	lines = append(lines, separator,

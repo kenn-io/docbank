@@ -457,6 +457,10 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 	if err := validateRetentionDisclosure(profile.RetentionDisclosure); err != nil {
 		return err
 	}
+	if profile.Rendition != nil && profile.Rendition.AdapterContract == VisionAdapterContract &&
+		(profile.RetentionDisclosure.RetainSanitizedMarkdown || profile.RetentionDisclosure.RetainProviderMarkdown || profile.RetentionDisclosure.RetainTypedArtifacts) {
+		return errors.New("photo descriptions do not retain Markdown or typed artifacts")
+	}
 	if err := validateRetrievalPolicy(profile.Retrieval); err != nil {
 		return err
 	}
@@ -469,6 +473,9 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 			return fmt.Errorf("embedding binding name %q is duplicated", binding.Name)
 		}
 		names[binding.Name] = struct{}{}
+		if binding.InputKind == EmbeddingInputRenditionChunk && profile.Rendition != nil && profile.Rendition.AdapterContract == VisionAdapterContract {
+			return errors.New("rendition_chunk embeddings require a text rendition; photo descriptions publish suggestions")
+		}
 		if err := validateEmbeddingBinding(binding, profile.Rendition != nil); err != nil {
 			return fmt.Errorf("embedding binding %d: %w", index, err)
 		}

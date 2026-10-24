@@ -23,6 +23,10 @@ const (
 type compiledGenerationArgument struct{}
 type compiledProfileArgument struct{}
 
+// compiledSuggestionArgument binds to whether pending suggestion text counts
+// as evidence, so one compiled query can also say what matches without it.
+type compiledSuggestionArgument struct{}
+
 type compiledQueryRelations uint8
 
 const (
@@ -50,6 +54,7 @@ type CompiledQuery struct {
 	Dependencies []query.Dependency
 
 	photoHidden       bool
+	withoutSuggestion bool
 	predicate         compiledQueryFragment
 	positiveTextTerms []string
 }
@@ -149,6 +154,8 @@ func (compiled CompiledQuery) bind(generationID string, profileFingerprint *stri
 			args[index] = generationID
 		case compiledProfileArgument:
 			args[index] = profileFingerprint
+		case compiledSuggestionArgument:
+			args[index] = !compiled.withoutSuggestion
 		default:
 			args[index] = arg
 		}
@@ -578,9 +585,20 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
 	parts := []compiledQueryFragment{name, content}
 	if c.photoDisplayMetadata {
-		parts = append(parts, metadata, compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files candidate JOIN photo_files pf ON pf.asset_id=candidate.asset_id JOIN nodes sibling ON sibling.id=pf.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id WHERE candidate.node_id=n.id AND pf.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND pf.node_id IN (SELECT rowid FROM photo_authored_fts WHERE photo_authored_fts MATCH ?))`, args: []any{fts}})
+		parts = append(parts, metadata, photoAssetTextPredicate(fts))
 	}
 	return joinCompiledFragments(parts, ` OR `)
+}
+
+// photoAssetTextPredicate matches a photo when any live, non-sidecar file of
+// its asset has authored text, an assigned tag name, or a pending suggestion
+// that matches, so all three read as one fact about the photo.
+func photoAssetTextPredicate(fts string) compiledQueryFragment {
+	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files candidate JOIN photo_files pf ON pf.asset_id=candidate.asset_id JOIN nodes sibling ON sibling.id=pf.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id WHERE candidate.node_id=n.id AND pf.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND (` +
+		`pf.node_id IN (SELECT rowid FROM photo_authored_fts WHERE photo_authored_fts MATCH ?)` +
+		` OR pf.node_id IN (SELECT nt.node_id FROM tag_fts JOIN tags t ON t.id=tag_fts.tag_id JOIN node_tags nt ON nt.tag_id=t.id WHERE tag_fts MATCH ?)` +
+		` OR pf.node_id IN (SELECT sv.node_id FROM photo_suggestion_fts JOIN photo_suggestions s ON s.id=photo_suggestion_fts.rowid JOIN content_versions sv ON sv.version_id=s.content_version_id JOIN nodes cur ON cur.id=sv.node_id AND cur.current_version_id=sv.version_id JOIN photo_files df ON df.node_id=sv.node_id JOIN photo_assets da ON da.asset_id=df.asset_id AND da.display_file_id=df.file_id WHERE photo_suggestion_fts MATCH ? AND ?)))`,
+		args: []any{fts, fts, fts, compiledSuggestionArgument{}}}
 }
 
 func quoteFTSOperand(value string, prefix bool) string {

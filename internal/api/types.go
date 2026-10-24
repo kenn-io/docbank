@@ -80,9 +80,10 @@ type ProcessingRuntimeDisclosure struct {
 }
 
 type ProcessingEstimate struct {
-	SourceBytes   int64 `json:"source_bytes" minimum:"0"`
-	ProviderCalls int   `json:"provider_calls" minimum:"0"`
-	VectorSpaces  int   `json:"vector_spaces" minimum:"0"`
+	SourceBytes   int64  `json:"source_bytes" minimum:"0"`
+	ProviderCalls int    `json:"provider_calls" minimum:"0"`
+	VectorSpaces  int    `json:"vector_spaces" minimum:"0"`
+	Scope         string `json:"scope,omitzero" maxLength:"256" doc:"Work beyond the selected source that consent starts."`
 }
 
 // ProcessingPlan is the complete reviewed disclosure. Its fingerprint must

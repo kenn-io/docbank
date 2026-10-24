@@ -31,8 +31,9 @@ docbank processing plan /inbox/notes.txt --profile <configured-profile>
 
 The plan names the stable node and content-version IDs, profile fingerprint,
 every provider flow and trust boundary, input classes disclosed to each flow,
-retained derivative classes, estimated source bytes and provider calls, whether
-consent is currently required, and the backup consequence. Each flow also names
+retained derivative classes, estimated source bytes and provider calls, any
+work beyond the selected source that consent starts, whether consent is
+currently required, and the backup consequence. Each flow also names
 the immediate and ultimate processor, endpoint, deployment, model and revision,
 vector space where applicable, provider-visible metadata, and retained artifact
 roles. These runtime disclosures are part of the plan fingerprint. Re-run the
@@ -116,6 +117,14 @@ exit 4, and failed integrity checks exit 6. Missing runtime, unsupported PDFs,
 work limits, request cancellation and worker failures exit 1. Native text
 inspection does not add OCR; the [font and coverage limitations](../architecture/page-images.md#remaining-refusals)
 still apply.
+
+## Describe photos
+
+Configure a [vision profile](../configuration.md#photo-descriptions), review `processing plan` for a photo, and grant consent with `processing build`. Eligible photos then queue automatically, a few at a time. The provider receives the cached grid JPEG, at most 512 pixels on its longest edge and re-encoded without metadata; filenames and original bytes stay in the vault. Hidden, excluded, trashed, and superseded photos are skipped before the call and again at publication, and a hidden photo retries once it is eligible again.
+
+The first request to a provider checks it with a synthetic image, and a failed check retries no sooner than a minute later. If it fails when you grant consent, the error says consent was saved. Caption, tags, and visible text arrive as one [suggestion](photos.md#suggested-metadata). An invalid caption or an oversized tag is dropped alone; a non-JSON reply publishes nothing. A dropped connection, timeout, or daemon restart during a description call retries it with backoff, since a description has no side effects.
+
+Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
 
 ## Review and render a native PDF
 
