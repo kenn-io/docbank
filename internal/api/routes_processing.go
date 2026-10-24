@@ -770,7 +770,7 @@ func fromProcessingError(err error) error {
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrSourceIneligible, http.StatusUnprocessableEntity, "rendition_source_ineligible",
 			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
-		{processing.ErrPDFPasswordsUnreadable, http.StatusConflict, "rendition_operator_required", "PDF passwords file can't be read; check media.pdf_passwords_file"},
+		{processing.ErrPDFPasswordsUnreadable, http.StatusConflict, "rendition_operator_required", processing.ErrPDFPasswordsUnreadable.Error()},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},
 		{processing.ErrProfileNotConfigured, http.StatusUnprocessableEntity, "processing_profile_unavailable", "processing profile is not configured"},

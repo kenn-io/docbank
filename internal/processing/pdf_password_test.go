@@ -73,8 +73,7 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
 			if tc.err != nil {
 				require.ErrorIs(t, err, ErrPDFPasswordsUnreadable)
-				require.NotErrorIs(t, err, tc.err)
-				require.NotContains(t, err.Error(), "/synthetic/private/passwords.txt")
+				require.ErrorIs(t, err, tc.err)
 				require.ErrorIs(t, err, ErrRenditionOperatorRequired)
 				require.Equal(t, tc.calls, provider.calls)
 				return

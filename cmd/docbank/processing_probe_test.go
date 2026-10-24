@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,32 +38,61 @@ func TestNewMistralProbeClient(t *testing.T) {
 
 func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing.T) {
 	cfg, _ := mistralOCRProcessingConfig(t)
-	policy, err := cfg.RenditionProfiles["documents"].MistralPolicy()
+	configured := cfg.RenditionProfiles["documents"]
+	policy, err := configured.MistralPolicy()
 	require.NoError(t, err)
-	requests := 0
 	client, err := mistral.NewClient(policy, mistral.ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{
 		Transport: mistralProbeTransport(func(request *http.Request) (*http.Response, error) {
-			requests++
 			assert.Equal(t, "https://api.eu.mistral.ai/v1/ocr", request.URL.String())
 			assert.Equal(t, "Bearer synthetic-key", request.Header.Get("Authorization"))
-			return &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"type":"invalid_model"}`)), Request: request}, nil
+			var input struct {
+				Pages    string `json:"pages"`
+				Document struct {
+					URL string `json:"document_url"`
+				} `json:"document"`
+			}
+			require.NoError(t, json.UnmarshalRead(request.Body, &input))
+			mediaType := strings.TrimPrefix(strings.SplitN(input.Document.URL, ";base64,", 2)[0], "data:")
+			var formatID string
+			for _, candidate := range mistral.CandidateFormats() {
+				if candidate.MediaType == mediaType {
+					formatID = candidate.ID
+					break
+				}
+			}
+			require.NotEmpty(t, formatID)
+			sentinel, err := mistral.ProbeFixtureSentinel(formatID)
+			require.NoError(t, err)
+			units := 1
+			if formatID == "pdf" && input.Pages != "0-0" {
+				units = 2
+			}
+			pages := make([]map[string]any, units)
+			for index := range pages {
+				pages[index] = map[string]any{"index": index, "markdown": sentinel}
+			}
+			body, err := json.Marshal(map[string]any{"model": mistral.DefaultModel, "pages": pages, "usage_info": map[string]int{"pages_processed": units}})
+			require.NoError(t, err)
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: request}, nil
 		}),
 	}})
 	require.NoError(t, err)
 	seeds := t.TempDir()
 	require.NoError(t, mistraltest.WriteNativeSeeds(seeds))
 	output := filepath.Join(t.TempDir(), "manifest.json")
+	configured.Runtime.CapabilityManifest = output
 	var printed bytes.Buffer
 	require.NoError(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false))
+	profile, err := configuredMistralProfile(configured)
+	require.NoError(t, err)
+	_, err = mistral.NewRenditionProvider(profile, environmentCredentialSecrets{}, &http.Client{})
+	require.NoError(t, err)
 	content, err := os.ReadFile(output)
 	require.NoError(t, err)
 	manifest, err := mistral.DecodeCapabilityManifest(bytes.NewReader(content))
 	require.NoError(t, err)
-	assert.Equal(t, mistral.DefaultModel, manifest.RequestedModel)
-	assert.Equal(t, len(mistral.CandidateFormats()), requests)
 	for _, result := range manifest.Results {
-		assert.Equal(t, "invalid_model", result.ReasonCode)
-		assert.Contains(t, printed.String(), result.FormatID+" "+string(result.Status)+" invalid_model")
+		assert.Contains(t, printed.String(), result.FormatID+" "+string(result.Status)+" "+result.ReasonCode)
 	}
 	assert.Contains(t, printed.String(), output)
 	require.Error(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false))
@@ -69,6 +100,36 @@ func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, content, preserved)
 	require.NoError(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, true))
+
+	content, err = os.ReadFile(output)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name         string
+		status       int
+		body, result string
+	}{
+		{"invalid model", http.StatusBadRequest, `{"type":"invalid_model"}`, "provider_rejected invalid_model"},
+		{"rate limited", http.StatusTooManyRequests, `{}`, "probe_failed transient_exhausted"},
+		{"bad key", http.StatusUnauthorized, `{}`, "provider_rejected provider_4xx"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failedClient, err := mistral.NewClient(policy, mistral.ClientConfig{APIKey: "synthetic-key", MaxRetryDelay: time.Millisecond, HTTPClient: &http.Client{
+				Transport: mistralProbeTransport(func(request *http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: test.status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(test.body)), Request: request}, nil
+				}),
+			}})
+			require.NoError(t, err)
+			var printed bytes.Buffer
+			require.Error(t, runMistralProbe(t.Context(), &printed, failedClient, policy, seeds, output, true))
+			preserved, err := os.ReadFile(output)
+			require.NoError(t, err)
+			assert.Equal(t, content, preserved)
+			for _, candidate := range mistral.CandidateFormats() {
+				assert.Contains(t, printed.String(), candidate.ID+" "+test.result)
+			}
+			assert.NotContains(t, printed.String(), "Capability manifest saved")
+		})
+	}
 }
 
 type mistralProbeTransport func(*http.Request) (*http.Response, error)

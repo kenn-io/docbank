@@ -78,10 +78,6 @@ func configureRenditionProviders(cfg config.Config) (
 	providers := make(map[string]document.RenditionProvider)
 	disclosures := make(map[string]processing.RuntimeDisclosure)
 	registered := make(map[string]registeredRenditionProvider)
-	secrets := environmentCredentialSecrets{variables: make(map[string]string)}
-	for name, binding := range cfg.CredentialBindings {
-		secrets.variables[name] = binding.EnvironmentVariable
-	}
 	names := make([]string, 0, len(cfg.RenditionProfiles))
 	for name := range cfg.RenditionProfiles {
 		names = append(names, name)
@@ -97,7 +93,7 @@ func configureRenditionProviders(cfg config.Config) (
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
-			provider, disclosures[name], err = configureExternalRendition(cfg, name, secrets, registered)
+			provider, disclosures[name], err = configureExternalRendition(cfg, name, registered)
 		default:
 			continue
 		}
@@ -119,7 +115,16 @@ func configureRenditionProviders(cfg config.Config) (
 	return providers, disclosures, nil
 }
 
-func configureExternalRendition(cfg config.Config, name string, secrets environmentCredentialSecrets,
+func renditionProviderClient(cfg config.Config, egress config.ProviderEgressConfig) (environmentCredentialSecrets, *http.Client, error) {
+	secrets := environmentCredentialSecrets{variables: make(map[string]string)}
+	for name, binding := range cfg.CredentialBindings {
+		secrets.variables[name] = binding.EnvironmentVariable
+	}
+	transport, err := providerhttp.NewTransport(providerEgressPolicy(egress), nil)
+	return secrets, &http.Client{Transport: transport}, err
+}
+
+func configureExternalRendition(cfg config.Config, name string,
 	registered map[string]registeredRenditionProvider,
 ) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
 	var disclosure processing.RuntimeDisclosure
@@ -148,7 +153,7 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 	if configured.DisclosureFingerprint != adapter.disclosureFingerprint {
 		return nil, disclosure, errors.New("disclosure fingerprint does not bind the runtime endpoint")
 	}
-	environmentVariable, ok := secrets.variables[adapter.secretBinding]
+	credential, ok := cfg.CredentialBindings[adapter.secretBinding]
 	if !ok {
 		return nil, disclosure, errors.New("rendition credential binding is not configured")
 	}
@@ -158,7 +163,7 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 	runtime.ProviderEgressConfig = config.ProviderEgressConfig{}
 	inputs := renditionProviderInputs{runtime: runtime, egress: egress, adapterContract: configured.AdapterContract,
 		maxTranscriptChars: configured.MaxTranscriptChars, maxDocumentBytes: configured.MaxDocumentBytes,
-		maxResponseBytes: configured.MaxResponseBytes, credentialEnvironment: environmentVariable}
+		maxResponseBytes: configured.MaxResponseBytes, credentialEnvironment: credential.EnvironmentVariable}
 	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: configured.AdapterContract,
 		UltimateProcessor: descriptor.ID, Endpoint: configured.Runtime.Endpoint,
 		Deployment: configured.DeploymentFingerprint, Model: adapter.model}
@@ -171,11 +176,11 @@ func configureExternalRendition(cfg config.Config, name string, secrets environm
 		}
 		return existing.provider, disclosure, nil
 	}
-	transport, err := providerhttp.NewTransport(egress, nil)
+	secrets, client, err := renditionProviderClient(cfg, configured.Runtime.ProviderEgressConfig)
 	if err != nil {
 		return nil, disclosure, err
 	}
-	provider, err := adapter.newProvider(secrets, &http.Client{Transport: transport})
+	provider, err := adapter.newProvider(secrets, client)
 	if err != nil {
 		return nil, disclosure, err
 	}

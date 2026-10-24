@@ -140,7 +140,7 @@ func (m CapabilityManifest) ValidateComplete() error {
 		return errors.New("mistral capability manifest endpoint or region is not pinned")
 	}
 	if m.RequestedModel != defaultModel {
-		return fmt.Errorf("mistral capability manifest was recorded for model %q, but this release pins %q; rerun docbank processing probe --overwrite", m.RequestedModel, defaultModel)
+		return fmt.Errorf("mistral capability manifest was recorded for model %q, but this release pins %q; rerun docbank processing probe --profile <processing-profile> --seeds <dir> --overwrite", m.RequestedModel, defaultModel)
 	}
 	if m.MaxUnits < MinUnits || m.MaxUnits > MaxUnits {
 		return errors.New("mistral capability manifest has invalid unit limit")
