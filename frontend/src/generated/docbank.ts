@@ -5512,6 +5512,33 @@ export interface PhotoAuthoredEditRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
+export interface PhotoXMPRow {
+  catalog: string;
+  field: string;
+  sidecar: string;
+}
+
+export type PhotoXMPStateState = typeof PhotoXMPStateState[keyof typeof PhotoXMPStateState];
+
+
+export const PhotoXMPStateState = {
+  none: 'none',
+  synced: 'synced',
+  pending: 'pending',
+  conflict: 'conflict',
+  unavailable: 'unavailable',
+  invalid: 'invalid',
+} as const;
+
+export interface PhotoXMPState {
+  conflict_id?: string;
+  /** The sidecar import that Undo can still reverse. */
+  import_receipt_id?: string;
+  reason?: string;
+  rows?: PhotoXMPRow[];
+  state: PhotoXMPStateState;
+}
+
 export interface PhotoPreparedTarget {
   asset_id: string;
   /** @minimum 1 */
@@ -5527,6 +5554,7 @@ export interface PhotoPreparedTarget {
   revision: number;
   tags: string[];
   values: PhotoAuthored;
+  xmp?: PhotoXMPState;
 }
 
 export interface PhotoAuthoredPreparation {
@@ -5582,6 +5610,7 @@ export interface PhotoRepresentativeChange {
 export interface PhotoSidecarProvenance {
   file_id: string;
   node_id: number;
+  /** The version that supplied the first imported value. */
   version_id: string;
 }
 
@@ -6384,6 +6413,21 @@ export interface PhotoTimelineRequest {
   readonly $schema?: string;
   coverage?: WorkspaceQueryCoverage;
   query: SavedQueryV1Schema;
+}
+
+export type PhotoXMPResolveRequestChoice = typeof PhotoXMPResolveRequestChoice[keyof typeof PhotoXMPResolveRequestChoice];
+
+
+export const PhotoXMPResolveRequestChoice = {
+  catalog: 'catalog',
+  sidecar: 'sidecar',
+} as const;
+
+export interface PhotoXMPResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  choice: PhotoXMPResolveRequestChoice;
+  conflict_id: string;
 }
 
 export interface RolePolicy {
@@ -17062,6 +17106,45 @@ return sessionJSON<PhotoAuthoredReceipt>(getDecidePhotoStackUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(photoStackDecisionRequest)
+  }
+);}
+
+
+
+export const getResolvePhotoXMPUrl = (fileId: string,) => {
+
+
+
+
+  return `/api/v1/photos/authored/${encodeURIComponent(String(fileId))}/xmp`
+}
+
+/**
+ * @summary Choose the catalog or sidecar copy of conflicting photo metadata
+ */
+export const resolvePhotoXMP = async (fileId: string,
+    photoXMPResolveRequest: NonReadonly<PhotoXMPResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt | void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredReceipt | void>(getResolvePhotoXMPUrl(fileId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoXMPResolveRequest)
   }
 );}
 

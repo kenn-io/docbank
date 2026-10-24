@@ -40,7 +40,27 @@ func (c queryCompiler) compilePhotoDecisionPredicate(predicate string, args ...a
 }
 
 func isPhotoScalarField(field string) bool {
-	return query.IsQualityField(field) || slices.Contains([]string{"rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "location", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
+	return query.IsQualityField(field) || slices.Contains([]string{"xmp", "rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "location", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
+}
+
+// photoXMPQueueRestricted identifies queries whose every match must belong to
+// the unsettled queue. Negated or alternative non-XMP matches need the full library.
+func photoXMPQueueRestricted(value query.Query) bool {
+	expression, err := query.ParseExpression(value.Text, value.Syntax)
+	return err == nil && photoXMPRequired(expression)
+}
+
+func photoXMPRequired(expression *query.Expression) bool {
+	switch expression.Kind {
+	case query.ExpressionField:
+		return expression.Field == "xmp" && len(expression.Children) == 1 && expression.Children[0].Kind == query.ExpressionTerm
+	case query.ExpressionAnd:
+		return slices.ContainsFunc(expression.Children, photoXMPRequired)
+	case query.ExpressionOr:
+		return len(expression.Children) > 0 && !slices.ContainsFunc(expression.Children, func(child *query.Expression) bool { return !photoXMPRequired(child) })
+	default:
+		return false
+	}
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
@@ -65,6 +85,20 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		return c.compilePhotoQualityPredicate(field, value)
 	}
 	switch field {
+	case "xmp":
+		if err := query.ValidateTextOperand(field, value); err != nil {
+			return compiledQueryFragment{}, err
+		}
+		originals := `SELECT f.node_id,f.asset_id FROM ` + photoXMPCandidatesSQL + ` WHERE f.eligible AND f.pending`
+		if strings.EqualFold(value, PhotoXMPStateConflict) {
+			originals = `SELECT f.node_id,f.asset_id FROM ` + photoXMPCandidatesSQL + ` WHERE f.eligible AND f.conflicts<>0`
+		}
+
+		if c.photoDisplayMetadata {
+			// Check each original once, then expand matching assets to their members.
+			return compiledQueryFragment{sql: `n.id IN (WITH xf AS MATERIALIZED (` + originals + `) SELECT pf.node_id FROM xf CROSS JOIN photo_files pf ON pf.asset_id=xf.asset_id)`}, nil
+		}
+		return compiledQueryFragment{sql: `n.id IN (SELECT node_id FROM (` + originals + `))`}, nil
 	case "rating", "rating_min", "rating_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil || n > 5 {

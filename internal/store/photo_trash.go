@@ -17,7 +17,7 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 	defer unlock()
 	var asset PhotoAsset
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
+		current, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision, "trash")
 		if err != nil {
 			return err
 		}
@@ -58,7 +58,7 @@ func (s *Store) trashPhotoAssetTx(
 		if audited {
 			_, _, err = s.trashAuditedTx(ctx, tx, n, n.Revision)
 		} else {
-			err = s.trashNodeTx(tx, n, now)
+			err = s.trashNodeTx(ctx, tx, n, now)
 		}
 		if err != nil {
 			err = fmt.Errorf("photo %s, file %q: %w", asset.ID, n.Name, err)

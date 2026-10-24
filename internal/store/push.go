@@ -327,7 +327,7 @@ func (s *Store) recordPushObservationTx(
 	if err != nil {
 		return Node{}, err
 	}
-	node, err = s.observeOperationalIngestTx(ctx, tx, run, node, fact, ingestAdded)
+	node, err = s.observeOperationalIngestTx(ctx, tx, run, node, fact, ingestAdded, node.CurrentVersionID)
 	if err != nil {
 		return Node{}, err
 	}

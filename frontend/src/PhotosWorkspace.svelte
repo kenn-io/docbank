@@ -111,8 +111,8 @@
     onloadtags?: () => Promise<void>;
     onloadmoretags?: () => Promise<void>;
     onmetadatachanged?: (
-      receipt: PhotoAuthoredReceipt,
-      tags: import("./generated/docbank.js").Tag[],
+      receipt?: PhotoAuthoredReceipt,
+      tags?: import("./generated/docbank.js").Tag[],
     ) => void;
     onhelp?: () => void;
     title?: string;
@@ -243,9 +243,24 @@
     editor.tagsLoading = tagsLoading;
     editor.tagsTotal = tagsTotal;
   });
+  $effect(() => {
+    editor.onXMPChanged = async (receipt, tags = []) => {
+      if (photoID) {
+        detailController?.abort();
+        reload = { id: photoID };
+      }
+      if (receipt) await metadataRefresh(receipt, tags, true);
+      else {
+        // A background import or status change has no receipt; sibling views still hold the old values.
+        onmetadatachanged?.(undefined, tags);
+        await refresh();
+      }
+    };
+  });
   async function metadataRefresh(
     receipt: PhotoAuthoredReceipt,
     tags: import("./generated/docbank.js").Tag[],
+    forceRefresh = false,
   ) {
     onmetadatachanged?.(receipt, tags);
     const refreshing = photos.loading;
@@ -263,7 +278,8 @@
       detailController?.abort();
       reload = { id: photoID };
     }
-    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) await refresh();
+    if (forceRefresh || refreshing || (photos.started && photos.reloadsAfter(rotations)))
+      await refresh();
   }
   function unavailable() {
     editor.unavailable(
@@ -478,7 +494,10 @@
           detailError = cause instanceof Error ? cause.message : String(cause);
       })
       .finally(() => {
-        if (!controller.signal.aborted) detailLoading = false;
+        if (!controller.signal.aborted) {
+          detailLoading = false;
+          if (loupeMetadata && !editor.dirty && !editor.busy) void editor.reload(true);
+        }
       });
     return () => {
       controller.abort();

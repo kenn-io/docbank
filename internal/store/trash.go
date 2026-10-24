@@ -49,7 +49,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 		if origPath, err = pathOf(ctx, tx, id); err != nil {
 			return err
 		}
-		if err := s.trashNodeTx(tx, n, nowRFC3339()); err != nil {
+		if err := s.trashNodeTx(ctx, tx, n, nowRFC3339()); err != nil {
 			return err
 		}
 		trashed, err = nodeByIDTx(tx, id)
@@ -102,7 +102,7 @@ func (s *Store) TrashPathRevision(
 		if origPath, err = pathOf(ctx, tx, n.ID); err != nil {
 			return err
 		}
-		if err := s.trashNodeTx(tx, n, nowRFC3339()); err != nil {
+		if err := s.trashNodeTx(ctx, tx, n, nowRFC3339()); err != nil {
 			return err
 		}
 		trashed, err = nodeByIDTx(tx, n.ID)
@@ -116,9 +116,9 @@ func (s *Store) TrashPathRevision(
 
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
 // subtree within the caller's transaction.
-func (s *Store) trashNodeTx(tx *sql.Tx, n Node, now string) error {
-	id := n.ID
-	if _, err := tx.Exec(`
+func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string) error {
+	removed, trashedIDs := map[string]int64{}, map[int64]struct{}{}
+	if err := queryRows(ctx, tx, `
 			WITH RECURSIVE subtree(id) AS (
 				SELECT id FROM nodes WHERE id = ?
 				UNION ALL
@@ -127,18 +127,40 @@ func (s *Store) trashNodeTx(tx *sql.Tx, n Node, now string) error {
 				WHERE n.trashed_at IS NULL
 			)
 			UPDATE nodes SET trashed_at = ?, revision = revision + 1, modified_at = ?
-			WHERE id IN (SELECT id FROM subtree)`, id, now, now); err != nil {
-		return fmt.Errorf("trashing subtree of node %d: %w", id, err)
+			WHERE id IN (SELECT id FROM subtree)
+			RETURNING id,(SELECT sidecar_of_file_id FROM photo_files WHERE node_id=nodes.id),
+			(SELECT o.node_id FROM photo_files f JOIN photo_files o ON o.file_id=f.sidecar_of_file_id WHERE f.node_id=nodes.id)`, []any{n.ID, now, now}, func(rows *sql.Rows) error {
+		var id int64
+		var fileID sql.NullString
+		var originalNode sql.NullInt64
+		if err := rows.Scan(&id, &fileID, &originalNode); err != nil {
+			return err
+		}
+		trashedIDs[id] = struct{}{}
+		if fileID.Valid {
+			removed[fileID.String] = originalNode.Int64
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("trashing subtree of node %d: %w", n.ID, err)
 	}
 	// Detach the trash root from its original parent (parent_id has ON
 	// DELETE CASCADE, so leaving it in place would silently destroy this
 	// trash root if the original parent were ever hard-deleted). The
 	// origin travels in trash_parent/trash_name; parent_id points at the
 	// tree root because the one_root index forbids a second NULL parent.
-	if _, err := tx.Exec(
-		`UPDATE nodes SET parent_id = ?, trash_parent = ?, trash_name = ? WHERE id = ?`,
-		s.rootID, *n.ParentID, n.Name, id); err != nil {
-		return fmt.Errorf("recording trash origin of node %d: %w", id, err)
+	if _, err := tx.Exec(`UPDATE nodes SET parent_id = ?, trash_parent = ?, trash_name = ? WHERE id = ?`,
+		s.rootID, *n.ParentID, n.Name, n.ID); err != nil {
+		return fmt.Errorf("recording trash origin of node %d: %w", n.ID, err)
+	}
+	for fileID, originalNode := range removed {
+		// An original trashed in this operation is ineligible, and its restore brings the sidecar back with it.
+		if _, together := trashedIDs[originalNode]; together {
+			continue
+		}
+		if err := recordPhotoXMPDetachedTx(ctx, tx, fileID, false); err != nil {
+			return err
+		}
 	}
 	return bumpRevisionTx(tx, *n.ParentID, now)
 }

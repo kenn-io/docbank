@@ -220,7 +220,7 @@ func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e
 			return err
 		}
 		run := IngestRun{record: metadataIngest{Type: metadataIngestType, ID: c.LastOperationID, StartedAt: startedAt, SourceKind: "photo-checkout", SourceDesc: c.ID}}
-		if _, err := s.observePhotoImportSourceTx(ctx, tx, run, replaced, PhotoImportMember{OriginalPath: e.Path, OriginalMtime: originalMtime}); err != nil {
+		if _, err := s.observePhotoImportSourceTx(ctx, tx, run, replaced, PhotoImportMember{OriginalPath: e.Path, OriginalMtime: originalMtime}, version.ID); err != nil {
 			return err
 		}
 		after := checkoutCommitState{c.ID, c.LastOperationID, e.FileID, version.ID, hash, size}

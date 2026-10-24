@@ -53,3 +53,17 @@ func TestPhotoCaptureTimeKey(t *testing.T) {
 		require.Empty(t, key, tc.value)
 	}
 }
+
+func TestXMPOperands(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"pending", "conflict", "PENDING", "Conflict"} {
+		require.NoError(t, ValidateTextOperand("xmp", value))
+		expr, err := ParseExpression("xmp:"+value, "advanced")
+		require.NoError(t, err)
+		require.Equal(t, ExpressionField, expr.Kind)
+		require.Equal(t, "xmp", expr.Field)
+	}
+	for _, value := range []string{"", "synced", "pending*", "pending conflict"} {
+		require.Error(t, ValidateTextOperand("xmp", value))
+	}
+}

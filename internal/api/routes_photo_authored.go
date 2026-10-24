@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
@@ -33,6 +35,41 @@ type PhotoAuthoredPreparation struct {
 	Targets []store.PhotoPreparedTarget `json:"targets"`
 }
 
+type PhotoXMPResolveRequest struct {
+	ConflictID string `json:"conflict_id" format:"uuid"`
+	Choice     string `json:"choice" enum:"catalog,sidecar"`
+}
+
+type photoXMPResolveOutput struct {
+	Status int
+	Body   *store.PhotoAuthoredReceipt
+}
+
+// resolvePhotoXMPOperation returns a receipt whenever resolution imports metadata.
+func resolvePhotoXMPOperation(api huma.API) huma.Operation {
+	const defaultResponse = "default"
+	errorSchema := api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[Error](), true, "")
+	return huma.Operation{OperationID: "resolvePhotoXMP", Method: http.MethodPost, Path: "/api/v1/photos/authored/{file_id}/xmp", Summary: "Choose the catalog or sidecar copy of conflicting photo metadata", Responses: map[string]*huma.Response{
+		"204":           {Description: "Resolution imported no catalog values"},
+		defaultResponse: {Description: "Error", Content: map[string]*huma.MediaType{new(Error).ContentType("application/json"): {Schema: errorSchema}}},
+	}}
+}
+
+// resolvePhotoXMP returns the import either choice created so every view
+// showing the photo can apply it.
+func resolvePhotoXMP(ctx context.Context, d Deps, g *gate, fileID string, request PhotoXMPResolveRequest) (*photoXMPResolveOutput, error) {
+	out := &photoXMPResolveOutput{Status: http.StatusNoContent}
+	err := g.mutate(func() error {
+		var err error
+		out.Body, err = processing.ResolvePhotoXMP(ctx, &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}, fileID, request.ConflictID, request.Choice)
+		return FromStoreError(err)
+	})
+	if out.Body != nil {
+		out.Status = http.StatusOK
+	}
+	return out, err
+}
+
 type PhotoStackDecisionRequest struct {
 	BurstGapSeconds int                             `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
 	Hidden          bool                            `json:"hidden,omitempty"`
@@ -44,6 +81,12 @@ type PhotoStackDecisionRequest struct {
 }
 
 func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
+	huma.Register(api, resolvePhotoXMPOperation(api), func(ctx context.Context, in *struct {
+		FileID string `path:"file_id" format:"uuid"`
+		Body   PhotoXMPResolveRequest
+	}) (*photoXMPResolveOutput, error) {
+		return resolvePhotoXMP(ctx, d, g, in.FileID, in.Body)
+	})
 	// Bound 500 observed frames and 2,000 file revisions.
 	huma.Register(api, huma.Operation{OperationID: "decidePhotoStack", Method: http.MethodPost, Path: "/api/v1/photos/authored/stack", Summary: "Decide one observed stack atomically", MaxBodyBytes: 576 << 10}, func(ctx context.Context, in *struct{ Body PhotoStackDecisionRequest }) (*struct{ Body store.PhotoAuthoredReceipt }, error) {
 		body := in.Body
@@ -116,6 +159,9 @@ func photoAuthoredBrowserRequestAllowed(r *http.Request) bool {
 		}
 		if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/authored/"); ok {
 			parts := strings.Split(after, "/")
+			if len(parts) == 2 && parts[1] == "xmp" && query.ValidateTextOperand("asset", parts[0]) == nil {
+				return r.Method == http.MethodPost
+			}
 			return len(parts) == 2 && parts[1] == "undo" && query.ValidateTextOperand("asset", parts[0]) == nil && r.Method == http.MethodPost
 		}
 	}

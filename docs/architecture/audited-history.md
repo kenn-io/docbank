@@ -37,6 +37,8 @@ from the wider design described here.
     - Read-only protection status, node history, and independent verification
       evidence in the web application; node history in the TUI.
 
+    XMP sync can write a new version of an existing sidecar when both the photo and sidecar belong to the active audit scope; audit authority blocks creating a new sidecar attachment.
+
     Overlapping scopes and cross-scope topology changes remain planned. Use
     [Permanent audited history](../usage/audited-history.md) for the current
     operator workflow.
