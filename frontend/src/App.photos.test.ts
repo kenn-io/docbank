@@ -4740,10 +4740,9 @@ it.each(personLibraryViews)("refreshes the %s photo filter after People edits", 
     await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
     await fireEvent.click(await screen.findByRole("button", { name: "Clear filters" }));
     await waitFor(() => expect(library.loading).toBe(false));
-    await fireEvent.input(await screen.findByRole("searchbox", { name: "Search photos" }), {
-      target: { value: "person:Grace" },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+    const search = await screen.findByRole("searchbox", { name: "Search photos" });
+    await fireEvent.input(search, { target: { value: "person:Grace" } });
+    await fireEvent.submit(search.closest("form")!);
     await waitFor(() => expect(library.query.text).toBe("person:Grace"));
     await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
   }
