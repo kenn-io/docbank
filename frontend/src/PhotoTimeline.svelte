@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
-  import { Button, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Card, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import { monthLabel } from "./photoGrid.js";
   import { timelineYears, type CaptureDayFacet } from "./photoTimeline.js";
 
@@ -8,172 +7,213 @@
     facet,
     loading,
     error,
-    selected,
+    chosen = "",
+    current = "",
+    compact = false,
+    disabled = false,
+    hint = "",
     onselect,
     onretry,
   }: {
     facet?: CaptureDayFacet;
     loading: boolean;
     error: string;
-    selected?: string;
-    onselect: (date: string) => void;
+    // The year the user chose, which stays open while the grid scrolls to it.
+    chosen?: string;
+    // The month of the photo at the top of the grid.
+    current?: string;
+    compact?: boolean;
+    disabled?: boolean;
+    hint?: string;
+    onselect: (month: string) => void;
     onretry: () => void;
   } = $props();
-  let monthStrip = $state<HTMLElement>();
   const years = $derived(facet?.available ? timelineYears(facet) : []);
-  const months = $derived(years.flatMap((year) => year.months));
-  const focused = $derived(
-    months.find((month) =>
-      selected?.length === 4 ? month.key.startsWith(selected) : month.key === selected?.slice(0, 7),
-    ) ?? months[0],
+  const missing = $derived(facet?.available ? (facet.missing ?? 0) : 0);
+  const countLabel = (count: number) => `${count.toLocaleString()} photo${count === 1 ? "" : "s"}`;
+  const shortMonth = (key: string) => `${monthLabel(key, { month: "short" })} ${key.slice(0, 4)}`;
+  // A year lands on its newest counted month.
+  const newest = (key: string) => years.find((year) => year.key === key)?.months[0]?.key ?? key;
+  const options = $derived([
+    { value: "", label: "Jump to date", disabled: true },
+    ...years.flatMap((year) => [
+      { value: year.key, label: `${year.key} · ${countLabel(year.count)}` },
+      ...year.months.map((month) => ({
+        value: month.key,
+        label: `${shortMonth(month.key)} · ${countLabel(month.count)}`,
+        triggerLabel: shortMonth(month.key),
+      })),
+    ]),
+    ...(missing
+      ? [{ value: "undated", label: `${missing.toLocaleString()} undated`, disabled: true }]
+      : []),
+  ]);
+  const selected = $derived(
+    years.some((year) => year.months.some((month) => month.key === current)) ? current : "",
   );
-  const peak = $derived(Math.max(1, ...years.map((year) => year.count)));
-  $effect(() => {
-    focused?.key;
-    selected;
-    void tick().then(() => {
-      monthStrip
-        ?.querySelector<HTMLElement>(".timeline-active")
-        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-    });
-  });
 </script>
 
-<section class="photo-timeline" aria-label="Photo timeline">
-  {#if loading}
-    <div role="status"><Spinner size={14} /> Loading timeline...</div>
-  {:else if error}
-    <div role="alert">{error} <Button size="sm" onclick={onretry}>Retry timeline</Button></div>
-  {:else if facet && !facet.available}
-    <div role="status">
-      {facet.reason === "snapshot_busy" || facet.reason === "snapshot_capacity"
-        ? "Timeline is busy. Retry in a moment."
-        : facet.reason === "time_budget_exceeded"
-          ? "Timeline took too long. Try again."
-          : facet.reason === "member_budget_exceeded"
-            ? "Too many photos for timeline counts."
-            : facet.reason === "snapshot_too_large"
-              ? "Timeline exceeds its limits."
-              : "Timeline counts are unavailable."}
-      <Button size="sm" onclick={onretry}>Retry timeline</Button>
-    </div>
-  {:else if facet?.available}
-    <div class="timeline-summary">
-      {facet.total?.toLocaleString()}
-      {facet.total === 1 ? "photo" : "photos"} in scope · {facet.missing?.toLocaleString()} undated
-    </div>
-    {#if years.length}
-      <nav class="year-ribbon" aria-label="Timeline years">
+{#snippet problem()}
+  <div class="timeline-status" role="alert">
+    <span>{error}</span>
+    <Button size="sm" ariaLabel="Retry timeline" disabled={loading} onclick={onretry}>Retry</Button>
+  </div>
+{/snippet}
+
+{#if compact}
+  <div class="compact-dates">
+    {#if error}{@render problem()}{/if}
+    {#if years.length || missing}
+      <SelectDropdown
+        title="Jump to date"
+        value={selected}
+        {options}
+        {disabled}
+        onchange={(value) => onselect(newest(value))}
+      />
+      {#if hint}<p class="timeline-hint">{hint}</p>{/if}
+    {:else if loading}
+      <div class="timeline-status" role="status"><Spinner size={14} />Loading dates…</div>
+    {/if}
+  </div>
+{:else}
+  <nav aria-label="Timeline">
+    <Card level="default" padding="none">
+      <div class="rail">
+        {#if hint}<p class="timeline-hint">{hint}</p>{/if}
+        {#if error}{@render problem()}{/if}
+        {#if loading && !years.length && !missing}
+          <div class="timeline-status" role="status"><Spinner size={14} />Loading…</div>
+        {/if}
         {#each years as year (year.key)}
-          <button
-            type="button"
-            class="photo-toggle kit-button kit-control-states kit-button--sm"
-            aria-pressed={Boolean(selected?.startsWith(year.key))}
-            onclick={() => onselect(year.key)}
-          >
-            <span class="year-count"
-              >{year.key}<span>{year.count.toLocaleString()}</span><span
-                class="year-density"
-                style:width={`${Math.max(5, (year.count / peak) * 100)}%`}
-              ></span></span
-            >
-          </button>
-        {/each}
-      </nav>
-      <nav
-        class="month-sections scrubber"
-        aria-label="Timeline month scrubber"
-        bind:this={monthStrip}
-      >
-        {#each years as year (year.key)}
-          {#if focused?.key.startsWith(year.key)}
-            {#each year.months as month (month.key)}<button
-                type="button"
-                class="photo-toggle kit-button kit-control-states kit-button--sm"
-                class:timeline-active={focused?.key === month.key}
-                aria-pressed={Boolean(selected?.startsWith(month.key))}
-                onclick={() => onselect(month.key)}
-                >{monthLabel(month.key)} · {month.count.toLocaleString()}</button
-              >{/each}
-          {/if}
-        {/each}
-      </nav>
-      {#if focused}
-        <div class="day-rows" aria-label={monthLabel(focused.key)}>
-          {#each focused.days as day (day.key)}
+          {@const open = year.key === chosen || year.key === current.slice(0, 4)}
+          <section class="rail-group" class:open>
             <button
               type="button"
-              class="photo-toggle kit-button kit-control-states kit-button--sm"
-              aria-pressed={selected === day.key}
-              onclick={() => onselect(day.key)}
-              >{day.key} · {day.count.toLocaleString()}
-              {day.count === 1 ? "photo" : "photos"}</button
+              class="rail-row rail-year"
+              aria-label={`${year.key}, ${countLabel(year.count)}`}
+              {disabled}
+              onclick={() => onselect(newest(year.key))}
+              ><span>{year.key}</span><small>{year.count.toLocaleString()}</small></button
             >
-          {/each}
-        </div>
-      {/if}
-    {:else if facet.total === 0}
-      <p>No photos in this scope.</p>
-    {:else}
-      <p>These photos have no recorded dates.</p>
-    {/if}
-  {/if}
-</section>
+            {#if open}
+              {#each year.months as month (month.key)}
+                <button
+                  type="button"
+                  class="rail-row rail-month"
+                  class:active={current === month.key}
+                  aria-label={`${shortMonth(month.key)}, ${countLabel(month.count)}`}
+                  aria-current={current === month.key ? "true" : undefined}
+                  {disabled}
+                  onclick={() => onselect(month.key)}
+                  ><span>{monthLabel(month.key, { month: "short" })}</span><small
+                    >{month.count.toLocaleString()}</small
+                  ></button
+                >
+              {/each}
+            {/if}
+          </section>
+        {/each}
+        {#if missing}<p class="rail-foot">{missing.toLocaleString()} undated</p>{/if}
+      </div>
+    </Card>
+  </nav>
+{/if}
 
 <style>
-  .photo-timeline {
-    flex-shrink: 0;
-    max-height: 42vh;
-    overflow: auto;
-    padding: var(--space-3) var(--space-5);
-    border-bottom: 1px solid var(--border-default);
-    color: var(--text-primary);
-    background: var(--bg-inset);
-    font-size: var(--font-size-sm);
+  .rail {
+    width: 104px;
+    max-height: var(--timeline-height, none);
+    overflow-y: auto;
   }
-  .timeline-summary {
-    color: var(--text-muted);
-    margin-bottom: var(--space-2);
-  }
-  .year-ribbon,
-  .day-rows {
-    display: flex;
+  .rail .timeline-status {
     flex-wrap: wrap;
-    gap: var(--space-2);
-    align-items: center;
-  }
-  .scrubber {
-    display: flex;
-    gap: var(--space-2);
-    overflow-x: auto;
-    padding: var(--space-1) 0;
-  }
-  .scrubber :global(button) {
-    flex-shrink: 0;
-  }
-  .year-ribbon {
-    margin-bottom: var(--space-3);
-  }
-  .year-count {
-    display: flex;
-    flex-direction: column;
-    min-width: 58px;
-    align-items: start;
-    gap: var(--space-1);
-  }
-  .year-count > span:first-child {
+    padding: var(--space-3);
     font-size: var(--font-size-xs);
   }
-  .year-density {
-    height: 3px;
-    background: currentColor;
-    border-radius: 2px;
+  .timeline-hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
-  .month-sections {
-    margin: var(--space-2) 0;
+  .rail .timeline-hint {
+    padding: var(--space-3);
   }
-  .day-rows {
+  .rail-group + .rail-group {
     border-top: 1px solid var(--border-default);
-    padding-top: var(--space-2);
+  }
+  .rail-group.open {
+    background: var(--bg-inset);
+    padding-bottom: 4px;
+  }
+  .rail-foot {
+    margin: 0;
+    padding: 7px 10px;
+    border-top: 1px solid var(--border-default);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+  .rail-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    border: 0;
+    border-left: 2px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    text-align: left;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+  }
+  .rail-row:disabled {
+    cursor: default;
+    opacity: var(--opacity-disabled);
+  }
+  .rail-row small {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+  .rail-row:not(:disabled):hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--accent-blue) 6%, transparent);
+  }
+  .rail-row:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+  }
+  .rail-year {
+    padding: 7px 10px;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+  }
+  .rail-group.open .rail-year {
+    color: var(--text-primary);
+  }
+  .rail-month {
+    padding: 3px 10px 3px 18px;
+    font-size: var(--font-size-xs);
+  }
+  .rail-month.active {
+    border-left-color: var(--accent-blue);
+    color: var(--accent-blue);
+    font-weight: 600;
+  }
+  .compact-dates {
+    display: grid;
+    gap: var(--space-2);
+    flex-shrink: 0;
+    padding: var(--space-3) var(--space-5);
+  }
+  .compact-dates :global(.kit-select-dropdown) {
+    width: 100%;
+  }
+  .timeline-status {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 </style>
