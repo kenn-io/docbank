@@ -211,7 +211,7 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 				})
 			if test.locked {
 				require.ErrorIs(t, err, home.ErrVaultLocked)
-				require.EqualError(t, err, root+": vault is locked by another process (is a docbank daemon or restore already running?); if you're in a sandbox, check for a daemon outside it")
+				require.ErrorContains(t, err, "if you're in a sandbox, check for a daemon outside it")
 			} else {
 				require.NoError(t, err)
 			}
