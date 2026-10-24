@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-24
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -1202,6 +1202,29 @@ completed embedding bindings, and any failure code. It does not start new work.
 See [Document processing](usage/document-processing.md) for the full workflow
 and [HTTP consent](architecture/http-api.md#processing-consent) for grants with
 expiry or revocation.
+
+## docbank redaction
+
+```
+docbank redaction prepare <path-or-id> [--version <version-uuid>] [--json]
+docbank redaction resolve <preparation.json> <masks.json> [--json]
+docbank redaction render <preparation.json> <masks.json> <review.json> <output.zip>
+  [--overwrite] [--json]
+docbank redaction verify <preparation.json> <masks.json> <review.json> <archive.zip> [--json]
+```
+
+Prepare, resolve and render use the daemon to inspect and redact a retained
+native PDF. Render saves one ZIP containing the fresh PDF, sanitized text and
+receipt. See [Review and render a native PDF](usage/document-processing.md#review-and-render-a-native-pdf)
+for masks, review files, runtime requirements and refusal handling.
+
+Verify checks a saved ZIP offline, without the source or a PDF runtime. It
+prints the checked receipt and the complete archive's size and SHA-256; `--json`
+returns `{ "receipt": ..., "size": ..., "sha256": ... }`. It does not compare
+PDF contents with the review or authenticate the producer. Compare the archive
+digest with the render-time value. See
+[Check and retain a saved archive](usage/document-processing.md#check-and-retain-a-saved-archive)
+for limits, exit codes and recovery.
 
 ## docbank rendition
 
