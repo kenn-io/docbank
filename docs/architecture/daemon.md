@@ -100,6 +100,10 @@ stale state:
   process's create-time. Discovery compares it against the live process at
   that PID and treats a mismatch as a stale record. It never signals or
   trusts a process it didn't start.
+  A sandbox can share `$DOCBANK_HOME` while seeing different PIDs, so a starter
+  that finds no daemon checks the vault lock first and refuses while another
+  process holds it. A dead daemon holds no lock, so its leftover record never
+  blocks a start.
 - **Exact version match.** Pre-1.0, there is no compatibility matrix:
   local daemon discovery requires an exact version match with the CLI. `docbank
   daemon status` and `docbank daemon stop` report any live daemon
