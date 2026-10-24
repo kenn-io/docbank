@@ -166,8 +166,8 @@ it("applies the draft when the search mode changes", async () => {
   photos.dispose();
 });
 
-it("reports nothing when the search mode changes with applied text", async () => {
-  const fetcher = vi.fn();
+it("reports Photos search outcomes for explicit submissions", async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
@@ -192,15 +192,6 @@ it("reports nothing when the search mode changes with applied text", async () =>
   }
   expect(actions.reportSearch).not.toHaveBeenCalled();
   expect(actions.reportFailure).not.toHaveBeenCalled();
-  photos.dispose();
-});
-
-it("reports Photos search outcomes for explicit submissions", async () => {
-  const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
-  vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  photos.started = true;
-  render(PhotoSearch, { photos });
   const search = screen.getByRole("searchbox", { name: "Search photos" });
   fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
   await fireEvent.input(search, { target: { value: "Nikon" } });
