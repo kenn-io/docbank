@@ -32,6 +32,7 @@ import (
 )
 
 func TestVaultCloseDrainsProcessingMutationBeforeCancel(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
 	require.NoError(t, err)
@@ -75,6 +76,7 @@ func TestVaultCloseDrainsProcessingMutationBeforeCancel(t *testing.T) {
 }
 
 func TestEmbeddedCoverageMappingPreservesRebuildCounters(t *testing.T) {
+	t.Parallel()
 	got := fromCoverageClass(internalprocessing.CoverageClass{
 		Name: "semantic", Required: true, State: "rebuilding", Rebuilding: 2, PreviousServing: 1, Total: 2,
 	})
@@ -83,6 +85,7 @@ func TestEmbeddedCoverageMappingPreservesRebuildCounters(t *testing.T) {
 }
 
 func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
@@ -148,6 +151,7 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 }
 
 func TestVaultSourceMetadataReturnsExactVersionEvidence(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -191,6 +195,7 @@ func TestVaultSourceMetadataReturnsExactVersionEvidence(t *testing.T) {
 }
 
 func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -226,6 +231,7 @@ func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
 }
 
 func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -260,6 +266,7 @@ func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) 
 }
 
 func TestVaultSourceMetadataBackfillRefreshesV15MOVGeneration(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -310,6 +317,7 @@ func TestVaultSourceMetadataBackfillRefreshesV15MOVGeneration(t *testing.T) {
 }
 
 func TestVaultEnsureSourceMetadataRestoresPreviouslyRecordedExtractorGeneration(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -349,6 +357,7 @@ func TestVaultEnsureSourceMetadataRestoresPreviouslyRecordedExtractorGeneration(
 }
 
 func TestVaultEnsureSourceMetadataRejectsUnknownVersion(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -358,6 +367,7 @@ func TestVaultEnsureSourceMetadataRejectsUnknownVersion(t *testing.T) {
 }
 
 func TestVaultEnsureSourceMetadataWaitsForActiveMutation(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -411,6 +421,7 @@ func TestVaultEnsureSourceMetadataWaitsForActiveMutation(t *testing.T) {
 }
 
 func TestVaultEnsureSourceMetadataHoldsMutationThroughFinalRead(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -464,6 +475,7 @@ func TestVaultEnsureSourceMetadataHoldsMutationThroughFinalRead(t *testing.T) {
 }
 
 func TestVaultOpensVerifiedVisualPreviewForExactVersion(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -506,6 +518,7 @@ func TestVaultOpensVerifiedVisualPreviewForExactVersion(t *testing.T) {
 }
 
 func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -546,6 +559,7 @@ func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
 }
 
 func TestVaultEnsureVisualPreviewReusesRecordedRecipeAfterHeadAdvances(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		source    []byte
@@ -598,6 +612,7 @@ func TestVaultEnsureVisualPreviewReusesRecordedRecipeAfterHeadAdvances(t *testin
 }
 
 func TestVaultEnsureVisualPreviewRemovesLooseDuplicateOfPackedOutput(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
 	require.NoError(t, err)
@@ -627,6 +642,7 @@ func TestVaultEnsureVisualPreviewRemovesLooseDuplicateOfPackedOutput(t *testing.
 }
 
 func TestLeasedLimitedReaderShortRead(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "short.bin")
 	require.NoError(t, os.WriteFile(path, []byte("12"), 0o600))
 	source, err := os.Open(path)
@@ -643,6 +659,7 @@ func TestLeasedLimitedReaderShortRead(t *testing.T) {
 }
 
 func TestNewRecoversInterruptedRestoreBeforeOpeningMetadata(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	digest := ""
 	interruptedOwnership := packstore.Ownership{
@@ -667,6 +684,7 @@ func TestNewRecoversInterruptedRestoreBeforeOpeningMetadata(t *testing.T) {
 }
 
 func TestEmbeddedCreateRecordsGenericProvenance(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		driver docsqlite.Driver
@@ -683,6 +701,7 @@ func TestEmbeddedCreateRecordsGenericProvenance(t *testing.T) {
 }
 
 func TestEmbeddedAppendProvenanceReturnsRevisionBoundReceipt(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -707,6 +726,7 @@ func TestEmbeddedAppendProvenanceReturnsRevisionBoundReceipt(t *testing.T) {
 // and negative revision handling, supersession, stale-revision conflict, and
 // the empty live path for a trashed node, on both SQLite drivers.
 func TestEmbeddedAppendProvenanceCoversAdapterBranches(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		driver docsqlite.Driver
@@ -866,6 +886,7 @@ func testEmbeddedCreateRecordsGenericProvenance(t *testing.T, driver docsqlite.D
 }
 
 func TestEmbeddedAuditedCreateRecordsProvenance(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -889,6 +910,7 @@ func TestEmbeddedAuditedCreateRecordsProvenance(t *testing.T) {
 }
 
 func TestEmbeddedCreateRejectsInvalidProvenanceBeforeWriting(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -906,6 +928,7 @@ func TestEmbeddedCreateRejectsInvalidProvenanceBeforeWriting(t *testing.T) {
 }
 
 func TestVaultCreateRejectsExpectedIdentityMismatch(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -939,6 +962,7 @@ func TestVaultCreateRejectsExpectedIdentityMismatch(t *testing.T) {
 }
 
 func TestVaultCreateConcurrent(t *testing.T) {
+	t.Parallel()
 	t.Run("identical creators converge", func(t *testing.T) {
 		vault, err := New(t.Context(), Config{Root: t.TempDir()})
 		require.NoError(t, err)
@@ -987,6 +1011,7 @@ func TestVaultCreateConcurrent(t *testing.T) {
 }
 
 func TestVaultMovePathReturnsCanonicalReceipt(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1011,6 +1036,7 @@ func TestVaultMovePathReturnsCanonicalReceipt(t *testing.T) {
 }
 
 func TestVaultMovePathRejectsDestinationConflict(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1029,6 +1055,7 @@ func TestVaultMovePathRejectsDestinationConflict(t *testing.T) {
 }
 
 func TestVaultMovePathEnforcesRevision(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1052,6 +1079,7 @@ func TestVaultMovePathEnforcesRevision(t *testing.T) {
 }
 
 func TestVaultMovePathConcurrentMutation(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1100,6 +1128,7 @@ func TestVaultMovePathConcurrentMutation(t *testing.T) {
 }
 
 func TestVaultTrashPathReturnsPreTrashReceipt(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1119,6 +1148,7 @@ func TestVaultTrashPathReturnsPreTrashReceipt(t *testing.T) {
 }
 
 func TestVaultTrashPathEnforcesRevision(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1138,6 +1168,7 @@ func TestVaultTrashPathEnforcesRevision(t *testing.T) {
 }
 
 func TestVaultRestoreReturnsCanonicalReceipt(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1165,6 +1196,7 @@ func TestVaultRestoreReturnsCanonicalReceipt(t *testing.T) {
 }
 
 func TestVaultRestoreEnforcesRevision(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1183,6 +1215,7 @@ func TestVaultRestoreEnforcesRevision(t *testing.T) {
 }
 
 func TestVaultTrashRestorePreservesSubtree(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1209,6 +1242,7 @@ func TestVaultTrashRestorePreservesSubtree(t *testing.T) {
 }
 
 func TestVaultEmptyTrashBoundsEachBatch(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1233,6 +1267,7 @@ func TestVaultEmptyTrashBoundsEachBatch(t *testing.T) {
 }
 
 func TestVaultEmptyTrashUsesFiniteDefault(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1251,6 +1286,7 @@ func TestVaultEmptyTrashUsesFiniteDefault(t *testing.T) {
 }
 
 func TestVaultEmptyTrashFiltersAgeAndRejectsInvalidOptions(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1276,6 +1312,7 @@ func TestVaultEmptyTrashFiltersAgeAndRejectsInvalidOptions(t *testing.T) {
 }
 
 func TestVaultRepairContentPreservesLogicalReferences(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		config       func(string) Config
@@ -1378,6 +1415,7 @@ func TestVaultRepairContentPreservesLogicalReferences(t *testing.T) {
 }
 
 func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testing.T) {
+	t.Parallel()
 	compressed := LooseCompressionOptions{Enabled: true, MinSavingsPercent: 0}
 	tests := []struct {
 		name         string
@@ -1462,6 +1500,7 @@ func TestVaultRepairPreservesLooseEncodingAcrossPostPublicationFailure(t *testin
 }
 
 func TestVaultRepairRestoresMissingPhysicalAuthority(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	content := []byte("content whose stale pack mapping was pruned\n")
 	vault, err := New(t.Context(), Config{Root: root})
@@ -1494,6 +1533,7 @@ func TestVaultRepairRestoresMissingPhysicalAuthority(t *testing.T) {
 }
 
 func TestVaultWriteCompletesReceiptAfterCallerCancellation(t *testing.T) {
+	t.Parallel()
 	content := []byte("committed content\n")
 	tests := []struct {
 		name  string
@@ -1535,6 +1575,7 @@ func TestVaultWriteCompletesReceiptAfterCallerCancellation(t *testing.T) {
 }
 
 func TestVaultWriteDoesNotReportRedundantCleanupFailure(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	content := []byte("packed content shared by another node\n")
 	vault, err := New(t.Context(), Config{Root: root})
@@ -1565,6 +1606,7 @@ func TestVaultWriteDoesNotReportRedundantCleanupFailure(t *testing.T) {
 }
 
 func TestVaultWriteAdoptsNewlyPublishedLooseRepresentation(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	content := []byte(strings.Repeat("representation handoff content\n", 512))
 	vault, err := New(t.Context(), Config{Root: root})
@@ -1596,6 +1638,7 @@ func TestVaultWriteAdoptsNewlyPublishedLooseRepresentation(t *testing.T) {
 }
 
 func TestVaultIdempotentWriteAdoptsNewlyPublishedLooseRepresentation(t *testing.T) {
+	t.Parallel()
 	compressed := LooseCompressionOptions{Enabled: true, MinSavingsPercent: 0}
 	tests := []struct {
 		name            string
@@ -1732,6 +1775,7 @@ func contentIdentity(content []byte) ContentIdentity {
 }
 
 func TestNewConfiguresLooseCompression(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{
@@ -1771,6 +1815,7 @@ func TestNewConfiguresLooseCompression(t *testing.T) {
 }
 
 func TestPutPackedDuplicateRemovesRedundantLoose(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
@@ -1803,6 +1848,7 @@ func TestPutPackedDuplicateRemovesRedundantLoose(t *testing.T) {
 }
 
 func TestPutPackedExpectedMismatchRemovesRedundantLoose(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
@@ -1828,6 +1874,7 @@ func TestPutPackedExpectedMismatchRemovesRedundantLoose(t *testing.T) {
 }
 
 func TestNewRejectsInvalidLooseCompressionPolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		opts LooseCompressionOptions
@@ -1846,6 +1893,7 @@ func TestNewRejectsInvalidLooseCompressionPolicy(t *testing.T) {
 }
 
 func TestPutExpectedMismatchLeavesTreeUnchanged(t *testing.T) {
+	t.Parallel()
 	content := []byte("authoritative bytes\n")
 	actual := sha256.Sum256(content)
 	other := sha256.Sum256([]byte("different bytes\n"))
@@ -1891,6 +1939,7 @@ func TestPutExpectedMismatchLeavesTreeUnchanged(t *testing.T) {
 }
 
 func TestPutMetadataFailureRemovesOnlyUnrecordedLooseBlob(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
@@ -1916,6 +1965,7 @@ func TestPutMetadataFailureRemovesOnlyUnrecordedLooseBlob(t *testing.T) {
 }
 
 func TestChildrenReturnsBoundedStablePages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
@@ -1976,6 +2026,7 @@ func TestChildrenReturnsBoundedStablePages(t *testing.T) {
 }
 
 func TestEmbeddedVersions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		driver docsqlite.Driver
@@ -2062,6 +2113,7 @@ func testEmbeddedVersions(t *testing.T, driver docsqlite.Driver) {
 }
 
 func TestEmbeddedVersionContent(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		driver docsqlite.Driver
@@ -2108,6 +2160,7 @@ func testEmbeddedVersionContent(t *testing.T, driver docsqlite.Driver) {
 }
 
 func TestEmbeddedVersionContentRejectsSizeMismatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
@@ -2125,6 +2178,7 @@ func TestEmbeddedVersionContentRejectsSizeMismatch(t *testing.T) {
 }
 
 func TestEmbeddedVersionContentRejectsSameSizeCorruption(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
@@ -2149,6 +2203,7 @@ func TestEmbeddedVersionContentRejectsSameSizeCorruption(t *testing.T) {
 }
 
 func TestPackBoundsWorkAndPreservesVerifiedContent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
@@ -2198,6 +2253,7 @@ func TestPackBoundsWorkAndPreservesVerifiedContent(t *testing.T) {
 }
 
 func TestChildrenAndPackRejectClosedVault(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(err)
@@ -2220,6 +2276,7 @@ func nodeNames(nodes []Node) []string {
 }
 
 func TestEmbeddedVaultLifecycle(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		driver docsqlite.Driver

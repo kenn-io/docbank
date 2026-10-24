@@ -17,12 +17,14 @@ import (
 )
 
 func TestVisualPreviewSupportsMediaType(t *testing.T) {
+	t.Parallel()
 	require.True(t, VisualPreviewSupportsMediaType("IMAGE/JPEG; q=90"))
 	require.True(t, VisualPreviewSupportsMediaType("image/x-adobe-dng"))
 	require.False(t, VisualPreviewSupportsMediaType("video/mp4"))
 }
 
 func TestVaultVisualPreviewSizes(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -69,6 +71,7 @@ func TestVaultVisualPreviewSizes(t *testing.T) {
 }
 
 func TestVaultEnsureVisualPreviewReusesOutputAfterPrimaryPlacement(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	secondaryRoot := t.TempDir()
 	require.NoError(t, internalblob.EnsureFilesystemNamespace(secondaryRoot))
