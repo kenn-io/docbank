@@ -269,6 +269,9 @@ func (r *webSessionRegistry) waitRevocations() {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if photoFaceBrowserRequestAllowed(r) {
+		return true
+	}
 	if photoAuthoredBrowserRequestAllowed(r) {
 		return true
 	}
@@ -287,7 +290,19 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			return r.Method == http.MethodPost && r.URL.RawQuery == "" && query.ValidateTextOperand("asset", parts[0]) == nil
 		}
 		if len(parts) == 3 && parts[1] == "previews" {
-			return r.Method == http.MethodGet && r.URL.RawQuery == "" && validPhotoPreviewPath(parts[0], parts[2])
+			values, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil {
+				return false
+			}
+			for key, entries := range values {
+				if key != "person_id" || len(entries) != 1 {
+					return false
+				}
+			}
+			if values.Has("person_id") && query.ValidateTextOperand("asset", values.Get("person_id")) != nil {
+				return false
+			}
+			return r.Method == http.MethodGet && validPhotoPreviewPath(parts[0], parts[2])
 		}
 	}
 	if emailNavigationBrowserReadAllowed(r) || emailViewerBrowserReadAllowed(r) {
@@ -703,4 +718,46 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 	}
 	_, err := hex.DecodeString(generationID)
 	return err == nil && strings.ToLower(generationID) == generationID
+}
+
+func photoFaceBrowserRequestAllowed(r *http.Request) bool {
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/people/"); ok {
+		parts := strings.Split(after, "/")
+		if r.Method != http.MethodGet || len(parts) != 2 || parts[1] != "face-previews" || query.ValidateTextOperand("asset", parts[0]) != nil {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if key != "hidden" || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
+	}
+	if r.URL.Path == "/api/v1/people" {
+		if r.Method != http.MethodGet {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if (key != "query" && key != "limit" && key != "cursor") || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/versions/"); ok {
+		parts := strings.Split(after, "/")
+		if len(parts) != 2 || query.ValidateTextOperand("asset", parts[0]) != nil || r.URL.RawQuery != "" {
+			return false
+		}
+		return parts[1] == "faces" && (r.Method == http.MethodGet || r.Method == http.MethodPost) || parts[1] == "face-decisions" && r.Method == http.MethodPost
+	}
+	return false
 }

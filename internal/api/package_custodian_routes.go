@@ -72,7 +72,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid people cursor"))
 			return
 		}
-		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1)
+		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()))
 		if err != nil {
 			writePackageError(w, err)
 			return
@@ -80,11 +80,12 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		out := PersonPage{Items: make([]PersonSummary, min(limit, len(people)))}
 		for index := range out.Items {
 			person := people[index]
-			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName,
-				State: person.State, Revision: person.Revision}
+			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName, DisplayNameFolded: person.DisplayNameFolded,
+				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt, IdentityLabel: person.IdentityLabel}
 		}
 		if len(people) > limit {
 			last := people[limit-1]
+			out.SameNameContinues = last.DisplayNameFolded == people[limit].DisplayNameFolded
 			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, query)
 		}
 		writeJSON(w, http.StatusOK, out)

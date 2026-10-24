@@ -20,12 +20,18 @@
   import { PhotoPreviewLoader, prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 
+  import type { PhotoFaces } from "./photoFaces.svelte.js";
+  import { drawnPhotoFace } from "./photoRotation.js";
+  import { fittedPhotoView, type PhotoView } from "./photoView.js";
+
   let {
     metadataOpen = $bindable(false),
     editor,
     actionDisabled = false,
     onedit,
     onundo,
+    onperson,
+    faces,
     photo,
     error,
     note = "",
@@ -46,6 +52,8 @@
     actionDisabled?: boolean;
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
     onundo?: () => void;
+    onperson?: (id: string, name: string) => void;
+    faces: PhotoFaces;
     photo?: PhotoBrowseRow;
     error: string;
     note?: string;
@@ -63,10 +71,37 @@
   } = $props();
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
   const unavailable = $derived(!loader.retrying && !!(error || loader.failure));
+  let addingFace = $state(false);
+  let addFaceButton: HTMLButtonElement | undefined;
+  $effect(() => {
+    const placing = addingFace;
+    void tick().then(() => {
+      if (placing)
+        dialog
+          ?.querySelector<HTMLButtonElement>(".region-keyboard")
+          ?.focus({ preventScroll: true });
+      else addFaceButton?.focus({ preventScroll: true });
+    });
+  });
+  $effect(() => {
+    void photo?.content_version_id;
+    addingFace = false;
+  });
+  $effect(() => {
+    if (addingFace && !faces.pending && faces.faces.some((face) => face.face_id === pendingFaceID))
+      addingFace = false;
+    pendingFaceID = faces.pending?.face_id ?? "";
+  });
+  let pendingFaceID = $state("");
   let busy = $state(false);
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
+  let view = $state<PhotoView>({ ...fittedPhotoView });
+  $effect(() => {
+    void identity;
+    view = { ...fittedPhotoView };
+  });
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);
@@ -144,7 +179,14 @@
     dialog?.focus({ preventScroll: true });
     onmove(direction);
   }
+  let imageReady = $state(false);
   function key(event: KeyboardEvent) {
+    if (event.key === "Escape" && addingFace) {
+      event.preventDefault();
+      event.stopPropagation();
+      addingFace = false;
+      return;
+    }
     if (
       event.altKey ||
       event.ctrlKey ||
@@ -203,6 +245,24 @@
       onclick={original}
       >{#if busy}<Spinner size={14} />{/if}View original</Button
     >
+    {#if photo?.kind === "photo"}<Button
+        size="sm"
+        disabled={faces.loading || faces.busy || !imageReady}
+        onclick={(event) => {
+          if (imageReady) {
+            addFaceButton = event.currentTarget as HTMLButtonElement;
+            addingFace = !addingFace;
+          }
+        }}>{addingFace ? "Cancel face" : "Add face"}</Button
+      >{/if}
+    {#if faces.pending}<Button
+        size="sm"
+        disabled={faces.busy || faces.loading}
+        onclick={() =>
+          void faces.retryAdd().then((saved) => {
+            if (saved) addingFace = false;
+          })}>Retry face</Button
+      >{/if}
     <IconButton ariaLabel="Reset zoom" onclick={() => image?.reset()}
       ><RotateCcw size={18} /></IconButton
     >
@@ -212,6 +272,7 @@
       onclick={() => (metadataOpen = !metadataOpen)}><Info size={18} /></IconButton
     >
   </header>
+  {#if addingFace}<span>Arrow keys to position. Enter to save. Escape to cancel.</span>{/if}
   {#if (items.length || canLoadMore) && photos.error}<div class="loupe-error" role="alert">
       <span>{photos.error}</span><Button
         size="sm"
@@ -238,6 +299,7 @@
           onclick={retry}>Retry preview</Button
         >{/if}
     </div>{/if}
+  {#if faces.error}<Notice tone="error" message={faces.error} />{/if}
   {#if editor?.error}<Notice tone="error" message={editor.error} />{/if}
   {#if editor?.receiptID}<Notice
       tone="success"
@@ -254,7 +316,31 @@
         >
       </div>
       {#key identity}<PhotoLoupeImage
+          {view}
+          onready={(ready) => (imageReady = ready)}
+          onview={(value) => (view = value)}
           rotation={photo?.rotation ?? 0}
+          faces={(faces.version === photo?.content_version_id ? faces.ordered : []).map((face) => ({
+            id: face.face_id,
+            box: face.box,
+            label: faces.caption(face),
+          }))}
+          regionMode={photo?.kind === "photo" && addingFace}
+          regionLabel={`Position face on ${photo?.name ?? "Photo"}`}
+          minimumRegionDrag
+          onconfirmregion={faces.pending
+            ? () =>
+                void faces.retryAdd().then((saved) => {
+                  if (saved) addingFace = false;
+                })
+            : undefined}
+          oncancelregion={() => (addingFace = false)}
+          onregion={(region) => {
+            if (!imageReady) return;
+            void faces.add(drawnPhotoFace(region, photo?.rotation ?? 0)).then((saved) => {
+              if (saved) addingFace = false;
+            });
+          }}
           bind:this={image}
           url={loader.url}
           {unavailable}
@@ -274,7 +360,15 @@
         >{/if}
     </div>
     {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">
-        {#if editor && onedit}<PhotoInspector {editor} {actionDisabled} {onedit} />{/if}
+        {#if editor && onedit}<PhotoInspector
+            {cache}
+            {editor}
+            {actionDisabled}
+            {onedit}
+            {faces}
+            session={photos.session}
+            {onperson}
+          />{/if}
         <h2>Photo details</h2>
         <dl>
           {#each facts as [label, value]}<dt>{label}</dt>

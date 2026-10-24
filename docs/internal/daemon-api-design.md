@@ -462,14 +462,19 @@ list route searches active names by folded prefix. Single-person routes live
 under `/by-id/` so they do not overlap the document-people rebuild routes.
 Reads return one person snapshot with identities and external UIDs.
 
-Create, rename, retire, merge, and split remain daemon-only. Rename, retire,
+Browser sessions can search people, read and create boxed photo faces,
+and name, clear, or dismiss a face with its current revision. They can also
+clear a whole-photo mark by assertion ID and revision. Naming can create the
+person atomically. Face pages carry canonical names and person states from
+the same snapshot. Browser search omits people whose only evidence is locked
+Hidden photos until unlock; CLI search stays global. Other person management
+and face decisions remain daemon-only. Rename, retire,
 merge, and split require `If-Match`. Merge also carries the absorbed
 revision in the body. Merge and split operation UUIDs replay their stored
 receipts. Reads follow a merged person's ID to the survivor. Edits require the
 current person ID and return 404 for a merged ID. The store owns membership
-validation, revision fences, and binding-epoch changes. Browser sessions stay
-denied by default. MCP exposes person reads and paged photo-face reads. Edits
-stay on HTTP and the CLI.
+validation, revision fences, and binding-epoch changes. MCP exposes person
+reads and paged photo-face reads. Edits stay on HTTP and the CLI.
 
 ## Ingest boundary
 

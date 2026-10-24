@@ -129,9 +129,10 @@ func (PhotoQuality) Schema(r huma.Registry) *huma.Schema {
 }
 
 type PreparePhotoPreviewRequest struct {
+	PersonID         string `json:"person_id,omitzero" format:"uuid"`
 	Hidden           bool   `json:"hidden,omitempty" default:"false"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`
-	Size             string `json:"size" enum:"fit,large"`
+	Size             string `json:"size" enum:"grid,fit,large"`
 }
 
 // PhotoTimelineRequest selects the photos to count by capture day. It takes the

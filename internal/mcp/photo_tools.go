@@ -52,6 +52,7 @@ type photoFacesToolOutput struct {
 
 	Faces           []photoFaceToolItem        `json:"faces"`
 	Assertions      []api.PhotoPersonAssertion `json:"assertions"`
+	People          []api.PhotoFacePerson      `json:"people"`
 	TotalFaces      int                        `json:"total_faces"`
 	TotalAssertions int                        `json:"total_assertions"`
 	Offset          int                        `json:"offset"`
@@ -132,6 +133,19 @@ func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFa
 	// Leave room for both the structured data and its escaped text copy.
 	const pageBudget = maxToolResponseBytes/3 - 8<<10
 	for {
+		personIDs := make(map[string]bool)
+		for _, face := range output.Faces {
+			personIDs[face.PersonID] = true
+		}
+		for _, assertion := range output.Assertions {
+			personIDs[assertion.PersonID] = true
+		}
+		output.People = []api.PhotoFacePerson{}
+		for _, person := range page.People {
+			if personIDs[person.PersonID] {
+				output.People = append(output.People, person)
+			}
+		}
 		encoded, err := json.Marshal(output)
 		if err != nil {
 			return photoFacesToolOutput{}, err

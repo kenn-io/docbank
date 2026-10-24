@@ -508,7 +508,7 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 			if test.action == "reject" {
 				require.Equal(t, personCandidateStateRejected, decided.State)
 				if !test.allPruned {
-					faces, _, err := s.PhotoFaces(ctx, current.ID)
+					faces, _, _, err := s.PhotoFacePersonNames(ctx, current.ID)
 					require.NoError(t, err)
 					require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
 				}
@@ -524,7 +524,7 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 				require.Len(t, assertions, 1)
 				require.Equal(t, decided.DecidedPersonID, assertions[0].PersonID)
 				if test.evidenceKind == "face" {
-					faces, _, err := s.PhotoFaces(ctx, current.ID)
+					faces, _, _, err := s.PhotoFacePersonNames(ctx, current.ID)
 					require.NoError(t, err)
 					require.Equal(t, currentID, faces[0].FaceID)
 					require.Equal(t, assertions[0].AssertionID, faces[0].AssertionID)

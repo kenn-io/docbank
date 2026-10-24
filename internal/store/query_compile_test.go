@@ -447,27 +447,35 @@ func TestQueryPersonCurrentPublishedEdges(t *testing.T) {
 
 func TestQueryPersonPhotoLiveSibling(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset, nodes := photoTrashFixture(t, s)
-	jpeg, _, err := s.ReplaceContent(ctx, nodes[1].ID, nodes[1].Revision, fakeHash("b2"), 20, "image/jpeg")
-	require.NoError(t, err)
-	nodes[1] = jpeg
-	image := fileByRole(asset.Files, PhotoRoleImage)
-	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &image.ID)
-	require.NoError(t, err)
-	p, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	_, _, err = s.CreatePhotoFace(ctx, nodes[0].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
-	require.NoError(t, err)
-	filter := `{"filters":{"person_ids":["` + p.PersonID + `"]}}`
-	require.Len(t, browsePhotoPage(t, s, filter).Items, 1)
-	_, _, err = s.Trash(ctx, nodes[0].ID, nodes[0].Revision)
-	require.NoError(t, err)
-	require.Empty(t, browsePhotoPage(t, s, filter).Items)
-	_, _, err = s.CreatePhotoFace(ctx, nodes[1].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
-	require.NoError(t, err)
-	require.Len(t, browsePhotoPage(t, s, filter).Items, 1)
+	for _, state := range []string{"trashed", "superseded"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset, nodes := photoTrashFixture(t, s)
+			jpeg, _, err := s.ReplaceContent(ctx, nodes[1].ID, nodes[1].Revision, fakeHash("b2"), 20, "image/jpeg")
+			require.NoError(t, err)
+			nodes[1] = jpeg
+			image := fileByRole(asset.Files, PhotoRoleImage)
+			_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &image.ID)
+			require.NoError(t, err)
+			p, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			_, _, err = s.CreatePhotoFace(ctx, nodes[0].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
+			require.NoError(t, err)
+			filter := `{"filters":{"person_ids":["` + p.PersonID + `"]}}`
+			require.Len(t, browsePhotoPage(t, s, filter).Items, 1)
+			if state == "trashed" {
+				_, _, err = s.Trash(ctx, nodes[0].ID, nodes[0].Revision)
+			} else {
+				_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("c3"), 30, "application/octet-stream")
+			}
+			require.NoError(t, err)
+			require.Empty(t, browsePhotoPage(t, s, filter).Items)
+			_, _, err = s.CreatePhotoFace(ctx, nodes[1].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
+			require.NoError(t, err)
+			require.Len(t, browsePhotoPage(t, s, filter).Items, 1)
+		})
+	}
 }
 
 func TestCompilePhotoPickShorthandAndLiteralDocumentSearch(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -16,6 +17,8 @@ var (
 	ErrPersonRetired          = errors.New("person is retired")
 	ErrInvalidPerson          = errors.New("invalid person")
 )
+
+const personStateRetired = "retired"
 
 type Person struct {
 	PersonID, DisplayName, DisplayNameFolded, Origin, State string
@@ -55,7 +58,15 @@ func validPersonConfidence(confidence string) bool {
 	return slices.Contains([]string{"exact_identifier", "operator_asserted", "supplied_identity", "name_candidate"}, confidence)
 }
 
-func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (Person, error) {
+func createPersonTx(ctx context.Context, tx *sql.Tx, displayName, origin string) (Person, error) {
+	id, err := newUUIDv4()
+	if err != nil {
+		return Person{}, err
+	}
+	return createPersonWithIDTx(ctx, tx, id, displayName, origin)
+}
+
+func createPersonWithIDTx(ctx context.Context, tx *sql.Tx, id, displayName, origin string) (Person, error) {
 	if !validPersonName(displayName) || !validPersonOrigin(origin) {
 		return Person{}, ErrInvalidPerson
 	}
@@ -63,19 +74,23 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 	if origin == "operator" {
 		state = "curated"
 	}
-	id, err := newUUIDv4()
-	if err != nil {
+	now := nowRFC3339()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
 		return Person{}, err
 	}
-	now := nowRFC3339()
 	var created Person
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
-			&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
-			&created.Revision, &created.CreatedAt, &created.UpdatedAt); err != nil {
+	err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+		&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
+		&created.Revision, &created.CreatedAt, &created.UpdatedAt)
+	return created, err
+}
+
+func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (Person, error) {
+	var created Person
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		created, err = createPersonTx(ctx, tx, displayName, origin)
+		if err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -124,41 +139,51 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 func (s *Store) RetirePerson(ctx context.Context, id string, revision int64) (Person, error) {
 	var retired Person
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if err := fencePersonTx(ctx, tx, id, revision); err != nil {
-			return err
-		}
-		now := nowRFC3339()
-		result, err := tx.ExecContext(ctx, `UPDATE persons SET state='retired',revision=revision+1,updated_at=? WHERE person_id=? AND revision=? AND state<>'retired'`, now, id, revision)
-		if err != nil {
-			return err
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count != 1 {
-			return ErrStaleRevision
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=NULL,reason='deleted',retired_at=? WHERE surviving_person_id=?`, now, id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,NULL,'deleted',?)`, id, now); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=NULL,revision=revision+1 WHERE person_id=? AND retired_at IS NULL`, id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, id); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
-			&retired.PersonID, &retired.DisplayName, &retired.DisplayNameFolded, &retired.Origin, &retired.State,
-			&retired.Revision, &retired.CreatedAt, &retired.UpdatedAt); err != nil {
-			return err
-		}
-		return advancePersonBindingEpochTx(ctx, tx)
+		var err error
+		retired, err = retirePersonTx(ctx, tx, id, revision)
+		return err
 	})
 	if err != nil {
+		return Person{}, err
+	}
+	return retired, nil
+}
+
+func retirePersonTx(ctx context.Context, tx *sql.Tx, id string, revision int64) (Person, error) {
+	var retired Person
+	if err := fencePersonTx(ctx, tx, id, revision); err != nil {
+		return Person{}, err
+	}
+	now := nowRFC3339()
+	result, err := tx.ExecContext(ctx, `UPDATE persons SET state='retired',revision=revision+1,updated_at=? WHERE person_id=? AND revision=? AND state<>'retired'`, now, id, revision)
+	if err != nil {
+		return Person{}, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return Person{}, err
+	}
+	if count != 1 {
+		return Person{}, ErrStaleRevision
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=NULL,reason='deleted',retired_at=? WHERE surviving_person_id=?`, now, id); err != nil {
+		return Person{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,NULL,'deleted',?)`, id, now); err != nil {
+		return Person{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=NULL,revision=revision+1 WHERE person_id=? AND retired_at IS NULL`, id); err != nil {
+		return Person{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, id); err != nil {
+		return Person{}, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+		&retired.PersonID, &retired.DisplayName, &retired.DisplayNameFolded, &retired.Origin, &retired.State,
+		&retired.Revision, &retired.CreatedAt, &retired.UpdatedAt); err != nil {
+		return Person{}, err
+	}
+	if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 		return Person{}, err
 	}
 	return retired, nil
@@ -208,37 +233,75 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
+// Materialize the bounded matches before reading their visible identity labels.
+var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
+ SELECT * FROM persons WHERE %s state<>'retired'
+	AND (?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
+		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
+		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=persons.person_id
+			AND i.origin='derived' AND i.confidence='exact_identifier')) OR EXISTS(
+		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id
+		AND a.role<>'blind_copy' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
+		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
+		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))
+	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
+	ORDER BY display_name_folded,person_id LIMIT ?)
+SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,
+	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
+		FROM person_identities i WHERE i.person_id=persons.person_id
+		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
+		AND (?=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
+			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
+			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
+		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
+ FROM matches persons ORDER BY display_name_folded,person_id`
+
+type PersonSearchResult struct {
+	Person
+
+	IdentityLabel string
+}
+
 // PeopleByDisplayName returns active people in stable folded-name order.
-func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int) ([]Person, error) {
+func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool) ([]PersonSearchResult, error) {
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
 		(afterName == "") != (afterID == "") {
 		return nil, ErrInvalidPerson
 	}
-	prefix := document.FoldPersonName(query)
-	rows, err := s.db.QueryContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
-		FROM persons WHERE state<>'retired' AND display_name_folded LIKE ? ESCAPE '\'
-		AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
-		ORDER BY display_name_folded,person_id LIMIT ?`, escapePersonLike(prefix)+"%", afterName, afterName, afterName, afterID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	people := []Person{}
-	for rows.Next() {
-		var person Person
-		if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
-			&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt); err != nil {
-			return nil, err
+	people := []PersonSearchResult{}
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		hideLocked := false
+		if visibleOnly {
+			_, err := s.hiddenSession(ctx, tx)
+			if err != nil && !errors.Is(err, ErrHiddenLocked) {
+				return err
+			}
+			hideLocked = errors.Is(err, ErrHiddenLocked)
 		}
-		people = append(people, person)
-	}
-	return people, rows.Err()
-}
-
-func escapePersonLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	return strings.ReplaceAll(value, `_`, `\_`)
+		prefix := document.FoldPersonName(query)
+		candidates := ""
+		args := []any{}
+		if prefix != "" {
+			candidates = `instr(display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(display_name_folded, ?) AND`
+			args = append(args, prefix, prefix)
+		}
+		args = append(args, visibleOnly, hideLocked, hideLocked, afterName, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, candidates), args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var person PersonSearchResult
+			if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
+				&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.IdentityLabel); err != nil {
+				return err
+			}
+			people = append(people, person)
+		}
+		return rows.Err()
+	})
+	return people, err
 }
 
 func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision int64, identity PersonIdentity) (PersonIdentity, error) {

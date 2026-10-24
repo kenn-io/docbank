@@ -121,3 +121,40 @@ it("reports an expired browser session to the auth handler", async () => {
   expect(await access.lock()).toBe(false);
   expect(onauthfailure).toHaveBeenCalledWith(expect.objectContaining({ status: 401 }));
 });
+
+it("expires access with expires_in", () => {
+  vi.useFakeTimers();
+  const access = new HiddenAccess("synthetic", vi.fn());
+  try {
+    const started = Date.now();
+    access.acceptState(
+      { configured: true, expires_at: "2026-01-01T00:00:00Z", expires_in: 2 },
+      started,
+    );
+    const scope = access.scope;
+    vi.advanceTimersByTime(2001);
+    expect(access.scope).toBeGreaterThan(scope);
+    expect(access.deadline).toBe(0);
+  } finally {
+    access.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("ignores a late former-scope state", () => {
+  vi.useFakeTimers();
+  const access = new HiddenAccess("synthetic", vi.fn());
+  try {
+    const started = Date.now();
+    access.acceptState({ configured: true, expires_in: 300 }, started);
+    vi.advanceTimersByTime(1);
+    access.acceptState({ configured: true }, Date.now());
+    const lockedScope = access.scope;
+    access.acceptState({ configured: true, expires_in: 300 }, started);
+    expect(access.scope).toBe(lockedScope);
+    expect(access.deadline).toBe(0);
+  } finally {
+    access.dispose();
+    vi.useRealTimers();
+  }
+});
