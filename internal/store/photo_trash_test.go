@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -13,6 +14,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPhotoTrashFolderXMPQueue(t *testing.T) {
+	t.Parallel()
+	s, folder := photoXMPPairs(t, 2)
+	queued := func() int {
+		var count int
+		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM photo_xmp_unsettled").Scan(&count))
+		return count
+	}
+	require.Equal(t, 2, queued())
+	trashed, _, err := s.Trash(t.Context(), folder.ID, UnconditionalRev)
+	require.NoError(t, err)
+	require.Zero(t, queued(), "trashed originals leave the queue even when sidecars update afterward")
+	_, _, err = s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	require.Equal(t, 2, queued(), "restoring the folder queues both originals again")
+}
 
 func photoTrashFixture(t *testing.T, s *Store) (PhotoAsset, []Node) {
 	t.Helper()
@@ -38,6 +56,154 @@ func photoTrashFixture(t *testing.T, s *Store) (PhotoAsset, []Node) {
 	return asset, nodes
 }
 
+// photoCheckoutCommitFixture commits an edit of the photo's JPEG through a real
+// checkout, after renaming it so the receipt's node revisions match the asset's.
+func photoCheckoutCommitFixture(t *testing.T, s *Store, asset PhotoAsset) {
+	t.Helper()
+	image := fileByRole(asset.Files, PhotoRoleImage)
+	node, err := s.NodeByID(t.Context(), image.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.Move(t.Context(), node.ID, *node.ParentID, "renamed.jpg", node.Revision)
+	require.NoError(t, err)
+	c, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "machine-local-checkout", "", 100)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	index := slices.IndexFunc(entries, func(e PhotoCheckoutEntry) bool { return e.FileID == image.ID })
+	require.GreaterOrEqual(t, index, 0)
+	require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[index], func() (bool, error) { return true, nil }))
+	require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	c, commit, err := s.PreparePhotoCheckoutOperation(t.Context(), PhotoCheckoutInspection{CheckoutID: c.ID}, StorageOperationKindPhotoCheckoutCommit)
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(t.Context(), commit.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.CommitPhotoCheckoutEntry(t.Context(), c, entries[index], browseHash("edit"), 23, "image/png", BlobPhysical{Encoding: "raw", StoredBytes: 23}))
+}
+
+// A revision that only sidecar-only steps have passed is the one a person viewed before
+// the sync worker attached a sidecar. Operations that change membership still need the exact one.
+func TestPhotoMutationRevisionDrift(t *testing.T) {
+	t.Parallel()
+	for _, op := range []struct {
+		name       string
+		membership bool
+		run        func(*Store, PhotoAsset, []Node, int64) error
+	}{
+		{"trash", false, func(s *Store, a PhotoAsset, _ []Node, rev int64) error {
+			_, err := s.TrashPhotoAsset(t.Context(), a.ID, rev)
+			return err
+		}},
+		{"hide", false, func(s *Store, a PhotoAsset, _ []Node, rev int64) error {
+			_, err := s.SetPhotoAssetHidden(t.Context(), a.ID, rev, true)
+			return err
+		}},
+		{"display", false, func(s *Store, a PhotoAsset, _ []Node, rev int64) error {
+			_, err := s.SetPhotoDisplay(t.Context(), a.ID, rev, new(fileByRole(a.Files, PhotoRoleRAW).ID))
+			return err
+		}},
+		{"exclude", false, func(s *Store, a PhotoAsset, _ []Node, rev int64) error {
+			_, err := s.SetPhotoAssetExcluded(t.Context(), a.ID, rev, true)
+			return err
+		}},
+		{"authored edit", false, func(s *Store, a PhotoAsset, _ []Node, rev int64) error {
+			raw := fileByRole(a.Files, PhotoRoleRAW)
+			node, err := s.NodeByID(t.Context(), raw.NodeID)
+			require.NoError(t, err)
+			_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{
+				Targets: []PhotoAuthoredEditTarget{{AssetID: a.ID, AssetRevision: rev, FileID: raw.ID, Revision: raw.Revision, NodeRevision: node.Revision}},
+				Patch:   PhotoAuthoredPatch{Rating: new(4)},
+			})
+			return err
+		}},
+		{"attach", true, func(s *Store, a PhotoAsset, nodes []Node, rev int64) error {
+			_, err := s.AttachPhotoFile(t.Context(), a.ID, rev, nodes[2].ID, PhotoRoleSidecar, new(fileByRole(a.Files, PhotoRoleRAW).ID))
+			return err
+		}},
+		{"detach", true, func(s *Store, a PhotoAsset, _ []Node, rev int64) error {
+			_, err := s.DetachPhotoFile(t.Context(), a.ID, rev, fileByRole(a.Files, PhotoRoleSidecar).ID, PhotoDetachOptions{})
+			return err
+		}},
+	} {
+		// The drift rule is one helper: trash alone runs every gap, and the rest run the sidecar-only one.
+		gaps := []struct {
+			name     string
+			steps    int64
+			mixed    bool
+			checkout bool
+		}{{"after sidecar-only steps", 1, false, false}, {"after sidecar-only steps and a checkout commit", 1, false, true}, {"after a mixed change", 2, true, false}}
+		if op.name != "trash" {
+			gaps = gaps[:1]
+		}
+		for _, gap := range gaps {
+			t.Run(op.name+" "+gap.name, func(t *testing.T) {
+				s := newTestStore(t)
+				require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+				asset, nodes := photoTrashFixture(t, s)
+				if gap.checkout {
+					photoCheckoutCommitFixture(t, s, asset)
+				}
+				err := op.run(s, asset, nodes, asset.Revision-gap.steps)
+				if op.membership || gap.mixed {
+					require.ErrorIs(t, err, ErrStaleRevision)
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+	}
+}
+
+// Trashing a folder takes each photo and its sidecar together, so no removal record is written and
+// restoring the folder finds every photo's sync history as it was.
+func TestPhotoTrashFolderKeepsSyncReceipts(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	shoot, err := s.Mkdir(ctx, s.RootID(), "shoot")
+	require.NoError(t, err)
+	var raws []PhotoFile
+	for i := range 3 {
+		dir, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("group-%d", i))
+		require.NoError(t, err)
+		asset, nodes := photoTrashFixture(t, s)
+		for _, node := range nodes {
+			_, _, err = s.Move(ctx, *node.ParentID, dir.ID, node.Name+"-folder", UnconditionalRev)
+			require.NoError(t, err)
+		}
+		raw := fileByRole(asset.Files, PhotoRoleRAW)
+		importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
+		raws = append(raws, raw)
+		_, _, err = s.Move(ctx, dir.ID, shoot.ID, dir.Name, UnconditionalRev)
+		require.NoError(t, err)
+	}
+	receiptIDs := func() []string {
+		var ids []string
+		require.NoError(t, queryRows(ctx, s.db, `SELECT receipt_id FROM photo_change_receipts WHERE operation='xmp_sync' ORDER BY receipt_id`, nil, func(rows *sql.Rows) error {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+			return nil
+		}))
+		return ids
+	}
+	before := receiptIDs()
+	require.Len(t, before, 3)
+	shoot = requireNodeByID(t, s, shoot.ID)
+	_, _, err = s.Trash(ctx, shoot.ID, shoot.Revision)
+	require.NoError(t, err)
+	require.Equal(t, before, receiptIDs(), "trashing a photo with its sidecar writes no removal record")
+	_, _, err = s.Restore(ctx, shoot.ID, UnconditionalRev)
+	require.NoError(t, err)
+	for _, raw := range raws {
+		work, resume, err := s.ClassifyPhotoXMP(ctx, raw.ID)
+		require.NoError(t, err)
+		require.True(t, resume, "sync resumes after the restore")
+		require.NotNil(t, work.History, "the settled history survives the trash")
+	}
+}
+
 func TestPhotoTrashAndRestoreMember(t *testing.T) {
 	t.Parallel()
 	for _, audited := range []bool{false, true} {
@@ -51,8 +217,6 @@ func TestPhotoTrashAndRestoreMember(t *testing.T) {
 			if audited {
 				seedInitialAuditAuthority(t, s, s.RootID())
 			}
-			_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision-1)
-			require.ErrorIs(t, err, ErrStaleRevision)
 			trashed, err := s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
 			require.NoError(t, err)
 			assert.Equal(t, asset.Revision+1, trashed.Revision)
@@ -279,10 +443,13 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 			}
 			age := time.Duration(0)
 			if mode == "retained peer" {
-				stamp := nowRFC3339()
-				_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`, nodes[1].BlobHash, stamp)
+				version, err := s.ContentVersionByID(t.Context(), nodes[1].CurrentVersionID)
 				require.NoError(t, err)
-				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('version','source',1,?,?,?)`, nodes[1].CurrentVersionID, `{}`, stamp)
+				_, err = s.RetainSuppliedMedia(t.Context(), MediaPublicationRequest{
+					Operation: MediaOperation{ID: "00000000-0000-4000-8000-000000000061", Principal: "operator", Verb: "submit_supplied_media", RequestSHA256: browseHash("retained peer"), SourceID: nodes[1].BlobHash},
+					SourceID:  nodes[1].BlobHash, ContentVersion: version, CaptureJSON: "{}",
+					Occurrence: MediaOccurrenceInput{SourceID: nodes[1].BlobHash, Principal: "operator", Ref: "photo", Revision: "1", Filename: "capture.jpg", MessageJSON: "{}"},
+				})
 				require.NoError(t, err)
 			}
 			if mode == "new peer" {
@@ -393,7 +560,7 @@ func BenchmarkTrashEmptyLarge(b *testing.B) {
 						if err != nil {
 							return err
 						}
-						if err := s.trashNodeTx(tx, node, nowRFC3339()); err != nil {
+						if err := s.trashNodeTx(b.Context(), tx, node, nowRFC3339()); err != nil {
 							return err
 						}
 					}

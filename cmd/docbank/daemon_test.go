@@ -38,7 +38,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
+func TestProcessingBackfillsRegisterOnceAndPublishPhotoState(t *testing.T) {
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
@@ -51,6 +51,13 @@ func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic-photo.jpg", written.Hash, written.Size, "image/jpeg",
 		store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+	require.NoError(t, err)
+	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	prepared, err := catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	require.Len(t, prepared.Targets, 1)
+	_, err = catalog.EditPhotoAuthoredBatch(t.Context(), store.PhotoAuthoredBatch{Targets: []store.PhotoAuthoredEditTarget{store.PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: prepared.Targets[0].PhotoAuthoredTargetRevision}}, Patch: store.PhotoAuthoredPatch{Rating: new(4)}})
 	require.NoError(t, err)
 	logger := slog.New(slog.DiscardHandler)
 	supervisor := jobs.New(t.Context(), logger)
@@ -86,6 +93,13 @@ func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
 	assert.InDelta(t, 1, signals.Brightness, 0.01)
 	assert.InDelta(t, 0, signals.Focus, 0.01)
 	assert.InDelta(t, 1, signals.Blur, 0.01)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		prepared, err := catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+		if !assert.NoError(c, err) || !assert.Len(c, prepared.Targets, 1) {
+			return
+		}
+		assert.Equal(c, store.PhotoXMPStateSynced, prepared.Targets[0].XMP.State, "the registered sidecar lane eventually syncs")
+	}, daemonStartTimeout, 50*time.Millisecond)
 }
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {

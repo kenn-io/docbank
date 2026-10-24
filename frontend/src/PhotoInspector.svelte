@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SelectDropdown, Spinner, Notice } from "@kenn-io/kit-ui";
+  import { Button, SelectDropdown, Spinner, Notice, Table, TableHeaderCell } from "@kenn-io/kit-ui";
   import TagPicker from "./TagPicker.svelte";
   import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import type { PhotoAuthoredPatch, PhotoKeywordEdit } from "./generated/docbank.js";
@@ -24,6 +24,23 @@
       (!!editor.error && !editor.targets.length),
   );
   const fields = ["caption", "creator", "copyright"] as const;
+  // Each original owns its sidecar status.
+  const xmpTargets = $derived(
+    editor.files.filter(
+      (target) =>
+        target.xmp?.state !== "none" &&
+        editor.asset?.files.some(
+          (file) => file.id === target.file_id && (file.role === "raw" || file.role === "image"),
+        ),
+    ),
+  );
+  const xmpLabels: Record<string, string> = {
+    synced: "Synced",
+    pending: "Pending",
+    conflict: "Conflict",
+    unavailable: "Unavailable",
+    invalid: "Invalid",
+  };
   const choices = [
     {
       field: "rating",
@@ -156,6 +173,55 @@
             {tag.name}{editor.keywordState(tag.id) === "mixed" ? " · Mixed" : ""}
           </li>{/each}
       </ul>{/if}
+    {#each xmpTargets as target}
+      {@const xmp = target.xmp}
+      <section class="xmp-state" aria-label={`XMP for ${target.file_name}`}>
+        <h3>{target.file_name}</h3>
+        <div role="status">
+          {#if xmp}<span>XMP: {xmpLabels[xmp.state]}</span>{/if}
+          {#if xmp?.reason}<p>{xmp.reason}</p>{/if}
+        </div>
+        {#if xmp?.state === "pending" && xmp.reason}<Button
+            size="sm"
+            {disabled}
+            onclick={() => void editor.refreshXMP()}>Refresh XMP status</Button
+          >{/if}
+        {#if xmp?.conflict_id}
+          <Table ariaLabel="XMP conflicts" bare unsorted>
+            <thead
+              ><tr>
+                <TableHeaderCell label="Field" /><TableHeaderCell label="Catalog" /><TableHeaderCell
+                  label="Sidecar"
+                />
+              </tr></thead
+            ><tbody>
+              {#each xmp.rows as row}<tr
+                  ><td>{row.field}</td><td>{row.catalog || "Empty"}</td><td
+                    >{row.sidecar || "Empty"}</td
+                  ></tr
+                >{/each}
+            </tbody>
+          </Table>
+          <div class="keyword-actions">
+            <Button
+              size="sm"
+              disabled={disabled || editor.dirty || xmp.state !== "conflict"}
+              onclick={() => void editor.resolveXMP(target.file_id, "catalog")}>Use Catalog</Button
+            ><Button
+              size="sm"
+              disabled={disabled || editor.dirty || xmp.state !== "conflict"}
+              onclick={() => void editor.resolveXMP(target.file_id, "sidecar")}>Use Sidecar</Button
+            >
+          </div>
+        {/if}
+        {#if xmp?.import_receipt_id}<Button
+            size="sm"
+            disabled={disabled || editor.dirty}
+            onclick={() => void editor.undoSidecarImport(target.file_id)}
+            >Undo sidecar import</Button
+          >{/if}
+      </section>
+    {/each}
     {#if editor.conflict && (!editor.membershipChanged || !editor.targets.length)}<Notice
         tone="warning"
         message={editor.targets.length
@@ -228,5 +294,28 @@
     margin: 0;
     padding-left: 16px;
     font-size: var(--font-size-xs);
+  }
+  .xmp-state {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+  }
+  h3 {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+  :global(.xmp-state table) {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+  :global(.xmp-state th),
+  :global(.xmp-state td) {
+    padding: 4px;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
   }
 </style>

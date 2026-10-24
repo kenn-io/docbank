@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-24
 title: Verified page images
 description: Page geometry and local page rendering for one document version, within fixed limits.
 ---
@@ -197,6 +197,23 @@ text is bounded at 1 MiB per page. The ZIP has three stored entries in order:
 optional contents. The client checks inventory, CRCs, hashes, review bindings
 and reconstructed sanitized text before atomic local publication. It does not
 run PDFium or claim to authenticate source pixels independently.
+
+`redaction verify` uses the same archive checker on a local, stable `io.ReaderAt`.
+The checker admits a positive size no larger than 544 MiB before ZIP parsing;
+it neither opens nor closes the reader. The offline command validates the
+preparation and masks, rebuilds the review, then checks the archive and hashes
+all ZIP bytes through the same open file. Hashing adds one bounded-memory
+sequential pass and no staged copy. It closes the file before reporting success.
+The download path retains its digest computed during transfer.
+
+The offline result is the checked receipt plus the whole-ZIP size and SHA-256.
+Receipt and sanitized-text agreement do not establish that the PDF implements
+the masks: an altered PDF with a correspondingly altered receipt can pass.
+Detecting that substitution requires comparison with an independently retained
+archive digest. This check needs neither source authority nor a PDF runtime;
+it does not authenticate the producer. See the
+[saved-archive workflow](../usage/document-processing.md#check-and-retain-a-saved-archive)
+for retention and recovery.
 
 Prepare, resolve and render share one shutdown-accounted operation slot. A busy
 refusal names its holder. The shared capture gate protects original bytes only

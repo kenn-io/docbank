@@ -450,7 +450,7 @@ func TestPhotoStackCursorMembershipFrontier(t *testing.T) {
 					expected = append(expected, stackPhoto(t, s, run, "/B/other-2.jpg", stamp.Add(step).Format(time.RFC3339Nano), document.SourceMetadataPrecisionFraction))
 				}
 				expected = append(expected, stackPhoto(t, s, run, "/C/end.jpg", base.Add(10*time.Minute).Format(time.RFC3339), document.SourceMetadataPrecisionSecond), stackPhoto(t, s, run, "/C/start.jpg", base.Add(-10*time.Minute).Format(time.RFC3339), document.SourceMetadataPrecisionSecond))
-				_, err = s.db.Exec(`UPDATE photo_files SET flag='reject' WHERE asset_id=?`, joined)
+				_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: []string{joined}}), Patch: PhotoAuthoredPatch{Flag: new("reject")}})
 				require.NoError(t, err)
 				request := captureRequest(t, direction)
 				request.PageSize = 4
@@ -468,7 +468,7 @@ func TestPhotoStackCursorMembershipFrontier(t *testing.T) {
 				} else {
 					require.Len(t, unchanged.Items, 1)
 				}
-				_, err = s.db.Exec(`UPDATE photo_files SET flag='' WHERE asset_id=?`, joined)
+				_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: []string{joined}}), Patch: PhotoAuthoredPatch{Flag: new("")}})
 				require.NoError(t, err)
 				_, err = s.ListPhotoAssets(t.Context(), request, first.Next)
 				require.ErrorIs(t, err, ErrInvalidPhotoCursor)
@@ -828,6 +828,37 @@ func TestPhotoStackReturnOwnership(t *testing.T) {
 		}
 		require.Equal(t, []string{"pick", "pick", "reject", "reject"}, flags)
 	})
+}
+
+func TestPhotoStackDecisionAfterSidecarPublication(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	ids := burstPhotos(t, s, 2)
+	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: ids[:1]}), Patch: PhotoAuthoredPatch{Rating: new(3)}})
+	require.NoError(t, err)
+	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: ids}), Decision: "current", CurrentID: ids[0]}
+	original := request.Targets[0]
+	work, run, err := s.ClassifyPhotoXMP(ctx, original.FileID)
+	require.NoError(t, err)
+	require.True(t, run)
+	plan, _ := PlanPhotoXMP(work, work.Steps(), "")
+	plan.Packet = PhotoXMPPacket{Rating: 3, Present: PhotoConfirmedRating, Keywords: []string{}}
+	plan.Write = true
+	_, err = s.PublishPhotoXMP(ctx, plan, fakeHash("f6"), 8, BlobPhysical{Encoding: "raw", StoredBytes: 8, Created: true})
+	require.NoError(t, err)
+	updated, err := s.PhotoAssetByID(ctx, original.AssetID)
+	require.NoError(t, err)
+	require.Greater(t, updated.Revision, original.AssetRevision)
+	require.Len(t, updated.Files, 2)
+	receipt, err := s.DecidePhotoStack(ctx, request)
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt.ReceiptID)
+	for i, id := range ids {
+		asset, err := s.PhotoAssetByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, []string{"pick", "reject"}[i], fileByRole(asset.Files, PhotoRoleImage).Flag)
+	}
 }
 
 func TestPhotoStackDecisionsAndUndo(t *testing.T) {

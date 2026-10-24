@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -190,24 +193,8 @@ func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundl
 	if !includeMetadata {
 		return i, nil
 	}
-	rows, err := q.QueryContext(ctx, `SELECT t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=? ORDER BY t.name,t.id`, m.NodeID)
-	if err != nil {
-		return i, err
-	}
-	defer func() { _ = rows.Close() }()
-	keywordBytes := 0
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return i, err
-		}
-		keywordBytes += len(name)
-		if keywordBytes > maxPhotoExportKeywordBytes {
-			return i, bundle.ErrLimit
-		}
-		i.Keywords = append(i.Keywords, name)
-	}
-	return i, rows.Err()
+	i.Keywords, _, err = photoKeywordNames(ctx, q, m.NodeID)
+	return i, err
 }
 
 func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.PlanRequest) ([]PhotoExportInput, error) {
@@ -256,4 +243,33 @@ func (s *Store) AcquirePhotoExportPreparation(ctx context.Context) (func(), erro
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// photoKeywordNames bounds the portable snapshot but fingerprints every name,
+// including names beyond the export limit, with length framing.
+func photoKeywordNames(ctx context.Context, q metadataQuerier, nodeID int64) ([]string, string, error) {
+	names := []string{}
+	digest := sha256.New()
+	keywordBytes := 0
+	err := queryRows(ctx, q, `SELECT t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=? ORDER BY t.name,t.id`, []any{nodeID}, func(rows *sql.Rows) error {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(name)))
+		_, _ = digest.Write(length[:])
+		_, _ = digest.Write([]byte(name))
+		keywordBytes += len(name)
+		if keywordBytes > maxPhotoExportKeywordBytes {
+			names = nil
+		} else {
+			names = append(names, name)
+		}
+		return nil
+	})
+	if err == nil && keywordBytes > maxPhotoExportKeywordBytes {
+		err = bundle.ErrLimit
+	}
+	return names, hex.EncodeToString(digest.Sum(nil)), err
 }

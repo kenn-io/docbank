@@ -46,6 +46,7 @@ const (
 	xmlNamespace                         = "http://www.w3.org/XML/1998/namespace"
 	xmpBasicNamespace                    = "http://ns.adobe.com/xap/1.0/"
 	xmpDublinCoreNamespace               = "http://purl.org/dc/elements/1.1/"
+	lightroomXMPNamespace                = "http://ns.adobe.com/lightroom/1.0/"
 	xmpPDFNamespace                      = "http://ns.adobe.com/pdf/1.3/"
 )
 
@@ -2251,7 +2252,8 @@ func localTimestampLayout(value string) string {
 }
 
 func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte) error {
-	values, err := readPhotoSidecar(ctx, data)
+	values, err := readPhotoSidecar(ctx, data, photoSidecarExtraction)
+	values.PhotoAuthored = values.extracted
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
@@ -2262,8 +2264,8 @@ func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte
 	c.boolean("image.xmp.packet_valid", "image.xmp", "packet", true)
 	c.string("image.xmp.sidecar_for_extension", "image.xmp", "SidecarForExtension", values.SidecarForExtension, false)
 	c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Rating))
-	c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Rotation))
-	for _, field := range []struct{ key, source, value string }{{"flag", "Pick", values.Flag}, {"label", "Label", values.Label}, {"caption", "description", values.Caption}, {"creator", "creator", values.Creator}, {"copyright", "rights", values.Copyright}} {
+	c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.PhotoAuthored.Rotation))
+	for _, field := range []struct{ key, source, value string }{{"flag", "Pick", values.Flag}, {"label", "Label", values.Label}, {"caption", sourceMetadataDescriptionField, values.Caption}, {sourceMetadataCreatorField, sourceMetadataCreatorField, values.Creator}, {"copyright", sourceMetadataRightsField, values.Copyright}} {
 		c.string("image.xmp."+field.key, "image.xmp", field.source, field.value, false)
 	}
 	return nil

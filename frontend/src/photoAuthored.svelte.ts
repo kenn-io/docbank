@@ -11,6 +11,41 @@ export class PhotoUndoState {
 }
 
 export class PhotoAuthoredEditor {
+  onXMPChanged?: (receipt?: api.PhotoAuthoredReceipt, tags?: api.Tag[]) => Promise<void>;
+  async undoSidecarImport(fileID: string) {
+    const receiptID = this.targets.find((target) => target.file_id === fileID)?.xmp
+      ?.import_receipt_id;
+    if (!receiptID || this.busy || this.loading || this.dirty || this.concealed) return;
+    await this.undo(async (receipt, tags) => {
+      await this.onXMPChanged?.(receipt, tags);
+    }, receiptID);
+  }
+
+  async resolveXMP(fileID: string, choice: api.PhotoXMPResolveRequestChoice) {
+    if (this.busy || this.loading || this.concealed || this.dirty) return;
+    const expected = this.targets.find((target) => target.file_id === fileID)?.xmp;
+    if (!expected || expected.state !== "conflict") return;
+    const write = this.beginWrite();
+    this.error = "";
+    try {
+      const receipt = await this.request(() =>
+        api.resolvePhotoXMP(fileID, { conflict_id: expected.conflict_id!, choice }, this.options()),
+      );
+      if (this.controller.signal.aborted) return;
+      this.endWrite(write);
+      await this.reload();
+      await this.publishXMPKeywords(receipt || undefined);
+    } catch (cause) {
+      if (!this.controller.signal.aborted) {
+        this.error =
+          cause instanceof APIError && [404, 409, 412].includes(cause.status)
+            ? "The photo or sidecar changed. Reopen the photo and choose again."
+            : this.failure(cause);
+      }
+    } finally {
+      this.endWrite(write);
+    }
+  }
   asset = $state<api.PhotoAsset>();
   /** Every prepared file once, by file_id. The edit selection and the stack each name the files they use. */
   private held = $state<Record<string, PreparedFile>>({});
@@ -31,8 +66,11 @@ export class PhotoAuthoredEditor {
     return this.stackFiles;
   }
   private setStack(targets: PreparedFile[]) {
-    this.stackIDs = this.hold(targets);
+    this.stackIDs = this.hold(targets.map((target) => this.stackTarget(target)));
     this.prune();
+  }
+  private stackTarget(target: PreparedFile) {
+    return target.xmp ? target : { ...target, xmp: this.held[target.file_id]?.xmp };
   }
   /** Each held file once, whichever scopes use it. */
   get prepared() {
@@ -98,6 +136,144 @@ export class PhotoAuthoredEditor {
     ];
     void this.resolveAssignedTags();
   }
+  private xmpTimer?: ReturnType<typeof setTimeout>;
+  private xmpRead?: AbortController;
+  private xmpAttempts = 0;
+  private xmpTerminal = false;
+  private watchXMP(restart = false) {
+    if (restart) {
+      this.stopXMP();
+      this.xmpAttempts = 0;
+      this.xmpTerminal = false;
+    }
+    if (
+      this.controller.signal.aborted ||
+      this.conflict ||
+      this.concealed ||
+      this.xmpTerminal ||
+      !this.asset ||
+      !this.targets.some((target) => target.xmp)
+    ) {
+      this.stopXMP();
+      return;
+    }
+    if (!this.xmpTimer && !this.xmpRead) {
+      this.xmpTimer = setTimeout(
+        () => {
+          this.xmpTimer = undefined;
+          void this.refreshXMP();
+        },
+        Math.min(2000 * 2 ** this.xmpAttempts, 30000),
+      );
+    }
+  }
+  private stopXMP() {
+    clearTimeout(this.xmpTimer);
+    this.xmpTimer = undefined;
+    this.xmpRead?.abort();
+    this.xmpRead = undefined;
+  }
+  // refreshXMP owns the polling schedule: every exit, including a skipped read, plans the next one.
+  async refreshXMP() {
+    try {
+      await this.readXMP();
+    } finally {
+      this.watchXMP();
+    }
+  }
+  private async readXMP() {
+    if (this.busy || this.loading || this.concealed || this.conflict || this.xmpRead) return;
+    const targets = this.targets;
+    const assetIDs = this.xmpAssets(targets);
+    if (!assetIDs.length) return;
+    this.xmpAttempts = Math.min(this.xmpAttempts + 1, 4);
+    const write = this.writes;
+    const controller = (this.xmpRead = new AbortController());
+    const signal = AbortSignal.any([controller.signal, this.controller.signal]);
+    try {
+      const prepared = await this.request(() =>
+        api.preparePhotoAuthored(
+          { asset_ids: assetIDs, hidden: this.scope?.hidden, skip_unavailable: true },
+          this.options(signal),
+        ),
+      );
+      if (signal.aborted || this.busy || write !== this.writes || targets !== this.targets) return;
+      const scope = targets.filter((target) => assetIDs.includes(target.asset_id));
+      const changed = this.acceptXMPStatus(prepared, scope);
+      if (changed) await this.publishXMPKeywords(undefined, [...scope, ...prepared.targets]);
+    } catch (cause) {
+      if (
+        !signal.aborted &&
+        cause instanceof APIError &&
+        cause.status >= 400 &&
+        cause.status < 500 &&
+        ![408, 429].includes(cause.status)
+      ) {
+        this.xmpTerminal = true;
+        this.failure(cause);
+      }
+    } finally {
+      if (this.xmpRead === controller) this.xmpRead = undefined;
+    }
+  }
+  private acceptXMPStatus(prepared: api.PhotoAuthoredPreparation, scope: typeof this.targets) {
+    const latest = new Map(prepared.targets.map((target) => [target.file_id, target]));
+    const asset = prepared.assets.find((asset) => asset.id === this.asset?.id);
+    const unchanged =
+      prepared.targets.length === scope.length &&
+      scope.every((target) => {
+        const fresh = latest.get(target.file_id);
+        return fresh?.revision === target.revision && fresh.node_revision === target.node_revision;
+      }) &&
+      (!this.asset ||
+        (!!asset &&
+          (
+            [
+              "kind",
+              "display_file_id",
+              "display_override_file_id",
+              "hidden_at",
+              "excluded_at",
+            ] as const
+          ).every((key) => asset[key] === this.asset![key])));
+    const changed =
+      !unchanged ||
+      scope.some((target) => {
+        const fresh = latest.get(target.file_id);
+        return !!fresh && JSON.stringify(fresh.xmp) !== JSON.stringify(target.xmp);
+      });
+    const accept =
+      !this.dirty &&
+      prepared.targets.length === scope.length &&
+      scope.every((target) => latest.has(target.file_id));
+    if (!unchanged && !accept) this.conflict = true;
+    this.targets = this.targets.map((target) => {
+      const fresh = latest.get(target.file_id);
+      if (!fresh) return target;
+      if (accept) return fresh;
+      return {
+        ...target,
+        xmp: fresh.xmp,
+        asset_revision: unchanged && asset ? fresh.asset_revision : target.asset_revision,
+      };
+    });
+    if (accept && asset && this.asset)
+      this.asset = {
+        ...asset,
+        files: asset.files.filter((file) =>
+          this.targets.some((target) => target.file_id === file.id),
+        ),
+      };
+    else if (unchanged && asset && this.asset)
+      this.asset = { ...this.asset, revision: asset.revision };
+    if (changed) this.xmpAttempts = 0;
+    return changed;
+  }
+  // While Metadata shows a target, its XMP status is observed in every state, so an outside
+  // import or conflict appears without reopening. The targets fence the refreshed status.
+  private xmpAssets(targets: typeof this.targets) {
+    return [...new Set(targets.filter((target) => target.xmp).map((target) => target.asset_id))];
+  }
   private pendingTags = new Map<string, Promise<api.Tag | undefined>>();
   private readTag(id: string, refresh = false) {
     if (refresh) this.pendingTags.delete(id);
@@ -147,8 +323,25 @@ export class PhotoAuthoredEditor {
     const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
     await Promise.all(ids.map((id) => this.readTag(id, true)));
   }
-  private async refreshKeywords(receipt: api.PhotoAuthoredReceipt) {
-    const changed = new Set(receipt.keywords?.map((change) => change.tag_id));
+  // Either choice can import unrelated outside changes.
+  private async publishXMPKeywords(
+    receipt?: api.PhotoAuthoredReceipt,
+    targets: api.PhotoPreparedTarget[] = [],
+  ) {
+    await this.loadTags?.();
+    const tags = await this.refreshKeywords(receipt ?? targets.flatMap((target) => target.tags));
+    if (receipt || tags.length) await this.onXMPChanged?.(receipt, tags);
+    else await this.onXMPChanged?.();
+  }
+  private refreshKeywords(source: api.PhotoAuthoredReceipt | string[]) {
+    return this.refreshKeywordIDs(
+      Array.isArray(source) ? source : source.keywords?.map((change) => change.tag_id),
+    );
+  }
+  private async refreshKeywordIDs(ids: string[] = []) {
+    const changed = new Set(ids);
+    if (!changed.size) return [];
+    for (const id of changed) this.pendingTags.delete(id);
     const refreshed = await Promise.all(
       [...changed].map((id) =>
         this.readTag(id, true).catch((cause) => {
@@ -207,6 +400,7 @@ export class PhotoAuthoredEditor {
     return false;
   }
   reset() {
+    this.stopXMP();
     this.read.abort();
     this.stackRead.abort();
     this.held = {};
@@ -231,6 +425,7 @@ export class PhotoAuthoredEditor {
     this.concealed = false;
   }
   conceal() {
+    this.stopXMP();
     this.read.abort();
     this.loading = false;
     this.concealed = true;
@@ -250,6 +445,7 @@ export class PhotoAuthoredEditor {
     if (this.asset && !eligible.has(this.asset.id)) this.asset = undefined;
     this.validating = false;
     this.concealed = false;
+    this.watchXMP(true);
   }
   // A quiet read keeps `loading` clear, so edits do not wait for it: a write on stale
   // revisions is refused by the server and reloads. It gives way to any edit, and throws on failure.
@@ -300,6 +496,7 @@ export class PhotoAuthoredEditor {
       this.conflict = this.membershipChanged;
       if (quiet) await this.resolveAssignedTags(true);
       else void this.resolveAssignedTags();
+      this.watchXMP(true);
       if (!this.tags.length && !this.tagsLoading && !this.tagsError)
         void this.loadTags?.().catch((cause) => {
           if (!signal.aborted) this.tagsError = this.failure(cause);
@@ -465,6 +662,7 @@ export class PhotoAuthoredEditor {
     for (const target of this.accepted(this.prepared, receipt)) this.held[target.file_id] = target;
   }
   private accepted(targets: PreparedFile[], receipt: api.PhotoAuthoredReceipt) {
+    this.watchXMP(true);
     return targets.map((target) => {
       const representative = receipt.representatives?.find(
         (change) => change.asset_id === target.asset_id,
@@ -487,6 +685,7 @@ export class PhotoAuthoredEditor {
         node_revision: nodeRevision,
         values: after.values,
         tags: [...tags],
+        xmp: target.xmp ? { state: "pending" as const } : undefined,
       };
     });
   }
@@ -772,33 +971,42 @@ export class PhotoAuthoredEditor {
     }
     return false;
   }
-  async undo(refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>) {
+  async undo(
+    refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
+    receiptID = this.receiptID,
+  ) {
     if (this.busy || this.loading || this.stackLoading || this.concealed) {
       this.unavailable();
       return;
     }
-    if (!this.receiptID || this.controller.signal.aborted) return;
+    if (!receiptID || this.controller.signal.aborted) return;
     const write = this.beginWrite();
     this.error = "";
     try {
-      const receipt = await this.request(() =>
-        api.undoPhotoAuthored(this.receiptID, this.options()),
-      );
+      const receipt = await this.request(() => api.undoPhotoAuthored(receiptID, this.options()));
       this.accept(receipt);
-      this.receiptID = "";
-      this.undoState.summary = "";
+      if (this.receiptID === receiptID) {
+        this.receiptID = "";
+        this.undoState.summary = "";
+      }
       this.notice = receipt.receipt_id ? "Edit undone" : "No changes to undo";
       if (!receipt.receipt_id) return;
       const tags = await this.refreshKeywords(receipt);
       this.endWrite(write);
       await refresh(receipt, tags);
     } catch (cause) {
-      if (!this.controller.signal.aborted) this.error = this.failure(cause);
+      if (!this.controller.signal.aborted) {
+        this.error =
+          cause instanceof APIError && cause.code === "stale_revision"
+            ? "This photo changed. This edit can no longer be undone."
+            : this.failure(cause);
+      }
     } finally {
       this.endWrite(write);
     }
   }
   dispose() {
+    this.stopXMP();
     this.controller.abort();
     this.read.abort();
     this.stackRead.abort();

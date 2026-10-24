@@ -104,6 +104,9 @@ func (s *Store) PruneContentVersions(
 		if err := retainMediaAuthorityVersionsTx(tx, candidateSet, retainedSet); err != nil {
 			return err
 		}
+		if err := retainPhotoXMPVersionsTx(ctx, tx, node, candidateSet, retainedSet); err != nil {
+			return err
+		}
 		checkpointRequired = checkpointRequired && candidateSet[node.CurrentVersionID]
 		retainContentVersionDependencies(versions, candidateSet, retainedSet)
 		retainedVersion, err := snapshotRetainedVersionTx(ctx, tx, candidateSet)
@@ -178,6 +181,49 @@ func (s *Store) PruneContentVersions(
 		result.DependencyRetained = []ContentVersion{}
 	}
 	return result, nil
+}
+
+// retainPhotoXMPVersionsTx keeps every recorded history's settled version and
+// each live source's latest version across attachment changes.
+func retainPhotoXMPVersionsTx(ctx context.Context, tx *sql.Tx, node Node, candidates, retained map[string]bool) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+	sources, err := photoXMPSourceVersionsTx(ctx, tx, node.ID)
+	if err != nil {
+		return err
+	}
+	for _, source := range sources {
+		if candidates[source.VersionID] {
+			delete(candidates, source.VersionID)
+			retained[source.VersionID] = true
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT r.after_json
+ FROM photo_files sf JOIN photo_change_receipts r INDEXED BY photo_change_receipts_xmp_sidecar
+ ON r.operation='xmp_sync'
+ WHERE sf.node_id=? AND CAST(json_extract(r.after_json,'$.sync.sidecar.file_id') AS TEXT)=sf.file_id
+ AND json_extract(r.after_json,'$.sync.sidecar.node_id')=sf.node_id
+ AND json_extract(r.after_json,'$.sync.settled.version_id') IS NOT NULL`, node.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return err
+		}
+		receipt, err := decodePhotoXMPReceipt(data)
+		if err != nil {
+			return err
+		}
+		if id := receipt.Sync.Settled.VersionID; candidates[id] {
+			delete(candidates, id)
+			retained[id] = true
+		}
+	}
+	return errors.Join(rows.Err(), rows.Close())
 }
 
 func snapshotRetainedVersionTx(ctx context.Context, tx *sql.Tx, candidates map[string]bool) (string, error) {

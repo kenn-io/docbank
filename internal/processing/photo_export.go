@@ -250,7 +250,7 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 func encodePhotoExport(ctx context.Context, decoded image.Image, orientation int, packets photoPackets, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt) ([]byte, bundle.PhotoRenderReceipt, error) {
 	profile := receipt.Profile
 	sourceOrientation := orientation
-	orientation = [4][8]int{{1, 2, 3, 4, 5, 6, 7, 8}, {6, 7, 8, 5, 2, 3, 4, 1}, {3, 4, 1, 2, 7, 8, 5, 6}, {8, 5, 6, 7, 4, 1, 2, 3}}[input.Authored.Rotation/90][orientation-1]
+	orientation = store.PhotoXMPOrientation(orientation, input.Authored.Rotation)
 	oriented, err := transformPhotoPixels(ctx, decoded, orientation, profile.LongEdge)
 	if err != nil {
 		return nil, receipt, err
