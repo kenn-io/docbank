@@ -158,7 +158,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
-| `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
+| `POST /backup/init` · `POST /backup/claim` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize or claim a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
 ### Format capability coverage
 
@@ -1280,7 +1280,16 @@ each requested move.
 
 `POST /backup/init` accepts `{"repo": "/absolute/server/path"}` and returns
 the repository identity and canonical path. `repo` may be omitted when
-`[backup] repo` is configured. `POST /backup/snapshots` accepts the same
+`[backup] repo` is configured.
+
+`POST /backup/claim` accepts `{repo?, confirm?}` to assign an existing
+repository's unmarked history to this vault. Omit `confirm` to preview its
+`id`, `path`, `snapshot_count`, optional `newest_at`, and `owned`.
+Send `confirm: true` to assign the history to this vault. A claim cannot replace
+an existing owner. Claim uses the same repository selection and master API
+authority as initialization.
+
+`POST /backup/snapshots` accepts the same
 optional repository plus `tag`, `jobs`, and `force_unlock`. It returns a
 stable logical summary rather than exposing Kit's physical manifest layout.
 The `/backup/snapshots/stream` variant accepts the same body and returns
@@ -2321,6 +2330,8 @@ include a `position` span:
 | `not_found` | 404 | `store.ErrNotFound` |
 | `exists` | 409 | `store.ErrExists` (name collision) |
 | `cycle` | 409 | `store.ErrCycle` (move under own descendant) |
+| `backup_repository_owner_conflict` | 409 | the owner marker does not name this vault |
+| `backup_repository_claim_required` | 409 | unmarked repository history requires an explicit claim before capture |
 | `audit_mutation_unsupported` | 409 | the audited vault does not yet record this logical mutation class |
 | `audit_already_enabled` | 409 | an initial-scope preview cannot execute because audit authority was enabled concurrently |
 | `audit_scope_overlap` | 409 | the proposed scope shares a live or retained-trash member with permanent protection |
