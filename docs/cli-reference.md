@@ -316,7 +316,7 @@ stderr. Human error text remains explanatory and may change.
 |------|---------|----------------|
 | `0` | Success, including an empty result or a dry run that found nothing | Continue |
 | `1` | General operational failure, such as local I/O, transport, daemon, or an otherwise unclassified conflict | Report or inspect stderr |
-| `2` | Invalid command usage, arguments, flag combinations, values, or request validation | Correct the invocation |
+| `2` | Invalid command usage, arguments, flag combinations, values, request validation, or backup repository ownership | Correct the invocation or select and claim the repository |
 | `3` | The daemon returned `not_found` for the requested vault object | Refresh names or identities |
 | `4` | Stale optimistic state: a revision or audit enrollment preview no longer matches | Re-read, reconsider, and retry deliberately |
 | `5` | Vault maintenance is active, or a vault, backup repository, or physical pack resource is busy or locked | Wait and retry, or release the known owner; do not blindly force-unlock |
@@ -1509,6 +1509,7 @@ problem was found.
 
 ```text
 docbank backup init [--repo <dir>] [--json]
+docbank backup claim [--repo <dir>] [--yes] [--json]
 docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 docbank backup list [--repo <dir>] [--json]
@@ -1530,12 +1531,16 @@ repository and reclaims unused backup storage. Supply `--repo` or configure
 | Command | Behavior |
 |---------|----------|
 | `init` | Initialize a repository |
+| `claim` | Preview and confirm adoption of existing repository history; `--yes` confirms without a prompt |
 | `create` | Capture a verified snapshot using logical JSONL metadata |
 | `list` | List snapshot history |
 | `verify` | Check the latest snapshot, a named snapshot, or every snapshot with `--all`; `--quick` skips content reads |
 | `restore` | Restore the latest or a named snapshot to a separate `--target` |
 | `forget` | Remove exact snapshot IDs; `--allow-empty` permits removing the last recovery point |
 | `prune` | Remove unused packs and rewrite eligible partly live packs; `--dry-run` reports the plan |
+
+`claim --json` writes the final claim object with `owned` true or false to
+stdout. Previews and prompts go to stderr.
 
 `create` pauses mutations briefly to fix the metadata view for the snapshot.
 It then streams loose or packed content while normal daemon work resumes.

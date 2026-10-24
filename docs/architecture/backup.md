@@ -17,7 +17,7 @@ for Go integration.
 
 ## Which entry point owns the operation?
 
-Standalone `docbank backup init`, `backup create`, `backup list`, `backup
+Standalone `docbank backup init`, `backup claim`, `backup create`, `backup list`, `backup
 verify`, `backup restore`, `backup forget`, and `backup prune` use the authenticated daemon API. See the
 [Backup user guide](../usage/backup.md). Applications that own an embedded
 vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
@@ -73,6 +73,23 @@ authority changes take the preservation side exclusively for their short
 catalog commit, so the logical membership and placement artifact cannot
 describe different authority handoffs.
 
+## Who schedules captures and retention?
+
+The shared capture path checks the repository's `docbank-owner` marker against
+its vault identity. Initialization marks daemon repositories; the first capture
+binds empty unmarked repositories. Existing unmarked history requires an explicit
+claim. Kit's exclusive repository lock covers binding and confirmed claims;
+atomic marker publication preserves an existing owner.
+
+The supervisor owns one serial `backup:scheduled` job and keeps the background
+daemon alive while scheduling is enabled. It reuses the HTTP capture helper and
+operation gate. Due and stale checks read scheduled snapshot times. Waits poll
+wall time once a minute and retain a monotonic bound. A failed due capture stays
+due across retries. Retention uses Kit's forget and prune, preserves the new
+point, and leaves manual history untouched. Errors appear in Jobs and logs;
+identical failures are logged once until recovery. See the
+[backup guide](../usage/backup.md#schedule-backups) for configuration and timing.
+
 ## What metadata does a snapshot retain?
 
 Docbank exports logical metadata as deterministic JSONL: one JSON record per
@@ -112,6 +129,9 @@ Manifest `Stats.coverage` records a versioned, bounded inventory of photo assets
 Restore resolves one exact manifest before starting. Kit's existing stats proof recomputes coverage from the staged database and compares it before publication. It preserves the manifest's recorded exclusions when recounting, so later exclusion-list changes preserve version-1 restore compatibility. Coverage version 1 is supported; restore rejects other recorded versions with upgrade guidance before creating the target database. Quick and full verification check manifest consistency and report unsupported coverage versions; full verification also checks physical content. Verification does not recount photo coverage. Snapshot listing preserves base statistics and IDs for unsupported coverage versions, omits the uninterpreted payload, and adds a per-snapshot warning. Historical manifests without coverage retain their original stats representation. Metadata import validates photo relationships and receipts; checkout import restores definitions and entries with inactive, unbound defaults. Hidden passcode and lockout records survive, while process-memory unlock sessions clear.
 
 Forget and prune reuse Kit's exclusive repository lock without opening the source vault. Operator routes and CLI output retain partial reports on error, including exact selected, planned, and completed item identities. Unknown selected snapshot IDs return 404; filesystem I/O failures remain server errors. The [user guide](../usage/backup.md#recover-on-a-fresh-installation) describes recovery with a fresh daemon home and a disjoint target.
+
+Explicit forget and prune address the operator-selected repository independently
+of its source owner. Ownership gates captures and automatic retention.
 
 ## When does copied content become trusted?
 
