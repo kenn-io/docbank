@@ -311,8 +311,8 @@ func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, recei
 		return err
 	}
 	// Only document assignments retain the version that authorized the absorbed
-	// person's visibility. Broader scopes and missing assignments require unlock
-	// because the receipt has no snapshot of their published document evidence.
+	// person's visibility. When Hidden photos exist, broader scopes and missing
+	// assignments require unlock because the receipt has no evidence snapshot.
 	var hidden bool
 	if err := tx.QueryRowContext(ctx, `WITH RECURSIVE replay_candidates(candidate_id) AS (
 		SELECT value FROM json_each(?)
@@ -331,7 +331,8 @@ func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, recei
 	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)
 	OR EXISTS(SELECT 1 FROM json_each(?) moved
 		LEFT JOIN custodian_assignments a ON a.assignment_id=moved.value
-		WHERE a.assignment_id IS NULL OR a.scope_kind<>'document'
+		WHERE ((a.assignment_id IS NULL OR a.scope_kind<>'document')
+			AND EXISTS(SELECT 1 FROM photo_assets WHERE hidden_at IS NOT NULL))
 		OR NOT `+personVersionVisibleSQL("a.content_version_id")+`)`, string(candidateIDs), string(ids), string(ids), string(versionIDs), string(assignmentIDs)).Scan(&hidden); err != nil {
 		return err
 	}

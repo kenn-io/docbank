@@ -10,6 +10,38 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
+func TestPersonBrowserMergeReplayWithCollectionCustodianWithoutHiddenPhotos(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Library Person", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Library Custodian", "operator")
+	require.NoError(t, err)
+	run, err := s.BeginIngest(ctx, "test", "/synthetic")
+	require.NoError(t, err)
+	library, _, err := s.IngestFile(ctx, run, s.RootID(), "library.jpg", fakeHash("library"), 20, "image/jpeg", "/synthetic/library.jpg", "2026-01-01T00:00:00Z")
+	require.NoError(t, err)
+	for _, person := range []Person{survivor, absorbed} {
+		_, err = s.MarkPersonInPhoto(ctx, library.CurrentVersionID, person.PersonID, "")
+		require.NoError(t, err)
+	}
+	assignment, err := s.SetCustodian(ctx, CustodianRequest{
+		Scope: CustodianScope{Kind: "collection", IngestID: run.ID()}, PersonID: absorbed.PersonID,
+		RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	browser := WithVisiblePeopleOnly(ctx)
+	operation := uuid.NewString()
+	first, err := s.MergePersons(browser, survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	require.Equal(t, []string{assignment.AssignmentID}, first.Moved.AssignmentIDs)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	replayed, err := s.MergePersons(browser, survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	require.Equal(t, first, replayed)
+}
+
 func TestPersonBrowserMergeReplayRequiresHiddenUnlockForCustodian(t *testing.T) {
 	t.Parallel()
 	for _, scopeKind := range []string{"document", "collection"} {
