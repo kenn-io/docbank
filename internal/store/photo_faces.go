@@ -237,9 +237,12 @@ func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
 
 // assertDepictedPersonTx creates or reuses the shared depicted edge for an active person.
 // An existing suppressed edge requires an explicit assertion edit.
-func assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID string) (PersonDocumentAssertion, error) {
+func (s *Store) assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID string) (PersonDocumentAssertion, error) {
 	resolved, err := resolveActiveCandidatePersonTx(ctx, tx, personID)
 	if err != nil {
+		return PersonDocumentAssertion{}, err
+	}
+	if err := s.fenceVisiblePeopleTx(ctx, tx, resolved); err != nil {
 		return PersonDocumentAssertion{}, err
 	}
 	assertion, changed, err := ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
@@ -278,6 +281,9 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 				return photoFaceExistsError{}
 			}
 			face, assertion, err = replayPhotoFaceTx(ctx, tx, existing, personID)
+			if err == nil && assertion != nil {
+				err = s.fenceVisiblePeopleTx(ctx, tx, assertion.PersonID)
+			}
 			if err == nil {
 				items := []PhotoFace{face}
 				err = s.readFaceDecisionsTx(ctx, tx, items)
@@ -297,7 +303,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 		}
 		face = PhotoFace{FaceID: faceID, ContentVersionID: versionID, Box: box, Revision: 1, CreatedAt: nowRFC3339()}
 		if personID != "" {
-			saved, err := assertDepictedPersonTx(ctx, tx, versionID, personID)
+			saved, err := s.assertDepictedPersonTx(ctx, tx, versionID, personID)
 			if err != nil {
 				return err
 			}
@@ -356,6 +362,9 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 			if errors.Is(err, sql.ErrNoRows) {
 				_, err = createPersonWithIDTx(ctx, tx, personID, personName, "operator")
 			} else if err == nil {
+				if err := s.fenceVisiblePeopleTx(ctx, tx, personID); err != nil {
+					return err
+				}
 				if state == personStateRetired {
 					return ErrNotFound
 				}
@@ -368,7 +377,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 			}
 		}
 		var err error
-		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID)
+		assertion, err = s.assertDepictedPersonTx(ctx, tx, versionID, personID)
 		if err == nil && !assertion.PhotoMark {
 			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID)
 			if err == nil {

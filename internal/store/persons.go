@@ -72,6 +72,13 @@ func createPersonWithIDTx(ctx context.Context, tx *sql.Tx, id, displayName, orig
 	if !validPersonName(displayName) || !validPersonOrigin(origin) {
 		return Person{}, ErrInvalidPerson
 	}
+	var retired bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_aliases WHERE retired_person_id=?)`, id).Scan(&retired); err != nil {
+		return Person{}, err
+	}
+	if retired {
+		return Person{}, ErrNotFound
+	}
 	state := "provisional"
 	if origin == "operator" {
 		state = "curated"
