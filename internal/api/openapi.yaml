@@ -27543,6 +27543,25 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Inspect checkout edits
+  /api/v1/photos/events:
+    get:
+      operationId: photoEvents
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: SSE change frames contain JSON {} or {"asset_id":"..."}. Clients must refetch on connection and reconnect to recover missed changes. IDs are filtered by Hidden access.
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: The daemon's concurrent photo event stream limit is reached.
+      summary: Observe photo changes as server-sent events
+      tags:
+        - Photo events
   /api/v1/photos/face-decisions/{receipt_id}/undo:
     post:
       operationId: undoPhotoFaceDecision

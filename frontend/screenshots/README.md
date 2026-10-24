@@ -85,6 +85,8 @@ The album proof uses `DOCBANK_ALBUMS_SCREENSHOT_DIR` to check adding photos by a
 to check ranked search, whole-library counts, continuation and rows before counts.
 Run either photo spec with the Playwright command above and its filename.
 
+`photo-tabs.screenshot.ts` opens two photo tabs on one daemon, edits a caption in one, and checks that the other updates through a single shared event stream. Run it with `make photo-tabs-browser-test`.
+
 | Variable                        | Photo proof behavior                                                              |
 | ------------------------------- | --------------------------------------------------------------------------------- |
 | `DOCBANK_SCREENSHOT_BINARY`     | Absolute branch binary; defaults to the built binary in `bin/`.                   |

@@ -46,6 +46,7 @@ func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
 		{http.MethodGet, "/api/v1/bates/exports/not-an-export/content", true},
 		{http.MethodPost, "/api/v1/processing/plans", false},
 		{http.MethodGet, "/api/v1/processing/plans", true},
+		{http.MethodGet, photoEventsPath, false},
 	} {
 		t.Run(test.method+test.path, func(t *testing.T) {
 			parent, cancel := context.WithCancel(t.Context())

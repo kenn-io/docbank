@@ -1,5 +1,6 @@
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
+import { affectsPhoto, type PhotoChange } from "./photoEvents.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 type PreparedFile = api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget;
@@ -97,52 +98,63 @@ export class PhotoAuthoredEditor {
     ];
     void this.resolveAssignedTags();
   }
-  private pendingTags = new Map<string, Promise<void>>();
-  private async resolveAssignedTags() {
+  private pendingTags = new Map<string, Promise<api.Tag | undefined>>();
+  private readTag(id: string, refresh = false) {
+    if (refresh) this.pendingTags.delete(id);
+    const pending = this.pendingTags.get(id);
+    if (pending) return pending;
+    const request = this.request(() => api.getTag(id, this.options()))
+      .then((tag) => {
+        if (this.pendingTags.get(id) !== request || this.controller.signal.aborted) return;
+        this.reconcile(tag);
+        return tag;
+      })
+      .catch((cause) => {
+        if (!(cause instanceof APIError && cause.status === 404)) throw cause;
+        if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
+          this.tags = this.tags.filter((tag) => tag.id !== id);
+        return undefined;
+      })
+      .finally(() => {
+        if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
+      });
+    this.pendingTags.set(id, request);
+    return request;
+  }
+  private async resolveAssignedTags(required = false) {
     const known = new Set(this.tags.map((tag) => tag.id));
     const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
-      (id) => !known.has(id) && !this.pendingTags.has(id),
+      (id) => !known.has(id),
     );
-    for (const id of missing) {
-      const request = this.request(() => api.getTag(id, this.options()))
-        .then((tag) => {
-          if (
-            this.pendingTags.get(id) === request &&
-            !this.controller.signal.aborted &&
-            this.targets.some((target) => target.tags.includes(id)) &&
-            !this.tags.some((value) => value.id === id)
-          )
-            this.tags = [...this.tags, tag];
-        })
-        .catch((cause) => {
-          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
-            this.tagsError = this.failure(cause);
-        })
-        .finally(() => {
-          if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
-        });
-      this.pendingTags.set(id, request);
-    }
-    await Promise.all(this.pendingTags.values());
+    await Promise.all(
+      missing.map((id) =>
+        this.readTag(id).catch((cause) => {
+          if (required) throw cause;
+          if (!this.controller.signal.aborted) this.tagsError = this.failure(cause);
+        }),
+      ),
+    );
+  }
+  /** Puts a freshly read tag in the catalog: renamed in place, or added when a target uses it. */
+  private reconcile(tag: api.Tag) {
+    if (this.tags.some((value) => value.id === tag.id))
+      this.tags = this.tags.map((value) => (value.id === tag.id ? tag : value));
+    else if (this.targets.some((target) => target.tags.includes(tag.id)))
+      this.tags = [...this.tags, tag];
+  }
+  /** Reads assigned tags again for renames and deletions outside the catalog page. */
+  async refreshAssignedTags() {
+    const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
+    await Promise.all(ids.map((id) => this.readTag(id, true)));
   }
   private async refreshKeywords(receipt: api.PhotoAuthoredReceipt) {
     const changed = new Set(receipt.keywords?.map((change) => change.tag_id));
-    if (!changed.size) return [];
-    for (const id of changed) this.pendingTags.delete(id);
     const refreshed = await Promise.all(
-      [...changed].map(async (id) => {
-        try {
-          const tag = await this.request(() => api.getTag(id, this.options()));
-          if (this.controller.signal.aborted) return;
-          if (this.tags.some((value) => value.id === id))
-            this.tags = this.tags.map((value) => (value.id === id ? tag : value));
-          else if (this.targets.some((target) => target.tags.includes(id)))
-            this.tags = [...this.tags, tag];
-          return tag;
-        } catch (cause) {
+      [...changed].map((id) =>
+        this.readTag(id, true).catch((cause) => {
           if (!this.controller.signal.aborted) this.tagsError = this.failure(cause);
-        }
-      }),
+        }),
+      ),
     );
     return refreshed.filter((tag): tag is api.Tag => !!tag);
   }
@@ -171,11 +183,14 @@ export class PhotoAuthoredEditor {
   // A write releases busy before its list refresh, so a later write may own busy by the time this one settles.
   private writes = 0;
   private beginWrite() {
+    this.read.abort();
     this.busy = true;
     return ++this.writes;
   }
   private endWrite(write: number) {
-    if (write === this.writes) this.busy = false;
+    if (write !== this.writes || !this.busy) return;
+    this.busy = false;
+    this.refreshPending();
   }
   canChangeTarget() {
     if (this.loading || this.stackLoading) {
@@ -199,6 +214,8 @@ export class PhotoAuthoredEditor {
     this.stackKey = "";
     this.stackError = "";
     this.stackLoading = false;
+    this.pendingChange = undefined;
+    this.preparedWaiters.splice(0).forEach((resolve) => resolve());
     this.asset = undefined;
     this.fileID = "";
     this.patch = {};
@@ -217,6 +234,7 @@ export class PhotoAuthoredEditor {
     this.loading = false;
     this.concealed = true;
     this.validating = true;
+    this.preparedWaiters.splice(0).forEach((resolve) => resolve());
   }
   revalidate(eligible: Set<string>) {
     const targets = this.targets.filter((target) => eligible.has(target.asset_id));
@@ -232,12 +250,26 @@ export class PhotoAuthoredEditor {
     this.validating = false;
     this.concealed = false;
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false, keepError = false) {
+  // A quiet read keeps `loading` clear, so edits do not wait for it: a write on stale
+  // revisions is refused by the server and reloads. It gives way to any edit, and throws on failure.
+  async prepare(
+    scope: api.PhotoAuthoredPrepareRequest,
+    reload = false,
+    keepError = false,
+    quiet = false,
+  ) {
     this.read.abort();
     const controller = (this.read = new AbortController());
-    const signal = AbortSignal.any([controller.signal, this.controller.signal]);
-    this.loading = true;
-    if (!keepError) this.error = "";
+    const signal = AbortSignal.any([
+      controller.signal,
+      this.controller.signal,
+      AbortSignal.timeout(30_000),
+    ]);
+    this.scope = scope;
+    if (!quiet) {
+      this.loading = true;
+      if (!keepError) this.error = "";
+    }
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
     try {
       const prepared = await this.request(() =>
@@ -245,7 +277,7 @@ export class PhotoAuthoredEditor {
       );
       if (!Array.isArray(prepared.assets) || !Array.isArray(prepared.targets))
         throw new Error("Metadata response was incomplete. Reload metadata.");
-      if (signal.aborted) return;
+      if (signal.aborted || (quiet && (this.busy || this.dirty || this.loading))) return;
       if (
         previous &&
         (prepared.targets.length !== previous.size ||
@@ -254,9 +286,7 @@ export class PhotoAuthoredEditor {
         this.membershipChanged = true;
         if (!prepared.targets.some((target) => target.file_id === this.fileID)) this.fileID = "";
       }
-      this.targets = previous
-        ? prepared.targets.filter((target) => previous.has(target.file_id))
-        : prepared.targets;
+      this.targets = prepared.targets.filter((target) => !previous || previous.has(target.file_id));
       const asset = prepared.assets.length === 1 ? prepared.assets[0] : undefined;
       this.asset = asset
         ? {
@@ -266,20 +296,59 @@ export class PhotoAuthoredEditor {
             ),
           }
         : undefined;
-      this.scope = scope;
       this.conflict = this.membershipChanged;
-      void this.resolveAssignedTags();
+      if (quiet) await this.resolveAssignedTags(true);
+      else void this.resolveAssignedTags();
       if (!this.tags.length && !this.tagsLoading && !this.tagsError)
         void this.loadTags?.().catch((cause) => {
           if (!signal.aborted) this.tagsError = this.failure(cause);
         });
+      return true;
     } catch (cause) {
-      if (!signal.aborted) this.error = this.failure(cause);
+      if (controller.signal.aborted || this.controller.signal.aborted) return;
+      if (quiet) throw cause;
+      this.error = this.failure(cause);
     } finally {
-      if (!signal.aborted) this.loading = false;
+      if (!controller.signal.aborted && !this.controller.signal.aborted && !quiet) {
+        this.loading = false;
+        this.preparedWaiters.splice(0).forEach((resolve) => resolve());
+      }
     }
   }
-  async reload(keepError = false) {
+  // Waiters for the current read; live invalidation runs after it settles.
+  private preparedWaiters: (() => void)[] = [];
+  private pendingChange?: PhotoChange;
+  async invalidate(change: PhotoChange) {
+    const scope = this.scope;
+    this.pendingChange = {
+      ids: new Set([...(this.pendingChange?.ids ?? []), ...change.ids]),
+      idFree: change.idFree || !!this.pendingChange?.idFree,
+    };
+    while (this.loading) await new Promise<void>((resolve) => this.preparedWaiters.push(resolve));
+    if (
+      this.scope !== scope ||
+      this.busy ||
+      this.dirty ||
+      this.conflict ||
+      this.concealed ||
+      this.controller.signal.aborted ||
+      !this.pendingChange
+    )
+      return;
+    const pending = this.pendingChange;
+    let consumed = true;
+    if (this.prepared.some((target) => affectsPhoto(pending, target.asset_id)))
+      consumed = !!(await this.reload(false, true));
+    else if (
+      !this.targets.length &&
+      scope &&
+      (scope.query || scope.asset_ids?.some((id) => affectsPhoto(pending, id)))
+    )
+      consumed = !!(await this.prepare(scope, false, false, true));
+    // Retain affected changes when their read was discarded.
+    if (consumed && this.pendingChange === pending) this.pendingChange = undefined;
+  }
+  async reload(keepError = false, quiet = false) {
     if (this.busy || this.loading) return;
     // Stack members prepare again once the stack is actionable.
     this.stackRead.abort();
@@ -292,7 +361,7 @@ export class PhotoAuthoredEditor {
       if (!keepError) this.error = "";
       return;
     }
-    await this.prepare(
+    return this.prepare(
       {
         asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
         hidden: this.scope?.hidden,
@@ -300,6 +369,7 @@ export class PhotoAuthoredEditor {
       },
       true,
       keepError,
+      quiet,
     );
   }
   reviewMembers() {
@@ -352,6 +422,16 @@ export class PhotoAuthoredEditor {
       this.conflict = false;
       this.membershipChanged = false;
     }
+    this.refreshPending();
+  }
+  private refreshPending() {
+    if (this.pendingChange)
+      void this.invalidate(this.pendingChange).catch((cause) => {
+        if (!this.controller.signal.aborted) {
+          this.error = this.failure(cause);
+          this.conflict = true;
+        }
+      });
   }
   member(fileID: string) {
     if (!this.dirty) this.fileID = fileID;
@@ -704,5 +784,7 @@ export class PhotoAuthoredEditor {
     this.controller.abort();
     this.read.abort();
     this.stackRead.abort();
+    this.loading = false;
+    this.preparedWaiters.splice(0).forEach((resolve) => resolve());
   }
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack, tick } from "svelte";
+  import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { patchPhotoRows } from "./photoRows.js";
@@ -42,6 +43,7 @@
         photos.session,
         photos.onauthfailure,
         photos.authored.undoState,
+        photos.hiddenAccess,
       )),
   );
   onMount(() => {
@@ -77,6 +79,8 @@
   let railError = $state("");
   let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
+  // The current photo and its rail, each once.
+  const shownIDs = $derived([...new Set([currentID, ...rail])].filter((id): id is string => !!id));
   const complete = $derived(cull.complete);
   let selectedFrames = $state<string[]>([]);
   let selectionRun: string | undefined;
@@ -96,6 +100,14 @@
   const pass = $derived(checkpoint.pass);
   let lastLookupAttempt = 0;
   let lastPass: string[] | undefined;
+  // Foreground, rail, and live reads share one owner per photo: the newest read of a photo
+  // wins, and an older answer for it is dropped whichever arrives last.
+  const owners = new Map<string, object>();
+  function claim(ids: string[]) {
+    const read = {};
+    for (const id of ids) owners.set(id, read);
+    return (id: string) => owners.get(id) === read;
+  }
   $effect(() => {
     const id = currentID;
     const changedPass = pass !== lastPass;
@@ -127,19 +139,20 @@
     error = "";
     loading = !!id && !held;
     view = { ...fittedPhotoView };
+    const owns = claim(id && !held ? [id] : []);
     if (id && !held)
       void photos
         .lookup(id, controller.signal)
         .then((row) => {
-          if (!controller.signal.aborted) photo = row;
+          if (!controller.signal.aborted && owns(id)) photo = row;
         })
         .catch((cause) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !owns(id)) return;
           error = cause instanceof Error ? cause.message : String(cause);
           if (cause instanceof APIError && cause.status === 404) cull.unavailable(id);
         })
         .finally(() => {
-          if (!controller.signal.aborted) loading = false;
+          if (!controller.signal.aborted && owns(id)) loading = false;
         });
     return () => controller.abort();
   });
@@ -147,12 +160,22 @@
     const held = untrack(() => neighbors).filter((row) => rail.includes(row.asset_id));
     const loaded = new Set(held.map((row) => row.asset_id));
     const ids = rail.filter((id) => id !== currentID && !loaded.has(id));
+    const window = new Set(rail);
     const controller = new AbortController();
+    const owns = claim(ids);
     railError = "";
     railLoading = true;
     void (ids.length ? photos.lookupMany(ids, controller.signal) : Promise.resolve([]))
       .then((rows) => {
-        if (!controller.signal.aborted) neighbors = [...held, ...rows];
+        if (controller.signal.aborted) return;
+        const fresh = rows.filter((row) => owns(row.asset_id));
+        neighbors = [
+          ...neighbors.filter(
+            (row) =>
+              window.has(row.asset_id) && !fresh.some((item) => item.asset_id === row.asset_id),
+          ),
+          ...fresh,
+        ];
       })
       .catch((cause) => {
         if (!controller.signal.aborted)
@@ -166,6 +189,64 @@
   $effect(() => {
     if (complete && pass) untrack(() => void cull.checkRemainder());
   });
+  // A live change reads the shown photos again and swaps their rows in place. Nothing here
+  // sets `loading` or `busy`, so shortcuts, Undo, navigation, and Exit keep working.
+  let runIDs: { ids: string[]; set: Set<string> } | undefined;
+  let writesInFlight = 0;
+  let changedDuringWrite: PhotoChange | undefined;
+  async function revalidate(change: PhotoChange) {
+    if (writesInFlight || editor.busy) changedDuringWrite = change;
+    const ids = cull.run!.ids;
+    if (runIDs?.ids !== ids) runIDs = { ids, set: new Set(ids) };
+    if (change.idFree || [...change.ids].some((id) => runIDs!.set.has(id))) cull.flagsChanged();
+    const shown = shownIDs.filter((id) => affectsPhoto(change, id));
+    await settleReads([
+      shown.length ? reread(shown) : undefined,
+      cull.complete ? revalidateRemainder() : undefined,
+      // Prepared stack revisions are read again, so a decision checks the refreshed rows.
+      editor.invalidate(change),
+    ]);
+  }
+  async function reconcileWriteChanges() {
+    const change = changedDuringWrite;
+    if (!change || writesInFlight || reloadController.signal.aborted) return;
+    try {
+      await reread(shownIDs);
+      if (changedDuringWrite === change) changedDuringWrite = undefined;
+    } catch (cause) {
+      if (!reloadController.signal.aborted) {
+        editor.error = cause instanceof Error ? cause.message : String(cause);
+        editor.conflict = true;
+      }
+    }
+  }
+  async function revalidateRemainder() {
+    await passTransition;
+    if (!reloadController.signal.aborted && cull.complete) await cull.checkRemainder(true);
+  }
+  async function reread(ids: string[]) {
+    const owns = claim(ids);
+    const signal = AbortSignal.any([reloadController.signal, AbortSignal.timeout(60_000)]);
+    const rows = new Map((await photos.lookupMany(ids, signal)).map((row) => [row.asset_id, row]));
+    if (signal.aborted) return;
+    ids = ids.filter(owns);
+    neighbors = [
+      ...neighbors.filter((row) => !ids.includes(row.asset_id)),
+      ...ids.flatMap((item) => rows.get(item) ?? []),
+    ];
+    const id = currentID;
+    if (id && ids.includes(id)) loading = false;
+    if (!id || !ids.includes(id) || (photo && photo.asset_id !== id)) return;
+    if (rows.has(id)) {
+      photo = rows.get(id);
+      error = "";
+    } else {
+      photo = undefined;
+      error = "This photo is no longer in this view.";
+      cull.unavailable(id);
+    }
+  }
+  $effect(() => photos.watch(revalidate));
   $effect(() =>
     prefetchPreviews(
       photos,
@@ -176,12 +257,17 @@
   function canChangeTarget() {
     return !busy && !editor.conflict && editor.canChangeTarget();
   }
+  let passTransition: Promise<void> | undefined;
   async function nextPass(followUp = false) {
     if (!canChangeTarget()) return;
     checkingDecision = true;
+    const transition = (passTransition = cull.nextPass(followUp, (message) =>
+      confirmation!.confirm(message, "Reset pass"),
+    ));
     try {
-      await cull.nextPass(followUp, (message) => confirmation!.confirm(message, "Reset pass"));
+      await transition;
     } finally {
+      if (passTransition === transition) passTransition = undefined;
       checkingDecision = false;
     }
   }
@@ -208,8 +294,15 @@
     representatives: PhotoAuthoredReceipt["representatives"] = [],
   ) {
     const receipt = { after: targets, representatives };
+    const before = [photo, ...neighbors];
     if (photo) [photo] = patchPhotoRows([photo], receipt);
     neighbors = patchPhotoRows(neighbors, receipt);
+    // The write's result is the newest read of every row it changed.
+    claim(
+      [photo, ...neighbors]
+        .filter((row, index): row is PhotoBrowseRow => !!row && row !== before[index])
+        .map((row) => row.asset_id),
+    );
   }
   async function decide(patch: PhotoAuthoredPatch, nextStack = false) {
     if (
@@ -234,7 +327,13 @@
     } finally {
       checkingDecision = false;
     }
-    await editor.undo(refresh);
+    writesInFlight++;
+    try {
+      await editor.undo(refresh);
+    } finally {
+      writesInFlight--;
+      await reconcileWriteChanges();
+    }
   }
   function stageDecision(
     selected: PhotoBrowseRow,
@@ -266,30 +365,36 @@
       checkingDecision = false;
     }
     const id = selected.asset_id;
-    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
-      beforeWrite: () => cull.verifyDecision(),
-      beforeStage: retry ? undefined : (targets) => stageDecision(selected, patch, targets),
-      viewed: retry
-        ? undefined
-        : {
-            content_version_id: selected.content_version_id,
-          },
-    });
-    await tick();
-    if (editor.error || editor.dirty || editor.conflict) return;
-    reconcile(editor.targets);
-    announcement =
-      patch.flag !== undefined
-        ? `${selected.name}: ${patch.flag || "flag cleared"}`
-        : `${selected.name}: ${patch.rating} stars`;
-    if (editor.fileID) {
-      announcement += " (shown file only)";
-      editor.noticeTone = "warning";
-      editor.notice = `${selected.name}: changed only the shown file. Its paired file has a different ${patch.flag !== undefined ? "flag" : "rating"}.`;
-    }
-    if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) {
-      if (advanceToNextStack) cull.moveStack(1);
-      else cull.move(1);
+    writesInFlight++;
+    try {
+      await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
+        beforeWrite: () => cull.verifyDecision(),
+        beforeStage: retry ? undefined : (targets) => stageDecision(selected, patch, targets),
+        viewed: retry
+          ? undefined
+          : {
+              content_version_id: selected.content_version_id,
+            },
+      });
+      await tick();
+      if (editor.error || editor.dirty || editor.conflict) return;
+      reconcile(editor.targets);
+      announcement =
+        patch.flag !== undefined
+          ? `${selected.name}: ${patch.flag || "flag cleared"}`
+          : `${selected.name}: ${patch.rating} stars`;
+      if (editor.fileID) {
+        announcement += " (shown file only)";
+        editor.noticeTone = "warning";
+        editor.notice = `${selected.name}: changed only the shown file. Its paired file has a different ${patch.flag !== undefined ? "flag" : "rating"}.`;
+      }
+      if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) {
+        if (advanceToNextStack) cull.moveStack(1);
+        else cull.move(1);
+      }
+    } finally {
+      writesInFlight--;
+      await reconcileWriteChanges();
     }
   }
   async function retryDecision() {
@@ -298,25 +403,32 @@
       await applyDecision(photo, { ...editor.patch }, true);
       return;
     }
-    editor.loading = true;
+    checkingDecision = true;
+    const id = photo.asset_id;
+    const ids = cull.currentStack ?? [id];
+    const owns = claim(ids);
     try {
-      const ids = cull.currentStack ?? [photo.asset_id];
       const rows = cull.currentStack
         ? await photos.lookupMany(ids, reloadController.signal)
-        : [await photos.lookup(photo.asset_id, reloadController.signal)];
-      const row = rows.find((row) => row.asset_id === photo!.asset_id);
+        : [await photos.lookup(id, reloadController.signal)];
+      if (reloadController.signal.aborted || !owns(id) || currentID !== id) return;
+      const row = rows.find((row) => row.asset_id === id);
       if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      if (reloadController.signal.aborted) return;
-      neighbors = [...neighbors.filter((row) => !ids.includes(row.asset_id)), ...rows];
+      // A newer read of a stack member keeps its row.
+      const owned = ids.filter(owns);
+      neighbors = [
+        ...neighbors.filter((row) => !owned.includes(row.asset_id)),
+        ...rows.filter((row) => owned.includes(row.asset_id)),
+      ];
       photo = row;
       view = { ...fittedPhotoView };
       editor.reset();
       if (cull.currentStack) await cull.regroup();
     } catch (cause) {
-      if (!reloadController.signal.aborted)
+      if (!reloadController.signal.aborted && owns(id) && currentID === id)
         editor.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      editor.loading = false;
+      checkingDecision = false;
     }
   }
   // Hold every member's revisions once a stack is current, so its decision checks what was shown.
@@ -363,37 +475,43 @@
       checkingDecision = false;
     }
     const id = photo.asset_id;
-    const success = await editor.decideStack(
-      {
-        hidden: photos.hidden,
-        asset_ids: stack,
-        current_id: id,
-        decision,
-        selected_ids:
-          decision === "selected" ? selectedFrames.filter((id) => stack.includes(id)) : undefined,
-        burst_gap_seconds: cull.run!.burstGapSeconds!,
-      },
-      refresh,
-      {
-        observed: [
-          photo,
-          ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
-        ],
-        beforeWrite: () => cull.verifyDecision(),
-      },
-    );
-    if (!success) return;
-    announcement =
-      decision === "representative"
-        ? "Representative chosen"
-        : decision === "all"
-          ? "Stack kept"
-          : decision === "selected"
-            ? "Selected frames kept"
-            : "Current frame kept";
-    await tick();
-    if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
-      cull.moveStack(1);
+    writesInFlight++;
+    try {
+      const success = await editor.decideStack(
+        {
+          hidden: photos.hidden,
+          asset_ids: stack,
+          current_id: id,
+          decision,
+          selected_ids:
+            decision === "selected" ? selectedFrames.filter((id) => stack.includes(id)) : undefined,
+          burst_gap_seconds: cull.run!.burstGapSeconds!,
+        },
+        refresh,
+        {
+          observed: [
+            photo,
+            ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
+          ],
+          beforeWrite: () => cull.verifyDecision(),
+        },
+      );
+      if (!success) return;
+      announcement =
+        decision === "representative"
+          ? "Representative chosen"
+          : decision === "all"
+            ? "Stack kept"
+            : decision === "selected"
+              ? "Selected frames kept"
+              : "Current frame kept";
+      await tick();
+      if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
+        cull.moveStack(1);
+    } finally {
+      writesInFlight--;
+      await reconcileWriteChanges();
+    }
   }
   function close() {
     if (canChangeTarget()) onclose();

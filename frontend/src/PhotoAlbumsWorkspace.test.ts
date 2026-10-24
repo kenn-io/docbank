@@ -13,7 +13,7 @@ import {
   savedSmartSet,
 } from "./photo-test-fixtures.js";
 import { parseQuery, queryFingerprint } from "./query.js";
-import { createSavedQuery } from "./savedQueries.js";
+import { createSavedQuery, refreshDefinitionViews } from "./savedQueries.js";
 
 beforeEach(() =>
   vi.stubGlobal(
@@ -549,6 +549,69 @@ it("refreshes the smart-set subscription after creating a definition", async () 
   expect(await screen.findByRole("button", { name: "New smart set" })).toBeTruthy();
   expect(screen.getByRole("button", { name: initial.name })).toBeTruthy();
   expect(offsets).toEqual([0, 0]);
+  cleanup();
+  albums.dispose();
+  await cache.dispose();
+});
+
+it("rebuilds every loaded page of smart sets on a definition refresh and on Retry", async () => {
+  const payload = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const fingerprint = await queryFingerprint(payload);
+  const items = Array.from({ length: 150 }, (_, index) =>
+    savedSmartSet(payload, fingerprint, {
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `Smart set ${index}`,
+    }),
+  );
+  const offsets: number[] = [];
+  let failing = false;
+  let hold = false;
+  let finish!: () => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const offset = Number(
+        new URL(String(input), "https://example.test").searchParams.get("offset"),
+      );
+      offsets.push(offset);
+      if (hold && offset === 0) await new Promise<void>((resolve) => (finish = resolve));
+      if (failing) return Response.json({ detail: "Down" }, { status: 503 });
+      return Response.json({
+        items: items.slice(offset, offset + 100),
+        total: 150,
+        limit: 100,
+        offset,
+      });
+    }),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+  await screen.findByRole("button", { name: "Smart set 99" });
+  await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+  await screen.findByRole("button", { name: "Smart set 149" });
+  hold = true;
+  const refreshing = refreshDefinitionViews("scoped");
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(screen.getByRole("button", { name: "Smart set 0" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Smart set 149" })).toBeTruthy();
+  items[0] = { ...items[0]!, name: "Renamed" };
+  hold = false;
+  finish();
+  await refreshing;
+  await screen.findByRole("button", { name: "Renamed" });
+  expect(screen.queryByRole("button", { name: "Smart set 0" })).toBeNull();
+  expect(offsets).toEqual([0, 100, 0, 100]);
+  expect(screen.getByRole("button", { name: "Smart set 149" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Load more smart sets" })).toBeNull();
+  failing = true;
+  await refreshDefinitionViews("scoped").catch(() => {});
+  const retry = await screen.findByRole("button", { name: "Retry smart sets" });
+  failing = false;
+  offsets.length = 0;
+  await fireEvent.click(retry);
+  await waitFor(() => expect(offsets).toEqual([0, 100]));
+  expect(screen.getByRole("button", { name: "Smart set 149" })).toBeTruthy();
   cleanup();
   albums.dispose();
   await cache.dispose();

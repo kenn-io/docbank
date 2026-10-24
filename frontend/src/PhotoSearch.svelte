@@ -8,7 +8,7 @@
   let { photos }: { photos: Photos } = $props();
   let search = $state(untrack(() => photos.baseQuery.text));
   let syntax = $state(untrack(() => photos.baseQuery.syntax));
-  const disabled = $derived(photos.loading || photos.hiding || photos.trashing);
+  const disabled = $derived(photos.blocking || photos.hiding || photos.trashing);
   const applyDraft = $derived(Boolean(search.trim()) || search !== photos.baseQuery.text);
   const appliedText = $derived(photos.baseQuery.text);
   const appliedSyntax = $derived(photos.baseQuery.syntax);

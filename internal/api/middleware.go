@@ -59,7 +59,7 @@ func browserSessionRequest(ctx context.Context) bool {
 // timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
 // export preparation.
 func timeoutExempt(method, path string) bool {
-	if packageContainerTimeoutExempt(method, path) {
+	if method == http.MethodGet && path == photoEventsPath || packageContainerTimeoutExempt(method, path) {
 		return true
 	}
 	switch path {

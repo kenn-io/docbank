@@ -28,6 +28,12 @@ asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
 
+## Live refresh
+
+Open photo views update when another tab, the CLI, an import, or a worker changes the library. Your selection, scroll position, and metadata draft stay in place, and a photo that is no longer available loses its cached image and says so. If a photo changed under a draft, Apply is refused until you choose **Reload metadata**.
+
+The daemon accepts up to 128 simultaneous photo event streams. When that limit is reached, additional streams retry automatically, waiting up to 30 seconds between attempts. Tabs in browsers with Web Locks share one stream per origin.
+
 ## Add photos in the web app
 
 In **Photos > Library**, choose **Add photos** and set the vault destination, which defaults to `/`. Use **Choose folder** or **Choose files**, then start the import. An invalid destination fails before uploading. Changing the destination replans the selected files when you click **Add N groups**.

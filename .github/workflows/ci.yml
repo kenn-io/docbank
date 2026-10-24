@@ -144,6 +144,11 @@ jobs:
           CGO_ENABLED: "0"
         run: make photo-map-browser-test
 
+      - name: Qualify live photo tabs in Chromium
+        env:
+          CGO_ENABLED: "0"
+        run: make photo-tabs-browser-test
+
   test:
     name: Linux tests
     runs-on: ubuntu-24.04

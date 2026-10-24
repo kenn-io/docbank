@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { PhotoAuthoredEditor, PhotoUndoState } from "./photoAuthored.svelte.js";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { preparedPhoto } from "./photo-test-fixtures.js";
 import PhotoInspector from "./PhotoInspector.svelte";
 import type { PhotoAsset, PhotoPreparedTarget, Tag } from "./generated/docbank.js";
@@ -659,6 +660,192 @@ it("shows field diagnostics for a failed edit and keeps its draft and Undo", asy
   editor.dispose();
 });
 
+it.each(["catalog first", "preparation first"])(
+  "removes a deleted keyword from choices and preserves the draft, %s",
+  async (order) => {
+    const editor = editorWithTargets();
+    const remaining = { id: "remaining", name: "Portfolio" } as Tag;
+    editor.targets[0]!.tags = ["deleted"];
+    editor.catalog([{ id: "deleted", name: "Gone" } as Tag, remaining]);
+    let finish!: (value: api.PhotoAuthoredPreparation) => void;
+    vi.spyOn(api, "preparePhotoAuthored").mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    vi.spyOn(api, "getTag").mockRejectedValue(new APIError("Missing", 404, "not_found"));
+    const preparation = editor.prepare({ asset_ids: ["asset"] });
+    editor.stage({ caption: "Draft caption", rating: 5 });
+    const refreshCatalog = async () => {
+      editor.catalog([remaining]);
+      await editor.refreshAssignedTags();
+    };
+    if (order === "catalog first") await refreshCatalog();
+    finish({ assets: [asset], targets: structuredClone(targets) });
+    await preparation;
+    if (order === "preparation first") await refreshCatalog();
+    expect(editor.targets.flatMap((target) => target.tags)).toEqual([]);
+    expect(editor.tags).toEqual([remaining]);
+    expect(editor.patch).toEqual({ caption: "Draft caption", rating: 5 });
+    ui(editor);
+    await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
+    expect(screen.queryByRole("option", { name: /Gone/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /Portfolio/ })).toBeTruthy();
+    editor.dispose();
+  },
+);
+
+it("keeps newer assigned tag reads and retains choices on errors", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const tag = (id: string, name: string, revision = 1) =>
+    ({ id, name, revision, assignment_count: 1 }) as Tag;
+  editor.targets = [preparedPhoto(1, { tags: ["renamed"] })];
+  let older!: () => void;
+  const fetcher = vi.fn(async (url: string) =>
+    url.endsWith("/tags/renamed")
+      ? response(tag("renamed", "New name", 2))
+      : response({ detail: "Missing" }, 404),
+  );
+  fetcher.mockImplementationOnce(
+    () =>
+      new Promise<Response>(
+        (resolve) => (older = () => resolve(response(tag("renamed", "Old name")))),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  editor.catalog([]);
+  await vi.waitFor(() => expect(older).toBeDefined());
+  editor.tags = [tag("renamed", "Old name"), tag("other", "Other")];
+  await editor.refreshAssignedTags();
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
+  older();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
+  fetcher.mockImplementation(async () => response({ detail: "Down" }, 503));
+  await expect(editor.refreshAssignedTags()).rejects.toThrow("Down");
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
+  editor.dispose();
+});
+
+it("retries a live keyword read outside the catalog before consuming the pending change", async () => {
+  const editor = editorWithTargets();
+  editor.tags = [{ id: "catalog", name: "Catalog keyword" }] as Tag[];
+  const latest = targets.map((target) => ({ ...target, tags: ["external"] }));
+  const keyword = { id: "external", name: "External keyword" } as Tag;
+  let reads = 0;
+  let prepares = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/prepare")) {
+        prepares++;
+        return response({ assets: [asset], targets: latest });
+      }
+      return ++reads === 1 ? response({ detail: "Keywords unavailable" }, 503) : response(keyword);
+    }),
+  );
+  try {
+    await expect(editor.invalidate({ ids: new Set(["asset"]), idFree: false })).rejects.toThrow(
+      "Keywords unavailable",
+    );
+    expect(editor.tags.map((tag) => tag.id)).toEqual(["catalog"]);
+    // The watcher retries the same identified change after a failed read.
+    await editor.invalidate({ ids: new Set(["asset"]), idFree: false });
+    expect(editor.tags).toContainEqual(keyword);
+    expect(reads).toBe(2);
+    await editor.invalidate({ ids: new Set(["other-asset"]), idFree: false });
+    expect(prepares).toBe(2);
+  } finally {
+    editor.dispose();
+  }
+});
+
+it.each([false, true])(
+  "refreshes after Clear edits when a draft discarded a live response, failed=%s",
+  async (failed) => {
+    const editor = editorWithTargets();
+    const latest = targets.map((target) => ({
+      ...target,
+      revision: 2,
+      values: { ...target.values, caption: "Saved update" },
+    }));
+    let finish!: (response: Response) => void;
+    const fetcher = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
+      .mockImplementation(async () => response({ assets: [asset], targets: latest }));
+    vi.stubGlobal("fetch", fetcher);
+    const refreshing = editor.invalidate({ ids: new Set(["asset"]), idFree: false });
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    editor.stage({ caption: "Draft" });
+    finish(response({ assets: [asset], targets: latest }));
+    await refreshing;
+    expect(editor.value("caption")).toBe("Draft");
+    expect(editor.targets.map((target) => target.revision)).toEqual([1, 1]);
+    if (failed) {
+      ui(editor);
+      fetcher.mockRejectedValueOnce(new APIError("Metadata unavailable", 503, "unavailable"));
+    }
+    editor.clearDraft();
+    if (failed) {
+      await vi.waitFor(() => expect(editor.error).toBe("Metadata unavailable"));
+      expect((screen.getByLabelText("Caption") as HTMLTextAreaElement).disabled).toBe(true);
+      await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+    }
+    await vi.waitFor(() => expect(editor.value("caption")).toBe("Saved update"));
+    expect(editor.targets.map((target) => target.revision)).toEqual([2, 2]);
+    editor.dispose();
+  },
+);
+
+// A quiet read in flight when a write starts is dropped: it must neither hold the write up
+// behind Hidden access nor land on revisions the write has already moved on.
+function editAfterQuietRead(editor: PhotoAuthoredEditor) {
+  const receipt = {
+    receipt_id: "receipt",
+    after: targets.map((target) => ({
+      file_id: target.file_id,
+      revision: 7,
+      values: { ...target.values, rating: 5 },
+    })),
+  };
+  let answer!: () => void;
+  const fetcher = vi.fn((url: string, init: RequestInit) =>
+    url.endsWith("/prepare")
+      ? new Promise<Response>((resolve, reject) => {
+          answer = () => resolve(response({ assets: [asset], targets: structuredClone(targets) }));
+          const abort = () => reject(new DOMException("", "AbortError"));
+          if (init.signal!.aborted) abort();
+          else init.signal!.addEventListener("abort", abort);
+        })
+      : Promise.resolve(response(receipt)),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  void editor.reload(false, true);
+  const edit = editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  return { edit, fetcher, answer: () => answer() };
+}
+
+it.each([false, true])(
+  "drops a pending quiet metadata read when an edit starts (Hidden access: %s)",
+  async (hidden) => {
+    const editor = new PhotoAuthoredEditor(
+      "session",
+      vi.fn(),
+      undefined,
+      hidden ? new HiddenAccess("session", vi.fn()) : undefined,
+    );
+    editor.targets = structuredClone(targets);
+    editor.asset = structuredClone(asset);
+    const { edit, fetcher, answer } = editAfterQuietRead(editor);
+    await vi.waitFor(() =>
+      expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
+    );
+    await edit;
+    answer();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(editor.targets.map((target) => target.revision)).toEqual([7, 7]);
+  },
+);
+
 it.each(["assigned tags", "edit counts", "Undo counts"])(
   "refreshes keywords while preserving %s",
   async (behavior) => {
@@ -838,5 +1025,39 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   finishWrite(response({ receipt_id: "second", before: targets, after: targets }));
   await second;
   expect(editor.busy).toBe(false);
+  editor.dispose();
+});
+
+it("reads external metadata retained while an edit response is pending", async () => {
+  const editor = editorWithTargets();
+  let finish!: (response: Response) => void;
+  const latest = targets.map((target) => ({
+    ...target,
+    revision: 3,
+    values: { ...target.values, caption: "External update" },
+  }));
+  const fetcher = vi.fn((url: string) =>
+    url.endsWith("/edit")
+      ? new Promise<Response>((resolve) => (finish = resolve))
+      : Promise.resolve(response({ assets: [asset], targets: latest })),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const editing = editor.edit({ asset_ids: ["asset"] }, { caption: "My edit" }, false, vi.fn());
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await editor.invalidate({ ids: new Set(["asset"]), idFree: false });
+  finish(
+    response({
+      receipt_id: "edited",
+      before: targets,
+      after: targets.map((target) => ({
+        ...target,
+        revision: 2,
+        values: { ...target.values, caption: "My edit" },
+      })),
+    }),
+  );
+  await editing;
+  await vi.waitFor(() => expect(editor.value("caption")).toBe("External update"));
+  expect(editor.targets.map((target) => target.revision)).toEqual([3, 3]);
   editor.dispose();
 });

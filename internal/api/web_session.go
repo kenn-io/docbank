@@ -370,7 +370,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		switch path {
 		case photoCheckpointPath, "/api/v1/photos/settings":
 			return method == http.MethodGet || method == http.MethodPut
-		case photoCheckpointPath + "/header", "/api/v1/photos/hidden":
+		case photoCheckpointPath + "/header", "/api/v1/photos/hidden", photoEventsPath:
 			return method == http.MethodGet
 		case "/api/v1/photos/stacks/group", "/api/v1/photos/hidden/setup", "/api/v1/photos/hidden/change", "/api/v1/photos/hidden/disable", "/api/v1/photos/hidden/unlock", "/api/v1/photos/hidden/lock":
 			return method == http.MethodPost

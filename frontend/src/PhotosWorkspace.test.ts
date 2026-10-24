@@ -14,6 +14,8 @@ import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
+  idFreeChange,
+  photoChange,
   photoMetadataResponse,
   photoPreparation,
   preparedPhoto,
@@ -303,6 +305,8 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   await fireEvent.click(await within(dialog).findByRole("button", { name: "Keep in Docbank" }));
   expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));
+  // The reloaded list shows before the failed move finishes; a new move waits for that.
+  await waitFor(() => expect(photos.trashing).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   const single = screen.getByRole("dialog", { name: "Move selected photos to trash" });
   expect(within(single).getByText(/^Move 1 selected photo and/)).toBeTruthy();
@@ -2147,6 +2151,40 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
   photos.dispose();
 });
 
+it("reconciles a Map list refresh after its detail generation changes", async () => {
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:map-preview"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: vi.fn(async () => {}),
+  });
+  const setup = openMapViewerSetup();
+  const { photos, lookup, preview, props } = setup;
+  photos.items = [mapPhoto(1)];
+  const row = photo(1);
+  row.previews.fit = { state: "ready", generation_id: "fit-1" };
+  lookup.mockResolvedValue(row);
+  preview.mockImplementation(async (row) => row.previews.fit);
+  const get = vi.fn(async () => new Blob(["synthetic-photo"]));
+  props.cache.get = get;
+  await openMapViewer(setup);
+  await screen.findByText("Fit preview");
+  lookup.mockResolvedValue({
+    ...row,
+    previews: { ...row.previews, fit: { state: "ready", generation_id: "fit-2" } },
+  });
+  await act(() => {
+    photos.items = [mapPhoto(1)];
+  });
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith("photo-1", "fit-2", expect.any(AbortSignal), false),
+  );
+  photos.dispose();
+});
+
 it("keeps an open Map photo's detail request through appended pages", async () => {
   const setup = openMapViewerSetup();
   const { photos, lookup } = setup;
@@ -3032,5 +3070,245 @@ it("explains paused grouping beside the Library stack controls", async () => {
   render(PhotosWorkspace, { photos, cache: new PhotoPreviewCache("scoped", vi.fn()) });
   await screen.findByText(/Some camera details are missing or outdated/);
   expect(screen.getByRole("spinbutton", { name: "Burst gap (seconds)" })).toBeTruthy();
+  photos.dispose();
+});
+
+function viewerWithCachedImage(photos: Photos, lookup: () => Promise<PhotoBrowseRow>) {
+  let counter = 0;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => `blob:synthetic-${++counter}`),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: vi.fn(async () => {}),
+  });
+  vi.spyOn(photos, "lookup").mockImplementation(lookup);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "ready", generation_id: "fit-1" });
+  stubPhotoFetch(vi.fn());
+  return render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn(async () => new Blob(["synthetic-jpeg"])) } as unknown as PhotoPreviewCache,
+    photoID: "photo-1",
+  });
+}
+
+it("reads the open photo again on a live change and conceals its cached image once it is gone", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const row = photo(1);
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(row);
+  viewerWithCachedImage(photos, lookup);
+  await screen.findByText("Fit preview");
+  await act(() => photos.changed(photoChange("photo-2")));
+  expect(lookup).toHaveBeenCalledOnce();
+  lookup.mockResolvedValueOnce({ ...row, name: "Renamed.jpg" });
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+  const refreshing = photos.refresh(undefined, true).finally(() => photos.changed(idFreeChange));
+  const failed = expect(refreshing).rejects.toThrow("List unavailable");
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(lookup).toHaveBeenCalledOnce();
+  await act(async () => {
+    finish(Response.json({ detail: "List unavailable" }, { status: 503 }));
+    await failed;
+  });
+  expect(lookup).toHaveBeenCalledTimes(2);
+  await screen.findByRole("dialog", { name: "Photo viewer, Renamed.jpg" });
+  expect(screen.getByText("Fit preview")).toBeTruthy();
+  lookup.mockRejectedValueOnce(new APIError("This photo is no longer in this view.", 404, "x"));
+  await act(() => photos.changed(idFreeChange));
+  await screen.findByText("This photo is no longer in this view.");
+  expect(screen.queryByText("Fit preview")).toBeNull();
+  expect(screen.getByText("No preview")).toBeTruthy();
+  expect(photos.items).toEqual([]);
+  photos.dispose();
+});
+
+it.each([undefined, "map"] as const)(
+  "reuses a refreshed full row only outside projections, projection=%s",
+  async (projection) => {
+    const photos = workspaceWithPreparedPhoto(preparedPhoto(1), projection);
+    const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(photo(1));
+    viewerWithCachedImage(photos, lookup);
+    await screen.findByText("Fit preview");
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+    const refreshed = projection
+      ? { ...mapPhoto(1), name: "Refreshed.jpg" }
+      : { ...photo(1), name: "Refreshed.jpg", stack };
+    lookup.mockResolvedValue({ ...photo(1), name: "Looked up.jpg" });
+    await act(async () => {
+      photos.items = [refreshed];
+      await photos.changed({ ...photoChange("photo-1"), listRefreshed: true });
+    });
+    await screen.findByRole("dialog", {
+      name: `Photo viewer, ${projection ? "Looked up.jpg" : "Refreshed.jpg"}`,
+    });
+    expect(lookup).toHaveBeenCalledTimes(projection ? 2 : 1);
+    expect(photos.items[0]).toEqual(refreshed);
+    expect(screen.getByText("Fit preview")).toBeTruthy();
+    photos.dispose();
+  },
+);
+
+it("ignores a live detail response after leaving and returning to Photos", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(photo(1));
+  const view = viewerWithCachedImage(photos, lookup);
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  let finish!: (row: PhotoBrowseRow) => void;
+  lookup.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  const changing = photos.changed(photoChange("photo-1"));
+  await waitFor(() => expect(finish).toBeDefined());
+  view.unmount();
+  stubPhotoFetch(async () =>
+    Response.json({ items: [{ ...photo(1), name: "Fresh.jpg" }], total: 1 }),
+  );
+  await act(() => photos.refresh());
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: "",
+  });
+  await screen.findByRole("button", { name: "Open Fresh.jpg" });
+  await act(async () => {
+    finish({ ...photo(1), name: "Older.jpg" });
+    await changing;
+  });
+  expect(screen.getByRole("button", { name: "Open Fresh.jpg" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Open Older.jpg" })).toBeNull();
+  photos.dispose();
+});
+
+it.each([
+  { older: "foreground", outcome: "answers", newer: "live read" },
+  { older: "foreground", outcome: "fails with 404", newer: "live read" },
+  { older: "live", outcome: "fails with 404", newer: "live read" },
+  { older: "live", outcome: "fails with 404", newer: "navigation" },
+])(
+  "keeps the newest detail after $newer when an older $older read $outcome",
+  async ({ older, outcome, newer }) => {
+    const photos = workspaceWithPreparedPhoto();
+    const row = photo(1);
+    let settle!: () => void;
+    const pending = () =>
+      new Promise<PhotoBrowseRow>((resolve, reject) => {
+        settle = () =>
+          outcome === "answers"
+            ? resolve({ ...row, name: "Older.jpg" })
+            : reject(new APIError("This photo is no longer in this view.", 404, "x"));
+      });
+    const lookup = vi.fn<() => Promise<PhotoBrowseRow>>();
+    if (older === "foreground") lookup.mockImplementationOnce(pending);
+    else lookup.mockResolvedValueOnce(row).mockImplementationOnce(pending);
+    const { rerender } = viewerWithCachedImage(photos, lookup);
+    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+    if (older === "live") {
+      await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+      void photos.changed(photoChange("photo-1"));
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+    }
+    const name = newer === "navigation" ? "Photo 2.jpg" : "Newer.jpg";
+    lookup.mockResolvedValueOnce(newer === "navigation" ? photo(2) : { ...row, name });
+    if (newer === "navigation") await rerender({ photoID: "photo-2" });
+    else await act(() => photos.changed(photoChange("photo-1")));
+    await screen.findByRole("dialog", { name: `Photo viewer, ${name}` });
+    settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("This photo is no longer in this view.")).toBeNull();
+    expect(screen.getByRole("dialog", { name: `Photo viewer, ${name}` })).toBeTruthy();
+    photos.dispose();
+  },
+);
+
+it("forwards live changes to the editor while Metadata is open", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.selectLoaded();
+  const invalidate = vi.spyOn(photos.authored, "invalidate").mockResolvedValue();
+  stubPhotoFetch(vi.fn());
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: "",
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+  const change = photoChange("photo-1");
+  await act(() => photos.changed(change));
+  expect(invalidate).toHaveBeenCalledWith(change);
+  photos.dispose();
+});
+
+it("keeps shortcuts and stack decisions usable during refresh", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.authored.targets = [];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  const row = { ...photo(1), stack };
+  photos.items = [row];
+  photos.selectLoaded();
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(
+    photoPreparation([preparedPhoto(1), preparedPhoto(2)]),
+  );
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))));
+  const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue();
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    shortcuts,
+  });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(photos.loading).toBe(true));
+  expect(photos.authored.loading).toBe(false);
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "4", cancelable: true }));
+  expect(edit).toHaveBeenCalledOnce();
+  expect(screen.queryByText(/Try again when they finish/)).toBeNull();
+  for (const name of ["Keep all", "Keep selected", "Choose representative"]) {
+    expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+  }
+  await act(async () => {
+    finish(Response.json({ items: [row], total: 1, stacks: [stack] }));
+    expect(await refreshing).toBe(true);
+  });
+  photos.dispose();
+});
+
+it("keeps newer Library values across an older live read", async () => {
+  const before = preparedPhoto(1);
+  const photos = workspaceWithPreparedPhoto(before);
+  const shortcuts = createShortcutManager();
+  let finish!: (receipt: PhotoAuthoredReceipt) => void;
+  const receipt = new Promise<PhotoAuthoredReceipt>((resolve) => (finish = resolve));
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockReturnValue(receipt);
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  stubPhotoFetch(async () => Response.json({ items: [{ ...photo(1), rotation: 180 }], total: 1 }));
+  render(PhotosWorkspace, {
+    photos,
+    shortcuts,
+    photoID: "photo-1",
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  let finishRead!: (row: PhotoBrowseRow) => void;
+  lookup.mockImplementationOnce(() => new Promise((resolve) => (finishRead = resolve)));
+  const reading = photos.changed(photoChange("photo-1"));
+  await waitFor(() => expect(finishRead).toBeDefined());
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
+  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+  expect(edit.mock.calls[0]![0].rotation_delta).toBe(90);
+  await act(() =>
+    finish({
+      receipt_id: "local",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
+    }),
+  );
+  await waitFor(() => expect(photos.authored.busy).toBe(false));
+  await waitFor(() => expect(photos.items[0]!.rotation).toBe(90));
+  finishRead(photo(1));
+  await reading;
+  expect(photos.items[0]!.rotation).toBe(90);
   photos.dispose();
 });

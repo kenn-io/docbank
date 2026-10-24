@@ -89,6 +89,7 @@
   import TargetIcon from "@lucide/svelte/icons/target";
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos, type PhotoReturn } from "./photos.svelte.js";
+  import { settleReads, watchPhotoEvents, type PhotoChange } from "./photoEvents.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import {
     concealPhotoWorkspace,
@@ -157,7 +158,7 @@
   import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
   import { type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
   import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
-  import { listSavedQueries } from "./savedQueries.js";
+  import { listSavedQueries, refreshDefinitionViews } from "./savedQueries.js";
   import type { RenditionObservation } from "./renditionText.js";
   import {
     clearSelection,
@@ -534,6 +535,9 @@
   );
   let photoAccessError = $state("");
   let photoChangeID: string | undefined;
+  let photoExpiresAt: string | null | undefined;
+  let photoEventError = $state("");
+  let reconnectPhotoEvents: (() => void) | undefined;
   let revalidatedChangeID: string | undefined | null = null;
   let photoAccessChecked = false;
   let photoConcealed = false;
@@ -577,6 +581,9 @@
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState, configuredVersion: number) {
     hiddenAccess?.recordConfigured(result.configured, configuredVersion);
+    // The event stream binds the Hidden unlock when it connects, so an unlock change needs a new one.
+    if (photoAccessChecked && result.expires_at !== photoExpiresAt) reconnectPhotoEvents?.();
+    photoExpiresAt = result.expires_at;
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && changed) await invalidateLibrary(false);
@@ -641,6 +648,7 @@
       discardLibrary();
       photoValidated = false;
       photoChangeID = undefined;
+      photoExpiresAt = undefined;
       photoAccessChecked = false;
     };
   });
@@ -773,6 +781,68 @@
       if (!hidden) void invalidateLibrary(false);
     };
   });
+  // Any change open views could show refreshes them: lists reload their loaded prefix, and
+  // single-photo viewers read their own photos again. Starting while a list is still
+  // loading would abort that read, so the pass waits for it.
+  async function photoChanged(change: PhotoChange) {
+    const lists = [
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ].filter((photos): photos is Photos => !!photos);
+    if (lists.some((photos) => photos.loading)) return false;
+    for (const photos of lists)
+      if (photos.started || photos.loading) photos.resumeStaged = !!change.resume;
+    let listRefreshed = false;
+    try {
+      await settleReads([
+        photosChanged(undefined, undefined, true),
+        hiddenWorkspace?.refresh(true),
+        change.idFree ? refreshDefinitions() : undefined,
+      ]);
+      listRefreshed = true;
+    } finally {
+      // A viewer's unavailable result must land after any older list rows.
+      await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));
+    }
+  }
+  async function refreshDefinitions() {
+    const shown = albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
+    await settleReads([
+      loadTagCatalog().then(() => {
+        if (tagCatalogError) throw new Error(tagCatalogError);
+      }),
+      shown?.authored.refreshAssignedTags(),
+      hiddenWorkspace?.activePhotos()?.authored.refreshAssignedTags(),
+      refreshDefinitionViews(webSession),
+    ]);
+  }
+  $effect(() => {
+    const session = webSession;
+    if (!session || !photoMode || !(photoValidated || hiddenMode)) return;
+    // A dropped stream reconnects on its own, so only a second drop in a row is shown.
+    let drops = 0;
+    const watcher = watchPhotoEvents(
+      session,
+      photoChanged,
+      (cause) => {
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else if (drops++) photoEventError = cause instanceof Error ? cause.message : String(cause);
+      },
+      () => {
+        drops = 0;
+        photoEventError = "";
+      },
+    );
+    reconnectPhotoEvents = watcher.reconnect;
+    return () => {
+      watcher.stop();
+      reconnectPhotoEvents = undefined;
+      photoEventError = "";
+    };
+  });
+
   function clearPhotoNotice() {
     if (photoAlbums) {
       photoAlbums.notice = "";
@@ -2703,7 +2773,11 @@
     void loadTagCatalog();
   }
 
-  async function photosChanged(source?: Photos, affectedAlbumID?: string): Promise<void> {
+  async function photosChanged(
+    source?: Photos,
+    affectedAlbumID?: string,
+    live = false,
+  ): Promise<void> {
     const visible = albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
     const loaded = [photoState?.photos, albumPhotos, mapPhotos].filter(
       (photos): photos is Photos => !!(photos?.started || photos?.loading),
@@ -2713,10 +2787,12 @@
         photos !== source &&
         (!affectedAlbumID || photos.query.filters?.set_ids?.includes(affectedAlbumID)),
     );
-    await Promise.all([
-      affectedAlbumID ? undefined : photoAlbums?.load(),
+    await settleReads([
+      affectedAlbumID ? undefined : photoAlbums?.load(live),
       ...stale.map((photos) =>
-        libraryWorkspace && photos === visible ? libraryWorkspace.refresh() : photos.refresh(),
+        libraryWorkspace && photos === visible
+          ? libraryWorkspace.refresh(live)
+          : photos.refresh(undefined, live),
       ),
       // A membership change moves Albums counts even where the photo list itself stays current.
       ...(affectedAlbumID
@@ -3381,6 +3457,7 @@
           >
         </div>{/if}
       {#if photoMode}
+        {#if photoEventError}<p role="alert">{photoEventError}</p>{/if}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
             access={hiddenAccess}
             undoState={photoUndo}
