@@ -56,6 +56,7 @@ var (
 	ErrConsentRequired           = errors.New("processing consent is required")
 	ErrRenditionFailed           = store.ErrRenditionJobTerminal
 	ErrRenditionOperatorRequired = store.ErrRenditionJobOperatorRequired
+	ErrPDFPasswordsUnreadable    = errors.New("PDF passwords file can't be read; check media.pdf_passwords_file")
 	ErrPurgePlanChanged          = errors.New("derivative purge plan changed after preview")
 	ErrInvalidPurgeRequest       = errors.New("derivative purge request is invalid")
 	ErrInvalidConsentExpiry      = errors.New("processing consent expiry is invalid")
@@ -2154,7 +2155,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return capability, nil
 		}
 		if passwordErr != nil {
-			return media.CapabilityRecord{}, fmt.Errorf("%w: read PDF passwords: %w", ErrRenditionOperatorRequired, passwordErr)
+			return media.CapabilityRecord{}, fmt.Errorf("%w: %w: %w", ErrRenditionOperatorRequired, ErrPDFPasswordsUnreadable, passwordErr)
 		}
 		reader, _, err := blobs.OpenStreamContext(ctx, version.BlobHash)
 		if err != nil {

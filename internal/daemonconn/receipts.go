@@ -379,7 +379,7 @@ func (c *Connection) Close() error {
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{
 	"rendition_failed":                store.ErrRenditionJobTerminal,
-	"pdf_password_required":           store.ErrRenditionJobTerminal,
+	"pdf_password_required":           fmt.Errorf("%w; no configured PDF password opens this PDF; add its password to media.pdf_passwords_file and build again", store.ErrRenditionJobTerminal),
 	"rendition_operator_required":     store.ErrRenditionJobOperatorRequired,
 	"search_query_required":           store.ErrSearchQueryRequired,
 	"not_found":                       store.ErrNotFound,

@@ -1167,11 +1167,14 @@ version 1 request format, date choices, counts, and retention limits.
 
 ```
 docbank processing profiles [--json]
+docbank processing probe --profile <name> --seeds <dir> [--overwrite]
 docbank processing coverage <version-uuid> --profile <name> [--json]
 docbank processing plan <path-or-id> --profile <name> [--json]
 docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha256> --consent [--json | --ndjson]
 docbank processing status <job-id> [--json]
 ```
+
+`probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
 
 `profiles` lists names the daemon can execute, their rendition and embedding
 bindings, and profile fingerprints. The default configuration lists none.

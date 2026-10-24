@@ -1,7 +1,6 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -89,6 +88,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		plan, err := d.Processing.Plan(planCtx, selector)
 		if err != nil {
+			logPDFPasswordsFailure(ctx, d, err)
 			return nil, fromProcessingError(err)
 		}
 		return &planOutput{Body: fromProcessingPlan(plan)}, nil
@@ -124,6 +124,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 				default:
 				}
 			})
+			logPDFPasswordsFailure(ctx, d, err)
 			done <- startResult{job: job, err: err}
 		}()
 		var first processing.Job
@@ -440,6 +441,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		return &searchOutput{Body: report}, nil
 	})
+}
+
+func logPDFPasswordsFailure(ctx context.Context, d Deps, err error) {
+	if errors.Is(err, processing.ErrPDFPasswordsUnreadable) {
+		d.Logger.InfoContext(ctx, "document processing refused", "error_code", "rendition_operator_required", "error", err)
+	}
 }
 
 func processingTerminalEvent(job processing.Job, runErr error, status processing.Status, statusErr error) ProcessingJobEvent {
@@ -771,7 +778,8 @@ func fromProcessingError(err error) error {
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrSourceIneligible, http.StatusUnprocessableEntity, "rendition_source_ineligible",
 			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},
-		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", ""},
+		{processing.ErrPDFPasswordsUnreadable, http.StatusConflict, "rendition_operator_required", processing.ErrPDFPasswordsUnreadable.Error()},
+		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},
 		{processing.ErrProfileNotConfigured, http.StatusUnprocessableEntity, "processing_profile_unavailable", "processing profile is not configured"},
 		{processing.ErrPlanChanged, http.StatusConflict, "processing_plan_changed", "processing plan changed after preview"},
@@ -791,7 +799,7 @@ func fromProcessingError(err error) error {
 		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, http.StatusUnprocessableEntity, "similar_search_too_large", "similar search scope exceeds the scoring budget; narrow the source scope"},
 	} {
 		if errors.Is(err, item.target) {
-			return NewError(item.status, item.code, cmp.Or(item.detail, err.Error()))
+			return NewError(item.status, item.code, item.detail)
 		}
 	}
 	if scopeError, ok := errors.AsType[*store.ProcessingSourceFenceScopeError](err); ok {

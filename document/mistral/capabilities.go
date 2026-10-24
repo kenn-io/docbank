@@ -136,8 +136,11 @@ func (m CapabilityManifest) ValidateComplete() error {
 	if err != nil || observed.After(time.Now().UTC().Add(24*time.Hour)) {
 		return errors.New("mistral capability manifest has invalid observation date")
 	}
-	if m.Endpoint != defaultEndpoint || m.Region != defaultRegion || m.RequestedModel != defaultModel {
-		return errors.New("mistral capability manifest endpoint, region, or model is not pinned")
+	if m.Endpoint != defaultEndpoint || m.Region != defaultRegion {
+		return errors.New("mistral capability manifest endpoint or region is not pinned")
+	}
+	if m.RequestedModel != defaultModel {
+		return fmt.Errorf("mistral capability manifest was recorded for model %q, but this release pins %q; rerun docbank processing probe --profile <processing-profile> --seeds <dir> --overwrite", m.RequestedModel, defaultModel)
 	}
 	if m.MaxUnits < MinUnits || m.MaxUnits > MaxUnits {
 		return errors.New("mistral capability manifest has invalid unit limit")

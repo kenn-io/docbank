@@ -74,7 +74,8 @@ func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 		detail string
 	}{
 		{processing.ErrRenditionFailed, "rendition_failed", ""},
-		{fmt.Errorf("%w: read PDF passwords: open PDF passwords file: permission denied", processing.ErrRenditionOperatorRequired), "rendition_operator_required", "rendition job requires operator resolution: read PDF passwords: open PDF passwords file: permission denied"},
+		{fmt.Errorf("%w: %w: open /synthetic/private/passwords.txt: permission denied", processing.ErrRenditionOperatorRequired, processing.ErrPDFPasswordsUnreadable), "rendition_operator_required", "PDF passwords file can't be read; check media.pdf_passwords_file"},
+		{processing.ErrRenditionOperatorRequired, "rendition_operator_required", "document rendition requires operator intervention"},
 		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large", ""},
 	} {
 		mapped := &Error{}
