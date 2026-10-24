@@ -195,9 +195,7 @@ func TestPhotoXMPInvalidation(t *testing.T) {
 			asset, err := f.s.PhotoAssetByID(f.t.Context(), f.raw.AssetID)
 			require.NoError(f.t, err)
 			n := requireNodeByID(f.t, f.s, fileByRole(asset.Files, PhotoRoleSidecar).NodeID)
-			_, _, err = f.s.Move(f.t.Context(), n.ID, f.s.RootID(), "missing.cr2.xmp", n.Revision)
-			require.NoError(f.t, err)
-			_, err = f.s.BatchMove(f.t.Context(), []BatchMoveRequest{{NodeID: n.ID, IfRevision: requireNodeByID(f.t, f.s, n.ID).Revision, DestinationPath: "/capture.cr2.xmp"}})
+			_, err = f.s.BatchMove(f.t.Context(), []BatchMoveRequest{{NodeID: n.ID, IfRevision: n.Revision, DestinationPath: "/capture.cr2.xmp"}})
 			require.NoError(f.t, err)
 		}, PhotoXMPStatePending},
 		{"asset display revision", func(f fixture) {
