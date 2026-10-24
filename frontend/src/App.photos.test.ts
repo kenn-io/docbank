@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import {
   photoMetadataResponse,
   photoPreparation,
+  photoTimelineCounts,
   preparedPhoto,
   photo,
   mapPhoto,
@@ -20,6 +21,7 @@ import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import * as snapshots from "./snapshots.js";
 
 const savedImportCheckpoints = vi.hoisted(
   () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
@@ -123,7 +125,7 @@ it("hides top-bar Photos search when a denied access check conceals Library", as
   expect(screen.getByRole("searchbox", { name: "Search photos" })).toBeTruthy();
   denied = true;
   poll();
-  await screen.findByRole("alert");
+  await screen.findByText("Access denied");
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   expect(screen.queryByRole("searchbox", { name: "Search photos" })).toBeNull();
 });
@@ -258,6 +260,7 @@ it.each(["workspace switch", "Clear filters"])(
       await screen.findByRole("button", { name: "Canon, 1 photos, selected" });
     }
     const input = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
+    await waitFor(() => expect(input.disabled).toBe(false));
     await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Plain words" }));
     await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
     await fireEvent.input(input, { target: { value: "rating:5" } });
@@ -2209,7 +2212,7 @@ it("shows Album not found for an unknown album Map", async () => {
   expect(location.pathname).toBe("/photos/albums");
 });
 
-it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"])(
+it.each(["album", "direct album", "Hidden", "existing gps_bounds"])(
   "keeps Map scoped when opened from %s",
   async (source) => {
     const album = photoAlbum();
@@ -2245,11 +2248,9 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
     document.head.append(meta);
     const queries: { projection?: string; hidden: boolean; query: Query }[] = [];
     let library: Photos | undefined;
-    let albumPhotos: Photos | undefined;
     const resume = Photos.prototype.resume;
     vi.spyOn(Photos.prototype, "resume").mockImplementation(function (this: Photos, ...args) {
       if (!this.projection && !this.hidden && !this.query.filters?.set_ids) library = this;
-      if (!this.projection && this.query.filters?.set_ids) albumPhotos = this;
       return resume.apply(this, args);
     });
     stubPhotoFetch(
@@ -2276,8 +2277,8 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
     render(App);
     if (source !== "direct album") {
       await screen.findByRole("button", { name: "Open Photo 1.jpg" });
-      library!.baseQuery = {
-        ...library!.baseQuery,
+      library!.query = {
+        ...library!.query,
         text: "beach",
         sort: { field: "relevance", direction: "desc" },
         filters: {
@@ -2285,7 +2286,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
           ...(source === "existing gps_bounds" ? { gps_bounds: gpsBounds } : {}),
         },
       };
-      await library!.selectDate("2024");
       if (source !== "existing gps_bounds") {
         await fireEvent.click(
           screen.getByRole("button", { name: source.startsWith("album") ? /^Trip/ : "Hidden" }),
@@ -2293,10 +2293,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
         await screen.findByRole("heading", {
           name: source.startsWith("album") ? "Trip" : "Hidden",
         });
-        if (source === "album year") {
-          await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-          await albumPhotos!.selectDate("2023");
-        }
       }
       if (source === "Hidden") {
         await waitFor(() =>
@@ -2335,8 +2331,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
         text: "beach",
         filters: {
           cameras: ["Library camera"],
-          capture_after: "2024-01-01",
-          capture_before: "2025-01-01",
         },
       });
       expect(request.query.filters.set_ids).toBeUndefined();
@@ -2344,12 +2338,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
       expect(request.query.text).toBe("");
       expect(request.query.filters.set_ids).toEqual([album.id]);
       expect(request.query.filters.cameras).toBeUndefined();
-      expect(request.query.filters.capture_after).toBe(
-        source === "album year" ? "2023-01-01" : undefined,
-      );
-      expect(request.query.filters.capture_before).toBe(
-        source === "album year" ? "2024-01-01" : undefined,
-      );
     }
     await waitFor(() => expect(map.props?.items).toHaveLength(1));
     const reads = queries.length;
@@ -2364,12 +2352,14 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
 );
 
 it.each(["Library", "album"])(
-  "closes the %s viewer from its active sidebar entry without reloading",
+  "closes the %s viewer from its active sidebar entry",
   async (kind) => {
+    const jump = vi.spyOn(Photos.prototype, "jumpTo").mockImplementation(() => {});
+    vi.spyOn(Photos.prototype, "canJump", "get").mockReturnValue(true);
     const album = photoAlbum({
       id: "22222222-2222-4222-8222-0000000000aa",
-      included_count: 1,
-      member_count: 1,
+      included_count: 3,
+      member_count: 3,
     });
     const path = kind === "album" ? `/photos/albums/${album.id}` : "/photos";
     history.replaceState(null, "", `${path}#web_session=synthetic&web_upload_secret=proof`);
@@ -2383,13 +2373,25 @@ it.each(["Library", "album"])(
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
     Element.prototype.scrollIntoView = vi.fn();
+    vi.spyOn(snapshots, "fetchPhotoTimeline").mockResolvedValue(
+      photoTimelineCounts([
+        ["2025-06-01", 1],
+        ["2024-03-01", 1],
+        ["2024-01-01", 1],
+      ]),
+    );
     const queries: { filters?: { set_ids?: string[] } }[] = [];
     stubPhotoFetch(
       vi.fn(async (url: string, init: RequestInit) => {
         if (url.endsWith("/photos/albums")) return new Response(JSON.stringify([album]));
         if (url.endsWith("/photos/assets/query")) {
           queries.push(JSON.parse(init.body as string).query);
-          return new Response(JSON.stringify({ items: [photo(1)], total: 1 }));
+          return new Response(
+            JSON.stringify({
+              items: [photo(1, "2025-06-01"), photo(2, "2024-03-01"), photo(3, "2024-01-01")],
+              total: 3,
+            }),
+          );
         }
         if (url.includes("/nodes/1"))
           return new Response(
@@ -2417,6 +2419,9 @@ it.each(["Library", "album"])(
     await waitFor(() => expect(location.hash).not.toContain("photo="));
     expect(queries).toHaveLength(reads);
     expect(location.pathname).toBe(path);
+    expect(screen.getByTestId("photo-scroll").scrollTop).toBe(0);
+    await fireEvent.click(await screen.findByRole("button", { name: "2024, 2 photos" }));
+    expect(jump).toHaveBeenCalled();
     await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 1.jpg" }), {
       key: "Enter",
     });
@@ -2975,6 +2980,11 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
   });
   render(App);
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).disabled,
+    ).toBe(false),
+  );
   const edit = vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockResolvedValue(undefined);
   await fireEvent.click(screen.getByRole("button", { name: "Select Photo 1.jpg" }));
   await fireEvent.keyDown(window, { key: "&", code: "Digit6" });

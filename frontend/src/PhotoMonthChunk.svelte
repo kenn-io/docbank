@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PhotoGroup, Row } from "./photoGrid.js";
-  import { visibleRows } from "./photoGrid.js";
+  import { STICKY_HEADER_HEIGHT, visibleRows } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoCell from "./PhotoCell.svelte";
 
@@ -79,7 +79,7 @@
   aria-label={group.label}
 >
   {#if inWindow}
-    {#if group.key !== "relevance"}<h2>
+    {#if group.key !== "relevance"}<h2 style:height={`${STICKY_HEADER_HEIGHT}px`}>
         {group.label}<span>{loadedCount} loaded</span>
       </h2>{/if}
     <div
@@ -126,7 +126,6 @@
     z-index: 2;
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border-default);
-    height: 44px;
     margin: 0;
     display: flex;
     align-items: center;

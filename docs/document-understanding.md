@@ -74,6 +74,36 @@ See the [provider contract](https://github.com/kenn-io/docbank/blob/main/documen
 and [rendition bridge schema](https://github.com/kenn-io/docbank/blob/main/document/bridge/openapi.yaml)
 for the normative types and wire format.
 
+## Convert PDF page ranges with Docling
+
+Call `client.RenderPageRange` with a `docling.PageRange`, such as
+`{First: 51, Last: 100}`, to convert inclusive, one-based PDF pages. Like
+`Render`, each call consumes its authorized upload, so create a fresh upload
+and authorization for each range. Every call uploads the whole PDF and sends
+Docling Serve's
+[`page_range` option](https://github.com/docling-project/docling-serve/blob/main/docs/usage.md).
+Bounds must be positive and ordered, and the input must be a PDF. Docbank
+doesn't count pages: keep `Last` at or below the page count from inspection, or
+the call fails.
+
+Range results require a supported `DoclingDocument` 1.x schema. Missing or
+unsupported schemas fail as malformed evidence before Markdown fallback.
+When the result has a page registry, its keys must be exactly `First..Last`.
+Every nonblank text's provenance page must also fall inside the selection,
+including when the registry is missing or null. Blank text is ignored.
+Contradictory selections fail as malformed evidence and aren't retried.
+Page units keep their original page numbers.
+
+Every range result carries a field omission named by
+`docling.PageRangeOmissionField` (`page_range`), so callers can't mistake it
+for the whole document. Structured ranges report partial coverage. A range
+after page 1 also names the preceding pages as a unit omission. When structured
+page evidence in a supported schema is unusable, bounded provider Markdown
+falls back with degraded provenance. Blank selections retain page units when
+Markdown is empty or whitespace-only. Whole-document `Render` also permits
+Markdown fallback for missing or unsupported schemas. Callers own range
+scheduling, retries, and aggregation.
+
 ## Extract EPUB locally
 
 `document/epub` provides `epub.in-process-v1` for one reflowable EPUB package

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-21
 title: Photo assets
 description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
@@ -149,26 +149,44 @@ Open `docbank web` and choose **Photos** in the sidebar. Library opens at
 `/photos`, newest captures first. A photo without a readable capture date sits
 in the month its file was last modified, when Docbank recorded that time; the
 viewer then shows File modified and leaves Captured blank. The rest appear under
-Undated. The year buttons jump to the years loaded so far; scrolling loads
-more photos and reveals older years. Choose **Load more** to continue from
-the same position when further results remain.
+Undated. The date rail on the right lists years and months with photo
+counts, including dates beyond the loaded grid. It has no day choices. Scrolling
+loads more photos and reveals older years. The rail ends with "N undated", where
+N is the number of undated photos, when that number is above zero. Choose
+**Load more** to continue from the same position when further results remain.
 
 The **⋯** menu holds Move rejects, Export, and Refresh previews, plus Rename album, Duplicate album, and Delete album in an album, and Group, Density, Cull, and Resume cull when available at 640px and below.
 
-The title row holds the photo count, Sort, Grid and Timeline, Group, Density, Cull, Resume cull when saved, the **⋯** menu, and **Add photos** in Library. At 640px and below, the title row wraps as needed, and Group, Density, Cull, and Resume cull move into **⋯**. A floating **Loading photos…** pill appears while a page loads.
+The title row holds the photo count, Sort, Group, Density, Cull, Resume cull when saved, the **⋯** menu, and **Add photos** in Library. At 640px and below, the title row wraps as needed, and Group, Density, Cull, and Resume cull move into **⋯**. A floating **Loading photos…** pill appears while a page loads.
 
-![Photos Library with refine facets, year buttons, and the photo grid](https://docbank.ai/assets/generated/web-photo-library.png)
+Choose a year or month to scroll there. Docbank loads pages until it reaches
+that date, so the search, filters, and album stay as they are. A year jumps to
+its newest month. If a collapsed stack holds that month's photos, the jump lands
+on the stack. A month without photos jumps to the next older one.
+Date navigation requires newest-first capture order: **Capture date** in Library
+and search, or **Captured** in an album. In other sorts, the
+rail keeps its dates visible and disables them with a hint to change the sort.
+Any scroll of the grid you make cancels a pending jump, and opening a photo does
+too. After a page fails to load, dates that are already loaded still jump, and
+**Retry** resumes a pending jump. Refreshing also retries a pending jump.
+The rail marks the first photo visible below the section heading in every sort order.
+A chosen year stays open so its months remain reachable, even when the grid reaches
+the end before that year reaches the top. Scrolling the grid yourself returns
+the open year to the top photo's year.
 
-Choose **Timeline** to see counts for every recorded capture day in the current
-scope, including days beyond the loaded grid. The year ribbon shows each year's
-total and relative density. Choose a year, month, or day to open its photos.
-The grid pages within that range. Once its first page arrives, the grid clears
-selection and starts at the top. A failed date change keeps the previous photos,
-date, selection, and scroll position. **Retry** requests the chosen range again.
-**Clear date** restores the full scope. Counts stay tied to the full
-scope until you refresh.
+On a screen 640 pixels wide or narrower, a full-width **Jump to date** selector
+above the grid replaces the rail. It lists each year and its months with photo
+counts, followed by a disabled "N undated" option when the count is above zero.
+Choosing a date jumps like the rail does. Other sorts disable the selector and show the same sort hint. It shows Loading dates… until the first
+counts arrive, and Jump to date while no month is at the top of the grid.
 
-![Timeline with photo counts by year, month, and day above the grid](https://docbank.ai/assets/generated/web-photo-timeline.png)
+The rail and selector appear when counts include dated or undated photos.
+A scope with only undated photos still shows its undated count. Hidden and Map
+have none; in Hidden, use the Year filter instead. Failed or unavailable counts
+show their reason and a **Retry** button in the rail or selector, even when the
+grid is empty or the search has no matches. A failed count
+refresh keeps the last available dates beside the error. While a hide or trash
+runs, the rail and selector are disabled.
 
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
@@ -183,17 +201,18 @@ Timeline counts every included photo asset, even in a vault with many ordinary
 documents. It shows a limit message when the scope spans more than 250,000
 distinct capture days or the count runs past its time budget, and offers Retry.
 A busy message asks you to retry after other timeline requests finish. Loading
-the timeline does not block Documents queries.
+the timeline does not block Documents queries. During refresh, the rail keeps the
+last successful counts until new counts arrive.
 
 Search filenames, camera or lens names, and location labels in the Photos
 top-bar search box and press Enter. Using the clear button or Escape to clear the box also reruns an applied search. Search opens in relevance order, with one tile per asset even
 when several paired files match. Choose Capture date to
 return to date browsing. Relevance shows the best 250 matches and the full total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture placement descending, then asset ID.
 
-Open **Filters** beside the title to narrow the grid by Camera, Lens, Year, Location, and Albums. Filters starts closed and loads counts when you open it. Its badge counts active filters you can edit in the panel, counting both ends of a range once. Counts cover the
+Open **Filters** beside the title to narrow the grid by Camera, Lens, Location, and Albums. Hidden also offers Year. Library shows Year while a saved search has an active capture range, so you can edit or clear it. Filters starts closed and loads counts when you open it. Its badge counts active filters you can edit in the panel, counting both ends of a range once. Counts cover the
 whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
-Camera, lens, year, and location describe the selected display file; year
+Camera, lens, and location describe the selected display file; Year
 uses its recorded local capture date, or the UTC day of its modified time when it has none. Text may match any live member of a
 pair, so a text match can appear under a different display-file camera or lens. Camera and lens count both make and model; their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Buttons submit an original valid spelling; oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges. Albums show live memberships. Choose Clear filters to reset the
 search and facets. Clear filters appears when a search or filter is applied. A facet group disappears when none of the photos have a value for it and no value in it is selected. Changing a facet keeps any unsent search text and mode. Changing scope clears selection and starts a fresh grid.
@@ -439,7 +458,7 @@ performs role, ownership, sidecar, display, and audit checks.
 Albums group photo assets without moving their files. Manage albums in the
 web app, CLI, or HTTP API.
 
-In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to star it, choose **Rename album**, **Duplicate album…**, or **Delete album…** in **⋯**, or sort its photos by Added, Captured, or Imported. Timeline, date choices, and the photo viewer work inside an album and stay within its photos. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
+In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to star it, choose **Rename album**, **Duplicate album…**, or **Delete album…** in **⋯**, or sort its photos by Added, Captured, or Imported. Sort by **Captured**, newest first, to choose a date in the rail and scroll within the album. The photo viewer stays within its photos. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
 
 ![Albums with a saved smart set and an album card](https://docbank.ai/assets/generated/web-photo-albums.png)
 
@@ -729,7 +748,7 @@ rows include the selected display file's nullable GPS latitude and longitude.
 ## Count photos by capture day
 
 `docbank photos timeline` prints JSON counts for every recorded capture day in
-a photo scope, newest day first. The web app's Timeline uses the same counts.
+a photo scope, newest day first. The web app's date rail uses the same counts.
 
 ```bash
 docbank photos timeline
@@ -742,13 +761,13 @@ output's single `capture_day` facet lists one value per day. `total` counts
 every matching asset, and `missing` counts those with neither a readable
 capture date nor a recorded file modified time. A photo without a capture date
 counts on the UTC day of its file's modified time. Days follow the same recorded calendar day as `capture_after` and
-`capture_before`, so a day's count matches browsing that day.
+`capture_before`.
 
 Over HTTP, send the same `query` and optional `coverage` to
 `POST /api/v1/photos/assets/timeline`. The
 [HTTP reference](../architecture/http-api.md) lists its limits and errors.
 
-Apply or clear staged metadata edits before changing the selection, search, sort, date, or viewed photo, or hiding or trashing photos. Hide uses the prepared selection, including unloaded photos, and keeps failed targets selected with their captured revisions.
+Apply or clear staged metadata edits before changing the selection, search, sort, or viewed photo, or hiding or trashing photos. Hide uses the prepared selection, including unloaded photos, and keeps failed targets selected with their captured revisions.
 
 ## Export photos
 
@@ -784,7 +803,7 @@ Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_ti
 
 ![Map with photo clusters beside the photos in view](https://docbank.ai/assets/generated/photo-map-enabled-1440-dark.png)
 
-Map uses album membership when opened from an album. Otherwise it inherits Library's text, filters and date. It sorts by capture date, then adds GPS eligibility. Each visit starts a fresh result and selection. Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. When more match, Map says how many it's showing. Narrow the search, filters or date to see older photos. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
+Map uses album membership when opened from an album. Otherwise it inherits Library's text and filters. It sorts by capture date, then adds GPS eligibility. Each visit starts a fresh result and selection. Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. When more match, Map says how many it's showing. Narrow the search or filters to see older photos; Map has no date filter, and choosing a date in Library does not change what Map fetches. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
 
 ## Cull and compare
 
