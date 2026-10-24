@@ -12,6 +12,88 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func BenchmarkPeopleRecentEvidenceHeavy(b *testing.B) {
+	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, s.Close()) })
+	ctx := b.Context()
+	const people, photos = 3000, 40000
+	versions := make([]string, photos)
+	ids := make([]string, people)
+	setup := time.Now()
+	require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for i := range photos {
+			node, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("photo-%05d.jpg", i), fmt.Sprintf("%064x", i+1), 128, "image/jpeg")
+			if err != nil {
+				return err
+			}
+			if _, err := s.insertPhotoAssetTx(ctx, tx, node.ID, PhotoRoleImage, PhotoKindPhoto); err != nil {
+				return err
+			}
+			versions[i] = node.CurrentVersionID
+		}
+		person, err := tx.PrepareContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,'operator','curated',?,?)`)
+		if err != nil {
+			return err
+		}
+		defer func() { require.NoError(b, person.Close()) }()
+		for i := range people {
+			ids[i] = uuid.NewString()
+			name := fmt.Sprintf("Person %05d", i)
+			if _, err := person.ExecContext(ctx, ids[i], name, strings.ToLower(name), nowRFC3339(), nowRFC3339()); err != nil {
+				return err
+			}
+		}
+		assertion, err := tx.PrepareContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at) VALUES(?,?,?,'depicted','assert','',?)`)
+		if err != nil {
+			return err
+		}
+		defer func() { require.NoError(b, assertion.Close()) }()
+		start := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+		for i, version := range versions {
+			for k := range 3 {
+				at := start.Add(time.Duration(i*3+k) * time.Microsecond).Format(timestampLayout)
+				if _, err := assertion.ExecContext(ctx, uuid.NewString(), version, ids[(i*7+k*1009)%people], at); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}))
+	b.Logf("fixture setup: %s", time.Since(setup))
+	first, _, err := s.PeopleByDisplayName(ctx, "", "", "", 24, true, PeopleSearchOptions{RecentFirst: true})
+	require.NoError(b, err)
+	require.Len(b, first, 24)
+	last := first[len(first)-1]
+	for _, test := range []struct {
+		name    string
+		cursor  bool
+		summary bool
+	}{
+		{name: "recent-visible"},
+		{name: "recent-visible-cursor", cursor: true},
+		{name: "recent-summary", summary: true},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			options := PeopleSearchOptions{RecentFirst: true, PhotoSummary: test.summary, GridRecipe: "grid"}
+			var afterName, afterID string
+			if test.cursor {
+				afterName, afterID, options.AfterRecent = last.DisplayNameFolded, last.PersonID, last.RecentRank
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				rows, _, err := s.PeopleByDisplayName(ctx, "", afterName, afterID, 24, true, options)
+				if err != nil || len(rows) != 24 {
+					b.Fatalf("rows=%d want=24 err=%v", len(rows), err)
+				}
+				if test.summary && (rows[0].PhotoSummary == nil || rows[0].PhotoSummary.LibraryCount == 0) {
+					b.Fatal("missing card summary")
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkPeopleRecentAtVaultScale compares a name page with recency ranking
 // and card summaries, including people with hundreds of photos.
 func BenchmarkPeopleRecentAtVaultScale(b *testing.B) {

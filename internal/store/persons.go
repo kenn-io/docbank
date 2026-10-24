@@ -250,12 +250,12 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 // their write transactions, so a person that Hidden locking or sensitivity
 // conceals from the list cannot be edited by ID.
 func personVisibleSQL(person string) string {
-	return `(?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
+	return `(?=0 OR (` + person + ` NOT IN (SELECT a.person_id FROM person_document_assertions a)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
-			AND i.origin='derived' AND i.confidence='exact_identifier')) OR EXISTS(
-		SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `
-		AND a.role<>'blind_copy' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
+			AND i.origin='derived' AND i.confidence='exact_identifier')) OR ` + person + ` IN (
+		SELECT a.person_id FROM person_document_assertions a
+		WHERE a.role<>'blind_copy' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
 		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))`
 }
