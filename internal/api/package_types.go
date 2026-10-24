@@ -83,12 +83,7 @@ type PackageImportJob struct {
 	UpdatedAt   string   `json:"updated_at"`
 }
 
-type PersonPhotoSummary struct {
-	HiddenCount  *int64                   `json:"hidden_count,omitzero"`
-	FaceHidden   bool                     `json:"face_hidden,omitzero"`
-	LibraryCount int64                    `json:"library_count"`
-	Face         *store.PersonFacePreview `json:"face,omitzero"`
-}
+type PersonPhotoSummary store.PersonPhotoSummary
 
 type PersonSummary struct {
 	PhotoSummary      *PersonPhotoSummary `json:"photo_summary,omitzero"`
