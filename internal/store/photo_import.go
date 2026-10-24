@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -165,6 +166,29 @@ func photoImportRoleFilter(role string) (string, []any) {
 	}
 }
 
+// photoImportAcceptedSQL recognizes an unchanged outside copy while the latest
+// completed Docbank publication remains current: the source (?6) last held
+// those bytes, or has no packet of its own and the bytes match another source's.
+const photoImportAcceptedSQL = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_file
+ WHERE CAST(json_extract(xr.after_json,'$.file_id') AS TEXT)=pf.sidecar_of_file_id AND xr.operation='xmp_sync' AND json_extract(xr.after_json,'$.sync.sidecar.node_id')=n.id
+ AND json_extract(xr.after_json,'$.sync.sidecar.file_id')=pf.file_id
+ AND json_extract(xr.after_json,'$.sync.written_version')=n.current_version_id
+ AND EXISTS(SELECT 1 FROM json_each(xr.after_json,'$.sync.outside') o WHERE json_extract(o.value,'$.digest')=?2
+ AND (json_extract(o.value,'$.path')=?6 OR NOT EXISTS(SELECT 1 FROM json_each(xr.after_json,'$.sync.outside') own WHERE json_extract(own.value,'$.path')=?6)))
+) THEN ?2 ELSE '' END`
+
+// photoImportSidecarCandidatesQuery finds sidecars by source path (?1) first:
+// a rescan can supply the outside bytes Docbank accepted before writing a
+// newer version, which no longer match the current content.
+const photoImportSidecarCandidatesQuery = `SELECT ` + nodeCols + `,p.original_path,` + photoImportAcceptedSQL + `
+ FROM provenance p INDEXED BY provenance_source_path
+ JOIN nodes n ON n.id=p.node_id
+ LEFT JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+ LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
+ WHERE p.original_path=?1 AND n.trashed_at IS NULL AND (pf.node_id IS NULL OR pf.role='sidecar')
+ AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+ ORDER BY n.id,p.identity`
+
 // browserPhotoSourceSQL selects the eligible earlier browser photos: live,
 // visible, included, non-sidecar, and claimed by a canonical browser folder.
 func browserPhotoSourceSQL() string {
@@ -266,40 +290,67 @@ func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImp
 
 func (s *Store) photoImportCurrentDuplicateTx(
 	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role, target string,
-	fallback bool, claimed map[int64]bool,
+	fallback, createOnly bool, claimed map[int64]bool, changedSource *bool,
 ) (Node, bool, error) {
 	var node Node
 	photoFilter, roleArgs := photoImportRoleFilter(role)
-	rows, err := tx.QueryContext(ctx, `
-		SELECT `+nodeCols+`, COALESCE(p.original_path, '')
+	query, args := `
+		SELECT `+nodeCols+`, COALESCE(p.original_path, ''), ''
 		FROM `+nodeFrom+`
 		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		LEFT JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=?
-		ORDER BY n.id, p.identity`, append(roleArgs, member.BlobHash)...)
+		ORDER BY n.id, p.identity`, slices.Concat(roleArgs, []any{member.BlobHash})
+	if role == PhotoRoleSidecar {
+		query, args = photoImportSidecarCandidatesQuery, []any{member.OriginalPath, member.BlobHash, nil, nil, nil, normalizePhotoSourcePath(member.OriginalPath)}
+	}
+	if role == PhotoRoleSidecar && fallback && target != "" {
+		original, bound, err := photoSidecarSourceTx(ctx, tx, target, member.OriginalPath, "", false)
+		if err != nil {
+			return Node{}, false, err
+		}
+		// Exact paths take priority over content matches and a generated attachment.
+		query = `SELECT * FROM (` + query + `) UNION ALL SELECT ` + nodeCols + `, '',` + photoImportAcceptedSQL + `
+ FROM ` + nodeFrom + ` JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=?3 AND pf.role='sidecar'
+ WHERE n.trashed_at IS NULL AND (?5=0 OR pf.sidecar_of_file_id=?4) AND (cv.blob_hash=?2 OR ` + photoImportAcceptedSQL + `<>'' OR pf.sidecar_of_file_id=?4)`
+		args[2], args[3], args[4] = target, original, bound
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return Node{}, false, fmt.Errorf("finding duplicate photo member: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	source := photoImportSourcePath(member.OriginalPath)
-	found, content := false, Node{}
+	found, takeover, content := false, false, Node{}
+	var fallbackNode Node
+	fallbackChanged, ambiguous := false, false
 	for rows.Next() {
-		var row Node
-		var sourcePath string
-		if err := rows.Scan(
-			&row.ID, &row.ParentID, &row.Name, &row.Kind, &row.CurrentVersionID,
-			&row.BlobHash, &row.MD5, &row.Size, &row.MimeType, &row.Revision,
-			&row.CreatedAt, &row.ModifiedAt, &row.TrashedAt, &sourcePath,
-		); err != nil {
+		var sourcePath, accepted string
+		row, err := scanNode(rows, &sourcePath, &accepted)
+		if err != nil {
 			return Node{}, false, fmt.Errorf("scanning duplicate photo member: %w", err)
+		}
+		changed := row.BlobHash != member.BlobHash && accepted != member.BlobHash
+		if changed && (role != PhotoRoleSidecar || sourcePath != "" || !fallback || target == "") {
+			continue
 		}
 		// Another member of this group already holds the node, so it can't also be this file.
 		if claimed[row.ID] {
 			continue
 		}
+		if role == PhotoRoleSidecar && sourcePath == "" {
+			// A unique content match preserves an established pairing before
+			// the filename fallback. Qualified names constrain both candidates.
+			if fallbackNode.ID == 0 || fallbackChanged && !changed {
+				fallbackNode, fallbackChanged, ambiguous = row, changed, false
+			} else if fallbackChanged == changed && fallbackNode.ID != row.ID {
+				ambiguous = true
+			}
+			continue
+		}
 		if sourcePath != "" && photoImportSourcePath(sourcePath) == source {
-			node, found = row, true
+			node, found, takeover = row, true, changed
 			break
 		}
 		if content.ID == 0 {
@@ -310,24 +361,36 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		return Node{}, false, fmt.Errorf("reading duplicate photo members: %w", err)
 	}
 	_ = rows.Close()
-	switch {
-	case found, !fallback:
-	case role != PhotoRoleSidecar && content.ID != 0:
-		// RAW and image files skip duplicates by content across folders; only the same source file is a sidecar's duplicate.
-		node, found = content, true
-	case role == PhotoRoleSidecar && target != "":
-		// A moved or re-cased folder changes the path, but the photo already holding these bytes is the same shot.
-		if node, found, err = photoImportTargetSidecarTx(ctx, tx, target, member.BlobHash, claimed); err != nil {
-			return Node{}, false, err
-		}
+	if !found && fallbackNode.ID != 0 && !ambiguous {
+		node, found, takeover = fallbackNode, true, fallbackChanged
 	}
-	if !found {
+	if !found && fallback && role != PhotoRoleSidecar && content.ID != 0 {
+		node, found = content, true
+	}
+	if !found || takeover && createOnly {
 		return Node{}, false, nil
+	}
+	if takeover {
+		node, found, err = s.replacePhotoImportSourceTx(ctx, tx, run, node, member, "application/rdf+xml")
+		*changedSource = *changedSource || found
+		return node, found, err
 	}
 	if err := s.EnsureBlobTx(tx, member.BlobHash, member.Size, photoImportPhysical(member)...); err != nil {
 		return Node{}, false, fmt.Errorf("reconciling duplicate photo content: %w", err)
 	}
-	observed, err := s.observePhotoImportSourceTx(ctx, tx, run, node, member)
+	// Unchanged outside bytes keep a newer Docbank version current and bind
+	// provenance to the version that holds them, while it is retained.
+	version := node.CurrentVersionID
+	if node.BlobHash != member.BlobHash {
+		err := tx.QueryRowContext(ctx, `SELECT version_id FROM content_versions WHERE node_id=? AND blob_hash=?
+ ORDER BY node_revision DESC LIMIT 1`, node.ID, member.BlobHash).Scan(&version)
+		if errors.Is(err, sql.ErrNoRows) {
+			version = ""
+		} else if err != nil {
+			return Node{}, false, err
+		}
+	}
+	observed, err := s.observePhotoImportSourceTx(ctx, tx, run, node, member, version)
 	if err != nil {
 		return Node{}, false, err
 	}
@@ -342,52 +405,57 @@ func (s *Store) photoImportChangedSourceTx(
 	claimed map[int64]bool,
 ) (Node, bool, error) {
 	photoFilter, roleArgs := photoImportRoleFilter(role)
-	rows, err := tx.QueryContext(ctx, `
+	var nodeID int64
+	err := queryRows(ctx, tx, `
 		SELECT DISTINCT n.id FROM nodes n
 		JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+photoFilter+` AND p.original_path=?
-		  -- A node shared with another source path keeps its bytes; the edit becomes its own file.
+		  -- Accepted photo-import paths share sidecar versions. Other source owners keep their bytes.
 		  -- Checkout observations record edits to this node, not independent import sources.
-		  AND NOT EXISTS (SELECT 1 FROM provenance other
-		    JOIN ingests other_ingest ON other_ingest.id=other.ingest_id
-		    WHERE other.node_id=n.id AND other.original_path IS NOT ?
-		      AND other_ingest.source_kind<>'photo-checkout'
+		  AND NOT EXISTS (SELECT 1 FROM provenance other JOIN ingests i ON i.id=other.ingest_id
+		    WHERE other.node_id=n.id AND other.original_path IS NOT ? AND i.source_kind NOT LIKE 'embedded:%'
+		      AND i.source_kind<>'photo-checkout'
+		      AND (NOT ? OR i.source_kind<>'photo-import')
 		      AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=other.identity))
-		ORDER BY n.id`, append(roleArgs, member.OriginalPath, member.OriginalPath)...)
-	if err != nil {
-		return Node{}, false, fmt.Errorf("finding changed photo source: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var nodeID int64
-	for rows.Next() {
+		ORDER BY n.id`, append(roleArgs, member.OriginalPath, member.OriginalPath, role == PhotoRoleSidecar), func(rows *sql.Rows) error {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			return Node{}, false, fmt.Errorf("scanning changed photo source: %w", err)
+			return err
 		}
-		if !claimed[id] {
+		if nodeID == 0 && !claimed[id] {
 			nodeID = id
-			break
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return Node{}, false, fmt.Errorf("reading changed photo sources: %w", err)
-	}
-	_ = rows.Close()
-	if nodeID == 0 {
-		return Node{}, false, nil
+		return nil
+	})
+	if err != nil || nodeID == 0 {
+		return Node{}, false, err
 	}
 	prior, err := nodeByIDTx(tx, nodeID)
 	if err != nil {
 		return Node{}, false, err
 	}
+	if role == PhotoRoleSidecar {
+		unchanged, version, err := photoXMPSourceUnchangedTx(ctx, tx, prior, member)
+		if err != nil {
+			return Node{}, false, err
+		}
+		if unchanged {
+			observed, err := s.observePhotoImportSourceTx(ctx, tx, run, prior, member, version)
+			return observed, err == nil, err
+		}
+	}
+	return s.replacePhotoImportSourceTx(ctx, tx, run, prior, member, mediaType)
+}
+
+func (s *Store) replacePhotoImportSourceTx(ctx context.Context, tx *sql.Tx, run IngestRun, prior Node, member PhotoImportMember, mediaType string) (Node, bool, error) {
 	replaced, _, err := s.replaceContentTx(ctx, tx, prior, prior.Revision,
 		member.BlobHash, member.Size, mediaType, photoImportPhysical(member)...)
 	if err != nil {
 		return Node{}, false, fmt.Errorf("recording changed photo source %q: %w", member.OriginalPath, err)
 	}
-	observed, err := s.observePhotoImportSourceTx(ctx, tx, run, replaced, member)
+	observed, err := s.observePhotoImportSourceTx(ctx, tx, run, replaced, member, replaced.CurrentVersionID)
 	if err != nil {
 		return Node{}, false, err
 	}
@@ -404,7 +472,7 @@ func photoImportPhysical(member PhotoImportMember) []BlobPhysical {
 // observePhotoImportSourceTx records that this run read member's source file
 // as node.
 func (s *Store) observePhotoImportSourceTx(
-	ctx context.Context, tx *sql.Tx, run IngestRun, node Node, member PhotoImportMember,
+	ctx context.Context, tx *sql.Tx, run IngestRun, node Node, member PhotoImportMember, versionID string,
 ) (Node, error) {
 	inserted, err := s.ensureIngestRunForMutationTx(ctx, tx, run)
 	if err != nil {
@@ -423,39 +491,7 @@ func (s *Store) observePhotoImportSourceTx(
 	if err != nil {
 		return Node{}, fmt.Errorf("identifying photo import observation: %w", err)
 	}
-	return s.observeOperationalIngestTx(ctx, tx, run, node, fact, inserted)
-}
-
-func photoImportTargetSidecarTx(
-	ctx context.Context, tx *sql.Tx, assetID, blobHash string, claimed map[int64]bool,
-) (Node, bool, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT `+nodeCols+`
-		FROM `+nodeFrom+`
-		JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=? AND pf.role=?
-		WHERE n.trashed_at IS NULL AND cv.blob_hash=?
-		ORDER BY n.id`, assetID, PhotoRoleSidecar, blobHash)
-	if err != nil {
-		return Node{}, false, fmt.Errorf("finding photo sidecar by content: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var node Node
-		if err := rows.Scan(
-			&node.ID, &node.ParentID, &node.Name, &node.Kind, &node.CurrentVersionID,
-			&node.BlobHash, &node.MD5, &node.Size, &node.MimeType, &node.Revision,
-			&node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		); err != nil {
-			return Node{}, false, fmt.Errorf("scanning photo sidecar by content: %w", err)
-		}
-		if !claimed[node.ID] {
-			return node, true, nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return Node{}, false, fmt.Errorf("reading photo sidecars by content: %w", err)
-	}
-	return Node{}, false, nil
+	return s.observeOperationalIngestTx(ctx, tx, run, node, fact, inserted, versionID)
 }
 
 // IngestPhotoGroup publishes one group of already-durable bytes and commits
@@ -560,7 +596,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		// An edited source becomes that node's new version unless the group is create-only. RAW and image files then settle by
 		// content so sidecars can see which photo the group joins.
 		for i, member := range group.Members {
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", false, claimed)
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", false, group.CreateOnly, claimed, &added)
 			if err != nil {
 				return err
 			}
@@ -581,7 +617,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if decided[i] || roles[i] == PhotoRoleSidecar {
 				continue
 			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", true, claimed)
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", true, group.CreateOnly, claimed, &added)
 			if err != nil {
 				return err
 			}
@@ -604,7 +640,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if decided[i] {
 				continue
 			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], joined, true, claimed)
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], joined, true, group.CreateOnly, claimed, &added)
 			if err != nil {
 				return err
 			}
@@ -694,7 +730,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				}
 				file := PhotoFile{AssetID: target.ID, NodeID: node.ID, Role: roles[i], CreatedAt: nowRFC3339()}
 				if roles[i] == PhotoRoleSidecar {
-					sourceID, _, err := photoSidecarSourceTx(ctx, tx, target.ID, group.Members[i].OriginalPath, "")
+					sourceID, _, err := photoSidecarSourceTx(ctx, tx, target.ID, group.Members[i].OriginalPath, "", false)
 					if err != nil {
 						return err
 					}
@@ -746,11 +782,20 @@ func (s *Store) importUnpairedPhotosTx(ctx context.Context, tx *sql.Tx, nodes []
 	return created, nil
 }
 
-func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidecarPath, extension string) (string, bool, error) {
-	name := filepath.Base(sidecarPath)
-	original := strings.TrimSuffix(name, filepath.Ext(name))
+// photoSidecarExtensionAgrees compares a packet claim with its original filename.
+func photoSidecarExtensionAgrees(name, extension string) bool {
+	return extension == "" || strings.EqualFold(strings.TrimPrefix(extension, "."), strings.TrimPrefix(path.Ext(normalizePhotoSourcePath(name)), "."))
+}
+
+func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidecarPath, extension string, vaultNames bool) (string, bool, error) {
+	sidecarPath = normalizePhotoSourcePath(sidecarPath)
+	name := path.Base(sidecarPath)
+	original := strings.TrimSuffix(name, path.Ext(name))
 	source := ClassifyPhotoSource(original)
 	bound := source.Kind == PhotoSourceRAW || source.Kind == PhotoSourceImage
+	if bound && extension != "" && !photoSidecarExtensionAgrees(original, extension) {
+		return "", true, nil
+	}
 	if !bound && extension != "" {
 		original += "." + strings.TrimPrefix(extension, ".")
 		bound = true
@@ -766,19 +811,20 @@ func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidec
 	defer func() { _ = rows.Close() }()
 	id, fallback := "", ""
 	for rows.Next() {
-		var fileID, role, nodeName, path string
-		if err := rows.Scan(&fileID, &role, &nodeName, &path); err != nil {
+		var fileID, role, nodeName, sourcePath string
+		if err := rows.Scan(&fileID, &role, &nodeName, &sourcePath); err != nil {
 			return "", bound, err
 		}
 		if role == PhotoRoleRAW || fallback == "" {
 			fallback = fileID
 		}
 		candidate := nodeName
-		if path != "" {
-			if !strings.EqualFold(filepath.Dir(path), filepath.Dir(sidecarPath)) {
+		if sourcePath != "" && !vaultNames {
+			sourcePath = normalizePhotoSourcePath(sourcePath)
+			if !strings.EqualFold(path.Dir(sourcePath), path.Dir(sidecarPath)) {
 				continue
 			}
-			candidate = filepath.Base(path)
+			candidate = path.Base(sourcePath)
 		}
 		if bound && strings.EqualFold(norm.NFC.String(candidate), norm.NFC.String(original)) {
 			if id != "" && id != fileID {

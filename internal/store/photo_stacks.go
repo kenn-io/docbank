@@ -327,6 +327,25 @@ type PhotoStackDecision struct {
 	SourceMetadataFingerprint string
 }
 
+// checkPhotoStackTargetTx tolerates only sidecar changes to asset membership.
+// Original file, node, and displayed content versions stay exact.
+func checkPhotoStackTargetTx(ctx context.Context, tx *sql.Tx, wanted PhotoAuthoredEditTarget, target PhotoPreparedTarget) error {
+	seen := wanted.AssetRevision
+	wanted.AssetRevision = target.AssetRevision
+	if wanted.PhotoAuthoredTargetRevision != target.PhotoAuthoredTargetRevision || seen < 1 || seen > target.AssetRevision {
+		return ErrStaleRevision
+	}
+	if seen != target.AssetRevision {
+		if err := photoAssetSidecarOnlySinceTx(ctx, tx, target.AssetID, seen, target.AssetRevision); err != nil {
+			return err
+		}
+	}
+	if wanted.ContentVersionID != "" && (target.CurrentContentVersionID != wanted.ContentVersionID || target.DisplayFileID != target.FileID) {
+		return ErrStaleRevision
+	}
+	return nil
+}
+
 // DecidePhotoStack applies one decision to an observed stack in one
 // transaction. The submitted members must still form one stack under the
 // stored folder and capture keys, and every file must keep its observed revision.
@@ -394,13 +413,8 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			if !ok {
 				return ErrStalePhotoStack
 			}
-			if wanted.PhotoAuthoredTargetRevision != target.PhotoAuthoredTargetRevision {
-				return ErrStaleRevision
-			}
-			if wanted.ContentVersionID != "" {
-				if target.CurrentContentVersionID != wanted.ContentVersionID || target.DisplayFileID != target.FileID {
-					return ErrStaleRevision
-				}
+			if err := checkPhotoStackTargetTx(ctx, tx, wanted, target); err != nil {
+				return err
 			}
 		}
 		kept := map[string]bool{}
@@ -446,13 +460,25 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			}
 			targets = append(targets, PhotoAuthoredTarget{FileID: target.FileID, Revision: target.Revision, Patch: PhotoAuthoredPatch{Flag: new(flag)}})
 		}
-		result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{persist: true, loaded: loaded, returnFlags: request.Decision == "current"})
+		result, err = s.applyPhotoStackFlagsTx(ctx, tx, targets, loaded, request.Decision == "current")
 		return err
 	})
 	if err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	return result, nil
+}
+
+// applyPhotoStackFlagsTx keeps the stack decision and its undo receipt together.
+func (s *Store) applyPhotoStackFlagsTx(ctx context.Context, tx *sql.Tx, targets []PhotoAuthoredTarget, loaded map[string]photoAuthoredLoaded, returnFlags bool) (PhotoAuthoredReceipt, error) {
+	result, err := s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{loaded: loaded, returnFlags: returnFlags})
+	if err != nil || result.ReceiptID == "" {
+		return result, err
+	}
+	if err := checkPhotoAuthoredReceiptSize(result); err != nil {
+		return result, err
+	}
+	return result, persistPhotoAuthoredReceiptTx(ctx, tx, result)
 }
 
 // choosePhotoRepresentativeTx stores an explicit choice with the next rank.
@@ -557,7 +583,7 @@ func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrows
 		`pl.sort_key<=? AND pl.sort_key>=? AND (pl.sort_key<? OR a.asset_id<?) ORDER BY pl.sort_key DESC,a.asset_id DESC LIMIT ?`,
 		`pl.sort_key>=? AND pl.sort_key<=? AND (pl.sort_key>? OR a.asset_id>?) ORDER BY pl.sort_key ASC,a.asset_id ASC LIMIT ?`,
 	} {
-		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key,` + photoStackFileCount + `,COALESCE(mg.extractor_fingerprint,'')` + ` FROM ` + photoStackProbeFrom + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND COALESCE(p.camera_make_folded,'')=? AND COALESCE(p.camera_model_folded,'')=? AND CASE WHEN ?='' OR COALESCE(mg.extractor_fingerprint,'')=? THEN COALESCE(p.body_serial_number,'') ELSE '' END=? AND ` + bounds)
+		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key,` + photoStackFileCount + `,COALESCE(mg.extractor_fingerprint,'')` + ` FROM ` + photoStackProbeFrom + scope.queue + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND COALESCE(p.camera_make_folded,'')=? AND COALESCE(p.camera_model_folded,'')=? AND CASE WHEN ?='' OR COALESCE(mg.extractor_fingerprint,'')=? THEN COALESCE(p.body_serial_number,'') ELSE '' END=? AND ` + bounds)
 		if err == nil {
 			pager.args = args
 			pager.probes[i], err = preparer.PrepareContext(ctx, statement) //nolint:sqlclosecheck // Close releases both probes when the page ends.
@@ -811,7 +837,7 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 		return err
 	}
 	for chunk := range slices.Chunk(unread, photoSelectionChunkSize) {
-		statement, args, err := p.scope.bind(`SELECT `+photoBrowseSelect+`,pl.sort_key FROM `+photoBrowseDisplayFrom+` WHERE `+p.scope.where()+` AND a.asset_id IN (`+placeholders(len(chunk))+`)`, anyArgs(chunk)...)
+		statement, args, err := p.scope.bind(`SELECT `+photoBrowseSelect+`,pl.sort_key FROM `+photoBrowseDisplayFrom+p.scope.queue+` WHERE `+p.scope.where()+` AND a.asset_id IN (`+placeholders(len(chunk))+`)`, anyArgs(chunk)...)
 		if err != nil {
 			return err
 		}
@@ -861,7 +887,7 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 		low, _ := photoStackReach(boundary.Key, p.gap, false)
 		high, _ := photoStackReach(boundary.Key, p.gap, true)
 		from, _, _ := photoBrowseOrder("capture_time")
-		statement, args, err := p.scope.bind(`SELECT a.asset_id,pl.folder_key,pl.sort_key,`+photoStackCameraColumns+`,`+photoStackFileCount+`,COALESCE(mg.extractor_fingerprint,'') FROM `+from+` WHERE `+p.scope.where()+` AND a.kind='photo' AND pl.folder_key IS NOT NULL AND pl.sort_key>=? AND pl.sort_key<=?`, low, high)
+		statement, args, err := p.scope.bind(`SELECT a.asset_id,pl.folder_key,pl.sort_key,`+photoStackCameraColumns+`,`+photoStackFileCount+`,COALESCE(mg.extractor_fingerprint,'') FROM `+from+p.scope.queue+` WHERE `+p.scope.where()+` AND a.kind='photo' AND pl.folder_key IS NOT NULL AND pl.sort_key>=? AND pl.sort_key<=?`, low, high)
 		if err != nil {
 			return "", err
 		}

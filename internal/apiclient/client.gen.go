@@ -9995,6 +9995,59 @@ func (c *Client) DecidePhotoStack(ctx context.Context, options *DecidePhotoStack
 	return responseParser(ctx, resp)
 }
 
+// ResolvePhotoXMP Choose the catalog or sidecar copy of conflicting photo metadata
+func (c *Client) ResolvePhotoXMP(ctx context.Context, options *ResolvePhotoXMPRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePhotoXMPResult, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/{file_id}/xmp",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePhotoXMPResult, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePhotoXMPResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePhotoXMPResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &ResolvePhotoXMPResult{Status200: target}, nil
+
+		case 204:
+
+			target := new(struct{})
+
+			return &ResolvePhotoXMPResult{Status204: target}, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePhotoXMPErrorResponse](resp, "ResolvePhotoXMPErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/{file_id}/xmp")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UndoPhotoAuthored Undo photo fields and keywords if their revisions still match
 func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoAuthoredResponse, error) {
 	var err error
@@ -15258,6 +15311,12 @@ type ReadPhotoPreviewResult struct {
 	Status200 *ReadPhotoPreviewResponse
 
 	Status304 *struct{}
+}
+
+// ResolvePhotoXMPResult contains the decoded body for the returned success status.
+type ResolvePhotoXMPResult struct {
+	Status200 *ResolvePhotoXMPResponse
+	Status204 *struct{}
 }
 
 // UploadPushFileResult contains the decoded body for the returned success status.
@@ -21830,6 +21889,41 @@ func (o *DecidePhotoStackRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// ResolvePhotoXMPRequestOptions is the options needed to make a request to ResolvePhotoXMP.
+type ResolvePhotoXMPRequestOptions struct {
+	PathParams *ResolvePhotoXMPPath
+	Body       *ResolvePhotoXMPBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePhotoXMPRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UndoPhotoAuthoredRequestOptions is the options needed to make a request to UndoPhotoAuthored.
 type UndoPhotoAuthoredRequestOptions struct {
 	PathParams *UndoPhotoAuthoredPath
@@ -25866,6 +25960,10 @@ type UnhidePhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
 
+type ResolvePhotoXMPPath struct {
+	FileID uuid.UUID `json:"file_id"`
+}
+
 type UndoPhotoAuthoredPath struct {
 	ReceiptID uuid.UUID `json:"receipt_id"`
 }
@@ -26256,6 +26354,8 @@ type EditPhotoAuthoredBody = PhotoAuthoredEditRequest
 type PreparePhotoAuthoredBody = PhotoAuthoredPrepareRequest
 
 type DecidePhotoStackBody = PhotoStackDecisionRequest
+
+type ResolvePhotoXMPBody = PhotoXMPResolveRequest
 
 type CreatePhotoCheckoutBody = PhotoCheckoutCreateRequest
 
@@ -27662,6 +27762,10 @@ type PreparePhotoAuthoredErrorResponse = Error
 type DecidePhotoStackResponse = store.PhotoAuthoredReceipt
 
 type DecidePhotoStackErrorResponse = Error
+
+type ResolvePhotoXMPResponse = store.PhotoAuthoredReceipt
+
+type ResolvePhotoXMPErrorResponse = Error
 
 type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
@@ -29195,6 +29299,12 @@ type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
 type PhotoTimeline = api.PhotoTimeline
 
 type PhotoTimelineRequest = api.PhotoTimelineRequest
+
+type PhotoXMPResolveRequest = api.PhotoXMPResolveRequest
+
+type PhotoXMPRow = store.PhotoXMPRow
+
+type PhotoXMPState = store.PhotoXMPState
 
 type Plan = bundle.Plan
 

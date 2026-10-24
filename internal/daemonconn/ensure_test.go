@@ -143,9 +143,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	info := kitdaemon.PingInfo{Version: version.Version}
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
-
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
-	assert.False(t, discoverOptions(true).Accept(rec, info), "mismatched protocol revision must be replaced")
+	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
 
 	delete(rec.Metadata, metaProtocolVersion)
@@ -220,7 +219,7 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 	}
 }
 
-func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
+func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"

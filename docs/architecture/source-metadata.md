@@ -185,34 +185,18 @@ real number, so `3.0` is a three-star rating. Caption, creator, and copyright
 text retain their whitespace. While reading a text property, the reader stops
 buffering once the text passes 16 KiB. Packets share the 64 MiB limit on
 extracted originals, so large editing data doesn't hide a rating. Malformed
-packets publish warnings without a valid-packet fact. The tolerant
+XML publishes warnings without a valid-packet fact. Packets refused only by
+sync, such as oversized editing data, still publish their supported fields
+under the existing extraction contract. Extraction retains its case-sensitive `x-default` selection; sync matches that language without regard to letter case and preserves whitespace-only text. The tolerant
 embedded XMP reader retains its existing behavior.
 The first top-level RDF description selects the subject. Matching descriptions
 combine its properties; other subjects and nested resources don't contribute decisions.
 
-Photo initialization consumes checksum-checked evidence from the running extractor
-fingerprint. It rechecks the sidecar version, bytes identity, membership, role,
-trash state, intended original, and target revision in its transaction. Qualified filenames take precedence over extension claims on basename-only packets. Imported names come from retained provenance; later explicit attachments retain authority. Resolving an old imported link changes only the authored target, preserving graph relationships. Empty or rejected packets
-make no owner edit; useful replacement bytes can initialize a revision-1 target.
-In an audited vault, a target outside every audit scope settles without a
-decision, because audited vaults refuse attachment changes there. Enrolling a
-scope that covers the target makes the sidecar eligible again.
-Schema 32 caches each considered packet in `photo_sidecar_considered`,
-keyed by sidecar file with its asset, asset revision, content version, extractor
-fingerprint, and an ordered snapshot of every member node ID, revision, and audit coverage, including trashed members. Pairing, rename, provenance, restoration, and audit enrollment changes make the sidecar eligible again. Idle listings read
-one work item per sidecar through the sidecar-only node index, in node-ID order.
-A sidecar waits until every live lower-node-ID sidecar in the same photo has a
-cached outcome for the current photo state, content version, and running
-fingerprint. Extraction order and the listing cursor therefore cannot let a
-higher-ID packet claim an original first; the first packet that makes a
-decision wins. A sibling whose packet never extracts or never settles holds
-back the higher-ID sidecars in that photo. Because one photo's sidecars never
-share a listing page, applying one cannot make a sibling in the same page
-stale. The background
-processor resolves the intended original and records its outcome under the
-maintenance gate, after checking the captured asset revision and member snapshot. A changed snapshot returns a stale revision error. Applied decisions record the resulting snapshot.
-Logical restore rebuilds this derived cache from retained source evidence.
-Applied decisions write the ordinary authored receipt with stable sidecar file,
-node, and content-version provenance, and advance the target node revision and
-modified time. Later pairing corrections preserve that
-historical identity. Authored values come from retained source evidence; imported binding conflicts consult graph receipts to preserve explicit attachment authority.
+The source facts describe each sidecar version for search and detail views. Sync-only RDF refusals in keywords or TIFF orientation preserve unrelated extraction facts.
+XMP sync does not read them: the sidecar worker reads the packet bytes with the
+same strict reader and also needs the original's extraction head for its
+orientation. XMP sync receipts retain settled and outside packet histories with their own source orientation. Work discovery, filters, and Inspector compare the same live input token with the latest receipt; publication rechecks it transactionally. See [Sync XMP sidecars](../usage/photos.md#sync-xmp-sidecars) for merge rules and the [storage design](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-asset-authority) for receipt authority.
+
+Provenance bindings identify each outside source path and its last observed digest in retained source versions. Paths preserve Unicode code-point spelling and case, use uppercase Windows drive letters and portable drive and UNC separators, and keep literal backslashes in POSIX paths. Restoring those bindings and versions on another operating system preserves the source keys and sidecar pairing.
+
+Checkout sidecars use their frozen original entry's filename to check extension claims, even after the vault file is renamed or the checkout is retired. Pruning retains the latest provenance-bound version for each outside source path so rescans can compare its digest independently of sync receipts. The settled version remains until sync can compare both sides and settle any conflict. Every retained sync history keeps its required versions across sidecar detachment and reattachment, including moves between originals.

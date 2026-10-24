@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"iter"
@@ -37,7 +38,7 @@ const maxPhotoKeywordEdits = 100
 
 var ErrPhotoEditFileLimit = errors.New("edit at most 1,000 files at once; RAW/JPEG pairs count as two files. Select fewer photos")
 var ErrPhotoStackFileLimit = fmt.Errorf("decide at most 2,000 files in one stack: %w", ErrInvalidPhotoAsset)
-var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 2 MiB limit")
+var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds its size limit")
 
 type PhotoAuthoredTargetRevision struct {
 	AssetID       string `json:"asset_id" format:"uuid"`
@@ -62,12 +63,13 @@ type photoAuthoredLoaded struct {
 type PhotoPreparedTarget struct {
 	PhotoAuthoredTargetRevision
 
-	CurrentContentVersionID string        `json:"current_content_version_id,omitempty" format:"uuid"`
-	DisplayFileID           string        `json:"display_file_id" format:"uuid"`
-	FileName                string        `json:"file_name"`
-	NodeID                  int64         `json:"node_id"`
-	Values                  PhotoAuthored `json:"values"`
-	Tags                    []string      `json:"tags"`
+	XMP                     *PhotoXMPState `json:"xmp,omitzero"`
+	CurrentContentVersionID string         `json:"current_content_version_id,omitempty" format:"uuid"`
+	DisplayFileID           string         `json:"display_file_id" format:"uuid"`
+	FileName                string         `json:"file_name"`
+	NodeID                  int64          `json:"node_id"`
+	Values                  PhotoAuthored  `json:"values"`
+	Tags                    []string       `json:"tags"`
 }
 
 type PhotoAuthoredPreparation struct {
@@ -175,7 +177,7 @@ func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error 
 		return err
 	}
 	for _, id := range ids {
-		if err := p.appendAsset(id, assets[id], targets); err != nil {
+		if err := p.appendAsset(ctx, id, assets[id], targets); err != nil {
 			return err
 		}
 	}
@@ -237,7 +239,7 @@ func (p photoAuthoredPreparer) loadTargets(ctx context.Context, in string, args 
 	return targets, err
 }
 
-func (p photoAuthoredPreparer) appendAsset(id string, asset PhotoAsset, targets map[string]PhotoPreparedTarget) error {
+func (p photoAuthoredPreparer) appendAsset(ctx context.Context, id string, asset PhotoAsset, targets map[string]PhotoPreparedTarget) error {
 	asset, err := completePhotoAsset(asset, p.settings)
 	if err != nil {
 		return err
@@ -263,6 +265,13 @@ func (p photoAuthoredPreparer) appendAsset(id string, asset PhotoAsset, targets 
 		}
 		target.DisplayFileID = *asset.DisplayFileID
 		target.AssetID, target.AssetRevision, target.FileID, target.Revision, target.NodeID, target.Values = id, asset.Revision, file.ID, file.Revision, file.NodeID, file.Authored()
+		if p.single && photoSidecarTargetRole(file.Role) {
+			state, err := photoXMPStateTx(ctx, p.tx, file, p.single)
+			if err != nil {
+				return err
+			}
+			target.XMP = &state
+		}
 		p.result.Targets = append(p.result.Targets, target)
 	}
 	return nil
@@ -406,11 +415,8 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 			return nil, nil, fmt.Errorf("node %d: %w", file.NodeID, ErrNotFound)
 		}
 		loaded[file.ID] = photoAuthoredLoaded{file, node}
-		if file.AssetID != expected.AssetID || asset.revision != expected.AssetRevision || len(request.Keywords) > 0 && node.Revision != expected.NodeRevision {
-			return nil, nil, ErrStaleRevision
-		}
-		if expected.ContentVersionID != "" && asset.displayVersionID.String != expected.ContentVersionID {
-			return nil, nil, ErrStaleRevision
+		if err := checkPhotoAuthoredBatchTargetTx(ctx, tx, request, expected, asset, file, node); err != nil {
+			return nil, nil, err
 		}
 		patch := request.Patch
 		if request.RotationDelta != nil {
@@ -420,6 +426,69 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 		targets = append(targets, PhotoAuthoredTarget{FileID: file.ID, Revision: expected.Revision, Patch: patch})
 	}
 	return targets, loaded, nil
+}
+
+func checkPhotoAuthoredBatchTargetTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch, expected PhotoAuthoredEditTarget, asset photoAuthoredAssetAccess, file PhotoFile, node Node) error {
+	if file.AssetID != expected.AssetID || len(request.Keywords) > 0 && node.Revision != expected.NodeRevision || expected.ContentVersionID != "" && asset.displayVersionID.String != expected.ContentVersionID {
+		return ErrStaleRevision
+	}
+	if asset.revision == expected.AssetRevision {
+		return nil
+	}
+	if asset.revision < expected.AssetRevision || node.Revision != expected.NodeRevision {
+		return ErrStaleRevision
+	}
+	return photoAssetSidecarOnlySinceTx(ctx, tx, expected.AssetID, expected.AssetRevision, asset.revision)
+}
+
+// photoAssetSidecarOnlySinceTx accepts an asset revision a person saw when every
+// later revision up to the current one only changed sidecar members, as the sync worker does.
+// Checkout, XMP, and face receipts count nodes or their own history, so they never advance an asset revision.
+func photoAssetSidecarOnlySinceTx(ctx context.Context, tx *sql.Tx, assetID string, seen, current int64) error {
+	revision := seen
+	err := queryRows(ctx, tx, `SELECT before_revision,after_revision,before_json,after_json FROM photo_change_receipts WHERE asset_id=? AND before_revision>=? AND after_revision<=? AND after_revision>before_revision AND operation NOT IN ('checkout_commit','xmp_sync','face_decision') ORDER BY before_revision`, []any{assetID, revision, current}, func(rows *sql.Rows) error {
+		var beforeRevision, afterRevision int64
+		var beforeJSON, afterJSON []byte
+		if err := rows.Scan(&beforeRevision, &afterRevision, &beforeJSON, &afterJSON); err != nil {
+			return err
+		}
+		var before, after photoReceiptAssetState
+		if json.Unmarshal(beforeJSON, &before) != nil || json.Unmarshal(afterJSON, &after) != nil || beforeRevision != revision || afterRevision != revision+1 || !photoAuthoredSidecarChange(before, after) {
+			return ErrStaleRevision
+		}
+		revision = afterRevision
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if revision != current {
+		return ErrStaleRevision
+	}
+	return nil
+}
+
+// Sidecar membership changes preserve the editable originals and display choice.
+func photoAuthoredSidecarChange(before, after photoReceiptAssetState) bool {
+	if !photoAuthoredAssetUnchanged(before, after) || after.ChangesTruncated || len(after.MemberChanges) == 0 {
+		return false
+	}
+	for _, change := range after.MemberChanges {
+		if change.Before != nil && change.Before.Role != PhotoRoleSidecar || change.After != nil && change.After.Role != PhotoRoleSidecar {
+			return false
+		}
+	}
+	return true
+}
+
+func photoAuthoredAssetUnchanged(before, after photoReceiptAssetState) bool {
+	if before.ID != after.ID || before.Kind != after.Kind {
+		return false
+	}
+	if !equalPhotoString(before.HiddenAt, after.HiddenAt) || !equalPhotoString(before.ExcludedAt, after.ExcludedAt) {
+		return false
+	}
+	return equalPhotoString(before.DisplayFileID, after.DisplayFileID) && equalPhotoString(before.DisplayOverrideFileID, after.DisplayOverrideFileID)
 }
 
 // photoKeywordPlan lists keyword changes sorted by tag and node, with each tag's
@@ -594,7 +663,7 @@ func queryInChunks[T any](ctx context.Context, q metadataQuerier, prefix string,
 }
 
 func validatePhotoKeywords(r PhotoAuthoredReceipt) error {
-	if len(r.Keywords) > maxBatchTagTargets*100 || len(r.KeywordNodes) > len(r.After) || r.Sidecar != nil && len(r.Keywords) != 0 {
+	if len(r.Keywords) > maxBatchTagTargets*100 || len(r.KeywordNodes) > len(r.After) {
 		return ErrInvalidPhotoAsset
 	}
 	nodes := map[int64]int{}

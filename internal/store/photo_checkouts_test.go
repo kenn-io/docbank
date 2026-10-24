@@ -634,14 +634,14 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(members...))
 			require.NoError(t, err)
 			if tc.multipleSidecars {
-				for _, observation := range []struct{ sidecar, hash string }{{"RENAMED.ARW.XMP", "second sidecar"}, {"RENAMED.XMP", "first sidecar"}} {
-					run, err = s.BeginIngest(ctx, "photo-import", source)
-					require.NoError(t, err)
-					result, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
-						photoImportTestMember(filepath.Join(source, "RENAMED.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-						photoImportTestMember(filepath.Join(source, observation.sidecar), PhotoRoleSidecar, browseHash(observation.hash), "application/rdf+xml")))
-					require.NoError(t, err)
-				}
+				// An import adds a copy to the one sidecar, so a second sidecar is attached.
+				run, err = s.BeginIngest(ctx, "photo-import", source)
+				require.NoError(t, err)
+				node, err := s.IngestFileExact(ctx, run, s.RootID(), "RENAMED.ARW.XMP", browseHash("second sidecar"), 20, "application/rdf+xml", filepath.Join(source, "RENAMED.ARW.XMP"), "")
+				require.NoError(t, err)
+				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
+				result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
+				require.NoError(t, err)
 			} else {
 				run, err = s.BeginIngest(ctx, "photo-import", source)
 				require.NoError(t, err)
@@ -888,7 +888,9 @@ func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 				require.NoError(t, lookupErr)
 				_, _, err = s.Trash(ctx, node.ID, node.Revision)
 			case "retargeted":
-				_, err = s.db.ExecContext(ctx, "UPDATE photo_files SET sidecar_of_file_id=? WHERE file_id=?", fileByRole(asset.Files, PhotoRoleImage).ID, sidecar.ID)
+				asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoDetachOptions{})
+				require.NoError(t, err)
+				_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.NodeID, PhotoRoleSidecar, new(fileByRole(asset.Files, PhotoRoleImage).ID))
 			}
 			require.NoError(t, err)
 			called := false
@@ -1336,9 +1338,7 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 			t.Skip("Windows filename policy")
 		}
 		s := newTestStore(t)
-		asset := albumAsset(t, s, "photo.jpg")
-		_, err := s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", "first?.jpg", asset.Files[0].NodeID)
-		require.NoError(t, err)
+		albumAsset(t, s, "first?.jpg")
 		for _, name := range []string{"second:.jpg", "valid.jpg"} {
 			_, err := s.CreateFile(t.Context(), s.RootID(), name, browseHash(name), 10, "image/jpeg")
 			require.NoError(t, err)

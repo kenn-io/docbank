@@ -3,6 +3,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -39,6 +40,32 @@ var (
 type Ingester struct {
 	Store *store.Store
 	Blobs *blob.Store
+}
+
+// PublishPhotoXMP stores a written packet's bytes, then publishes the plan.
+func (ing *Ingester) PublishPhotoXMP(ctx context.Context, plan store.PhotoXMPPlan, data []byte) (imported *store.PhotoAuthoredReceipt, retErr error) {
+	if !plan.Write {
+		return ing.Store.PublishPhotoXMP(ctx, plan, "", 0, store.BlobPhysical{})
+	}
+	retErr = ing.Blobs.WithMutation(ctx, func() error {
+		var err error
+		imported, err = ing.publishPhotoXMPBytes(ctx, plan, data)
+		return err
+	})
+	return imported, retErr
+}
+
+func (ing *Ingester) publishPhotoXMPBytes(ctx context.Context, plan store.PhotoXMPPlan, data []byte) (imported *store.PhotoAuthoredReceipt, retErr error) {
+	written, err := ing.Blobs.WriteDetailedContext(ctx, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash)) }()
+	physical, err := physicalReceipt(written)
+	if err != nil {
+		return nil, err
+	}
+	return ing.Store.PublishPhotoXMP(ctx, plan, written.Hash, written.Size, physical)
 }
 
 // FileError records a per-file ingest failure.

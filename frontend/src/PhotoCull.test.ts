@@ -269,7 +269,7 @@ async function reviewPhoto(
   row = photo(1),
   autoAdvance = false,
   store?: ReturnType<typeof photoCullStorage>,
-  options: { lookupError?: Error } = {},
+  options: { lookupError?: Error; onmetadatachanged?: () => void } = {},
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -314,6 +314,7 @@ async function reviewPhoto(
       get: vi.fn(async () => new Blob(["synthetic-photo"])),
     } as unknown as PhotoPreviewCache,
     onclose,
+    onmetadatachanged: options.onmetadatachanged,
   });
   if (options.lookupError) await screen.findByText(options.lookupError.message);
   else await screen.findByText(row.name);
@@ -467,6 +468,49 @@ it("allows another decision after reconciling its own flag and rating with auto-
   expect(edit).toHaveBeenCalledTimes(3);
   expect(cull.currentID).toBe("photo-1");
   expect(photos.cullEditor!.conflict).toBe(false);
+});
+
+it("shows a background import's rating, rotation, and flag and tells the app", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
+  const target = preparedPhoto(1);
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async () =>
+    photoPreparation([{ ...target, values: { ...target.values } }]),
+  );
+  const row = photo(1);
+  row.previews.grid = { state: "ready", generation_id: "grid-1" };
+  const onmetadatachanged = vi.fn();
+  const { cull, photos, container } = await reviewPhoto(row, false, undefined, {
+    onmetadatachanged,
+  });
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  expect(screen.getByText("Unflagged · 0 stars")).toBeTruthy();
+  const flagsChanged = vi.spyOn(cull, "flagsChanged");
+  // The sync worker imports a sidecar edit made outside Docbank.
+  target.values = { ...target.values, rating: 4, flag: "pick", rotation: 90 };
+  target.revision++;
+  target.node_revision++;
+  target.xmp = { state: "synced", import_receipt_id: "xmp-import" };
+  vi.mocked(photos.lookupMany).mockResolvedValue([
+    { ...row, rating: 4, flag: "pick", rotation: 90 },
+  ]);
+  const tags = [
+    { id: "later-page", name: "Travel", revision: 2, assignment_count: 1 },
+  ] as api.Tag[];
+  await photos.cullEditor!.onXMPChanged!(undefined, tags);
+  await screen.findByText("pick · 4 stars");
+  await waitFor(() =>
+    expect(container.querySelector(".photo-stage img")?.getAttribute("style")).toContain(
+      "rotate(90deg)",
+    ),
+  );
+  expect(flagsChanged).toHaveBeenCalled();
+  expect(refresh).toHaveBeenCalled();
+  expect(onmetadatachanged).toHaveBeenCalledWith(undefined, tags);
 });
 
 it("shows prepared rotation after a no-op decision without replacing Undo", async () => {

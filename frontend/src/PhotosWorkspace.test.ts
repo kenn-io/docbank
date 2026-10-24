@@ -2899,6 +2899,93 @@ it.each(
   },
 );
 
+it.each(["resolution", "background import"])(
+  "refreshes the workspace after an XMP %s",
+  async (change) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "Image",
+      class {
+        src = "";
+        async decode() {}
+      },
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const before = preparedPhoto(1, { file_id: "file-1", xmp: { state: "pending" } });
+    const photos = workspaceWithPreparedPhoto(before);
+    photos.total = 1;
+    photos.filtersOpen = true;
+    photos.query = photos.baseQuery = { ...photos.query, text: "Harbor" };
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([before]));
+    const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "ready", generation_id: "fit" });
+    const receipt = { receipt_id: "xmp-import", before: [], after: [] } as PhotoAuthoredReceipt;
+    const facet = {
+      dimension: "camera",
+      available: true,
+      reason: "",
+      total: 2,
+      values: [{ key: "Canon", label: "Canon", count: 2, selected: false }],
+    };
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json(
+          change === "resolution"
+            ? {
+                items: [{ ...photo(1), rating: 4, rotation: 90 }],
+                total: 1,
+                facets: [],
+              }
+            : {
+                items: [{ ...photo(1), rating: 4, rotation: 90 }, photo(2)],
+                total: 2,
+                facets: [facet],
+              },
+        );
+      const metadata = photoMetadataResponse(url, init);
+      if (metadata) return metadata;
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const view = render(PhotosWorkspace, {
+      photos,
+      photoID: change === "background import" ? "photo-1" : undefined,
+      cache: { get: vi.fn(async () => new Blob(["synthetic"])) } as unknown as PhotoPreviewCache,
+    });
+    const viewer = () => view.container.querySelector(".photo-viewport img");
+    if (change === "resolution") {
+      await tick();
+      await photos.authored.onXMPChanged!(receipt);
+      await waitFor(() => expect(photos.items[0]?.rotation).toBe(90));
+      expect(photos.items).toEqual([{ ...photo(1), rating: 4, rotation: 90 }]);
+      expect(photos.total).toBe(1);
+      expect(photos.facets).toEqual([]);
+    } else {
+      await waitFor(() => expect(viewer()).toBeTruthy());
+      expect(viewer()!.getAttribute("style") ?? "").not.toContain("rotate(90deg)");
+      // The sync worker rotates the photo after the viewer loaded it.
+      lookup.mockClear();
+      lookup.mockResolvedValue({ ...photo(1), rating: 4, rotation: 90 });
+      await photos.authored.onXMPChanged!();
+      await waitFor(() => {
+        expect(photos.items[0]?.rotation).toBe(90);
+        expect(photos.items[0]).toMatchObject({ rating: 4 });
+        expect(photos.total).toBe(2);
+        expect(photos.facets).toEqual([facet]);
+      });
+      await waitFor(() => expect(lookup).toHaveBeenCalled());
+      await waitFor(() => expect(viewer()!.getAttribute("style")).toContain("rotate(90deg)"));
+    }
+    photos.dispose();
+  },
+);
+
 it("toggles the Filters panel", async () => {
   stubPhotoFetch(() => Promise.resolve(Response.json({ items: [photo(1)], total: 1, facets: [] })));
   const photos = new Photos("scoped", vi.fn());

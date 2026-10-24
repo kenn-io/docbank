@@ -223,7 +223,7 @@ func readPhotoIPTCKeywords(data []byte) ([]string, error) {
 		default:
 			return nil, invalid
 		}
-		if validatePhotoXMPText(keyword) != nil {
+		if store.ValidatePhotoXMPText("keyword", keyword) != nil {
 			return nil, invalid
 		}
 		if keyword != "" && !seen[keyword] {
@@ -795,25 +795,14 @@ type photoXMPFrame struct {
 type photoXMPEncoder struct {
 	encoder *xml.Encoder
 	frames  []photoXMPFrame
-}
-
-func validatePhotoXMPText(value string) error {
-	if !utf8.ValidString(value) {
-		return errors.New("XMP text contains invalid UTF-8")
-	}
-	for _, r := range value {
-		if r == '\t' || r == '\n' || r == '\r' || r >= 0x20 && r <= 0xd7ff || r >= 0xe000 && r <= 0xfffd || r >= 0x10000 && r <= 0x10ffff {
-			continue
-		}
-		return fmt.Errorf("XMP text contains character U+%04X that XML cannot represent", r)
-	}
-	return nil
+	// prefixes names the namespaces a writer wants under their usual prefixes.
+	prefixes map[string]string
 }
 
 func (w *photoXMPEncoder) EncodeToken(token xml.Token) error {
 	switch t := token.(type) {
 	case xml.CharData:
-		if err := validatePhotoXMPText(string(t)); err != nil {
+		if err := store.ValidatePhotoXMPText("XMP text", string(t)); err != nil {
 			return err
 		}
 	case xml.StartElement:
@@ -822,7 +811,7 @@ func (w *photoXMPEncoder) EncodeToken(token xml.Token) error {
 			namespaces = maps.Clone(w.frames[len(w.frames)-1].namespaces)
 		}
 		for _, attr := range t.Attr {
-			if err := validatePhotoXMPText(attr.Value); err != nil {
+			if err := store.ValidatePhotoXMPText("XMP text", attr.Value); err != nil {
 				return err
 			}
 			if attr.Name.Space == xmlNamespacePrefix {
@@ -844,7 +833,10 @@ func (w *photoXMPEncoder) EncodeToken(token xml.Token) error {
 					return xml.Name{Local: prefix + ":" + name.Local}
 				}
 			}
-			prefix := "ns" + strconv.Itoa(len(namespaces))
+			prefix := w.prefixes[name.Space]
+			if prefix == "" {
+				prefix = "ns" + strconv.Itoa(len(namespaces))
+			}
 			for namespaces[prefix] != "" {
 				prefix += "_"
 			}
@@ -1115,9 +1107,10 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				continue
 			}
 			if depth == rdfDepth+1 && elements[rdfDepth-1] == (xml.Name{Space: rdfNamespace, Local: "RDF"}) && t.Name == (xml.Name{Space: rdfNamespace, Local: "Description"}) {
-				current, err := readPhotoXMPSubject(t.Attr)
-				if err != nil {
-					return nil, err
+				current := readPhotoXMPSubject(t.Attr)
+				if current.kind == "ID" {
+					// A packet cannot repeat an rdf:ID, so authored values could not join it.
+					return nil, errors.New("XMP rdf:ID subjects are unsupported; turn image metadata off")
 				}
 				if !subjectSeen {
 					subject, subjectSeen = current, true
@@ -1261,7 +1254,7 @@ type photoXMPSubject struct {
 	kind, value string
 }
 
-func readPhotoXMPSubject(attrs []xml.Attr) (photoXMPSubject, error) {
+func readPhotoXMPSubject(attrs []xml.Attr) photoXMPSubject {
 	subject := photoXMPSubject{kind: "about"}
 	for _, attr := range attrs {
 		if attr.Name.Space != rdfNamespace {
@@ -1272,14 +1265,43 @@ func readPhotoXMPSubject(attrs []xml.Attr) (photoXMPSubject, error) {
 			if subject.kind == "about" {
 				subject.value = attr.Value
 			}
-		case "nodeID":
-			subject = photoXMPSubject{kind: "nodeID", value: attr.Value}
-		case "ID":
-			// A packet cannot repeat an rdf:ID, so authored values could not join it.
-			return subject, errors.New("XMP rdf:ID subjects are unsupported; turn image metadata off")
+		case "ID", "nodeID":
+			subject = photoXMPSubject{kind: attr.Name.Local, value: attr.Value}
 		}
 	}
-	return subject, nil
+	return subject
+}
+
+func writePhotoXMPProperty(encoder *photoXMPEncoder, space, name, value, collection string, keywords []string) error {
+	e := xml.StartElement{Name: xml.Name{Space: space, Local: name}}
+	if err := encoder.EncodeToken(e); err != nil {
+		return err
+	}
+	if collection != "" {
+		c := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: collection}}
+		if err := encoder.EncodeToken(c); err != nil {
+			return err
+		}
+		values := []string{value}
+		if name == "subject" || photoXMPLightroomKeywords(e.Name) {
+			values = keywords
+		}
+		for _, v := range values {
+			li := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: "li"}}
+			if collection == photoXMPAlt {
+				li.Attr = []xml.Attr{{Name: xml.Name{Space: xmlNamespace, Local: "lang"}, Value: "x-default"}}
+			}
+			if err := encoder.EncodeElement(v, li); err != nil {
+				return err
+			}
+		}
+		if err := encoder.EncodeToken(c.End()); err != nil {
+			return err
+		}
+	} else if err := encoder.EncodeToken(xml.CharData(value)); err != nil {
+		return err
+	}
+	return encoder.EncodeToken(e.End())
 }
 
 func writePhotoAuthoredXMP(encoder *photoXMPEncoder, input store.PhotoExportInput, subject photoXMPSubject) error {
@@ -1290,43 +1312,12 @@ func writePhotoAuthoredXMP(encoder *photoXMPEncoder, input store.PhotoExportInpu
 	if err := encoder.EncodeToken(description); err != nil {
 		return err
 	}
-	write := func(space, name, value string, collection string) error {
-		e := xml.StartElement{Name: xml.Name{Space: space, Local: name}}
-		if err := encoder.EncodeToken(e); err != nil {
-			return err
-		}
-		if collection != "" {
-			c := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: collection}}
-			if err := encoder.EncodeToken(c); err != nil {
-				return err
-			}
-			values := []string{value}
-			if name == "subject" {
-				values = input.Keywords
-			}
-			for _, v := range values {
-				li := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: "li"}}
-				if collection == "Alt" {
-					li.Attr = []xml.Attr{{Name: xml.Name{Space: xmlNamespace, Local: "lang"}, Value: "x-default"}}
-				}
-				if err := encoder.EncodeElement(v, li); err != nil {
-					return err
-				}
-			}
-			if err := encoder.EncodeToken(c.End()); err != nil {
-				return err
-			}
-		} else if err := encoder.EncodeToken(xml.CharData(value)); err != nil {
-			return err
-		}
-		return encoder.EncodeToken(e.End())
-	}
-	v := input.Authored
-	for _, p := range [][4]string{{xmpBasicNamespace, "Rating", strconv.Itoa(v.Rating), ""}, {xmpBasicNamespace, "Label", v.Label, ""}, {teststripXMPNamespace, "Pick", v.Flag, ""}, {teststripXMPNamespace, "Rotation", "0", ""}, {xmpDublinCoreNamespace, "description", v.Caption, "Alt"}, {xmpDublinCoreNamespace, sourceMetadataCreatorField, v.Creator, "Seq"}, {xmpDublinCoreNamespace, "rights", v.Copyright, "Alt"}, {xmpDublinCoreNamespace, "subject", "", "Bag"}} {
-		if !photoXMPConfirmed(xml.Name{Space: p[0], Local: p[1]}, input) {
+	input.Authored.Rotation = 0 // exports write ts:Rotation as 0
+	for _, p := range photoXMPProperties {
+		if p.name == photoXMPOrientationField || !photoXMPConfirmed(xml.Name{Space: p.space, Local: p.name}, input) {
 			continue
 		}
-		if err := write(p[0], p[1], p[2], p[3]); err != nil {
+		if err := writePhotoXMPProperty(encoder, p.space, p.name, photoXMPPropertyText(p, input.Authored, 1), p.collection, input.Keywords); err != nil {
 			return err
 		}
 	}
@@ -1340,11 +1331,11 @@ func photoXMPExportField(n xml.Name) string {
 	if n.Space == "http://ns.adobe.com/tiff/1.0/" {
 		switch n.Local {
 		case "ImageDescription":
-			return "description"
+			return sourceMetadataDescriptionField
 		case "Artist":
 			return sourceMetadataCreatorField
 		case "Copyright":
-			return "rights"
+			return sourceMetadataRightsField
 		}
 	}
 	return photoXMPField(n)
@@ -1354,23 +1345,19 @@ func photoXMPKeywords(n xml.Name) bool {
 	if strings.TrimSuffix(n.Space, "/") == microsoftPhotoXMPNamespace {
 		return n.Local == "LastKeywordXMP" || n.Local == "LastKeywordIPTC" || n.Local == "LastKeywordIPTC_TIFF_IRB"
 	}
-	return n.Space == xmpDublinCoreNamespace && n.Local == "subject" || n.Space == "http://ns.adobe.com/lightroom/1.0/" && n.Local == "hierarchicalSubject" || n.Space == xmpPDFNamespace && n.Local == "Keywords"
+	return n.Space == xmpDublinCoreNamespace && n.Local == "subject" || photoXMPLightroomKeywords(n) && n.Local == "hierarchicalSubject" || n.Space == xmpPDFNamespace && n.Local == "Keywords"
 }
 
 func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 	if photoXMPKeywords(n) {
 		return len(input.Keywords) > 0
 	}
-	bit := map[string]store.PhotoAuthoredFields{
-		"Rating":                   store.PhotoConfirmedRating,
-		"Label":                    store.PhotoConfirmedLabel,
-		"Pick":                     store.PhotoConfirmedFlag,
-		"Rotation":                 store.PhotoConfirmedRotation,
-		"description":              store.PhotoConfirmedCaption,
-		sourceMetadataCreatorField: store.PhotoConfirmedCreator,
-		"rights":                   store.PhotoConfirmedCopyright,
-	}[photoXMPExportField(n)]
-	return bit != 0 && input.Authored.Confirmed&bit != 0
+	for _, p := range photoXMPProperties {
+		if p.name == photoXMPExportField(n) && p.name != photoXMPOrientationField {
+			return input.Authored.Confirmed&p.bit != 0
+		}
+	}
+	return false
 }
 
 const metadataOffRemedy = "; turn image metadata off to export this photo"

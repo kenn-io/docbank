@@ -77,8 +77,8 @@ describe different authority handoffs.
 
 Docbank exports logical metadata as deterministic JSONL: one JSON record per
 line, with stable record and field ordering. Snapshot manifests identify this
-artifact as `docbank-metadata-jsonl-v2`; restore also accepts v1 snapshots. It
-contains the complete virtual
+artifact as `docbank-metadata-jsonl-v2`; restore also accepts released v1 snapshots.
+Format 2 includes XMP sync receipts. The stream contains the complete virtual
 directory tree and file records, including stable IDs, content hashes,
 timestamps, trash coordinates, prior versions, ingest provenance,
 watched-source cursors, tags, and extracted text. Photo files retain `flag_owner`, which holds `return` when a Return decision owns the flag and is empty otherwise, so explicit flag choices and Undo keep their meaning after restore.

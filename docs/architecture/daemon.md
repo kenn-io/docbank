@@ -194,7 +194,7 @@ The daemon's content jobs include:
 - `extract:source-metadata` reads retained originals that the current extractor
   has not processed. It publishes typed metadata and keeps watching for new
   content.
-- `extract:photo-sidecars` initializes undecided photo files from linked XMP sidecars.
+- `extract:photo-sidecars` syncs Pending photo files with their linked XMP sidecars, including hidden photos.
 - `derive:photo-quality` evaluates the selected display file's quality signals.
 - `maintenance:auxiliary-checksums` computes MD5 for retained blobs that
   predate auxiliary checksums, then completes. New writes record MD5 at ingest.

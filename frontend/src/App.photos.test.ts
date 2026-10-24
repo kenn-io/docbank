@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
   photoMetadataResponse,
+  photoPreparation,
   preparedPhoto,
   photo,
   mapPhoto,
@@ -2788,6 +2789,138 @@ it.each(["search", "tag", "snapshot"] as const)(
   },
 );
 
+it("rereads sibling photo views, album covers, and a frozen Documents selection after a receiptless background import", async () => {
+  const query = parseQuery("{}");
+  const fingerprint = await queryFingerprint(query);
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const prepare = vi.spyOn(PhotoAuthoredEditor.prototype, "prepare");
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  const node = {
+    id: 7,
+    parent_id: 1,
+    name: "report.pdf",
+    kind: "file",
+    current_version_id: "00000000-0000-4000-8000-000000000007",
+    blob_hash: "a".repeat(64),
+    size: 1007,
+    mime_type: "application/pdf",
+    revision: 3,
+    created_at: "2026-10-14T12:00:00Z",
+    modified_at: "2026-10-14T12:00:00Z",
+    path: "/report.pdf",
+  };
+  const album = photoAlbum({ member_count: 1, included_count: 1 });
+  const reads = { tags: 0, audit: 0, albums: 0, library: 0, album: 0 };
+  stubPhotoFetch(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/authored/prepare"))
+      return Response.json(
+        photoPreparation([preparedPhoto(1, { file_id: "file-1", xmp: { state: "synced" } })]),
+      );
+    if (url.endsWith("/photos/albums")) {
+      reads.albums++;
+      return albumResponse([album]);
+    }
+    if (url.endsWith("/photos/assets/query")) {
+      reads[JSON.parse(String(init.body ?? "{}")).query?.filters?.set_ids ? "album" : "library"]++;
+      return albumResponse({ items: [photo(1)], total: 1, facets: [] });
+    }
+    if (url === "/api/v1/path?path=%2F") return albumResponse(root);
+    if (url.includes("/nodes/1/children"))
+      return albumResponse({ directory: root, items: [], total: 0 });
+    if (url.startsWith("/api/v1/tags?")) return albumResponse({ items: [], total: 0 });
+    if (url.endsWith("/queries/parse"))
+      return albumResponse({ query, query_fingerprint: fingerprint, dependencies: [] });
+    if (url.endsWith("/workspace/queries"))
+      return albumResponse({
+        query,
+        dependencies: [],
+        query_fingerprint: fingerprint,
+        member_hash: "a".repeat(64),
+        snapshot_fingerprint: `sha256:${"b".repeat(64)}`,
+        generation: { kind: "native" },
+        coverage: { configuration: "unconfigured" },
+        observed_at: "2026-10-14T12:00:00Z",
+        page_size: 100,
+        total: 1,
+        total_bytes: node.size,
+        rows: [
+          {
+            node_id: node.id,
+            content_version_id: node.current_version_id,
+            blob_hash: node.blob_hash,
+            size: node.size,
+            revision: node.revision,
+            name: node.name,
+            path: node.path,
+            mime_type: node.mime_type,
+            media_family: "document",
+            modified_at: node.modified_at,
+            sort_key: node.name,
+            tags: [],
+            collection_ids: [],
+          },
+        ],
+        facets: JSON.parse(String(init.body)).facets.map((dimension: string) => ({
+          dimension,
+          available: false,
+          reason: "not_requested",
+          values: [],
+        })),
+        snapshot: true,
+        snapshot_id: "a".repeat(32),
+        created_at: "2026-10-14T12:00:00Z",
+        expires_at: "2026-10-14T12:30:00Z",
+      });
+    if (url === "/api/v1/nodes/7") return albumResponse(node);
+    if (url.startsWith("/api/v1/nodes/7/tags")) {
+      reads.tags++;
+      return albumResponse({ node, items: [], total: 0 });
+    }
+    if (url.startsWith("/api/v1/audit/status?node_id=7")) {
+      reads.audit++;
+      return albumResponse({ enabled: false, scopes: [] });
+    }
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  await fireEvent.click(await screen.findByRole("cell", { name: "/report.pdf" }));
+  await waitFor(() => expect(reads.audit).toBeGreaterThan(0));
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(await screen.findByRole("button", { name: /^Trip/ }));
+  await waitFor(() => expect(reads.album).toBeGreaterThan(0));
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await waitFor(() => expect(prepare).toHaveBeenCalled());
+  const before = { ...reads };
+  // The album's editor reports an import that carries no receipt; its siblings and covers must follow.
+  await (prepare.mock.contexts.at(-1) as PhotoAuthoredEditor).onXMPChanged!();
+  await waitFor(() => expect(reads.library).toBeGreaterThan(before.library));
+  expect(reads.albums).toBeGreaterThan(before.albums);
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  await waitFor(() => {
+    expect(reads.tags).toBeGreaterThan(before.tags);
+    expect(reads.audit).toBeGreaterThan(before.audit);
+  });
+  expect(screen.getByRole("region", { name: "Frozen query results" })).toBeTruthy();
+});
+
 it("opens a smart set through the Albums app route", async () => {
   history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
@@ -3287,6 +3420,7 @@ it("loads keywords beyond the first catalog page", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   Element.prototype.scrollIntoView = vi.fn();
+  const prepare = vi.spyOn(PhotoAuthoredEditor.prototype, "prepare");
   const catalog = Array.from({ length: 1000 }, (_, index) => ({
     id: `tag-${index}`,
     name: `Keyword ${index}`,
@@ -3324,6 +3458,14 @@ it("loads keywords beyond the first catalog page", async () => {
   expect(
     await within(inspector).findByRole("option", { name: /Beyond the first page/ }),
   ).toBeTruthy();
+  const editor = prepare.mock.contexts.at(-1) as PhotoAuthoredEditor;
+  await editor.onXMPChanged!(undefined, [{ ...last, revision: 2, assignment_count: 1 }]);
+  await waitFor(() =>
+    expect(editor.tags.find((tag) => tag.id === "last")).toMatchObject({
+      revision: 2,
+      assignment_count: 1,
+    }),
+  );
 });
 
 it("guards a Hidden draft while a status failure conceals its workspace", async () => {

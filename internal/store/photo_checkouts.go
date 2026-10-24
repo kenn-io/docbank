@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/filename"
 	"go.kenn.io/docbank/internal/query"
 	"golang.org/x/sync/semaphore"
+	"golang.org/x/text/unicode/norm"
 )
 
 var ErrInvalidPhotoCheckout = errors.New("invalid photo checkout")
@@ -200,7 +201,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	if err != nil {
 		return nil, estimate, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(timeline.day,'')
+	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,f.role,v.version_id,v.blob_hash,v.size,n.name,COALESCE(timeline.day,'')
  FROM photo_files f JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  JOIN photo_assets a ON a.asset_id=f.asset_id JOIN photo_files display ON display.file_id=a.display_file_id
  LEFT JOIN photo_timeline timeline ON timeline.file_id=display.file_id
@@ -209,15 +210,36 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		return nil, estimate, err
 	}
 	defer func() { _ = rows.Close() }()
-	skipped := map[string]PhotoCheckoutSkip{}
-	pathOwners := map[string]string{}
+	type checkoutRow struct {
+		entry      PhotoCheckoutEntry
+		name, date string
+	}
+	var scanned []checkoutRow
+	// Originals by asset and file, known before their sidecars are named.
+	originals := map[string]map[string]checkoutOriginal{}
 	for rows.Next() {
-		var entry PhotoCheckoutEntry
-		var name, date string
-		if err := rows.Scan(&entry.FileID, &entry.AssetID, &entry.VersionID, &entry.Hash, &entry.Size, &name, &date); err != nil {
+		var r checkoutRow
+		var role string
+		if err := rows.Scan(&r.entry.FileID, &r.entry.AssetID, &role, &r.entry.VersionID, &r.entry.Hash, &r.entry.Size, &r.name, &r.date); err != nil {
 			_ = rows.Close()
 			return nil, estimate, err
 		}
+		r.name = photoDeliveredName(sources, r.entry.FileID, r.name)
+		if role != PhotoRoleSidecar {
+			if originals[r.entry.AssetID] == nil {
+				originals[r.entry.AssetID] = map[string]checkoutOriginal{}
+			}
+			originals[r.entry.AssetID][r.entry.FileID] = checkoutOriginal{r.name, role == PhotoRoleRAW}
+		}
+		scanned = append(scanned, r)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, estimate, err
+	}
+	skipped := map[string]PhotoCheckoutSkip{}
+	pathOwners := map[string]string{}
+	for _, r := range scanned {
+		entry, name := r.entry, r.name
 		source := sources[entry.FileID]
 		if source.target != "" {
 			target := sources[source.target]
@@ -225,13 +247,13 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 				continue
 			}
 			entry.SidecarOfID = new(source.target)
-		}
-		if source.path != "" {
-			name = path.Base(source.path)
+			if source.identity == "" {
+				name = checkoutSidecarName(source.target, originals[entry.AssetID])
+			}
 		}
 		folder := "undated"
-		if len(date) >= 10 {
-			folder = strings.ReplaceAll(date[:10], "-", "/")
+		if len(r.date) >= 10 {
+			folder = strings.ReplaceAll(r.date[:10], "-", "/")
 		}
 		if err := validateCheckoutFilename(name); err != nil {
 			skipped[entry.AssetID] = PhotoCheckoutSkip{entry.AssetID, entry.FileID, name, err.Error()}
@@ -244,9 +266,6 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		}
 		pathOwners[entry.Path] = entry.FileID
 		entries = append(entries, entry)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, estimate, err
 	}
 	for _, id := range ids {
 		if skip, exists := skipped[id]; exists {
@@ -763,4 +782,30 @@ func (c PhotoCheckout) ActiveOperationID() string {
 		return c.LastOperationID
 	}
 	return c.OperationID
+}
+
+type checkoutOriginal struct {
+	name string
+	raw  bool
+}
+
+// photoDeliveredName is the name checkout gives a file: its source path's base, else its node name.
+func photoDeliveredName(sources map[string]photoSource, fileID, nodeName string) string {
+	if p := sources[fileID].path; p != "" {
+		return path.Base(p)
+	}
+	return nodeName
+}
+
+// checkoutSidecarName names a sidecar with no source filename after the original it ships beside.
+// It is <stem>.xmp, which Adobe apps read, for the only original or only RAW with that stem, as import folds names.
+func checkoutSidecarName(target string, originals map[string]checkoutOriginal) string {
+	original := originals[target]
+	stem := strings.TrimSuffix(original.name, path.Ext(original.name))
+	for id, other := range originals {
+		if id != target && (other.raw || !original.raw) && strings.EqualFold(norm.NFC.String(strings.TrimSuffix(other.name, path.Ext(other.name))), norm.NFC.String(stem)) {
+			return original.name + ".xmp"
+		}
+	}
+	return stem + ".xmp"
 }
