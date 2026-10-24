@@ -99,13 +99,10 @@ func processCreateTimeMillis(pid int) (int64, bool) {
 	return created, true
 }
 
-// createTimeMatches rejects foreign or gone process identities.
-// Otherwise it compares create_time with the live PID when the key is present.
+// createTimeMatches reports whether rec's recorded create_time still
+// describes the live process at rec.PID. A record without the key matches
+// trivially (older daemons); a mismatch means PID reuse — treat as dead.
 func createTimeMatches(rec kitdaemon.RuntimeRecord) bool {
-	scope := kitdaemon.RuntimeProcessScope(rec)
-	if scope == kitdaemon.ProcessScopeForeign || scope == kitdaemon.ProcessScopeGone {
-		return false
-	}
 	recorded := rec.Metadata[metaCreateTime]
 	if recorded == "" {
 		return true

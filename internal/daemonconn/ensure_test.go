@@ -104,40 +104,17 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 }
 
 func TestCreateTimeMatches(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		want bool
-	}{
-		{"own record", true},
-		{"mismatched create time", false},
-		{"missing create time", true},
-		{"gone identity", false},
-		{"foreign identity", false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			rec := NewRecord("127.0.0.1:1", "key", "tok", "")
-			require.Equal(t, os.Getpid(), rec.PID)
-			switch test.name {
-			case "mismatched create time":
-				rec.Metadata[metaCreateTime] = "1"
-			case "missing create time":
-				delete(rec.Metadata, metaCreateTime)
-			case "gone identity", "foreign identity":
-				if runtime.GOOS != "linux" {
-					t.Skip("fabricated boot and PID namespace identities require Linux")
-				}
-				fields := strings.Split(string(rec.ProcessIdentityV2), ":")
-				require.Len(t, fields, 4)
-				if test.name == "gone identity" {
-					fields[1] = "11111111-2222-3333-4444-555555555555"
-				} else {
-					fields[2] = "1"
-				}
-				rec.ProcessIdentityV2 = kitdaemon.ProcessIdentity(strings.Join(fields, ":"))
-			}
-			assert.Equal(t, test.want, createTimeMatches(rec))
-		})
-	}
+	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
+	require.Equal(t, os.Getpid(), rec.PID)
+	assert.True(t, createTimeMatches(rec), "own record must match")
+
+	// Simulate PID reuse: same live PID, different recorded create time.
+	rec.Metadata[metaCreateTime] = strconv.FormatInt(1, 10)
+	assert.False(t, createTimeMatches(rec), "mismatched create_time must read as dead")
+
+	// Records without the key (older daemons) match trivially.
+	delete(rec.Metadata, metaCreateTime)
+	assert.True(t, createTimeMatches(rec))
 }
 
 // A version-matched record without a published API key is a pre-key daemon:
