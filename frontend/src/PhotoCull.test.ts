@@ -1204,8 +1204,8 @@ async function reviewThree() {
   const rows = [photo(1), photo(2), photo(3)];
   const review = await reviewPhoto(rows[0]);
   const { cull, photos } = review;
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
     rows.filter((row) => ids.includes(row.asset_id)),
@@ -1384,8 +1384,8 @@ it.each([1, 7])("keeps all with fresh revisions after stack member %i changes", 
     })),
   }));
   const { cull, photos } = await reviewPhoto(rows[0]);
-  vi.mocked(photos.lookup).mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
   );
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
     rows.filter((row) => ids.includes(row.asset_id)),
