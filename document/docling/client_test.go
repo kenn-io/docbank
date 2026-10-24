@@ -1182,11 +1182,71 @@ func TestClientClonesHTTPClientAndRefusesRedirects(t *testing.T) {
 }
 
 func TestClientAcceptanceSyntheticUpload(t *testing.T) {
+	fixture := newFixture(t, "text", "text/plain", "synthetic-acceptance.txt", []byte("Synthetic Docling acceptance document.\n"))
+	client := acceptanceClient(t, fixture)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, fixture.authorization.SourceSHA256, result.Receipt.SourceSHA256)
+	assert.NotEmpty(t, result.Evidence.Units)
+}
+
+// TestClientAcceptancePageRange checks the Docling Serve behavior page ranges
+// rely on: repeated page_range form fields select pages, results keep original
+// page numbers, and a range past the last page is not silently truncated.
+func TestClientAcceptancePageRange(t *testing.T) {
+	var source bytes.Buffer
+	offsets := []int{}
+	object := func(body string) {
+		offsets = append(offsets, source.Len())
+		fmt.Fprintf(&source, "%d 0 obj\n%s\nendobj\n", len(offsets), body)
+	}
+	source.WriteString("%PDF-1.4\n")
+	object("<< /Type /Catalog /Pages 2 0 R >>")
+	object("<< /Type /Pages /Kids [4 0 R 6 0 R 8 0 R] /Count 3 >>")
+	object("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+	for page := 1; page <= 3; page++ {
+		object(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>", len(offsets)+2))
+		content := fmt.Sprintf("BT /F1 24 Tf 72 720 Td (Synthetic range page %d) Tj ET", page)
+		object(fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
+	}
+	xref := source.Len()
+	fmt.Fprintf(&source, "xref\n0 %d\n0000000000 65535 f \n", len(offsets)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&source, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&source, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets)+1, xref)
+
+	fixture := newFixture(t, "pdf", "application/pdf", "synthetic-range.pdf", source.Bytes())
+	fixture.authorization.MaxArtifactBytes = 1 << 20
+	fixture.authorization.MaxProviderMarkdownBytes = 1 << 20
+	fixture.authorization.MaxTotalResultBytes = 4 << 20
+	client := acceptanceClient(t, fixture)
+
+	result, err := client.RenderPageRange(t.Context(), fixture.upload(), fixture.authorization, PageRange{First: 2, Last: 3})
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
+	require.Len(t, result.Evidence.Units, 2)
+	for index, page := range []int64{2, 3} {
+		unit := result.Evidence.Units[index]
+		assert.Equal(t, page, unit.Locator.Start)
+		assert.Equal(t, page, unit.Locator.End)
+		assert.Contains(t, unit.Text, fmt.Sprintf("Synthetic range page %d", page))
+	}
+	assert.NotContains(t, string(result.ProviderMarkdown), "Synthetic range page 1")
+
+	_, err = client.RenderPageRange(t.Context(), fixture.upload(), fixture.authorization, PageRange{First: 2, Last: 4})
+	require.Error(t, err)
+	assert.False(t, document.IsRenditionProviderErrorRetryable(err))
+}
+
+// acceptanceClient connects to the operator-controlled Docling Serve endpoint
+// named by DOCLING_ACCEPTANCE_URL, skipping the test when it is unset.
+func acceptanceClient(t *testing.T, fixture fixture) *Client {
+	t.Helper()
 	origin := os.Getenv("DOCLING_ACCEPTANCE_URL")
 	if origin == "" {
 		t.Skip("set DOCLING_ACCEPTANCE_URL to run against an operator-controlled Docling Serve endpoint")
 	}
-	fixture := newFixture(t, "text", "text/plain", "synthetic-acceptance.txt", []byte("Synthetic Docling acceptance document.\n"))
 	var secrets SecretResolver
 	if apiKey := os.Getenv("DOCLING_ACCEPTANCE_API_KEY"); apiKey != "" {
 		secrets = testSecrets{"docling-api": apiKey}
@@ -1201,10 +1261,7 @@ func TestClientAcceptanceSyntheticUpload(t *testing.T) {
 		MaxPollAttempts: 300, MaxResponseBytes: 64 << 20, MaxDocumentBytes: 1 << 20,
 	}, secrets, http.DefaultClient)
 	require.NoError(t, err)
-	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
-	assert.Equal(t, fixture.authorization.SourceSHA256, result.Receipt.SourceSHA256)
-	assert.NotEmpty(t, result.Evidence.Units)
+	return client
 }
 
 type fixture struct {
