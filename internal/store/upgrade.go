@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -249,8 +250,9 @@ func validateReleasedStorageSchemas() error {
 		}
 		delete(versions, version)
 	}
-	for version := range versions {
-		return fmt.Errorf("storage schema version %d has an adapter but no release", version)
+	if len(versions) > 0 {
+		leftover := slices.Sorted(maps.Keys(versions))
+		return fmt.Errorf("storage schema version %d has an adapter but no release", leftover[0])
 	}
 	return nil
 }
