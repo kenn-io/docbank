@@ -241,17 +241,18 @@ func (client *Client) buildPageRangeResult(
 
 // checkSelection rejects a page registry that is not exactly the selection and
 // any text provenance outside it, so no fallback hides a contradictory result.
-// Only recognized Docling 1.x documents can establish the selected page bounds.
+// Only recognized Docling 1.x documents can establish the selected page bounds;
+// the header is checked before relying on fields whose shape may change across majors.
 func checkSelection(raw jsontext.Value, pages PageRange) error {
-	if !recognizedDoclingDocument(raw) {
-		return provider.Malformed("Docling page range result requires a supported document schema", nil)
-	}
 	var wire struct {
-		Pages map[string]jsontext.Value `json:"pages"`
-		Texts []doclingText             `json:"texts"`
+		SchemaName string                    `json:"schema_name"`
+		Version    string                    `json:"version"`
+		Pages      map[string]jsontext.Value `json:"pages"`
+		Texts      []doclingText             `json:"texts"`
 	}
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		return provider.Malformed("Docling page range result cannot be checked", err)
+	if len(raw) == 0 || json.Unmarshal(raw, &wire) != nil ||
+		wire.SchemaName != "DoclingDocument" || !supportedDoclingMajor(wire.Version) {
+		return provider.Malformed("Docling page range result requires a supported document schema", nil)
 	}
 	if wire.Pages != nil && int64(len(wire.Pages)) != pages.Last-pages.First+1 {
 		return provider.Malformed("Docling page registry does not match the selected range", nil)
@@ -718,17 +719,6 @@ func doclingPageTexts(
 		hasMappedText = true
 	}
 	return indexes, pages, hasMappedText || allowBlankRange
-}
-
-// recognizedDoclingDocument reports whether raw names a supported DoclingDocument
-// schema, without decoding fields whose shape may change across majors.
-func recognizedDoclingDocument(raw jsontext.Value) bool {
-	var header struct {
-		SchemaName string `json:"schema_name"`
-		Version    string `json:"version"`
-	}
-	return len(raw) != 0 && json.Unmarshal(raw, &header) == nil &&
-		header.SchemaName == "DoclingDocument" && supportedDoclingMajor(header.Version)
 }
 
 func supportedDoclingMajor(version string) bool {
