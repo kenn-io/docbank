@@ -341,10 +341,6 @@ func (s *Store) VisiblePhotoEvents(ctx context.Context, events []PhotoEvent) ([]
 					continue
 				}
 			}
-			if event.AssetID != "" && !exists {
-				visible = []PhotoEvent{{}}
-				return nil
-			}
 			event.hiddenOnly = false
 			visible = append(visible, event)
 		}
