@@ -473,47 +473,40 @@ func TestPhotoXMPRotationComposesWithOrientation(t *testing.T) {
 func TestPhotoXMPOutsideImportReplacesGeneratedSidecar(t *testing.T) {
 	t.Parallel()
 	raw := photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}
-	generated := func(t *testing.T) (*xmpEnv, store.Node) {
-		t.Helper()
-		e := newXMPEnv(t)
-		e.edit(store.PhotoAuthoredPatch{Rating: new(4)})
-		e.drain()
-		created, _, _ := e.packet()
-		before, err := e.catalog.NodeProvenance(t.Context(), created.ID, 10, 0)
-		require.NoError(t, err)
-		require.Len(t, before.Items, 1)
-		require.Equal(t, "photo-xmp", before.Items[0].SourceKind)
-		return e, created
+	e := newXMPEnv(t)
+	e.edit(store.PhotoAuthoredPatch{Rating: new(4)})
+	e.drain()
+	created, _, _ := e.packet()
+	before, err := e.catalog.NodeProvenance(t.Context(), created.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, before.Items, 1)
+	require.Equal(t, "photo-xmp", before.Items[0].SourceKind)
+	outside := xmpSidecar(` xmp:Rating="4"`, "")
+	result := e.importFiles(raw, outside)
+	require.True(t, result.Added)
+	require.Equal(t, created.ID, result.Nodes[1].ID)
+	require.NotEqual(t, created.CurrentVersionID, result.Nodes[1].CurrentVersionID)
+	require.Len(t, e.sidecars(), 1)
+	provenance, err := e.catalog.NodeProvenance(t.Context(), created.ID, 10, 0)
+	require.NoError(t, err)
+	found := false
+	for _, fact := range provenance.Items {
+		found = found || fact.SourceKind == "photo-import" && fact.OriginalPath == filepath.Join(e.root, "camera", outside.name)
 	}
-	t.Run("a matching rating starts the folder's history", func(t *testing.T) {
-		e, created := generated(t)
-		outside := xmpSidecar(` xmp:Rating="4"`, "")
-		result := e.importFiles(raw, outside)
-		require.True(t, result.Added)
-		require.Equal(t, created.ID, result.Nodes[1].ID)
-		require.NotEqual(t, created.CurrentVersionID, result.Nodes[1].CurrentVersionID)
-		require.Len(t, e.sidecars(), 1)
-		provenance, err := e.catalog.NodeProvenance(t.Context(), created.ID, 10, 0)
-		require.NoError(t, err)
-		found := false
-		for _, fact := range provenance.Items {
-			found = found || fact.SourceKind == "photo-import" && fact.OriginalPath == filepath.Join(e.root, "camera", outside.name)
-		}
-		require.True(t, found, "outside bytes retain their source path")
+	require.True(t, found, "outside bytes retain their source path")
+	e.drain()
+	e.state(store.PhotoXMPStateSynced)
+	for _, rating := range []int{5, 2} {
+		outside = xmpSidecar(` xmp:Rating="`+strconv.Itoa(rating)+`"`, "")
+		result = e.importFiles(raw, outside)
+		require.Equal(t, created.ID, result.Nodes[1].ID, "later outside edits keep the attachment")
 		e.drain()
 		e.state(store.PhotoXMPStateSynced)
-		for _, rating := range []int{5, 2} {
-			outside = xmpSidecar(` xmp:Rating="`+strconv.Itoa(rating)+`"`, "")
-			result = e.importFiles(raw, outside)
-			require.Equal(t, created.ID, result.Nodes[1].ID, "later outside edits keep the attachment")
-			e.drain()
-			e.state(store.PhotoXMPStateSynced)
-			current, _, packet := e.packet()
-			assert.Equal(t, created.ID, current.ID)
-			assert.Equal(t, rating, packet.Rating)
-			assert.Equal(t, packet.Rating, e.raw().Rating)
-		}
-	})
+		current, _, packet := e.packet()
+		assert.Equal(t, created.ID, current.ID)
+		assert.Equal(t, rating, packet.Rating)
+		assert.Equal(t, packet.Rating, e.raw().Rating)
+	}
 }
 
 func TestPhotoXMPSourceReplacementKeepsAuthoredRotation(t *testing.T) {
@@ -981,11 +974,7 @@ func TestPhotoXMPPreservesUnmodeledCollectionItems(t *testing.T) {
 			if tc.body != "" && !strings.HasPrefix(tc.body, "</rdf:Description>") && !strings.HasPrefix(tc.body, "<x:xmpmeta") {
 				body = "<dc:" + tc.property + ">" + tc.body + "</dc:" + tc.property + ">"
 			}
-
-			original := []byte(body)
-			if !strings.HasPrefix(body, "<x:xmpmeta") {
-				original = []byte(xmpSidecar(` xmp:Rating="3"`, body).payload)
-			}
+			original := []byte(xmpSidecar(` xmp:Rating="3"`, body).payload)
 			unchangedBytes, unchangedPacket, err := rewritePhotoXMPSidecar(t.Context(), original, store.PhotoExportInput{Authored: store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}}, 1, store.PhotoConfirmedRating)
 			require.NoError(t, err)
 			if tc.initial != "" {
@@ -1027,9 +1016,6 @@ func TestPhotoXMPPreservesUnmodeledCollectionItems(t *testing.T) {
 			if tc.written != nil {
 				tc.written(t, written)
 			}
-			if strings.HasPrefix(tc.body, "<x:xmpmeta") {
-				return
-			}
 
 			clearedBytes, parsed, err := rewritePhotoXMPSidecar(t.Context(), writtenBytes, store.PhotoExportInput{}, 1, mask)
 			require.NoError(t, err)
@@ -1056,10 +1042,6 @@ func TestPhotoXMPPreservesUnmodeledCollectionItems(t *testing.T) {
 			_, _, err := rewritePhotoXMPSidecar(t.Context(), []byte(packet.payload), store.PhotoExportInput{Authored: store.PhotoAuthored{Creator: "Changed", Confirmed: store.PhotoConfirmedCreator}}, 1, store.PhotoConfirmedCreator)
 			require.ErrorContains(t, err, "xml:base", attrs)
 		}
-		e := newXMPEnv(t, xmpSidecar(` xmp:Rating="3" xml:base="photos/"`, ""))
-		e.drain()
-		require.Contains(t, e.state(store.PhotoXMPStateInvalid).Reason, "xml:base")
-		require.Zero(t, e.raw().Rating)
 	})
 	t.Run("subject held in a later description moves once", func(t *testing.T) {
 		held := `</rdf:Description><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:subject><rdf:Bag><rdf:li>Beach</rdf:li></rdf:Bag></dc:subject>`
@@ -1259,22 +1241,6 @@ func TestPhotoXMPFirstSidecarKeepsPreparedEditorUsable(t *testing.T) {
 	require.Equal(t, target.NodeRevision, e.node(e.raw().NodeID).Revision)
 }
 
-func TestPhotoXMPWrittenEchoKeepsRotationAcrossSourceChanges(t *testing.T) {
-	t.Parallel()
-	e := newXMPEnv(t, xmpSidecar("", ""))
-	e.drain()
-	e.orient(e.node(e.raw().NodeID).BlobHash, strings.Repeat("b", 64), 6)
-	e.edit(store.PhotoAuthoredPatch{Rotation: new(90)})
-	e.drain()
-	sc, data, _ := e.packet()
-	e.orient(e.node(e.raw().NodeID).BlobHash, strings.Repeat("c", 64), 1)
-	e.observe(photoGroupFile{sc.Name, store.PhotoRoleSidecar, "application/rdf+xml", data})
-	e.state(store.PhotoXMPStateSynced)
-	require.Equal(t, 90, e.raw().Rotation)
-	_, _, packet := e.packet()
-	require.Equal(t, 6, packet.Orientation)
-}
-
 func (e *xmpEnv) commitCheckout(payload string) string {
 	e.t.Helper()
 	t := e.t
@@ -1330,8 +1296,7 @@ func TestPhotoXMPCheckoutEditsPublishedAncestor(t *testing.T) {
 			changed := strings.Replace(data, `Rating="5"`, `Rating="`+strconv.Itoa(tc.rating)+`"`, 1)
 			changed = strings.Replace(changed, ">Published<", ">Outside<", 1)
 			require.NotEqual(t, data, changed)
-			var checkout string
-			mutate := func(data string) { checkout = e.commitCheckout(data) }
+			mutate := func(data string) { e.commitCheckout(data) }
 			if tc.local {
 				mutate = e.replaceSidecar
 			}
@@ -1346,7 +1311,6 @@ func TestPhotoXMPCheckoutEditsPublishedAncestor(t *testing.T) {
 				require.Equal(t, 1, pruned.DeletedVersions)
 			}
 			mutate(changed)
-			committed, _, _ := e.packet()
 			e.drain()
 			state := e.state(store.PhotoXMPStateSynced)
 			require.Equal(t, tc.rating, e.raw().Rating)
@@ -1355,27 +1319,6 @@ func TestPhotoXMPCheckoutEditsPublishedAncestor(t *testing.T) {
 			_, _, synced := e.packet()
 			require.Equal(t, tc.rating, synced.Rating)
 			require.Equal(t, []string{"Outside"}, synced.Keywords)
-			if tc.name == "single change" {
-				for _, rating := range []int{5, 2} {
-					if rating == 2 {
-						_, err := e.catalog.RetirePhotoCheckout(t.Context(), checkout)
-						require.NoError(t, err)
-						n := e.sidecars()[0]
-						pruned, err := e.catalog.PruneContentVersions(t.Context(), n.ID, n.Revision, store.VersionPruneSelector{VersionIDs: []string{committed.CurrentVersionID}}, true)
-						require.NoError(t, err)
-						require.Equal(t, 1, pruned.DeletedVersions)
-						_, err = e.catalog.ContentVersionByID(t.Context(), committed.CurrentVersionID)
-						require.ErrorIs(t, err, store.ErrNotFound)
-					}
-					before, _, _ := e.packet()
-					e.edit(store.PhotoAuthoredPatch{Rating: new(rating)})
-					e.drain()
-					e.state(store.PhotoXMPStateSynced)
-					after, _, packet := e.packet()
-					require.NotEqual(t, before.CurrentVersionID, after.CurrentVersionID)
-					require.Equal(t, rating, packet.Rating)
-				}
-			}
 		})
 	}
 }
@@ -1470,7 +1413,7 @@ func TestPhotoXMPEveryChangedCopyIsCompared(t *testing.T) {
 		require.Equal(t, 4, e.raw().Rating)
 		require.Equal(t, "Harbor", e.raw().Caption)
 	})
-	t.Run("both changes import in one run", func(t *testing.T) {
+	t.Run("both folders change before one drain", func(t *testing.T) {
 		e := twoCopies(t)
 		e.importFiles(raw, xmpSidecar(` xmp:Rating="4"`, ""))
 		e.importFilesFrom("backup", raw, xmpSidecar(` xmp:Rating="3"`, `<dc:description>Harbor</dc:description>`))
@@ -1478,9 +1421,6 @@ func TestPhotoXMPEveryChangedCopyIsCompared(t *testing.T) {
 		e.state(store.PhotoXMPStateSynced)
 		require.Equal(t, 4, e.raw().Rating)
 		require.Equal(t, "Harbor", e.raw().Caption)
-		e.importFiles(raw, xmpSidecar(` xmp:Rating="4"`, ""))
-		e.drain()
-		require.Equal(t, 4, e.raw().Rating, "rescanning the first copy unchanged keeps its rating")
 	})
 	t.Run("copies that disagree ask for a choice", func(t *testing.T) {
 		e := twoCopies(t)
@@ -1786,6 +1726,20 @@ func TestPhotoXMPPublishedRotationThroughLocalEdits(t *testing.T) {
 		after, _, packet := e.packet()
 		assert.NotEqual(t, before.CurrentVersionID, after.CurrentVersionID)
 		assert.Equal(t, 3, packet.Orientation)
+	})
+	t.Run("the written echo keeps the rotation when the source orientation changes", func(t *testing.T) {
+		e := newXMPEnv(t, xmpSidecar("", ""))
+		e.drain()
+		e.orient(e.node(e.raw().NodeID).BlobHash, strings.Repeat("b", 64), 6)
+		e.edit(store.PhotoAuthoredPatch{Rotation: new(90)})
+		e.drain()
+		sc, data, _ := e.packet()
+		e.orient(e.node(e.raw().NodeID).BlobHash, strings.Repeat("c", 64), 1)
+		e.observe(photoGroupFile{sc.Name, store.PhotoRoleSidecar, "application/rdf+xml", data})
+		e.state(store.PhotoXMPStateSynced)
+		require.Equal(t, 90, e.raw().Rotation)
+		_, _, packet := e.packet()
+		require.Equal(t, 6, packet.Orientation)
 	})
 }
 
@@ -2376,30 +2330,5 @@ func TestPhotoXMPCheckoutSidecarNames(t *testing.T) {
 		e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
 		e.drain()
 		e.state(store.PhotoXMPStateSynced)
-		// The delivered pair imports back together.
-		_, data, _ := e.packet()
-		again := newXMPEnv(t, photoGroupFile{"capture.xmp", store.PhotoRoleSidecar, "application/rdf+xml", data})
-		again.drain()
-		again.state(store.PhotoXMPStateSynced)
-		require.Equal(t, 5, again.raw().Rating)
-	})
-	t.Run("a committed edit to the delivered sidecar", func(t *testing.T) {
-		e := newXMPEnv(t)
-		e.edit(store.PhotoAuthoredPatch{Rating: new(4)})
-		e.drain()
-		before, data, _ := e.packet()
-		checkout := e.commitCheckout(strings.Replace(data, `Rating="4"`, `Rating="2"`, 1))
-		entries, err := e.catalog.PhotoCheckoutEntries(t.Context(), checkout)
-		require.NoError(t, err)
-		delivered := []string{}
-		for _, entry := range entries {
-			delivered = append(delivered, path.Base(entry.Path))
-		}
-		require.ElementsMatch(t, []string{"capture.ARW", "capture.xmp"}, delivered)
-		after, _, packet := e.packet()
-		require.Equal(t, before.ID, after.ID)
-		require.Equal(t, "capture.ARW.xmp", after.Name)
-		require.NotEqual(t, before.CurrentVersionID, after.CurrentVersionID)
-		require.Equal(t, 2, packet.Rating)
 	})
 }

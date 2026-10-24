@@ -192,8 +192,7 @@ func TestMetadataCollectorAuthoredTextPresence(t *testing.T) {
 	}
 }
 
-// v20 emits supported facts even when a packet is refused for sync alone.
-func TestPhotoSidecarEditingRefusesOrAcceptsV20Facts(t *testing.T) {
+func TestPhotoSidecarEditingRefusesOrAccepts(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, packet string

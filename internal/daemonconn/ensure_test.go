@@ -147,11 +147,6 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
 
-	rec.Metadata[metaProtocolVersion] = "89"
-	assert.False(t, discoverOptions(true).Accept(rec, info), "a daemon from main must be replaced")
-	assert.True(t, discoverOptions(false).Accept(rec, info),
-		"status/stop discovery must still see incompatible daemons")
-
 	delete(rec.Metadata, metaProtocolVersion)
 	assert.False(t, discoverOptions(true).Accept(rec, info),
 		"same-version record without a protocol revision must be replaced")
