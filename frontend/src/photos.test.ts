@@ -3512,6 +3512,7 @@ it.each([
       await vi.waitFor(() => expect(photos.timelineLoading).toBe(false));
       expect(photos.timeline).toEqual({ ...timeline, total: 1 });
     } else if (transition.endsWith("after recovery")) {
+      photos.filtersOpen = true;
       photos.setView("timeline");
       await photos.loadMore();
       await vi.waitFor(() => {

@@ -3141,7 +3141,8 @@ it("forwards the accepted photo action scope to export", async () => {
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const onexport = vi.fn();
   render(PhotosWorkspace, { photos, cache, onexport });
-  await fireEvent.click(screen.getByRole("button", { name: "Export photos" }));
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Export 1 photo" }));
   await vi.waitFor(() =>
     expect(onexport).toHaveBeenCalledWith(
       expect.objectContaining({ photos: expect.objectContaining(scope) }),

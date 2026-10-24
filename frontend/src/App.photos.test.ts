@@ -3190,12 +3190,14 @@ async function applyAlbumKeyword(ranked = false) {
   render(App);
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   if (ranked) {
-    await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Metadata" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: "Find by: Metadata" }));
     await fireEvent.click(screen.getByRole("option", { name: "Meaning" }));
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search photos" }), {
       target: { value: "sunset" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await fireEvent.submit(
+      screen.getByRole("searchbox", { name: "Search photos" }).closest("form")!,
+    );
     await waitFor(() =>
       expect(
         fetcher.mock.calls.some(([url, init]) => {
@@ -3206,7 +3208,10 @@ async function applyAlbumKeyword(ranked = false) {
       ).toBe(true),
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Search" })).toHaveProperty("disabled", false),
+      expect(screen.getByRole("searchbox", { name: "Search photos" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
     );
   }
   await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));

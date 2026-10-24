@@ -1029,7 +1029,7 @@
                 />
               {:else if searchable}<SelectDropdown
                   title="Sort photos"
-                  disabled={actionDisabled}
+                  disabled={actionDisabled || photos.query.mode !== "lexical"}
                   value={photos.query.sort?.field}
                   options={sortOptions}
                   onchange={(value) =>
@@ -1179,7 +1179,8 @@
           </div>
           {#if !mapMode}<div class="photo-stack-controls browser-toolbar">
               {#if photos.groupingIncomplete}<p role="status">
-                  Some photo details or image vectors are missing. Stacks can change as processing finishes.
+                  Some photo details or image vectors are missing. Stacks can change as processing
+                  finishes.
                 </p>{/if}
               <label class="burst-gap"
                 >Burst gap (seconds) <input
