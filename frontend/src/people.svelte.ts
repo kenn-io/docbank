@@ -1,6 +1,5 @@
 import {
   listPeople,
-  getPerson,
   renamePerson,
   mergePerson,
   type Person,
@@ -166,20 +165,35 @@ export class People {
     if (status !== 422) await this.load();
     if (status === 0 || status >= 500) {
       try {
-        const saved = await this.run(() =>
-          getPerson(person.person_id, undefined, {
-            session: this.session,
-            signal: this.writer?.signal,
-          }),
-        );
-        if (epoch !== this.epoch || this.writer?.signal.aborted) return;
-        if (
-          survivorID
-            ? saved.person_id === survivorID && saved.reached_through_person_id === person.person_id
-            : saved.person_id === person.person_id &&
-              saved.display_name === name &&
-              saved.revision > person.revision
-        )
+        let saved: PersonSummary | undefined;
+        for (const query of survivorID ? [name, person.display_name] : [name]) {
+          let cursor: string | undefined;
+          do {
+            if (epoch !== this.epoch || this.writer?.signal.aborted) return;
+            const page = await this.run(() =>
+              listPeople(
+                {
+                  query,
+                  limit: peoplePageSize,
+                  photo_summary: true,
+                  ...(cursor ? { cursor } : {}),
+                },
+                { session: this.session, signal: this.writer?.signal },
+              ),
+            );
+            if (epoch !== this.epoch || this.writer?.signal.aborted) return;
+            if (survivorID && page.items.some((row) => row.person_id === person.person_id)) return;
+            saved ??= page.items.find((row) =>
+              survivorID
+                ? row.person_id === survivorID
+                : row.person_id === person.person_id &&
+                  row.display_name === name &&
+                  row.revision > person.revision,
+            );
+            cursor = page.next_cursor;
+          } while (cursor);
+        }
+        if (saved)
           this.onchanged(person.person_id, saved.display_name, ...(survivorID ? [survivorID] : []));
       } catch (recoveryCause) {
         this.failure(recoveryCause);

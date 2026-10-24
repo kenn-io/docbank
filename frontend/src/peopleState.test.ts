@@ -85,7 +85,7 @@ it.each(["valid", "empty", "wrong person", "invalid revision", "wrong ETag"])(
       expect(changed).not.toHaveBeenCalled();
       expect(people.items).toEqual([ada]);
       expect(people.selected).toEqual([ada]);
-      expect(read).toHaveBeenCalledOnce();
+      expect(read.mock.calls.map(([params]) => params?.query)).toEqual(["Ada", "Zoe"]);
       people.dispose();
       return;
     }
@@ -146,11 +146,8 @@ it.each([
   expect(people.merge).toBeUndefined();
   expect(people.selected).toEqual(result === "valid" ? [] : [ada, grace]);
   expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
-  if (result === "valid") expect(changed).toHaveBeenCalledWith("ada", "Grace", "grace");
-  else {
-    expect(people.writeError).toBe("Invalid person merge response.");
-    expect(changed).not.toHaveBeenCalled();
-  }
+  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+  if (result !== "valid") expect(people.writeError).toBe("Invalid person merge response.");
   people.dispose();
 });
 
