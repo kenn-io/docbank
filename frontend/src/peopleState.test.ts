@@ -339,6 +339,36 @@ it("confirms a lost merge response after leaving People without restoring the di
   people.dispose();
 });
 
+it("refreshes People when a merge is confirmed after leaving and returning", async () => {
+  let finish!: () => void;
+  let rows = [ada, grace];
+  vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockRejectedValueOnce(new TypeError("Response lost"))
+    .mockImplementation(
+      (_, request) =>
+        new Promise((resolve) => {
+          finish = () => {
+            rows = [grace];
+            resolve(personMergeReceipt(ada, grace, request.operation_id));
+          };
+        }),
+    );
+  const people = new People("session", vi.fn());
+  people.items = rows;
+  merging(people);
+  const pending = people.submitMerge();
+  await vi.waitFor(() => expect(merge).toHaveBeenCalledTimes(2));
+  people.conceal();
+  await people.load();
+  expect(people.items).toEqual([ada, grace]);
+  finish();
+  expect(await pending).toBe(true);
+  expect(people.items).toEqual([grace]);
+  people.dispose();
+});
+
 it.each(["network failure", 503])("replays an uncertain merge after %s once", async (status) => {
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
   const merge = vi

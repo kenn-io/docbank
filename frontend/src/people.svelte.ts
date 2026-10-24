@@ -303,8 +303,8 @@ export class People {
       if (epoch === this.epoch) {
         this.merge = undefined;
         this.selected = [];
-        await this.load();
       }
+      if (epoch === this.epoch || this.items.length > 0 || this.loading) await this.load();
       return true;
     } catch (cause) {
       if (!request.signal.aborted) {
