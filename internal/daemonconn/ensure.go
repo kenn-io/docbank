@@ -441,6 +441,19 @@ func ensureDaemonWithOptions(
 						stopping.PID, err)
 				}
 				res.Replaced = &stopping
+			} else {
+				vault, lock, lockErr := (home.Layout{Root: root}).OpenExistingAndLockExclusive()
+				if errors.Is(lockErr, home.ErrVaultLocked) {
+					return fmt.Errorf("this vault is in use by another process, such as a docbank daemon outside this sandbox; run docbank there: %w", lockErr)
+				}
+				if lockErr != nil && !errors.Is(lockErr, os.ErrNotExist) {
+					return fmt.Errorf("checking vault ownership before daemon start: %w", lockErr)
+				}
+				if lockErr == nil {
+					if err := errors.Join(lock.Release(), vault.Close()); err != nil {
+						return fmt.Errorf("releasing vault ownership before daemon start: %w", err)
+					}
+				}
 			}
 		}
 

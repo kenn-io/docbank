@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/packagetest"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -172,6 +173,58 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 		rec := NewRecord("127.0.0.1:1", "key", "tok", address)
 		assert.False(t, webDiscoverOptions().Accept(rec, info), address)
 	}
+}
+
+func TestEnsureRefusesLockedVaultBeforeStarting(t *testing.T) {
+	root := t.TempDir()
+	lock, err := (home.Layout{Root: root}).TryLockExclusive()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lock.Release()) })
+	started := false
+	result, err := ensureDaemon(t.Context(), root,
+		func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+			started = true
+			return kitdaemon.RuntimeRecord{}, nil
+		})
+	assert.ErrorIs(t, err, home.ErrVaultLocked)
+	assert.ErrorContains(t, err, "this vault is in use by another process, such as a docbank daemon outside this sandbox; run docbank there")
+	assert.False(t, started)
+	assert.False(t, result.Started)
+}
+
+func TestEnsureStartsOverDeadRuntimeRecord(t *testing.T) {
+	root := t.TempDir()
+	rec := NewRecord("127.0.0.1:1", "key", "token", "")
+	rec.PID = 1 << 30
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
+	started := false
+	result, err := ensureDaemon(t.Context(), root,
+		func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+			started = true
+			lock, err := (home.Layout{Root: root}).TryLockExclusive()
+			require.NoError(t, err, "the probe must release ownership before starting")
+			require.NoError(t, lock.Release())
+			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
+		})
+	require.NoError(t, err)
+	assert.True(t, started)
+	assert.True(t, result.Started)
+}
+
+func TestEnsureStartsWithMissingVault(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing", "vault")
+	started := false
+	result, err := ensureDaemon(t.Context(), root,
+		func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+			started = true
+			_, err := os.Stat(filepath.Dir(root))
+			assert.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
+			return NewRecord("127.0.0.1:2", "key", "token", ""), nil
+		})
+	require.NoError(t, err)
+	assert.True(t, started)
+	assert.True(t, result.Started)
 }
 
 func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
