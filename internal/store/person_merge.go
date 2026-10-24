@@ -306,6 +306,13 @@ func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, recei
 	if err != nil {
 		return err
 	}
+	assignmentIDs, err := json.Marshal(receipt.Moved.AssignmentIDs)
+	if err != nil {
+		return err
+	}
+	// Only document assignments retain the version that authorized the absorbed
+	// person's visibility. Broader scopes and missing assignments require unlock
+	// because the receipt has no snapshot of their published document evidence.
 	var hidden bool
 	if err := tx.QueryRowContext(ctx, `WITH RECURSIVE replay_candidates(candidate_id) AS (
 		SELECT value FROM json_each(?)
@@ -321,7 +328,11 @@ func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, recei
 		WHERE json_extract(d.value, '$.assertion.AssertionID') IN (SELECT value FROM json_each(?))
 		UNION SELECT value FROM json_each(?)
 		UNION SELECT e.content_version_id FROM person_candidate_faces e WHERE e.candidate_id IN (SELECT candidate_id FROM replay_candidates)
-	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)`, string(candidateIDs), string(ids), string(ids), string(versionIDs)).Scan(&hidden); err != nil {
+	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)
+	OR EXISTS(SELECT 1 FROM json_each(?) moved
+		LEFT JOIN custodian_assignments a ON a.assignment_id=moved.value
+		WHERE a.assignment_id IS NULL OR a.scope_kind<>'document'
+		OR NOT `+personVersionVisibleSQL("a.content_version_id")+`)`, string(candidateIDs), string(ids), string(ids), string(versionIDs), string(assignmentIDs)).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {

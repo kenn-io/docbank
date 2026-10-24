@@ -7,7 +7,84 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 )
+
+func TestPersonBrowserMergeReplayRequiresHiddenUnlockForCustodian(t *testing.T) {
+	t.Parallel()
+	for _, scopeKind := range []string{"document", "collection"} {
+		t.Run(scopeKind, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			survivor, err := s.CreatePerson(ctx, "Library Person", "operator")
+			require.NoError(t, err)
+			library := browsePhotoNode(t, s, "library.jpg", fakeHash("library"), "image/jpeg")
+			_, err = s.MarkPersonInPhoto(ctx, library.CurrentVersionID, survivor.PersonID, "")
+			require.NoError(t, err)
+			absorbed, err := s.CreatePerson(ctx, "Hidden Custodian", "operator")
+			require.NoError(t, err)
+			run, err := s.BeginIngest(ctx, "test", "/synthetic")
+			require.NoError(t, err)
+			hidden, _, err := s.IngestFile(ctx, run, s.RootID(), "hidden.jpg", fakeHash("hidden"), 20, "image/jpeg", "/synthetic/hidden.jpg", "2026-01-01T00:00:00Z")
+			require.NoError(t, err)
+			scope := CustodianScope{Kind: "document", NodeID: hidden.ID, ContentVersionID: hidden.CurrentVersionID}
+			if scopeKind == "collection" {
+				scope = CustodianScope{Kind: "collection", IngestID: run.ID()}
+			}
+			assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: absorbed.PersonID,
+				RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+			target := requireDocumentEventTarget(t, s, hidden.CurrentVersionID)
+			record := document.DocumentEventsV1{VaultUID: s.VaultID(), ContentVersionID: hidden.CurrentVersionID,
+				ContractVersion: document.DocumentEventsContractV1, DocumentKind: "image"}
+			_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint,
+				requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			input, err := s.PrepareDocumentPeopleInputs(ctx, hidden.CurrentVersionID)
+			require.NoError(t, err)
+			require.Len(t, input.Custodians, 1)
+			raw, err := canonical.Marshal(input)
+			require.NoError(t, err)
+			_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
+				People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1,
+					ContentVersionID: input.ContentVersionID, EventGenerationID: input.EventGenerationID,
+					Edges: []document.DocumentPersonEdgeV1{{PersonID: absorbed.PersonID, Role: "custodian",
+						EvidenceKind: "custodian_assignment", EvidenceID: assignment.AssignmentID,
+						Confidence: "operator_asserted", Basis: "operator_assigned", RawLabel: absorbed.DisplayName, ClaimCount: 1}}},
+				InputsSHA256: fakeSHA256(raw), ResolverFingerprint: document.PersonResolverFingerprint(),
+				NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch,
+			})
+			require.NoError(t, err)
+			browser := WithVisiblePeopleOnly(ctx)
+			operation := uuid.NewString()
+			_, err = s.MergePersons(browser, survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+			require.ErrorIs(t, err, ErrNotFound, "published Hidden custodian evidence conceals the absorbed person")
+			token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+			require.NoError(t, err)
+			first, err := s.MergePersons(WithPhotoHiddenToken(browser, token), survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+			require.NoError(t, err)
+			require.Equal(t, "Hidden Custodian", first.AbsorbedDisplayName)
+			require.Equal(t, []string{assignment.AssignmentID}, first.Moved.AssignmentIDs)
+			require.Empty(t, first.Moved.AssertionIDs)
+			require.Empty(t, first.Moved.FaceCandidates)
+			require.NoError(t, s.LockPhotoHidden(ctx))
+			replayed, err := s.MergePersons(browser, survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+			require.ErrorIs(t, err, ErrHiddenLocked, "locked replay returned absorbed display name %q", replayed.AbsorbedDisplayName)
+			require.Empty(t, replayed.AbsorbedDisplayName)
+			token, _, err = s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+			require.NoError(t, err)
+			replayed, err = s.MergePersons(WithPhotoHiddenToken(browser, token), survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+			require.NoError(t, err)
+			require.Equal(t, first, replayed)
+		})
+	}
+}
 
 func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
 	t.Parallel()
