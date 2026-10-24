@@ -446,7 +446,7 @@ func ensureDaemonWithOptions(
 					return err
 				}
 			} else if errors.Is(lockErr, home.ErrVaultLocked) {
-				return fmt.Errorf("possibly a docbank daemon outside this sandbox: %w", lockErr)
+				return fmt.Errorf("%w; if you're in a sandbox, check for a daemon outside it", lockErr)
 			} else if !errors.Is(lockErr, os.ErrNotExist) {
 				return fmt.Errorf("checking vault ownership before daemon start: %w", lockErr)
 			}

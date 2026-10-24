@@ -177,45 +177,45 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 
 func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		wantStart bool
+		name    string
+		locked  bool
+		missing bool
 	}{
-		{"locked vault", false},
-		{"unlocked existing vault", true},
-		{"missing vault", true},
+		{name: "locked vault", locked: true},
+		{name: "unlocked existing vault"},
+		{name: "missing vault", missing: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			switch test.name {
-			case "locked vault":
+			if test.locked {
 				lock, err := (home.Layout{Root: root}).TryLockExclusive()
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, lock.Release()) })
-			case "missing vault":
+			}
+			if test.missing {
 				root = filepath.Join(root, "missing", "vault")
 			}
 			started := false
 			_, err := ensureDaemon(t.Context(), root,
 				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
 					started = true
-					switch test.name {
-					case "unlocked existing vault":
+					if test.missing {
+						_, err := os.Stat(filepath.Dir(root))
+						require.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
+					} else {
 						lock, err := (home.Layout{Root: root}).TryLockExclusive()
 						require.NoError(t, err, "the probe must release ownership before starting")
 						require.NoError(t, lock.Release())
-					case "missing vault":
-						_, err := os.Stat(filepath.Dir(root))
-						require.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
 					}
 					return NewRecord("127.0.0.1:2", "key", "token", ""), nil
 				})
-			if test.wantStart {
-				require.NoError(t, err)
-			} else {
+			if test.locked {
 				require.ErrorIs(t, err, home.ErrVaultLocked)
-				require.ErrorContains(t, err, "possibly a docbank daemon outside this sandbox: ")
+				require.EqualError(t, err, root+": vault is locked by another process (is a docbank daemon or restore already running?); if you're in a sandbox, check for a daemon outside it")
+			} else {
+				require.NoError(t, err)
 			}
-			assert.Equal(t, test.wantStart, started)
+			assert.Equal(t, !test.locked, started)
 		})
 	}
 }
