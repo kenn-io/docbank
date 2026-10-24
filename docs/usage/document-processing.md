@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-16
+last_edited: 2026-10-24
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -185,12 +185,55 @@ inspect the named archive before retrying.
 The daemon verifies the fresh PDF before creating the ZIP. The CLI verifies the
 transferred archive, its inventory, file hashes, receipt and reviewed text
 before publishing one file. Client checks do not independently verify the
-source pixels. No job, attachment or restart-recoverable output is retained.
+source pixels. The daemon retains no job, attachment or output for later download.
 A killed daemon may leave private files in its spool; see the
 [staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
 and `/api/v1/redaction/render` routes. Browser sessions and MCP tools do not
 expose these operations.
+
+### Check and retain a saved archive
+
+Use the saved preparation, masks and review to check a ZIP after copying or
+recovering it:
+
+```sh
+docbank redaction verify preparation.json masks.json review.json redacted.zip
+docbank redaction verify preparation.json masks.json review.json redacted.zip --json
+```
+
+This command runs offline, without a daemon, source PDF or page/PDF runtime.
+It checks the ZIP inventory, entry checksums, receipt bindings and sanitized
+text against the review. It prints the complete archive's SHA-256 and byte
+count, plus the receipt. JSON output is `{ "receipt": ..., "size": ..., "sha256": ... }`.
+The archive must be a regular file of at most 544 MiB. Keep it unchanged while
+the check runs. The verifier uses the current preparation and recipe contracts;
+it does not promise compatibility with every future format.
+
+The PDF's contents are **not compared with the review**. Someone who replaces
+both the PDF and its hash in the receipt can pass these checks. Compare the
+reported whole-archive SHA-256 with the value saved from `redaction render`, or
+with a trusted vault version's `blob_hash`. The archive's own receipt is not
+that independent record. Success also does not authenticate who produced it.
+
+To retain the ZIP in a vault, use ordinary file storage:
+
+```sh
+docbank mkdir /produced
+docbank add redacted.zip --dest /produced
+docbank get /produced/redacted.zip recovered.zip
+docbank redaction verify preparation.json masks.json review.json recovered.zip
+```
+
+Packing, garbage collection and backup treat the ZIP as an ordinary file.
+Keep the preparation, masks and review separately: they contain unredacted
+evidence and are not included in the ZIP. Backing up the ZIP alone does not
+recover those inputs. Deleting the source PDF does not prevent offline checks.
+
+Malformed local JSON inputs exit 2; changed review bindings exit 4; archive
+integrity failures exit 6. Opening the archive, reading it, cancellation and
+output failures exit 1. No success result is printed on validation failure.
+Check the exit status even when output was partially written.
 
 ## Convert documents with Docling
 
