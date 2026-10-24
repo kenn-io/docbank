@@ -14155,6 +14155,8 @@ components:
           type: array
         values:
           $ref: "#/components/schemas/PhotoAuthored"
+        xmp:
+          $ref: "#/components/schemas/PhotoXMPState"
       required:
         - display_file_id
         - file_name
@@ -14551,6 +14553,7 @@ components:
           format: int64
           type: integer
         version_id:
+          description: The version that supplied the first imported value.
           type: string
       required:
         - node_id
@@ -14736,6 +14739,80 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoXMPResolveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoXMPResolveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        choice:
+          enum:
+            - catalog
+            - sidecar
+          type: string
+        conflict_id:
+          format: uuid
+          type: string
+      required:
+        - conflict_id
+        - choice
+      type: object
+      x-go-type: api.PhotoXMPResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoXMPRow:
+      additionalProperties: false
+      properties:
+        catalog:
+          type: string
+        field:
+          type: string
+        sidecar:
+          type: string
+      required:
+        - field
+        - catalog
+        - sidecar
+      type: object
+      x-go-type: store.PhotoXMPRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoXMPState:
+      additionalProperties: false
+      properties:
+        conflict_id:
+          type: string
+        import_receipt_id:
+          description: The sidecar import that Undo can still reverse.
+          type: string
+        reason:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/PhotoXMPRow"
+          type: array
+        state:
+          enum:
+            - none
+            - synced
+            - pending
+            - conflict
+            - unavailable
+            - invalid
+          type: string
+      required:
+        - state
+      type: object
+      x-go-type: store.PhotoXMPState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     Plan:
       additionalProperties: false
       properties:
@@ -27316,6 +27393,38 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Decide one observed stack atomically
+  /api/v1/photos/authored/{file_id}/xmp:
+    post:
+      operationId: resolvePhotoXMP
+      parameters:
+        - in: path
+          name: file_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoXMPResolveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAuthoredReceipt"
+          description: OK
+        "204":
+          description: Resolution imported no catalog values
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Choose the catalog or sidecar copy of conflicting photo metadata
   /api/v1/photos/authored/{receipt_id}/undo:
     post:
       operationId: undoPhotoAuthored

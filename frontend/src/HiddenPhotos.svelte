@@ -53,8 +53,8 @@
     onloadtags?: () => Promise<void>;
     onloadmoretags?: () => Promise<void>;
     onmetadatachanged?: (
-      receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
-      tags: import("./generated/docbank.js").Tag[],
+      receipt?: import("./generated/docbank.js").PhotoAuthoredReceipt,
+      tags?: import("./generated/docbank.js").Tag[],
     ) => void;
     undoState?: PhotoUndoState;
     onhelp?: () => void;

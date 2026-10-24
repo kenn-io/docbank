@@ -2471,15 +2471,20 @@
     else void loadRoot();
   }
 
+  // Without a receipt, a background import or status change touched values this
+  // session cannot name, so every started view reloads.
   function handlePhotoMetadataChanged(
-    receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
-    tags: Tag[],
+    receipt?: import("./generated/docbank.js").PhotoAuthoredReceipt,
+    tags: Tag[] = [],
   ): void {
-    const refreshed = new Map(tags.map((tag) => [tag.id, tag]));
-    for (const tag of tagCatalog)
-      if ((refreshed.get(tag.id)?.revision ?? 0) < tag.revision) refreshed.set(tag.id, tag);
-    tagCatalog = sortTags([...refreshed.values()]);
+    if (receipt || tags.length) {
+      const refreshed = new Map(tags.map((tag) => [tag.id, tag]));
+      for (const tag of tagCatalog)
+        if ((refreshed.get(tag.id)?.revision ?? 0) < tag.revision) refreshed.set(tag.id, tag);
+      tagCatalog = sortTags([...refreshed.values()]);
+    } else void loadTagCatalog();
     if (
+      !receipt ||
       receipt.after.some((after) =>
         receipt.before.some(
           (before) =>
@@ -2498,29 +2503,36 @@
         !(photos.started || photos.loading)
       )
         continue;
-      const rotations = photos.metadataChanged(receipt);
-      const preparedChanged = photos.authored.targets.some((target) =>
-        receipt.after.some((file) => file.file_id === target.file_id),
-      );
+      const rotations = receipt ? photos.metadataChanged(receipt) : new Map<string, number>();
+      const preparedChanged = receipt
+        ? photos.authored.targets.some((target) =>
+            receipt.after.some((file) => file.file_id === target.file_id),
+          )
+        : photos.authored.targets.length > 0;
       const refresh =
-        photos.loading || photos.reloadsAfter(rotations) ? photos.refresh() : Promise.resolve();
+        !receipt || photos.loading || photos.reloadsAfter(rotations)
+          ? photos.refresh()
+          : Promise.resolve();
       if (preparedChanged) void refresh.then(() => photos.authored.reload());
     }
-    for (const file of receipt.after) pendingPhotoNodes.add(file.node_id);
+    if (receipt) for (const file of receipt.after) pendingPhotoNodes.add(file.node_id);
+    else pendingPhotoDocuments = true;
     if (!photoMode) refreshPhotoDocuments();
   }
 
   const pendingPhotoNodes = new Set<number>();
+  let pendingPhotoDocuments = false;
   $effect(() => {
     if (!photoMode) untrack(refreshPhotoDocuments);
   });
   function refreshPhotoDocuments(): void {
-    if (!pendingPhotoNodes.size) return;
-    const affected = new Set(pendingPhotoNodes);
+    if (!pendingPhotoNodes.size && !pendingPhotoDocuments) return;
+    const affected = pendingPhotoDocuments ? undefined : new Set(pendingPhotoNodes);
     pendingPhotoNodes.clear();
+    pendingPhotoDocuments = false;
     const source = selectedSource;
     if (!snapshotActive) refreshDocumentsView();
-    if (source && affected.has(source.nodeID)) {
+    if (source && (!affected || affected.has(source.nodeID))) {
       void loadSelectedTags(source.nodeID, source.key);
       void loadAuditStatus(source.nodeID, source.key);
     }

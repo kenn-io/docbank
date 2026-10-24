@@ -79,25 +79,29 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 	}
 	created := Tag{ID: id, Name: name, Revision: 1}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id, name) VALUES(?, ?)`, id, name); err != nil {
-			if s.driver.IsUniqueViolation(err) {
-				return fmt.Errorf("tag %q: %w", name, ErrExists)
-			}
-			return fmt.Errorf("creating tag %q: %w", name, err)
-		}
-		if !active {
-			return nil
-		}
-		return s.persistAuditedTagCreation(ctx, tx, created)
+		return s.createTagTx(ctx, tx, created)
 	})
 	if err != nil {
 		return Tag{}, err
 	}
 	return created, nil
+}
+
+func (s *Store) createTagTx(ctx context.Context, tx *sql.Tx, created Tag) error {
+	active, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES(?,?)`, created.ID, created.Name); err != nil {
+		if s.driver.IsUniqueViolation(err) {
+			return fmt.Errorf("tag %q: %w", created.Name, ErrExists)
+		}
+		return fmt.Errorf("creating tag %q: %w", created.Name, err)
+	}
+	if !active {
+		return nil
+	}
+	return s.persistAuditedTagCreation(ctx, tx, created)
 }
 
 // TagByID returns one tag by stable identity.

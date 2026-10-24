@@ -277,7 +277,7 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
-			unreleased := currentStorageSchemaVersion - 1
+			unreleased := photoBurstStorageSchemaVersion
 			for slices.Contains(releasedStorageSchemaVersions, unreleased) {
 				unreleased--
 			}
@@ -290,6 +290,31 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			}
 			require.ErrorContains(t, err, fmt.Sprintf("development schema version %d has no supported JSONL cutover; recreate the vault", unreleased))
 		})
+	}
+}
+
+func TestOpenRejectsCurrentDatabaseWithoutPhotoXMPInputs(t *testing.T) {
+	t.Parallel()
+	for _, object := range []struct{ kind, name string }{
+		{"VIEW", "photo_xmp_inputs"},
+		{"TABLE", "photo_xmp_unsettled"},
+		{"TABLE", "photo_xmp_unsettled_pending"},
+	} {
+		for _, driver := range v090UpgradeDrivers() {
+			t.Run(object.name+"/"+driver.name, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(path, driver.driver)
+				require.NoError(t, err)
+				_, err = s.db.Exec("DROP " + object.kind + " " + object.name)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+				reopened, err := Open(path, driver.driver)
+				if reopened != nil {
+					require.NoError(t, reopened.Close())
+				}
+				require.ErrorContains(t, err, "unexpected "+object.name+" layout")
+			})
+		}
 	}
 }
 
@@ -516,11 +541,18 @@ func schemaSQLWithAddedColumn(t *testing.T, original, table, column string) stri
 	}
 	result := strings.Replace(
 		original,
-		"CREATE TABLE IF NOT EXISTS "+table+" ("+lineEnding,
-		"CREATE TABLE IF NOT EXISTS "+table+" ("+lineEnding+
-			"    "+column+" TEXT,"+lineEnding,
+		"CREATE TABLE IF NOT EXISTS "+table+" (",
+		"CREATE TABLE IF NOT EXISTS "+table+" ("+column+" TEXT,",
 		1,
 	)
+	if result == original {
+		result = strings.Replace(
+			original,
+			"CREATE VIEW IF NOT EXISTS "+table+" AS"+lineEnding+"SELECT ",
+			"CREATE VIEW IF NOT EXISTS "+table+" AS"+lineEnding+"SELECT NULL AS "+column+", ",
+			1,
+		)
+	}
 	require.NotEqual(t, original, result)
 	return result
 }

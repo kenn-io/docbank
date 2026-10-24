@@ -29,7 +29,7 @@ func backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout bool) (map[string]photoSource, error) {
+func photoSourcesTx(ctx context.Context, tx metadataQuerier, assets string, checkout bool) (map[string]photoSource, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),COALESCE(p.original_path,n.name),
  COALESCE(f.sidecar_of_file_id,''),EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=f.asset_id AND a.hidden_at IS NULL AND a.excluded_at IS NULL) AND n.trashed_at IS NULL
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
@@ -68,7 +68,14 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 func normalizePhotoSourcePath(path string) string {
 	windowsDrive := len(path) >= 3 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/')
 	if windowsDrive || strings.HasPrefix(path, `\\`) {
-		return strings.ReplaceAll(path, "\\", "/")
+		return normalizePhotoWindowsSourcePath(path, windowsDrive)
 	}
 	return path
+}
+
+func normalizePhotoWindowsSourcePath(path string, drive bool) string {
+	if drive {
+		path = strings.ToUpper(path[:1]) + path[1:]
+	}
+	return strings.ReplaceAll(path, "\\", "/")
 }

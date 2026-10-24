@@ -1,11 +1,12 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, render, screen, fireEvent, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import { tick } from "svelte";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { PhotoAuthoredEditor, PhotoUndoState } from "./photoAuthored.svelte.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
-import { preparedPhoto } from "./photo-test-fixtures.js";
+import { photoPreparation, preparedPhoto } from "./photo-test-fixtures.js";
 import PhotoInspector from "./PhotoInspector.svelte";
 import type { PhotoAsset, PhotoPreparedTarget, Tag } from "./generated/docbank.js";
 
@@ -595,11 +596,24 @@ it.each(["shared receipt", "no-op edit", "empty Undo"])(
   async (behavior) => {
     const state = new PhotoUndoState(),
       first = new PhotoAuthoredEditor("session", vi.fn(), state);
-    first.targets = structuredClone(targets);
+    const before = targets.map((target) => ({ ...target, revision: 2, node_revision: 2 }));
+    first.targets = structuredClone(before);
+    const rated = before.map((target) => ({
+      ...target,
+      revision: 3,
+      node_revision: 3,
+      values: { ...target.values, rating: 5 },
+    }));
+    const picked = rated.map((target) => ({
+      ...target,
+      revision: 4,
+      node_revision: 4,
+      values: { ...target.values, flag: "pick" as const },
+    }));
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(response({ receipt_id: "first", after: targets }))
-      .mockResolvedValueOnce(response({ receipt_id: "latest", after: targets }));
+      .mockResolvedValueOnce(response({ receipt_id: "first", before, after: rated }))
+      .mockResolvedValueOnce(response({ receipt_id: "latest", before: rated, after: picked }));
     vi.stubGlobal("fetch", fetcher);
     const refresh = vi.fn();
     await first.edit({}, { rating: 5 }, false, refresh);
@@ -613,23 +627,26 @@ it.each(["shared receipt", "no-op edit", "empty Undo"])(
       expect(first.notice).toBe("No changes to apply");
       expect(refresh).not.toHaveBeenCalled();
     } else if (behavior === "shared receipt") {
-      fetcher
-        .mockResolvedValueOnce(response({ detail: "Changed elsewhere" }, 412))
-        .mockResolvedValueOnce(response({ receipt_id: "inverse", after: targets }));
-      first.stage({ caption: "Local draft" });
+      const current = structuredClone(picked);
+      current[0].revision++;
+      current[0].node_revision++;
+      current[0].values.rating = 2;
+      fetcher.mockImplementation(async (url: string) =>
+        url.endsWith("/prepare")
+          ? response(photoPreparation(current))
+          : response({ detail: "Changed elsewhere", code: "stale_revision" }, 412),
+      );
       first.dispose();
       const next = new PhotoAuthoredEditor("session", vi.fn(), state);
-      expect(next.receiptID).toBe("latest");
-      expect(next.dirty).toBe(false);
       await next.undo(refresh);
       expect(next.receiptID).toBe("latest");
-      expect(next.error).toBe("Changed elsewhere");
+      expect(next.error).toBe("This photo changed. This edit can no longer be undone.");
+      await next.prepare({ asset_ids: [asset.id] });
+      await next.undo(refresh);
+      expect(fetcher.mock.calls[4][0]).toContain("/latest/undo");
+      expect(next.error).toBe("This photo changed. This edit can no longer be undone.");
+      expect(next.targets).toEqual(current);
       expect(refresh).not.toHaveBeenCalled();
-      await next.undo(refresh);
-      expect(fetcher.mock.calls[2][0]).toContain("/latest/undo");
-      expect(refresh).toHaveBeenCalledOnce();
-      expect(state.receiptID).toBe("");
-      expect(state.summary).toBe("");
       next.dispose();
     } else {
       fetcher.mockResolvedValueOnce(response({ receipt_id: "", before: [], after: [] }));
@@ -1128,3 +1145,475 @@ it("reads external metadata retained while an edit response is pending", async (
   expect(editor.targets.map((target) => target.revision)).toEqual([3, 3]);
   editor.dispose();
 });
+
+function withXMP(editor: PhotoAuthoredEditor, xmp: api.PhotoXMPState) {
+  editor.targets[0]!.xmp = xmp;
+  return editor;
+}
+const conflict: api.PhotoXMPState = {
+  state: "conflict",
+  conflict_id: "40000000-0000-4000-8000-000000000009",
+  rows: [{ field: "Rating", catalog: "4", sidecar: "1" }],
+};
+
+it.each(["resolution", "background"])(
+  "refreshes later-page keyword records after XMP %s",
+  async (mode) => {
+    const before = { ...targets[0]!, revision: 2, node_revision: 2 };
+    const editor = withXMP(editorWithTargets(), structuredClone(conflict));
+    editor.targets[0] = { ...before, xmp: structuredClone(conflict) };
+    const catalog = Array.from({ length: 1001 }, (_, i) => ({
+      id: `tag-${i}`,
+      name: `Keyword ${i}`,
+      revision: 1,
+      assignment_count: 0,
+    })) as Tag[];
+    const fresh = { ...catalog[1000]!, revision: 2, assignment_count: 1 };
+    const imported = {
+      ...before,
+      revision: 3,
+      node_revision: 4,
+      values: { ...before.values, rating: 1 },
+      tags: [fresh.id],
+      xmp: { state: "synced" as const, import_receipt_id: "import" },
+    };
+    const receipt = {
+      receipt_id: "import",
+      before: [{ file_id: "raw", node_id: 1, revision: before.revision, values: before.values }],
+      after: [{ file_id: "raw", node_id: 1, revision: imported.revision, values: imported.values }],
+      sidecar: {
+        node_id: 3,
+        file_id: "sidecar",
+        version_id: "40000000-0000-4000-8000-000000000003",
+      },
+      keywords: [{ node_id: 1, tag_id: fresh.id, before: false, after: true }],
+      keyword_nodes: [{ node_id: 1, after_revision: 4 }],
+    };
+    editor.catalog(catalog);
+    editor.loadTags = async () => editor.catalog(catalog.slice(0, 1000));
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/xmp")) return response(receipt);
+      if (url.endsWith(`/tags/${fresh.id}`)) return response(fresh);
+      if (url.endsWith("/photos/authored/prepare"))
+        return response(
+          photoPreparation([imported, { ...targets[1]!, revision: 2, node_revision: 2 }]),
+        );
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const workspace = vi.fn(async () => {});
+    editor.onXMPChanged = workspace;
+    ui(editor);
+    if (mode === "resolution") {
+      await editor.resolveXMP("raw", "sidecar");
+    } else {
+      editor.targets[0]!.xmp = { state: "pending" };
+      await editor.refreshXMP();
+    }
+    await vi.waitFor(() =>
+      expect(workspace).toHaveBeenCalledWith(mode === "resolution" ? receipt : undefined, [fresh]),
+    );
+    expect(editor.tags.find((tag) => tag.id === fresh.id)).toEqual(fresh);
+    await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
+    expect(
+      within(screen.getByRole("option", { name: /Keyword 1000/ })).getByText("1", { exact: true }),
+    ).toBeTruthy();
+    editor.dispose();
+  },
+);
+
+it("keeps the inspected conflict and polling when preparing its stack", async () => {
+  vi.useFakeTimers();
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const target = { ...structuredClone(targets[0]!), xmp: structuredClone(conflict) };
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/xmp")) return response({});
+    const request = JSON.parse(options!.body as string);
+    return response(
+      request.stack
+        ? photoPreparation([...structuredClone(targets), preparedPhoto(3, { asset_id: "other" })])
+        : photoPreparation([target]),
+    );
+  });
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    await editor.prepare({ asset_ids: ["asset"] });
+    await editor.prepareStack(["asset", "other"], false);
+    expect(editor.targets[0]!.xmp?.state).toBe("conflict");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  } finally {
+    editor.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("shows conflicting properties and resolves the recorded conflict", async () => {
+  const before = { ...targets[0]!, revision: 2, node_revision: 2 };
+  const editor = withXMP(editorWithTargets(), structuredClone(conflict));
+  editor.targets[0] = { ...before, xmp: structuredClone(conflict) };
+  editor.fileID = "raw";
+  const imported = {
+    ...before,
+    revision: 3,
+    node_revision: before.node_revision + 1,
+    values: { ...before.values, rating: 1 },
+    xmp: { state: "synced" as const, import_receipt_id: "import" },
+  };
+  const receipt = {
+    receipt_id: "import",
+    before: [{ file_id: "raw", node_id: 1, revision: before.revision, values: before.values }],
+    after: [{ file_id: "raw", node_id: 1, revision: imported.revision, values: imported.values }],
+    sidecar: { node_id: 3, file_id: "sidecar", version_id: "40000000-0000-4000-8000-000000000003" },
+  };
+  const fetcher = vi.fn<typeof fetch>(async (url) =>
+    String(url).endsWith("/xmp")
+      ? response(receipt)
+      : response(photoPreparation([imported, { ...targets[1]!, revision: 2, node_revision: 2 }])),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  ui(editor);
+  const panel = screen.getByRole("region", { name: "XMP for capture.raw" });
+  expect(within(panel).getByText("XMP: Conflict")).toBeTruthy();
+  expect(within(panel).getByRole("status").textContent).toContain("XMP: Conflict");
+  expect(within(panel).getByRole("row", { name: "Rating 4 1" })).toBeTruthy();
+  await fireEvent.click(within(panel).getByRole("button", { name: "Use Sidecar" }));
+  await vi.waitFor(() => expect(editor.targets[0]!.xmp?.state).toBe("synced"));
+  expect(String(fetcher.mock.calls[0]![0])).toContain("/photos/authored/raw/xmp");
+  expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string)).toEqual({
+    conflict_id: conflict.conflict_id,
+    choice: "sidecar",
+  });
+  expect(editor.targets[0]!.xmp?.import_receipt_id).toBe("import");
+  expect(editor.targets[0]!.values.rating).toBe(1);
+  expect(screen.getByRole("combobox", { name: /Rating:/ }).textContent).toContain("1 star");
+  expect(editor.asset!.files.find((file) => file.id === "raw")!.rating).toBe(1);
+  editor.dispose();
+});
+
+it("keeps invalid conflict values visible and disables choices", async () => {
+  const editor = withXMP(editorWithTargets(), {
+    ...structuredClone(conflict),
+    state: "invalid",
+    reason: "Packet unreadable",
+  });
+  editor.targets[0]!.revision = 2;
+  editor.targets[0]!.node_revision = 2;
+  const fetcher = vi.fn<typeof fetch>();
+  vi.stubGlobal("fetch", fetcher);
+  ui(editor);
+  const panel = screen.getByRole("region", { name: "XMP for capture.raw" });
+  expect(within(panel).getByText("Packet unreadable")).toBeTruthy();
+  expect(within(panel).getByRole("row", { name: "Rating 4 1" })).toBeTruthy();
+  for (const name of ["Use Catalog", "Use Sidecar"]) {
+    const button = within(panel).getByRole("button", { name }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    await fireEvent.click(button);
+  }
+  expect(fetcher).not.toHaveBeenCalled();
+  editor.dispose();
+});
+
+it("asks for a refresh when the conflict changed before the choice", async () => {
+  const editor = withXMP(editorWithTargets(), structuredClone(conflict));
+  editor.targets[0]!.revision = 2;
+  editor.targets[0]!.node_revision = 2;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ detail: "stale" }, 412)));
+  await editor.resolveXMP("raw", "catalog");
+  expect(editor.error).toBe("The photo or sidecar changed. Reopen the photo and choose again.");
+  editor.dispose();
+});
+
+it("invalidates old XMP conflict details after an authored edit", async () => {
+  vi.useFakeTimers();
+  const before = { ...targets[0]!, revision: 2, node_revision: 2 };
+  const editor = withXMP(editorWithTargets(), {
+    ...structuredClone(conflict),
+    import_receipt_id: "old-import",
+  });
+  editor.targets[0]!.revision = before.revision;
+  editor.targets[0]!.node_revision = before.node_revision;
+  try {
+    editor.fileID = "raw";
+    vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+      receipt_id: "new-edit",
+      before: [{ file_id: "raw", node_id: 1, revision: before.revision, values: before.values }],
+      after: [{ file_id: "raw", node_id: 1, revision: 3, values: { ...before.values, rating: 5 } }],
+    });
+    ui(editor);
+    const panel = screen.getByRole("region", { name: "XMP for capture.raw" });
+    expect(within(panel).getByRole("row", { name: "Rating 4 1" })).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: "Undo sidecar import" })).toBeTruthy();
+    await editor.edit(
+      {},
+      { rating: 5 },
+      false,
+      vi.fn(async () => {}),
+    );
+    await vi.waitFor(() => expect(within(panel).getByText("XMP: Pending")).toBeTruthy());
+    const pending = editor.targets[0]!.xmp!;
+    expect(pending.conflict_id).toBeUndefined();
+    expect(pending.rows ?? []).toHaveLength(0);
+    expect(pending.import_receipt_id).toBeUndefined();
+    expect(within(panel).queryByRole("row", { name: "Rating 4 1" })).toBeNull();
+    for (const name of ["Use Catalog", "Use Sidecar", "Undo sidecar import"])
+      expect(within(panel).queryByRole("button", { name })).toBeNull();
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockResolvedValue(
+        photoPreparation(editor.targets.map((target) => ({ ...target, xmp: { state: "synced" } }))),
+      );
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(editor.targets[0]!.xmp?.state).toBe("synced");
+    expect(prepare).toHaveBeenCalledTimes(1);
+  } finally {
+    editor.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { from: "synced", to: "synced" },
+  { from: "pending", to: "invalid" },
+] as const)("notifies the workspace once when XMP goes from $from to $to", async ({ from, to }) => {
+  vi.useFakeTimers();
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const target = {
+    ...structuredClone(targets[0]!),
+    revision: 2,
+    node_revision: 2,
+    xmp: { state: from } as api.PhotoXMPState,
+  };
+  // A synced target changes by importing an outside edit; the others settle with no file revision change.
+  const settled =
+    from === to
+      ? {
+          ...target,
+          revision: target.revision + 1,
+          node_revision: target.node_revision + 1,
+          values: { ...target.values, rating: 5 },
+          xmp: { state: to, import_receipt_id: "40000000-0000-4000-8000-000000000008" },
+        }
+      : { ...target, xmp: { state: to } as api.PhotoXMPState };
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValueOnce(photoPreparation([target]))
+    .mockResolvedValue(photoPreparation([settled]));
+  try {
+    await editor.prepare({ asset_ids: ["asset"] });
+    ui(editor);
+    const changed = vi.fn(async () => {});
+    editor.onXMPChanged = changed;
+    await vi.advanceTimersByTimeAsync(2000);
+    await tick();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(editor.targets[0]!.xmp).toEqual(settled.xmp);
+    expect(editor.targets[0]!.values.rating).toBe(settled.values.rating);
+    expect(changed).toHaveBeenCalledTimes(1);
+    if (from === to) {
+      // Polling resumes at the first interval, and the same import does not notify again.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(prepare).toHaveBeenCalledTimes(3);
+      expect(changed).toHaveBeenCalledTimes(1);
+    }
+  } finally {
+    editor.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it.each(["pending", "retry"])("backs off %s XMP polls until a batch", async (outcome) => {
+  vi.useFakeTimers();
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const target = {
+    ...structuredClone(targets[0]!),
+    revision: 2,
+    node_revision: 2,
+    xmp: { state: "pending" as const },
+  };
+  const prepared = photoPreparation([target]);
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(prepared);
+  try {
+    await editor.prepare({ asset_ids: ["asset"] });
+    if (outcome === "retry")
+      prepare.mockRejectedValue(new APIError("Unavailable", 503, "unavailable"));
+    for (const [attempt, delay] of [
+      2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000,
+    ].entries()) {
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(prepare).toHaveBeenCalledTimes(attempt + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(prepare).toHaveBeenCalledTimes(attempt + 2);
+    }
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(prepare).toHaveBeenCalledTimes(10);
+    expect(editor.targets[0]!.xmp?.state).toBe("pending");
+    prepare.mockResolvedValue(prepared);
+    await editor.prepare({ asset_ids: ["asset"] });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(prepare).toHaveBeenCalledTimes(12);
+    prepare.mockResolvedValue({ assets: [], targets: [preparedPhoto(1), preparedPhoto(2)] });
+    await editor.prepare({ asset_ids: ["photo-1", "photo-2"] });
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(prepare).toHaveBeenCalledTimes(13);
+    prepare.mockResolvedValue(prepared);
+    await editor.prepare({ asset_ids: ["asset"] });
+    editor.dispose();
+    await vi.advanceTimersByTimeAsync(3600000);
+    expect(prepare).toHaveBeenCalledTimes(14);
+  } finally {
+    editor.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it.each([401, 404])("stops XMP polling after a terminal %s response", async (status) => {
+  vi.useFakeTimers();
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const target = {
+    ...structuredClone(targets[0]!),
+    revision: 2,
+    node_revision: 2,
+    xmp: { state: "pending" as const },
+  };
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValue(photoPreparation([target]));
+  try {
+    await editor.prepare({ asset_ids: ["asset"] });
+    prepare.mockRejectedValue(new APIError("Unavailable", status, "unavailable"));
+    await vi.advanceTimersByTimeAsync(3600000);
+    expect(prepare).toHaveBeenCalledTimes(2);
+  } finally {
+    editor.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it.each(["authored values", "membership", "XMP conflict"])(
+  "preserves a draft when background refresh finds changed %s",
+  async (changed) => {
+    vi.useFakeTimers();
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    const target = {
+      ...structuredClone(targets[0]!),
+      revision: 2,
+      node_revision: 2,
+      xmp: { state: "pending" as const },
+    };
+    const refreshed =
+      changed === "authored values"
+        ? [{ ...target, revision: 3, node_revision: 3, values: { ...target.values, rating: 1 } }]
+        : changed === "membership"
+          ? [
+              { ...target, asset_revision: 2 },
+              { ...structuredClone(targets[1]!), revision: 2, node_revision: 2, asset_revision: 2 },
+            ]
+          : [{ ...target, xmp: structuredClone(conflict) }];
+    const refreshedPreparation = photoPreparation(refreshed);
+    if (changed === "membership") refreshedPreparation.assets[0]!.revision = 2;
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockResolvedValueOnce(photoPreparation([target]))
+      .mockResolvedValue(refreshedPreparation);
+    const edit = vi.spyOn(api, "editPhotoAuthored");
+    try {
+      await editor.prepare({ asset_ids: ["asset"] });
+      ui(editor);
+      editor.stage({ caption: "Harbor draft" });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(editor.patch).toEqual({ caption: "Harbor draft" });
+      if (changed === "XMP conflict") {
+        await tick();
+        expect(prepare.mock.calls[1]?.[0].asset_ids).toEqual(["asset"]);
+        expect(editor.conflict).toBe(false);
+        expect(editor.targets[0]!.xmp?.state).toBe("conflict");
+        expect(screen.getByRole("row", { name: "Rating 4 1" })).toBeTruthy();
+        expect(editor.targets[0]!.values).toEqual(target.values);
+        expect(editor.targets[0]!.asset_revision).toBe(1);
+        expect(
+          (screen.getByRole("textbox", { name: "Caption" }) as HTMLTextAreaElement).value,
+        ).toBe("Harbor draft");
+      } else {
+        expect(editor.conflict).toBe(true);
+        expect(editor.targets[0]!.values.rating).toBe(4);
+        expect(editor.targets[0]!.revision).toBe(2);
+        expect(editor.targets[0]!.node_revision).toBe(2);
+        await editor.edit(
+          {},
+          {},
+          false,
+          vi.fn(async () => {}),
+        );
+        expect(edit).not.toHaveBeenCalled();
+      }
+    } finally {
+      editor.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("ignores an XMP refresh that predates the next authored edit", async () => {
+  vi.useFakeTimers();
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const target = {
+    ...structuredClone(targets[0]!),
+    revision: 2,
+    node_revision: 2,
+    xmp: { state: "pending" as const },
+  };
+  let finish!: (value: api.PhotoAuthoredPreparation) => void;
+  vi.spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValueOnce(photoPreparation([target]))
+    .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "new-edit",
+    before: [{ file_id: "raw", node_id: 1, revision: target.revision, values: target.values }],
+    after: [{ file_id: "raw", node_id: 1, revision: 3, values: { ...target.values, rating: 5 } }],
+  });
+  try {
+    await editor.prepare({ asset_ids: ["asset"] });
+    await vi.advanceTimersByTimeAsync(2000);
+    await editor.edit(
+      {},
+      { rating: 5 },
+      false,
+      vi.fn(async () => {}),
+    );
+    finish(photoPreparation([{ ...target, xmp: structuredClone(conflict) }]));
+    await tick();
+    expect(editor.targets[0]!.xmp).toEqual({ state: "pending" });
+    expect(editor.targets[0]!.revision).toBe(3);
+    expect(editor.targets[0]!.values.rating).toBe(5);
+    expect(editor.conflict).toBe(false);
+  } finally {
+    editor.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it.each(["originals without a sidecar or decisions", "a batch of assets"])(
+  "omits XMP status for %s",
+  (scenario) => {
+    const editor = editorWithTargets();
+    if (scenario === "a batch of assets") {
+      editor.asset = undefined;
+      editor.targets = Array.from({ length: 50 }, (_, index) =>
+        preparedPhoto(index + 1, {
+          asset_id: `asset-${index}`,
+          file_id: `file-${index}`,
+          file_name: `capture-${index}.raw`,
+        }),
+      );
+    } else
+      editor.targets = editor.targets.map((target) => ({
+        ...target,
+        values: preparedPhoto(1).values,
+        xmp: { state: "none" },
+      }));
+    ui(editor);
+    expect(screen.queryAllByRole("region", { name: /^XMP for / })).toHaveLength(0);
+    editor.dispose();
+  },
+);

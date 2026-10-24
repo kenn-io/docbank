@@ -35,7 +35,7 @@
     photos: Photos;
     cache: PhotoPreviewCache;
     onclose: () => void;
-    onmetadatachanged?: (receipt: PhotoAuthoredReceipt, tags: Tag[]) => void;
+    onmetadatachanged?: (receipt?: PhotoAuthoredReceipt, tags?: Tag[]) => void;
   } = $props();
   const editor = untrack(
     () =>
@@ -46,6 +46,16 @@
         photos.hiddenAccess,
       )),
   );
+  $effect(() => {
+    // A sync import after a cull edit changes values this session holds no receipt for.
+    editor.onXMPChanged = async (receipt, tags = []) => {
+      if (receipt) await refresh(receipt, tags);
+      else {
+        onmetadatachanged?.(undefined, tags);
+        await Promise.all([photos.refresh(), reloadHeldRows()]);
+      }
+    };
+  });
   onMount(() => {
     void cull.checkSettings();
   });
@@ -287,6 +297,31 @@
     ) {
       cull.flagsChanged();
       if (cull.complete) await cull.checkRemainder();
+    }
+  }
+  // An import with no receipt can change any row Cull holds, so reread the displayed photo and its rail.
+  async function reloadHeldRows() {
+    const held = [...(photo ? [photo] : []), ...neighbors];
+    if (!held.length) return;
+    try {
+      const fresh = new Map(
+        (
+          await photos.lookupMany(
+            held.map((row) => row.asset_id),
+            reloadController.signal,
+          )
+        ).map((row) => [row.asset_id, row]),
+      );
+      const latest = (row: PhotoBrowseRow) => fresh.get(row.asset_id) ?? row;
+      const flagged = held.some((row) => latest(row).flag !== row.flag);
+      if (photo) photo = latest(photo);
+      neighbors = neighbors.map(latest);
+      if (!flagged) return;
+      cull.flagsChanged();
+      if (cull.complete) await cull.checkRemainder();
+    } catch (cause) {
+      if (!reloadController.signal.aborted)
+        railError = cause instanceof Error ? cause.message : String(cause);
     }
   }
   function reconcile(
