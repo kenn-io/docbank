@@ -43,7 +43,7 @@ import {
   type QueryFilters,
   type QuerySort,
 } from "./query.js";
-import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
+import { timelineProblem, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 import type { PhotoCull } from "./photoCull.svelte.js";
@@ -111,16 +111,9 @@ export async function lookupPhotoRows(
 }
 export const mapPhotoLimit = 20_000;
 const mapPageLimit = 20;
-const photoFacets = [
-  "camera",
-  "lens",
-  "year",
-  "location",
-  "set",
-  "rating",
-  "flag",
-  "label",
-] as const;
+const photoFacets = ["camera", "lens", "location", "set", "rating", "flag", "label"] as const;
+// Year also exposes capture ranges retained by saved searches.
+const datedPhotoFacets = [...photoFacets, "year"] as const;
 // One move can audit-trash up to 1,000 files in a single writer transaction.
 const photoRejectsTimeout = 300_000;
 const densityKey = "docbank.photos.density";
@@ -176,6 +169,9 @@ interface PhotosOptions {
   hiddenAccess?: HiddenAccess | undefined;
 }
 
+export const capturedNewest = (sort?: QuerySort) =>
+  sort?.field === "capture_time" && sort.direction === "desc";
+
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
   cullEditor = $state.raw<PhotoAuthoredEditor>();
@@ -195,8 +191,6 @@ export class Photos {
   }
   readonly contextID = randomUUID();
   viewerReturn = $state.raw<PhotoReturn>();
-  view = $state<"grid" | "timeline">("grid");
-  date = $state<string | undefined>();
   smartSet = $state.raw<SavedQuery>();
   frozen = $state.raw<SavedQueryRunResult>();
   frozenExpired = $state(false);
@@ -326,8 +320,9 @@ export class Photos {
       Math.max(0, Date.parse(result.run.expires_at) - Date.now()),
     );
   }
-  baseQuery = $state.raw<Query>(photoQuery);
   query = $state.raw<Query>(photoQuery);
+  // The active jump's month stays pending while pages load. Clearing it cancels the jump.
+  seek = $state("");
   // queryResets counts accepted resetQuery calls; the search box remounts on it.
   queryResets = $state(0);
   timeline = $state<CaptureDayFacet | undefined>();
@@ -388,8 +383,7 @@ export class Photos {
   allResults = $state(false);
   started = $state(false);
   private expired = false;
-  private replacement: "refresh" | "expiry" | "date" | undefined;
-  private replacementDate: string | undefined;
+  private replacement: "refresh" | "expiry" | undefined;
   staged:
     | {
         candidate: Map<string, PhotoRow>;
@@ -429,20 +423,38 @@ export class Photos {
       undoState,
       hidden ? hiddenAccess : undefined,
     );
-    this.baseQuery = query;
     this.query = query;
     this.withoutCounts = Boolean(query.filters?.set_ids?.length) || this.projection === "map";
   }
 
+  // refusesChange says whether the view's query must stay, and asks the editor to explain why.
+  private refusesChange(checkEditor = true) {
+    return (
+      this.disposed ||
+      this.hiding ||
+      this.trashing ||
+      (checkEditor && !this.authored.canChangeTarget())
+    );
+  }
+
+  // Dates line up in Captured, newest first order. The grid pages to the month in place.
+  get canJump() {
+    return !this.refusesChange(false) && capturedNewest(this.query.sort);
+  }
+
+  jumpTo(month: string) {
+    this.seek = month;
+  }
+
   setSort(sort: QuerySort) {
     if (sort.field === "relevance" && !this.relevanceAvailable) return;
-    if (this.disposed || !this.authored.canChangeTarget()) return;
+    if (this.refusesChange()) return;
+    this.seek = "";
     // Timeline counts ignore sort, so only photo paging restarts.
     this.controller.abort();
     this.controller = new AbortController();
     this.loading = false;
     this.staged = undefined;
-    this.baseQuery = { ...this.baseQuery, sort };
     this.query = { ...this.query, sort };
     this.items = [];
     this.total = 0;
@@ -685,10 +697,10 @@ export class Photos {
     }
   }
 
-  // setQuery replaces the search, filter, or album scope. It clears the selected
-  // date and the timeline counts, which describe the previous scope.
+  // setQuery replaces the search, filter, or album scope. It clears the pending jump
+  // and the timeline counts, which describe the previous scope.
   setQuery(query: Query) {
-    if (this.disposed || this.hiding || this.trashing || !this.authored.canChangeTarget()) return;
+    if (this.refusesChange()) return;
     this.cancelPending();
     let next: Query;
     try {
@@ -697,9 +709,8 @@ export class Photos {
       this.error = cause instanceof Error ? cause.message : String(cause);
       return;
     }
-    this.baseQuery = next;
     this.query = next;
-    this.date = undefined;
+    this.seek = "";
     this.reconcileFrozen();
     this.timeline = undefined;
     this.timelineError = "";
@@ -716,7 +727,7 @@ export class Photos {
     this.replacement = undefined;
     this.scrollTop = 0;
     this.clearSelection();
-    if (this.view === "timeline") void this.loadTimeline();
+    void this.loadTimeline();
     return this.loadMore();
   }
 
@@ -724,7 +735,7 @@ export class Photos {
   // search drafts, which an ordinary setQuery keeps.
   resetQuery() {
     const loading = this.setQuery({
-      ...this.baseQuery,
+      ...this.query,
       text: "",
       filters: {},
       sort: { field: "capture_time", direction: "desc" },
@@ -927,8 +938,7 @@ export class Photos {
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.needsFacets && !this.facetsError) void this.retryFacets();
-    if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError)
-      void this.loadTimeline();
+    if (!this.timeline && !this.timelineLoading && !this.timelineError) void this.loadTimeline();
     if (this.error) return;
     if (this.countStale && !this.replacement) void this.recount(preserve);
     if (this.replacement) return this.retry(preserve);
@@ -937,12 +947,7 @@ export class Photos {
 
   async retry(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.replacement || this.expired)
-      return this.replace(
-        this.replacement ?? "expiry",
-        preserve,
-        this.replacementDate,
-        this.projection === "map",
-      );
+      return this.replace(this.replacement ?? "expiry", preserve, this.projection === "map");
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);
@@ -1008,29 +1013,25 @@ export class Photos {
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {
     this.timelineController.abort();
-    this.timeline = undefined;
-    this.timelineError = "";
     this.timelineLoading = false;
-    if (this.view === "timeline") void this.loadTimeline();
-    return this.replacement === "date"
-      ? this.replace("date", undefined, this.replacementDate)
-      : this.replace("refresh", preserve);
-  }
-
-  setView(view: "grid" | "timeline") {
-    this.view = view;
-    if (view === "timeline" && !this.timeline && !this.timelineLoading) void this.loadTimeline();
+    void this.loadTimeline();
+    return this.replace("refresh", preserve);
   }
 
   async loadTimeline() {
-    if (this.disposed || this.hidden) return;
+    if (this.disposed || this.hidden || this.projection === "map") return;
     this.timelineController.abort();
     const controller = (this.timelineController = new AbortController());
     this.timelineLoading = true;
-    this.timelineError = "";
     try {
-      const page = await fetchPhotoTimeline(this.session, this.baseQuery, controller.signal);
-      if (!controller.signal.aborted) this.timeline = page.facets[0];
+      // A failed refresh keeps the last counts and says why beside them.
+      const page = await fetchPhotoTimeline(this.session, this.query, controller.signal);
+      if (controller.signal.aborted) return;
+      const facet = page.facets[0];
+      if (facet?.available) {
+        this.timeline = facet;
+        this.timelineError = "";
+      } else this.timelineError = timelineProblem(facet?.reason);
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (this.authFailure(cause)) return;
@@ -1042,14 +1043,9 @@ export class Photos {
           "snapshot_busy",
           "snapshot_unavailable",
         ].includes(cause.code)
-      ) {
-        this.timeline = {
-          dimension: "capture_day",
-          available: false,
-          reason: cause.code,
-          values: [],
-        };
-      } else this.timelineError = cause instanceof Error ? cause.message : String(cause);
+      )
+        this.timelineError = timelineProblem(cause.code);
+      else this.timelineError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.timelineLoading = false;
     }
@@ -1106,11 +1102,6 @@ export class Photos {
       if (controller.signal.aborted) return false;
       throw cause;
     }
-  }
-
-  selectDate(date?: string) {
-    if (!this.authored.canChangeTarget()) return;
-    return this.replace("date", undefined, date);
   }
 
   async previewRejects(selected = false) {
@@ -1212,9 +1203,8 @@ export class Photos {
   }
 
   private async replace(
-    mode: "refresh" | "expiry" | "date",
+    mode: "refresh" | "expiry",
     preserve?: () => (() => Promise<void>) | undefined,
-    date?: string,
     resume = false,
   ) {
     if (this.disposed) return false;
@@ -1226,8 +1216,7 @@ export class Photos {
     const controller = this.controller;
     let signal = controller.signal;
     this.replacement = mode;
-    this.replacementDate = date;
-    const query = mode === "date" ? captureDateQuery(this.baseQuery, date) : this.query;
+    const query = this.query;
     this.loading = true;
     this.error = "";
     const count = this.items.length;
@@ -1276,15 +1265,11 @@ export class Photos {
           !cursor ||
           (!!this.projection &&
             (candidate.size >= mapPhotoLimit || staged.pages >= mapPageLimit)) ||
-          (!this.projection &&
-            (mode === "date" || (reachedPrefix && (mode === "refresh" || reachedPreviously))));
+          (!this.projection && reachedPrefix && (mode === "refresh" || reachedPreviously));
       }
-      const eligible =
-        mode === "date"
-          ? new Set(candidate.keys())
-          : await this.eligibleSelection(candidate.keys(), query, controller.signal);
+      const eligible = await this.eligibleSelection(candidate.keys(), query, controller.signal);
       if (controller.signal.aborted) return false;
-      const restore = mode === "date" ? undefined : preserve?.();
+      const restore = preserve?.();
       const captured = !this.authored.inspectedID && !!this.authored.targets.length;
       if (captured) this.captureSelection();
       this.authored.revalidate(eligible);
@@ -1297,24 +1282,16 @@ export class Photos {
       this.facetsError = "";
       this.cursor = cursor;
       this.started = true;
-      if (mode === "date") {
-        this.clearFrozen();
-        this.query = query;
-        this.date = date;
-        this.scrollTop = 0;
-        this.clearSelection();
-      } else {
-        if (!this.authored.targets.length)
-          this.selection =
-            this.allResults && !captured
-              ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined }
-              : reconcileIDSelection(this.selection, eligible);
-        if (!this.authored.targets.length && !this.selection.selectedIDs.size)
-          this.allResults = false;
-        this.trashTargets = this.trashTargets.filter(
-          (item) => eligible.has(item.asset_id) && this.selectedIDs.has(item.asset_id),
-        );
-      }
+      if (!this.authored.targets.length)
+        this.selection =
+          this.allResults && !captured
+            ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined }
+            : reconcileIDSelection(this.selection, eligible);
+      if (!this.authored.targets.length && !this.selection.selectedIDs.size)
+        this.allResults = false;
+      this.trashTargets = this.trashTargets.filter(
+        (item) => eligible.has(item.asset_id) && this.selectedIDs.has(item.asset_id),
+      );
       this.expired = false;
       this.replacement = undefined;
       this.staged = undefined;
@@ -1443,6 +1420,13 @@ export class Photos {
     if (this.needsFacets && !this.facetsError) void this.retryFacets();
   }
 
+  get captureRange() {
+    return (
+      !this.projection &&
+      Boolean(this.query.filters.capture_after || this.query.filters.capture_before)
+    );
+  }
+
   private get countsHidden() {
     return this.withoutCounts || !this.filtersOpen;
   }
@@ -1456,11 +1440,15 @@ export class Photos {
     this.facetsError = "";
     this.facetsRetryable = true;
     try {
-      // Counts describe the whole scope, like timeline counts, so a selected date does not narrow them.
-      const query = parseQuery(canonicalQuery(this.baseQuery));
+      const query = parseQuery(canonicalQuery(this.query));
       query.sort = { field: "capture_time", direction: "desc" };
       const page = await listPhotoAssets(
-        { query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 },
+        {
+          query,
+          hidden: this.hidden,
+          facets: [...(this.hidden || this.captureRange ? datedPhotoFacets : photoFacets)],
+          page_size: 1,
+        },
         { session: this.session, signal: controller.signal },
       );
       if (controller.signal.aborted) return;

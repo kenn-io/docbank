@@ -80,6 +80,7 @@ export function computeJustified(items: LayoutItem[], opts: LayoutOptions): Layo
 }
 
 export const HEADER_HEIGHT = 56;
+export const STICKY_HEADER_HEIGHT = 44;
 export const ROW_HEIGHTS = { compact: 140, comfortable: 200, large: 280 };
 export type Density = keyof typeof ROW_HEIGHTS;
 export type PhotoGroup = { key: string; label: string; year: string; items: PhotoGridRow[] };
@@ -100,12 +101,13 @@ export function photoDate(
   return item.file_modified_time ?? item.capture_time ?? null;
 }
 
-export function monthLabel(key: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${key}-01T00:00:00Z`));
+export function monthLabel(
+  key: string,
+  format: Intl.DateTimeFormatOptions = { month: "long", year: "numeric" },
+): string {
+  return new Intl.DateTimeFormat(undefined, { ...format, timeZone: "UTC" }).format(
+    new Date(`${key}-01T00:00:00Z`),
+  );
 }
 
 // Floating EXIF dates retain their recorded clock time regardless of the browser's zone.
@@ -141,7 +143,7 @@ export function groupPhotos(
   if (grouping === "months") {
     const byMonth = new Map<string, PhotoGroup>();
     for (const item of dated) {
-      const key = photoDate(item)!.slice(0, 7);
+      const key = photoMonth(item);
       let group = byMonth.get(key);
       if (!group) {
         group = { key, label: monthLabel(key), year: key.slice(0, 4), items: [] };
@@ -203,15 +205,91 @@ export function computeMonthLayout(
   };
 }
 
-export function visibleRows(rows: Row[], top: number, bottom: number): Row[] {
+function rowBoundary(rows: Row[], top: number, after = false): number {
   let start = 0;
   let end = rows.length;
   while (start < end) {
     const mid = (start + end) >>> 1;
-    if (rows[mid].y + rows[mid].height < top) start = mid + 1;
+    const bottom = rows[mid].y + rows[mid].height;
+    if (after ? bottom <= top : bottom < top) start = mid + 1;
     else end = mid;
   }
-  const first = start;
+  return start;
+}
+
+export function visibleRows(rows: Row[], top: number, bottom: number): Row[] {
+  const first = rowBoundary(rows, top);
+  let start = first;
   while (start < rows.length && rows[start].y <= bottom) start++;
   return rows.slice(first, start);
+}
+
+export type PhotoChunk = {
+  group: PhotoGroup;
+  layout: ReturnType<typeof computeMonthLayout>;
+  offset: number;
+};
+
+const photoMonth = (item?: PhotoGridRow) => (item && photoDate(item)?.slice(0, 7)) ?? "";
+
+// layoutRow is the chunk's layout row holding the photo at index, if any.
+export function layoutRow(chunk: PhotoChunk, index: number): Row | undefined {
+  return chunk.layout.rows.find((row) => row.items.some((item) => item.index === index));
+}
+
+export function rowTop(chunk: PhotoChunk, row: Row): number {
+  return chunk.offset + chunk.layout.contentOffset + row.y;
+}
+
+// firstRow locates the first matching visible photo. A section's first row starts at its heading.
+function firstRow(chunks: PhotoChunk[], matches: (item: PhotoGridRow) => boolean) {
+  for (const chunk of chunks.filter((chunk) => chunk.group.year)) {
+    const row = layoutRow(chunk, chunk.group.items.findIndex(matches));
+    if (row)
+      return row === chunk.layout.rows[0]
+        ? chunk.offset
+        : rowTop(chunk, row) - STICKY_HEADER_HEIGHT;
+  }
+}
+
+// seekOffset returns where the month's first photo or its collapsed stack sits. Photos page in UTC
+// order but are filed by recorded date, so only a finished list can say it has none;
+// then the first row of the nearest older calendar month stands in. Undefined means the
+// caller should keep paging, or scroll to the end once the list has ended.
+export function seekOffset(
+  chunks: PhotoChunk[],
+  month: string,
+  ended = false,
+  loadedItems: PhotoGridRow[] = [],
+) {
+  const own = firstRow(chunks, (item) => photoMonth(item) === month);
+  if (own !== undefined) return own;
+  const members = new Set(
+    loadedItems.flatMap((row) => (row.stack && photoMonth(row) === month ? [row.asset_id] : [])),
+  );
+  const stack = firstRow(chunks, (item) => !!item.stack?.asset_ids.some((id) => members.has(id)));
+  if (stack !== undefined) return stack;
+  if (!ended) return;
+  const months = chunks.flatMap(({ group }) => (group.year ? group.items.map(photoMonth) : []));
+  const target = months.sort().findLast((found) => found <= month);
+  return firstRow(chunks, (item) => photoMonth(item) === target);
+}
+
+// topPhoto is the first photo in the chunk's top visible row.
+function topPhoto({ layout, group, offset }: PhotoChunk, top: number) {
+  const row = layout.rows[rowBoundary(layout.rows, top - offset - layout.contentOffset, true)];
+  return row && group.items[row.items[0]!.index];
+}
+
+// monthAt names the first photo visible below the sticky section heading in any order.
+export function monthAt(chunks: PhotoChunk[], top: number): string {
+  for (const chunk of chunks) {
+    if (chunk.offset + chunk.layout.intrinsicHeight <= top) continue;
+    const photo = topPhoto(
+      chunk,
+      top + (chunk.group.key === "relevance" ? 0 : STICKY_HEADER_HEIGHT),
+    );
+    if (photo) return photoMonth(photo);
+  }
+  return "";
 }

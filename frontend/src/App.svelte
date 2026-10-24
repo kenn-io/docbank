@@ -706,7 +706,6 @@
       },
       { projection: "map", undoState: photoUndo, hiddenAccess },
     );
-    photos.date = untrack(() => (id ? albumPhotos?.date : state.photos.date));
     mapPhotos = photos;
     return () => photos.dispose();
   });

@@ -8,12 +8,13 @@ export async function withPhotoFixture(
   preview: string,
   use: (run: (...args: string[]) => Promise<string>) => Promise<void>,
   rejects = false,
+  flags: string[] = [],
 ) {
   const workspace = await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));
   const { run, seed, dispose } = photoFixture(workspace);
   try {
     await mkdir(output!, { recursive: true });
-    await seed(count, ...(rejects ? ["--rejects"] : []));
+    await seed(count, ...(rejects ? ["--rejects"] : []), ...flags);
     await use(run);
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {

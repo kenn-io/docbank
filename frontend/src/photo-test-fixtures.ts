@@ -2,6 +2,7 @@ import { type PhotoBrowseRow } from "./photoRows.js";
 import { Blob } from "node:buffer";
 import { vi } from "vite-plus/test";
 import { fireEvent } from "@testing-library/svelte";
+import * as snapshots from "./snapshots.js";
 import type {
   PhotoMapRow,
   PhotoAlbumSummary,
@@ -240,3 +241,44 @@ export const photoSelectionFiles = () => [
   new File(["video"], "movie.MP4", { lastModified: photoSelectionLastModified }),
   new File(["text"], "notes.txt", { lastModified: photoSelectionLastModified }),
 ];
+
+// Timeline counts shaped like the daemon's reply: available totals are the day counts plus
+// `missing`, and unavailable facets carry a reason and no counts. `facet` overrides either.
+export function photoTimelineCounts(
+  days: [key: string, count: number][] = [],
+  facet: Partial<snapshots.CaptureDayFacet> = {},
+): snapshots.PhotoTimelineCounts {
+  const unavailable = facet.available === false;
+  const missing = facet.missing ?? 0;
+  return {
+    query: {
+      v: 1,
+      mode: "lexical",
+      syntax: "simple",
+      text: "",
+      filters: {},
+      sort: { field: "capture_time", direction: "desc" },
+    },
+    dependencies: [],
+    generation: { kind: "native" },
+    coverage: { configuration: "unconfigured" },
+    observed_at: "2026-01-01T00:00:00Z",
+    facets: [
+      {
+        dimension: "capture_day",
+        available: true,
+        ...(unavailable
+          ? {}
+          : { total: days.reduce((sum, [, count]) => sum + count, missing), missing, other: 0 }),
+        values: unavailable
+          ? []
+          : days.map(([key, count]) => ({ key, label: key, count, selected: false })),
+        ...facet,
+      },
+    ],
+  };
+}
+
+export function stubPhotoTimeline() {
+  vi.spyOn(snapshots, "fetchPhotoTimeline").mockResolvedValue(photoTimelineCounts());
+}

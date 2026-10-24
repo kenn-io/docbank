@@ -31,6 +31,7 @@ func check(err error) {
 
 func main() {
 	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
+	singleYear := flag.Bool("single-year", false, "Place every photo in one year")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
 	rejects := flag.Bool("rejects", false, "Include confirmed rejects")
@@ -177,6 +178,9 @@ func main() {
 		}
 		if index >= 9000 {
 			sampleIndex = 10 + index%38
+		}
+		if *singleYear {
+			sampleIndex = 0
 		}
 		item := samples[sampleIndex]
 		name := fmt.Sprintf("Synthetic-photo-%05d.jpg", index+1)

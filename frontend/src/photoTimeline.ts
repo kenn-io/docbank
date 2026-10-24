@@ -1,11 +1,9 @@
-import { normalizeCaptureDate, type Query } from "./query.js";
 import type { CaptureDayFacet } from "./snapshots.js";
 
 export type { CaptureDayFacet } from "./snapshots.js";
 export interface TimelineMonth {
   key: string;
   count: number;
-  days: { key: string; count: number }[];
 }
 export interface TimelineYear {
   key: string;
@@ -25,32 +23,22 @@ export function timelineYears(facet: CaptureDayFacet): TimelineYear[] {
     const monthKey = day.key.slice(0, 7);
     let month = year.months.at(-1);
     if (month?.key !== monthKey) {
-      month = { key: monthKey, count: 0, days: [] };
+      month = { key: monthKey, count: 0 };
       year.months.push(month);
     }
     year.count += day.count;
     month.count += day.count;
-    month.days.push({ key: day.key, count: day.count });
   }
   return [...years.values()];
 }
 
-export function captureDateQuery(base: Query, date?: string): Query {
-  if (!date) return base;
-  const after = normalizeCaptureDate(
-    date.length === 4 ? `${date}-01-01` : date.length === 7 ? `${date}-01` : date,
-  )!;
-  const end = new Date(`${after}T00:00:00Z`);
-  if (date.length === 4) end.setUTCFullYear(end.getUTCFullYear() + 1);
-  else if (date.length === 7) end.setUTCMonth(end.getUTCMonth() + 1);
-  else end.setUTCDate(end.getUTCDate() + 1);
-  const before = end.getUTCFullYear() <= 9999 ? end.toISOString().slice(0, 10) : undefined;
-  return {
-    ...base,
-    filters: {
-      ...base.filters,
-      capture_after: after,
-      ...(before ? { capture_before: before } : {}),
-    },
-  };
+// timelineProblem says why counts could not be shown, from an unavailable facet's reason or a
+// refusal's error code.
+export function timelineProblem(reason?: string): string {
+  if (reason === "snapshot_busy" || reason === "snapshot_capacity")
+    return "Timeline is busy. Retry in a moment.";
+  if (reason === "time_budget_exceeded") return "Timeline took too long. Try again.";
+  if (reason === "member_budget_exceeded") return "Too many photos for timeline counts.";
+  if (reason === "snapshot_too_large") return "Timeline exceeds its limits.";
+  return "Timeline counts are unavailable.";
 }
