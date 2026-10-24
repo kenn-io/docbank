@@ -263,8 +263,6 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 		return err
 	}
 	var hidden bool
-	// Package assignments have no shared photo-membership resolver. Require an
-	// unlock for them only when the vault contains a Hidden photo.
 	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 	SELECT EXISTS(SELECT 1 FROM (
 		SELECT content_version_id FROM person_document_assertions WHERE person_id IN (?,?)
@@ -275,9 +273,19 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 		UNION
 		SELECT n.current_version_id FROM custodian_assignments ca JOIN collection_members cm ON cm.ingest_id=ca.ingest_id JOIN nodes n ON n.id=cm.node_id
 		WHERE ca.person_id IN (?,?) AND ca.scope_kind='collection'
-	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)
-	OR (EXISTS(SELECT 1 FROM custodian_assignments WHERE person_id IN (?,?) AND scope_kind='package')
-		AND EXISTS(SELECT 1 FROM photo_assets WHERE hidden_at IS NOT NULL))`, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
+		UNION
+		SELECT m.content_version_id FROM custodian_assignments ca JOIN packages p ON p.package_id=ca.package_id
+		JOIN collection_snapshot_members m ON m.snapshot_id=p.snapshot_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND (ca.package_record_id='' OR EXISTS(
+			SELECT 1 FROM package_records r WHERE r.package_id=p.package_id AND r.row_id=ca.package_record_id AND r.occurrence_id=m.occurrence_id))
+		UNION
+		SELECT r.content_version_id FROM custodian_assignments ca JOIN package_import_receipts r ON r.package_id=ca.package_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND (ca.package_record_id='' OR ca.package_record_id=r.record_key)
+		UNION
+		SELECT n.current_version_id FROM custodian_assignments ca JOIN packages p ON p.package_id=ca.package_id
+		JOIN collection_members cm ON cm.ingest_id=p.ingest_id JOIN nodes n ON n.id=cm.node_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND ca.package_record_id='' AND p.snapshot_id IS NULL
+	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)`, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {

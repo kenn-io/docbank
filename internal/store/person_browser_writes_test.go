@@ -11,7 +11,7 @@ import (
 
 func TestBrowserMergeHiddenCustodian(t *testing.T) {
 	t.Parallel()
-	for _, scopeKind := range []string{"document", "collection", "package"} {
+	for _, scopeKind := range []string{"document", "collection", "package", "package-snapshot", "package-record"} {
 		for _, ownerRole := range []string{"absorbed", "survivor"} {
 			t.Run(scopeKind+"/"+ownerRole, func(t *testing.T) {
 				t.Parallel()
@@ -34,9 +34,23 @@ func TestBrowserMergeHiddenCustodian(t *testing.T) {
 					require.NoError(t, err)
 					addCollectionMembership(t, s, ingest, hidden.ID, "hidden.jpg", nil)
 					scope = CustodianScope{Kind: "collection", IngestID: ingest.ID()}
-				case "package":
-					pkg, _ := seedReceivedPackage(t, s, "synthetic-custody")
+				case "package", "package-snapshot", "package-record":
+					request, run, _ := prepareReceivedPackage(t, s, "synthetic-custody")
+					_, err := s.AdmitPackageImport(ctx, run, request, packageImportJobRequest(t, s, request))
+					require.NoError(t, err)
+					hidden, err = s.IngestFileExact(ctx, run, s.RootID(), "package-hidden.jpg", fakeHash("abc123"), 20, "image/jpeg", "package-hidden.jpg", "")
+					require.NoError(t, err)
+					pkg, err := s.Package(ctx, request.PackageID)
+					require.NoError(t, err)
 					scope = CustodianScope{Kind: "package", PackageID: pkg.PackageID}
+					if scopeKind != "package" {
+						commitReceivedLabel(t, s, pkg, hidden.CurrentVersionID, "PHOTO000001")
+					}
+					if scopeKind == "package-record" {
+						scope.PackageRecordID, err = PackageRecordKey("VOL001.dat", 1, "DOC-A")
+						require.NoError(t, err)
+						scope.HasPackageRecordID = true
+					}
 				}
 				owner := absorbed
 				if ownerRole == "survivor" {
@@ -106,14 +120,12 @@ func TestBrowserMergeCustodianWithoutHiddenEvidence(t *testing.T) {
 			assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: absorbed.PersonID,
 				RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
 			require.NoError(t, err)
-			if scopeKind != "package" {
-				hidden := browsePhotoNode(t, s, "unrelated.jpg", fakeHash("unrelated"), "image/jpeg")
-				asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
-				require.NoError(t, err)
-				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-				require.NoError(t, err)
-			}
+			hidden := browsePhotoNode(t, s, "unrelated.jpg", fakeHash("unrelated"), "image/jpeg")
+			asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
 			_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
 			require.NoError(t, err)
 			after, err := s.custodianByID(ctx, assignment.AssignmentID)
