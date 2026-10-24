@@ -581,10 +581,12 @@ it.each([
     secondTime: "12:00:00",
   },
   { label: "same displayed date", identity: "", secondTime: "12:00:30" },
-  { label: "new person", identity: "", secondTime: "12:00:30", create: true },
+  { label: "new person", identity: "", secondTime: "12:00:30", create: "alex" },
+  { label: "new person from a word prefix", identity: "", secondTime: "12:00:30", create: "al" },
 ])(
   "distinguishes namesakes for $label",
   async ({ identity, secondIdentity, secondTime, create }) => {
+    const newName = create === "al" ? "Alex" : create;
     const ids = ["person-alex-a", "person-alex-b", "person-alex-c"];
     const identities = [
       identity,
@@ -614,7 +616,7 @@ it.each([
     await faces.load("version-a");
     render(PhotoPeople, { faces, session: "session" });
     await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
-    if (create) await fireEvent.input(screen.getByRole("combobox"), { target: { value: "alex" } });
+    if (create) await fireEvent.input(screen.getByRole("combobox"), { target: { value: create } });
     await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 3 people" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
     if (secondIdentity) {
@@ -629,7 +631,7 @@ it.each([
     await fireEvent.click(
       dialog.getByRole("radio", {
         name: create
-          ? "New person named alex"
+          ? `New person named ${newName}`
           : secondIdentity
             ? /alex-b@example.test/
             : /person-alex-b/,
@@ -641,7 +643,7 @@ it.each([
         "version-a",
         expect.objectContaining(
           create
-            ? { face_id: face.face_id, revision: 3, person_name: "alex" }
+            ? { face_id: face.face_id, revision: 3, person_name: newName }
             : { person_id: "person-alex-b" },
         ),
         expect.anything(),

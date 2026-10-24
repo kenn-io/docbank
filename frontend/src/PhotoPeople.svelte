@@ -227,10 +227,13 @@
   function openChooser(face: PhotoFace | undefined, name: string) {
     closeChooser();
     const members = searchState.people.filter((person) => person.display_name_folded === name);
+    // Search matches word prefixes, so keep the typed spelling only when it is the whole name.
+    const typed = searchState.query.trim();
+    const folded = typed.normalize("NFKC").toLowerCase().split(/\s+/).join(" ");
     duplicate = {
       face: face ? { ...face } : undefined,
       name: members[0]!.display_name,
-      newName: searchState.query.trim() || members[0]!.display_name,
+      newName: typed && folded === name ? typed : members[0]!.display_name,
       people: members,
     };
     selection =

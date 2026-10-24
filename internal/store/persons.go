@@ -234,18 +234,25 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 }
 
 // Materialize the bounded matches before reading their visible identity labels.
-var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
- SELECT * FROM persons WHERE %s state<>'retired'
-	AND (?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
+// person_document_assertions has no person_id index in the frozen schema, so
+// browser searches read it once per query instead of once per candidate person.
+var peopleByDisplayNameSQL = `WITH hidden_versions AS MATERIALIZED (
+ SELECT v.version_id FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id
+ JOIN content_versions v ON v.node_id=f.node_id WHERE ?<>0 AND a.hidden_at IS NOT NULL
+), assertion_evidence AS MATERIALIZED (
+ SELECT person_id,MAX(role<>'blind_copy' AND content_version_id NOT IN hidden_versions) visible
+ FROM person_document_assertions WHERE ?<>0 GROUP BY person_id
+), matches AS MATERIALIZED (
+ SELECT persons.* FROM persons LEFT JOIN assertion_evidence e ON e.person_id=persons.person_id
+ WHERE %s state<>'retired'
+	AND (?=0 OR (e.person_id IS NULL
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=persons.person_id
-			AND i.origin='derived' AND i.confidence='exact_identifier')) OR EXISTS(
-		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id
-		AND a.role<>'blind_copy' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
+			AND i.origin='derived' AND i.confidence='exact_identifier')) OR e.visible OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
 		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))
-	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
-	ORDER BY display_name_folded,person_id LIMIT ?)
+	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND persons.person_id>?))
+	ORDER BY display_name_folded,persons.person_id LIMIT ?)
 SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,
 	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
 		FROM person_identities i WHERE i.person_id=persons.person_id
@@ -280,12 +287,12 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		}
 		prefix := document.FoldPersonName(query)
 		candidates := ""
-		args := []any{}
+		args := []any{visibleOnly && hideLocked, visibleOnly}
 		if prefix != "" {
 			candidates = `instr(display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(display_name_folded, ?) AND`
 			args = append(args, prefix, prefix)
 		}
-		args = append(args, visibleOnly, hideLocked, hideLocked, afterName, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
+		args = append(args, visibleOnly, hideLocked, afterName, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, candidates), args...)
 		if err != nil {
 			return err
