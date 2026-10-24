@@ -54,7 +54,6 @@ jobs:
             --mount type=bind,src="$secrets/api-key",dst=/run/secrets/api-key,readonly \
             -e DOCBANK_API_KEY_FILE=/run/secrets/api-key \
             -e DOCBANK_ALLOWED_HOSTS=docbank:8485 \
-            -e DOCBANK_TELEMETRY_ENABLED=off \
             docbank:smoke
           for _ in $(seq 60); do
             if curl -fsS -H 'Host: docbank:8485' http://127.0.0.1:18485/health >/dev/null; then

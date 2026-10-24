@@ -111,7 +111,6 @@ func TestConcreteNetworkDaemonKeepsLocalImports(t *testing.T) {
 	t.Setenv("DOCBANK_API_PORT", "0")
 	t.Setenv("DOCBANK_API_KEY", "synthetic-network-key")
 	t.Setenv("DOCBANK_API_KEY_FILE", "")
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
 	t.Setenv("DOCBANK_ALLOWED_HOSTS", "docbank")
 	stop := startServe(t)
 	rec := waitForDaemon(t, root)

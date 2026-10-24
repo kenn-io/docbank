@@ -17,7 +17,7 @@ const binary = path.join(
 test.use({ launchOptions: { args: ["--host-resolver-rules=MAP archive.example.test 127.0.0.1"] } });
 
 function envFor(vault: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { DOCBANK_HOME: vault, DOCBANK_TELEMETRY_ENABLED: "0" };
+  const env: NodeJS.ProcessEnv = { DOCBANK_HOME: vault };
   for (const name of [
     "PATH",
     "HOME",

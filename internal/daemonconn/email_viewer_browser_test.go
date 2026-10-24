@@ -41,7 +41,7 @@ func TestEmailViewerRealDaemonBrowser(t *testing.T) {
 	run := func(args ...string) []byte {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), binary, args...)
-		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
+		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault)
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
 		return out
@@ -49,7 +49,7 @@ func TestEmailViewerRealDaemonBrowser(t *testing.T) {
 	run("daemon", "start")
 	t.Cleanup(func() {
 		cmd := exec.Command(binary, "daemon", "stop")
-		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
+		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault)
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
 		status := exec.Command(binary, "daemon", "status", "--json")
