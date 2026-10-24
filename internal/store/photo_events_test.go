@@ -281,6 +281,27 @@ func TestPhotoEventsVisibleAccess(t *testing.T) {
 	events, err = s.VisiblePhotoEvents(unlocked, []PhotoEvent{{AssetID: asset.ID}})
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, events)
+	// Tag and album changes on the hidden photo reach only the unlocked viewer.
+	tag, err := s.CreateTag(ctx, "Hidden")
+	require.NoError(t, err)
+	set, err := s.CreatePhotoSet(ctx, "Album")
+	require.NoError(t, err)
+	changes := watchPhotoChanges(t, s)
+	_, err = s.AssignTag(unlocked, tag.ID, asset.Files[0].NodeID, UnconditionalRev)
+	require.NoError(t, err)
+	tagged := nextPhotoWake(t, changes)
+	_, err = s.ChangePhotoSetMembers(unlocked, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	for _, wake := range [][]PhotoEvent{tagged, nextPhotoWake(t, changes)} {
+		require.Len(t, wake, 1)
+		require.Equal(t, asset.ID, wake[0].AssetID)
+		events, err = s.VisiblePhotoEvents(ctx, wake)
+		require.NoError(t, err)
+		require.Empty(t, events)
+		events, err = s.VisiblePhotoEvents(unlocked, wake)
+		require.NoError(t, err)
+		require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, events)
+	}
 }
 
 // Each write commits separately so a second dependency cannot hide a missing mapping.
