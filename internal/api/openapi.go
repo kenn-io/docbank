@@ -72,11 +72,15 @@ func OpenAPIYAML() ([]byte, error) {
 			schema.Extensions = make(map[string]any)
 		}
 		name, _, _ := strings.Cut(typ.String(), ".")
+		pkgPath := typ.PkgPath()
+		if typ == reflect.TypeFor[PersonPhotoSummary]() {
+			name, pkgPath = "api", "go.kenn.io/docbank/internal/api"
+		}
 		schema.Extensions["x-go-type"] = name + "." + typ.Name()
 		schema.Extensions["x-go-type-import"] = struct {
 			Path string `json:"path"`
 			Name string `json:"name"`
-		}{typ.PkgPath(), name}
+		}{pkgPath, name}
 	}
 	// The patch decoder tracks presence separately, while clients send the
 	// public optional-field request type with the same wire representation.
