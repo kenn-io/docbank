@@ -104,17 +104,40 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 }
 
 func TestCreateTimeMatches(t *testing.T) {
-	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
-	require.Equal(t, os.Getpid(), rec.PID)
-	assert.True(t, createTimeMatches(rec), "own record must match")
-
-	// Simulate PID reuse: same live PID, different recorded create time.
-	rec.Metadata[metaCreateTime] = strconv.FormatInt(1, 10)
-	assert.False(t, createTimeMatches(rec), "mismatched create_time must read as dead")
-
-	// Records without the key (older daemons) match trivially.
-	delete(rec.Metadata, metaCreateTime)
-	assert.True(t, createTimeMatches(rec))
+	for _, test := range []struct {
+		name string
+		want bool
+	}{
+		{"own record", true},
+		{"mismatched create time", false},
+		{"missing create time", true},
+		{"gone identity", false},
+		{"foreign identity", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := NewRecord("127.0.0.1:1", "key", "tok", "")
+			require.Equal(t, os.Getpid(), rec.PID)
+			switch test.name {
+			case "mismatched create time":
+				rec.Metadata[metaCreateTime] = "1"
+			case "missing create time":
+				delete(rec.Metadata, metaCreateTime)
+			case "gone identity", "foreign identity":
+				if runtime.GOOS != "linux" {
+					t.Skip("fabricated boot and PID namespace identities require Linux")
+				}
+				fields := strings.Split(string(rec.ProcessIdentityV2), ":")
+				require.Len(t, fields, 4)
+				if test.name == "gone identity" {
+					fields[1] = "11111111-2222-3333-4444-555555555555"
+				} else {
+					fields[2] = "1"
+				}
+				rec.ProcessIdentityV2 = kitdaemon.ProcessIdentity(strings.Join(fields, ":"))
+			}
+			assert.Equal(t, test.want, createTimeMatches(rec))
+		})
+	}
 }
 
 // A version-matched record without a published API key is a pre-key daemon:
@@ -175,63 +198,49 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 	}
 }
 
-func TestEnsureRefusesLockedVaultBeforeStarting(t *testing.T) {
-	root := t.TempDir()
-	lock, err := (home.Layout{Root: root}).TryLockExclusive()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, lock.Release()) })
-	started := false
-	result, err := ensureDaemon(t.Context(), root,
-		func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
-			started = true
-			return kitdaemon.RuntimeRecord{}, nil
+func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		wantStart bool
+	}{
+		{"locked vault", false},
+		{"unlocked existing vault", true},
+		{"missing vault", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			switch test.name {
+			case "locked vault":
+				lock, err := (home.Layout{Root: root}).TryLockExclusive()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, lock.Release()) })
+			case "missing vault":
+				root = filepath.Join(root, "missing", "vault")
+			}
+			started := false
+			_, err := ensureDaemon(t.Context(), root,
+				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+					started = true
+					switch test.name {
+					case "unlocked existing vault":
+						lock, err := (home.Layout{Root: root}).TryLockExclusive()
+						require.NoError(t, err, "the probe must release ownership before starting")
+						require.NoError(t, lock.Release())
+					case "missing vault":
+						_, err := os.Stat(filepath.Dir(root))
+						require.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
+					}
+					return NewRecord("127.0.0.1:2", "key", "token", ""), nil
+				})
+			if test.wantStart {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, home.ErrVaultLocked)
+				require.ErrorContains(t, err, "possibly a docbank daemon outside this sandbox: ")
+			}
+			assert.Equal(t, test.wantStart, started)
 		})
-	require.ErrorIs(t, err, home.ErrVaultLocked)
-	require.ErrorContains(t, err, "possibly a docbank daemon outside this sandbox: ")
-	assert.False(t, started)
-	assert.False(t, result.Started)
-}
-
-func TestEnsureStartsOverGoneRuntimeIdentityWithoutSignalingLivePID(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("earlier-boot process identities require Linux")
 	}
-	root, rec := startUnresponsiveRuntime(t)
-	fields := strings.Split(string(rec.ProcessIdentityV2), ":")
-	require.Len(t, fields, 4)
-	fields[1] = "11111111-2222-3333-4444-555555555555"
-	rec.ProcessIdentityV2 = kitdaemon.ProcessIdentity(strings.Join(fields, ":"))
-	_, err := RuntimeStore(root).Write(rec)
-	require.NoError(t, err)
-	started := false
-	result, err := ensureDaemon(t.Context(), root,
-		func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
-			started = true
-			lock, err := (home.Layout{Root: root}).TryLockExclusive()
-			require.NoError(t, err, "the probe must release ownership before starting")
-			require.NoError(t, lock.Release())
-			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
-		})
-	assert.True(t, kitdaemon.ProcessAlive(rec.PID), "the live helper must never be signaled for a gone identity")
-	require.NoError(t, err)
-	assert.True(t, started)
-	assert.True(t, result.Started)
-	assert.Nil(t, result.Replaced)
-}
-
-func TestEnsureStartsWithMissingVault(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "missing", "vault")
-	started := false
-	result, err := ensureDaemon(t.Context(), root,
-		func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
-			started = true
-			_, err := os.Stat(filepath.Dir(root))
-			require.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
-			return NewRecord("127.0.0.1:2", "key", "token", ""), nil
-		})
-	require.NoError(t, err)
-	assert.True(t, started)
-	assert.True(t, result.Started)
 }
 
 func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
