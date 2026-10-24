@@ -85,3 +85,50 @@ it.each([
     expect(lookup).toHaveBeenCalledWith(item.asset_id, expect.anything());
   },
 );
+
+it("keeps the large preview when a replaced row loads while zoomed to 1:1", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(URL, "createObjectURL").mockImplementation(
+    (blob) => `blob:${(blob as Blob & { id: string }).id}`,
+  );
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
+  const item = photo(1);
+  item.previews.grid = { state: "ready", generation_id: "grid-1" };
+  item.previews.fit = { state: "ready", generation_id: "fit-1" };
+  const photos = new Photos("scoped", vi.fn());
+  const preview = vi
+    .spyOn(photos, "preview")
+    .mockImplementation(async (row, size) =>
+      size === "fit"
+        ? row.previews.fit
+        : { state: "ready", generation_id: `large-of-${row.previews.fit.generation_id}` },
+    );
+  const cache = {
+    get: vi.fn(async (_asset: string, id: string) =>
+      Object.assign(new Blob(["synthetic-photo"]), { id }),
+    ),
+  } as unknown as PhotoPreviewCache;
+  const props = { photo: item, photos, cache, view: { ...fittedPhotoView } };
+  const { container, rerender } = render(PhotoStage, props);
+  const source = () => container.querySelector("img")?.getAttribute("src");
+  await waitFor(() => expect(source()).toBe("blob:fit-1"));
+  container.querySelector<HTMLElement>(".photo-viewport")!.dataset.zoomed = "true";
+  await waitFor(() => expect(source()).toBe("blob:large-of-fit-1"));
+  const replaced = {
+    ...item,
+    previews: { ...item.previews, fit: { state: "ready" as const, generation_id: "fit-2" } },
+  };
+  await rerender({ ...props, photo: replaced });
+  await waitFor(() => expect(source()).toBe("blob:large-of-fit-2"));
+  expect(preview).toHaveBeenCalledWith(replaced, "large", expect.anything());
+});

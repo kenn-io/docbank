@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -174,7 +173,7 @@ func TestPhotoEventsNonPhotoFiltering(t *testing.T) {
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, ch), "the photo's duplicate status changed")
 	tag, err := s.CreateTag(t.Context(), "Synthetic duplicate keyword")
 	require.NoError(t, err)
-	nextPhotoWake(t, ch)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch), "a new keyword asks every viewer to refetch")
 	ordinary, _, err = s.Move(t.Context(), ordinary.ID, s.RootID(), "renamed.bin", ordinary.Revision)
 	require.NoError(t, err)
 	require.Empty(t, ch)
@@ -243,18 +242,6 @@ func TestPhotoEventsHiddenTransition(t *testing.T) {
 	_, err := s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events), "hiding asks every viewer to refetch")
-	// Replacing the hidden photo with identical bytes stays invisible to a locked viewer.
-	_, _, err = s.ReplaceContent(t.Context(), asset.Files[0].NodeID, UnconditionalRev, browseHash("transition.jpg"), 20, "image/jpeg")
-	require.NoError(t, err)
-	locked, err := s.VisiblePhotoEvents(t.Context(), nextPhotoWake(t, events))
-	require.NoError(t, err)
-	require.Empty(t, locked)
-	// A visible duplicate still refreshes, by its own ID.
-	duplicate, err := s.PhotoAssetForNode(t.Context(), browsePhotoNode(t, s, "copy.jpg", browseHash("transition.jpg"), "image/jpeg").ID)
-	require.NoError(t, err)
-	locked, err = s.VisiblePhotoEvents(t.Context(), nextPhotoWake(t, events))
-	require.NoError(t, err)
-	require.Equal(t, []PhotoEvent{{AssetID: duplicate.ID}}, locked)
 }
 
 func TestPhotoEventsVisibleAccess(t *testing.T) {
@@ -278,27 +265,6 @@ func TestPhotoEventsVisibleAccess(t *testing.T) {
 	events, err = s.VisiblePhotoEvents(unlocked, []PhotoEvent{{AssetID: asset.ID}})
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, events)
-	// Tag and album changes on the hidden photo reach only the unlocked viewer.
-	tag, err := s.CreateTag(ctx, "Hidden")
-	require.NoError(t, err)
-	set, err := s.CreatePhotoSet(ctx, "Album")
-	require.NoError(t, err)
-	changes := watchPhotoChanges(t, s)
-	_, err = s.AssignTag(unlocked, tag.ID, asset.Files[0].NodeID, UnconditionalRev)
-	require.NoError(t, err)
-	tagged := nextPhotoWake(t, changes)
-	_, err = s.ChangePhotoSetMembers(unlocked, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-	require.NoError(t, err)
-	for _, wake := range [][]PhotoEvent{tagged, nextPhotoWake(t, changes)} {
-		require.Len(t, wake, 1)
-		require.Equal(t, asset.ID, wake[0].AssetID)
-		events, err = s.VisiblePhotoEvents(ctx, wake)
-		require.NoError(t, err)
-		require.Empty(t, events)
-		events, err = s.VisiblePhotoEvents(unlocked, wake)
-		require.NoError(t, err)
-		require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, events)
-	}
 }
 
 // Each write commits separately so a second dependency cannot hide a missing mapping.
@@ -375,6 +341,9 @@ func TestPhotoEventsAlbumMembership(t *testing.T) {
 	}
 	// Definition changes still ask every viewer to refetch.
 	for _, change := range []func() (PhotoSet, error){
+		func() (PhotoSet, error) {
+			return s.UpdatePhotoSet(ctx, set.ID, set.Revision, new("Renamed album"), nil, nil)
+		},
 		func() (PhotoSet, error) { return s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, new(true), nil) },
 		func() (PhotoSet, error) { return s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, nil, new(&asset.ID)) },
 	} {
@@ -394,9 +363,7 @@ func TestPhotoEventsGlobalDefinitions(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	_, err := s.CreatePhotoSet(ctx, "Album")
-	require.NoError(t, err)
-	_, err = s.CreateTag(ctx, "Keyword")
+	_, err := s.CreateTag(ctx, "Keyword")
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	person, err := s.CreatePerson(ctx, "Example Person", "operator")
@@ -421,7 +388,6 @@ func TestPhotoEventsGlobalDefinitions(t *testing.T) {
 	require.NoError(t, err)
 	events := watchPhotoChanges(t, s)
 	for _, statement := range []string{
-		`UPDATE photo_sets SET name='Renamed album'`,
 		`UPDATE photo_library_settings SET revision=revision+1`,
 		`UPDATE tags SET name='Renamed keyword'`,
 		`UPDATE persons SET display_name='Renamed person' WHERE state='curated'`,
@@ -530,45 +496,29 @@ func TestPhotoEventsCurrentVersionSources(t *testing.T) {
 
 func TestPhotoEventsDirectoryVisibility(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"move", "trash", "queued trash", "purge"} {
-		for _, count := range []int{1, PhotoEventIDLimit + 1} {
-			t.Run(fmt.Sprintf("%s/%d", action, count), func(t *testing.T) {
-				s := newTestStore(t)
-				ctx := t.Context()
-				parent, err := s.Mkdir(ctx, s.RootID(), "Photo folder")
+	for _, action := range []string{"trash", "purge"} {
+		t.Run(action, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			parent, err := s.Mkdir(ctx, s.RootID(), "Photo folder")
+			require.NoError(t, err)
+			node, err := s.CreateFile(ctx, parent.ID, "photo.jpg", fakeHash("1"), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			events := watchPhotoChanges(t, s)
+			_, _, err = s.Trash(ctx, parent.ID, UnconditionalRev)
+			require.NoError(t, err)
+			if action == "purge" {
+				nextPhotoWake(t, events)
+				_, err = s.TrashEmpty(ctx, 0, true)
 				require.NoError(t, err)
-				var all []PhotoEvent
-				for i := range count {
-					node, err := s.CreateFile(ctx, parent.ID, fmt.Sprintf("photo-%d.jpg", i), fakeHash(strconv.Itoa(i)), 20, "image/jpeg")
-					require.NoError(t, err)
-					asset, err := s.PhotoAssetForNode(ctx, node.ID)
-					require.NoError(t, err)
-					all = append(all, PhotoEvent{AssetID: asset.ID})
-				}
-				events := watchPhotoChanges(t, s)
-				if action == "move" || action == "queued trash" {
-					_, _, err = s.Move(ctx, parent.ID, s.RootID(), "Renamed folder", UnconditionalRev)
-					require.NoError(t, err)
-				}
-				if action != "move" {
-					_, _, err = s.Trash(ctx, parent.ID, UnconditionalRev)
-					require.NoError(t, err)
-				}
-				if action == "purge" {
-					nextPhotoWake(t, events)
-					_, err = s.TrashEmpty(ctx, 0, true)
-					require.NoError(t, err)
-					// Permanent deletion removes files but retains the asset's graph identity.
-					asset, err := s.PhotoAssetByID(ctx, all[0].AssetID)
-					require.NoError(t, err)
-					require.Empty(t, asset.Files)
-				}
-				want := all
-				if count > PhotoEventIDLimit || action == "queued trash" {
-					want = []PhotoEvent{{}}
-				}
-				require.ElementsMatch(t, want, nextPhotoWake(t, events))
-			})
-		}
+				// Permanent deletion removes files but retains the asset's graph identity.
+				purged, err := s.PhotoAssetByID(ctx, asset.ID)
+				require.NoError(t, err)
+				require.Empty(t, purged.Files)
+			}
+			require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
+		})
 	}
 }

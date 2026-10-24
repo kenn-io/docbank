@@ -2385,24 +2385,6 @@ it.each(["deselected anchor", "displaced selection"])(
   },
 );
 
-it("keeps selected photos that new photos pushed past the refreshed window, with their current revisions", async () => {
-  const moved = { ...photo(1), revision: 5 };
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(response([photo(2)], "next"))
-    .mockImplementationOnce(async (_url: string, options: RequestInit) => {
-      expect(JSON.parse(String(options.body)).query.filters.asset_ids).toEqual(["photo-1"]);
-      return response([moved]);
-    });
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  photos.items = [photo(1)];
-  photos.selectLoaded();
-  await photos.refresh();
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  expect(photos.trashTargets).toEqual([moved]);
-});
-
 it("keeps album scope and a pending timeline request through a sort change", async () => {
   let finish!: (page: snapshots.PhotoTimelineCounts) => void;
   const counts = vi

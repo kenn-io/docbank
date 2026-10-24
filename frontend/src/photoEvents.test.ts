@@ -92,9 +92,6 @@ it("authenticates, names the changed photos, and queues exactly one more pass fo
   expect(new Headers(fetch.mock.calls[0][1]?.headers).get("X-Docbank-Web-Session")).toBe(
     "synthetic",
   );
-  // Connecting asks for a refetch, since a change can land before the server subscribes.
-  expect(refresh).toHaveBeenCalledTimes(1);
-  expect(refresh).toHaveBeenLastCalledWith(idFreeChange);
   refresh.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
   stream.write('data: {"asset_id":"open"}\n\n');
   await vi.advanceTimersByTimeAsync(1000);
@@ -166,28 +163,30 @@ it("reports each time the stream opens, including after a failed connection", as
   fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
   const failure = vi.fn(),
     opened = vi.fn();
-  const watcher = watchPhotoEvents(
-    "synthetic",
-    vi.fn().mockResolvedValue(undefined),
-    failure,
-    opened,
-  );
+  const refresh = vi.fn((_change: PhotoChange) => Promise.resolve());
+  const watcher = watchPhotoEvents("synthetic", refresh, failure, opened);
   await vi.advanceTimersByTimeAsync(0);
   expect(failure).toHaveBeenCalledOnce();
   expect(opened).not.toHaveBeenCalled();
+  expect(refresh).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(1000);
   expect(opened).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  // A change can land before the server subscribes, so the connect asks for a refetch too.
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(refresh).toHaveBeenLastCalledWith(idFreeChange);
   watcher.stop();
 });
 
 it("lets a pass that only retries a failed one resume, but not one with new events", async () => {
   vi.useFakeTimers();
   const { stream } = serveStream();
+  let fail!: (cause: Error) => void;
   const refresh = vi
     .fn<(change: PhotoChange) => Promise<boolean | void>>()
     .mockResolvedValueOnce(undefined)
     .mockRejectedValueOnce(new Error("Page two failed"))
-    .mockRejectedValueOnce(new Error("Page two failed"))
+    .mockImplementationOnce(() => new Promise<void>((_, reject) => (fail = reject)))
     .mockResolvedValue(undefined);
   const watcher = watchPhotoEvents("synthetic", refresh, vi.fn());
   await vi.advanceTimersByTimeAsync(0);
@@ -199,8 +198,10 @@ it("lets a pass that only retries a failed one resume, but not one with new even
   await vi.advanceTimersByTimeAsync(1000);
   expect(refresh).toHaveBeenCalledTimes(3);
   expect(refresh.mock.calls[2]![0]).toMatchObject({ resume: true, ids: new Set(["a"]) });
-  // A new event while the retry fails means the staged pages may be stale.
+  // A new event while the retry runs means the pages it staged may be stale when it fails.
   stream.write('data: {"asset_id":"b"}\n\n');
+  await vi.advanceTimersByTimeAsync(0);
+  fail(new Error("Page two failed"));
   await vi.advanceTimersByTimeAsync(5000);
   expect(refresh).toHaveBeenCalledTimes(4);
   expect(refresh.mock.calls[3]![0].resume).toBeUndefined();
