@@ -34,6 +34,40 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	assert.NotNil(t, c.ProcessingProfiles)
 }
 
+func TestBackupScheduleConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, problem string
+		interval            time.Duration
+		keepLast            int
+	}{
+		{"disabled", "", "", 0, 0},
+		{"disabled with retention", "repo = 'snapshots'\ninterval = '0'\nkeep_last = 14", "", 0, 14},
+		{"enabled", "repo = 'snapshots'\ninterval = '24h'\nkeep_last = 14", "", 24 * time.Hour, 14},
+		{"minimum interval", "repo = 'snapshots'\ninterval = '1m'\nkeep_last = 1", "", time.Minute, 1},
+		{"short interval", "repo = 'snapshots'\ninterval = '59s'\nkeep_last = 1", "at least one minute", 0, 0},
+		{"missing repo", "interval = '24h'\nkeep_last = 14", "repo and positive keep_last", 0, 0},
+		{"missing count", "repo = 'snapshots'\ninterval = '24h'", "positive keep_last", 0, 0},
+		{"negative count", "keep_last = -1", "must not be negative", 0, 0},
+		{"negative interval", "interval = '-1h'", "must not be negative", 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := privateTestConfigDir(t)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[backup]\n"+tc.body), 0o600))
+			cfg, err := Load(dir)
+			if err == nil {
+				err = cfg.Validate()
+			}
+			if tc.problem != "" {
+				require.ErrorContains(t, err, tc.problem)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.interval, cfg.Backup.Interval.Std())
+			require.Equal(t, tc.keepLast, cfg.Backup.KeepLast)
+		})
+	}
+}
+
 func TestLoadParsesFile(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(

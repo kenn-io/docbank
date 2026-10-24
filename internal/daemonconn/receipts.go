@@ -34,6 +34,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
@@ -449,6 +450,9 @@ var codeToTypedErr = map[string]error{
 	"snapshot_busy":                   store.ErrSnapshotBusy,
 	"snapshot_too_large":              store.ErrQuerySnapshotTooLarge,
 	"invalid_saved_query_run":         store.ErrInvalidSavedQueryRun,
+
+	"backup_repository_owner_conflict": backupapp.ErrRepositoryOwnerConflict,
+	"backup_repository_claim_required": backupapp.ErrRepositoryClaimRequired,
 }
 
 // maxErrorResponseBytes bounds daemon problem bodies while leaving room for

@@ -342,15 +342,8 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = metadata.Close() })
-	blobsDir := filepath.Join(root, "blobs")
-	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	blobs, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = blobs.Close() })
+	d := backupTestDeps(t)
+	root, metadata, blobs := d.VaultRoot, d.Store, d.Blobs
 
 	source := filepath.Join(root, "source.txt")
 	require.NoError(t, os.WriteFile(source, []byte("capture before collection"), 0o600))
@@ -367,8 +360,7 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 
 	repo, err := backup.Init(filepath.Join(root, "backup"))
 	require.NoError(t, err)
-	g := NewOperationGate()
-	d := Deps{Store: metadata, Blobs: blobs}
+	g := d.Gate
 	metadataCaptured := make(chan struct{})
 	resumeBackup := make(chan struct{})
 	var resumeOnce sync.Once

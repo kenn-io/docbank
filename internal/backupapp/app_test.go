@@ -455,6 +455,35 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 		assert.Equal(t, node.ID, version.NodeID)
 		assert.Equal(t, node.BlobHash, version.BlobHash)
 	}
+	repositoryFiles := func() map[string]string {
+		files := map[string]string{}
+		require.NoError(t, filepath.WalkDir(repo.Root(), func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() {
+				content, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				files[path] = string(content)
+			}
+			return nil
+		}))
+		return files
+	}
+	before := repositoryFiles()
+	_, err = backupapp.Create(t.Context(), repo, "test-version", restoredStore, restoredBlobs, backup.CreateOptions{})
+	require.ErrorIs(t, err, backupapp.ErrRepositoryClaimRequired)
+	require.Equal(t, before, repositoryFiles())
+	preview, err := backupapp.ClaimRepository(t.Context(), repo, restoredStore, false)
+	require.NoError(t, err)
+	assert.False(t, preview.Owned)
+	assert.Equal(t, manifest.CreatedAt, preview.NewestAt)
+	_, err = backupapp.ClaimRepository(t.Context(), repo, restoredStore, true)
+	require.NoError(t, err)
+	_, err = backupapp.Create(t.Context(), repo, "test-version", restoredStore, restoredBlobs, backup.CreateOptions{})
+	require.NoError(t, err)
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
 }

@@ -399,7 +399,8 @@ CREATE INDEX IF NOT EXISTS page_render_jobs_request ON page_render_jobs(request_
 CREATE TABLE IF NOT EXISTS vault_metadata (
     singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
     vault_uid      TEXT NOT NULL UNIQUE,
-    schema_version INTEGER NOT NULL CHECK (schema_version >= 1)
+    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+    backup_claim_required INTEGER NOT NULL DEFAULT 0
 );
 
 -- AUTOINCREMENT: node ids are stored as origins (trash_parent) and will be
