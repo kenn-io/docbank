@@ -269,6 +269,6 @@ linters:
       - linters: [bodyclose]
         path: internal/api/.*_test\.go
 
-      # Only the storage tests run in parallel so far.
+      # Only these packages run their tests in parallel so far.
       - linters: [paralleltest]
-        path-except: internal/(store|api|processing)/
+        path-except: (internal/(store|api|processing)/|^docbank/)

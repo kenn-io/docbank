@@ -413,7 +413,7 @@ func TestResetVaultReleaseFailureLeavesSourceUnmoved(t *testing.T) {
 	require.NoError(t, vault.Close())
 }
 
-func TestResetVaultParentSyncFailureStopsBeforeFreshInitialization(t *testing.T) {
+func TestResetVaultParentSyncFailureStopsBeforeFreshInitialization(t *testing.T) { //nolint:paralleltest // replaces the package-level syncResetParentDirectory
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	diagnostic := filepath.Join(base, "vault.reset")
@@ -444,7 +444,7 @@ func TestResetVaultParentSyncFailureStopsBeforeFreshInitialization(t *testing.T)
 	assert.Equal(t, sourceBefore, mustReadResetFile(t, filepath.Join(diagnostic, "docbank.db")))
 }
 
-func TestResetVaultFreshParentSyncFailureClosesFreshVault(t *testing.T) {
+func TestResetVaultFreshParentSyncFailureClosesFreshVault(t *testing.T) { //nolint:paralleltest // replaces the package-level syncResetParentDirectory
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	diagnostic := filepath.Join(base, "vault.reset")
