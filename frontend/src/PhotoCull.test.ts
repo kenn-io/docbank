@@ -277,7 +277,7 @@ async function reviewPhoto(
   row = photo(1),
   autoAdvance = false,
   store?: ReturnType<typeof photoCullStorage>,
-  options: { lookupError?: Error; hiddenAccess?: HiddenAccess } = {},
+  options: { lookupError?: Error; hiddenAccess?: HiddenAccess; realPreview?: boolean } = {},
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -315,13 +315,15 @@ async function reviewPhoto(
   const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(row);
   if (options.lookupError) lookup.mockRejectedValueOnce(options.lookupError);
   vi.spyOn(photos, "lookupMany").mockResolvedValue([row]);
-  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  if (!options.realPreview) vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   const onclose = vi.fn();
   const view = render(PhotoCullView, {
     cull,
     photos,
     cache: {
-      get: vi.fn(async () => new Blob(["synthetic-photo"])),
+      get: vi.fn(async (_asset: string, id: string) =>
+        Object.assign(new Blob(["synthetic-photo"]), { id }),
+      ),
     } as unknown as PhotoPreviewCache,
     onclose,
   });
@@ -662,6 +664,33 @@ it("shows the restored rotation in the cull stage after Undo", async () => {
     expect(container.querySelector(".photo-stage [style*='rotate(0deg)']")).toBeTruthy(),
   );
   expect(container.querySelector(".photo-stage img")!.getAttribute("src")).toBe(preview);
+});
+
+it("keeps the large preview after lazy generation at 1:1", async () => {
+  vi.spyOn(URL, "createObjectURL").mockImplementation(
+    (blob) => `blob:${(blob as Blob & { id: string }).id}`,
+  );
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
+  vi.spyOn(api, "preparePhotoPreview").mockResolvedValue({
+    state: "ready",
+    generation_id: "large-1",
+  });
+  const row = photo(1);
+  row.previews.grid = { state: "ready", generation_id: "grid-1" };
+  row.previews.fit = { state: "ready", generation_id: "fit-1" };
+  const { container } = await reviewPhoto(row, false, undefined, { realPreview: true });
+  await waitFor(() =>
+    expect(container.querySelector(".photo-stage img")?.getAttribute("src")).toBe("blob:fit-1"),
+  );
+  container.querySelector<HTMLElement>(".photo-viewport")!.dataset.zoomed = "1";
+  await waitFor(() => expect(api.preparePhotoPreview).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(container.querySelector(".photo-stage img")?.getAttribute("src")).toBe("blob:large-1"),
+  );
 });
 
 it.each(["before edit", "during preparation", "before Undo"])(

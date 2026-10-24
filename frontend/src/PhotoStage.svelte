@@ -38,12 +38,17 @@
   let current = $state.raw(untrack(() => photo));
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
   let reloadRevision = $state(0);
-  // A preview published for the same content version also starts a new load.
-  const identity = $derived(
-    [current.asset_id, current.content_version_id]
-      .concat(Object.values(current.previews).map((slot) => `${slot.state}${slot.generation_id}`))
-      .join(":"),
-  );
+  let image = $state<PhotoLoupeImage>();
+  // A row replaced with a newly published preview starts a new load. The loader's own slot
+  // updates change the row in place, so they leave the identity alone.
+  const identity = $derived.by(() => {
+    const row = current;
+    return untrack(() =>
+      [row.asset_id, row.content_version_id]
+        .concat(Object.values(row.previews).map((slot) => `${slot.state}${slot.generation_id}`))
+        .join(":"),
+    );
+  });
   $effect(() => {
     current = photo;
   });
@@ -56,6 +61,9 @@
       untrack(() => current),
     );
     loader = active;
+    void tick().then(() => {
+      if (!active.active.signal.aborted && image?.isZoomed()) active.zoom();
+    });
     return () => active.dispose();
   });
   async function retry() {
@@ -91,6 +99,7 @@
 
 <div class="photo-stage">
   <PhotoLoupeImage
+    bind:this={image}
     url={loader.url}
     name={current.name}
     rotation={current.rotation}
