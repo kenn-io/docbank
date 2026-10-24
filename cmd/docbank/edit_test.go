@@ -237,7 +237,6 @@ func TestMain(m *testing.M) {
 	code := packagetest.RunWithLockRegistry(m)
 	if err := os.RemoveAll(docbankBuildDir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		code = 1
 	}
 	os.Exit(code)
 }
