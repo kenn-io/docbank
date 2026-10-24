@@ -1,148 +1,114 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import PhotoTimeline from "./PhotoTimeline.svelte";
-import { parseQuery } from "./query.js";
-import { captureDateQuery, timelineYears } from "./photoTimeline.js";
+import { photoTimelineCounts } from "./photo-test-fixtures.js";
 
-afterEach(cleanup);
+// The compact selector measures and scrolls its option list.
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+});
 
-it("uses recorded days and full counts for years and months", () => {
-  const years = timelineYears({
-    dimension: "capture_day",
-    available: true,
-    total: 904,
-    missing: 4,
-    other: 0,
-    values: [
-      { key: "2025-01-01", label: "2025-01-01", count: 500, selected: false },
-      { key: "2024-02-29", label: "2024-02-29", count: 300, selected: false },
-      { key: "2024-02-28", label: "2024-02-28", count: 100, selected: false },
+const facet = (missing = 4) =>
+  photoTimelineCounts(
+    [
+      ["2025-06-02", 10],
+      ["2025-06-01", 2],
+      ["2025-01-05", 3],
+      ["2024-02-29", 7],
     ],
-  });
-  expect(years.map((year) => [year.key, year.count])).toEqual([
-    ["2025", 500],
-    ["2024", 400],
-  ]);
-  expect(years[1].months[0].days.map((day) => day.key)).toEqual(["2024-02-29", "2024-02-28"]);
-  expect(years[1].months[0].count).toBe(400);
+    { missing },
+  ).facets[0];
+
+const props = (overrides: Record<string, unknown> = {}) => ({
+  facet: facet(),
+  loading: false,
+  error: "",
+  onselect: vi.fn(),
+  onretry: vi.fn(),
+  ...overrides,
 });
 
-it("bounds leap days and the final supported day without a timezone shift", () => {
-  const base = parseQuery("{}");
-  expect(captureDateQuery(base, "2025").filters).toEqual({
-    capture_after: "2025-01-01",
-    capture_before: "2026-01-01",
-  });
-  expect(captureDateQuery(base, "2025-12").filters).toEqual({
-    capture_after: "2025-12-01",
-    capture_before: "2026-01-01",
-  });
-  expect(captureDateQuery(base, "0001").filters).toEqual({
-    capture_after: "0001-01-01",
-    capture_before: "0002-01-01",
-  });
-  expect(captureDateQuery(base, "9999").filters).toEqual({ capture_after: "9999-01-01" });
-  expect(captureDateQuery(base, "9999-12").filters).toEqual({ capture_after: "9999-12-01" });
-  expect(captureDateQuery(base, "2024-02-29").filters).toEqual({
-    capture_after: "2024-02-29",
-    capture_before: "2024-03-01",
-  });
-  expect(captureDateQuery(base).filters).toEqual(base.filters);
-  expect(captureDateQuery(parseQuery("{}"), "9999-12-31").filters).toEqual({
-    capture_after: "9999-12-31",
-  });
+it("lists years with full counts and opens the chosen and current years", () => {
+  render(PhotoTimeline, props({ chosen: "2024", current: "2025-01" }));
+  const rail = screen.getByRole("navigation", { name: "Timeline" });
+  expect(within(rail).getByRole("button", { name: "2025, 15 photos" })).toBeTruthy();
+  expect(within(rail).getByRole("button", { name: "2024, 7 photos" })).toBeTruthy();
+  // Both years are open, so each lists its months.
+  expect(within(rail).getByRole("button", { name: "Jun 2025, 12 photos" })).toBeTruthy();
+  expect(within(rail).getByRole("button", { name: "Feb 2024, 7 photos" })).toBeTruthy();
+  // Only the top photo's month is marked.
+  const marked = rail.querySelectorAll("[aria-current]");
+  expect([...marked].map((row) => row.getAttribute("aria-label"))).toEqual(["Jan 2025, 3 photos"]);
 });
 
-it("shows full-scope year density and only the focused month's day rows", async () => {
+it("resolves a year click to its newest counted month", async () => {
   const onselect = vi.fn();
-  const view = render(PhotoTimeline, {
-    loading: false,
-    error: "",
-    onselect,
-    onretry: vi.fn(),
-    facet: {
-      dimension: "capture_day",
-      available: true,
-      total: 905,
-      missing: 5,
-      other: 0,
-      values: [
-        { key: "2025-01-01", label: "2025-01-01", count: 500, selected: false },
-        { key: "2024-02-29", label: "2024-02-29", count: 400, selected: false },
-      ],
-    },
-  });
-  expect(screen.getByText("905 photos in scope · 5 undated")).toBeTruthy();
-  const years = screen.getByRole("navigation", { name: "Timeline years" });
-  await fireEvent.click([...years.querySelectorAll("button")][1]);
-  expect(onselect).toHaveBeenLastCalledWith("2024");
-  await view.rerender({ selected: "2024" });
-  expect(years.querySelector('[aria-pressed="true"]')?.textContent).toContain("2024");
-  expect(screen.getByRole("button", { name: "February 2024 · 400", pressed: false })).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "February 2024 · 400" }));
-  expect(onselect).toHaveBeenLastCalledWith("2024-02");
-  await view.rerender({ selected: "2024-02" });
-  expect(screen.getByRole("button", { name: "February 2024 · 400", pressed: true })).toBeTruthy();
-  const day = screen.getByRole("button", { name: "2024-02-29 · 400 photos" });
-  expect(screen.queryByRole("button", { name: "2025-01-01 · 500 photos" })).toBeNull();
-  await fireEvent.click(day);
-  expect(onselect).toHaveBeenCalledWith("2024-02-29");
-  await view.rerender({ selected: "2024-02-29" });
-  expect(
-    screen.getByRole("button", { name: "2024-02-29 · 400 photos", pressed: true }),
-  ).toBeTruthy();
-  expect(screen.getByRole("navigation", { name: "Timeline month scrubber" })).toBeTruthy();
+  render(PhotoTimeline, props({ onselect }));
+  await fireEvent.click(screen.getByRole("button", { name: "2025, 15 photos" }));
+  expect(onselect).toHaveBeenCalledWith("2025-06");
+  // Closed years list no months.
+  expect(screen.queryByRole("button", { name: /^Jun 2025/ })).toBeNull();
 });
 
-it("shows an undated scope honestly", () => {
-  render(PhotoTimeline, {
-    loading: false,
-    error: "",
-    onselect: vi.fn(),
-    onretry: vi.fn(),
-    facet: {
-      dimension: "capture_day",
-      available: true,
-      total: 10,
-      missing: 10,
-      other: 0,
-      values: [],
-    },
-  });
-  expect(screen.getByText("These photos have no recorded dates.")).toBeTruthy();
+it("shows the undated foot for a scope with only undated photos", () => {
+  render(PhotoTimeline, props({ facet: photoTimelineCounts([], { missing: 5 }).facets[0] }));
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.getByText("5 undated")).toBeTruthy();
 });
-it.each([
-  ["time_budget_exceeded", /Timeline took too long/],
-  ["snapshot_busy", /Timeline is busy/],
-  ["snapshot_capacity", /Timeline is busy/],
-  ["snapshot_too_large", /Timeline exceeds its limits/],
-  ["member_budget_exceeded", /Too many photos/],
-])("shows %s with its retry message", async (reason, message) => {
-  const retry = vi.fn();
-  render(PhotoTimeline, {
-    loading: false,
-    error: "",
-    onselect: vi.fn(),
-    onretry: retry,
-    facet: { dimension: "capture_day", available: false, reason: String(reason), values: [] },
-  });
-  expect(screen.getByText(message)).toBeTruthy();
-  expect(screen.queryByRole("navigation", { name: "Timeline years" })).toBeNull();
+
+it("keeps the counts beside an error and retries", async () => {
+  const onretry = vi.fn();
+  render(PhotoTimeline, props({ error: "Timeline is busy. Retry in a moment.", onretry }));
+  expect(screen.getByRole("alert").textContent).toContain("Timeline is busy. Retry in a moment.");
+  expect(screen.getByRole("button", { name: "2025, 15 photos" })).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Retry timeline" }));
-  expect(retry).toHaveBeenCalledTimes(1);
+  expect(onretry).toHaveBeenCalledOnce();
 });
 
-it("adds date bounds to the base filters so an album date stays inside the album", () => {
-  const base = {
-    ...parseQuery("{}"),
-    filters: { set_ids: ["11111111-1111-4111-8111-111111111111"] },
-  };
-  expect(captureDateQuery(base, "2025-12").filters).toEqual({
-    set_ids: ["11111111-1111-4111-8111-111111111111"],
-    capture_after: "2025-12-01",
-    capture_before: "2026-01-01",
-  });
-  expect(captureDateQuery(base).filters).toEqual({
-    set_ids: ["11111111-1111-4111-8111-111111111111"],
-  });
+it("shows a spinner row until the first counts arrive", () => {
+  render(PhotoTimeline, props({ facet: undefined, loading: true }));
+  expect(screen.getByText("Loading…")).toBeTruthy();
+});
+
+it("disables every entry", () => {
+  render(PhotoTimeline, props({ disabled: true, current: "2025-06" }));
+  const buttons = screen.getAllByRole("button");
+  expect(buttons.length).toBeGreaterThan(1);
+  expect(buttons.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+});
+
+it("offers years, months, and the undated count with the current month or a prompt at the top", async () => {
+  const view = render(PhotoTimeline, props({ compact: true, current: "2025-01" }));
+  expect(screen.getByRole("combobox", { name: "Jump to date: Jan 2025" })).toBeTruthy();
+  await view.rerender(props({ compact: true, current: undefined }));
+  const select = screen.getByRole("combobox", { name: "Jump to date: Jump to date" });
+  await fireEvent.click(select);
+  const options = screen.getAllByRole("option");
+  expect(options.map((option) => option.textContent?.trim())).toEqual([
+    "Jump to date",
+    "2025 · 15 photos",
+    "Jun 2025 · 12 photos",
+    "Jan 2025 · 3 photos",
+    "2024 · 7 photos",
+    "Feb 2024 · 7 photos",
+    "4 undated",
+  ]);
+  expect(options[0]!.hasAttribute("disabled")).toBe(true);
+  expect(options.at(-1)!.hasAttribute("disabled")).toBe(true);
 });

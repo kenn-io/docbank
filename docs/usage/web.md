@@ -190,9 +190,9 @@ facet or changing the query creates a new snapshot. It never splices live
 results into the accepted one. An unavailable facet says why instead of
 presenting a zero count.
 
-Photos' Timeline counts each included photo asset once by capture day. It
-creates no snapshot and does not block Documents queries. The year ribbon,
-month scrubber, and day rows open photos for the chosen period. See
+Photos' date rail counts each included photo asset once by capture day. It
+creates no snapshot and does not block Documents queries. Choose a year or month
+to scroll there, including dates beyond the loaded grid. See
 [Browse photos](photos.md#browse-in-the-web-app) and
 [Count photos by capture day](photos.md#count-photos-by-capture-day).
 

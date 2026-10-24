@@ -1,12 +1,34 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { Button } from "@kenn-io/kit-ui";
-  import { computeMonthLayout, HEADER_HEIGHT, photoDate, type PhotoGroup } from "./photoGrid.js";
+  import {
+    computeMonthLayout,
+    HEADER_HEIGHT,
+    layoutRow,
+    monthAt,
+    type PhotoGridRow,
+    rowTop,
+    seekOffset,
+    type PhotoChunk,
+    type PhotoGroup,
+  } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import type { CaptureDayFacet } from "./photoTimeline.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
+  import PhotoTimeline from "./PhotoTimeline.svelte";
 
   let {
     groups,
+    loadedItems,
+    narrow = false,
+    timeline,
+    timelineError = "",
+    timelineLoading = false,
+    timelineDisabled = false,
+    timelineHint = "",
+    onretrytimeline,
+    onjump,
+    more = false,
+    seek = $bindable(""),
     targetRowHeight,
     loading,
     cache,
@@ -24,6 +46,20 @@
     scrollTop = $bindable(0),
   }: {
     groups: PhotoGroup[];
+    loadedItems: PhotoGridRow[];
+    narrow?: boolean;
+    timeline?: CaptureDayFacet;
+    timelineError?: string;
+    timelineLoading?: boolean;
+    timelineDisabled?: boolean;
+    timelineHint?: string;
+    onretrytimeline?: () => void;
+    // Without onjump the grid shows no timeline.
+    onjump?: (month: string) => void;
+    more?: boolean;
+    // The month a timeline choice is scrolling to. It stays set while pages load, and any
+    // scroll the grid did not make clears it.
+    seek?: string;
     targetRowHeight: number;
     loading: boolean;
     cache: PhotoPreviewCache;
@@ -44,7 +80,7 @@
   let width = $state(800);
   let initialized = $state(false);
   let viewport = $state(960);
-  const chunks = $derived.by(() => {
+  const chunks: PhotoChunk[] = $derived.by(() => {
     let offset = 0;
     return groups.map((group) => {
       const layout = computeMonthLayout(
@@ -61,17 +97,27 @@
   const totalHeight = $derived(
     chunks.reduce((sum, chunk) => sum + chunk.layout.intrinsicHeight, 0),
   );
-  const years = $derived(
-    [
-      ...new Set(
-        groups
-          .filter((group) => group.year)
-          .flatMap((group) => group.items.map((item) => photoDate(item)!.slice(0, 4))),
-      ),
-    ]
-      .sort()
-      .reverse(),
+  const showTimeline = $derived(
+    !!onjump &&
+      (!!timelineError ||
+        timelineLoading ||
+        !!timeline?.values.length ||
+        (timeline?.missing ?? 0) > 0),
   );
+  // The chosen year stays open until a scroll the grid did not make.
+  let chosenYear = $state(untrack(() => seek.slice(0, 4)));
+  const current = $derived(monthAt(chunks, scrollTop));
+  function choose(month: string) {
+    onjump?.(month);
+    chosenYear = month.slice(0, 4);
+  }
+  // Every scroll the grid makes goes through here and records where the browser actually put it,
+  // so a clamped position is never mistaken for the user's scroll.
+  function place(top: number) {
+    if (!container) return;
+    container.scrollTop = top;
+    scrollTop = container.scrollTop;
+  }
 
   $effect(() => {
     if (!container) return;
@@ -100,8 +146,7 @@
     measure();
     void tick().then(() => {
       if (!current) return;
-      element.scrollTop = savedTop;
-      scrollTop = element.scrollTop;
+      place(savedTop);
       initialized = true;
     });
     return () => {
@@ -114,19 +159,17 @@
       container.scrollTop = scrollTop;
   });
   $effect(() => {
-    if (initialized && !loading && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
+    if (!initialized || loading) return;
+    if (seek) {
+      const offset = seekOffset(chunks, seek, !more, loadedItems);
+      // Done once the month can sit at the top of the view, or the list ends.
+      const done = !more || (offset !== undefined && offset + viewport <= totalHeight);
+      // A loaded month scrolls now, so it still works when paging has failed.
+      if (offset !== undefined || done) place(Math.ceil(offset ?? totalHeight));
+      if (done) seek = "";
+      else untrack(onloadmore);
+    } else if (totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
   });
-
-  function jump(year: string) {
-    const chunk = chunks.find(
-      (chunk) =>
-        chunk.group.year && chunk.group.items.some((item) => photoDate(item)!.slice(0, 4) === year),
-    );
-    if (chunk && container) {
-      container.scrollTo({ top: Math.ceil(chunk.offset) });
-      scrollTop = Math.ceil(chunk.offset);
-    }
-  }
 
   export function preservePosition() {
     const element = container;
@@ -146,37 +189,52 @@
         for (const chunk of chunks) {
           const index = chunk.group.items.findIndex((item) => item.asset_id === id);
           if (index < 0) continue;
-          const row = chunk.layout.rows.find((row) =>
-            row.items.some((item) => item.index === index),
-          );
-          if (row) newTop = chunk.offset + chunk.layout.contentOffset + row.y - pixelOffset;
+          const row = layoutRow(chunk, index);
+          if (row) newTop = rowTop(chunk, row) - pixelOffset;
           break;
         }
       }
       scrollTop = newTop;
       await tick();
-      element.scrollTop = newTop;
-      scrollTop = element.scrollTop;
+      place(newTop);
       await tick();
     };
   }
 </script>
 
+{#snippet dates(compact: boolean)}
+  <PhotoTimeline
+    facet={timeline}
+    loading={timelineLoading}
+    error={timelineError}
+    chosen={chosenYear}
+    {current}
+    {compact}
+    disabled={timelineDisabled}
+    hint={timelineHint}
+    onselect={choose}
+    onretry={() => onretrytimeline?.()}
+  />
+{/snippet}
+
+{#if showTimeline && narrow}{@render dates(true)}{/if}
 <div
   class="photo-scroll"
-  class:with-years={years.length > 1}
+  class:with-years={showTimeline && !narrow}
   bind:this={container}
   onscroll={() => {
-    if (initialized) scrollTop = container?.scrollTop ?? 0;
+    if (initialized && container && container.scrollTop !== scrollTop) {
+      scrollTop = container.scrollTop;
+      seek = "";
+      chosenYear = "";
+    }
   }}
   data-testid="photo-scroll"
 >
-  {#if years.length > 1}
-    <nav class="year-scrubber" aria-label="Photo years">
-      <div class="year-buttons" style:max-height={`${Math.max(0, viewport - 7)}px`}>
-        {#each years as year}<Button size="sm" onclick={() => jump(year)}>{year}</Button>{/each}
-      </div>
-    </nav>
+  {#if showTimeline && !narrow}
+    <div class="year-scrubber" style:--timeline-height={`calc(${viewport}px - 2 * var(--space-5))`}>
+      {@render dates(false)}
+    </div>
   {/if}
   <div class="grid" style:height={`${totalHeight}px`}>
     {#if initialized}
@@ -213,31 +271,20 @@
     overflow-anchor: none;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    column-gap: 12px;
+    column-gap: var(--space-5);
     align-content: start;
-    padding: 0 12px;
+    padding: 0 var(--space-5);
   }
   .with-years {
     grid-template-columns: minmax(0, 1fr) max-content;
   }
-  .with-years .grid {
-    padding-right: 12px;
-    border-right: 1px solid var(--border-default);
-  }
   .year-scrubber {
     position: sticky;
-    top: 7px;
+    top: var(--space-5);
     grid-column: 2;
     grid-row: 1;
     height: 0;
     z-index: 3;
-  }
-  .year-buttons {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 2px;
-    overflow-y: auto;
   }
   .grid {
     position: relative;
