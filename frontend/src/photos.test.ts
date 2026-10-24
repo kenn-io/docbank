@@ -106,20 +106,26 @@ it.each(["timeline", "counts"])(
   "fails a live refresh when its %s read fails, so the watcher retries it",
   async (read) => {
     let failing = false;
+    let countsFailures = 0;
     vi.spyOn(snapshots, "fetchPhotoTimeline").mockImplementation(async () => {
       if (failing && read === "timeline") throw new Error("Timeline down");
       return { facets: [] } as unknown as snapshots.PhotoTimelineCounts;
     });
-    vi.stubGlobal("fetch", (_url: string, init: RequestInit) =>
-      failing && read === "counts" && JSON.parse(String(init.body)).facets?.length
-        ? Promise.resolve(Response.json({ detail: "Counts down" }, { status: 503 }))
-        : Promise.resolve(Response.json({ items: [photo(1)], total: 1, facets: [] })),
-    );
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      if (failing && read === "counts" && JSON.parse(String(init.body)).facets?.length) {
+        countsFailures++;
+        return Promise.resolve(Response.json({ detail: "Counts down" }, { status: 503 }));
+      }
+      return Promise.resolve(Response.json({ items: [photo(1)], total: 1, facets: [] }));
+    });
     const photos = new Photos("scoped", vi.fn());
     await photos.refresh();
     photos.setView("timeline");
+    // Counts load only while Filters is open.
+    photos.filtersOpen = true;
     failing = true;
     await expect(photos.refresh(undefined, true)).rejects.toThrow(/down/i);
+    expect(countsFailures > 0).toBe(read === "counts");
     failing = false;
     await expect(photos.refresh(undefined, true)).resolves.toBe(true);
     photos.dispose();
