@@ -120,6 +120,8 @@ func newRedactionVerifyFixture(t *testing.T) redactionVerifyFixture {
 		f.args = append(f.args, filepath.Join(dir, name))
 	}
 	// Captured from the real prepare path for synthetic Helvetica text, with no gaps.
+	// After renderer/recipe changes, recapture f.preparation immediately after
+	// importNativeRedaction in TestNativePDFRedactionRecoveryCLI.
 	data, err := os.ReadFile("testdata/redaction-preparation.json")
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &f.request.Preparation))

@@ -51,12 +51,19 @@ func newRedactionVerifyCommand() *cobra.Command {
 func verifyRedactionFile(ctx context.Context, path string,
 	review processing.RedactionReview,
 ) (result processing.RedactionArchive, retErr error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return result, err
+	}
+	if !info.Mode().IsRegular() {
+		return result, usageError(errors.New("archive must be a regular file"))
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return result, err
 	}
 	defer func() { retErr = errors.Join(retErr, file.Close()) }()
-	info, err := file.Stat()
+	info, err = file.Stat()
 	if err != nil {
 		return result, err
 	}
