@@ -62,6 +62,55 @@ func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }
 
+func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
+	t.Parallel()
+	for _, evidence := range []string{"whole photo", "face"} {
+		t.Run(evidence, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
+			require.NoError(t, err)
+			absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
+			require.NoError(t, err)
+			duplicate := browsePhotoNode(t, s, "duplicate.jpg", fakeHash("duplicate-evidence"), "image/jpeg")
+			keptAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, survivor.PersonID, "")
+			require.NoError(t, err)
+			absorbedAssertion, err := s.MarkPersonInPhoto(ctx, duplicate.CurrentVersionID, absorbed.PersonID, "")
+			require.NoError(t, err)
+			for assertionID, recordedAt := range map[string]string{
+				keptAssertion.AssertionID:     "2026-01-01T00:00:00.000000000Z",
+				absorbedAssertion.AssertionID: "2026-03-01T00:00:00.000000000Z",
+			} {
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE assertion_id=?`, recordedAt, assertionID)
+				require.NoError(t, err)
+			}
+			var face PhotoFace
+			if evidence == "face" {
+				face, _, err = s.CreatePhotoFace(ctx, duplicate.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, absorbed.PersonID)
+				require.NoError(t, err)
+			}
+			_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+			require.NoError(t, err)
+			merged, err := s.DocumentPersonAssertions(ctx, duplicate.CurrentVersionID)
+			require.NoError(t, err)
+			require.Len(t, merged, 1)
+			require.Equal(t, "2026-01-01T00:00:00.000000000Z", merged[0].RecordedAt)
+			require.Equal(t, keptAssertion.Revision, merged[0].Revision)
+			after, _, err := s.PeopleByDisplayName(ctx, "Survivor", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
+			require.NoError(t, err)
+			require.Len(t, after, 1)
+			require.Equal(t, "2026-01-01T00:00:00.000000000Z", after[0].RecentRank)
+			if evidence == "face" {
+				faces, _, _, err := s.PhotoFacePersonNames(ctx, duplicate.CurrentVersionID)
+				require.NoError(t, err)
+				require.Len(t, faces, 1)
+				require.Equal(t, face.FaceID, faces[0].FaceID)
+				require.Equal(t, keptAssertion.AssertionID, faces[0].AssertionID)
+			}
+		})
+	}
+}
+
 func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -299,4 +348,32 @@ func TestPersonSplitMissingAssertion(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.SplitPerson(t.Context(), PersonSplitRequest{PersonID: p.PersonID, OperationID: uuid.NewString(), DisplayName: "Grace", Revision: p.Revision, AssertionIDs: []string{uuid.NewString()}})
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
+}
+
+func TestMergePersonsPreservesKeyFace(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
+	require.NoError(t, err)
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("portrait"), "image/jpeg")
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .1, Width: .5, Height: .5}, survivor.PersonID)
+	require.NoError(t, err)
+	key, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .7, Width: .1, Height: .1}, absorbed.PersonID)
+	require.NoError(t, err)
+	absorbed, _, err = s.PersonByID(ctx, absorbed.PersonID)
+	require.NoError(t, err)
+	_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "key", Revision: key.Revision, PersonID: absorbed.PersonID, PersonRevision: absorbed.Revision, FaceID: key.FaceID})
+	require.NoError(t, err)
+	absorbed, _, err = s.PersonByID(ctx, absorbed.PersonID)
+	require.NoError(t, err)
+	survivor, _, err = s.PersonByID(ctx, survivor.PersonID)
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	detail, err := s.PersonDetailPage(ctx, survivor.PersonID, PersonAssertionPage{})
+	require.NoError(t, err)
+	require.Equal(t, key.FaceID, detail.KeyFaceID)
 }

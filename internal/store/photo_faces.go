@@ -114,6 +114,10 @@ type PersonFacePreviewPage struct {
 
 const rejectedFaceMatchPredicate = `c.reason='face_match' AND c.state='rejected'`
 
+// personFaceCropOrder chooses a ready crop, then its area and stable IDs.
+const personFaceCropOrder = `(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
+ face.width*face.height DESC,cv.version_id,face.face_id`
+
 func personFacePreviewsQuery(hidden bool) string {
 	return `WITH linked AS NOT MATERIALIZED (
  SELECT member.asset_id,boxed_face.face_id
@@ -138,8 +142,7 @@ func personFacePreviewsQuery(hidden bool) string {
  asset_page.sort_key,COALESCE(g.generation_id,'') generation_id,
  CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN 1 ELSE 0 END ready,
  ROW_NUMBER() OVER (PARTITION BY asset_page.asset_id ORDER BY
- (face.width IS NOT NULL) DESC,(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
- face.width*face.height DESC,cv.version_id,face.face_id) crop_rank
+ (face.width IS NOT NULL) DESC,` + personFaceCropOrder + `) crop_rank
  FROM asset_page CROSS JOIN photo_files member ON member.asset_id=asset_page.asset_id
  CROSS JOIN nodes source_node ON source_node.id=member.node_id
  CROSS JOIN content_versions cv ON cv.node_id=source_node.id AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id") + `

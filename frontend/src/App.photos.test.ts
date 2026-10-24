@@ -14,14 +14,17 @@ import {
   storage,
 } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
+import { person, personResponse, personMergeReceipt } from "./people-test-fixtures.js";
 import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
+import { People } from "./people.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 const savedImportCheckpoints = vi.hoisted(
   () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
@@ -3908,8 +3911,8 @@ it.each([
       ],
       people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
     });
-    const locks = vi.fn();
     const other = photo(2);
+    const locks = vi.fn();
     stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden/lock")) {
         locks();
@@ -3925,7 +3928,7 @@ it.each([
       if (url.endsWith("/photos/assets/query")) {
         const request = JSON.parse(String(init?.body));
         const items =
-          hidden && !request.hidden
+          request.hidden !== hidden
             ? []
             : request.query.filters?.person_ids?.includes(personID)
               ? [item]
@@ -3973,9 +3976,11 @@ it.each([
       sort: { field: "capture_time", direction: "desc" },
       filters: { person_ids: [personID] },
     };
-    expect(setQuery).toHaveBeenCalledWith(expect.objectContaining(personQuery));
+    await waitFor(() =>
+      expect(setQuery).toHaveBeenCalledWith(expect.objectContaining(personQuery)),
+    );
     expect(setQuery.mock.contexts.at(-1)).toMatchObject({ hidden });
-    if (hidden) expect(location.pathname).toBe("/photos/hidden");
+    expect(location.pathname).toBe(hidden ? "/photos/hidden" : "/photos");
     await waitFor(() =>
       expect(setQuery).toHaveBeenLastCalledWith(expect.objectContaining(personQuery)),
     );
@@ -3987,9 +3992,9 @@ it.each([
     expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
     expect(screen.queryByRole("button", { name: `Select ${other.name}` })).toBeNull();
     if (hidden) {
-      expect(location.hash).toBe("");
-      expect(screen.getByRole("button", { name: "Lock" })).toBeTruthy();
       expect(locks).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Lock" })).toBeTruthy();
+      expect(location.hash).toBe("");
     }
   },
 );
@@ -4349,3 +4354,378 @@ it("closes Hidden setup and reports an expired session after a 401 save", async 
   expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
   expect(hidden.size).toBe(0);
 });
+
+const personLibraryViews = [
+  "absorbed",
+  "absorbed behind Albums",
+  "absorbed behind album",
+  "survivor",
+  "text",
+];
+
+it.each(personLibraryViews)("refreshes the %s photo filter after People edits", async (filter) => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    revision: 1,
+    photo_summary: { library_count: 1 },
+  });
+  const grace = person("00000000-0000-4000-8000-000000000002", {
+    display_name: "Grace",
+    revision: 1,
+    photo_summary: { library_count: 1 },
+  });
+  let rows = [ada, grace];
+  vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
+  vi.spyOn(api, "renamePerson").mockImplementation(async (_id, request) => {
+    const renamed = { ...ada, display_name: request.display_name, revision: 2 };
+    rows = [renamed, grace];
+    return personResponse(renamed);
+  });
+  let finishMerge!: () => void;
+  vi.spyOn(api, "mergePerson").mockImplementation(async (_id, request) => {
+    await new Promise<void>((resolve) => (finishMerge = resolve));
+    rows = [grace];
+    return personMergeReceipt(
+      { ...ada, display_name: "Ada Lovelace" },
+      grace,
+      request.operation_id,
+    );
+  });
+  const item = photo(1);
+  let survivorReads = 0;
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([photoAlbum()]);
+    if (url.endsWith("/photos/assets/query")) {
+      if (
+        JSON.parse(String(init.body)).query.filters?.person_ids?.includes(grace.person_id) ||
+        JSON.parse(String(init.body)).query.text === "person:Grace"
+      )
+        survivorReads++;
+      return Response.json({ items: [item], total: 1, facets: [] });
+    }
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+    );
+  });
+  const query = vi.spyOn(Photos.prototype, "setQuery");
+  const peopleLoad = vi.spyOn(People.prototype, "load");
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Ada 1 Library photo" }));
+  await screen.findByText("Person: Ada");
+  const library = query.mock.contexts.at(-1) as Photos;
+  expect(library.query.filters.person_ids).toEqual([ada.person_id]);
+  await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  await screen.findByRole("button", { name: "Ada 1 Library photo" });
+  if (filter === "absorbed") {
+    const people = peopleLoad.mock.contexts.at(-1) as People;
+    await act(async () => {
+      await people.rename(ada, "Ada Lovelace");
+    });
+    await screen.findByRole("button", { name: "Ada Lovelace 1 Library photo" });
+    expect(library.personFilter).toEqual({ id: ada.person_id, name: "Ada Lovelace" });
+    await fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace 1 Library photo" }));
+    await screen.findByText("Person: Ada Lovelace");
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  }
+  if (filter === "survivor") {
+    await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
+    await screen.findByText("Person: Grace");
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  }
+  if (filter === "text") {
+    await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Clear filters" }));
+    await waitFor(() => expect(library.loading).toBe(false));
+    await fireEvent.input(await screen.findByRole("searchbox", { name: "Search photos" }), {
+      target: { value: "person:Grace" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+    await waitFor(() => expect(library.query.text).toBe("person:Grace"));
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  }
+  let pendingMerge: Promise<boolean> | undefined;
+  const people = peopleLoad.mock.contexts.at(-1) as People;
+  people.toggle(rows[0]!);
+  people.toggle(grace);
+  people.startMerge();
+  people.keep(grace.person_id);
+  people.confirmMerge(true);
+  await act(() => {
+    pendingMerge = people.submitMerge();
+  });
+  await waitFor(() => expect(finishMerge).toBeTypeOf("function"));
+  if (filter.startsWith("absorbed behind")) {
+    const album = filter === "absorbed behind album";
+    await fireEvent.click(screen.getByRole("button", { name: album ? /^Trip/ : /^Albums$/ }));
+    await screen.findByRole("heading", { name: album ? "Trip" : "Albums" });
+  } else if (filter !== "absorbed") {
+    const readsBeforeNavigation = survivorReads;
+    await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
+    if (filter === "survivor") await screen.findByText("Person: Grace");
+    await waitFor(() => expect(survivorReads).toBeGreaterThan(readsBeforeNavigation));
+    await waitFor(() => expect(library.loading).toBe(false));
+  }
+  const readsBeforeMerge = survivorReads;
+  await act(async () => {
+    finishMerge();
+    await pendingMerge;
+  });
+  await waitFor(() => expect(library.loading).toBe(false));
+  await waitFor(() => expect(survivorReads).toBe(readsBeforeMerge + 1));
+  if (filter === "text") {
+    expect(library.query.text).toBe("person:Grace");
+    return;
+  }
+  await waitFor(() => expect(library.query.filters.person_ids).toEqual([grace.person_id]));
+  expect(library.personFilter).toEqual({ id: grace.person_id, name: "Grace" });
+  if (filter.startsWith("absorbed behind"))
+    await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  if (filter.startsWith("absorbed"))
+    await fireEvent.click(await screen.findByRole("button", { name: "Grace 1 Library photo" }));
+  await screen.findByText("Person: Grace");
+});
+
+it.each(["rename", "merge"])(
+  "refreshes the inspector's face reads after a People %s",
+  async (edit) => {
+    history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+    storage();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const ada = person("00000000-0000-4000-8000-000000000001", {
+      display_name: "Ada",
+      revision: 1,
+      photo_summary: { library_count: 1 },
+    });
+    const grace = person("00000000-0000-4000-8000-000000000002", {
+      display_name: "Grace",
+      revision: 1,
+      photo_summary: { library_count: 1 },
+    });
+    let rows = [ada, grace];
+    vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
+    let finish!: () => void;
+    let saved = false;
+    vi.spyOn(api, "renamePerson").mockImplementation(async (_id, request) => {
+      await new Promise<void>((resolve) => (finish = resolve));
+      saved = true;
+      const renamed = { ...ada, display_name: request.display_name, revision: 2 };
+      rows = [renamed, grace];
+      return personResponse(renamed);
+    });
+    vi.spyOn(api, "mergePerson").mockImplementation(async (_id, request) => {
+      await new Promise<void>((resolve) => (finish = resolve));
+      rows = [grace];
+      saved = true;
+      return personMergeReceipt(
+        { ...ada, display_name: "Ada Lovelace" },
+        grace,
+        request.operation_id,
+      );
+    });
+    const item = photo(1);
+    const faceReads = vi.spyOn(api, "listPhotoFaces").mockImplementation(async () => ({
+      faces: [photoFace({ content_version_id: item.content_version_id })],
+      assertions: [
+        photoPersonAssertion({
+          content_version_id: item.content_version_id,
+          person_id: saved && edit === "merge" ? grace.person_id : ada.person_id,
+        }),
+      ],
+      people: [
+        {
+          person_id: saved && edit === "merge" ? grace.person_id : ada.person_id,
+          display_name: saved ? "Grace" : "Ada",
+          state: "curated",
+        },
+      ],
+    }));
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (url.endsWith("/photos/albums")) return Response.json([photoAlbum()]);
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [item], total: 1, facets: [] });
+      return (
+        photoMetadataResponse(url, init) ??
+        Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+      );
+    });
+    const peopleLoad = vi.spyOn(People.prototype, "load");
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    render(App);
+    await screen.findByRole("button", { name: "Ada 1 Library photo" });
+    const people = peopleLoad.mock.contexts.at(-1) as People;
+    let pending!: Promise<boolean>;
+    await act(() => {
+      if (edit === "rename") pending = people.rename(ada, "Grace");
+      else {
+        people.toggle(ada);
+        people.toggle(grace);
+        people.startMerge();
+        people.keep(grace.person_id);
+        people.confirmMerge(true);
+        pending = people.submitMerge();
+      }
+    });
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    await fireEvent.click(screen.getByRole("button", { name: /^Library$/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: `Select ${item.name}` }));
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    await screen.findByRole("button", {
+      name: "Find or create a person: Ada",
+    });
+    const readsBeforeSave = faceReads.mock.calls.length;
+    await act(async () => {
+      finish();
+      await pending;
+    });
+    await screen.findByRole("button", {
+      name: "Find or create a person: Grace",
+    });
+    expect(faceReads.mock.calls.length).toBeGreaterThan(readsBeforeSave);
+  },
+);
+
+it("opens 1 Hidden photo in filtered Hidden photos", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    photo_summary: { library_count: 0, hidden_count: 1 },
+  });
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const item = photo(1);
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden"))
+      return Response.json({
+        configured: true,
+        expires_at: "2099-01-01T00:00:00Z",
+        expires_in: 300,
+      });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) {
+      const body = JSON.parse(String(init?.body));
+      const items =
+        body.hidden && body.query.filters?.person_ids?.includes(ada.person_id) ? [item] : [];
+      return Response.json({ items, total: items.length, facets: [] });
+    }
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+    );
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "1 Hidden photo" }));
+  await screen.findByText("Person: Ada");
+  await screen.findByRole("button", { name: `Select ${item.name}` });
+  expect(location.pathname).toBe("/photos/hidden");
+});
+
+it.each(["Hidden lock", "Hidden navigate", "Library lock", "Library unlock"])(
+  "keeps the person filter in its scope during %s before the workspace mounts",
+  async (scenario) => {
+    const library = scenario.startsWith("Library");
+    const action = scenario.split(" ")[1];
+    history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+    storage();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const ada = person("00000000-0000-4000-8000-000000000001", {
+      display_name: "Ada",
+      photo_summary: library ? { library_count: 1 } : { library_count: 0, hidden_count: 1 },
+    });
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+    const open = { configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 };
+    const accessState = vi.spyOn(HiddenAccess.prototype, "acceptState");
+    let navigating = false;
+    let locked = library && action === "unlock";
+    let finishAccess!: (response: Response) => void;
+    const hiddenQueries: Query[] = [];
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) {
+        if (navigating) return new Promise<Response>((resolve) => (finishAccess = resolve));
+        return Response.json(locked ? { configured: true } : open);
+      }
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/assets/query")) {
+        const body = JSON.parse(String(init.body));
+        if (body.hidden) hiddenQueries.push(body.query);
+        return Response.json({ items: [], total: 0, facets: [] });
+      }
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    });
+    const query = vi.spyOn(Photos.prototype, "setQuery");
+    render(App);
+    const card = await screen.findByRole("button", {
+      name: library ? "Ada 1 Library photo" : "1 Hidden photo",
+    });
+    const access = accessState.mock.contexts.at(-1) as HiddenAccess;
+    navigating = true;
+    const navigation = fireEvent.click(card);
+    if (library)
+      access.acceptState(action === "unlock" ? open : { configured: true }, Date.now() + 1);
+    await navigation;
+    await waitFor(() => expect(finishAccess).toBeTypeOf("function"));
+    if (library) {
+      finishAccess(Response.json(action === "unlock" ? open : { configured: true }));
+      await screen.findByText("Person: Ada");
+      expect(location.pathname).toBe("/photos");
+      const filtered = (query.mock.contexts as Photos[]).filter((photos) =>
+        photos.query.filters.person_ids?.includes(ada.person_id),
+      );
+      expect(filtered.length).toBeGreaterThan(0);
+      expect(filtered.every((photos) => !photos.hidden)).toBe(true);
+      return;
+    }
+    if (action === "lock") {
+      locked = true;
+      await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+      navigating = false;
+      finishAccess(Response.json({ configured: true }));
+      await screen.findByRole("button", { name: "Unlock" });
+    }
+    await fireEvent.click(screen.getByRole("button", { name: /^Albums$/ }));
+    await screen.findByRole("heading", { name: "Albums" });
+    navigating = false;
+    if (action === "navigate") finishAccess(Response.json({ configured: true }));
+    locked = false;
+    await fireEvent.click(screen.getByRole("button", { name: /^Hidden$/ }));
+    await waitFor(() => expect(hiddenQueries.length).toBeGreaterThan(0));
+    expect(hiddenQueries.every((query) => !query.filters.person_ids?.length)).toBe(true);
+    await screen.findByText("No hidden photos");
+    expect(screen.queryByText("Person: Ada")).toBeNull();
+  },
+);

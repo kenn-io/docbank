@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -33,8 +34,10 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 	cursor := &huma.Param{Name: "cursor", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}
 	operations := []*huma.Operation{
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",
-			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor},
-			Responses:  map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
+			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor,
+				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.", Schema: &huma.Schema{Type: "boolean"}},
+				{Name: "recent_first", In: openAPIQueryLocation, Description: "Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.", Schema: &huma.Schema{Type: "boolean"}}},
+			Responses: map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
 		{OperationID: "listPackageCustodians", Method: http.MethodGet, Path: "/api/v1/packages/by-id/{package_id}/custodians",
 			Summary: "List active package custodian claims", Parameters: []*huma.Param{packageID,
 				{Name: "row_id", In: openAPIQueryLocation, Description: "Return claims for this record only. Omit to return package-level defaults only.", Schema: &huma.Schema{Type: openAPIStringType}},
@@ -67,26 +70,48 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		query := r.URL.Query().Get("query")
-		afterName, afterID, err := decodePeopleCursor(r.URL.Query().Get("cursor"), query)
-		if err != nil {
-			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid people cursor"))
+		projection, projectionErr := strconv.ParseBool(defaultQuery(r, "photo_summary", "false"))
+		recentFirst, recentErr := strconv.ParseBool(defaultQuery(r, "recent_first", "false"))
+		if projectionErr != nil || recentErr != nil {
+			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "photo_summary and recent_first must be booleans"))
 			return
 		}
-		people, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()))
+		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst)
+		var gridRecipe string
+		if projection {
+			fingerprints, err := document.CurrentPhotoQualityFingerprints()
+			if err != nil {
+				writePackageError(w, err)
+				return
+			}
+			gridRecipe = fingerprints.GridRecipe
+		}
+		afterName, afterID, afterRecent, cursorScope, err := decodePeopleCursor(r.URL.Query().Get("cursor"), binding)
+		if err != nil {
+			writeError(w, peopleCursorExpiredError())
+			return
+		}
+		people, scope, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: gridRecipe})
 		if err != nil {
 			writePackageError(w, err)
+			return
+		}
+		// The cursor carries the Hidden scope this page was read under.
+		binding += peopleScopeBinding(scope)
+		if afterName != "" && cursorScope != peopleScopeBinding(scope) {
+			writeError(w, peopleCursorExpiredError())
 			return
 		}
 		out := PersonPage{Items: make([]PersonSummary, min(limit, len(people)))}
 		for index := range out.Items {
 			person := people[index]
 			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName, DisplayNameFolded: person.DisplayNameFolded,
-				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt, IdentityLabel: person.IdentityLabel}
+				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt, IdentityLabel: person.IdentityLabel, PhotoSummary: (*PersonPhotoSummary)(person.PhotoSummary)}
 		}
 		if len(people) > limit {
 			last := people[limit-1]
 			out.SameNameContinues = last.DisplayNameFolded == people[limit].DisplayNameFolded
-			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, query)
+			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, last.RecentRank, binding)
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
@@ -217,20 +242,31 @@ func defaultQuery(r *http.Request, key, fallback string) string {
 	return fallback
 }
 
-func encodePeopleCursor(name, id, query string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(name + "\x00" + id + "\x00" + query))
+// People cursors bind the query, projection, order, person filter, and visibility.
+func encodePeopleCursor(name, id, recent, binding string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(name + "\x00" + id + "\x00" + recent + "\x00" + binding))
 }
 
-func decodePeopleCursor(cursor, query string) (string, string, error) {
+// decodePeopleCursor checks the request binding and returns the Hidden scope
+// binding that follows it, which the caller checks against the page's scope.
+func decodePeopleCursor(cursor, binding string) (string, string, string, string, error) {
 	if cursor == "" {
-		return "", "", nil
+		return "", "", "", "", nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
-	parts := strings.SplitN(string(raw), "\x00", 3)
-	if err != nil || len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] != query {
-		return "", "", errors.New("invalid cursor")
+	parts := strings.SplitN(string(raw), "\x00", 4)
+	if err != nil || len(parts) != 4 || parts[0] == "" || parts[1] == "" || !strings.HasPrefix(parts[3], binding) {
+		return "", "", "", "", errors.New("invalid cursor")
 	}
-	return parts[0], parts[1], nil
+	return parts[0], parts[1], parts[2], parts[3][len(binding):], nil
+}
+
+// peopleScopeBinding binds a cursor to the Hidden scope a page was read under.
+func peopleScopeBinding(scope *store.PhotoHiddenState) string {
+	if scope == nil {
+		return ""
+	}
+	return "\x01" + strconv.FormatBool(scope.Configured) + "\x01" + strconv.FormatBool(scope.ExpiresAt != nil) + "\x01" + scope.ChangeID
 }
 
 func encodeCustodianCursor(packageID, rowID string, unresolvedOnly bool, offset int) string {

@@ -5,6 +5,7 @@ import { PhotoFaces } from "./photoFaces.svelte.js";
 import PhotoPeople from "./PhotoPeople.svelte";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
+import { person as personSummary } from "./people-test-fixtures.js";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -93,7 +94,7 @@ it("marks existing people and creates a new person in the whole photo", async ()
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "New name" } });
   await waitFor(() =>
     expect(search).toHaveBeenLastCalledWith(
-      { query: "New name", limit: 100 },
+      { query: "New name", limit: 100, recent_first: true },
       expect.objectContaining({ session: "session" }),
     ),
   );
@@ -155,14 +156,14 @@ it("resets validated person search input on reopen", async () => {
   });
   expect(await screen.findByRole("option", { name: `Create person "${normalized}"` })).toBeTruthy();
   expect(search).toHaveBeenLastCalledWith(
-    { query: normalized, limit: 100 },
+    expect.objectContaining({ query: normalized, limit: 100 }),
     expect.objectContaining({ session: "session" }),
   );
   await fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
   await waitFor(() =>
     expect(search).toHaveBeenLastCalledWith(
-      { query: "", limit: 100 },
+      expect.objectContaining({ query: "", limit: 100 }),
       expect.objectContaining({ session: "session" }),
     ),
   );
@@ -217,7 +218,7 @@ it("searches again after a failed assignment and disables the picker throughout 
   await screen.findByText("Response lost");
   await waitFor(() =>
     expect(search).toHaveBeenCalledWith(
-      { query: "Ada", limit: 100 },
+      expect.objectContaining({ query: "Ada", limit: 100 }),
       expect.objectContaining({ session: "session" }),
     ),
   );
@@ -718,14 +719,14 @@ it.each(["exact", "absent", "broad", "case"])(
     });
     const grouped = result === "broad" || result === "case";
     const query = result === "broad" ? "Al" : "Alex";
-    const person = (index: number): api.PersonSummary => ({
-      person_id: `person-${index}`,
-      display_name: "Alex",
-      display_name_folded: "alex",
-      state: "curated",
-      revision: 1,
-      created_at: "2026-01-01T00:00:00Z",
-    });
+    const people = Array.from({ length: 300 }, (_, index) =>
+      personSummary(`person-${index}`, {
+        display_name: "Alex",
+        display_name_folded: "alex",
+        revision: 1,
+        created_at: "2026-01-01T00:00:00Z",
+      }),
+    );
     let finish!: (page: api.PersonPage) => void;
     let attempts = 0;
     const lost = vi.fn();
@@ -736,7 +737,7 @@ it.each(["exact", "absent", "broad", "case"])(
         if (!cursor)
           return {
             items: Array.from({ length: 100 }, (_, index) => ({
-              ...person(index),
+              ...people[index]!,
               ...(grouped
                 ? {}
                 : {
@@ -778,7 +779,7 @@ it.each(["exact", "absent", "broad", "case"])(
     if (result === "case") {
       await act(() =>
         finish({
-          items: Array.from({ length: 100 }, (_, i) => person(100 + i)),
+          items: Array.from({ length: 100 }, (_, i) => people[100 + i]!),
           next_cursor: "last",
           same_name_continues: true,
         }),
@@ -786,7 +787,7 @@ it.each(["exact", "absent", "broad", "case"])(
       await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
       await waitFor(() =>
         expect(search).toHaveBeenCalledWith(
-          { query, limit: 100, cursor: "last" },
+          expect.objectContaining({ query, limit: 100, cursor: "last" }),
           expect.anything(),
         ),
       );
@@ -798,16 +799,16 @@ it.each(["exact", "absent", "broad", "case"])(
           result === "absent"
             ? []
             : result === "exact"
-              ? [person(100)]
+              ? [people[100]!]
               : [
                   ...(result === "case"
                     ? Array.from({ length: 100 }, (_, i) => ({
-                        ...person(200 + i),
+                        ...people[200 + i]!,
                         display_name: "ALEX",
                       }))
-                    : [person(100)]),
+                    : [people[100]!]),
                   ...(result === "broad"
-                    ? [{ ...person(101), display_name: "Alice", display_name_folded: "alice" }]
+                    ? [{ ...people[101]!, display_name: "Alice", display_name_folded: "alice" }]
                     : []),
                 ],
         next_cursor: result === "broad" ? "more" : undefined,
@@ -848,7 +849,10 @@ it.each(["exact", "absent", "broad", "case"])(
         ),
       );
     }
-    expect(search).toHaveBeenCalledWith({ query, limit: 100, cursor: "tail" }, expect.anything());
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ query, limit: 100, cursor: "tail" }),
+      expect.anything(),
+    );
     expect(search.mock.calls.filter(([params]) => params?.query === query)).toHaveLength(
       result === "broad" ? 2 : 3,
     );
@@ -941,7 +945,7 @@ it.each(["unauthorized", "generic"])(
       search.mockResolvedValue({ items: [] });
       await fireEvent.mouseDown(await screen.findByRole("option", { name: "Retry" }));
       expect(search).toHaveBeenLastCalledWith(
-        { query: "Ada", limit: 100 },
+        expect.objectContaining({ query: "Ada", limit: 100 }),
         expect.objectContaining({ session: "session" }),
       );
       await fireEvent.mouseDown(await screen.findByRole("option", { name: 'Create person "Ada"' }));
@@ -950,3 +954,49 @@ it.each(["unauthorized", "generic"])(
     faces.dispose();
   },
 );
+it("lists a person once when a rank change repeats them on the next page", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
+  vi.spyOn(api, "listPeople")
+    .mockResolvedValueOnce({
+      items: [personSummary("ada", { display_name: "Ada" })],
+      next_cursor: "next",
+    })
+    .mockResolvedValueOnce({
+      items: [
+        personSummary("ada", { display_name: "Ada" }),
+        personSummary("bob", { display_name: "Bob" }),
+      ],
+    });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Mark person in photo" }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
+  await screen.findByRole("option", { name: "Bob" });
+  expect(screen.getByRole("option", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: "Ada · 2 people" })).toBeNull();
+});
+
+it("restarts the picker after a load-more cursor expires", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
+  const search = vi
+    .spyOn(api, "listPeople")
+    .mockResolvedValueOnce({
+      items: [personSummary("ada", { display_name: "Ada" })],
+      next_cursor: "stale",
+    })
+    .mockRejectedValueOnce(new APIError("People scope changed", 422, "people_cursor_expired"))
+    .mockResolvedValueOnce({ items: [personSummary("grace", { display_name: "Grace" })] });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Mark person in photo" }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
+  await screen.findByText("People scope changed");
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Retry" }));
+  await screen.findByRole("option", { name: "Grace" });
+  expect(search.mock.calls[1]![0]).toHaveProperty("cursor", "stale");
+  expect(search.mock.calls[2]![0]).not.toHaveProperty("cursor");
+  expect(screen.queryByRole("option", { name: "Ada" })).toBeNull();
+  faces.dispose();
+});
