@@ -28,7 +28,10 @@ Instructions for autonomous coding agents working in this repository.
 - Real documentation screenshots use the repository-owned Playwright harness in
   `frontend/screenshots/`. Run `make docs-screenshots`; captures must use
   its temporary synthetic vault and real daemon, never a developer vault or
-  mocked API data. Generated images stay under `.superpowers/screenshots/`
+  mocked API data. Never generate a screenshot that no page embeds, and add a
+  published image only when it meets the screenshot guidance in
+  [docs/README.md](docs/README.md#does-this-page-need-a-screenshot).
+  Generated images stay under `.superpowers/screenshots/`
   until they are visually inspected and published as a complete reviewed set.
   Publish the complete set as one orphan `docs-assets` commit, then pin that
   exact commit in `scripts/docs-assets.ref`. Documentation builds consume the
