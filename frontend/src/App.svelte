@@ -536,6 +536,7 @@
   const photoSearchable = $derived(
     photoMode &&
       photoPath !== "/photos/albums" &&
+      photoPath !== "/photos/people" &&
       searchablePhotoView(albumID, mapMode) &&
       (hiddenMode || photoValidated),
   );

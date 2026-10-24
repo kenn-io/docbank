@@ -144,6 +144,39 @@ it("hides top-bar Photos search when a denied access check conceals Library", as
   expect(screen.queryByRole("searchbox", { name: "Search photos" })).toBeNull();
 });
 
+it("shows Find people instead of retained Library search in the People directory", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const ada = person("00000000-0000-4000-8000-000000000001", {
+    display_name: "Ada",
+    photo_summary: { library_count: 1 },
+  });
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  const search = await screen.findByRole("searchbox", { name: "Search photos" });
+  await fireEvent.input(search, { target: { value: "mountains" } });
+  await fireEvent.submit(search.closest("form")!);
+  await fireEvent.click(screen.getByRole("button", { name: /^People$/ }));
+  await screen.findByRole("button", { name: "Ada 1 Library photo" });
+  expect(screen.getByRole("textbox", { name: "Find people" })).toBeTruthy();
+  expect(screen.queryByRole("searchbox", { name: "Search photos" })).toBeNull();
+});
+
 it("retains the navigated comparison and closeup across a browser tab switch", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();

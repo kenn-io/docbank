@@ -247,8 +247,9 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
 
-// hiddenScopeContext schedules a real lock when the request first reads its
-// Hidden token. Context has no standard hook for coordinating Value reads.
+// hiddenScopeContext schedules a real lock on the second Hidden token lookup,
+// between visibility observations if the cursor and page read separate scopes.
+// Context has no standard hook for coordinating Value reads.
 type hiddenScopeContext struct {
 	context.Context
 
@@ -261,7 +262,7 @@ func (ctx *hiddenScopeContext) Value(key any) any {
 	value := ctx.Context.Value(key)
 	if token, ok := value.(string); ok && token == ctx.token {
 		ctx.reads++
-		if ctx.reads == 1 {
+		if ctx.reads == 2 {
 			ctx.lock()
 		}
 	}
@@ -337,7 +338,7 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	require.NotContains(t, body, "photo_summary")
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Equal(t, ada.PersonID, second.Items[0].PersonID)
-	// A lock during the request still yields a cursor the locked client can follow.
+	// A lock between separate scope reads must not yield an unusable cursor.
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	requestCtx := &hiddenScopeContext{
@@ -354,9 +355,12 @@ func TestPeoplePageProjectionAndCursorBinding(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &locking))
 	require.Len(t, locking.Items, 1)
 	require.NotEmpty(t, locking.NextCursor)
-	require.Nil(t, locking.Items[0].PhotoSummary.HiddenCount, "the lock landed before the page read its scope")
-	response, body = get(t, ts, lockPath+"&cursor="+locking.NextCursor, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	followCtx := store.WithPhotoHiddenToken(ctx, token)
+	request = httptest.NewRequestWithContext(followCtx, http.MethodGet, ts.URL+lockPath+"&cursor="+locking.NextCursor, nil)
+	request.Header.Set("X-Api-Key", testAPIKey)
+	recorder = httptest.NewRecorder()
+	s.Server.Handler().ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 }
 
 // Browser merge conflicts identify the exact face version to review.
