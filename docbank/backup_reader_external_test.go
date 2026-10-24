@@ -22,6 +22,7 @@ import (
 )
 
 func TestBackupReaderWithoutVault(t *testing.T) {
+	t.Parallel()
 	size := int64(64<<20 + 1)
 	if value := os.Getenv("DOCBANK_LARGE_OBJECT_TEST_BYTES"); value != "" {
 		var err error
@@ -168,6 +169,7 @@ type backupReaderWriter func([]byte) (int, error)
 func (w backupReaderWriter) Write(p []byte) (int, error) { return w(p) }
 
 func TestBackupReaderBackupContention(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "source")})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, vault.Close()) })
@@ -202,6 +204,7 @@ func TestBackupReaderBackupContention(t *testing.T) {
 }
 
 func TestBackupReaderRejectsInvalidSnapshots(t *testing.T) {
+	t.Parallel()
 	for _, repository := range []*docbank.BackupRepository{nil, {}} {
 		_, err := repository.OpenSnapshot(t.Context(), "snapshot")
 		require.ErrorContains(t, err, "repository is required")
@@ -219,6 +222,7 @@ func TestBackupReaderRejectsInvalidSnapshots(t *testing.T) {
 }
 
 func TestBackupReaderCloseAfterFailedOpen(t *testing.T) {
+	t.Parallel()
 	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
 	require.NoError(t, err)
 	reader, err := repository.OpenSnapshot(t.Context(), "invalid")

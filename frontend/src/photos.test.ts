@@ -6,6 +6,8 @@ import * as download from "./download.js";
 import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
 import {
   photo,
+  photoTimelineCounts,
+  stubPhotoTimeline,
   preparedPhoto,
   mapPhoto,
   savedSmartSet as savedSmartSetFixture,
@@ -13,6 +15,10 @@ import {
 import type { Query } from "./query.js";
 import * as snapshots from "./snapshots.js";
 import { parseQuery, queryFingerprint } from "./query.js";
+
+beforeEach(() => {
+  stubPhotoTimeline();
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -109,7 +115,7 @@ it.each(["timeline", "counts"])(
     let countsFailures = 0;
     vi.spyOn(snapshots, "fetchPhotoTimeline").mockImplementation(async () => {
       if (failing && read === "timeline") throw new Error("Timeline down");
-      return { facets: [] } as unknown as snapshots.PhotoTimelineCounts;
+      return photoTimelineCounts();
     });
     vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
       if (failing && read === "counts" && JSON.parse(String(init.body)).facets?.length) {
@@ -120,7 +126,6 @@ it.each(["timeline", "counts"])(
     });
     const photos = new Photos("scoped", vi.fn());
     await photos.refresh();
-    photos.setView("timeline");
     // Counts load only while Filters is open.
     photos.filtersOpen = true;
     failing = true;
@@ -1020,152 +1025,97 @@ it.each(["replace", "checkbox", "loaded", "add"])(
   },
 );
 
-it("keeps base counts across day changes and rejects a pre-refresh calendar reply", async () => {
-  const first = {
-    facets: [
-      { dimension: "capture_day", available: true, total: 9000, missing: 4, other: 0, values: [] },
-    ],
-  } as unknown as snapshots.PhotoTimelineCounts;
-  const second = {
-    facets: [
-      { dimension: "capture_day", available: true, total: 20, missing: 0, other: 0, values: [] },
-    ],
-  } as unknown as snapshots.PhotoTimelineCounts;
+it("retains timeline counts during refresh and rejects a stale reply", async () => {
+  const first = photoTimelineCounts([["2024-02-29", 8996]], { missing: 4 });
+  const second = photoTimelineCounts([["2024-01-01", 20]]);
   let finish!: (page: snapshots.PhotoTimelineCounts) => void;
+  let replace!: (page: snapshots.PhotoTimelineCounts) => void;
   const create = vi
     .spyOn(snapshots, "fetchPhotoTimeline")
     .mockResolvedValueOnce(first)
     .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-    .mockResolvedValueOnce(second);
+    .mockImplementationOnce(() => new Promise((resolve) => (replace = resolve)));
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([photo(1)])));
   const photos = new Photos("scoped", vi.fn());
   await photos.loadTimeline();
-  photos.setView("timeline");
   const pending = photos.loadTimeline();
   const oldSignal = create.mock.calls[1][2];
-  photos.setView("grid");
   await photos.refresh();
-  expect(photos.timeline).toBeUndefined();
-  photos.setView("timeline");
-  finish(first);
+  expect(photos.timeline?.total).toBe(9000);
+  expect(photos.timelineLoading).toBe(true);
+  finish(photoTimelineCounts([["2024-02-29", 100]]));
   await pending;
   expect(oldSignal.aborted).toBe(true);
+  expect(photos.timeline?.total).toBe(9000);
+  replace(second);
   await vi.waitFor(() => expect(photos.timeline?.total).toBe(20));
   expect(create.mock.calls[2][1].sort.field).toBe("capture_time");
   expect(create.mock.calls[2][1].filters).toEqual({});
-  await photos.selectDate("2024-02-29");
-  expect(create).toHaveBeenCalledTimes(3);
-  expect(photos.timeline?.total).toBe(20);
   photos.dispose();
 });
 
-it.each([
-  [new APIError("Too many photos", 413, "snapshot_too_large"), "", 0, false],
-  [new APIError("Expired", 401, "unauthorized"), "", 1, undefined],
-  [new Error("Scope unavailable"), "Scope unavailable", 0, undefined],
-])("maps timeline failure %s", async (error, message, failures, available) => {
-  vi.spyOn(snapshots, "fetchPhotoTimeline").mockRejectedValue(error);
+it("reports an unauthorized timeline request to the failure callback", async () => {
+  vi.spyOn(snapshots, "fetchPhotoTimeline").mockRejectedValue(
+    new APIError("Expired", 401, "unauthorized"),
+  );
   const failure = vi.fn();
   const photos = new Photos("scoped", failure);
   await photos.loadTimeline();
-  expect(photos.timeline?.available).toBe(available);
-  expect(photos.timelineError).toBe(message);
-  expect(failure).toHaveBeenCalledTimes(failures as number);
+  expect(photos.timeline).toBeUndefined();
+  expect(photos.timelineError).toBe("");
+  expect(failure).toHaveBeenCalledOnce();
   photos.dispose();
 });
 
 it("resumes an interrupted timeline request", async () => {
-  const receipt = {
-    facets: [
-      { dimension: "capture_day", available: false, reason: "member_budget_exceeded", values: [] },
-    ],
-  } as unknown as snapshots.PhotoTimelineCounts;
+  const receipt = photoTimelineCounts([["2024-02-29", 7]]);
   const create = vi
     .spyOn(snapshots, "fetchPhotoTimeline")
     .mockImplementationOnce(() => new Promise(() => {}))
     .mockResolvedValueOnce(receipt);
   const photos = new Photos("scoped", vi.fn());
-  photos.setView("timeline");
+  void photos.loadTimeline();
   expect(photos.timelineLoading).toBe(true);
   photos.cancelPending();
   photos.started = true;
   await photos.resume();
   expect(create).toHaveBeenCalledTimes(2);
-  await vi.waitFor(() => expect(photos.timeline?.available).toBe(false));
+  await waitFor(() => expect(photos.timeline).toEqual(receipt.facets[0]));
   photos.dispose();
 });
 
-it("seeks an unloaded day, pages within it, and restores the full scope", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(response([photo(1)], "old"))
-    .mockResolvedValueOnce(response([photo(4)], "year-page"))
-    .mockResolvedValueOnce(response([photo(5)], "month-page"))
-    .mockResolvedValueOnce(response([photo(2)], "day-page"))
-    .mockResolvedValueOnce(response([photo(3)]))
-    .mockResolvedValueOnce(response([photo(1)], "full"));
-  stubPhotoFetch(fetcher);
+it.each([
+  [
+    "snapshot_too_large",
+    new APIError("Too many photos", 413, "snapshot_too_large"),
+    "Timeline exceeds its limits.",
+  ],
+  [
+    "member_budget_exceeded",
+    photoTimelineCounts([], { available: false, reason: "member_budget_exceeded" }),
+    "Too many photos for timeline counts.",
+  ],
+  [
+    "snapshot_busy",
+    new APIError("Busy", 503, "snapshot_busy"),
+    "Timeline is busy. Retry in a moment.",
+  ],
+  [
+    "an unavailable answer",
+    photoTimelineCounts([], { available: false, reason: "time_budget_exceeded" }),
+    "Timeline took too long. Try again.",
+  ],
+])("keeps the last counts after %s and says why", async (_name, outcome, message) => {
+  const counts = vi
+    .spyOn(snapshots, "fetchPhotoTimeline")
+    .mockResolvedValueOnce(photoTimelineCounts([["2024-02-29", 3]]));
+  if (outcome instanceof Error) counts.mockRejectedValueOnce(outcome);
+  else counts.mockResolvedValueOnce(outcome);
   const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore();
-  photos.selectLoaded();
-  photos.scrollTop = 500;
-  await photos.selectDate("2025");
-  expect(photos.items[0].asset_id).toBe("photo-4");
-  expect(photos.date).toBe("2025");
-  expect(photos.selection.selectedIDs.size).toBe(0);
-  expect(JSON.parse(fetcher.mock.calls[1][1].body).cursor).toBeUndefined();
-  await photos.selectDate("2025-12");
-  expect(photos.items[0].asset_id).toBe("photo-5");
-  expect(photos.date).toBe("2025-12");
-  await photos.selectDate("2024-02-29");
-  expect(photos.selection.selectedIDs.size).toBe(0);
-  expect(photos.scrollTop).toBe(0);
-  const request = JSON.parse(fetcher.mock.calls[3][1].body);
-  expect(request.cursor).toBeUndefined();
-  expect(request.query.filters.capture_after).toBe("2024-02-29");
-  await photos.loadMore();
-  expect(JSON.parse(fetcher.mock.calls[4][1].body).cursor).toBe("day-page");
-  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-2", "photo-3"]);
-  await photos.selectDate();
-  expect(photos.date).toBeUndefined();
-  let finish!: (value: Response) => void;
-  fetcher
-    .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-    .mockResolvedValueOnce(response([photo(2)]))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }))
-    .mockResolvedValueOnce(response([photo(3)]));
-  const older = photos.selectDate("2024-01-01");
-  await photos.selectDate("2024-02-29");
-  finish(response([photo(1)]));
-  await older;
-  expect(photos.items[0].asset_id).toBe("photo-2");
-  await photos.selectDate("2025-01-01");
-  expect(photos.error).toBe("Try again");
-  await photos.retry();
-  expect(photos.items[0].asset_id).toBe("photo-3");
-  photos.dispose();
-});
-
-it("keeps a pending date change when the library refreshes", async () => {
-  let finish!: (value: Response) => void;
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(response([photo(1)], "old"))
-    .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-    .mockResolvedValueOnce(response([photo(2)]));
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore();
-  const pending = photos.selectDate("2024-02-29");
-  await photos.refresh();
-  finish(response([photo(3)]));
-  await pending;
-  expect(photos.date).toBe("2024-02-29");
-  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-2"]);
-  expect(JSON.parse(fetcher.mock.calls[2][1].body).query.filters).toEqual({
-    capture_after: "2024-02-29",
-    capture_before: "2024-03-01",
-  });
+  await photos.loadTimeline();
+  await photos.loadTimeline();
+  expect(photos.timeline?.total).toBe(3);
+  expect(photos.timelineError).toBe(message);
   photos.dispose();
 });
 
@@ -1208,45 +1158,6 @@ it("keeps earlier pages on failure, waits for Retry, and reuses the failed curso
   expect(fetcher).toHaveBeenCalledTimes(3);
   photos.dispose();
 });
-
-it.each(["2024", undefined])(
-  "resumes interrupted date navigation to %s and keeps the accepted date on failure",
-  async (date) => {
-    let finish!: (value: Response) => void;
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(response([photo(1)], "old"))
-      .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }))
-      .mockResolvedValueOnce(response([photo(2)], "new"));
-    stubPhotoFetch(fetcher);
-    const photos = new Photos("scoped", vi.fn());
-    await photos.selectDate("2025-01-01");
-    photos.selectLoaded();
-    photos.scrollTop = 500;
-    const interrupted = photos.selectDate(date);
-    photos.cancelPending();
-    await photos.resume();
-    finish(response([photo(99)]));
-    await interrupted;
-    expect(photos.error).toBe("Try again");
-    expect(photos.date).toBe("2025-01-01");
-    expect(photos.items[0].asset_id).toBe("photo-1");
-    expect(photos.cursor).toBe("old");
-    expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-    expect(photos.scrollTop).toBe(500);
-    await photos.retry();
-    expect(photos.date).toBe(date);
-    expect(photos.items[0].asset_id).toBe("photo-2");
-    expect(photos.cursor).toBe("new");
-    expect(photos.selection.selectedIDs.size).toBe(0);
-    expect(photos.scrollTop).toBe(0);
-    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual(
-      JSON.parse(fetcher.mock.calls[3][1].body),
-    );
-    photos.dispose();
-  },
-);
 
 it("stages multiple replacement pages and preserves accepted rows on a failed refresh", async () => {
   const fetcher = vi
@@ -2477,69 +2388,31 @@ it("keeps selected photos that new photos pushed past the refreshed window, with
   expect(photos.trashTargets).toEqual([moved]);
 });
 
-it("keeps an album scope through timeline counts, date filters, sort changes, and whole-query selection", async () => {
-  const counts = vi.spyOn(snapshots, "fetchPhotoTimeline").mockResolvedValue({
-    facets: [
-      { dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [] },
-    ],
-  } as unknown as snapshots.PhotoTimelineCounts);
-  const fetcher = vi.fn(async () => response([photo(1)]));
-  stubPhotoFetch(fetcher);
-  const album = {
-    ...photoQuery,
-    filters: { set_ids: ["album"] },
-    sort: { field: "added_time" as const, direction: "desc" as const },
-  };
-  const photos = new Photos("scoped", vi.fn(), false, album);
-  const sent = () =>
-    JSON.parse((fetcher.mock.calls.at(-1) as unknown as [string, RequestInit])[1].body as string)
-      .query;
-  await photos.loadTimeline();
-  expect(counts.mock.calls[0]![1].filters).toEqual({ set_ids: ["album"] });
-  await photos.selectDate("2024-02");
-  expect(sent()).toMatchObject({
-    filters: { set_ids: ["album"], capture_after: "2024-02-01", capture_before: "2024-03-01" },
-    sort: { field: "added_time" },
-  });
-  await photos.setSort({ field: "import_time", direction: "desc" });
-  expect(sent()).toMatchObject({
-    filters: { set_ids: ["album"], capture_after: "2024-02-01" },
-    sort: { field: "import_time" },
-  });
-  photos.selectAllResults();
-  expect(photos.scope().query?.filters).toMatchObject({
-    set_ids: ["album"],
-    capture_after: "2024-02-01",
-  });
-  await photos.selectDate();
-  expect(sent().filters).toEqual({ set_ids: ["album"] });
-  photos.dispose();
-});
-
-it("keeps a pending timeline request when an album sort changes", async () => {
+it("keeps album scope and a pending timeline request through a sort change", async () => {
   let finish!: (page: snapshots.PhotoTimelineCounts) => void;
   const counts = vi
     .spyOn(snapshots, "fetchPhotoTimeline")
     .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => response([photo(1)])),
-  );
+  const fetcher = vi.fn(async () => response([photo(1)]));
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn(), false, {
     ...photoQuery,
     filters: { set_ids: ["album"] },
     sort: { field: "added_time", direction: "desc" },
   });
-  photos.setView("timeline");
+  void photos.loadTimeline();
   await vi.waitFor(() => expect(counts).toHaveBeenCalledOnce());
+  expect(counts.mock.calls[0]![1].filters).toEqual({ set_ids: ["album"] });
   await photos.setSort({ field: "import_time", direction: "desc" });
+  const sent = JSON.parse(
+    (fetcher.mock.calls.at(-1) as unknown as [string, RequestInit])[1].body as string,
+  ).query;
+  expect(sent).toMatchObject({ filters: { set_ids: ["album"] }, sort: { field: "import_time" } });
+  photos.selectAllResults();
+  expect(photos.scope().query?.filters).toEqual({ set_ids: ["album"] });
   expect(counts.mock.calls[0]![2].aborted).toBe(false);
   expect(photos.timelineLoading).toBe(true);
-  finish({
-    facets: [
-      { dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [] },
-    ],
-  } as unknown as snapshots.PhotoTimelineCounts);
+  finish(photoTimelineCounts([["2024-02-29", 1]]));
   await vi.waitFor(() => expect(photos.timeline?.total).toBe(1));
   expect(photos.timelineLoading).toBe(false);
   expect(counts).toHaveBeenCalledOnce();
@@ -2628,18 +2501,17 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
   counts[3].finish(new Response(JSON.stringify({ facets: [facet] })));
   await retry;
   expect(photos.facets).toEqual([]);
-  expect(counts[4].request.query.text).toBe("Canon");
-  expect(counts[4].request.query.sort).toEqual({ field: "capture_time", direction: "desc" });
   expect(counts[4].request.facets).toEqual([
     "camera",
     "lens",
-    "year",
     "location",
     "set",
     "rating",
     "flag",
     "label",
   ]);
+  expect(counts[4].request.query.text).toBe("Canon");
+  expect(counts[4].request.query.sort).toEqual({ field: "capture_time", direction: "desc" });
   expect(counts[4].request.cursor).toBeUndefined();
   const rowRequests = rows.mock.calls.length;
   await photos.loadMore();
@@ -2756,14 +2628,36 @@ it.each([
   },
 );
 
-it("requests filter counts for the library but not for an album", async () => {
-  for (const album of [false, true]) {
-    const fetcher = vi.fn(async (_url: string, _init: RequestInit) => response([photo(1)]));
+it.each([
+  ["library", false],
+  ["library", true],
+  ["hidden", false],
+  ["album", false],
+  ["map", false],
+] as const)(
+  "requests filter counts for Library and Hidden but not album or Map; Year only for Hidden or a saved range: %s, %s",
+  async (mode, range) => {
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) =>
+      response(mode === "map" ? [mapPhoto(1)] : [photo(1)]),
+    );
     vi.stubGlobal("fetch", fetcher);
-    const scope = album
-      ? { ...photoQuery, filters: { set_ids: ["00000000-0000-4000-8000-000000000001"] } }
-      : photoQuery;
-    const photos = new Photos("scoped", vi.fn(), false, scope);
+    const scope =
+      mode === "album"
+        ? { ...photoQuery, filters: { set_ids: ["00000000-0000-4000-8000-000000000001"] } }
+        : photoQuery;
+    const photos = new Photos(
+      "scoped",
+      vi.fn(),
+      mode === "hidden",
+      {
+        ...scope,
+        filters: {
+          ...scope.filters,
+          ...(range ? { capture_after: "2024-01-01", capture_before: "2025-01-01" } : {}),
+        },
+      },
+      { projection: mode === "map" ? "map" : undefined },
+    );
     await photos.loadMore();
     await vi.waitFor(() => expect(photos.facetsLoading).toBe(false));
     expect(fetcher).toHaveBeenCalledOnce();
@@ -2772,11 +2666,69 @@ it("requests filter counts for the library but not for an album", async () => {
     await vi.waitFor(() => expect(photos.facetsLoading).toBe(false));
     const counted = fetcher.mock.calls.filter(
       ([, init]) => JSON.parse(String(init.body)).facets?.length,
-    ).length;
-    expect(counted).toBe(album ? 0 : 1);
+    );
+    expect(counted).toHaveLength(mode === "map" || mode === "album" ? 0 : 1);
+    if (mode !== "map" && mode !== "album") {
+      const facets: string[] = JSON.parse(String(counted[0]![1].body)).facets;
+      expect(facets.includes("year")).toBe(mode === "hidden" || range);
+    }
+    fetcher.mockClear();
+    await photos.reloadCounts();
+    expect(fetcher).toHaveBeenCalledTimes(mode === "map" || mode === "album" ? 0 : 1);
     photos.dispose();
-  }
+  },
+);
+
+it("allows date navigation only in Captured newest order while idle", () => {
+  const photos = new Photos("scoped", vi.fn());
+  expect(photos.canJump).toBe(true);
+  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "asc" } };
+  expect(photos.canJump).toBe(false);
+  photos.query = { ...photos.query, sort: { field: "import_time", direction: "desc" } };
+  expect(photos.canJump).toBe(false);
+  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
+  photos.hiding = true;
+  expect(photos.canJump).toBe(false);
+  photos.hiding = false;
+  photos.trashing = true;
+  expect(photos.canJump).toBe(false);
+  photos.dispose();
 });
+
+it.each(["hiding", "trashing"] as const)("keeps the sort during %s", async (mutation) => {
+  const fetcher = vi.fn(async () => response([photo(1)]));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore();
+  photos.selectLoaded();
+  photos.jumpTo("2024-02");
+  const query = photos.query;
+  fetcher.mockClear();
+  photos[mutation] = true;
+  await photos.setSort({ field: "import_time", direction: "desc" });
+  expect(photos.query).toEqual(query);
+  expect(photos.seek).toBe("2024-02");
+  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  expect(fetcher).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
+it.each(["query", "sort"] as const)(
+  "clears a pending jump on a new %s, with query changes also clearing timeline counts",
+  async (change) => {
+    stubPhotoFetch(async () => response([photo(1)]));
+    const photos = new Photos("scoped", vi.fn());
+    await photos.loadTimeline();
+    await photos.jumpTo("2024-02");
+    expect(photos.seek).toBe("2024-02");
+    vi.spyOn(snapshots, "fetchPhotoTimeline").mockImplementation(() => new Promise(() => {}));
+    if (change === "query") void photos.setQuery({ ...photos.query, text: "river" });
+    else await photos.setSort({ field: "added_time", direction: "desc" });
+    expect(photos.seek).toBe("");
+    if (change === "query") expect(photos.timeline).toBeUndefined();
+    photos.dispose();
+  },
+);
 
 describe("frozen photo runs", () => {
   let photos: Photos;
@@ -2795,29 +2747,10 @@ describe("frozen photo runs", () => {
   });
   afterEach(() => photos.dispose());
 
-  it.each(["query change", "date replacement"])(
-    "clears frozen results after %s completes",
-    async (path) => {
-      if (path === "query change") {
-        await photos.setQuery({ ...photoQuery, text: "river" });
-      } else {
-        let finish!: (value: Response) => void;
-        fetcher
-          .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-          .mockResolvedValueOnce(
-            new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }),
-          );
-        const interrupted = photos.selectDate("2024");
-        photos.cancelPending();
-        await photos.resume();
-        finish(response([]));
-        await interrupted;
-        expect(photos.frozen).toBe(result);
-        await photos.retry();
-      }
-      expect(photos.frozen).toBeUndefined();
-    },
-  );
+  it("clears frozen results after a query change completes", async () => {
+    await photos.setQuery({ ...photoQuery, text: "river" });
+    expect(photos.frozen).toBeUndefined();
+  });
 
   it("clears frozen results when the saved revision changes", async () => {
     const payload = photos.savedPhotoQuery;
@@ -2857,7 +2790,7 @@ it("recovers smart sets without stale identities", async () => {
   const fetcher = vi.fn(async () => savedSmartSetResponse(saved));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("session", vi.fn());
-  photos.query = photos.baseQuery = saved.payload;
+  photos.query = saved.payload;
   await photos.recoverSmartSet();
   expect(photos.smartSet?.id).toBe(saved.id);
   const otherSession = new Photos("other-session", vi.fn());
@@ -3001,7 +2934,6 @@ it.each([
       "all",
       "query",
       "sort",
-      "date",
       "hide",
       "trash",
       "rejects",
@@ -3045,7 +2977,6 @@ it.each([
           text: state === "clean" ? "another search" : "New search",
         }),
       sort: () => photos.setSort({ field: "import_time", direction: "desc" }),
-      date: () => photos.selectDate("2025-06-01"),
       hide: () => photos.setHidden("photo-1"),
       trash: () => photos.trashSelected(),
       rejects: async () => {
@@ -3069,7 +3000,6 @@ it.each([
       expect([...photos.selectedIDs]).toEqual(["photo-1"]);
       expect(photos.editScopeRevision).toBe(revision);
       expect(photos.query).toEqual(photoQuery);
-      expect(photos.date).toBeUndefined();
       expect(photos.authored.patch).toEqual({ caption: "Unapplied" });
       photos.authored.clearDraft();
       photos.selectLoaded();
@@ -3334,6 +3264,39 @@ it.each([true, false])(
     expect([...photos.selectedIDs]).toEqual(eligible ? ["photo-1", "photo-2"] : ["photo-1"]);
     if (eligible)
       expect(photos.trashTargets.find((row) => row.asset_id === "photo-2")?.revision).toBe(5);
+    photos.dispose();
+  },
+);
+
+it("clears a timeline error only when a retry succeeds", async () => {
+  const counts = vi
+    .spyOn(snapshots, "fetchPhotoTimeline")
+    .mockRejectedValueOnce(new Error("Scope unavailable"))
+    .mockRejectedValueOnce(new Error("Still unavailable"))
+    .mockResolvedValueOnce(photoTimelineCounts([["2024-02-29", 1]]));
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadTimeline();
+  expect(photos.timelineError).toBe("Scope unavailable");
+  const retry = photos.loadTimeline();
+  expect(photos.timelineError).toBe("Scope unavailable");
+  await retry;
+  expect(photos.timelineError).toBe("Still unavailable");
+  await photos.loadTimeline();
+  expect(photos.timelineError).toBe("");
+  expect(photos.timeline?.total).toBe(1);
+  expect(counts).toHaveBeenCalledTimes(3);
+  photos.dispose();
+});
+
+it.each([undefined, "map"] as const)(
+  "loads timeline counts after setQuery except for Map; projection=%s",
+  async (projection) => {
+    const timeline = vi.mocked(snapshots.fetchPhotoTimeline);
+    stubPhotoFetch(async () => response([]));
+    const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection });
+    await photos.setQuery({ ...photoQuery, text: "Synthetic" });
+    await waitFor(() => expect(photos.timelineLoading).toBe(false));
+    expect(timeline).toHaveBeenCalledTimes(projection === "map" ? 0 : 1);
     photos.dispose();
   },
 );

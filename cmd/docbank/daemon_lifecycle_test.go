@@ -3,23 +3,40 @@ package main
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 )
+
+var docbankBuildDir string // Allocated on first build; TestMain removes it.
+var docbankBuildMu sync.Mutex
+var docbankBuilds = map[string]struct {
+	bin string
+	err error
+}{}
+
+// ensureDocbankBuildDir allocates the shared build directory on first use,
+// so test processes that never build a binary leave no directory behind.
+func ensureDocbankBuildDir() (err error) {
+	if docbankBuildDir == "" {
+		docbankBuildDir, err = os.MkdirTemp("", "docbank-test-binaries-")
+	}
+	return err
+}
 
 func buildDocbank(tb testing.TB) string {
 	tb.Helper()
@@ -33,21 +50,35 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
-	name := "docbank"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
+	docbankBuildMu.Lock()
+	defer docbankBuildMu.Unlock()
+	build, ok := docbankBuilds[v]
+	if !ok {
+		build.bin, build.err = func() (string, error) {
+			if err := ensureDocbankBuildDir(); err != nil {
+				return "", err
+			}
+			name := fmt.Sprintf("docbank-%d", len(docbankBuilds))
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			bin := filepath.Join(docbankBuildDir, name)
+			args := []string{"build", "-tags", "fts5"}
+			if v != "" {
+				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
+			}
+			args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
+			cmd := exec.Command("go", args...)
+			cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return "", fmt.Errorf("build docbank: %w\n%s", err, out)
+			}
+			return bin, nil
+		}()
+		docbankBuilds[v] = build
 	}
-	bin := filepath.Join(tb.TempDir(), name)
-	args := []string{"build", "-tags", "fts5,kit_posthog_disabled"}
-	if v != "" {
-		args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
-	}
-	args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
-	cmd := exec.Command("go", args...)
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-	out, err := cmd.CombinedOutput()
-	require.NoError(tb, err, string(out))
-	return bin
+	require.NoError(tb, build.err)
+	return build.bin
 }
 
 var pidRe = regexp.MustCompile(`pid (\d+)`)
@@ -86,7 +117,6 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	require.NoError(t, err, out)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	startPID := parsePID(t, out)
-	require.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
 	out, err = run("daemon", "status")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "running")

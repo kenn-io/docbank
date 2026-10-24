@@ -22,6 +22,7 @@ import (
 )
 
 func TestEmbeddedBatesPlanningAndReservationAPI(t *testing.T) {
+	t.Parallel()
 	vaultRoot := t.TempDir()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: vaultRoot})
 	require.NoError(t, err)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestResetVaultRevalidatesSourceAliasAfterOwnerRelease(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	parked := filepath.Join(base, "vault.parked")

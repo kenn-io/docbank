@@ -6,12 +6,12 @@
   import { photoSearchSort } from "./photoSearch.js";
 
   let { photos }: { photos: Photos } = $props();
-  let search = $state(untrack(() => photos.baseQuery.text));
-  let syntax = $state(untrack(() => photos.baseQuery.syntax));
+  let search = $state(untrack(() => photos.query.text));
+  let syntax = $state(untrack(() => photos.query.syntax));
   const disabled = $derived(photos.blocking || photos.hiding || photos.trashing);
-  const applyDraft = $derived(Boolean(search.trim()) || search !== photos.baseQuery.text);
-  const appliedText = $derived(photos.baseQuery.text);
-  const appliedSyntax = $derived(photos.baseQuery.syntax);
+  const applyDraft = $derived(Boolean(search.trim()) || search !== photos.query.text);
+  const appliedText = $derived(photos.query.text);
+  const appliedSyntax = $derived(photos.query.syntax);
   $effect(() => {
     search = appliedText;
   });
@@ -21,7 +21,7 @@
   function submit() {
     const text = search.trim();
     const pending = photos.setQuery({
-      ...photos.baseQuery,
+      ...photos.query,
       text: search,
       syntax,
       sort: photoSearchSort({ text: search, syntax }),
@@ -47,7 +47,7 @@
     placeholder="Search photos"
     bind:value={search}
     onclear={() => {
-      if (photos.baseQuery.text && !submit()) search = photos.baseQuery.text;
+      if (photos.query.text && !submit()) search = photos.query.text;
     }}
   />
 </form>
@@ -61,6 +61,6 @@
   ]}
   onchange={(value) => {
     syntax = value as "simple" | "advanced";
-    if (applyDraft && !submit()) syntax = photos.baseQuery.syntax;
+    if (applyDraft && !submit()) syntax = photos.query.syntax;
   }}
 />

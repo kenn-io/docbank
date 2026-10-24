@@ -352,6 +352,33 @@ it("requests zoom quality once per zoom gesture", async () => {
   expect(onzoom).toHaveBeenCalledOnce();
 });
 
+it("ignores the second tap of the double tap that opened the photo", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const onzoom = vi.fn();
+  const view = render(PhotoLoupeImage, {
+    url: "",
+    name: "Synthetic photo",
+    onzoom,
+    onmove: vi.fn(),
+  });
+  const viewport = view.container.querySelector<HTMLElement>(".photo-viewport")!;
+  await fireEvent.click(viewport, { detail: 2 });
+  await fireEvent.doubleClick(viewport, { detail: 2 });
+  expect(viewport.dataset.zoomed).toBeUndefined();
+  expect(onzoom).not.toHaveBeenCalled();
+  await fireEvent.click(viewport, { detail: 1 });
+  await fireEvent.click(viewport, { detail: 2 });
+  await fireEvent.doubleClick(viewport, { detail: 2 });
+  expect(viewport.dataset.zoomed).toBe("true");
+  expect(onzoom).toHaveBeenCalledOnce();
+});
+
 it("resets a touch swipe before requesting navigation when the current photo remains mounted", async () => {
   vi.stubGlobal(
     "ResizeObserver",

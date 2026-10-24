@@ -26,8 +26,8 @@ make docs-screenshots
 
 The command builds the frontend and Docbank binary in `bin/`, seeds owner-private
 synthetic vaults, captures the real interfaces, stops its daemons, and removes
-the vaults. `DOCBANK_TELEMETRY_ENABLED=0` disables telemetry for every spec.
-Do not run another build while a capture is using the binary or embedded assets.
+the vaults. Do not run another build while a capture is using the binary or
+embedded assets.
 
 ## Review and publish the complete set
 

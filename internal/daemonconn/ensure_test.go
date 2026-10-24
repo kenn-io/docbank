@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/packagetest"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -171,6 +172,51 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 	} {
 		rec := NewRecord("127.0.0.1:1", "key", "tok", address)
 		assert.False(t, webDiscoverOptions().Accept(rec, info), address)
+	}
+}
+
+func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		locked  bool
+		missing bool
+	}{
+		{name: "locked vault", locked: true},
+		{name: "unlocked existing vault"},
+		{name: "missing vault", missing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if test.locked {
+				lock, err := (home.Layout{Root: root}).TryLockExclusive()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, lock.Release()) })
+			}
+			if test.missing {
+				root = filepath.Join(root, "missing", "vault")
+			}
+			started := false
+			_, err := ensureDaemon(t.Context(), root,
+				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+					started = true
+					if test.missing {
+						_, err := os.Stat(filepath.Dir(root))
+						require.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
+					} else {
+						lock, err := (home.Layout{Root: root}).TryLockExclusive()
+						require.NoError(t, err, "the probe must release ownership before starting")
+						require.NoError(t, lock.Release())
+					}
+					return NewRecord("127.0.0.1:2", "key", "token", ""), nil
+				})
+			if test.locked {
+				require.ErrorIs(t, err, home.ErrVaultLocked)
+				require.ErrorContains(t, err, "if you're in a sandbox, check for a daemon outside it")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, !test.locked, started)
+		})
 	}
 }
 

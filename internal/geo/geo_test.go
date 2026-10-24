@@ -5,42 +5,53 @@ import (
 	"encoding/hex"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/paulmach/orb"
 	"github.com/stretchr/testify/require"
 )
 
+var testNaturalEarth = sync.OnceValues(NewNaturalEarth)
+
 func TestNaturalEarthResolveKnownCities(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 
 	type tc struct {
 		name           string
 		lat, lon       float64
+		wantOK         bool
 		cityPrefix     string
 		mustContain    []string
 		mustNotContain []string
 	}
 	cases := []tc{
-		{"Paris", 48.8566, 2.3522, "", []string{"France"}, nil},
+		{"Paris", 48.8566, 2.3522, true, "", []string{"France"}, nil},
+		{"Swapped Paris coordinates", 2.3522, 48.8566, false, "", nil, []string{"France", "Paris"}},
 		// "Manhattan" is a borough, not a populated_places city, so it
 		// must NEVER appear in the label — locks the field-selection
 		// contract (NAMEASCII → NAME, not e.g. an ADM2-style sub-name).
-		{"NYC", 40.7128, -74.0060, "", []string{"New York", "United States"}, []string{"Manhattan"}},
-		{"Tokyo", 35.6762, 139.6503, "", []string{"Japan"}, nil},
-		{"Sydney", -33.8688, 151.2093, "", []string{"Australia"}, nil},
-		{"Cape Town", -33.9249, 18.4241, "", []string{"South Africa"}, nil},
-		{"George Town", 19.294748, -81.371570, "George Town", []string{"Cayman Is."}, nil},
-		{"Willemstad", 12.112290, -68.872356, "Willemstad", []string{"Curaçao"}, nil},
-		{"Linares", 38.083320, -3.633355, "Linares", []string{"Jaén", "Spain"}, nil},
+		{"NYC", 40.7128, -74.0060, true, "", []string{"New York", "United States"}, []string{"Manhattan"}},
+		{"Tokyo", 35.6762, 139.6503, true, "", []string{"Japan"}, nil},
+		{"Sydney", -33.8688, 151.2093, true, "", []string{"Australia"}, nil},
+		{"Cape Town", -33.9249, 18.4241, true, "", []string{"South Africa"}, nil},
+		{"George Town", 19.294748, -81.371570, true, "George Town", []string{"Cayman Is."}, nil},
+		{"Willemstad", 12.112290, -68.872356, true, "Willemstad", []string{"Curaçao"}, nil},
+		{"Linares", 38.083320, -3.633355, true, "Linares", []string{"Jaén", "Spain"}, nil},
+		{"Open ocean", 0, -30, false, "", nil, nil},
+		{"South Pole", -89.9, 0, true, "", []string{"Antarctica"}, nil},
+		{"Russian Far East", 53.0, 158.7, true, "", []string{"Russia"}, nil},
+		{"Suva", -18.1416, 178.4419, true, "", []string{"Fiji"}, nil},
+		// Ignoring the Spanish enclave's hole in France would return France first.
+		{"Country polygon hole", 42.46277, 1.96382, true, "", []string{"Spain"}, []string{"France"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := require.New(t)
 			label, ok := g.Resolve(c.lat, c.lon)
-			r.True(ok, "expected resolve to succeed; got label=%q ok=%v", label, ok)
+			r.Equal(c.wantOK, ok, "label=%q", label)
 			if c.cityPrefix != "" {
 				r.True(strings.HasPrefix(label, c.cityPrefix+", "), "label %q does not start with city %q", label, c.cityPrefix)
 			}
@@ -55,103 +66,32 @@ func TestNaturalEarthResolveKnownCities(t *testing.T) {
 	}
 }
 
-// TestNaturalEarthCoordOrderFootgun guards against the silent
-// orb.Point{lon, lat} vs. orb.Point{lat, lon} bug. Resolving with the
-// arguments swapped MUST NOT produce a Paris-shaped label — Paris's
-// (lat=48.8566, lon=2.3522) swapped becomes (lat=2.3522, lon=48.8566)
-// which lands in the Indian Ocean / Somalia.
-func TestNaturalEarthCoordOrderFootgun(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-	label, _ := g.Resolve(2.3522, 48.8566)
-	r.NotContains(label, "France",
-		"swapped Paris coords resolved to a France-shaped label %q — "+
-			"orb.Point construction order is wrong", label)
-	r.NotContains(label, "Paris", "label=%q", label)
-}
-
-func TestNaturalEarthOpenOceanReturnsFalse(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-	_, ok := g.Resolve(0, -30) // mid-Atlantic
-	r.False(ok)
-}
-
-func TestNaturalEarthSouthPole(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-	label, ok := g.Resolve(-89.9, 0)
-	r.True(ok)
-	r.Contains(label, "Antarctica")
-}
-
-func TestNaturalEarthAntimeridian(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-
-	// Russian Far East: Petropavlovsk-Kamchatsky-ish.
-	label, ok := g.Resolve(53.0, 158.7)
-	r.True(ok)
-	r.Contains(label, "Russia")
-
-	// Suva, Fiji — straddles antimeridian as a country, but Suva itself
-	// is at lon ≈ 178.4 (just west of 180).
-	label, ok = g.Resolve(-18.1416, 178.4419)
-	r.True(ok)
-	r.Contains(label, "Fiji")
-}
-
-// TestNaturalEarthSameCountryGate makes sure the city-threshold gate
-// drops a populated-place from a different country than the resolved
-// admin_0. Tijuana and San Diego are both within the city threshold, but
-// only Tijuana shares the resolved country's label.
-func TestNaturalEarthSameCountryGate(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-
-	label, ok := g.Resolve(32.52, -117.03)
-	r.True(ok)
-	r.Equal("Tijuana, Baja California, Mexico", label)
-	r.NotContains(label, "San Diego")
-	r.NotContains(label, "United States")
-}
-
-func TestNaturalEarthRegionGate(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-
-	// This point is in Basel-Landschaft, where Basel is closer than Liestal.
-	// The city must still come from the resolved admin_1 region.
-	label, ok := g.Resolve(47.54, 7.61)
-	r.True(ok)
-	r.Equal("Liestal, Basel-Landschaft, Switzerland", label)
-	r.NotContains(label, "Basel, Basel-Stadt")
-}
-
-func TestNaturalEarthRegionStaysInCountry(t *testing.T) {
-	g, err := NewNaturalEarth()
+func TestNaturalEarthLabelGates(t *testing.T) {
+	g, err := testNaturalEarth()
 	require.NoError(t, err)
 
-	// Simplified Algerian and Tunisian borders overlap here. Each label must
-	// keep a neighboring country's region out.
 	cases := []struct {
+		name     string
 		lat, lon float64
 		want     string
 	}{
-		{36.44, 8.35, "Algeria"},
-		{35.43, 8.30, "Tunisia"},
-		{35.65, 8.32, "Tébessa, Algeria"},
+		// Nearby San Diego belongs to a different country.
+		{"Same country", 32.52, -117.03, "Tijuana, Baja California, Mexico"},
+		// Basel is closer, but Liestal belongs to the containing region.
+		{"Same region", 47.54, 7.61, "Liestal, Basel-Landschaft, Switzerland"},
+		// Simplified Algerian and Tunisian borders overlap at these points.
+		{"Algeria", 36.44, 8.35, "Algeria"},
+		{"Tunisia", 35.43, 8.30, "Tunisia"},
+		{"Tébessa", 35.65, 8.32, "Tébessa, Algeria"},
+		// Alice Springs is about 28 km away, beyond the 25 km city limit.
+		{"City distance", -23.45, 133.88, "Northern Territory, Australia"},
 	}
 	for _, c := range cases {
-		label, ok := g.Resolve(c.lat, c.lon)
-		require.True(t, ok)
-		require.Equal(t, c.want, label)
+		t.Run(c.name, func(t *testing.T) {
+			label, ok := g.Resolve(c.lat, c.lon)
+			require.True(t, ok)
+			require.Equal(t, c.want, label)
+		})
 	}
 }
 
@@ -219,32 +159,6 @@ func TestNearestCityMembershipGates(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
-}
-
-func TestNaturalEarthCityDistanceGate(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-
-	// Alice Springs is about 28 km away, so the 25 km city limit leaves only
-	// the containing region and country in the label.
-	label, ok := g.Resolve(-23.45, 133.88)
-	r.True(ok)
-	r.Equal("Northern Territory, Australia", label)
-	r.NotContains(label, "Alice Springs")
-}
-
-func TestNaturalEarthCountryPolygonHole(t *testing.T) {
-	r := require.New(t)
-	g, err := NewNaturalEarth()
-	r.NoError(err)
-
-	// This point falls inside a Spanish enclave cut out of the France polygon.
-	// Ignoring polygon holes would return France because it sorts before Spain.
-	label, ok := g.Resolve(42.46277, 1.96382)
-	r.True(ok)
-	r.Contains(label, "Spain")
-	r.NotContains(label, "France")
 }
 
 // TestEmbeddedDataChecksums verifies that the embedded archives decompress

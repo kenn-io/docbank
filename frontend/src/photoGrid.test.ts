@@ -3,10 +3,184 @@ import {
   computeJustified,
   computeMonthLayout,
   groupPhotos,
+  monthAt,
   photoAspect,
+  seekOffset,
   visibleRows,
+  type PhotoGridRow,
 } from "./photoGrid.js";
 import { photo } from "./photo-test-fixtures.js";
+
+// Lays out groups at 144px wide, so every 3:2 photo gets its own 96px row.
+function chunks(groups: { key: string; year: string; items: PhotoGridRow[] }[]) {
+  let offset = 0;
+  return groups.map((group) => {
+    const layout = computeMonthLayout(
+      group.items,
+      144,
+      96,
+      group.key === "relevance" ? 12 : undefined,
+    );
+    const chunk = { group: { label: group.key, ...group }, layout, offset };
+    offset += layout.intrinsicHeight;
+    return chunk;
+  });
+}
+
+it("seeks a month's offset across month, session, and stacked layouts", () => {
+  const months = chunks([
+    { key: "2025-06", year: "2025", items: [1, 2, 3].map((id) => photo(id, "2025-06-01")) },
+    { key: "2024-01", year: "2024", items: [photo(4, "2024-01-01")] },
+    { key: "undated", year: "", items: [photo(5, null)] },
+  ]);
+  expect(seekOffset(months, "2025-06")).toBe(0);
+  expect(seekOffset(months, "2024-01")).toBe(months[1].offset);
+  // A month absent from the loaded rows may still be on a later page.
+  expect(seekOffset(months, "2025-03")).toBeUndefined();
+  // Once the list has ended, the first section whose newest photo is older stands in.
+  expect(seekOffset(months, "2025-03", true)).toBe(months[1].offset);
+  // Session order follows UTC, while the nearest older month follows the recorded date.
+  const sessions = chunks(
+    groupPhotos(
+      [
+        photo(6, "2025-04-01T00:00:00Z"),
+        photo(7, "2025-01-31T23:30:00-05:00"),
+        photo(8, "2025-02-01T00:30:00+01:00"),
+        photo(9, "2024-12-01T12:00:00Z"),
+      ],
+      "sessions",
+    ),
+  );
+  // April and January each occupy a 56px heading and one 96px row.
+  expect(seekOffset(sessions, "2025-03", true)).toBe(304);
+  // With nothing older, the caller scrolls to the end.
+  expect(seekOffset(months, "2023-05", true)).toBeUndefined();
+
+  {
+    const session = chunks(
+      groupPhotos(
+        [
+          photo(1, "2025-01-01T04:00:00"),
+          photo(2, "2025-01-01T03:00:00"),
+          photo(3, "2025-01-01T02:00:00"),
+          photo(4, "2025-01-01T01:00:00"),
+          photo(5, "2025-01-01T00:00:00"),
+          photo(6, "2024-12-31T23:00:00"),
+        ],
+        "sessions",
+      ),
+    );
+    expect(session).toHaveLength(1);
+    // The December row starts at 556px and must sit below the 44px sticky heading.
+    const target = seekOffset(session, "2024-12")!;
+    expect(target).toBe(512);
+    expect(monthAt(session, target)).toBe("2024-12");
+    expect(seekOffset(session, "2025-01")).toBe(0);
+  }
+
+  {
+    const items = Array.from({ length: 100 }, (_, index) => photo(index, "2025-01-01"));
+    const sections = chunks(groupPhotos(items, "months"));
+    let reads = 0;
+    for (const item of items) {
+      const capture = item.capture_time;
+      Object.defineProperty(item, "capture_time", {
+        get() {
+          reads++;
+          return capture;
+        },
+      });
+    }
+    expect(seekOffset(sections, "2024-12", false, items)).toBeUndefined();
+    expect(reads).toBeLessThanOrEqual(100);
+  }
+
+  {
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+    const items = [
+      photo(3, "2025-02-01"),
+      { ...photo(1, "2025-01-01T00:00:00"), stack },
+      { ...photo(2, "2024-12-31T23:59:59"), stack },
+      photo(4, "2024-11-01"),
+    ];
+    const sections = chunks(
+      groupPhotos(
+        items.filter((item) => item.asset_id !== "photo-2"),
+        "months",
+      ),
+    );
+    expect(seekOffset(sections, "2024-12", true, items)).toBe(152);
+    expect(seekOffset(sections, "2024-12", false, items)).toBe(152);
+    const visible = chunks(
+      groupPhotos(
+        [...items.filter((item) => item.asset_id !== "photo-2"), photo(5, "2024-12-01")],
+        "months",
+      ),
+    );
+    expect(seekOffset(visible, "2024-12", false, items)).toBe(304);
+    const expanded = chunks(groupPhotos(items, "months"));
+    expect(seekOffset(expanded, "2024-12", true, items)).toBe(304);
+    const sessionItems = [photo(3, "2025-01-01T00:01:00"), ...items.slice(1)];
+    const sessions = chunks(
+      groupPhotos(
+        sessionItems.filter((item) => item.asset_id !== "photo-2"),
+        "sessions",
+      ),
+    );
+    expect(seekOffset(sessions, "2024-12", true, sessionItems)).toBe(112);
+  }
+});
+
+it("names the top visible photo's month across orders with bounded row reads", () => {
+  const sections = chunks(
+    groupPhotos(
+      [
+        photo(1, "2025-01-01T01:00:00"),
+        photo(2, "2024-12-31T23:00:00"),
+        photo(3, "2024-06-01"),
+        photo(4, null),
+      ],
+      "sessions",
+    ),
+  );
+  expect(monthAt(sections, 0)).toBe("2025-01");
+  expect(monthAt(sections, 156)).toBe("2024-12");
+  expect(monthAt(sections, 107)).toBe("2025-01");
+  expect(monthAt(sections, 108)).toBe("2024-12");
+  expect(monthAt(sections, sections[1].offset - 1)).toBe("2024-06");
+  expect(monthAt(sections, sections[1].offset)).toBe("2024-06");
+  expect(monthAt(sections, sections[2].offset)).toBe("");
+  for (const [grouping, second, third] of [
+    ["flat", 156, 256],
+    ["relevance", 112, 212],
+  ] as const) {
+    const rows = chunks(
+      groupPhotos([photo(1, "2025-06-01"), photo(2, "2024-03-01"), photo(3, null)], grouping),
+    );
+    expect(monthAt(rows, 0)).toBe("2025-06");
+    expect(monthAt(rows, second)).toBe("2024-03");
+    expect(monthAt(rows, third)).toBe("");
+  }
+
+  const items = Array.from({ length: 10_000 }, (_, index) =>
+    photo(
+      index,
+      `${2025 - Math.floor(index / 1200)}-${String(12 - (Math.floor(index / 100) % 12)).padStart(2, "0")}-01`,
+    ),
+  );
+  const [large] = chunks([{ key: "all", year: "", items }]);
+  let reads = 0;
+  large.layout.rows = large.layout.rows.map((row) => ({
+    ...row,
+    get y() {
+      reads++;
+      return row.y;
+    },
+  }));
+  // Row 9,000 starts at 900,056px, below the 44px sticky heading.
+  expect(monthAt([large], 900_012)).toBe("2018-06");
+  expect(reads).toBeLessThan(30);
+});
 
 it("fits panoramas and full justified rows within the available width", () => {
   const layout = computeJustified(

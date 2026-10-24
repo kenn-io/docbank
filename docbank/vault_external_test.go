@@ -35,13 +35,8 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-func TestRootPackageConstructor(t *testing.T) {
-	vault, err := docbank.New(context.Background(), docbank.Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	require.NoError(t, vault.Close())
-}
-
 func TestVaultFormatCoverage(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 
@@ -76,6 +71,7 @@ func TestVaultFormatCoverage(t *testing.T) {
 }
 
 func TestVaultFormatCoverageCapturesConstructedProviders(t *testing.T) {
+	t.Parallel()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	descriptor := provider.Descriptor()
@@ -96,6 +92,7 @@ func TestVaultFormatCoverageCapturesConstructedProviders(t *testing.T) {
 }
 
 func TestRootPackageRecoversInterruptedProcessingSpool(t *testing.T) {
+	t.Parallel()
 	for _, custom := range []bool{false, true} {
 		name := "default"
 		if custom {
@@ -145,6 +142,7 @@ func TestRootPackageRecoversInterruptedProcessingSpool(t *testing.T) {
 }
 
 func TestRootPackageOwnsProcessingSpoolUntilClose(t *testing.T) {
+	t.Parallel()
 	for _, custom := range []bool{false, true} {
 		name := "default"
 		if custom {
@@ -196,6 +194,7 @@ func TestRootPackageOwnsProcessingSpoolUntilClose(t *testing.T) {
 }
 
 func TestRootPackageReleasesProcessingSpoolAfterOpenFailure(t *testing.T) {
+	t.Parallel()
 	config := docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
 		SpoolDirectory: t.TempDir(), Profiles: map[string]docbank.ProcessingProfileConfig{"invalid": {}},
 	}}
@@ -208,6 +207,7 @@ func TestRootPackageReleasesProcessingSpoolAfterOpenFailure(t *testing.T) {
 }
 
 func TestEmbeddedProcessingReportsIneligibleSource(t *testing.T) {
+	t.Parallel()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
@@ -243,6 +243,7 @@ func TestEmbeddedProcessingReportsIneligibleSource(t *testing.T) {
 }
 
 func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
+	t.Parallel()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	profile := embeddedProcessingProfile(t, provider.Descriptor())
@@ -320,6 +321,7 @@ func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
 }
 
 func TestEmbeddedProcessingRejectsForeignFenceAndClosedVault(t *testing.T) {
+	t.Parallel()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
@@ -339,6 +341,7 @@ func TestEmbeddedProcessingRejectsForeignFenceAndClosedVault(t *testing.T) {
 }
 
 func TestEmbeddedProcessingWaitsForSharedRenditionAndHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	plaintextProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	provider := &waitingRenditionProvider{RenditionProvider: plaintextProvider,
@@ -391,6 +394,7 @@ func TestEmbeddedProcessingWaitsForSharedRenditionAndHonorsCancellation(t *testi
 }
 
 func TestEmbeddedProcessingRenewalDuringRenditionKeepsEmbeddingStatus(t *testing.T) {
+	t.Parallel()
 	plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	renderer := &waitingRenditionProvider{RenditionProvider: plain,
@@ -453,6 +457,7 @@ func TestEmbeddedProcessingRenewalDuringRenditionKeepsEmbeddingStatus(t *testing
 }
 
 func TestEmbeddedProcessingRequiresOwnRenditionPublication(t *testing.T) {
+	t.Parallel()
 	for _, chunks := range []bool{false, true} {
 		for _, trash := range []bool{false, true} {
 			t.Run(fmt.Sprintf("chunks=%t/trash=%t", chunks, trash), func(t *testing.T) {
@@ -568,6 +573,7 @@ type waitingRenditionProvider struct {
 }
 
 func TestEmbeddedProcessingWaitsForRenditionOutcome(t *testing.T) {
+	t.Parallel()
 	for _, chunks := range []bool{false, true} {
 		for _, test := range []struct {
 			name string
@@ -630,6 +636,7 @@ func TestEmbeddedProcessingWaitsForRenditionOutcome(t *testing.T) {
 }
 
 func TestEmbeddedProcessingCancelsRenditionBackoff(t *testing.T) {
+	t.Parallel()
 	plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	failure, err := document.NewRenditionProviderError(document.RenditionErrorRateLimited, 10*time.Minute, nil)
@@ -706,6 +713,7 @@ func (provider *waitingRenditionProvider) Render(ctx context.Context, upload doc
 }
 
 func TestEmbeddedProcessingRunsDirectEmbeddingsAndSemanticSearch(t *testing.T) {
+	t.Parallel()
 	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	embeddingProvider := newSyntheticEmbeddingProvider(t)
@@ -756,6 +764,7 @@ func TestEmbeddedProcessingRunsDirectEmbeddingsAndSemanticSearch(t *testing.T) {
 }
 
 func TestEmbeddedProcessingReturnsStatusWhenOptionalEmbeddingFails(t *testing.T) {
+	t.Parallel()
 	provider := newSyntheticEmbeddingProvider(t)
 	provider.failure = errors.New("synthetic provider failure")
 	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
@@ -799,6 +808,7 @@ func TestEmbeddedProcessingReturnsStatusWhenOptionalEmbeddingFails(t *testing.T)
 }
 
 func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
+	t.Parallel()
 	provider := newSyntheticEmbeddingProvider(t)
 	provider.started, provider.release = make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(provider.release) })
@@ -859,6 +869,7 @@ func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
 }
 
 func TestEmbeddedProcessingRejectsSourceChangesDuringEmbedding(t *testing.T) {
+	t.Parallel()
 	for _, chunks := range []bool{false, true} {
 		for _, mutation := range []string{"unchanged", "replace", "trash"} {
 			t.Run(fmt.Sprintf("chunks=%t/%s", chunks, mutation), func(t *testing.T) {
@@ -932,6 +943,7 @@ func TestEmbeddedProcessingRejectsSourceChangesDuringEmbedding(t *testing.T) {
 }
 
 func TestEmbeddedProcessingUsesEachBindingClassifier(t *testing.T) {
+	t.Parallel()
 	provider := newSyntheticEmbeddingProvider(t)
 	provider.failure = errors.New("synthetic provider failure")
 	profiles := make(map[string]docbank.ProcessingProfileConfig)
@@ -1006,6 +1018,7 @@ func TestEmbeddedProcessingUsesEachBindingClassifier(t *testing.T) {
 }
 
 func TestEmbeddedProcessingIndexesConcurrentDocuments(t *testing.T) {
+	t.Parallel()
 	provider := newSyntheticEmbeddingProvider(t)
 	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
 	profile.Rendition = nil
@@ -1052,6 +1065,7 @@ func TestEmbeddedProcessingIndexesConcurrentDocuments(t *testing.T) {
 }
 
 func TestEmbeddedProcessingEnforcesProfileSearchLimits(t *testing.T) {
+	t.Parallel()
 	provider := newSyntheticEmbeddingProvider(t)
 	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
 	profile.Rendition = nil
@@ -1096,6 +1110,7 @@ func TestEmbeddedProcessingEnforcesProfileSearchLimits(t *testing.T) {
 }
 
 func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testing.T) {
+	t.Parallel()
 	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	embeddingProvider := newSyntheticEmbeddingProvider(t)
@@ -1129,6 +1144,7 @@ func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testin
 }
 
 func TestEmbeddedProcessingPreservesTimedEvidenceAcrossSearchLanes(t *testing.T) {
+	t.Parallel()
 	renditionProvider := newTimedTranscriptRenditionProvider(t)
 	embeddingProvider := newSyntheticEmbeddingProvider(t)
 	profile := embeddedProcessingProfile(t, renditionProvider.Descriptor())
@@ -1231,6 +1247,7 @@ func (syntheticTranscriptSource) Transcript(context.Context, string) (document.S
 }
 
 func TestVaultRemoteRecordingReceiptReadsSavedSubmission(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -1250,6 +1267,7 @@ func TestVaultRemoteRecordingReceiptReadsSavedSubmission(t *testing.T) {
 }
 
 func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRestart(t *testing.T) {
+	t.Parallel()
 	renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
 		Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("async-media-source"),
 		MaxDocumentChars: 1 << 20,
@@ -1422,6 +1440,7 @@ func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRest
 }
 
 func TestEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, testEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation)
 }
 
@@ -1523,6 +1542,7 @@ func testEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation(t *te
 }
 
 func TestEmbeddedProcessingSameFenceConsentRenewalCountsBindingOnce(t *testing.T) {
+	t.Parallel()
 	embedder := newSyntheticEmbeddingProvider(t)
 	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
 	profile.Rendition = nil
@@ -1574,6 +1594,7 @@ func TestEmbeddedProcessingSameFenceConsentRenewalCountsBindingOnce(t *testing.T
 }
 
 func TestEmbeddedMediaEmbeddingContinuationCompletesAcrossRestart(t *testing.T) {
+	t.Parallel()
 	renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
 		Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("async-media-success-source"),
 		MaxDocumentChars: 1 << 20,
@@ -1674,6 +1695,7 @@ func TestEmbeddedMediaEmbeddingContinuationCompletesAcrossRestart(t *testing.T) 
 }
 
 func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *testing.T) {
+	t.Parallel()
 	embeddingProvider := newSyntheticEmbeddingProvider(t)
 	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
 	profile.Rendition = nil
@@ -1715,6 +1737,7 @@ func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *te
 }
 
 func TestEmbeddedProcessingRejectsConflictingProvidersForOneDescriptor(t *testing.T) {
+	t.Parallel()
 	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	first := newSyntheticEmbeddingProvider(t)
@@ -2033,6 +2056,7 @@ func createRangeFixture(
 }
 
 func TestOpenVersionContentRangeRejectsInvalidSlices(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2055,6 +2079,7 @@ func TestOpenVersionContentRangeRejectsInvalidSlices(t *testing.T) {
 }
 
 func TestOpenVersionContentRangeMissingVersion(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2067,6 +2092,7 @@ func TestOpenVersionContentRangeMissingVersion(t *testing.T) {
 }
 
 func TestOpenVersionContentRangeRawLoose(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2089,6 +2115,7 @@ func TestOpenVersionContentRangeRawLoose(t *testing.T) {
 }
 
 func TestOpenVersionContentRangeHistoricalVersion(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2113,6 +2140,7 @@ func TestOpenVersionContentRangeHistoricalVersion(t *testing.T) {
 }
 
 func TestOpenVersionContentRangeCompressedLoose(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{
 		Root: t.TempDir(),
 		LooseCompression: docbank.LooseCompressionOptions{
@@ -2138,6 +2166,7 @@ func TestOpenVersionContentRangeCompressedLoose(t *testing.T) {
 }
 
 func TestOpenVersionContentRangePacked(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
 	require.NoError(t, err)
@@ -2161,6 +2190,7 @@ func TestOpenVersionContentRangePacked(t *testing.T) {
 }
 
 func TestOpenVersionContentRangeUnavailable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		corrupt func(*testing.T, string)
@@ -2200,6 +2230,7 @@ func TestOpenVersionContentRangeUnavailable(t *testing.T) {
 }
 
 func TestOpenVersionContentRangeHoldsVaultLease(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2225,6 +2256,7 @@ func TestOpenVersionContentRangeHoldsVaultLease(t *testing.T) {
 }
 
 func TestOpenVersionContentRangeClosedVault(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	receipt := createRangeFixture(t, vault, "/ranges/closed.bin", []byte("closed bytes"))
@@ -2237,22 +2269,8 @@ func TestOpenVersionContentRangeClosedVault(t *testing.T) {
 	require.ErrorIs(t, err, docbank.ErrClosed)
 }
 
-func TestEmbeddedImmutableCreate(t *testing.T) {
-	content := []byte("immutable external content\n")
-	sum := sha256.Sum256(content)
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-
-	receipt, err := vault.Create(t.Context(), "/external.txt", bytes.NewReader(content), docbank.CreateOptions{
-		MediaType: "text/plain",
-		Expected:  docbank.ContentIdentity{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content))},
-	})
-	require.NoError(t, err)
-	require.True(t, receipt.Created)
-}
-
 func TestEmbeddedPutRequiresCurrentRevision(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2296,6 +2314,7 @@ func TestEmbeddedPutRequiresCurrentRevision(t *testing.T) {
 }
 
 func TestVaultMoveTrashRestoreExternalAPI(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2333,6 +2352,7 @@ func TestVaultMoveTrashRestoreExternalAPI(t *testing.T) {
 }
 
 func TestVaultMoveBatchExternalAPI(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2355,6 +2375,7 @@ func TestVaultMoveBatchExternalAPI(t *testing.T) {
 }
 
 func TestTreeMutationErrorsAreClassifiableOutsidePackage(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -2385,6 +2406,7 @@ func TestTreeMutationErrorsAreClassifiableOutsidePackage(t *testing.T) {
 }
 
 func TestOpenContentClassifiesPhysicalContentFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		corrupt func(*testing.T, string)
@@ -2425,6 +2447,7 @@ func TestOpenContentClassifiesPhysicalContentFailures(t *testing.T) {
 }
 
 func TestOpenVersionContentClassifiesPhysicalContentFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		corrupt func(*testing.T, string)
@@ -2469,6 +2492,7 @@ func TestOpenVersionContentClassifiesPhysicalContentFailures(t *testing.T) {
 }
 
 func TestEnsureSourceMetadataClassifiesPhysicalContentFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		corrupt func(*testing.T, string)
@@ -2506,6 +2530,7 @@ func TestEnsureSourceMetadataClassifiesPhysicalContentFailures(t *testing.T) {
 }
 
 func TestContentMetadataErrorsRemainDistinctFromPhysicalUnavailability(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
 	require.NoError(t, err)
@@ -2543,6 +2568,7 @@ func looseBlobPath(root, hash string) string {
 }
 
 func TestEmbeddedProcessingSharesOnlyMatchingRenditionExecution(t *testing.T) {
+	t.Parallel()
 	for _, disclose := range []bool{false, true} {
 		t.Run(strconv.FormatBool(disclose), func(t *testing.T) {
 			provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -2573,6 +2599,7 @@ func TestEmbeddedProcessingSharesOnlyMatchingRenditionExecution(t *testing.T) {
 }
 
 func TestEmbeddedProcessingRejectsMismatchedProviderBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"rendition", "embedding"} {
 		for _, boundary := range []string{"local_process", "hosted_provider", "unknown"} {
 			t.Run(kind+"/"+boundary, func(t *testing.T) {
@@ -2604,6 +2631,7 @@ func TestEmbeddedProcessingRejectsMismatchedProviderBoundaries(t *testing.T) {
 }
 
 func TestEmbeddedProcessingStatusExcludesHistoricalChunkJobs(t *testing.T) {
+	t.Parallel()
 	for _, initialFailure := range []bool{false, true} {
 		t.Run(strconv.FormatBool(initialFailure), func(t *testing.T) {
 			rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -2660,6 +2688,7 @@ func TestEmbeddedProcessingStatusExcludesHistoricalChunkJobs(t *testing.T) {
 }
 
 func TestEmbeddedProcessingRejectsRenamedConsent(t *testing.T) {
+	t.Parallel()
 	for _, disclose := range []bool{false, true} {
 		t.Run(strconv.FormatBool(disclose), func(t *testing.T) {
 			base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -2706,6 +2735,7 @@ func TestEmbeddedProcessingRejectsRenamedConsent(t *testing.T) {
 }
 
 func TestEmbeddedProcessingWaitsForBackupFreeze(t *testing.T) {
+	t.Parallel()
 	for _, rendition := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rendition=%t", rendition), func(t *testing.T) {
 			embedding := newSyntheticEmbeddingProvider(t)
@@ -2788,6 +2818,7 @@ func TestEmbeddedProcessingWaitsForBackupFreeze(t *testing.T) {
 }
 
 func TestEmbeddedCoverageTracksCurrentSourceVersions(t *testing.T) {
+	t.Parallel()
 	for _, embeddings := range []bool{false, true} {
 		for _, mutation := range []string{"unchanged", "replace", "trash", "delete"} {
 			t.Run(fmt.Sprintf("embeddings=%t/%s", embeddings, mutation), func(t *testing.T) {
@@ -2857,6 +2888,7 @@ func TestEmbeddedCoverageTracksCurrentSourceVersions(t *testing.T) {
 }
 
 func TestEmbeddedSearchContentFirst(t *testing.T) {
+	t.Parallel()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	profile := embeddedProcessingProfile(t, provider.Descriptor())

@@ -9,6 +9,7 @@ import {
   photo,
   mapPhoto,
   photoAlbum,
+  stubPhotoTimeline,
   albumResponse,
   savedSmartSet,
 } from "./photo-test-fixtures.js";
@@ -71,6 +72,7 @@ it("requires acknowledgement before retrying an album creation after a network f
 });
 
 function setup(scoped = false, onnavigate = vi.fn(), mapMode = false) {
+  stubPhotoTimeline();
   vi.stubGlobal(
     "ResizeObserver",
     class {

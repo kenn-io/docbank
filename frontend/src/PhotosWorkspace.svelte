@@ -37,10 +37,11 @@
   import {
     mapPhotoLimit,
     maxComparePhotos,
+    capturedNewest,
     type Photos,
     type PhotoReturn,
   } from "./photos.svelte.js";
-  import { groupPhotos, monthLabel, ROW_HEIGHTS, type Density } from "./photoGrid.js";
+  import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoSmartSet from "./PhotoSmartSet.svelte";
@@ -52,7 +53,6 @@
     PhotoKeywordEdit,
   } from "./generated/docbank.js";
   import PhotoLoupe from "./PhotoLoupe.svelte";
-  import PhotoTimeline from "./PhotoTimeline.svelte";
   import SlidersHorizontalIcon from "@lucide/svelte/icons/sliders-horizontal";
   import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
   import PlusIcon from "@lucide/svelte/icons/plus";
@@ -589,6 +589,7 @@
     localReturn = undefined;
   }
   export function captureReturn(element: HTMLElement = document.activeElement as HTMLElement) {
+    photos.seek = "";
     openingElement = element;
     openingID =
       element.dataset.mapAsset ?? element.closest<HTMLElement>("[data-asset]")?.dataset.asset ?? "";
@@ -731,11 +732,11 @@
     ),
   );
   const searchable = $derived(searchablePhotoView(albumID, mapMode));
-  const activeFilters = $derived(activeFilterCount(photos.baseQuery.filters));
+  const activeFilters = $derived(activeFilterCount(photos.query.filters));
   const filtered = $derived(
     searchable &&
-      (Boolean(photos.baseQuery.text.trim()) ||
-        Object.values(photos.baseQuery.filters ?? {}).some(isFilterSet)),
+      (Boolean(photos.query.text.trim()) ||
+        Object.values(photos.query.filters ?? {}).some(isFilterSet)),
   );
   const ordered = $derived(photos.items);
   const outsideSelection = $derived(
@@ -773,7 +774,6 @@
       ? shown.map((item) => item.asset_id)
       : groups.flatMap((group) => group.items.map((item) => item.asset_id)),
   );
-  const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
   const count = $derived(mapMode ? shown.length : photos.total);
   const photoCount = $derived(
     !photos.started
@@ -783,11 +783,6 @@
       : `${count.toLocaleString()} photo${count === 1 ? "" : "s"}`,
   );
   const filtersID = $props.id();
-  const photoDate = $derived(
-    !mapMode && photos.started && photos.date
-      ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}`
-      : "",
-  );
   const densityOptions = [
     { value: "compact", label: "Compact" },
     { value: "comfortable", label: "Comfortable" },
@@ -809,6 +804,7 @@
       void photos.resume(preserve);
     }
     return () => {
+      photos.seek = "";
       photos.cancelPending();
       openingElement = undefined;
       restorePosition = undefined;
@@ -955,17 +951,11 @@
         {tiles.host} receives Docbank's IP address and viewed map areas.
       </div>
       {#if photos.started}<div class="map-controls">
-          <span
-            >{photos.total.toLocaleString()} located photo{photos.total === 1
-              ? ""
-              : "s"}{photos.date
-              ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}`
-              : ""}</span
-          >
+          <span>{photos.total.toLocaleString()} located photo{photos.total === 1 ? "" : "s"}</span>
         </div>{/if}
       {#if photos.mapCapped}<p class="photo-search-limit" role="status">
           Showing the newest {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}
-          located photos. Narrow your search or date to see the rest.
+          located photos. Narrow your search to see the rest.
         </p>{/if}
       <div class="map-tabs">
         <Button
@@ -1056,10 +1046,8 @@
               {#if cull?.error}<span role="alert">{cull.error}</span>{/if}
             </div>
             <div class="toolbar-actions">
-              <span title={`${photoCount}${photoDate}`}>
-                <span class="photo-count-value">{photoCount}</span>{#if photoDate}<span
-                    class="photo-count-date">{photoDate}</span
-                  >{/if}
+              <span title={photoCount}>
+                <span class="photo-count-value">{photoCount}</span>
               </span>
               {#if albumID}<SelectDropdown
                   title="Sort photos"
@@ -1082,19 +1070,6 @@
                       direction: "desc",
                     })}
                 />{/if}
-              {#if !mapMode && !photos.hidden}<nav class="photo-views" aria-label="Photo views">
-                  <button
-                    type="button"
-                    class="photo-toggle kit-button kit-control-states kit-button--sm"
-                    aria-pressed={photos.view === "grid"}
-                    onclick={() => photos.setView("grid")}>Grid</button
-                  ><button
-                    type="button"
-                    class="photo-toggle kit-button kit-control-states kit-button--sm"
-                    aria-pressed={photos.view === "timeline"}
-                    onclick={() => photos.setView("timeline")}>Timeline</button
-                  >
-                </nav>{/if}
               {#if !narrow.current && (!albumID || photos.query.sort?.field === "capture_time")}<SelectDropdown
                   title="Group photos"
                   disabled={photos.query.sort?.field !== "capture_time"}
@@ -1246,21 +1221,6 @@
               Select up to {maxPhotoExportMembers} photos to export.
             </p>{/if}
           {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
-          {#if !mapMode && photos.date}
-            <div class="photo-date-selection">
-              <Button size="sm" onclick={() => void photos.selectDate()}>Clear date</Button>
-            </div>
-          {/if}
-          {#if !mapMode && photos.view === "timeline"}
-            <PhotoTimeline
-              facet={photos.timeline}
-              loading={photos.timelineLoading}
-              error={photos.timelineError}
-              selected={photos.date}
-              onselect={(date) => void photos.selectDate(date)}
-              onretry={() => void photos.loadTimeline()}
-            />
-          {/if}
           {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
           {#if albums?.notice}<div class="photo-notice" role="status">
@@ -1301,7 +1261,7 @@
                 <FacetSidebar
                   disabled={photos.blocking || photos.hiding || photos.trashing}
                   facets={photos.facets}
-                  query={photos.baseQuery}
+                  query={photos.query}
                   unit="photos"
                   onchange={(value) => void photos.setQuery(value)}
                 />
@@ -1324,44 +1284,57 @@
                   ><Button onclick={() => onnavigate("/photos/albums")}>Back to albums</Button
                   ></EmptyState
                 >
-              {:else if shown.length}
-                {#key photos.baseQuery}
-                  <PhotoGrid
-                    bind:this={grid}
-                    bind:scrollTop={photos.scrollTop}
-                    {groups}
-                    expandedStacks={photos.expandedStacks}
-                    onexpand={(id) => photos.toggleStack(id)}
-                    targetRowHeight={ROW_HEIGHTS[photos.density]}
-                    loading={photos.loading || !!photoID}
-                    {cache}
-                    hidden={photos.hidden}
-                    onhidden={(id) => void setHidden(id)}
-                    selectedIDs={photos.selectedIDs}
-                    onselect={select}
-                    onopen={(id, element) => open(id, element)}
-                    oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)}
-                    onloadmore={() => {
-                      if (!mapMode) void photos.loadMore(preserve);
-                    }}
-                    ondragstart={albums
-                      ? (id, event) => albums?.startDrag(id, event, photos)
-                      : undefined}
-                    ondragend={albums
-                      ? () => {
-                          if (albums) albums.drag = undefined;
-                        }
-                      : undefined}
-                  />
-                {/key}
-              {:else if !(photos.loading || photos.error)}
-                <EmptyState
-                  title={mapMode
-                    ? photos.items.length
-                      ? "No photos in this area"
-                      : "No located photos"
-                    : photos.date
-                      ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}`
+              {:else}
+                {#if shown.length || !mapMode}
+                  {#key photos.query}
+                    <PhotoGrid
+                      bind:this={grid}
+                      bind:scrollTop={photos.scrollTop}
+                      {groups}
+                      loadedItems={shown}
+                      narrow={narrow.current}
+                      timeline={mapMode ? undefined : photos.timeline}
+                      timelineError={mapMode ? "" : photos.timelineError}
+                      timelineLoading={!mapMode && photos.timelineLoading}
+                      timelineDisabled={!photos.canJump}
+                      timelineHint={capturedNewest(photos.query.sort)
+                        ? ""
+                        : `Sort by ${searchable ? "Capture date" : "Captured"}, newest first.`}
+                      onretrytimeline={() => void photos.loadTimeline()}
+                      onjump={mapMode ? undefined : (month) => photos.jumpTo(month)}
+                      more={!mapMode && (!photos.started || !!photos.cursor)}
+                      bind:seek={photos.seek}
+                      expandedStacks={photos.expandedStacks}
+                      onexpand={(id) => photos.toggleStack(id)}
+                      targetRowHeight={ROW_HEIGHTS[photos.density]}
+                      loading={photos.loading || photos.hiding || photos.trashing || !!photoID}
+                      {cache}
+                      hidden={photos.hidden}
+                      onhidden={(id) => void setHidden(id)}
+                      selectedIDs={photos.selectedIDs}
+                      onselect={select}
+                      onopen={(id, element) => open(id, element)}
+                      oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)}
+                      onloadmore={() => {
+                        if (!mapMode) void photos.loadMore(preserve);
+                      }}
+                      ondragstart={albums
+                        ? (id, event) => albums?.startDrag(id, event, photos)
+                        : undefined}
+                      ondragend={albums
+                        ? () => {
+                            if (albums) albums.drag = undefined;
+                          }
+                        : undefined}
+                    />
+                  {/key}
+                {/if}
+                {#if !shown.length && !(photos.loading || photos.error)}
+                  <EmptyState
+                    title={mapMode
+                      ? photos.items.length
+                        ? "No photos in this area"
+                        : "No located photos"
                       : filtered
                         ? "No matching photos"
                         : photos.hidden
@@ -1369,26 +1342,26 @@
                           : albumID
                             ? "This album is empty"
                             : "Your photo library is empty"}
-                  description={mapMode || photos.date
-                    ? undefined
-                    : filtered
-                      ? "Clear a filter or try another search."
-                      : photos.hidden
-                        ? "Choose Hide from a photo's actions menu in Library."
-                        : albumID
-                          ? "Go to Library, select photos, then choose Add to album or press B."
-                          : "Choose a folder or files with Add photos. Large camera cards on the daemon's own disk import faster with docbank photos import."}
-                >
-                  {#snippet icon()}<ImageIcon size="24" />{/snippet}
-                  {#if !mapMode && !photos.hidden && !albumID && !filtered && !photos.date}<Button
-                      disabled={!onadd}
-                      title={uploadChannelError || undefined}
-                      onclick={onadd}>Add photos</Button
-                    >{/if}
-                  {#if albumID && !photos.date}<Button onclick={() => onnavigate("/photos")}
-                      >Go to Library</Button
-                    >{/if}
-                </EmptyState>
+                    description={mapMode
+                      ? undefined
+                      : filtered
+                        ? "Clear a filter or try another search."
+                        : photos.hidden
+                          ? "Choose Hide from a photo's actions menu in Library."
+                          : albumID
+                            ? "Go to Library, select photos, then choose Add to album or press B."
+                            : "Choose a folder or files with Add photos. Large camera cards on the daemon's own disk import faster with docbank photos import."}
+                  >
+                    {#snippet icon()}<ImageIcon size="24" />{/snippet}
+                    {#if !mapMode && !photos.hidden && !albumID && !filtered}<Button
+                        disabled={!onadd}
+                        title={uploadChannelError || undefined}
+                        onclick={onadd}>Add photos</Button
+                      >{/if}
+                    {#if albumID}<Button onclick={() => onnavigate("/photos")}>Go to Library</Button
+                      >{/if}
+                  </EmptyState>
+                {/if}
               {/if}
               <div role="status">
                 {#if !mapMode && photos.loading}<div class="photo-pill kit-popover-card">
@@ -1765,6 +1738,11 @@
     min-width: 0;
     min-height: 0;
   }
+  .photo-results > :global(.kit-empty-state) {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+  }
   @media (max-width: 640px) {
     .photo-crumbs {
       flex-basis: 100%;
@@ -1807,18 +1785,6 @@
       max-height: 50dvh;
       flex-shrink: 0;
     }
-  }
-  .photo-date-selection {
-    display: flex;
-    gap: var(--space-3);
-    align-items: center;
-    padding: var(--space-2) var(--space-5);
-    font-size: var(--font-size-sm);
-    color: var(--text-primary);
-  }
-  .photo-views {
-    display: flex;
-    gap: var(--space-2);
   }
   .photo-error {
     display: flex;
@@ -1892,15 +1858,12 @@
     flex-basis: 100%;
     margin: 0;
   }
-  /* The shared mobile rule hides toolbar counts; here the count states the chosen date. */
+  /* The shared mobile rule hides toolbar counts; here the count stays visible. */
   .photo-bar .toolbar-actions > span {
     display: inline-flex;
   }
   .photo-count-value {
     flex-shrink: 0;
-  }
-  .photo-count-date {
-    white-space: pre;
   }
   .photo-bar .toolbar-actions :global(.kit-select-dropdown) {
     width: auto;

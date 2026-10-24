@@ -22,6 +22,9 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 )
 
+// testAPIKey enables reporters that send to a loopback collector.
+const testAPIKey = "synthetic-project-key"
+
 // enableTelemetryEnv isolates reporting from inherited opt-outs and CI.
 func enableTelemetryEnv(t *testing.T) {
 	t.Helper()
@@ -132,7 +135,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
-	r := New(Options{Dir: dir, Version: "v1.2.3", Commit: "test-commit", Logger: discardLogger(), endpoint: srv.URL})
+	r := New(Options{Dir: dir, Version: "v1.2.3", Commit: "test-commit", Logger: discardLogger(), apiKey: testAPIKey, endpoint: srv.URL})
 	require.True(t, r.Enabled())
 	handler := CaptureHandler(r, dir)
 	rec := postEvent(t, handler, `{"event":"app_opened","properties":{"path":"/synthetic/report.pdf","query":"synthetic"}}`)
@@ -187,7 +190,7 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 		http.Error(w, "synthetic ingest rejection", http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	reporter := New(Options{Dir: t.TempDir(), Version: "v1.2.3", Logger: logger, endpoint: server.URL})
+	reporter := New(Options{Dir: t.TempDir(), Version: "v1.2.3", Logger: logger, apiKey: testAPIKey, endpoint: server.URL})
 	require.True(t, reporter.Enabled())
 	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
 	require.NoError(t, reporter.Close())

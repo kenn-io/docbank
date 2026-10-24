@@ -17,6 +17,7 @@ import (
 )
 
 func TestMediaFailedPublicationLeavesNoCoreContent(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name     string
 		conflict bool
@@ -70,6 +71,7 @@ func TestMediaFailedPublicationLeavesNoCoreContent(t *testing.T) {
 // TestMediaSuppliedOccurrencesReuseOneSealedVersion catches duplicate media
 // nodes or source revisions being created for independent occurrence claims.
 func TestMediaSuppliedOccurrencesReuseOneSealedVersion(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -118,6 +120,7 @@ func TestMediaSuppliedOccurrencesReuseOneSealedVersion(t *testing.T) {
 // TestMediaSuppliedTranscriptConsumer proves admitted audio containers can use
 // an occurrence-bound supplied transcript through the public embedded API.
 func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, filename, mediaType, extension string
 		raw                                  []byte
@@ -205,6 +208,7 @@ func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
 }
 
 func TestRemoteRecordingManualEmbedded(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
 	require.NoError(t, err)
@@ -280,6 +284,7 @@ func TestRemoteRecordingManualEmbedded(t *testing.T) {
 }
 
 func TestRemoteRecordingEqualBytesKeepOrdinaryProcessingSource(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -349,6 +354,7 @@ func TestRemoteRecordingEqualBytesKeepOrdinaryProcessingSource(t *testing.T) {
 // TestMediaExistingVersionBindingKeepsOriginalPath catches media retention
 // cloning a package-owned version into the managed /media namespace.
 func TestMediaExistingVersionBindingKeepsOriginalPath(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -383,6 +389,7 @@ func TestMediaExistingVersionBindingKeepsOriginalPath(t *testing.T) {
 }
 
 func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -494,6 +501,7 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 }
 
 func TestStartProcessingFreezesSuppliedInputBeforeRevocation(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -545,6 +553,7 @@ func TestStartProcessingFreezesSuppliedInputBeforeRevocation(t *testing.T) {
 }
 
 func TestEmbeddedMediaSourceCeilingOptions(t *testing.T) {
+	t.Parallel()
 	for _, maximum := range []int64{-1, (4 << 30) + 1} {
 		_, err := New(t.Context(), Config{Root: t.TempDir(), Processing: ProcessingOptions{MediaMaxBytes: maximum}})
 		require.ErrorContains(t, err, "media byte limit")
