@@ -118,6 +118,77 @@ func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
 	})
 }
 
+func TestPersonBrowserMergeReplayRequiresHiddenUnlockForCandidates(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"rejected", "deduplicated", "superseded"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			left, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			right, err := s.CreatePerson(ctx, "Grace", "operator")
+			require.NoError(t, err)
+			for _, person := range []Person{left, right} {
+				photo := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
+				_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+				require.NoError(t, err)
+			}
+			hidden, face := faceForDecisionTest(t, s, "")
+			if kind == "superseded" {
+				candidate := candidateForTest(t, "face:"+face.FaceID, "Face", right.PersonID, []PersonCandidateOccurrence{{
+					ContentVersionID: hidden.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID,
+				}})
+				candidate.Reason = personCandidateReasonFaceMatch
+				openCandidateForTest(t, s, candidate)
+			} else {
+				decideFaceForTest(t, s, hidden, face.FaceID, right.PersonID, "reject")
+				if kind == "deduplicated" {
+					decideFaceForTest(t, s, hidden, face.FaceID, left.PersonID, "reject")
+				}
+			}
+			assertions, err := s.DocumentPersonAssertions(ctx, hidden.CurrentVersionID)
+			require.NoError(t, err)
+			require.Empty(t, assertions)
+			asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+			token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+			require.NoError(t, err)
+			browser := WithVisiblePeopleOnly(ctx)
+			unlockedBrowser := WithPhotoHiddenToken(browser, token)
+			operation := uuid.NewString()
+			first, err := s.MergePersons(unlockedBrowser, left.PersonID, right.PersonID, operation, left.Revision, right.Revision)
+			require.NoError(t, err)
+			require.Empty(t, first.Moved.DeduplicatedAssertions)
+			require.Len(t, first.Moved.FaceCandidates, 1)
+			moved := first.Moved.FaceCandidates[0]
+			if kind == "deduplicated" {
+				require.NotEqual(t, moved.CandidateID, moved.RetainedCandidateID)
+			} else {
+				require.Equal(t, moved.CandidateID, moved.RetainedCandidateID)
+			}
+			if kind == "superseded" {
+				require.Equal(t, []string{moved.CandidateID}, first.Moved.SupersededCandidates)
+			}
+			require.NoError(t, s.LockPhotoHidden(ctx))
+			replayed, err := s.MergePersons(browser, left.PersonID, right.PersonID, operation, left.Revision, right.Revision)
+			require.ErrorIs(t, err, ErrHiddenLocked)
+			require.Empty(t, replayed.Moved)
+			replayed, err = s.MergePersons(ctx, left.PersonID, right.PersonID, operation, left.Revision, right.Revision)
+			require.NoError(t, err)
+			require.Equal(t, first, replayed)
+			token, _, err = s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+			require.NoError(t, err)
+			replayed, err = s.MergePersons(WithPhotoHiddenToken(browser, token), left.PersonID, right.PersonID, operation, left.Revision, right.Revision)
+			require.NoError(t, err)
+			require.Equal(t, first, replayed)
+		})
+	}
+}
+
 func TestBrowserPersonWritesRequireVisibility(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

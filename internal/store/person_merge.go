@@ -293,11 +293,21 @@ func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, recei
 	if err != nil {
 		return err
 	}
+	candidates := make([]string, 0, 2*len(receipt.Moved.FaceCandidates)+len(receipt.Moved.SupersededCandidates))
+	for _, moved := range receipt.Moved.FaceCandidates {
+		candidates = append(candidates, moved.CandidateID, moved.RetainedCandidateID)
+	}
+	candidates = append(candidates, receipt.Moved.SupersededCandidates...)
+	candidateIDs, err := json.Marshal(candidates)
+	if err != nil {
+		return err
+	}
 	var hidden bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (
 		SELECT content_version_id FROM person_document_assertions WHERE assertion_id IN (SELECT value FROM json_each(?))
 		UNION SELECT value FROM json_each(?)
-	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)`, string(ids), string(versionIDs)).Scan(&hidden); err != nil {
+		UNION SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.candidate_id IN (SELECT value FROM json_each(?))
+	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)`, string(ids), string(versionIDs), string(candidateIDs)).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {
