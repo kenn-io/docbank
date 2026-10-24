@@ -1212,7 +1212,8 @@ it("shows a suggestion published after the inspector opened once previews refres
   await photos.authored.reload();
   expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
 
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
   await screen.findByRole("region", { name: "Suggested photo metadata" });
   expect(prepared).toHaveBeenCalledTimes(2);
   expect(photos.authored.patch).toEqual({ rating: 3 });

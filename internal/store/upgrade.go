@@ -121,6 +121,17 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		restoreSourceState:         restoreV28SourceState,
 		keepsProcessingIncarnation: true,
 	},
+	{
+		version: 41, release: "v0.16.0", backupSuffix: ".schema-v41.bak",
+		validate: func(db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(db, "v0.16.0", schemaV41Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 41)
+		},
+		restoreSourceState:         restoreV28SourceState,
+		keepsProcessingIncarnation: true,
+	},
 }
 
 var (
