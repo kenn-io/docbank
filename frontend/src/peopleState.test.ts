@@ -146,8 +146,11 @@ it.each([
   expect(people.merge).toBeUndefined();
   expect(people.selected).toEqual([]);
   expect(read.mock.calls[0]![0]).not.toHaveProperty("cursor");
-  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
-  if (result !== "valid") expect(people.writeError).toBe("Invalid person merge response.");
+  if (result === "valid") expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+  else {
+    expect(changed).not.toHaveBeenCalled();
+    expect(people.writeError).toBe("Invalid person merge response.");
+  }
   people.dispose();
 });
 
@@ -266,3 +269,46 @@ it.each(["rename", "merge", "load"])("conceals names after a late %s response", 
   } else expect(read).not.toHaveBeenCalled();
   people.dispose();
 });
+
+it.each([0, 503])("replays an uncertain merge HTTP %s once", async (status) => {
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockRejectedValueOnce(new APIError("Response lost", status, ""))
+    .mockImplementation(async (_, request) => personMergeReceipt(ada, grace, request.operation_id));
+  const changed = vi.fn();
+  const people = new People("session", vi.fn(), undefined, changed);
+  merging(people);
+  expect(await people.submitMerge()).toBe(true);
+  expect(merge).toHaveBeenCalledTimes(2);
+  expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
+  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+  expect(people.merge).toBeUndefined();
+  expect(people.selected).toEqual([]);
+  people.dispose();
+});
+
+it.each([404, 412, 503, "invalid receipt"])(
+  "leaves a merge unconfirmed after replay %s",
+  async (result) => {
+    const renamed = { ...ada, display_name: "Zoe", revision: 3 };
+    vi.spyOn(api, "listPeople").mockImplementation(async (params) => ({
+      items: [renamed, grace].filter((row) => row.display_name.includes(params?.query ?? "")),
+    }));
+    const merge = vi
+      .spyOn(api, "mergePerson")
+      .mockRejectedValueOnce(new APIError("Response lost", 0, ""))
+      .mockImplementation(async () => {
+        if (typeof result === "number") throw new APIError("Unconfirmed", result, "");
+        return Response.json({});
+      });
+    const changed = vi.fn();
+    const people = new People("session", vi.fn(), undefined, changed);
+    merging(people);
+    expect(await people.submitMerge()).toBe(false);
+    expect(changed).not.toHaveBeenCalled();
+    expect(merge).toHaveBeenCalledTimes(2);
+    expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
+    people.dispose();
+  },
+);

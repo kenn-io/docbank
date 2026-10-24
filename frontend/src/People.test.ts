@@ -94,78 +94,79 @@ it.each([
   ["rename", false],
   ["merge", true],
   ["merge", false],
-] as const)(
-  "confirms a lost %s response through browser reads, committed=%s",
-  async (operation, committed) => {
-    let rows = [ada, grace];
-    const saved = {
-      ...grace,
-      display_name: operation === "rename" ? "Grace Hopper" : "Grace",
-      revision: 5,
-    };
-    vi.stubGlobal("fetch", async (input: string, init: RequestInit) => {
-      const url = new URL(input, "https://example.com");
-      expect(new Headers(init.headers).get("X-Docbank-Web-Session")).toBe("session");
-      if (url.pathname.startsWith("/api/v1/people/by-id/") && init.method === "GET")
-        return Response.json({ detail: "Forbidden" }, { status: 403 });
-      if (url.pathname === "/api/v1/people" && init.method === "GET") {
-        expect(url.searchParams.get("limit")).toBe("24");
-        expect(url.searchParams.get("photo_summary")).toBe("true");
-        const query = url.searchParams.get("query") ?? "";
-        if (operation === "merge" && query === "Ada") {
-          // A same-name person on the first page cannot prove Ada was absorbed.
-          if (!url.searchParams.has("cursor"))
-            return Response.json({
-              items: [{ ...ada, person_id: "other-ada" }],
-              next_cursor: "next",
-            });
-          expect(url.searchParams.get("cursor")).toBe("next");
-        }
-        return Response.json({ items: rows.filter((row) => row.display_name.includes(query)) });
-      }
-      if (url.pathname === "/api/v1/people/by-id/grace" && init.method === "PATCH") {
-        expect(JSON.parse(init.body as string)).toEqual({ display_name: "Grace Hopper" });
-        if (committed) rows = [ada, saved];
+] as const)("confirms a lost %s response, committed=%s", async (operation, committed) => {
+  let rows = [ada, grace];
+  const merges: RequestInit[] = [];
+  const saved = {
+    ...grace,
+    display_name: operation === "rename" ? "Grace Hopper" : "Grace",
+    revision: 5,
+  };
+  vi.stubGlobal("fetch", async (input: string, init: RequestInit) => {
+    const url = new URL(input, "https://example.com");
+    expect(new Headers(init.headers).get("X-Docbank-Web-Session")).toBe("session");
+    if (url.pathname.startsWith("/api/v1/people/by-id/") && init.method === "GET")
+      return Response.json({ detail: "Forbidden" }, { status: 403 });
+    if (url.pathname === "/api/v1/people" && init.method === "GET") {
+      expect(url.searchParams.get("limit")).toBe("24");
+      expect(url.searchParams.get("photo_summary")).toBe("true");
+      const query = url.searchParams.get("query") ?? "";
+      return Response.json({ items: rows.filter((row) => row.display_name.includes(query)) });
+    }
+    if (url.pathname === "/api/v1/people/by-id/grace" && init.method === "PATCH") {
+      expect(JSON.parse(init.body as string)).toEqual({ display_name: "Grace Hopper" });
+      if (committed) rows = [ada, saved];
+      throw new TypeError("Response lost");
+    }
+    if (url.pathname === "/api/v1/people/by-id/grace/merge" && init.method === "POST") {
+      expect(JSON.parse(init.body as string)).toMatchObject({ absorbed_person_id: "ada" });
+      merges.push(init);
+      if (merges.length === 1) {
+        rows = committed ? [saved] : [{ ...ada, display_name: "Zoe", revision: 3 }, grace];
         throw new TypeError("Response lost");
       }
-      if (url.pathname === "/api/v1/people/by-id/grace/merge" && init.method === "POST") {
-        expect(JSON.parse(init.body as string)).toMatchObject({ absorbed_person_id: "ada" });
-        if (committed) rows = [saved];
-        throw new TypeError("Response lost");
-      }
-      throw new Error(`Unexpected request: ${init.method} ${input}`);
-    });
-    const changed = vi.fn();
-    const people = new People("session", vi.fn(), undefined, changed);
-    people.items = [ada, grace];
-    // The visible search can exclude the person we need to confirm.
-    people.query = "Ada";
-    const cache = new PhotoPreviewCache("session", vi.fn());
-    render(PeopleView, { people, cache, onperson: vi.fn() });
-    await act(async () => {
-      if (operation === "rename") await people.rename(grace, "Grace Hopper");
-      else {
-        people.toggle(ada);
-        people.toggle(grace);
-        people.startMerge();
-        people.keep(grace.person_id);
-        people.confirmMerge(true);
-        await people.submitMerge();
-      }
-    });
-    if (committed)
-      expect(changed).toHaveBeenCalledExactlyOnceWith(
-        operation === "rename" ? "grace" : "ada",
-        operation === "rename" ? "Grace Hopper" : "Grace",
-        ...(operation === "merge" ? ["grace"] : []),
-      );
-    else expect(changed).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Ada 3 Library photos" })).toBeTruthy();
-    expect(people.query).toBe("Ada");
-    people.dispose();
-    await cache.dispose();
-  },
-);
+      expect(init.body).toBe(merges[0]!.body);
+      expect(new Headers(init.headers).get("If-Match")).toBe('"4"');
+      return committed
+        ? personMergeReceipt(ada, grace, JSON.parse(init.body as string).operation_id)
+        : Response.json({ detail: "Person changed" }, { status: 412 });
+    }
+    throw new Error(`Unexpected request: ${init.method} ${input}`);
+  });
+  const changed = vi.fn();
+  const people = new People("session", vi.fn(), undefined, changed);
+  people.items = [ada, grace];
+  // The visible search can exclude the person we need to confirm.
+  people.query = "Ada";
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  render(PeopleView, { people, cache, onperson: vi.fn() });
+  await act(async () => {
+    if (operation === "rename") await people.rename(grace, "Grace Hopper");
+    else {
+      people.toggle(ada);
+      people.toggle(grace);
+      people.startMerge();
+      people.keep(grace.person_id);
+      people.confirmMerge(true);
+      await people.submitMerge();
+    }
+  });
+  if (committed)
+    expect(changed).toHaveBeenCalledExactlyOnceWith(
+      operation === "rename" ? "grace" : "ada",
+      operation === "rename" ? "Grace Hopper" : "Grace",
+      ...(operation === "merge" ? ["grace"] : []),
+    );
+  else expect(changed).not.toHaveBeenCalled();
+  if (operation === "merge") {
+    expect(merges).toHaveLength(2);
+    expect(people.merge).toBeUndefined();
+    expect(people.selected).toEqual([]);
+  } else expect(screen.getByRole("button", { name: "Ada 3 Library photos" })).toBeTruthy();
+  expect(people.query).toBe("Ada");
+  people.dispose();
+  await cache.dispose();
+});
 it.each([
   ["rename", 0, true],
   ["rename", 503, true],

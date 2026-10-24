@@ -155,7 +155,7 @@ export class People {
   }
   // Uncertain writes reload the cards and require fresh selections. Rejected
   // input keeps the cards; stale or missing people also clear the selection.
-  private async recover(cause: unknown, person: PersonSummary, name: string, survivorID?: string) {
+  private async recover(cause: unknown, person?: PersonSummary, name?: string) {
     const epoch = this.epoch;
     this.writeError = this.failure(cause);
     const status = cause instanceof APIError ? cause.status : 0;
@@ -168,9 +168,10 @@ export class People {
     if (status !== 422) await this.load();
     if (status === 0 || status >= 500) {
       this.selected = [];
+      if (!person || name === undefined) return;
       try {
         let saved: PersonSummary | undefined;
-        for (const query of survivorID ? [name, person.display_name] : [name]) {
+        for (const query of [name]) {
           let cursor: string | undefined;
           do {
             if (epoch !== this.epoch || this.writer?.signal.aborted) return;
@@ -186,19 +187,16 @@ export class People {
               ),
             );
             if (epoch !== this.epoch || this.writer?.signal.aborted) return;
-            if (survivorID && page.items.some((row) => row.person_id === person.person_id)) return;
-            saved ??= page.items.find((row) =>
-              survivorID
-                ? row.person_id === survivorID
-                : row.person_id === person.person_id &&
-                  row.display_name === name &&
-                  row.revision > person.revision,
+            saved ??= page.items.find(
+              (row) =>
+                row.person_id === person.person_id &&
+                row.display_name === name &&
+                row.revision > person.revision,
             );
             cursor = page.next_cursor;
           } while (cursor);
         }
-        if (saved)
-          this.onchanged(person.person_id, saved.display_name, ...(survivorID ? [survivorID] : []));
+        if (saved) this.onchanged(person.person_id, saved.display_name);
       } catch (recoveryCause) {
         this.failure(recoveryCause);
       }
@@ -279,8 +277,8 @@ export class People {
     const epoch = this.epoch;
     const { source, survivor } = roles;
     const operationID = randomUUID();
-    try {
-      const response = await this.run(() =>
+    const send = () =>
+      this.run(() =>
         mergePerson(
           survivor.person_id,
           {
@@ -292,6 +290,13 @@ export class People {
           { session: this.session, signal: request.signal },
         ),
       );
+    try {
+      const response = await send().catch((cause: unknown) => {
+        const status = cause instanceof APIError ? cause.status : 0;
+        if (request.signal.aborted || epoch !== this.epoch || (status !== 0 && status < 500))
+          throw cause;
+        return send();
+      });
       await readReceipt(response, source, survivor, operationID);
       if (request.signal.aborted) return false;
       this.onchanged(source.person_id, survivor.display_name, survivor.person_id);
@@ -304,7 +309,7 @@ export class People {
     } catch (cause) {
       if (!request.signal.aborted && epoch === this.epoch) {
         this.merge = undefined;
-        await this.recover(cause, source, survivor.display_name, survivor.person_id);
+        await this.recover(cause);
       }
       return false;
     } finally {
