@@ -5,15 +5,18 @@ import (
 	"encoding/hex"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/paulmach/orb"
 	"github.com/stretchr/testify/require"
 )
 
+var testNaturalEarth = sync.OnceValues(NewNaturalEarth)
+
 func TestNaturalEarthResolveKnownCities(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 
 	type tc struct {
@@ -62,7 +65,7 @@ func TestNaturalEarthResolveKnownCities(t *testing.T) {
 // which lands in the Indian Ocean / Somalia.
 func TestNaturalEarthCoordOrderFootgun(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 	label, _ := g.Resolve(2.3522, 48.8566)
 	r.NotContains(label, "France",
@@ -73,7 +76,7 @@ func TestNaturalEarthCoordOrderFootgun(t *testing.T) {
 
 func TestNaturalEarthOpenOceanReturnsFalse(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 	_, ok := g.Resolve(0, -30) // mid-Atlantic
 	r.False(ok)
@@ -81,7 +84,7 @@ func TestNaturalEarthOpenOceanReturnsFalse(t *testing.T) {
 
 func TestNaturalEarthSouthPole(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 	label, ok := g.Resolve(-89.9, 0)
 	r.True(ok)
@@ -90,7 +93,7 @@ func TestNaturalEarthSouthPole(t *testing.T) {
 
 func TestNaturalEarthAntimeridian(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 
 	// Russian Far East: Petropavlovsk-Kamchatsky-ish.
@@ -111,7 +114,7 @@ func TestNaturalEarthAntimeridian(t *testing.T) {
 // only Tijuana shares the resolved country's label.
 func TestNaturalEarthSameCountryGate(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 
 	label, ok := g.Resolve(32.52, -117.03)
@@ -123,7 +126,7 @@ func TestNaturalEarthSameCountryGate(t *testing.T) {
 
 func TestNaturalEarthRegionGate(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 
 	// This point is in Basel-Landschaft, where Basel is closer than Liestal.
@@ -135,7 +138,7 @@ func TestNaturalEarthRegionGate(t *testing.T) {
 }
 
 func TestNaturalEarthRegionStaysInCountry(t *testing.T) {
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	require.NoError(t, err)
 
 	// Simplified Algerian and Tunisian borders overlap here. Each label must
@@ -223,7 +226,7 @@ func TestNearestCityMembershipGates(t *testing.T) {
 
 func TestNaturalEarthCityDistanceGate(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 
 	// Alice Springs is about 28 km away, so the 25 km city limit leaves only
@@ -236,7 +239,7 @@ func TestNaturalEarthCityDistanceGate(t *testing.T) {
 
 func TestNaturalEarthCountryPolygonHole(t *testing.T) {
 	r := require.New(t)
-	g, err := NewNaturalEarth()
+	g, err := testNaturalEarth()
 	r.NoError(err)
 
 	// This point falls inside a Spanish enclave cut out of the France polygon.

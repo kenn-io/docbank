@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +21,9 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 )
+
+var docbankBuildDir string
+var docbankBuilds sync.Map
 
 func buildDocbank(tb testing.TB) string {
 	tb.Helper()
@@ -32,20 +37,30 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
-	name := "docbank"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	bin := filepath.Join(tb.TempDir(), name)
-	args := []string{"build", "-tags", "fts5"}
-	if v != "" {
-		args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
-	}
-	args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
-	cmd := exec.Command("go", args...)
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-	out, err := cmd.CombinedOutput()
-	require.NoError(tb, err, string(out))
+	build, _ := docbankBuilds.LoadOrStore(v, sync.OnceValues(func() (string, error) {
+		dir, err := os.MkdirTemp(docbankBuildDir, "build-")
+		if err != nil {
+			return "", err
+		}
+		name := "docbank"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		bin := filepath.Join(dir, name)
+		args := []string{"build", "-tags", "fts5"}
+		if v != "" {
+			args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
+		}
+		args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
+		cmd := exec.Command("go", args...)
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("build docbank: %w\n%s", err, out)
+		}
+		return bin, nil
+	}))
+	bin, err := build.(func() (string, error))()
+	require.NoError(tb, err)
 	return bin
 }
 

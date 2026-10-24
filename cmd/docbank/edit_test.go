@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -227,7 +228,18 @@ func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
 	}
-	os.Exit(packagetest.RunWithLockRegistry(m))
+	var err error
+	docbankBuildDir, err = os.MkdirTemp("", "docbank-test-binaries-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := packagetest.RunWithLockRegistry(m)
+	if err := os.RemoveAll(docbankBuildDir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	os.Exit(code)
 }
 
 func runEditHelper() int {
