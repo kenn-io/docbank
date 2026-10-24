@@ -307,11 +307,21 @@ func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, recei
 		return err
 	}
 	var hidden bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (
+	if err := tx.QueryRowContext(ctx, `WITH RECURSIVE replay_candidates(candidate_id) AS (
+		SELECT value FROM json_each(?)
+		UNION
+		SELECT json_extract(f.value, '$.retained_candidate_id')
+		FROM person_merges m, json_each(m.moved_json, '$.face_candidates') f
+		JOIN replay_candidates c ON c.candidate_id=json_extract(f.value, '$.candidate_id')
+	)
+	SELECT EXISTS(SELECT 1 FROM (
 		SELECT content_version_id FROM person_document_assertions WHERE assertion_id IN (SELECT value FROM json_each(?))
+		UNION SELECT json_extract(d.value, '$.assertion.ContentVersionID')
+		FROM person_merges m, json_each(m.moved_json, '$.deduplicated_assertions') d
+		WHERE json_extract(d.value, '$.assertion.AssertionID') IN (SELECT value FROM json_each(?))
 		UNION SELECT value FROM json_each(?)
-		UNION SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.candidate_id IN (SELECT value FROM json_each(?))
-	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)`, string(ids), string(versionIDs), string(candidateIDs)).Scan(&hidden); err != nil {
+		UNION SELECT e.content_version_id FROM person_candidate_faces e WHERE e.candidate_id IN (SELECT candidate_id FROM replay_candidates)
+	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)`, string(candidateIDs), string(ids), string(ids), string(versionIDs)).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {
