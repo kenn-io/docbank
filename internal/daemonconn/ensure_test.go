@@ -187,7 +187,7 @@ func TestEnsureRefusesLockedVaultBeforeStarting(t *testing.T) {
 			return kitdaemon.RuntimeRecord{}, nil
 		})
 	require.ErrorIs(t, err, home.ErrVaultLocked)
-	require.ErrorContains(t, err, "this vault is in use by another process, such as a docbank daemon outside this sandbox or a restore; run docbank where it runs")
+	require.ErrorContains(t, err, "possibly a docbank daemon outside this sandbox: ")
 	assert.False(t, started)
 	assert.False(t, result.Started)
 }
