@@ -470,6 +470,7 @@ export class Photos {
     this.controller.abort();
     this.controller = new AbortController();
     this.loading = false;
+    this.backgroundRefresh = false;
     this.staged = undefined;
     this.query = { ...this.query, sort };
     this.items = [];

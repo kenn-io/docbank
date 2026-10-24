@@ -137,6 +137,21 @@ it.each(["timeline", "counts"])(
   },
 );
 
+it("blocks controls for the sorted reload that replaces a live refresh", async () => {
+  const pending: ((response: Response) => void)[] = [];
+  vi.stubGlobal("fetch", () => new Promise<Response>((resolve) => pending.push(resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.started = true;
+  void photos.refresh(undefined, true);
+  await waitFor(() => expect(pending).toHaveLength(1));
+  expect(photos.blocking).toBe(false);
+  void photos.setSort({ field: "capture_time", direction: "desc" });
+  await waitFor(() => expect(pending).toHaveLength(2));
+  expect(photos.blocking).toBe(true);
+  photos.dispose();
+});
+
 it("keeps a refused query error after a successful live refresh", async () => {
   const fetcher = vi
     .fn()
