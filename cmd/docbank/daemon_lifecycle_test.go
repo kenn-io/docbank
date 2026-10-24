@@ -46,15 +46,11 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	build, ok := docbankBuilds[v]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
-			dir, err := os.MkdirTemp(docbankBuildDir, "build-")
-			if err != nil {
-				return "", err
-			}
-			name := "docbank"
+			name := fmt.Sprintf("docbank-%d", len(docbankBuilds))
 			if runtime.GOOS == "windows" {
 				name += ".exe"
 			}
-			bin := filepath.Join(dir, name)
+			bin := filepath.Join(docbankBuildDir, name)
 			args := []string{"build", "-tags", "fts5"}
 			if v != "" {
 				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
