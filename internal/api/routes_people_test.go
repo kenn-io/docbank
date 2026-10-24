@@ -16,6 +16,57 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+func TestPeopleBrowserMergeReplayAfterChainedMerge(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	grace, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	lin, err := s.CreatePerson(ctx, "Lin", "operator")
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
+	path := "/api/v1/people/by-id/" + grace.PersonID + "/merge"
+	request := map[string]any{"absorbed_person_id": ada.PersonID, "absorbed_revision": ada.Revision, "operation_id": "00000000-0000-4000-8000-000000000011"}
+	response, original := do(t, ts, http.MethodPost, path, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, original)
+	var receipt api.PersonMergeReceipt
+	require.NoError(t, json.Unmarshal([]byte(original), &receipt))
+	response, body := do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+lin.PersonID+"/merge", headers, map[string]any{
+		"absorbed_person_id": grace.PersonID, "absorbed_revision": receipt.SurvivorRevisionAfter, "operation_id": "00000000-0000-4000-8000-000000000012",
+	})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, path, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.JSONEq(t, original, body)
+	require.Equal(t, strconv.Quote(strconv.FormatInt(receipt.SurvivorRevisionAfter, 10)), response.Header.Get("ETag"))
+
+	// Authorization follows Lin even though the receipt still names Grace.
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic portrait"))
+	require.NoError(t, err)
+	photo, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, lin.PersonID, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodPost, path, headers, request)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	delete(headers, "If-Match")
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Len(t, response.Cookies(), 1)
+	headers["Cookie"] = response.Cookies()[0].String()
+	headers["If-Match"] = `"1"`
+	response, body = do(t, ts, http.MethodPost, path, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.JSONEq(t, original, body)
+}
+
 func TestPeopleRoutesWorkflow(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)

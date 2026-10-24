@@ -275,7 +275,11 @@ func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, recei
 	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
 		return nil
 	}
-	if err := s.fenceVisiblePeopleTx(ctx, tx, receipt.SurvivorPersonID); err != nil {
+	survivorID, err := resolvePersonIDTx(ctx, tx, receipt.SurvivorPersonID)
+	if err != nil {
+		return err
+	}
+	if err := s.fenceVisiblePeopleTx(ctx, tx, survivorID); err != nil {
 		return err
 	}
 	if _, err := s.hiddenSession(ctx, tx); !errors.Is(err, ErrHiddenLocked) {

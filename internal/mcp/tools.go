@@ -476,7 +476,7 @@ func stableDomainError(err error) (string, int) {
 		"incomplete_date_coverage", "date_review_required", "report_unavailable", "report_capacity",
 		"report_limit", "report_timeout", "report_retained":
 		return facts.Code, 0
-	case "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
+	case "validation", "people_cursor_expired", "export_conflict", "export_expired", "export_limit", "export_retained",
 		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed",
 		"export_unavailable":
 		return facts.Code, 0
@@ -608,6 +608,8 @@ func domainErrorMessage(code string) string {
 		return "The exact source scope exceeds the supported limit; narrow the source scope."
 	case "cursor_expired":
 		return "The document cursor expired; restart the listing from the first page."
+	case "people_cursor_expired":
+		return "The people cursor is invalid for this listing; restart from the first page."
 	case "invalid_document_cursor":
 		return "The document cursor is invalid for this listing."
 	case "invalid_rendition_window":

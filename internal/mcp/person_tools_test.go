@@ -56,6 +56,16 @@ func peopleMCPServer(t *testing.T) (*store.Store, func(string, map[string]any) m
 	}, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
+	t.Run("FindPeopleBadCursor", func(t *testing.T) {
+		result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": "find_people", "arguments": map[string]any{"cursor": "bogus"},
+		})))
+		require.Equal(t, true, result["isError"])
+		content := objectField(t, result, "structuredContent")
+		require.Equal(t, "people_cursor_expired", content["code"])
+		require.Equal(t, "The people cursor is invalid for this listing; restart from the first page.", content["message"])
+	})
+
 	call := func(name string, arguments map[string]any) map[string]any {
 		t.Helper()
 		result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
