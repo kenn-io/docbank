@@ -173,31 +173,29 @@ export class People {
       if (!person || name === undefined) return;
       try {
         let saved: PersonSummary | undefined;
-        for (const query of [name]) {
-          let cursor: string | undefined;
-          do {
-            if (this.writer?.signal.aborted) return;
-            const page = await this.run(() =>
-              listPeople(
-                {
-                  query,
-                  limit: peoplePageSize,
-                  photo_summary: true,
-                  ...(cursor ? { cursor } : {}),
-                },
-                { session: this.session, signal: this.writer?.signal },
-              ),
-            );
-            if (this.writer?.signal.aborted) return;
-            saved ??= page.items.find(
-              (row) =>
-                row.person_id === person.person_id &&
-                row.display_name === name &&
-                row.revision > person.revision,
-            );
-            cursor = page.next_cursor;
-          } while (cursor);
-        }
+        let cursor: string | undefined;
+        do {
+          if (this.writer?.signal.aborted) return;
+          const page = await this.run(() =>
+            listPeople(
+              {
+                query: name,
+                limit: peoplePageSize,
+                photo_summary: true,
+                ...(cursor ? { cursor } : {}),
+              },
+              { session: this.session, signal: this.writer?.signal },
+            ),
+          );
+          if (this.writer?.signal.aborted) return;
+          saved ??= page.items.find(
+            (row) =>
+              row.person_id === person.person_id &&
+              row.display_name === name &&
+              row.revision > person.revision,
+          );
+          cursor = page.next_cursor;
+        } while (cursor);
         if (saved) this.onchanged(person.person_id, saved.display_name);
       } catch (recoveryCause) {
         this.failure(recoveryCause);
