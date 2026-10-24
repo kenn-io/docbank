@@ -443,10 +443,15 @@ an `authentication` provider error and a `terminal` job failure. The client make
 at most four attempts, with up to thirty seconds between attempts, all bounded by
 the daemon's ten-minute authorization window after inspection and spooling.
 
-Obtain the manifest through the Go-only `mistral.RunCapabilityProbe` and
-`mistral.EncodeCapabilityManifest` in `go.kenn.io/docbank/document/mistral`.
-Probe with header and footer extraction off, so their text stays in Markdown,
-and a unit bound at least as large as `max_units`. The daemon pins `standard`
+Create a directory containing five synthetic native seed files named `doc`, `ppt`, `xls`, `numbers`, and `msg`. Use valid files in those formats with no private content. Run the probe with the selecting processing profile:
+
+```bash
+docbank processing probe --profile documents --seeds ./mistral-seeds
+```
+
+The command runs locally, without starting the daemon. It uses the profile's policy, credential binding, and egress settings, sends the generated fixture matrix to Mistral, and saves the manifest at the configured `capability_manifest` path. Pass `--overwrite` to replace an existing manifest. Restart the daemon after saving the manifest and updating the fingerprints below.
+
+Header and footer extraction stay off, so their text stays in Markdown. The daemon pins `standard`
 retention, `default-opt-out` training, EU region, `mistral.DefaultModel`, and a
 normalization identity of 25,000,000 characters. `max_units` accepts 3 to 5,000,
 subject to manifest authority; document and response limits are 500 MiB and 512 MiB.

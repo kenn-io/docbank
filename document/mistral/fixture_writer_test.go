@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/mistral/internal/testfixture"
 )
 
 var generatedFixtureDigests = map[string]string{
@@ -165,15 +166,6 @@ func writeNativeSeeds(t *testing.T) string {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), "seeds")
 	require.NoError(t, os.Mkdir(directory, 0o700))
-	seeds := map[string][]byte{
-		"doc":     compoundDocument(t, "WordDocument"),
-		"ppt":     compoundDocument(t, "PowerPoint Document"),
-		"xls":     compoundDocument(t, "Workbook"),
-		"numbers": documentZIP(t, map[string]string{"Index/Tables/Table.iwa": "synthetic"}),
-		"msg":     compoundDocument(t, "__properties_version1.0"),
-	}
-	for name, content := range seeds {
-		require.NoError(t, os.WriteFile(filepath.Join(directory, name), content, 0o600))
-	}
+	require.NoError(t, testfixture.WriteNativeSeeds(directory))
 	return directory
 }

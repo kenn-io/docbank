@@ -353,6 +353,7 @@ func canonicalSHA256(value string) bool {
 }
 
 func init() {
+	processingCmd.AddCommand(newProcessingProbeCommand())
 	processingCmd.AddCommand(newProcessingCoverageCommand())
 	processingProfilesCmd.Flags().BoolVar(&processingProfilesJSON, "json", false, "print JSON to stdout")
 	processingPlanCmd.Flags().StringVar(&processingPlanProfile, "profile", "", "named executable processing profile")

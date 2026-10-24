@@ -268,6 +268,10 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 				if test.want != nil {
 					require.ErrorIs(t, err, test.want)
 				}
+				if test.code == "pdf_password_required" {
+					require.ErrorContains(t, err, "no configured PDF password opens this PDF")
+					require.ErrorContains(t, err, "media.pdf_passwords_file")
+				}
 			}
 			assert.Equal(t, job.ID, got.ID)
 			assert.Equal(t, status.EmbeddingJobIDs, got.EmbeddingJobIDs)

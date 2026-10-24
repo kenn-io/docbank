@@ -80,3 +80,6 @@ func SyntheticManifest(policy mistral.Policy, pdfBound bool) (mistral.Capability
 // MinimalPDF returns deterministic one-page PDF bytes for format, staging, and
 // application orchestration tests. It is not a capability-probe fixture.
 func MinimalPDF(label string) []byte { return testfixture.MinimalPDF(label) }
+
+// WriteNativeSeeds writes synthetic native probe seeds into an existing directory.
+func WriteNativeSeeds(directory string) error { return testfixture.WriteNativeSeeds(directory) }

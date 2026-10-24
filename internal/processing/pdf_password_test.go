@@ -40,7 +40,7 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	central := bytes.Index(container, []byte("PK\x01\x02"))
 	require.NotEqual(t, -1, central)
 	container[central+8] |= 1
-	passwordErr := errors.New("password file read failed")
+	passwordErr := errors.New("open /synthetic/private/passwords.txt: permission denied")
 	for _, tc := range []struct {
 		name, mime string
 		data       []byte
@@ -72,7 +72,9 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 			require.NoError(t, err)
 			capability, err := inspectRenditionSource(t.Context(), fixture.blobs, node, version, profile)
 			if tc.err != nil {
-				require.ErrorIs(t, err, tc.err)
+				require.ErrorIs(t, err, ErrPDFPasswordsUnreadable)
+				require.NotErrorIs(t, err, tc.err)
+				require.NotContains(t, err.Error(), "/synthetic/private/passwords.txt")
 				require.ErrorIs(t, err, ErrRenditionOperatorRequired)
 				require.Equal(t, tc.calls, provider.calls)
 				return

@@ -256,7 +256,7 @@ fails with `rendition_source_ineligible`, except for locked PDFs. When no
 configured password opens a PDF, or no password file is configured, starting
 creates a job that ends `failed` with `failure_code=pdf_password_required`.
 If the configured password file is refused, planning or starting returns
-409 `rendition_operator_required` with the refusal.
+409 `rendition_operator_required` with the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file`. The detail omits the file's path. Other operator-required errors use `document rendition requires operator intervention`.
 Each flow identifies the provider,
 capability, trust boundary, input classes, any filename disclosure, and a
 `runtime_disclosure` object. Review it before granting consent or starting
@@ -868,7 +868,7 @@ envelope. Common processing codes are:
 | 428 | `processing_consent_required` | No matching grant; review and grant consent |
 | 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
-| 409 | `rendition_operator_required` | Processing needs operator intervention; planning or starting a locked PDF includes the refusal when the configured password file is refused |
+| 409 | `rendition_operator_required` | Processing needs operator intervention; an unreadable PDF passwords file returns the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file` without its path |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
 | 422 | `rendition_failed` | Required rendition work failed |

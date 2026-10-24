@@ -1,7 +1,6 @@
 package mistral
 
 import (
-	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
@@ -19,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/internal/formatdetect"
+	"go.kenn.io/docbank/document/mistral/internal/testfixture"
 	"go.kenn.io/docbank/internal/formatqualification"
 )
 
@@ -422,16 +422,9 @@ func TestValidateZIPEndRecordRejectsUnboundedDirectory(t *testing.T) {
 
 func documentZIP(t *testing.T, entries map[string]string) []byte {
 	t.Helper()
-	var output bytes.Buffer
-	writer := zip.NewWriter(&output)
-	for name, value := range entries {
-		entry, err := writer.Create(name)
-		require.NoError(t, err)
-		_, err = io.WriteString(entry, value)
-		require.NoError(t, err)
-	}
-	require.NoError(t, writer.Close())
-	return output.Bytes()
+	content, err := testfixture.DocumentZIP(entries)
+	require.NoError(t, err)
+	return content
 }
 
 func docxContentTypes(mainContentType string) string {
@@ -442,49 +435,7 @@ func docxContentTypes(mainContentType string) string {
 
 func compoundDocument(t *testing.T, streamNames ...string) []byte {
 	t.Helper()
-	const (
-		freeSector = uint32(0xffffffff)
-		endOfChain = uint32(0xfffffffe)
-		fatSector  = uint32(0xfffffffd)
-	)
-	content := make([]byte, 3*512)
-	header := content[:512]
-	copy(header, compoundFileMagic)
-	binary.LittleEndian.PutUint16(header[26:28], 3)
-	binary.LittleEndian.PutUint16(header[28:30], 0xfffe)
-	binary.LittleEndian.PutUint16(header[30:32], 9)
-	binary.LittleEndian.PutUint16(header[32:34], 6)
-	binary.LittleEndian.PutUint32(header[44:48], 1)
-	binary.LittleEndian.PutUint32(header[48:52], 1)
-	binary.LittleEndian.PutUint32(header[56:60], 4096)
-	binary.LittleEndian.PutUint32(header[60:64], endOfChain)
-	binary.LittleEndian.PutUint32(header[68:72], endOfChain)
-	for offset := 76; offset < 512; offset += 4 {
-		binary.LittleEndian.PutUint32(header[offset:offset+4], freeSector)
-	}
-	binary.LittleEndian.PutUint32(header[76:80], 0)
-
-	fat := content[512:1024]
-	for offset := 0; offset < len(fat); offset += 4 {
-		binary.LittleEndian.PutUint32(fat[offset:offset+4], freeSector)
-	}
-	binary.LittleEndian.PutUint32(fat[0:4], fatSector)
-	binary.LittleEndian.PutUint32(fat[4:8], endOfChain)
-
-	directory := content[1024:]
-	writeCompoundDirectoryEntry(t, directory[:128], "Root Entry", 5)
-	if len(streamNames) > 0 {
-		binary.LittleEndian.PutUint32(directory[76:80], 1)
-	}
-	for i, name := range streamNames {
-		offset := (i + 1) * 128
-		require.LessOrEqual(t, offset+128, len(directory))
-		writeCompoundDirectoryEntry(t, directory[offset:offset+128], name, 2)
-		if i+1 < len(streamNames) {
-			binary.LittleEndian.PutUint32(directory[offset+72:offset+76], uint32(i+2))
-		}
-	}
-	return content
+	return testfixture.CompoundDocument(streamNames...)
 }
 
 func compoundDocumentWithEmbeddedWorkbook(t *testing.T) []byte {
@@ -498,23 +449,6 @@ func compoundDocumentWithEmbeddedWorkbook(t *testing.T) []byte {
 	directory[256+66] = 1
 	binary.LittleEndian.PutUint32(directory[256+76:256+80], 3)
 	return content
-}
-
-func writeCompoundDirectoryEntry(t *testing.T, entry []byte, name string, entryType byte) {
-	t.Helper()
-	encoded := make([]byte, 0, (len(name)+1)*2)
-	for _, character := range name {
-		require.Less(t, character, rune(0x10000))
-		encoded = binary.LittleEndian.AppendUint16(encoded, uint16(character))
-	}
-	encoded = binary.LittleEndian.AppendUint16(encoded, 0)
-	require.LessOrEqual(t, len(encoded), 64)
-	copy(entry, encoded)
-	binary.LittleEndian.PutUint16(entry[64:66], uint16(len(encoded)))
-	entry[66] = entryType
-	binary.LittleEndian.PutUint32(entry[68:72], compoundNoStream)
-	binary.LittleEndian.PutUint32(entry[72:76], compoundNoStream)
-	binary.LittleEndian.PutUint32(entry[76:80], compoundNoStream)
 }
 
 type observedReadCloser struct {
