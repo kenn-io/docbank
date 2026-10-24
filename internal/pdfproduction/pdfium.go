@@ -344,26 +344,9 @@ func verifyFreshPage(ctx context.Context, e *pdfiumEngine, reader io.ReaderAt, s
 		return err
 	}
 	err = e.withInstanceContext(ctx, func(ctx context.Context, instance pdfium.Pdfium) (pageErr error) {
-		doc, err := instance.OpenDocument(&requests.OpenDocument{FileReader: io.NewSectionReader(reader, 0, size), FileReaderSize: size})
+		ref, err := openVerificationPage(instance, reader, size,
+			verificationPage{i, len(input.Pages), artifact, parsed.advances})
 		if err != nil {
-			return fmt.Errorf("open fresh PDF: %w", err)
-		}
-		count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
-		if err != nil {
-			return fmt.Errorf("count fresh PDF pages: %w", err)
-		}
-		if count.PageCount != len(input.Pages) {
-			return errors.New("fresh PDF page count mismatch")
-		}
-		ref := requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: i}}
-		size, err := instance.GetPageSize(&requests.GetPageSize{Page: ref})
-		if err != nil {
-			return fmt.Errorf("inspect fresh page size: %w", err)
-		}
-		if math.Abs(size.Width-physicalPoints(page.Width)) > 0.001 || math.Abs(size.Height-physicalPoints(page.Height)) > 0.001 {
-			return errors.New("fresh PDF page dimensions differ from expected output frame")
-		}
-		if err := checkTextObjects(instance, ref, artifact, parsed.advances); err != nil {
 			return err
 		}
 		rows, err := openPNGRows(ctx, artifact, e.recipe)
@@ -373,11 +356,21 @@ func verifyFreshPage(ctx context.Context, e *pdfiumEngine, reader io.ReaderAt, s
 		defer func() { pageErr = errors.Join(pageErr, rows.Close()) }()
 		comparison := newFreshImageComparison(ctx, parsed.image, rows.width)
 		defer comparison.z.Close() //nolint:errcheck // Preserve the processing error; finish checks successful completion.
+		pixels := verificationPixels{width: rows.width, height: rows.height, next: func() ([]byte, error) {
+			row, err := rows.Next()
+			if err != nil {
+				return nil, err
+			}
+			if err := comparison.row(row); err != nil {
+				return nil, err
+			}
+			return row, nil
+		}}
 		for top := 0; top < rows.height; top += 256 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := compareTile(instance, ref, rows, comparison, top, min(256, rows.height-top)); err != nil {
+			if err := compareTile(instance, ref, pixels, top, min(256, rows.height-top)); err != nil {
 				return fmt.Errorf("verify final pixels on page %d: %w", i+1, err)
 			}
 		}
@@ -389,7 +382,12 @@ func verifyFreshPage(ctx context.Context, e *pdfiumEngine, reader io.ReaderAt, s
 	return ctx.Err()
 }
 
-func compareTile(instance pdfium.Pdfium, page requests.Page, rows *pngRows, comparison *freshImageComparison, top, height int) error {
+type verificationPixels struct {
+	width, height int
+	next          func() ([]byte, error)
+}
+
+func compareTile(instance pdfium.Pdfium, page requests.Page, rows verificationPixels, top, height int) error {
 	width, fullHeight := rows.width, rows.height
 	bitmap, err := instance.FPDFBitmap_Create(&requests.FPDFBitmap_Create{Width: width, Height: height, Alpha: 1})
 	if err != nil {
@@ -412,15 +410,12 @@ func compareTile(instance pdfium.Pdfium, page requests.Page, rows *pngRows, comp
 	}
 	actual, actualStride := buffer.Buffer, line.Stride
 	for y := range height {
-		expected, err := rows.Next()
+		expected, err := rows.next()
 		if err != nil {
 			return err
 		}
-		if err := comparison.row(expected); err != nil {
-			return err
-		}
 		if !bytes.Equal(expected, actual[y*actualStride:y*actualStride+width*4]) {
-			return errors.New("rendered pixels differ from staged page")
+			return pdfIntegrity("rendered pixels differ from expected page")
 		}
 	}
 	return nil
@@ -432,14 +427,14 @@ func checkTextObjects(instance pdfium.Pdfium, page requests.Page, a PageArtifact
 		return fmt.Errorf("inspect fresh annotations: %w", err)
 	}
 	if annotations.Count != 0 {
-		return errors.New("fresh PDF contains annotations")
+		return pdfIntegrity("fresh PDF contains annotations")
 	}
 	objects, err := instance.FPDFPage_CountObjects(&requests.FPDFPage_CountObjects{Page: page})
 	if err != nil {
 		return fmt.Errorf("inspect fresh page objects: %w", err)
 	}
 	if objects.Count != 1+len(a.Runs)+len(a.Endorsements) {
-		return errors.New("fresh PDF has extra or missing image/text objects")
+		return pdfIntegrity("fresh PDF has extra or missing image/text objects")
 	}
 	textPage, err := instance.FPDFText_LoadPage(&requests.FPDFText_LoadPage{Page: page})
 	if err != nil {
@@ -457,12 +452,12 @@ func checkTextObjects(instance pdfium.Pdfium, page requests.Page, a PageArtifact
 		}
 		if i == 0 {
 			if kind.Type != enums.FPDF_PAGEOBJ_IMAGE {
-				return errors.New("fresh PDF first object is not its burned image")
+				return pdfIntegrity("fresh PDF first object is not its burned image")
 			}
 			continue
 		}
 		if kind.Type != enums.FPDF_PAGEOBJ_TEXT {
-			return errors.New("fresh PDF contains an unexpected nontext object")
+			return pdfIntegrity("fresh PDF contains an unexpected nontext object")
 		}
 		var text, role string
 		var box redaction.Box
@@ -496,14 +491,14 @@ func checkTextObject(instance pdfium.Pdfium, obj references.FPDF_PAGEOBJECT, tex
 	// Unicode whitespace sequence and trimming edges. The independent content
 	// decoder above still requires exact UTF-8, including every LF and space.
 	if decoded.Text != "" && strings.Join(strings.Fields(decoded.Text), " ") != strings.Join(strings.Fields(text), " ") {
-		return errors.New("fresh PDF decoded Unicode text mismatch")
+		return pdfIntegrity("fresh PDF decoded Unicode text mismatch")
 	}
 	marks, err := instance.FPDFPageObj_CountMarks(&requests.FPDFPageObj_CountMarks{PageObject: obj})
 	if err != nil {
 		return fmt.Errorf("count fresh stream roles: %w", err)
 	}
 	if marks.Count != 1 {
-		return errors.New("fresh PDF text has missing or extra stream roles")
+		return pdfIntegrity("fresh PDF text has missing or extra stream roles")
 	}
 	mark, err := instance.FPDFPageObj_GetMark(&requests.FPDFPageObj_GetMark{PageObject: obj, Index: 0})
 	if err != nil {
@@ -514,7 +509,7 @@ func checkTextObject(instance pdfium.Pdfium, obj references.FPDF_PAGEOBJECT, tex
 		return fmt.Errorf("decode fresh stream role: %w", err)
 	}
 	if name.Name != role {
-		return errors.New("fresh text stream role mismatch")
+		return pdfIntegrity("fresh text stream role mismatch")
 	}
 	matrix, err := instance.FPDFPageObj_GetMatrix(&requests.FPDFPageObj_GetMatrix{PageObject: obj})
 	if err != nil {
@@ -523,21 +518,21 @@ func checkTextObject(instance pdfium.Pdfium, obj references.FPDF_PAGEOBJECT, tex
 	m := matrix.Matrix
 	xscale := float64(box.X1-box.X0) * 72 * 100 / (advance * float64(size))
 	if math.Abs(float64(m.A)-xscale) > 0.00001 || m.B != 0 || m.C != 0 || m.D != 1 || math.Abs(float64(m.E)-physicalPoints(box.X0)) > 0.001 || math.Abs(float64(m.F)-physicalPoints(page.Height-box.Y1)) > 0.001 {
-		return errors.New("fresh text placement differs from staged geometry")
+		return pdfIntegrity("fresh text placement differs from staged geometry")
 	}
 	fontSize, err := instance.FPDFTextObj_GetFontSize(&requests.FPDFTextObj_GetFontSize{PageObject: obj})
 	if err != nil {
 		return fmt.Errorf("read fresh font size: %w", err)
 	}
 	if math.Abs(float64(fontSize.FontSize)-float64(size)/1000) > 0.001 {
-		return errors.New("fresh text size differs from staged geometry")
+		return pdfIntegrity("fresh text size differs from staged geometry")
 	}
 	mode, err := instance.FPDFTextObj_GetTextRenderMode(&requests.FPDFTextObj_GetTextRenderMode{PageObject: obj})
 	if err != nil {
 		return fmt.Errorf("read fresh text render mode: %w", err)
 	}
 	if mode.TextRenderMode != 3 {
-		return errors.New("fresh searchable text must be invisible over burned pixels")
+		return pdfIntegrity("fresh searchable text must be invisible over burned pixels")
 	}
 	return nil
 }
@@ -700,4 +695,38 @@ func renderPage(instance pdfium.Pdfium, ref requests.Page, page redaction.Page, 
 	output := image.NewNRGBA(img.Bounds())
 	draw.Draw(output, output.Bounds(), img, image.Point{}, draw.Src)
 	return Raster{Pixels: output, Page: page, DPI: recipe.DPI}, nil
+}
+
+type verificationPage struct {
+	index, count int
+	artifact     PageArtifact
+	advances     []float64
+}
+
+func openVerificationPage(instance pdfium.Pdfium, reader io.ReaderAt, size int64,
+	expected verificationPage,
+) (requests.Page, error) {
+	doc, err := instance.OpenDocument(&requests.OpenDocument{FileReader: io.NewSectionReader(reader, 0, size), FileReaderSize: size})
+	if err != nil {
+		return requests.Page{}, fmt.Errorf("open fresh PDF: %w", err)
+	}
+	count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+	if err != nil {
+		return requests.Page{}, fmt.Errorf("count fresh PDF pages: %w", err)
+	}
+	if count.PageCount != expected.count {
+		return requests.Page{}, pdfIntegrity("fresh PDF page count mismatch")
+	}
+	ref := requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: expected.index}}
+	pageSize, err := instance.GetPageSize(&requests.GetPageSize{Page: ref})
+	if err != nil {
+		return requests.Page{}, fmt.Errorf("inspect fresh page size: %w", err)
+	}
+	if math.Abs(pageSize.Width-physicalPoints(expected.artifact.Page.Width)) > 0.001 || math.Abs(pageSize.Height-physicalPoints(expected.artifact.Page.Height)) > 0.001 {
+		return requests.Page{}, pdfIntegrity("fresh PDF page dimensions differ from expected output frame")
+	}
+	if err := checkTextObjects(instance, ref, expected.artifact, expected.advances); err != nil {
+		return requests.Page{}, err
+	}
+	return ref, nil
 }

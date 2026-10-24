@@ -198,20 +198,40 @@ optional contents. The client checks inventory, CRCs, hashes, review bindings
 and reconstructed sanitized text before atomic local publication. It does not
 run PDFium or claim to authenticate source pixels independently.
 
-`redaction verify` uses the same archive checker on a local, stable `io.ReaderAt`.
-The checker admits a positive size no larger than 544 MiB before ZIP parsing;
-it neither opens nor closes the reader. The offline command validates the
-preparation and masks, rebuilds the review, then checks the archive and hashes
-all ZIP bytes through the same open file. Hashing adds one bounded-memory
-sequential pass and no staged copy. It closes the file before reporting success.
-The download path retains its digest computed during transfer.
+`redaction verify` validates the preparation and masks, rebuilds the review,
+then captures the local ZIP into one private temporary file while hashing it.
+The archive checker admits a positive size no larger than 544 MiB before parsing
+and returns the validated PDF as a bounded section of that snapshot. All checks
+and the reported digest use the same captured bytes. Comparing source-file
+metadata between passes could not establish that consistency. The cost is up
+to 544 MiB of temporary storage, or RAM on a memory-backed temporary directory.
+The snapshot is closed and removed before success is reported. The download
+path retains its digest computed during transfer.
 
-The offline result is the checked receipt plus the whole-ZIP size and SHA-256.
-Receipt and sanitized-text agreement do not establish that the PDF implements
-the masks: an altered PDF with a correspondingly altered receipt can pass.
-Detecting that substitution requires comparison with an independently retained
-archive digest. This check needs neither source authority nor a PDF runtime;
-it does not authenticate the producer. See the
+Saved-PDF verification takes its masks, runs and geometry from the reconstructed
+review. It parses the complete fresh-writer grammar, checks exact searchable
+text and placement, and requires opaque black pixels throughout every reviewed
+mask. Embedded PDFium renders tiles which must match the stored RGB rows.
+The bounded PDF section goes directly to PDFium; there is no extracted PDF,
+PNG spool or `VerifyFresh` freezing copy. The command needs neither source
+authority nor a configured page runtime. Its ten-minute deadline includes a
+60-second limit per page; the qualified 512 MiB WASM and 1 GiB process RSS limits
+also apply. RSS refusals remain resource failures, not tampering claims.
+
+Each saved image must contain exactly one zlib stream with the exact RGB byte
+count, valid checksum and complete end-of-stream. Preset dictionaries and any
+bytes after the trailer within the declared stream length are refused. A
+buffered byte reader preserves the inflater's exact boundary, including buffered
+trailing bytes. Valid differences in DEFLATE encoding are accepted so that saved
+files do not depend on the verifying Go toolchain's encoder. This does not
+eliminate hidden variation in compression choices. Render-time `VerifyFresh`
+keeps its separate byte-exact comparison against independently staged PNG rows.
+
+The offline result remains the checked receipt plus the whole-ZIP size and SHA-256.
+It establishes reviewed mask and text agreement, but cannot establish that
+unmasked image content matches the source or authenticate the producer. Detecting
+substitution outside the checked masks requires an independently retained archive
+digest. See the
 [saved-archive workflow](../usage/document-processing.md#check-and-retain-a-saved-archive)
 for retention and recovery.
 

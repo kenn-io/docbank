@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/production"
 )
@@ -93,6 +94,12 @@ func readRedactionReview(path string, request processing.RedactionResolveRequest
 }
 
 func redactionCLIError(err error) error {
+	if _, ok := errors.AsType[*pdfproduction.RSSLimitError](err); ok {
+		return &exitError{code: exitBusy, err: err}
+	}
+	if errors.Is(err, pdfproduction.ErrPDFIntegrity) {
+		return integrityError(err)
+	}
 	if errors.Is(err, processing.ErrRedactionReviewChanged) {
 		return &exitError{code: exitStale, err: err}
 	}

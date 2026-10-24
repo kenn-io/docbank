@@ -231,6 +231,18 @@ func preflightEndorsements(endorsements []redaction.Endorsement) error {
 }
 
 func validateArtifact(a PageArtifact, r redaction.Recipe) error {
+	if err := validatePageDescriptor(a, r); err != nil {
+		return err
+	}
+	if !validHash(a.PNGSHA256) || a.OpenPNG == nil || a.PNGSize <= 0 || a.PNGSize > r.MaxPixels*8+1<<20 {
+		return errors.New("invalid page artifact identities or PNG size")
+	}
+	return nil
+}
+
+// validatePageDescriptor checks common text/layout authority without claiming
+// that the caller has independent PNG evidence.
+func validatePageDescriptor(a PageArtifact, r redaction.Recipe) error {
 	if len(a.Runs) > 16384 || len(a.Endorsements) > 4096 {
 		return errors.New("page text descriptor exceeds qualified bounds")
 	}
@@ -263,8 +275,8 @@ func validateArtifact(a PageArtifact, r redaction.Recipe) error {
 	if _, _, err := dimensions(a.Page, r); err != nil {
 		return err
 	}
-	if !validHash(a.PNGSHA256) || !validHash(a.ResolvedSHA256) || !validHash(a.EndorsementsSHA256) || !validHash(a.LayoutSHA256) || a.OpenPNG == nil || a.PNGSize <= 0 || a.PNGSize > r.MaxPixels*8+1<<20 {
-		return errors.New("invalid page artifact identities or PNG size")
+	if !validHash(a.ResolvedSHA256) || !validHash(a.EndorsementsSHA256) || !validHash(a.LayoutSHA256) {
+		return errors.New("invalid page descriptor identities")
 	}
 	l := a.Layout
 	if a.Page != l.Output || l.Source.Number != a.Page.Number || l.Source.Width != a.Page.Width || l.StripHeight < 0 || l.StripHeight > a.Page.Height || l.Source.Height != a.Page.Height-l.StripHeight || !validHash(l.Source.FrameSHA256) {

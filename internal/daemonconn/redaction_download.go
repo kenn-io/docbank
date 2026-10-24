@@ -52,9 +52,9 @@ func (c *Connection) RenderNativePDFTo(ctx context.Context, request processing.R
 	if written != size || hex.EncodeToString(hash.Sum(nil)) != digest {
 		return result, integrityErrorf("redaction archive size or digest mismatch")
 	}
-	receipt, err := VerifyRedactionArchive(ctx, output, size, review)
+	contents, err := VerifyRedactionArchive(ctx, output, size, review)
 	if err != nil {
 		return result, err
 	}
-	return processing.RedactionArchive{Receipt: receipt, Size: size, SHA256: digest}, nil
+	return processing.RedactionArchive{Receipt: contents.Receipt, Size: size, SHA256: digest}, nil
 }
