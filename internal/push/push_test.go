@@ -812,8 +812,14 @@ func TestPushTreatsAnEditDuringUploadAsASourceChange(t *testing.T) {
 			done := make(chan struct{})
 			go func() { report, runErr = push.Run(ctx, f.connection, opts); close(done) }()
 			t.Cleanup(func() { cancel(); <-done })
-			require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-			assert.Equal(t, "added", <-events)
+			// Two real uploads and durable writes are bounded by the suite's
+			// deadline, not an additional filesystem throughput requirement.
+			select {
+			case outcome := <-events:
+				assert.Equal(t, "added", outcome)
+			case <-done:
+				require.FailNow(t, "watch stopped before adding the edited file", "%v", runErr)
+			}
 			cancel()
 			<-done
 			require.ErrorIs(t, runErr, context.Canceled)
