@@ -995,6 +995,28 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.Empty(t, rows)
 }
 
+func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = s.CreatePerson(ctx, "ada", "operator")
+	require.NoError(t, err)
+	node := browsePhotoNode(t, s, "ada.jpg", fakeHash("ada-photo"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
+	require.NoError(t, err)
+	for _, recent := range []bool{false, true} {
+		for _, prefix := range []string{"", "ada"} {
+			rows, _, err := s.PeopleByDisplayName(ctx, prefix, "", "", 24, true, PeopleSearchOptions{PhotoSummary: true, RecentFirst: recent})
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Equal(t, person.PersonID, rows[0].PersonID)
+			require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+		}
+	}
+}
+
 func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

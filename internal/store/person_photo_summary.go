@@ -9,13 +9,11 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-// personEvidence starts from the requested people's indexed depicted
-// assertions, so the cost follows their evidence rather than the size of the
-// vault. Pin the person index so the recency index can't turn each lookup into
-// a scan of all depicted assertions. It binds the requested person IDs as JSON.
-const personEvidence = ` FROM json_each(?1) requested
- CROSS JOIN persons person ON person.person_id=requested.value
- CROSS JOIN person_document_assertions assertion INDEXED BY person_document_assertions_person ON assertion.person_id=person.person_id AND assertion.action='assert' AND assertion.role='depicted'`
+// personEvidence scans depicted assertions once per query and keeps those for
+// the requested people. It binds the requested person IDs as JSON.
+const personEvidence = ` FROM person_document_assertions assertion
+ CROSS JOIN persons person ON person.person_id=assertion.person_id AND assertion.action='assert' AND assertion.role='depicted'
+ AND assertion.person_id IN (SELECT value FROM json_each(?1))`
 
 // personPhotoSource reaches the live photo of version cv with the same
 // current-source predicate as face previews. Library photos qualify, and

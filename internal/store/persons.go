@@ -300,15 +300,25 @@ type PeopleSearchOptions struct {
 func peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []any) {
 	clause, args := "", []any{}
 	if prefix != "" {
-		clause, args = `instr(persons.display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, ?) AND`, []any{prefix, prefix}
+		clause, args = `instr(persons.display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, ?) AND `, []any{prefix, prefix}
 	}
 	if photosOnly {
-		joins, where := personPhotoSource(unlocked)
-		clause += ` EXISTS(SELECT 1 FROM person_document_assertions assertion INDEXED BY person_document_assertions_person
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
- AND assertion.person_id=persons.person_id AND assertion.action='assert' AND assertion.role='depicted') AND`
+		clause += personHasPhotoSQL(unlocked, "") + " AND "
 	}
 	return clause, args
+}
+
+// personHasPhotoSQL builds the eligible person list once. The recent walk has
+// already checked its person's photo, so only namesakes need the list.
+func personHasPhotoSQL(unlocked bool, walkerAlias string) string {
+	joins, where := personPhotoSource(unlocked)
+	clause := `persons.person_id IN (SELECT assertion.person_id FROM person_document_assertions assertion
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ AND assertion.action='assert' AND assertion.role='depicted')`
+	if walkerAlias != "" {
+		clause = "(persons.person_id=" + walkerAlias + ".person_id OR " + clause + ")"
+	}
+	return clause
 }
 
 // PeopleByDisplayName returns active people in stable folded-name order, or
@@ -328,7 +338,8 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			}
 		}
 		hideLocked := scope != nil && scope.ExpiresAt == nil
-		candidates, args := peopleCandidatesSQL(document.FoldPersonName(query), options.PhotoSummary, !hideLocked)
+		// The recent walk adds its own photo check, reusing its evidence joins.
+		candidates, args := peopleCandidatesSQL(document.FoldPersonName(query), options.PhotoSummary && !options.RecentFirst, !hideLocked)
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
@@ -336,7 +347,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			args = append(args, true, hideLocked, hideLocked)
 		}
 		if options.RecentFirst {
-			people, err = peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked)
+			people, err = peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary)
 		} else {
 			people, err = peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
 		}
@@ -376,15 +387,19 @@ func peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, a
 // mail assertions don't contribute to a ranked page's cost. A group's first
 // readable assertion gives every active namesake its rank. Finish timestamp
 // ties before stopping so folded name and ID remain the tie breakers.
-func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked bool) ([]PersonSearchResult, error) {
+func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool) ([]PersonSearchResult, error) {
 	joins, where := personPhotoSource(!hideLocked)
+	walkCandidates := candidates
+	if photosOnly {
+		walkCandidates += personHasPhotoSQL(!hideLocked, "person") + " AND "
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT persons.person_id,persons.display_name_folded,assertion.recorded_at
  FROM person_document_assertions assertion
  CROSS JOIN persons person ON person.person_id=assertion.person_id
  CROSS JOIN persons ON persons.display_name_folded=person.display_name_folded
  CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id`+joins+where+`
  AND assertion.role='depicted' AND assertion.action='assert' AND person.state<>'retired'
- AND `+candidates+` persons.state<>'retired'
+ AND `+walkCandidates+` persons.state<>'retired'
  ORDER BY assertion.recorded_at DESC`, args...)
 	if err != nil {
 		return nil, err
@@ -442,6 +457,9 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 	if len(people) < limit {
 		// Exhausting the walk identifies all eligible ranked groups. The rest
 		// use the name index and stop as soon as the page fills.
+		if photosOnly {
+			candidates += personHasPhotoSQL(!hideLocked, "") + " AND "
+		}
 		unrankedNames := make([]string, 0, len(names))
 		for name := range names {
 			unrankedNames = append(unrankedNames, name)
