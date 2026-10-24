@@ -308,6 +308,7 @@ it("expands a burst without selecting or opening a photo", async () => {
   render(PhotoCell, {
     photo: {
       ...photo(1),
+      matched_ai_suggestion: true,
       stack: { asset_ids: ["a", "b", "c"], representative_id: "b" },
     },
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
@@ -316,6 +317,7 @@ it("expands a burst without selecting or opening a photo", async () => {
     onopen,
     onexpand,
   });
+  expect(screen.getByText("Matched AI suggestion")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Expand stack of 3 photos" }));
   expect(onexpand).toHaveBeenCalledOnce();
   expect(onclick).not.toHaveBeenCalled();

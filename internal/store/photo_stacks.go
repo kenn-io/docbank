@@ -811,7 +811,7 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 		return err
 	}
 	for chunk := range slices.Chunk(unread, photoSelectionChunkSize) {
-		statement, args, err := p.scope.bind(`SELECT `+photoBrowseSelect+`,pl.sort_key FROM `+photoBrowseDisplayFrom+` WHERE `+p.scope.where()+` AND a.asset_id IN (`+placeholders(len(chunk))+`)`, anyArgs(chunk)...)
+		statement, args, err := p.scope.bind(`SELECT `+photoBrowseSelect+`,pl.sort_key,0 FROM `+photoBrowseDisplayFrom+` WHERE `+p.scope.where()+` AND a.asset_id IN (`+placeholders(len(chunk))+`)`, anyArgs(chunk)...)
 		if err != nil {
 			return err
 		}

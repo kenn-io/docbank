@@ -80,7 +80,10 @@ type PhotoPreviewSlot struct {
 }
 
 type PhotoBrowseRow struct {
-	Quality *document.PhotoQualitySignals
+	// MatchedAISuggestion marks a row that matches the whole query only with
+	// pending suggestion text.
+	MatchedAISuggestion bool
+	Quality             *document.PhotoQualitySignals
 	// QualityUnavailable marks a terminal evaluator result with no signals.
 	QualityUnavailable bool
 	AssetID            string
@@ -297,7 +300,7 @@ func (s *Store) ListPhotoAssets(
 					args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
 				}
 				args = append(args, limit-len(result))
-				pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
+				pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+`,0 FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
 					` ORDER BY `+order+` LIMIT ?`, args...)
 				if err != nil {
 					return nil, err
@@ -328,6 +331,9 @@ func (s *Store) ListPhotoAssets(
 			}
 		}
 		if err != nil {
+			return err
+		}
+		if err := markSuggestionOnlyMatches(ctx, q, compiled, generation.ID, coverage, request.Hidden, page.Items); err != nil {
 			return err
 		}
 		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
@@ -488,44 +494,117 @@ func photoBrowseMatch(compiled CompiledQuery, generation string, coverage Covera
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member CROSS JOIN (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
 }
 
-func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot bool) (string, []any, error) {
-	var names, content []string
+// photoTextOperands joins the matches of the non-negated text operands, all
+// of them and those that also search retained content.
+func photoTextOperands(compiled CompiledQuery) (names, content string) {
+	var all, retained []string
 	for _, operand := range compiled.predicate.lexical {
 		if operand.negated {
 			continue
 		}
-		names = append(names, "("+operand.match+")")
+		all = append(all, "("+operand.match+")")
 		if operand.content {
-			content = append(content, "("+operand.match+")")
+			retained = append(retained, "("+operand.match+")")
 		}
 	}
+	return strings.Join(all, " OR "), strings.Join(retained, " OR ")
+}
+
+// markSuggestionOnlyMatches marks the rows of a page that match the whole
+// query only because of a pending suggestion: they drop out when the query
+// is evaluated without suggestion text.
+func markSuggestionOnlyMatches(
+	ctx context.Context, q metadataQuerier, compiled CompiledQuery,
+	generation string, coverage CoverageSelection, hidden bool, items []PhotoBrowseRow,
+) error {
+	if _, content := photoTextOperands(compiled); content == "" || len(items) == 0 {
+		return nil
+	}
+	if suggestions, err := photoSuggestionsExist(ctx, q); err != nil || !suggestions {
+		return err
+	}
+	compiled.withoutSuggestion = true
+	scope, err := newPhotoBrowseScope(ctx, q, compiled, generation, coverage, hidden)
+	if err != nil {
+		return err
+	}
+	args := make([]any, len(items))
+	for i, item := range items {
+		args[i] = item.AssetID
+	}
+	statement, args, err := scope.bind(`SELECT a.asset_id FROM photo_assets a WHERE `+scope.match.sql+` AND a.asset_id IN (`+placeholders(len(items))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	rows, err := q.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	plain := map[string]bool{}
+	for rows.Next() {
+		var assetID string
+		if err := rows.Scan(&assetID); err != nil {
+			return err
+		}
+		plain[assetID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range items {
+		items[i].MatchedAISuggestion = !plain[items[i].AssetID]
+	}
+	return nil
+}
+
+func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot, suggestions bool) (string, []any, error) {
+	names, content := photoTextOperands(compiled)
 	population, err := photoBrowsePopulation(compiled, generation, coverage)
 	if err != nil {
 		return "", nil, err
 	}
 	candidates := sqlquery.Query{SQL: `SELECT 0 node_id,0 tier,0.0 score WHERE 0`}
-	if len(names) > 0 {
+	if names != "" {
 		var profile *string
 		if coverage.Configuration == photoBrowseConfiguredCoverage {
 			profile = &coverage.ProfileFingerprint
 		}
-		candidates, err = photoSearchCandidates(strings.Join(names, " OR "), strings.Join(content, " OR "), generation, profile)
+		candidates, err = photoSearchCandidates(names, content, generation, profile)
 		if err != nil {
 			return "", nil, err
 		}
 	}
-	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
- SELECT member.asset_id,COALESCE(MAX(candidates.tier),0) tier,
- COALESCE(MAX(CASE WHEN candidates.tier=4 THEN candidates.score END),MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
+	// A photo that matches the whole query only with suggestion text ranks no
+	// higher than the suggestion tier, below any fully authored match.
+	// Without suggestion-searchable text every match is a plain one.
+	var plain compiledQueryFragment
+	plainCTE, plainJoin, plainMatch := "", "", "1"
+	if content != "" && suggestions {
+		withoutSuggestion := compiled
+		withoutSuggestion.withoutSuggestion = true
+		if plain, err = photoBrowsePopulation(withoutSuggestion, generation, coverage); err != nil {
+			return "", nil, err
+		}
+		plainCTE = `plain AS MATERIALIZED (` + plain.sql + `), `
+		plainJoin = `LEFT JOIN plain ON plain.node_id=eligible.node_id`
+		plainMatch = `MAX(plain.node_id IS NOT NULL)`
+	}
+	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), ` + plainCTE + `candidates AS (` + candidates.SQL + `), ranked AS (
+ SELECT member.asset_id,NOT ` + plainMatch + ` suggestion_only,
+ CASE WHEN ` + plainMatch + ` THEN COALESCE(MAX(candidates.tier),0) ELSE MIN(COALESCE(MAX(candidates.tier),0),3) END tier,
+ COALESCE(CASE WHEN ` + plainMatch + ` THEN MAX(CASE WHEN candidates.tier=5 THEN candidates.score END) END,CASE WHEN ` + plainMatch + ` THEN MAX(CASE WHEN candidates.tier=4 THEN candidates.score END) END,MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
  FROM eligible JOIN photo_files member ON member.node_id=eligible.node_id
+	 ` + plainJoin + `
 	 LEFT JOIN candidates ON candidates.node_id=eligible.node_id GROUP BY member.asset_id)`
-	args := append(append([]any(nil), population.args...), candidates.Args...)
+	args := append(append(append([]any(nil), population.args...), plain.args...), candidates.Args...)
+	population.relations |= plain.relations
 	order := "DESC"
 	if compiled.Query.Sort.Direction == "asc" {
 		order = "ASC"
 	}
 	orderBy := `member.tier ` + order + `,member.score ` + order + `,COALESCE(pl.sort_key,'') DESC,member.asset_id ASC`
-	projection := photoBrowseSelect + `,''`
+	projection := photoBrowseSelect + `,'',member.suggestion_only`
 	if snapshot {
 		projection = `n.id node_id,v.version_id content_version_id,a.asset_id,row_number() OVER (ORDER BY ` + orderBy + `) photo_position`
 	}
@@ -545,8 +624,20 @@ func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage Co
 	return statement, args, nil
 }
 
+// photoSuggestionsExist reports whether any pending suggestion text exists, so
+// a library with all suggestions decided skips the suggestion-aware passes.
+func photoSuggestionsExist(ctx context.Context, q metadataQuerier) (bool, error) {
+	var exists bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_suggestion_fts)`).Scan(&exists)
+	return exists, err
+}
+
 func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int) ([]PhotoBrowseRow, error) {
-	statement, args, err := rankedPhotoStatement(compiled, generation, coverage, pageSize, false)
+	suggestions, err := photoSuggestionsExist(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	statement, args, err := rankedPhotoStatement(compiled, generation, coverage, pageSize, false, suggestions)
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +659,7 @@ func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoB
 		row := PhotoBrowseRow{position: position}
 		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.Rating, &row.Flag, &row.FileModifiedTime, &row.folderKey, &row.cameraMake, &row.cameraModel, &row.bodySerialNumber, &row.metadataFingerprint}
 		dest = append(dest, row.Fields.columnPointers()...)
-		dest = append(dest, &row.position.Key)
+		dest = append(dest, &row.position.Key, &row.MatchedAISuggestion)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}

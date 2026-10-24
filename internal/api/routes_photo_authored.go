@@ -29,8 +29,9 @@ type PhotoAuthoredEditRequest struct {
 }
 
 type PhotoAuthoredPreparation struct {
-	Assets  []PhotoAsset                `json:"assets"`
-	Targets []store.PhotoPreparedTarget `json:"targets"`
+	Suggestions []store.PhotoSuggestion     `json:"suggestions,omitempty"`
+	Assets      []PhotoAsset                `json:"assets"`
+	Targets     []store.PhotoPreparedTarget `json:"targets"`
 }
 
 type PhotoStackDecisionRequest struct {
@@ -74,7 +75,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 			selection.Query = &value
 		}
 		result, err := d.Store.PreparePhotoAuthored(ctx, selection)
-		body := PhotoAuthoredPreparation{Assets: []PhotoAsset{}, Targets: result.Targets}
+		body := PhotoAuthoredPreparation{Assets: []PhotoAsset{}, Targets: result.Targets, Suggestions: result.Suggestions}
 		for _, asset := range result.Assets {
 			body.Assets = append(body.Assets, fromStorePhotoAsset(asset))
 		}
@@ -111,6 +112,10 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 
 func photoAuthoredBrowserRequestAllowed(r *http.Request) bool {
 	if r.URL.RawQuery == "" {
+		if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/suggestions/"); ok {
+			parts := strings.Split(after, "/")
+			return len(parts) == 2 && parts[1] == "response" && r.Method == http.MethodPost
+		}
 		if r.URL.Path == "/api/v1/photos/authored/stack" || r.URL.Path == "/api/v1/photos/authored/edit" || r.URL.Path == "/api/v1/photos/authored/prepare" {
 			return r.Method == http.MethodPost
 		}

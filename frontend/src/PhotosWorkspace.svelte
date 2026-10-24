@@ -246,6 +246,7 @@
   async function metadataRefresh(
     receipt: PhotoAuthoredReceipt,
     tags: import("./generated/docbank.js").Tag[],
+    refreshList = true,
   ) {
     onmetadatachanged?.(receipt, tags);
     const refreshing = photos.loading;
@@ -263,7 +264,16 @@
       detailController?.abort();
       reload = { id: photoID };
     }
-    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) await refresh();
+    if (refreshList && (refreshing || (photos.started && photos.reloadsAfter(rotations))))
+      await refresh();
+  }
+  async function suggestionRefresh(
+    receipt?: PhotoAuthoredReceipt,
+    tags: import("./generated/docbank.js").Tag[] = [],
+  ) {
+    if (receipt) await metadataRefresh(receipt, tags, false);
+    await onloadtags?.();
+    await refresh();
   }
   function unavailable() {
     editor.unavailable(
@@ -773,6 +783,8 @@
   }
   async function refreshView() {
     await Promise.all([refresh(), albums?.load()]);
+    // An open inspector can be showing a description that finished since it loaded.
+    await photos.authored.reload();
   }
   async function remove() {
     if (!albums || !album) return;
@@ -1329,7 +1341,13 @@
                 </div>{/if}
             </div>
             {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
-                <PhotoInspector {editor} {actionDisabled} count={editCount} onedit={edit} />
+                <PhotoInspector
+                  {editor}
+                  {actionDisabled}
+                  count={editCount}
+                  onedit={edit}
+                  onresponse={suggestionRefresh}
+                />
               </aside>{/if}
           </div>
           {#if !photoID}
@@ -1473,6 +1491,7 @@
       {actionDisabled}
       onedit={edit}
       onundo={() => void editor.undo(metadataRefresh)}
+      onresponse={suggestionRefresh}
       photo={current}
       error={detailError}
       note={membershipNote}

@@ -81,14 +81,18 @@ artifact as `docbank-metadata-jsonl-v2`; restore also accepts v1 snapshots. It
 contains the complete virtual
 directory tree and file records, including stable IDs, content hashes,
 timestamps, trash coordinates, prior versions, ingest provenance,
-watched-source cursors, tags, and extracted text. Photo files retain `flag_owner`, which holds `return` when a Return decision owns the flag and is empty otherwise, so explicit flag choices and Undo keep their meaning after restore.
+watched-source cursors, tags, and extracted text. Photo suggestion records keep
+dismissals and per-field resolution without suggestion text; restore
+regenerates unresolved fields under fresh consent. Builds without photo
+description support reject the `photo_suggestion` record.
+Photo files retain `flag_owner`, which holds `return` when a Return decision owns the flag and is empty otherwise, so explicit flag choices and Undo keep their meaning after restore.
 Snapshots also preserve people, their identifiers and merge/split history,
 custodian assignments, document assertions, and match candidates. Restore
 rebuilds document–person links from those records after rebuilding document
 events. In audited vaults, this rebuild does not create people or candidates.
 Actors without a retained match remain unresolved.
 
-It omits rebuildable full-text and vector indexes, `photo_quality_signals`, `photo_timeline`, `photo_technical_metadata`, and physical pack mappings.
+It omits rebuildable full-text and vector indexes, `photo_quality_signals`, `photo_timeline`, `photo_technical_metadata`, pending photo suggestion text, and physical pack mappings.
 Restore rebuilds full-text search and vector indexes from retained records.
 When a vector source cannot be rebuilt locally, restore records that missing
 coverage instead of calling an external provider. Restore grants physical

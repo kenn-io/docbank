@@ -1113,7 +1113,7 @@ func validateRenditionAuthorization(
 	if authorization.DiscloseFilename && metadata.Filename == "" {
 		return errors.New("authorization requires filename disclosure but upload filename is empty")
 	}
-	if authorization.SourceSHA256 != metadata.SHA256 || authorization.SourceBytes != metadata.ByteLength {
+	if metadata.InputKind == RenditionInputOriginalFile && (authorization.SourceSHA256 != metadata.SHA256 || authorization.SourceBytes != metadata.ByteLength) {
 		return errors.New("authorization does not match exact upload bytes")
 	}
 	if authorization.CapabilityRecordChecksum != metadata.CapabilityRecordChecksum {

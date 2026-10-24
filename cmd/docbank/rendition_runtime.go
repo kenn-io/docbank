@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/document/providerhttp"
+	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 )
@@ -72,6 +73,16 @@ func (provider *configuredRenditionProvider) Render(
 	return provider.RenditionProvider.Render(ctx, upload, authorization)
 }
 
+func (provider *configuredRenditionProvider) Probe(ctx context.Context) error {
+	probe, ok := provider.RenditionProvider.(interface {
+		Probe(ctx context.Context) error
+	})
+	if !ok {
+		return errors.New("provider has no vision probe")
+	}
+	return probe.Probe(ctx)
+}
+
 func configureRenditionProviders(cfg config.Config) (
 	map[string]document.RenditionProvider, map[string]processing.RuntimeDisclosure, error,
 ) {
@@ -96,6 +107,8 @@ func configureRenditionProviders(cfg config.Config) (
 			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
+		case vision.AdapterContract:
+			provider, disclosures[name], err = configureVision(cfg, name, secrets, registered)
 		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
 			provider, disclosures[name], err = configureExternalRendition(cfg, name, secrets, registered)
 		default:
@@ -310,4 +323,59 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 	}
 	return mistral.Profile{Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), Timeout: runtime.RequestTimeout.Std()}, nil
+}
+
+func configureVision(cfg config.Config, name string, secrets environmentCredentialSecrets, registered map[string]registeredRenditionProvider) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
+	var disclosure processing.RuntimeDisclosure
+	configured := cfg.RenditionProfiles[name]
+	if configured.Runtime == nil {
+		return nil, disclosure, nil
+	}
+	runtime := configured.Runtime
+	profile := vision.Profile{Origin: runtime.Endpoint, Model: configured.Model, TrustBoundary: document.RenditionTrustBoundary(configured.TrustBoundary), SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), RequestTimeout: runtime.RequestTimeout.Std(), MaxResponseBytes: configured.MaxResponseBytes}
+	environmentVariable, ok := secrets.variables[profile.SecretBinding]
+	if !ok {
+		return nil, disclosure, errors.New("vision credential binding is not configured")
+	}
+	descriptor, err := vision.Descriptor(profile.Model, profile.TrustBoundary)
+	if err != nil {
+		return nil, disclosure, err
+	}
+	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint || string(descriptor.TrustBoundary) != configured.TrustBoundary {
+		return nil, disclosure, errors.New("descriptor differs from portable binding")
+	}
+	if configured.DisclosureFingerprint != vision.DisclosureFingerprint(descriptor, profile.Origin, configured.DeploymentFingerprint) {
+		return nil, disclosure, errors.New("vision disclosure fingerprint does not bind runtime endpoint")
+	}
+	requestFingerprints, err := configuredRenditionRequestFingerprints(cfg, name)
+	if err != nil {
+		return nil, disclosure, err
+	}
+	egress := providerEgressPolicy(runtime.ProviderEgressConfig)
+	storedRuntime := *configured.Runtime
+	storedRuntime.CapabilityManifest = ""
+	storedRuntime.ProviderEgressConfig = config.ProviderEgressConfig{}
+	inputs := renditionProviderInputs{runtime: storedRuntime, egress: egress, adapterContract: vision.AdapterContract,
+		maxResponseBytes: configured.MaxResponseBytes, credentialEnvironment: environmentVariable}
+	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: vision.AdapterContract, UltimateProcessor: descriptor.ID, Endpoint: profile.Origin, Deployment: configured.DeploymentFingerprint, Model: profile.Model}
+	if existing, ok := registered[descriptor.Fingerprint]; ok {
+		if !reflect.DeepEqual(existing.inputs, inputs) {
+			return nil, disclosure, errors.New("conflicts with another profile's provider for the same descriptor")
+		}
+		for fingerprint := range requestFingerprints {
+			existing.provider.allowedRenditionRequests[fingerprint] = struct{}{}
+		}
+		return existing.provider, disclosure, nil
+	}
+	transport, err := providerhttp.NewTransport(egress, nil)
+	if err != nil {
+		return nil, disclosure, err
+	}
+	provider, err := vision.New(profile, secrets, &http.Client{Transport: transport})
+	if err != nil {
+		return nil, disclosure, err
+	}
+	bound := &configuredRenditionProvider{RenditionProvider: provider, allowedRenditionRequests: requestFingerprints}
+	registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
+	return bound, disclosure, nil
 }

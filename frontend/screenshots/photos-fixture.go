@@ -7,15 +7,23 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"flag"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/vision"
+	"go.kenn.io/docbank/document/vision/visiontest"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
@@ -30,6 +38,7 @@ func check(err error) {
 }
 
 func main() {
+	suggestions := flag.Bool("suggestions", false, "Include synthetic photo suggestions")
 	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
@@ -206,6 +215,13 @@ func main() {
 		}
 		_, err = s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, item.canonical, &item.physical)
 		check(err)
+		if *suggestions && (index == 0 || index == 2 || index == 9) {
+			value := document.PhotoDescription{Caption: "A calm harbor under a blue sky.", Tags: []string{"coast", "harbor"}, VisibleText: "QUAYSIDE"}
+			if index == 2 {
+				value = document.PhotoDescription{Caption: "A forest beside a lake.", Tags: []string{"forest"}}
+			}
+			seedSuggestion(ctx, s, blobs, layout.BlobsDir(), node, value)
+		}
 		if *pair && index == 0 {
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
 			check(err)
@@ -305,4 +321,56 @@ func editTargets(prepared []store.PhotoPreparedTarget) []store.PhotoAuthoredEdit
 		targets[i] = store.PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	return targets
+}
+
+// seedSuggestion exercises the same worker and publication path as a configured vision provider.
+func seedSuggestion(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node, value document.PhotoDescription) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		check(err)
+		payload, err := json.Marshal(value)
+		check(err)
+		content := string(payload)
+		if visiontest.IsProbe(body) {
+			content = "red,blue"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err = w.Write(visiontest.Completion(content))
+		check(err)
+	}))
+	defer server.Close()
+	provider, err := vision.New(vision.Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	check(err)
+	hash := func(value string) string {
+		digest := sha256.Sum256([]byte(value))
+		return hex.EncodeToString(digest[:])
+	}
+	descriptor := provider.Descriptor()
+	profile := document.ProcessingProfileV1{
+		ContractVersion: document.ProcessingProfileContractV1,
+		Rendition: &document.RenditionBindingV1{
+			AdapterContract: vision.AdapterContract, AuthorizationFingerprint: hash("authorization"), CredentialBinding: "credential:none", DeploymentFingerprint: hash("deployment"),
+			Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, DisclosureFingerprint: hash("disclosure"), MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 1000, Name: "vision", RequestedArtifacts: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, TrustBoundary: string(descriptor.TrustBoundary), UploadOptionsFingerprint: hash("upload"),
+		},
+		EvidenceLexical:     document.EvidenceLexicalPolicyV1{CompletenessFingerprint: hash("completeness"), LexicalSegmenterFingerprint: hash("segments"), MaxDocumentChars: 1 << 20, MaxSegmentRunes: 1000, MaxUnitRunes: 100000, NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, NormalizerFingerprint: hash("normalizer"), RenditionContract: document.RenditionContractV1, SanitizerFingerprint: hash("sanitizer"), SourceEvidenceContract: document.SourceEvidenceContractV1},
+		RetentionDisclosure: document.RetentionDisclosurePolicyV1{AttachmentPolicyFingerprint: hash("attachment"), ConsentFingerprint: hash("consent"), TrustBoundary: string(descriptor.TrustBoundary)},
+		Retrieval:           document.RetrievalPolicyV1{LexicalLimit: 50, VectorLimit: 50},
+	}
+	service, err := processing.NewService(processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: api.NewOperationGate(), SpoolDirectory: spool, Profiles: map[string]processing.ProfileConfig{"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: processing.RuntimeDisclosure{Endpoint: server.URL}}}})
+	check(err)
+	defer service.Stop()
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
+	plan, err := service.Plan(ctx, selector)
+	check(err)
+	_, err = service.GrantConsent(ctx, processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	check(err)
+	_, err = service.Start(ctx, processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	check(err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	check(err)
+	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	check(err)
+	if len(prepared.Suggestions) != 1 || prepared.Suggestions[0].Value.Caption != value.Caption {
+		panic("photo description did not publish the suggestion")
+	}
 }

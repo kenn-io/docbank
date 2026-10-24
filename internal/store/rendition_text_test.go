@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,4 +132,23 @@ func TestResolveRenditionTextDoesNotTreatMissingSegmentsAsVerifiedEmptyMarkdown(
 		NodeRevision: node.Revision, ContentVersionID: versions[0], SourceSHA256: node.BlobHash,
 		SourceSize: node.Size, ProfileFingerprint: profile.Fingerprint})
 	require.ErrorIs(t, err, ErrRenditionTextUnavailable)
+}
+
+func TestResolveRenditionTextIgnoresFailedPhotoDescriptions(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "described.jpg")
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	request := photoDescriptionJobRequest(t, s, node.CurrentVersionID, producerB, false)
+	grantRenditionJobConsent(t, s, request)
+	at := time.Now().UTC().Add(time.Minute)
+	_, _, claim := startPhotoDescription(t, s, request, at)
+	require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, RenditionFailureTerminal, at.Add(time.Second)))
+
+	_, err = s.ResolveRenditionText(ctx, RenditionTextBinding{NodeID: node.ID, NodeRevision: node.Revision,
+		ContentVersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, SourceSize: node.Size,
+		ProfileFingerprint: request.Profile.Fingerprint})
+	require.ErrorIs(t, err, ErrNotFound, "a description never produces text, so its failure is not a text failure")
 }

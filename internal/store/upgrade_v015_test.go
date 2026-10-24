@@ -286,7 +286,7 @@ func TestReleasedStorageSchemasRequireAdapters(t *testing.T) { //nolint:parallel
 	releasedStorageSchemaVersions = append(append([]int(nil), original...), 27)
 	require.ErrorContains(t, validateReleasedStorageSchemas(), "released storage schema version 27 adapter is missing")
 
-	releasedStorageSchemaVersions = []int{1, 2, 3, 29}
+	releasedStorageSchemaVersions = slices.DeleteFunc(slices.Clone(original), func(version int) bool { return version == 28 })
 	require.ErrorContains(t, validateReleasedStorageSchemas(), "storage schema version 28 has an adapter but no release")
 }
 

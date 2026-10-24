@@ -10,6 +10,11 @@ export class PhotoUndoState {
 }
 
 export class PhotoAuthoredEditor {
+  suggestions = $state<api.PhotoSuggestion[]>([]);
+  get activeSuggestion() {
+    return this.suggestions.find((suggestion) => suggestion.target === this.asset?.display_file_id);
+  }
+  suggestionsError = $state("");
   asset = $state<api.PhotoAsset>();
   /** Every prepared file once, by file_id. The edit selection and the stack each name the files they use. */
   private held = $state<Record<string, PreparedFile>>({});
@@ -200,6 +205,8 @@ export class PhotoAuthoredEditor {
     this.stackError = "";
     this.stackLoading = false;
     this.asset = undefined;
+    this.suggestions = [];
+    this.suggestionsError = "";
     this.fileID = "";
     this.patch = {};
     this.rotationDelta = undefined;
@@ -228,6 +235,9 @@ export class PhotoAuthoredEditor {
       }
     }
     this.targets = targets;
+    this.suggestions = this.suggestions.filter((suggestion) =>
+      targets.some((target) => target.file_id === suggestion.target),
+    );
     if (this.asset && !eligible.has(this.asset.id)) this.asset = undefined;
     this.validating = false;
     this.concealed = false;
@@ -266,6 +276,8 @@ export class PhotoAuthoredEditor {
             ),
           }
         : undefined;
+      this.suggestions = prepared.suggestions ?? [];
+      this.suggestionsError = "";
       this.scope = scope;
       this.conflict = this.membershipChanged;
       void this.resolveAssignedTags();
@@ -276,7 +288,53 @@ export class PhotoAuthoredEditor {
     } catch (cause) {
       if (!signal.aborted) this.error = this.failure(cause);
     } finally {
-      if (!signal.aborted) this.loading = false;
+      if (!signal.aborted) {
+        this.loading = false;
+        if (this.notice === "Metadata is loading. Try again when it finishes.") this.notice = "";
+      }
+    }
+  }
+  async respondSuggestion(
+    suggestion: api.PhotoSuggestion,
+    caption = false,
+    tags: string[] = [],
+    dismiss = false,
+    refresh?: (receipt?: api.PhotoAuthoredReceipt, tags?: api.Tag[]) => Promise<void>,
+  ) {
+    if (this.busy || this.dirty || this.concealed || this.conflict || this.loading) return;
+    const write = this.beginWrite();
+    this.suggestionsError = "";
+    try {
+      const result = await this.request(() =>
+        api.respondPhotoSuggestion(
+          suggestion.suggestion_id,
+          {
+            response: dismiss ? "dismissed" : "accepted",
+            caption,
+            tags,
+            asset_id: suggestion.asset_id,
+            asset_revision: suggestion.asset_revision,
+            source_revision: suggestion.source_revision,
+            node_revision: suggestion.node_revision,
+          },
+          this.options(),
+        ),
+      );
+      if (result.authored_receipt?.receipt_id) {
+        this.receiptID = result.authored_receipt.receipt_id;
+        this.undoState.summary = `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
+      }
+      this.endWrite(write);
+      await this.reload();
+      const refreshedTags = result.authored_receipt
+        ? await this.refreshKeywords(result.authored_receipt)
+        : [];
+      await refresh?.(result.authored_receipt, refreshedTags);
+    } catch (cause) {
+      this.suggestionsError = this.failure(cause);
+      this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+    } finally {
+      this.endWrite(write);
     }
   }
   async reload(keepError = false) {
@@ -372,7 +430,7 @@ export class PhotoAuthoredEditor {
     this.noticeTone = "warning";
     this.notice = message;
   }
-  private accept(receipt: api.PhotoAuthoredReceipt) {
+  private acceptTargets(receipt: api.PhotoAuthoredReceipt) {
     this.noticeTone = "success";
     for (const target of this.accepted(this.prepared, receipt)) this.held[target.file_id] = target;
   }
@@ -399,6 +457,20 @@ export class PhotoAuthoredEditor {
         node_revision: nodeRevision,
         values: after.values,
         tags: [...tags],
+      };
+    });
+  }
+  private accept(receipt: api.PhotoAuthoredReceipt) {
+    this.acceptTargets(receipt);
+    this.suggestions = this.suggestions.map((suggestion) => {
+      const target = this.targets.find((target) => target.file_id === suggestion.target);
+      if (!target) return suggestion;
+      return {
+        ...suggestion,
+        asset_id: target.asset_id,
+        asset_revision: target.asset_revision,
+        source_revision: target.revision,
+        node_revision: target.node_revision,
       };
     });
   }
@@ -514,6 +586,7 @@ export class PhotoAuthoredEditor {
       const tags = await this.refreshKeywords(receipt);
       this.endWrite(write);
       await refresh(receipt, tags);
+      if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) {
         this.error = this.failure(cause);
@@ -694,6 +767,7 @@ export class PhotoAuthoredEditor {
       const tags = await this.refreshKeywords(receipt);
       this.endWrite(write);
       await refresh(receipt, tags);
+      if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) this.error = this.failure(cause);
     } finally {

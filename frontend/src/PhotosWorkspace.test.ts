@@ -1182,6 +1182,44 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])(
   },
 );
 
+it("shows a suggestion published after the inspector opened once previews refresh", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const prepared = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValueOnce(photoPreparation([preparedPhoto(1)]))
+    .mockResolvedValueOnce({
+      ...photoPreparation([preparedPhoto(1)]),
+      suggestions: [
+        {
+          suggestion_id: "suggestion",
+          content_version_id: "version",
+          target: "file-1",
+          asset_id: "photo-1",
+          asset_revision: 1,
+          source_revision: 1,
+          node_revision: 1,
+          value: { caption: "A harbor.", tags: [], visible_text: "" },
+        },
+      ],
+    });
+  stubPhotoFetch(async () => Response.json({ items: [photo(1)], total: 1 }));
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  photos.authored.stage({ rating: 3 });
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+  await photos.authored.reload();
+  expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
+  await screen.findByRole("region", { name: "Suggested photo metadata" });
+  expect(prepared).toHaveBeenCalledTimes(2);
+  expect(photos.authored.patch).toEqual({ rating: 3 });
+  photos.dispose();
+});
+
 function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map") {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);

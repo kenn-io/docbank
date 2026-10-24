@@ -87,7 +87,7 @@ func processingVersionCoverageCTE() string {
    w.waiter_id DESC, j.job_id DESC) attempt_rank
  FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
  JOIN coverage_versions v ON v.version_id=w.content_version_id
- CROSS JOIN coverage_selection p WHERE w.profile_fingerprint=p.profile
+ CROSS JOIN coverage_selection p WHERE w.profile_fingerprint=p.profile AND ` + originalFileWaiterSQL + `
 ),
 coverage_head_builds AS (
  SELECT DISTINCT b.build_id,b.completeness,b.partial_success,b.truncated,
