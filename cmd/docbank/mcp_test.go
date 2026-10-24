@@ -100,6 +100,19 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	}
 }
 
+func TestMCPCatalogChildLeavesTempDirEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMCPCommandWriteFlagsSelectTools$")
+	command.Env = append(os.Environ(), "DOCBANK_TEST_MCP_TOOL_CATALOG=mcp", "DOCBANK_HOME="+t.TempDir(), "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
+	out, err := command.CombinedOutput()
+	require.NoError(t, err, string(out))
+	entries, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
 func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 	const childVariable = "DOCBANK_TEST_MCP_TOOL_CATALOG"
 	if args := os.Getenv(childVariable); args != "" {

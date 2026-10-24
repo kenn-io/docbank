@@ -29,6 +29,7 @@ func TestNaturalEarthResolveKnownCities(t *testing.T) {
 	}
 	cases := []tc{
 		{"Paris", 48.8566, 2.3522, true, "", []string{"France"}, nil},
+		{"Swapped Paris coordinates", 2.3522, 48.8566, false, "", nil, []string{"France", "Paris"}},
 		// "Manhattan" is a borough, not a populated_places city, so it
 		// must NEVER appear in the label — locks the field-selection
 		// contract (NAMEASCII → NAME, not e.g. an ADM2-style sub-name).

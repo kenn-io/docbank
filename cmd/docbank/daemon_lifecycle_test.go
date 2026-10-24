@@ -22,7 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 )
 
-var docbankBuildDir string // TestMain in edit_test.go sets this directory.
+var docbankBuildDir string // Allocated on first build; TestMain removes it.
 var docbankBuildMu sync.Mutex
 var docbankBuilds = map[string]struct {
 	bin string
@@ -46,6 +46,13 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	build, ok := docbankBuilds[v]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
+			if docbankBuildDir == "" {
+				var err error
+				docbankBuildDir, err = os.MkdirTemp("", "docbank-test-binaries-")
+				if err != nil {
+					return "", err
+				}
+			}
 			name := fmt.Sprintf("docbank-%d", len(docbankBuilds))
 			if runtime.GOOS == "windows" {
 				name += ".exe"
