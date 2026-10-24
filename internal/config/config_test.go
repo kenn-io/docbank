@@ -1189,7 +1189,6 @@ func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
 			require.Equal(t, document.EmbeddingInputImage, portable.Document.Embeddings[0].InputKind)
 		})
 	}
-
 }
 
 func TestMistralOCRRuntime(t *testing.T) {
