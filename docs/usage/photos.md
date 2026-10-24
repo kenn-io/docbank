@@ -305,7 +305,7 @@ without confirmation are refused.
 
 The first import reads supported XMP decisions into an original that has no catalog decisions. Photo decisions and keywords sync with each original's linked XMP sidecar inside the vault. Catalog edits create immutable sidecar versions. Rescanning a source folder imports outside edits with provenance and an undoable metadata receipt. Docbank writes only vault content; source folders stay unchanged.
 
-After an upgrade, the first background sync creates a vault sidecar for each photo with Docbank tags. Photos without tags or a linked sidecar remain without one until you edit their decisions or keywords.
+After an upgrade, the first background sync writes a vault sidecar for each photo with a Docbank decision, a tag, or a linked sidecar. Other photos get one when you edit their decisions or keywords.
 
 1. Edit decisions or keywords in Metadata; pending changes write a new sidecar version. A photo without a sidecar gets `<original-name>.xmp` beside its original.
 2. Rescan after editing outside XMP. Properties changed on one side merge automatically. Metadata offers **Undo sidecar import** while its file and keyword revisions still match.
