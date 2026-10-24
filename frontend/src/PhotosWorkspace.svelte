@@ -83,6 +83,7 @@
     onloadtags,
     onloadmoretags,
     onmetadatachanged,
+    onfaceschanged,
     onhelp,
     title = "Library",
     mapMode = false,
@@ -90,6 +91,7 @@
     albums,
     albumID = "",
     onnavigate = () => {},
+    onperson,
     ontrashed,
     onhidden,
     onactionerror,
@@ -114,6 +116,7 @@
       receipt: PhotoAuthoredReceipt,
       tags: import("./generated/docbank.js").Tag[],
     ) => void;
+    onfaceschanged?: () => void;
     onhelp?: () => void;
     title?: string;
     mapMode?: boolean;
@@ -121,6 +124,7 @@
     albums?: PhotoAlbums;
     albumID?: string;
     onnavigate?: (path: string) => void;
+    onperson?: (id: string, name: string) => void;
     ontrashed?: (source: Photos) => void;
     onhidden?: () => void | Promise<void>;
     onactionerror?: (error: string) => void;
@@ -132,6 +136,7 @@
     uploadChannelError?: string;
   } = $props();
   let cull = $state.raw<CullRun>();
+  let cullPhoto = $state.raw<PhotoBrowseRow>();
   const culling = $derived(photos.culling);
   const comparing = $derived(photos.comparing);
   let enteringReview = false;
@@ -197,6 +202,78 @@
   }
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
+  const inspectorFaces = untrack(() => {
+    const owner = photos,
+      actionError = onactionerror;
+    const faces = owner.faceEditor;
+    faces.ondecision = (error = "", refresh = true) => {
+      owner.actionError = error;
+      actionError?.(error);
+      if (refresh) {
+        onfaceschanged?.();
+        if (owner.dependsOnPeople) void owner.refresh(alive ? preserve : undefined);
+      }
+    };
+    return faces;
+  });
+  $effect(() => {
+    const filter = photos.personFilter;
+    const person = inspectorFaces.people.find((person) => person.person_id === filter?.id);
+    if (filter && person && filter.name !== person.display_name)
+      photos.personFilter = { id: filter.id, name: person.display_name };
+  });
+  $effect(() => {
+    const cullID = culling ? cull?.currentID : undefined;
+    const id = culling
+      ? cullID
+      : comparing
+        ? undefined
+        : photoID ||
+          (editing && !photos.allResults && photos.selectedIDs.size === 1
+            ? [...photos.selectedIDs][0]
+            : undefined);
+    const validating =
+      photos.loading || photos.error || (!culling && photoID && (detailLoading || detailError));
+    const row = culling
+      ? cullPhoto?.asset_id === cullID
+        ? cullPhoto
+        : undefined
+      : photoID
+        ? current
+        : photos.items.find((row) => row.asset_id === id);
+    const concealed = untrack(() => inspectorFaces.concealed);
+    void reloadRevision;
+    const controller = new AbortController();
+    untrack(() => {
+      const target = (row: PhotoBrowseRow | undefined) => {
+        const version = row?.kind === "photo" ? row.content_version_id : "";
+        if (version !== inspectorFaces.version || (version && concealed))
+          void inspectorFaces.load(version);
+      };
+      if (validating) {
+        inspectorFaces.conceal();
+        return;
+      }
+      if (!id && inspectorFaces.busy) return;
+      if (id !== photos.faceAssetID) target(undefined);
+      if (row && row.asset_id === id && "content_version_id" in row) target(row);
+      else {
+        inspectorFaces.conceal();
+        if (id && !photoID && !culling && !comparing)
+          void photos
+            .lookup(id, controller.signal)
+            .then((row) => {
+              if (!controller.signal.aborted) target(row);
+            })
+            .catch((cause) => {
+              if (!controller.signal.aborted)
+                inspectorFaces.error = cause instanceof Error ? cause.message : String(cause);
+            });
+      }
+      photos.faceAssetID = id ?? "";
+    });
+    return () => controller.abort();
+  });
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
@@ -426,6 +503,11 @@
       if (fromGrid) void restoreGrid();
       return;
     }
+    if (photos.staged && photos.loading) {
+      direct = undefined;
+      detailLoading = true;
+      return;
+    }
     const controller = new AbortController();
     detailController = controller;
     const explicit =
@@ -451,6 +533,7 @@
       detailLoading = false;
       return () => controller.abort();
     }
+    inspectorFaces.conceal();
     detailLoading = true;
     const request = reload;
     const version = untrack(() => current?.content_version_id);
@@ -860,6 +943,7 @@
     {photos}
     {cache}
     {onmetadatachanged}
+    onfacephoto={(row) => (cullPhoto = row)}
     onclose={() => void closeReview()}
   />{/if}
 {#if comparing}<PhotoCompare
@@ -976,6 +1060,9 @@
                   disabled={actionDisabled}
                   onclick={() => void photos.resetQuery()}>Clear filters</Button
                 >
+              {/if}
+              {#if photos.personFilter && photos.query.filters.person_ids?.includes(photos.personFilter.id)}
+                <span>Person: {photos.personFilter.name}</span>
               {/if}
               {#if searchable && albums}<PhotoSmartSet {photos} {albums} {onnavigate} />{/if}
               {#if cull?.progress}<span role="status">{cull.progress}</span>{/if}
@@ -1329,7 +1416,16 @@
                 </div>{/if}
             </div>
             {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
-                <PhotoInspector {editor} {actionDisabled} count={editCount} onedit={edit} />
+                <PhotoInspector
+                  {cache}
+                  {editor}
+                  {actionDisabled}
+                  count={editCount}
+                  onedit={edit}
+                  faces={inspectorFaces}
+                  session={photos.session}
+                  {onperson}
+                />
               </aside>{/if}
           </div>
           {#if !photoID}
@@ -1418,7 +1514,7 @@
                 {/if}
                 <Button
                   size="sm"
-                  disabled={!editCount && !editor.dirty}
+                  disabled={inspectorFaces.busy || (!editCount && !editor.dirty)}
                   onclick={() => (editing = !editing)}>Metadata</Button
                 >
                 {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
@@ -1468,6 +1564,8 @@
     </div>
   {/if}
   {#if photoID}<PhotoLoupe
+      faces={inspectorFaces}
+      {onperson}
       bind:metadataOpen={loupeMetadata}
       {editor}
       {actionDisabled}

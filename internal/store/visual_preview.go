@@ -416,8 +416,37 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
 	return eligible, nil
 }
 
-// PhotoVisualPreviewByGeneration binds a retained generation to an included current display.
-func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, generationID string) (VisualPreviewView, error) {
+// PersonPhotoPreviewSource authorizes an assigned source version through its live photo.
+func (s *Store) PersonPhotoPreviewSource(ctx context.Context, assetID, versionID, personID string) error {
+	return s.photoReadTx(ctx, func(tx *sql.Tx) error { return s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID) })
+}
+
+func (s *Store) personPhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, assetID, versionID, personID string) error {
+	if validateUUIDv4(assetID) != nil || validateUUIDv4(personID) != nil {
+		return ErrNotFound
+	}
+	if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
+		return err
+	}
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM content_versions cv JOIN photo_files member ON member.node_id=cv.node_id
+ JOIN nodes source_node ON source_node.id=cv.node_id AND source_node.current_version_id=cv.version_id
+ JOIN person_document_assertions assertion ON assertion.content_version_id=cv.version_id
+ JOIN persons person ON person.person_id=assertion.person_id
+ WHERE member.asset_id=? AND cv.version_id=? AND assertion.person_id=? AND person.state<>'retired'
+ AND assertion.role='depicted' AND assertion.action='assert')`, assetID, versionID, personID).Scan(&eligible)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// PhotoVisualPreviewByGeneration binds a generation to a live display or assigned source grid.
+func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, generationID, personID string) (VisualPreviewView, error) {
 	if validateUUIDv4(assetID) != nil || validateCatalogSHA256(generationID, "preview generation") != nil {
 		return VisualPreviewView{}, ErrNotFound
 	}
@@ -428,14 +457,22 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 	defer func() { _ = tx.Rollback() }()
 	var versionID, recipe string
 	var hidden *string
-	err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=? AND g.generation_id=?`, assetID, generationID).Scan(&hidden, &versionID, &recipe)
+	if personID != "" {
+		err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,g.content_version_id,g.recipe_fingerprint FROM photo_assets a JOIN visual_preview_generations g ON g.generation_id=? WHERE a.asset_id=?`, generationID, assetID).Scan(&hidden, &versionID, &recipe)
+		if err == nil {
+			err = s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID)
+		}
+	} else {
+		err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=? AND g.generation_id=?`, assetID, generationID).Scan(&hidden, &versionID, &recipe)
+	}
+
 	if errors.Is(err, sql.ErrNoRows) {
 		return VisualPreviewView{}, ErrNotFound
 	}
 	if err != nil {
 		return VisualPreviewView{}, err
 	}
-	if hidden != nil {
+	if hidden != nil && personID == "" {
 		if _, err := s.hiddenSession(ctx, tx); err != nil {
 			return VisualPreviewView{}, err
 		}
@@ -447,6 +484,15 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 	generation, err := visualPreviewGenerationByRecipeTx(ctx, tx, versionID, recipe)
 	if err != nil {
 		return VisualPreviewView{}, err
+	}
+	if personID != "" {
+		fingerprints, err := document.CurrentPhotoQualityFingerprints()
+		if err != nil {
+			return VisualPreviewView{}, err
+		}
+		if generation.RecipeFingerprint != fingerprints.GridRecipe {
+			return VisualPreviewView{}, ErrNotFound
+		}
 	}
 	if generation.GenerationID != generationID || generation.VaultID != s.vaultID || generation.Preview.SourceSHA256 != version.BlobHash {
 		return VisualPreviewView{}, errors.New("stored visual preview source binding is invalid")

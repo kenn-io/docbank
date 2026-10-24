@@ -9672,7 +9672,7 @@ func (c *Client) HidePhotoAsset(ctx context.Context, options *HidePhotoAssetRequ
 	return responseParser(ctx, resp)
 }
 
-// PreparePhotoPreview Prepare a fit or large preview for the current photo display
+// PreparePhotoPreview Prepare a display preview or an assigned source grid preview
 func (c *Client) PreparePhotoPreview(ctx context.Context, options *PreparePhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreparePhotoPreviewResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -9722,10 +9722,15 @@ func (c *Client) PreparePhotoPreview(ctx context.Context, options *PreparePhotoP
 // ReadPhotoPreview Read verified bytes of an eligible exact photo preview
 func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPhotoPreviewResult, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"person_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/previews/{generation_id}",
-		Method:     "GET",
-		Options:    options,
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/previews/{generation_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -10926,6 +10931,57 @@ func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNode
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/nodes/{node_id}/promote")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonFacePreviews Read up to three linked source-version photos in timeline order
+func (c *Client) ListPersonFacePreviews(ctx context.Context, options *ListPersonFacePreviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonFacePreviewsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"hidden": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/people/{person_id}/face-previews",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPersonFacePreviewsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPersonFacePreviewsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPersonFacePreviewsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPersonFacePreviewsErrorResponse](resp, "ListPersonFacePreviewsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/people/{person_id}/face-previews")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -21635,6 +21691,7 @@ func (o *PreparePhotoPreviewRequestOptions) GetHeader() (map[string]string, erro
 // ReadPhotoPreviewRequestOptions is the options needed to make a request to ReadPhotoPreview.
 type ReadPhotoPreviewRequestOptions struct {
 	PathParams *ReadPhotoPreviewPath
+	Query      *ReadPhotoPreviewQuery
 	Header     *ReadPhotoPreviewHeaders
 }
 
@@ -21651,7 +21708,13 @@ func (o *ReadPhotoPreviewRequestOptions) GetPathParams() (map[string]any, error)
 
 // GetQuery returns the query params as a map.
 func (o *ReadPhotoPreviewRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
@@ -22388,6 +22451,44 @@ func (o *PromotePhotoNodeRequestOptions) GetHeader() (map[string]string, error) 
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// ListPersonFacePreviewsRequestOptions is the options needed to make a request to ListPersonFacePreviews.
+type ListPersonFacePreviewsRequestOptions struct {
+	PathParams *ListPersonFacePreviewsPath
+	Query      *ListPersonFacePreviewsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPersonFacePreviewsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPersonFacePreviewsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPersonFacePreviewsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPersonFacePreviewsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // PreflightPhotoRejectsRequestOptions is the options needed to make a request to PreflightPhotoRejects.
@@ -25902,6 +26003,10 @@ type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
+type ListPersonFacePreviewsPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
 type DecidePhotoFacePath struct {
 	ContentVersionID uuid.UUID `json:"content_version_id"`
 }
@@ -26641,6 +26746,10 @@ type DetachPhotoFileQuery struct {
 	ClearDependentSidecars *bool `json:"clear_dependent_sidecars,omitempty"`
 }
 
+type ReadPhotoPreviewQuery struct {
+	PersonID *uuid.UUID `json:"person_id,omitempty"`
+}
+
 type GetPhotoCheckoutQuery struct {
 	After *uuid.UUID `json:"after,omitempty"`
 	Limit *int64     `json:"limit,omitempty"`
@@ -26648,6 +26757,10 @@ type GetPhotoCheckoutQuery struct {
 
 type UndoPhotoFaceDecisionQuery struct {
 	OperationID *uuid.UUID `json:"operation_id,omitempty"`
+}
+
+type ListPersonFacePreviewsQuery struct {
+	Hidden *bool `json:"hidden,omitempty"`
 }
 
 type ListPushSourcesQuery struct {
@@ -27742,6 +27855,10 @@ type GetPhotoAssetByNodeErrorResponse = Error
 type PromotePhotoNodeResponse = api.PhotoAsset
 
 type PromotePhotoNodeErrorResponse = Error
+
+type ListPersonFacePreviewsResponse = store.PersonFacePreviewPage
+
+type ListPersonFacePreviewsErrorResponse = Error
 
 type PreflightPhotoRejectsResponse = store.PhotoRejectsPreflight
 
@@ -29034,6 +29151,10 @@ type PersonExternalIdentity = api.PersonExternalIdentity
 
 type PersonExternalUID = api.PersonExternalUID
 
+type PersonFacePreview = store.PersonFacePreview
+
+type PersonFacePreviewPage = store.PersonFacePreviewPage
+
 type PersonIdentity = api.PersonIdentity
 
 type PersonMergeMovedCounts = api.PersonMergeMovedCounts
@@ -29122,6 +29243,8 @@ type PhotoFaceDecisionRequest = api.PhotoFaceDecisionRequest
 type PhotoFaceDecisionResult = api.PhotoFaceDecisionResult
 
 type PhotoFacePage = api.PhotoFacePage
+
+type PhotoFacePerson = store.PhotoFacePerson
 
 type PhotoFaceResult = api.PhotoFaceResult
 

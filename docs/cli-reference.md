@@ -282,7 +282,7 @@ docbank people split <person-id> --revision REV --display-name NAME [--identity 
 ```
 
 Person commands use the daemon API and emit the same JSON records as the HTTP
-client. List accepts a folded display-name prefix. `show` includes identity,
+client. List matches the start of any word in the folded display name. `show` includes identity,
 external UID, assertion selectors, key face, and revision data. Package custodian assignment IDs come from package reads. Get
 assignment IDs from `GET /api/v1/packages/by-id/{package_id}/custodians` or MCP
 `list_package_custodians`. See [People](usage/people.md#create-and-inspect) for

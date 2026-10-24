@@ -155,8 +155,8 @@ func TestProduceVisualPreviewConvertsEmbeddedColor(t *testing.T) {
 			syntheticExtendedWebP(t, webpSource, 3, 2, visualPreviewWebPICCProfile, "ICCP", make([]byte, visualPreviewMaxICCBytes+1)),
 			webpSource, unchanged,
 		},
-		{"nef embedded jpeg profile", "image/x-nikon-nef", syntheticRAWPreviewTIFF(1, jpegProfile(1, 2)), syntheticRAWPreviewTIFF(1, jpegSource), p3},
-		{"nef embedded jpeg Adobe RGB EXIF", "image/x-nikon-nef", syntheticRAWPreviewTIFF(1, jpegEXIF(adobeEXIF)), syntheticRAWPreviewTIFF(1, jpegSource), adobe},
+		{"nef embedded jpeg profile", "image/x-nikon-nef", mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: jpegProfile(1, 2)}), mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: jpegSource}), p3},
+		{"nef embedded jpeg Adobe RGB EXIF", "image/x-nikon-nef", mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: jpegEXIF(adobeEXIF)}), mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: jpegSource}), adobe},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
@@ -512,6 +513,13 @@ func TestPreparePhotoPreviewEligibilityAndReuse(t *testing.T) {
 	request.Size = "grid"
 	response, body = do(t, ts, http.MethodPost, path, nil, request)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, `"code":"invalid_photo_query"`)
+	request.PersonID = uuid.NewString()
+	request.Size = "fit"
+	response, body = do(t, ts, http.MethodPost, path, nil, request)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, `"code":"invalid_photo_query"`)
+	request.PersonID = ""
 	request.Size = "large"
 	sourcePath := filepath.Join(s.BlobsDir, hash[:2], hash)
 	for _, corrupt := range [][]byte{nil, bytes.Repeat([]byte("x"), int(size))} {
@@ -527,8 +535,9 @@ func TestPreparePhotoPreviewEligibilityAndReuse(t *testing.T) {
 	require.NoError(t, os.WriteFile(sourcePath, source, 0o600))
 	response, body = do(t, ts, http.MethodPost, path, nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &second))
-	require.Equal(t, "ready", second.State)
+	var large api.PhotoPreviewSlot
+	require.NoError(t, json.Unmarshal([]byte(body), &large))
+	require.Equal(t, "ready", large.State)
 	asset, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	response, body = do(t, ts, http.MethodPost, path, nil, request)
@@ -658,6 +667,75 @@ func TestPhotoBrowseRowsCarryFileModifiedTime(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &compact))
 	require.Len(t, compact.MapItems, 1)
 	require.Equal(t, new("2024-03-05T10:00:00Z"), compact.MapItems[0].FileModifiedTime)
+}
+
+func TestPersonSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	hash, size, err := s.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 16, color.Black)))
+	require.NoError(t, err)
+	displayed, err := s.CreateFile(ctx, s.RootID(), "paired.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, displayed.ID)
+	require.NoError(t, err)
+	raw := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(80, 40, color.White)})
+	hash, size, err = s.Blobs.Write(bytes.NewReader(raw))
+	require.NoError(t, err)
+	source, err := s.CreateFile(ctx, s.RootID(), "paired.dng", hash, size, "image/x-adobe-dng")
+	require.NoError(t, err)
+	singleton, err := s.PhotoAssetForNode(ctx, source.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, singleton.ID, singleton.Revision, singleton.Files[0].ID, store.PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, source.ID, store.PhotoRoleRAW, nil)
+	require.NoError(t, err)
+	var displayFile string
+	for _, file := range asset.Files {
+		if file.NodeID == displayed.ID {
+			displayFile = file.ID
+		}
+	}
+	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &displayFile)
+	require.NoError(t, err)
+	person, err := s.CreatePerson(ctx, "Alex Source", "operator")
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, source.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .6, Y: .2, Width: .2, Height: .3}, person.PersonID)
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	preparePath := "/api/v1/photos/assets/" + asset.ID + "/preview"
+	request := api.PreparePhotoPreviewRequest{ContentVersionID: source.CurrentVersionID, PersonID: person.PersonID, Size: "grid"}
+	response, body := do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var slot api.PhotoPreviewSlot
+	require.NoError(t, json.Unmarshal([]byte(body), &slot))
+	require.Equal(t, "ready", slot.State)
+	readPath := "/api/v1/photos/assets/" + asset.ID + "/previews/" + slot.GenerationID
+	response, body = get(t, ts, readPath, headers)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	sourcePath := readPath + "?person_id=" + person.PersonID
+	require.Equal(t, sourcePath, slot.URL)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	decoded, err := jpeg.Decode(strings.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, image.Rect(0, 0, 80, 40), decoded.Bounds())
+	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	request.Hidden = true
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	headers["Cookie"] = response.Cookies()[0].String()
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
 
 func TestLookupPhotoFlags(t *testing.T) {

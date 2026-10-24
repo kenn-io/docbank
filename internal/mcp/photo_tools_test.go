@@ -64,7 +64,10 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	}
 	faces[0].RejectedPersonIDs = []string{"00000000-0000-4000-8000-000000000203"}
 	faces[2].Dismissed = true
-	page := api.PhotoFacePage{Faces: faces, Assertions: assertions}
+	page := api.PhotoFacePage{Faces: faces, Assertions: assertions, People: []api.PhotoFacePerson{
+		{PersonID: assertions[0].PersonID, DisplayName: "Alex One", State: "curated"},
+		{PersonID: assertions[1].PersonID, DisplayName: "Alex Two", State: "retired"},
+	}}
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, http.MethodGet, request.Method)
 		assert.Equal(t, "/api/v1/photos/versions/"+versionID+"/faces", request.URL.Path)
@@ -83,6 +86,10 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	require.EqualValues(t, 2, firstPage["next_offset"])
 	require.Len(t, firstPage["faces"], 2)
 	require.Len(t, firstPage["assertions"], 2)
+	require.Equal(t, []any{
+		map[string]any{"person_id": assertions[0].PersonID, "display_name": "Alex One", "state": "curated"},
+		map[string]any{"person_id": assertions[1].PersonID, "display_name": "Alex Two", "state": "retired"},
+	}, firstPage["people"])
 	firstFaces, ok := firstPage["faces"].([]any)
 	require.True(t, ok)
 	firstFace, ok := firstFaces[0].(map[string]any)
@@ -97,6 +104,9 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, lastFaces, 2)
 	require.Empty(t, lastPage["assertions"])
+	require.Equal(t, []any{
+		map[string]any{"person_id": assertions[0].PersonID, "display_name": "Alex One", "state": "curated"},
+	}, lastPage["people"])
 	require.Nil(t, lastPage["next_offset"])
 	named, ok := lastFaces[0].(map[string]any)
 	require.True(t, ok)
@@ -111,6 +121,10 @@ func TestGetPhotoFacesMCPFitsRejectionEnvelope(t *testing.T) {
 	page := api.PhotoFacePage{Assertions: []api.PhotoPersonAssertion{}}
 	for i := range 14 {
 		f := api.PhotoFace{FaceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), ContentVersionID: version, Box: document.FaceBox{Width: .2, Height: .2}, Revision: 1, CreatedAt: "2026-10-01T00:00:00Z"}
+		f.AssertionID = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+30)
+		personID := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+50)
+		page.Assertions = append(page.Assertions, api.PhotoPersonAssertion{AssertionID: f.AssertionID, ContentVersionID: version, PersonID: personID, Role: "depicted", Action: "assert", RecordedAt: f.CreatedAt, Revision: 1})
+		page.People = append(page.People, api.PhotoFacePerson{PersonID: personID, DisplayName: strings.Repeat("\x01", 200), State: "curated"})
 		for j := range 1000 {
 			f.RejectedPersonIDs = append(f.RejectedPersonIDs, fmt.Sprintf("00000000-0000-4000-8000-%012d", j+100))
 		}

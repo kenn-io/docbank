@@ -19,6 +19,19 @@ import (
 )
 
 func init() {
+	modernsqlite.MustRegisterFunction("docbank_person_name_starts_with_word_v1", &modernsqlite.FunctionImpl{
+		NArgs: 2, Deterministic: true,
+		// Length-aware text arguments preserve NUL; this predicate retains no input.
+		VolatileArgs: true,
+		Scalar: func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			name, nameOK := args[0].(string)
+			prefix, prefixOK := args[1].(string)
+			if !nameOK || !prefixOK {
+				return nil, errors.New("person word-start matching requires text name and prefix")
+			}
+			return query.PersonNameStartsWithWord(name, prefix), nil
+		},
+	})
 	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_media_family_v1", 2,
 		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			mediaType, mimeOK := args[0].(string)

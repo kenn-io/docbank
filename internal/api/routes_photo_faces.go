@@ -12,9 +12,10 @@ import (
 type PhotoFace = store.PhotoFace
 
 type CreatePhotoFaceRequest struct {
-	FaceID   string            `json:"face_id,omitzero" format:"uuid"`
-	Box      *document.FaceBox `json:"box,omitzero"`
-	PersonID string            `json:"person_id,omitzero" format:"uuid"`
+	FaceID     string            `json:"face_id,omitzero" format:"uuid"`
+	Box        *document.FaceBox `json:"box,omitzero"`
+	PersonID   string            `json:"person_id,omitzero" format:"uuid"`
+	PersonName *string           `json:"person_name,omitzero" doc:"New person name for a whole-photo mark with a caller-chosen UUIDv4 person_id; reuse both fields for retries. Limited to 200 UTF-8 bytes"`
 }
 
 type PhotoPersonAssertion struct {
@@ -38,20 +39,37 @@ type PhotoFaceResult struct {
 	Assertion *PhotoPersonAssertion `json:"assertion,omitzero"`
 }
 
+type PhotoFacePerson = store.PhotoFacePerson
+
 type PhotoFacePage struct {
+	People     []PhotoFacePerson      `json:"people" maxItems:"1000"`
 	Faces      []PhotoFace            `json:"faces" maxItems:"1000"`
 	Assertions []PhotoPersonAssertion `json:"assertions" maxItems:"1000"`
 }
 
 func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
-	huma.Register(api, huma.Operation{OperationID: "listPhotoFaces", Method: http.MethodGet, Path: "/api/v1/photos/versions/{content_version_id}/faces", Summary: "Read face boxes and people on one photo version"}, func(ctx context.Context, in *struct {
-		ContentVersionID string `path:"content_version_id" format:"uuid"`
-	}) (*struct{ Body PhotoFacePage }, error) {
-		faces, assertions, err := d.Store.PhotoFaces(ctx, in.ContentVersionID)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		panic(err)
+	}
+	huma.Register(api, huma.Operation{OperationID: "listPersonFacePreviews", Method: http.MethodGet, Path: "/api/v1/photos/people/{person_id}/face-previews", Summary: "Read up to three linked source-version photos in timeline order"}, func(ctx context.Context, in *struct {
+		PersonID string `path:"person_id" format:"uuid"`
+		Hidden   bool   `query:"hidden"`
+	}) (*struct{ Body store.PersonFacePreviewPage }, error) {
+		previews, err := d.Store.PersonFacePreviews(ctx, in.PersonID, fingerprints.GridRecipe, in.Hidden)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		page := PhotoFacePage{Faces: faces, Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
+		return &struct{ Body store.PersonFacePreviewPage }{Body: previews}, nil
+	})
+	huma.Register(api, huma.Operation{OperationID: "listPhotoFaces", Method: http.MethodGet, Path: "/api/v1/photos/versions/{content_version_id}/faces", Summary: "Read face boxes and people on one photo version"}, func(ctx context.Context, in *struct {
+		ContentVersionID string `path:"content_version_id" format:"uuid"`
+	}) (*struct{ Body PhotoFacePage }, error) {
+		faces, assertions, people, err := d.Store.PhotoFacePersonNames(ctx, in.ContentVersionID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		page := PhotoFacePage{Faces: faces, People: people, Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
 		for _, assertion := range assertions {
 			page.Assertions = append(page.Assertions, photoAssertion(assertion))
 		}
@@ -63,11 +81,18 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 	}) (*struct{ Body PhotoFaceResult }, error) {
 		var result PhotoFaceResult
 		err := g.mutate(func() error {
-			if in.Body.Box == nil {
-				if in.Body.PersonID == "" || in.Body.FaceID != "" {
+			personName := ""
+			if in.Body.PersonName != nil {
+				personName = *in.Body.PersonName
+				if in.Body.Box != nil || personName == "" {
 					return FromStoreError(store.ErrInvalidPhotoFace)
 				}
-				assertion, err := d.Store.MarkPersonInPhoto(ctx, in.ContentVersionID, in.Body.PersonID)
+			}
+			if in.Body.Box == nil {
+				if in.Body.FaceID != "" {
+					return FromStoreError(store.ErrInvalidPhotoFace)
+				}
+				assertion, err := d.Store.MarkPersonInPhoto(ctx, in.ContentVersionID, in.Body.PersonID, personName)
 				if err != nil {
 					return FromStoreError(err)
 				}
@@ -104,6 +129,9 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             PhotoFaceDecisionRequest
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
+		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" && in.Body.Action != "dismiss" {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces and clear whole-photo marks.")
+		}
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {
 			var err error
