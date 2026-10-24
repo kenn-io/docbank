@@ -73,8 +73,9 @@ type PhotoPreparedTarget struct {
 }
 
 type PhotoAuthoredPreparation struct {
-	Assets  []PhotoAsset          `json:"assets"`
-	Targets []PhotoPreparedTarget `json:"targets"`
+	Suggestions []PhotoSuggestion     `json:"suggestions,omitempty"`
+	Assets      []PhotoAsset          `json:"assets"`
+	Targets     []PhotoPreparedTarget `json:"targets"`
 }
 
 type PhotoAuthoredBatch struct {
@@ -103,6 +104,10 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 			if err := preparer.prepare(ctx, chunk); err != nil {
 				return err
 			}
+		}
+		if len(result.Assets) == 1 {
+			result.Suggestions, err = s.photoSuggestionsQuery(ctx, tx, result.Assets[0].ID)
+			return err
 		}
 		return nil
 	})
@@ -288,26 +293,12 @@ func (s *Store) EditPhotoAuthoredBatch(ctx context.Context, request PhotoAuthore
 		return result, ErrPhotoEditFileLimit
 	}
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		targets, loaded, err := s.photoAuthoredBatchTargetsTx(ctx, tx, request)
+		targets, loaded, err := s.photoAuthoredBatchTargetsTx(ctx, tx, request, photoAuthoredTargetChecks{})
 		if err != nil {
 			return err
 		}
-		result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{force: true, loaded: loaded})
-		if err != nil {
-			return err
-		}
-		nodes := map[int64]Node{}
-		tagTargets := make([]BatchTagTarget, 0, len(loaded))
-		for _, snapshot := range loaded {
-			nodes[snapshot.node.ID] = snapshot.node
-			tagTargets = append(tagTargets, BatchTagTarget{NodeID: snapshot.node.ID, Revision: snapshot.node.Revision})
-		}
-		slices.SortFunc(tagTargets, func(a, b BatchTagTarget) int { return cmp.Compare(a.NodeID, b.NodeID) })
-		plan, err := planPhotoKeywordsTx(ctx, tx, request.Keywords, tagTargets)
-		if err != nil {
-			return err
-		}
-		return s.applyPhotoKeywordsTx(ctx, tx, &result, plan, nodes)
+		result, err = s.applyPhotoAuthoredBatchTx(ctx, tx, request, targets, loaded)
+		return err
 	})
 	if err != nil {
 		return PhotoAuthoredReceipt{}, err
@@ -374,9 +365,17 @@ func loadPhotoAuthoredBatchRowsTx(ctx context.Context, tx *sql.Tx, targets []Pho
 	return loaded, err
 }
 
+// photoAuthoredTargetChecks narrows the checks of photoAuthoredBatchTargetsTx
+// for a caller whose transaction already decided them.
+type photoAuthoredTargetChecks struct {
+	requireNodeRevision bool
+	// hiddenUnlocked means the caller already confirmed the hidden session.
+	hiddenUnlocked bool
+}
+
 // photoAuthoredBatchTargetsTx checks each requested target, in request order,
 // against its current asset, file, and node revisions.
-func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch) ([]PhotoAuthoredTarget, map[string]photoAuthoredLoaded, error) {
+func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch, checks photoAuthoredTargetChecks) ([]PhotoAuthoredTarget, map[string]photoAuthoredLoaded, error) {
 	rows, err := loadPhotoAuthoredBatchRowsTx(ctx, tx, request.Targets)
 	if err != nil {
 		return nil, nil, err
@@ -384,7 +383,7 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 	targets := make([]PhotoAuthoredTarget, 0, len(request.Targets))
 	assets := map[string]photoAuthoredAssetAccess{}
 	loaded := map[string]photoAuthoredLoaded{}
-	unlocked := false
+	unlocked := checks.hiddenUnlocked
 	for _, expected := range request.Targets {
 		asset, checked := assets[expected.AssetID]
 		if !checked {
@@ -415,7 +414,7 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 			return nil, nil, fmt.Errorf("node %d: %w", file.NodeID, ErrNotFound)
 		}
 		loaded[file.ID] = photoAuthoredLoaded{file, node}
-		if err := checkPhotoAuthoredBatchTargetTx(ctx, tx, request, expected, asset, file, node); err != nil {
+		if err := checkPhotoAuthoredBatchTargetTx(ctx, tx, request, checks, expected, asset, file, node); err != nil {
 			return nil, nil, err
 		}
 		patch := request.Patch
@@ -428,8 +427,8 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 	return targets, loaded, nil
 }
 
-func checkPhotoAuthoredBatchTargetTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch, expected PhotoAuthoredEditTarget, asset photoAuthoredAssetAccess, file PhotoFile, node Node) error {
-	if file.AssetID != expected.AssetID || len(request.Keywords) > 0 && node.Revision != expected.NodeRevision || expected.ContentVersionID != "" && asset.displayVersionID.String != expected.ContentVersionID {
+func checkPhotoAuthoredBatchTargetTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch, checks photoAuthoredTargetChecks, expected PhotoAuthoredEditTarget, asset photoAuthoredAssetAccess, file PhotoFile, node Node) error {
+	if file.AssetID != expected.AssetID || (checks.requireNodeRevision || len(request.Keywords) > 0) && node.Revision != expected.NodeRevision || expected.ContentVersionID != "" && asset.displayVersionID.String != expected.ContentVersionID {
 		return ErrStaleRevision
 	}
 	if asset.revision == expected.AssetRevision {
@@ -710,4 +709,27 @@ func photoAuthoredChanged(receipt PhotoAuthoredReceipt) bool {
 		}
 	}
 	return false
+}
+
+// applyPhotoAuthoredBatchTx uses targets already validated in this transaction.
+func (s *Store) applyPhotoAuthoredBatchTx(ctx context.Context, tx *sql.Tx, request PhotoAuthoredBatch, targets []PhotoAuthoredTarget, loaded map[string]photoAuthoredLoaded) (PhotoAuthoredReceipt, error) {
+	result, err := s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{force: true, loaded: loaded})
+	if err != nil {
+		return PhotoAuthoredReceipt{}, err
+	}
+	nodes := map[int64]Node{}
+	tagTargets := make([]BatchTagTarget, 0, len(loaded))
+	for _, snapshot := range loaded {
+		nodes[snapshot.node.ID] = snapshot.node
+		tagTargets = append(tagTargets, BatchTagTarget{NodeID: snapshot.node.ID, Revision: snapshot.node.Revision})
+	}
+	slices.SortFunc(tagTargets, func(a, b BatchTagTarget) int { return cmp.Compare(a.NodeID, b.NodeID) })
+	plan, err := planPhotoKeywordsTx(ctx, tx, request.Keywords, tagTargets)
+	if err != nil {
+		return PhotoAuthoredReceipt{}, err
+	}
+	if err := s.applyPhotoKeywordsTx(ctx, tx, &result, plan, nodes); err != nil {
+		return PhotoAuthoredReceipt{}, err
+	}
+	return result, nil
 }

@@ -259,11 +259,10 @@ func encodeVisualPreview(
 	if err != nil {
 		return VisualPreviewProduct{}, err
 	}
-	var encoded bytes.Buffer
-	if err := jpeg.Encode(&encoded, matte, &jpeg.Options{Quality: visualPreviewJPEGQuality}); err != nil {
-		return VisualPreviewProduct{}, fmt.Errorf("encoding visual preview: %w", err)
+	output, err := encodeVisualPreviewJPEG(matte)
+	if err != nil {
+		return VisualPreviewProduct{}, err
 	}
-	output := encoded.Bytes()
 	digest := sha256.Sum256(output)
 	base.State = document.VisualPreviewReady
 	base.Output = &document.VisualPreviewOutputV1{
@@ -271,6 +270,16 @@ func encodeVisualPreview(
 		MediaType: "image/jpeg", Width: width, Height: height,
 	}
 	return VisualPreviewProduct{Preview: base, Output: output}, nil
+}
+
+// encodeVisualPreviewJPEG is the one encoder for grid previews and for the
+// copy a vision provider receives, so both carry only pixels.
+func encodeVisualPreviewJPEG(pixels image.Image) ([]byte, error) {
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, pixels, &jpeg.Options{Quality: visualPreviewJPEGQuality}); err != nil {
+		return nil, fmt.Errorf("encoding visual preview: %w", err)
+	}
+	return encoded.Bytes(), nil
 }
 
 func visualPreviewSourceMediaType(value string) string {

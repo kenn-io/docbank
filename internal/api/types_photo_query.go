@@ -50,6 +50,7 @@ type PhotoQuality struct {
 }
 
 type PhotoBrowseRow struct {
+	MatchedAISuggestion  bool              `json:"matched_ai_suggestion,omitempty"`
 	Rating               int               `json:"rating" minimum:"0" maximum:"5"`
 	Flag                 string            `json:"flag" enum:",pick,reject"`
 	Quality              *PhotoQuality     `json:"quality,omitempty"`

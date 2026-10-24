@@ -34,7 +34,7 @@ type CoverageIncluded struct {
 func computeCoverage(ctx context.Context, q rowQuerier) (*BackupCoverage, error) {
 	c := &BackupCoverage{Version: 1, Excluded: []string{
 		"browser_sessions", "hidden_unlock_sessions", "storage_operations",
-		"checkout_destination_bindings", "search_indexes", "photo_timeline", "photo_quality_signals", "photo_technical_metadata", "vector_indexes",
+		"checkout_destination_bindings", "search_indexes", "photo_timeline", "photo_quality_signals", "photo_technical_metadata", "vector_indexes", "photo_suggestion_text",
 	}}
 	counts := []struct {
 		dst   *int64

@@ -349,6 +349,74 @@ content identity. The watcher does not pack content itself. Configure
 `[storage] pack_interval` when accumulated loose content should be packed
 automatically. GC and repack still run only on request.
 
+### Photo descriptions
+
+Photo descriptions send the cached stripped 512px grid JPEG to an OpenAI-compatible `POST /v1/chat/completions` endpoint. The endpoint must support image input and `max_completion_tokens`. The preview has normalized orientation and color and fits the 512px input profile. `max_document_bytes` limits the preview upload, and the provider rejects any preview over 4 MiB however high you set it; `max_response_bytes` is at most 1 MiB. The original can be larger. Vision profiles require every `retain_*` flag to be false.
+
+The example below uses a named environment credential and the [shared transport settings](#supplied-audio-transcription). Use a root origin, a positive request timeout of at most ten minutes, and HTTPS for `hosted_provider`. Profiles sharing a descriptor must share endpoint, credential, and runtime settings.
+
+Compute both fingerprints with the release binary, using the exact model, trust boundary, endpoint, and deployment fingerprint for your configuration. This command runs locally without a daemon or provider credential:
+
+```sh
+docbank processing vision-fingerprints --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Copy the printed `descriptor_fingerprint` and `disclosure_fingerprint` assignments into the tables below, then add them to `config.toml` and set `DOCBANK_VISION_KEY` in the daemon's environment. The other fingerprints identify synthetic policies; use stable identities for your policies and change them when those policies change.
+
+```toml
+[credential_bindings.vision]
+environment_variable = "DOCBANK_VISION_KEY"
+
+[rendition_profiles.vision]
+adapter_contract = "docbank-compatible-vision/v1"
+model = "vision-model"
+descriptor_id = "compatible-vision.describe-v1"
+descriptor_fingerprint = "<descriptor_fingerprint>"
+disclosure_fingerprint = "<disclosure_fingerprint>"
+deployment_fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+authorization_fingerprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+upload_options_fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+credential_binding = "credential:vision"
+trust_boundary = "operator_network"
+disclose_filename = false
+requested_artifacts = ["structured_evidence"]
+max_document_bytes = 4194304
+max_response_bytes = 1048576
+max_units = 1
+
+[rendition_profiles.vision.runtime]
+endpoint = "http://127.0.0.1:8080"
+request_timeout = "2m"
+allowed_cidrs = ["127.0.0.0/8"]
+proxy_mode = "disabled"
+connect_timeout = "10s"
+keep_alive = "30s"
+tls_handshake_timeout = "10s"
+
+[retrieval_profiles.photos]
+lexical_limit = 40
+vector_limit = 60
+
+[processing_profiles.photos]
+rendition = "vision"
+retrieval = "photos"
+trust_boundary = "operator_network"
+attachment_policy_fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+completeness_fingerprint = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+consent_fingerprint = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+lexical_segmenter_fingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+normalizer_fingerprint = "2222222222222222222222222222222222222222222222222222222222222222"
+sanitizer_fingerprint = "3333333333333333333333333333333333333333333333333333333333333333"
+max_document_chars = 100000
+max_segment_runes = 2000
+max_unit_runes = 100000
+retain_provider_markdown = false
+retain_sanitized_markdown = false
+retain_typed_artifacts = false
+```
+
+Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. An explicit build can name another profile, but it describes a photo only when the photo has no pending suggestion. A build for a photo that already has a pending suggestion from any profile completes without a provider call; dismiss that suggestion first to ask another profile.
+
 ### Document conversion with Docling
 
 The daemon can send an original PDF, PPTX, XLSX, plain text, Markdown, PNG,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -86,6 +87,12 @@ func (provider Provider) ValidateOrigin(raw string, trust document.RenditionTrus
 		parsed.ForceQuery || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return "", fmt.Errorf("%s: origin must be one absolute origin without path, credentials, query, or fragment",
 			provider.prefix())
+	}
+	if parsed.Port() != "" || strings.HasSuffix(parsed.Host, ":") {
+		port, err := strconv.ParseUint(parsed.Port(), 10, 16)
+		if err != nil || port == 0 {
+			return "", fmt.Errorf("%s: origin port must be between 1 and 65535", provider.prefix())
+		}
 	}
 	if parsed.Scheme != "https" && (parsed.Scheme != "http" || trust != document.RenditionTrustOperatorNetwork) {
 		return "", fmt.Errorf("%s: hosted origins require HTTPS; HTTP is operator-network only", provider.prefix())

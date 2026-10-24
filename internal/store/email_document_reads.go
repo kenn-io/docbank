@@ -109,7 +109,7 @@ func emailDocumentProcessingState(ctx context.Context, q metadataQuerier, r docu
 	err = q.QueryRowContext(ctx, `SELECT CASE WHEN w.state='rejected' THEN 'failed' ELSE j.state END,
 	 COALESCE(w.failure_code,j.failure_code,'')
 	 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
-	 WHERE w.content_version_id=?
+	 WHERE w.content_version_id=? AND `+originalFileWaiterSQL+`
 	 ORDER BY MAX(w.updated_at,j.updated_at) DESC,w.updated_at DESC,j.updated_at DESC,w.waiter_id DESC,j.job_id DESC LIMIT 1`, r.Child.VersionID).Scan(&state, &failure)
 	if err == nil {
 		switch state {

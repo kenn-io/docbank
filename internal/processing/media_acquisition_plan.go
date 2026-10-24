@@ -359,3 +359,113 @@ func verifyMediaToken(key [32]byte, token string) ([]byte, error) {
 	}
 	return body, nil
 }
+
+const (
+	// visionRetryInterval is the soonest a failed provider probe repeats.
+	visionRetryInterval = time.Minute
+	// visionProbeTimeout bounds one probe, so an endpoint that never answers
+	// holds a profile's probe slot for this long rather than the request timeout.
+	visionProbeTimeout = 30 * time.Second
+)
+
+// visionReadinessKey names a description profile's probe and evidence.
+func visionReadinessKey(fingerprint string) string { return "vision:" + fingerprint }
+
+// visionProbe builds the probe for one description profile.
+func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe {
+	return func(ctx context.Context) (MediaOriginEvidence, error) {
+		evidence := MediaOriginEvidence{AdapterContract: profile.portable.Rendition.AdapterContract,
+			DeploymentRevision: profile.portable.Rendition.DeploymentFingerprint, ProbeState: "provider_unavailable"}
+		probe, ok := profile.provider.(interface {
+			Probe(ctx context.Context) error
+		})
+		if !ok {
+			return evidence, ErrRenditionRuntimeUnavailable
+		}
+		if err := probe.Probe(ctx); err != nil {
+			return evidence, err
+		}
+		evidence.ProbeState = "ready"
+		return evidence, nil
+	}
+}
+
+// requireVisionReadiness proves the profile's provider answers under the
+// current consent grant. A passing probe stands until a provider call fails;
+// otherwise the probe runs here, one at a time per profile, and a failure
+// repeats no sooner than a minute later. A caller waiting for the probe in
+// flight gives up with its own context.
+func (service *Service) requireVisionReadiness(ctx context.Context, profile configuredProfile) error {
+	id := visionReadinessKey(profile.record.Fingerprint)
+	slot := service.visionLocks[id]
+	select {
+	case slot <- struct{}{}:
+		defer func() { <-slot }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	authorization, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
+	if err != nil {
+		return err
+	}
+	service.mediaOriginMu.Lock()
+	observation := service.mediaOriginEvidence[id]
+	service.mediaOriginMu.Unlock()
+	if observation.GrantID == authorization.GrantID {
+		if observation.Evidence.ProbeState == "ready" {
+			return nil
+		}
+		if service.clock().Sub(observation.ProbedAt) < visionRetryInterval {
+			return runtimeUnavailable(observation.Cause)
+		}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, service.visionProbeTimeout)
+	evidence, err := service.visionProbes[id](probeCtx)
+	cancel()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	service.mediaOriginMu.Lock()
+	service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, GrantID: authorization.GrantID, ProbedAt: service.clock().UTC(), Cause: err}
+	service.mediaOriginMu.Unlock()
+	if evidence.ProbeState != "ready" {
+		return runtimeUnavailable(err)
+	}
+	return nil
+}
+
+func (service *Service) invalidateVisionReadiness(fingerprint string) {
+	service.mediaOriginMu.Lock()
+	delete(service.mediaOriginEvidence, visionReadinessKey(fingerprint))
+	service.mediaOriginMu.Unlock()
+}
+
+// RuntimeUnavailableError is ErrRenditionRuntimeUnavailable with the reason the
+// provider's probe failed.
+type RuntimeUnavailableError struct{ Cause error }
+
+func (err *RuntimeUnavailableError) Error() string {
+	return ErrRenditionRuntimeUnavailable.Error() + ": " + err.Cause.Error()
+}
+
+func (err *RuntimeUnavailableError) Is(target error) bool {
+	return target == ErrRenditionRuntimeUnavailable
+}
+
+func (err *RuntimeUnavailableError) Unwrap() error { return err.Cause }
+
+func runtimeUnavailable(cause error) error {
+	if cause == nil {
+		return ErrRenditionRuntimeUnavailable
+	}
+	return &RuntimeUnavailableError{Cause: cause}
+}
+
+func (service *Service) requireVisionFingerprint(ctx context.Context, fingerprint string) error {
+	for _, profile := range service.profiles {
+		if profile.record.Fingerprint == fingerprint {
+			return service.requireVisionReadiness(ctx, profile)
+		}
+	}
+	return ErrRenditionRuntimeStale
+}
