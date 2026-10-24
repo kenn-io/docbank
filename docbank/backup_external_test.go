@@ -21,6 +21,7 @@ import (
 )
 
 func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -93,6 +94,7 @@ func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
 }
 
 func TestEmbeddedBackupRefusesSensitiveHostFileWithoutPlaintextOptIn(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -114,6 +116,7 @@ func TestEmbeddedBackupRefusesSensitiveHostFileWithoutPlaintextOptIn(t *testing.
 }
 
 func TestEmbeddedBackupPreparationFailureReleasesMutationGate(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -143,6 +146,7 @@ func TestEmbeddedBackupPreparationFailureReleasesMutationGate(t *testing.T) {
 }
 
 func TestEmbeddedBackupPreparationPanicReleasesMutationGate(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -175,6 +179,7 @@ func TestEmbeddedBackupPreparationPanicReleasesMutationGate(t *testing.T) {
 }
 
 func TestEmbeddedBackup(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -271,6 +276,7 @@ func TestEmbeddedBackup(t *testing.T) {
 }
 
 func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -318,6 +324,7 @@ func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
 }
 
 func TestEmbeddedBackupAllowsAppendsAfterFreeze(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -368,6 +375,7 @@ func TestEmbeddedBackupAllowsAppendsAfterFreeze(t *testing.T) {
 }
 
 func TestEmbeddedRestoreRejectsLiveVaultOverlap(t *testing.T) {
+	t.Parallel()
 	liveRoot := filepath.Join(t.TempDir(), "live")
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: liveRoot})
 	require.NoError(t, err)
@@ -386,6 +394,7 @@ func TestEmbeddedRestoreRejectsLiveVaultOverlap(t *testing.T) {
 }
 
 func TestEmbeddedRestoreRejectsHostProtectedRoot(t *testing.T) {
+	t.Parallel()
 	liveRoot := filepath.Join(t.TempDir(), "live")
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: liveRoot})
 	require.NoError(t, err)

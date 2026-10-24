@@ -15,6 +15,7 @@ import (
 )
 
 func TestNewRecoversAbandonedEmailSpoolBeforeBlobCleanup(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	layout := home.Layout{Root: root}
@@ -38,6 +39,7 @@ func TestNewRecoversAbandonedEmailSpoolBeforeBlobCleanup(t *testing.T) {
 }
 
 func TestVaultEmailKeepsExactSourceAndPart(t *testing.T) {
+	t.Parallel()
 	v, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
@@ -70,6 +72,7 @@ func TestVaultEmailKeepsExactSourceAndPart(t *testing.T) {
 }
 
 func TestVaultEnsureEmailMetadataPreservesUndeclaredSource(t *testing.T) {
+	t.Parallel()
 	v, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
@@ -85,6 +88,7 @@ func TestVaultEnsureEmailMetadataPreservesUndeclaredSource(t *testing.T) {
 }
 
 func TestVaultOpenEmailPartHoldsLifecycleLease(t *testing.T) {
+	t.Parallel()
 	v, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	raw := []byte("Content-Type: text/plain\r\n\r\nlease-body")
@@ -119,6 +123,7 @@ func TestVaultOpenEmailPartHoldsLifecycleLease(t *testing.T) {
 }
 
 func TestVaultOpenEmailPartPhysicalFailureReleasesLifecycleLease(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	v, err := New(t.Context(), Config{Root: root})
 	require.NoError(t, err)

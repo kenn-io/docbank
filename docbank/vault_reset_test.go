@@ -17,6 +17,7 @@ import (
 )
 
 func TestResetVaultRecoversCorruptCatalogWithoutDeletingDiagnosticVault(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	diagnostic := filepath.Join(base, "vault.reset-20260722T120000Z")
@@ -49,6 +50,7 @@ func TestResetVaultRecoversCorruptCatalogWithoutDeletingDiagnosticVault(t *testi
 }
 
 func TestResetVaultValidatesSourceAndDestinationWithoutMutation(t *testing.T) {
+	t.Parallel()
 	t.Run("invalid config before release callback", func(t *testing.T) {
 		called := false
 		fresh, err := ResetVault(t.Context(), Config{
@@ -181,6 +183,7 @@ func TestResetVaultValidatesSourceAndDestinationWithoutMutation(t *testing.T) {
 }
 
 func TestValidateResetSourceAttributesRejectsDirectoryReparsePoint(t *testing.T) {
+	t.Parallel()
 	err := validateResetSourceAttributes(resetSourceAttributes{
 		directory: true,
 		reparse:   true,
@@ -190,6 +193,7 @@ func TestValidateResetSourceAttributesRejectsDirectoryReparsePoint(t *testing.T)
 }
 
 func TestValidateResetRootRelationshipRejectsFilesystemRoot(t *testing.T) {
+	t.Parallel()
 	volumeRoot := filepath.VolumeName(t.TempDir()) + string(os.PathSeparator)
 
 	err := validateResetRootRelationship(
@@ -201,6 +205,7 @@ func TestValidateResetRootRelationshipRejectsFilesystemRoot(t *testing.T) {
 }
 
 func TestResetVaultRejectsChangedParentBeforeRename(t *testing.T) {
+	t.Parallel()
 	grandparent := t.TempDir()
 	base := filepath.Join(grandparent, "base")
 	parkedBase := filepath.Join(grandparent, "base.original")
@@ -241,6 +246,7 @@ func TestResetVaultRejectsChangedParentBeforeRename(t *testing.T) {
 }
 
 func TestResetVaultRejectsSourceReplacementDuringOwnerRelease(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	parkedRoot := filepath.Join(base, "vault.original")
@@ -280,6 +286,7 @@ func TestResetVaultRejectsSourceReplacementDuringOwnerRelease(t *testing.T) {
 }
 
 func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {
+	t.Parallel()
 	grandparent := t.TempDir()
 	base := filepath.Join(grandparent, "base")
 	require.NoError(t, os.Mkdir(base, 0o700))
@@ -342,6 +349,7 @@ func TestResetVaultCoordinatesReleaseOfCurrentOwnerBeforeRename(t *testing.T) {
 }
 
 func TestNewAllowsCaseDistinctVaultRoots(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	upperRoot := filepath.Join(base, "CaseDistinctVault")
 	lowerRoot := filepath.Join(base, "casedistinctvault")
@@ -369,6 +377,7 @@ func TestNewAllowsCaseDistinctVaultRoots(t *testing.T) {
 }
 
 func TestResetVaultLockConflictLeavesActiveSourceUnmoved(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	diagnostic := filepath.Join(base, "vault.reset")
@@ -386,6 +395,7 @@ func TestResetVaultLockConflictLeavesActiveSourceUnmoved(t *testing.T) {
 }
 
 func TestResetVaultReleaseFailureLeavesSourceUnmoved(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	diagnostic := filepath.Join(base, "vault.reset")
@@ -476,6 +486,7 @@ func TestResetVaultFreshParentSyncFailureClosesFreshVault(t *testing.T) {
 }
 
 func TestResetVaultFreshInitializationFailurePreservesBothPaths(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	diagnostic := filepath.Join(base, "vault.reset")

@@ -12,6 +12,7 @@ import (
 )
 
 func TestRepositoryCleanupWithoutSourcePreservesRetainedRestore(t *testing.T) {
+	t.Parallel()
 	r := require.New(t)
 	source := filepath.Join(t.TempDir(), "source")
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: source})
@@ -99,6 +100,7 @@ func TestRepositoryCleanupWithoutSourcePreservesRetainedRestore(t *testing.T) {
 }
 
 func TestRepositoryCleanupRequiresInitializedRepository(t *testing.T) {
+	t.Parallel()
 	for _, repository := range []*docbank.BackupRepository{nil, {}} {
 		_, err := repository.Forget(t.Context(), docbank.BackupForgetOptions{})
 		require.ErrorContains(t, err, "repository is required")

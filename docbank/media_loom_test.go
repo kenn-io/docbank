@@ -16,12 +16,14 @@ import (
 )
 
 func TestLoomManualExportEmbedded(t *testing.T) {
+	t.Parallel()
 	for _, origin := range []string{"supplied", "provider"} {
 		t.Run(origin, func(t *testing.T) { runLoomManualExportEmbedded(t, origin) })
 	}
 }
 
 func TestLoomCaptionSearchHonorsExactFence(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })

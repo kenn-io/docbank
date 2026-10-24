@@ -8,6 +8,7 @@ import (
 )
 
 func TestEmbeddedDocumentPeopleRebuildDrainsAndReplays(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })

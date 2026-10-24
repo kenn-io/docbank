@@ -18,6 +18,7 @@ import (
 )
 
 func TestVaultReadTools(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
