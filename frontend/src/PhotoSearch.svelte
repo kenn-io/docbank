@@ -18,7 +18,7 @@
   $effect(() => {
     syntax = appliedSyntax;
   });
-  function submit() {
+  function submit(explicit = false) {
     const text = search.trim();
     const pending = photos.setQuery(
       {
@@ -27,12 +27,14 @@
         syntax,
         sort: photoSearchSort({ text: search, syntax }),
       },
-      (cause) => {
-        if (text) reportFailure(photos.session, "search", cause);
-      },
+      explicit
+        ? (cause) => {
+            if (text) reportFailure(photos.session, "search", cause);
+          }
+        : undefined,
     );
     void pending?.then((outcome) => {
-      if (!text || !outcome) return;
+      if (!explicit || !text || !outcome) return;
       if (outcome.accepted) return reportSearch(photos.session, "text", outcome.empty);
       reportFailure(photos.session, "search", outcome.cause);
     });
@@ -44,7 +46,7 @@
   class="search"
   onsubmit={(event) => {
     event.preventDefault();
-    submit();
+    submit(true);
   }}
 >
   <SearchInput

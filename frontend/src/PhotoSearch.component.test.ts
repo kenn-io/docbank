@@ -66,10 +66,11 @@ it.each(["simple", "advanced"] as const)("submits %s text", async (syntax) => {
       syntax,
       filters: { cameras: ["Synthetic camera"] },
     }),
+    expect.any(Function),
   );
   photos.baseQuery = { ...photos.baseQuery, text: "camera" };
   await fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
-  expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ text: "", syntax }));
+  expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ text: "", syntax }), undefined);
   photos.dispose();
 });
 
@@ -148,6 +149,7 @@ it("applies the draft when the search mode changes", async () => {
   await fireEvent.click(await screen.findByRole("option", { name: "Plain words" }));
   expect(submit).toHaveBeenLastCalledWith(
     expect.objectContaining({ text: "rating:5", syntax: "simple" }),
+    undefined,
   );
   photos.baseQuery = photos.query = { ...photos.baseQuery, text: "camera" };
   await tick();
@@ -159,7 +161,37 @@ it("applies the draft when the search mode changes", async () => {
   await fireEvent.click(await screen.findByRole("option", { name: "Query syntax" }));
   expect(submit).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ text: "", syntax: "advanced" }),
+    undefined,
   );
+  photos.dispose();
+});
+
+it("reports nothing when the search mode changes with applied text", async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.baseQuery = photos.query = { ...photos.baseQuery, text: "Nikon" };
+  render(PhotoSearch, { photos });
+  const outcomes = [
+    Response.json({ items: [{ id: "a" }], total: 1, facets: [] }),
+    Response.json({ items: [], total: 0, facets: [] }),
+    new Response("unavailable", { status: 500 }),
+  ];
+  for (const [name, next] of [
+    ["Plain words", "Query syntax"],
+    ["Query syntax", "Plain words"],
+    ["Plain words", "Query syntax"],
+  ]) {
+    fetcher.mockResolvedValueOnce(outcomes.shift());
+    await fireEvent.click(screen.getByRole("combobox", { name: `Search mode: ${name}` }));
+    await fireEvent.click(await screen.findByRole("option", { name: next }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    await waitFor(() => expect(photos.loading).toBe(false));
+    fetcher.mockClear();
+  }
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(actions.reportFailure).not.toHaveBeenCalled();
   photos.dispose();
 });
 
