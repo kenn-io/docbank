@@ -22,8 +22,12 @@ import (
 	"go.kenn.io/docbank/internal/home"
 )
 
-var docbankBuildDir string
-var docbankBuilds sync.Map
+var docbankBuildDir string // TestMain in edit_test.go sets this directory.
+var docbankBuildMu sync.Mutex
+var docbankBuilds = map[string]struct {
+	bin string
+	err error
+}{}
 
 func buildDocbank(tb testing.TB) string {
 	tb.Helper()
@@ -37,31 +41,36 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
-	build, _ := docbankBuilds.LoadOrStore(v, sync.OnceValues(func() (string, error) {
-		dir, err := os.MkdirTemp(docbankBuildDir, "build-")
-		if err != nil {
-			return "", err
-		}
-		name := "docbank"
-		if runtime.GOOS == "windows" {
-			name += ".exe"
-		}
-		bin := filepath.Join(dir, name)
-		args := []string{"build", "-tags", "fts5"}
-		if v != "" {
-			args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
-		}
-		args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
-		cmd := exec.Command("go", args...)
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("build docbank: %w\n%s", err, out)
-		}
-		return bin, nil
-	}))
-	bin, err := build.(func() (string, error))()
-	require.NoError(tb, err)
-	return bin
+	docbankBuildMu.Lock()
+	defer docbankBuildMu.Unlock()
+	build, ok := docbankBuilds[v]
+	if !ok {
+		build.bin, build.err = func() (string, error) {
+			dir, err := os.MkdirTemp(docbankBuildDir, "build-")
+			if err != nil {
+				return "", err
+			}
+			name := "docbank"
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			bin := filepath.Join(dir, name)
+			args := []string{"build", "-tags", "fts5"}
+			if v != "" {
+				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
+			}
+			args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
+			cmd := exec.Command("go", args...)
+			cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return "", fmt.Errorf("build docbank: %w\n%s", err, out)
+			}
+			return bin, nil
+		}()
+		docbankBuilds[v] = build
+	}
+	require.NoError(tb, build.err)
+	return build.bin
 }
 
 var pidRe = regexp.MustCompile(`pid (\d+)`)
