@@ -584,33 +584,35 @@ func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]an
 }
 
 // A released photo with a sidecar is queued for XMP sync without a new mutation.
-func TestUpgradeReleasedV0151QueuesSidecarPhotos(t *testing.T) {
+func TestUpgradeReleasedSchemasQueueSidecarPhotos(t *testing.T) {
 	t.Parallel()
-	for _, driver := range v090UpgradeDrivers() {
-		t.Run(driver.name, func(t *testing.T) {
-			ctx := t.Context()
-			path := filepath.Join(t.TempDir(), "docbank.db")
-			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0151SQL, 29)
-			raw := createReleasedFixtureFile(t, legacy, "capture.ARW", fakeHash("a1"), 4, "application/octet-stream")
-			jpeg := createReleasedFixtureFile(t, legacy, "capture.JPG", fakeHash("b2"), 4, "image/jpeg")
-			sidecar := createReleasedFixtureFile(t, legacy, "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml")
-			seedReleasedPhotoAsset(t, db, jpeg.ID)
-			const assetID = "40000000-0000-4000-8000-000000000001"
-			rawID, sidecarID := uuid.New().String(), uuid.New().String()
-			_, err := db.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at)
+	for _, version := range []int{29, 41} {
+		for _, driver := range v090UpgradeDrivers() {
+			t.Run(fmt.Sprintf("v%d/%s", version, driver.name), func(t *testing.T) {
+				ctx := t.Context()
+				path := filepath.Join(t.TempDir(), "docbank.db")
+				db, legacy := newReleasedFixtureStore(t, path, driver.driver, releasedSchemaFixtures[version], version)
+				raw := createReleasedFixtureFile(t, legacy, "capture.ARW", fakeHash("a1"), 4, "application/octet-stream")
+				jpeg := createReleasedFixtureFile(t, legacy, "capture.JPG", fakeHash("b2"), 4, "image/jpeg")
+				sidecar := createReleasedFixtureFile(t, legacy, "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml")
+				seedReleasedPhotoAsset(t, db, jpeg.ID)
+				const assetID = "40000000-0000-4000-8000-000000000001"
+				rawID, sidecarID := uuid.New().String(), uuid.New().String()
+				_, err := db.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at)
 				VALUES(?,?,?,'raw',NULL,?), (?,?,?,'sidecar',?,?)`, rawID, assetID, raw.ID, raw.CreatedAt, sidecarID, assetID, sidecar.ID, rawID, sidecar.CreatedAt)
-			require.NoError(t, err)
-			_, err = db.Exec(`UPDATE photo_assets SET revision=2,display_file_id=? WHERE asset_id=?`, rawID, assetID)
-			require.NoError(t, err)
-			seedReleasedXMPOrientation(t, db, raw)
-			require.NoError(t, db.Close())
-			s, err := Open(path, driver.driver)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, s.Close()) })
-			targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
-			require.NoError(t, err)
-			require.Contains(t, targets, PhotoSidecarTarget{FileID: rawID, NodeID: raw.ID, AssetID: assetID}, "released photos must be queued without a new mutation")
-		})
+				require.NoError(t, err)
+				_, err = db.Exec(`UPDATE photo_assets SET revision=2,display_file_id=? WHERE asset_id=?`, rawID, assetID)
+				require.NoError(t, err)
+				seedReleasedXMPOrientation(t, db, raw)
+				require.NoError(t, db.Close())
+				s, err := Open(path, driver.driver)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, s.Close()) })
+				targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
+				require.NoError(t, err)
+				require.Contains(t, targets, PhotoSidecarTarget{FileID: rawID, NodeID: raw.ID, AssetID: assetID}, "released photos must be queued without a new mutation")
+			})
+		}
 	}
 }
 
