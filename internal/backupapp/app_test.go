@@ -291,8 +291,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	preference := "image"
-	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, store.PhotoSettingsUpdate{Preference: &preference})
+	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, store.PhotoSettingsUpdate{Preference: new("image")})
 	require.NoError(t, err)
 
 	album, err := fixture.metadata.CreatePhotoSet(ctx, "Recovered album")
@@ -342,8 +341,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	assert.NotNil(t, restoredNode.TrashedAt)
 	settings, err := restored.PhotoSettings(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, settings.Preference)
-	assert.Equal(t, "image", *settings.Preference)
+	assert.Equal(t, new("image"), settings.Preference)
 	restoredAlbum, err := restored.PhotoSet(ctx, album.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "Recovered album", restoredAlbum.Name)

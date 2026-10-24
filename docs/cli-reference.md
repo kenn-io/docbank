@@ -195,7 +195,8 @@ docbank photos faces withdraw-rejection <content-version-id> --face ID --person 
 docbank photos faces undo <receipt-id>
 docbank photos settings show
 docbank photos settings set [raw|image] [--burst-gap-seconds SECONDS] [--revision REV]
-docbank photos settings reset [--revision REV]
+docbank photos settings set <key> <value> [--revision REV]
+docbank photos settings reset [key] [--revision REV]
 docbank photos hidden setup|change|disable|lock|state|reset
 docbank photos assets hide <asset-id> [--revision REV]
 docbank photos assets unhide <asset-id|node-selector> [--revision REV]
@@ -220,6 +221,8 @@ instead. `inspect` also accepts an `id:N` or path selector for a member file.
 image member and never become the display member. `timeline` counts the photos
 a QueryV1 scope selects by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
+
+Runtime keys are `backup.interval`, `backup.keep_last`, and `photos.hidden_unlock_lifetime`. Durations use Go syntax, such as `1h` or `15m`. Reset restores config inheritance for backup keys and five minutes for Hidden. Paths and credentials belong in `config.toml`; browser sessions cannot write runtime overrides.
 
 Photo assets, albums, memberships, settings, receipts, and checkout definitions are included in JSONL backup and restore. Sidecars require a selected eligible original; name errors skip the whole affected photo. The estimate and the checkout in create, status, and list JSON report up to 20 `skipped_photos` details and the total `skipped_photo_count`; status and list also print a short skip summary to stderr. A selection with no remaining files fails. Failed and cancelled checkouts release unpublished source holds and destination reservations. Published or uncertain copies retain their bases until `photos checkout retire <checkout-id>` releases all holds. Retirement preserves copies and history. Queued or running work keeps retirement pending until it finishes or is cancelled; if the lane is paused, resume or cancel the job through Jobs first.
 

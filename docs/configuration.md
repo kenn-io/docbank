@@ -215,6 +215,8 @@ exclude = [".DS_Store", "cache/"]
 - **`[backup] interval`**: schedules captures at this interval. `"0"` disables
   the schedule. An enabled schedule requires a configured `repo` and a positive
   `keep_last`. Values must be nonnegative; enabled intervals must be at least one minute.
+  A stored `photos settings` override takes precedence over this value.
+  `docbank photos settings reset backup.interval` returns control to `config.toml`.
 - **`[backup] keep_last`**: number of scheduled snapshots to retain after each
   capture. Values must be nonnegative. Manual snapshots remain outside this policy.
 - **`[storage] pack_interval`**: schedules non-destructive packing of

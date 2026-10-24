@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -38,7 +39,7 @@ type photoHiddenOutput struct {
 }
 
 func hiddenCookie(host, token string, expires time.Time) string {
-	cookie := &http.Cookie{Name: photoHiddenCookie(host), Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 300, Expires: expires} //nolint:gosec // The daemon serves loopback HTTP, which cannot deliver Secure cookies.
+	cookie := &http.Cookie{Name: photoHiddenCookie(host), Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: max(1, int(math.Ceil(time.Until(expires).Seconds()))), Expires: expires} //nolint:gosec // The daemon serves loopback HTTP, which cannot deliver Secure cookies.
 	if token == "" {
 		cookie.MaxAge = -1
 	}

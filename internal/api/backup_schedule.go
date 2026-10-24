@@ -8,31 +8,111 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/internal/backupapp"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
 	"go.kenn.io/kit/backup"
 )
 
+// effectiveBackupConfig overlays the vault's runtime settings on config.toml.
+func effectiveBackupConfig(cfg config.BackupConfig, settings store.PhotoSettings) config.BackupConfig {
+	if settings.BackupIntervalSeconds != nil {
+		cfg.Interval = config.Duration(time.Duration(*settings.BackupIntervalSeconds) * time.Second)
+	}
+	if settings.BackupKeepLast != nil {
+		cfg.KeepLast = *settings.BackupKeepLast
+	}
+	return cfg
+}
+
+// StartBackupSchedule starts a job only when the effective schedule is enabled.
+func StartBackupSchedule(ctx context.Context, d Deps) error {
+	settings, err := d.Store.PhotoSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if effectiveBackupConfig(d.Cfg.Backup, settings).Interval.Std() <= 0 {
+		return nil
+	}
+	return startBackupSchedule(d)
+}
+
+func startBackupSchedule(d Deps) error {
+	if d.Jobs == nil {
+		return nil
+	}
+	err := d.Jobs.Start("backup:scheduled", func(ctx context.Context) error {
+		return RunBackupSchedule(ctx, d)
+	})
+	if errors.Is(err, jobs.ErrDuplicate) || errors.Is(err, jobs.ErrClosed) {
+		return nil
+	}
+	return err
+}
+
 // RunBackupSchedule runs serial captures until its supervisor cancels the job.
 // Repositories must already be initialized by the operator.
 func RunBackupSchedule(ctx context.Context, d Deps) error {
-	interval := d.Cfg.Backup.Interval.Std()
-	if interval <= 0 {
-		return nil
-	}
 	logger := d.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	retry := min(interval, 5*time.Minute)
+	holding := false
+	defer func() {
+		if holding && d.Tracker != nil {
+			d.Tracker.End()
+		}
+	}()
 	captureDue := false
 	lastFailure := ""
+	reportFailure := func(err error, retry time.Duration) {
+		jobs.ReportError(ctx, err)
+		if failure := err.Error(); failure != lastFailure {
+			logger.Error("scheduled backup failed", "error", err, "retry_in", retry)
+			lastFailure = failure
+		}
+	}
 	schedule := backupSchedule{}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		delay, attempted, err := schedule.capture(ctx, d, logger, captureDue)
+		settings, err := d.Store.PhotoSettings(ctx)
+		cfg := effectiveBackupConfig(d.Cfg.Backup, settings)
+		interval := cfg.Interval.Std()
+		if interval > 0 {
+			if !holding && d.Tracker != nil {
+				d.Tracker.Begin()
+			}
+			holding = true
+		}
+		if err == nil {
+			err = cfg.ValidateSchedule()
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			reportFailure(err, time.Minute)
+			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
+				return err
+			}
+			continue
+		}
+		if interval <= 0 {
+			if holding && d.Tracker != nil {
+				d.Tracker.End()
+			}
+			holding, captureDue, lastFailure = false, false, ""
+			jobs.ReportError(ctx, nil)
+			if err := waitBackupSchedule(ctx, time.Minute, d.BackupScheduleWake); err != nil {
+				return err
+			}
+			continue
+		}
+		retry := min(interval, 5*time.Minute)
+		delay, attempted, err := schedule.capture(ctx, d, logger, cfg, captureDue)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -40,19 +120,31 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 			if schedule.stale {
 				err = fmt.Errorf("%w; newest scheduled backup is stale", err)
 			}
-			jobs.ReportError(ctx, err)
-			if failure := err.Error(); failure != lastFailure {
-				logger.Error("scheduled backup failed", "error", err, "retry_in", retry)
-				lastFailure = failure
-			}
+			reportFailure(err, retry)
 			delay = retry
 		} else {
+			captureDue = false
 			lastFailure = ""
 		}
-		if err := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now); err != nil {
-			return err
+		changed := false
+		if waitErr := waitBackupDeadline(ctx, time.Now().Add(delay), time.Now, d.BackupScheduleWake, func() (bool, error) {
+			next, readErr := d.Store.PhotoSettings(ctx)
+			if readErr != nil {
+				reportFailure(readErr, time.Minute)
+				return false, nil
+			}
+			if err == nil && lastFailure != "" {
+				jobs.ReportError(ctx, nil)
+				lastFailure = ""
+			}
+			changed = effectiveBackupConfig(d.Cfg.Backup, next).Interval != cfg.Interval
+			return changed, nil
+		}); waitErr != nil {
+			return waitErr
 		}
-		if attempted || err == nil {
+		if changed {
+			captureDue = false
+		} else if attempted || err == nil {
 			// Preserve due captures across failures and consume successful wait deadlines.
 			// Preflight failures leave captureDue unchanged: they haven't established a capture is due.
 			captureDue = true
@@ -60,22 +152,40 @@ func RunBackupSchedule(ctx context.Context, d Deps) error {
 	}
 }
 
-func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time.Time) error {
+func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time.Time, wake <-chan struct{}, changed func() (bool, error)) error {
 	// Wall time counts suspension, while timer clocks can stop during sleep.
-	// Poll only the deadline so retries keep their original delay.
+	// Read settings at each minute wake so runtime changes recompute the deadline.
 	wallDeadline := deadline.Round(0)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if changed != nil {
+			if changed, err := changed(); changed || err != nil {
+				return err
+			}
 		}
 		// The original monotonic deadline also bounds waits when wall time moves back.
 		remaining := min(time.Until(deadline), wallDeadline.Sub(now().Round(0)))
 		if remaining <= 0 {
 			return nil
 		}
-		if err := jobs.Wait(ctx, min(remaining, time.Minute)); err != nil {
+		if err := waitBackupSchedule(ctx, min(remaining, time.Minute), wake); err != nil {
 			return err
 		}
+	}
+}
+
+func waitBackupSchedule(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-wake:
+		return nil
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -83,9 +193,9 @@ type backupSchedule struct {
 	stale bool
 }
 
-func (s *backupSchedule) capture(ctx context.Context, d Deps, logger *slog.Logger, captureDue bool) (time.Duration, bool, error) {
-	interval := d.Cfg.Backup.Interval.Std()
-	repo, err := backup.Open(d.Cfg.Backup.Repo)
+func (s *backupSchedule) capture(ctx context.Context, d Deps, logger *slog.Logger, cfg config.BackupConfig, captureDue bool) (time.Duration, bool, error) {
+	interval := cfg.Interval.Std()
+	repo, err := backup.Open(cfg.Repo)
 	if err != nil {
 		return 0, false, fmt.Errorf("opening scheduled backup repository: %w", err)
 	}
@@ -113,7 +223,7 @@ func (s *backupSchedule) capture(ctx context.Context, d Deps, logger *slog.Logge
 	s.stale = false
 	logger.Info("scheduled backup captured", "snapshot", snapshot.ID)
 	// Cleanup errors surface in Jobs and retry after the next capture.
-	err = retainScheduledBackups(ctx, repo, tag, d.Cfg.Backup.KeepLast)
+	err = retainScheduledBackups(ctx, repo, tag, cfg.KeepLast)
 	jobs.ReportError(ctx, err)
 	if err != nil {
 		logger.Warn("scheduled backup cleanup failed", "error", err)

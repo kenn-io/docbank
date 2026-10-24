@@ -49,7 +49,7 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 	asset.Agreement = photoAgreement(asset.Files)
 	choice := selectPhotoDisplay(asset.Files, settings.Preference, asset.DisplayOverrideFileID)
 	asset.DisplaySource = choice.Source
-	if !equalPhotoString(asset.DisplayFileID, choice.FileID) {
+	if !equalPhotoOptional(asset.DisplayFileID, choice.FileID) {
 		return PhotoAsset{}, fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, asset.ID)
 	}
 	if err := validatePhotoAssetPointers(asset, asset.Files); err != nil {
@@ -77,9 +77,9 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 	var settings PhotoSettings
 	var preference sql.NullString
 	err := q.QueryRowContext(ctx, `
-		SELECT preference, revision, updated_at, COALESCE(burst_gap_seconds,2)
+		SELECT preference, revision, updated_at, COALESCE(burst_gap_seconds,2), backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds
 		FROM photo_library_settings WHERE singleton=1`).Scan(
-		&preference, &settings.Revision, &settings.UpdatedAt, &settings.BurstGapSeconds,
+		&preference, &settings.Revision, &settings.UpdatedAt, &settings.BurstGapSeconds, &settings.BackupIntervalSeconds, &settings.BackupKeepLast, &settings.HiddenUnlockLifetimeSeconds,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoSettings{Revision: 1, UpdatedAt: "", BurstGapSeconds: 2}, nil
@@ -198,7 +198,7 @@ func photoAssetMemberChanges(before, after PhotoAsset) []photoReceiptMemberChang
 	for _, id := range ordered {
 		beforeFile, hadBefore := beforeByID[id]
 		afterFile, hadAfter := afterByID[id]
-		if hadBefore && hadAfter && beforeFile.NodeID == afterFile.NodeID && beforeFile.Role == afterFile.Role && equalPhotoString(beforeFile.SidecarOfID, afterFile.SidecarOfID) {
+		if hadBefore && hadAfter && beforeFile.NodeID == afterFile.NodeID && beforeFile.Role == afterFile.Role && equalPhotoOptional(beforeFile.SidecarOfID, afterFile.SidecarOfID) {
 			continue
 		}
 		change := photoReceiptMemberChange{FileID: id}
@@ -230,10 +230,13 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 
 func photoSettingsState(settings PhotoSettings) any {
 	return struct {
-		BurstGapSeconds int     `json:"burst_gap_seconds"`
-		Preference      *string `json:"preference"`
-		Revision        int64   `json:"revision"`
-	}{settings.BurstGapSeconds, settings.Preference, settings.Revision}
+		BurstGapSeconds             int     `json:"burst_gap_seconds"`
+		Preference                  *string `json:"preference"`
+		Revision                    int64   `json:"revision"`
+		BackupIntervalSeconds       *int64  `json:"backup_interval_seconds,omitzero"`
+		BackupKeepLast              *int    `json:"backup_keep_last,omitzero"`
+		HiddenUnlockLifetimeSeconds *int64  `json:"hidden_unlock_lifetime_seconds,omitzero"`
+	}{settings.BurstGapSeconds, settings.Preference, settings.Revision, settings.BackupIntervalSeconds, settings.BackupKeepLast, settings.HiddenUnlockLifetimeSeconds}
 }
 
 func marshalPhotoState(value any) (string, error) {
@@ -306,7 +309,7 @@ func nullablePhotoText(value string) any {
 	return value
 }
 
-func equalPhotoString(left, right *string) bool {
+func equalPhotoOptional[T comparable](left, right *T) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
@@ -825,7 +828,7 @@ func (s *Store) SetPhotoDisplay(ctx context.Context, assetID string, revision in
 				return false, fmt.Errorf("%w: sidecars cannot display", ErrInvalidPhotoAsset)
 			}
 		}
-		if equalPhotoString(asset.DisplayOverrideFileID, override) {
+		if equalPhotoOptional(asset.DisplayOverrideFileID, override) {
 			return false, nil
 		}
 		asset.DisplayOverrideFileID = override
@@ -842,23 +845,29 @@ func photoFileByID(files []PhotoFile, id string) (PhotoFile, bool) {
 	return PhotoFile{}, false
 }
 
-// PhotoSettingsUpdate changes the display preference, the burst gap, or both.
-// Gap-only updates keep the preference. ResetPreference clears it, including
-// with a gap update. An empty update resets the preference and keeps the gap.
+// PhotoSettingsUpdate keeps omitted overrides. Reset flags restore inheritance.
+// An empty update resets the display preference.
 type PhotoSettingsUpdate struct {
-	Preference      *string
-	ResetPreference bool
-	BurstGapSeconds *int
+	BurstGapSeconds             *int
+	Preference                  *string
+	ResetPreference             bool
+	BackupIntervalSeconds       *int64
+	ResetBackupInterval         bool
+	BackupKeepLast              *int
+	ResetBackupKeepLast         bool
+	HiddenUnlockLifetimeSeconds *int64
+	ResetHiddenUnlockLifetime   bool
+	ValidateSchedule            func(PhotoSettings) error
 }
 
-// SetPhotoSettings applies one settings update with one revision and receipt.
-// A preference change atomically fans the inherited choice across every asset.
+// SetPhotoSettings applies one update with one revision and receipt. Only
+// preference changes recompute and validate the photo graph.
 func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update PhotoSettingsUpdate) (PhotoSettings, error) {
 	if revision < 1 {
 		return PhotoSettings{}, fmt.Errorf("%w: revision must be positive", ErrStaleRevision)
 	}
-	if !photoPreferenceValid(update.Preference) || update.ResetPreference && update.Preference != nil {
-		return PhotoSettings{}, fmt.Errorf("%w: invalid preference", ErrInvalidPhotoAsset)
+	if update.ResetPreference && update.Preference != nil || update.ResetBackupInterval && update.BackupIntervalSeconds != nil || update.ResetBackupKeepLast && update.BackupKeepLast != nil || update.ResetHiddenUnlockLifetime && update.HiddenUnlockLifetimeSeconds != nil {
+		return PhotoSettings{}, fmt.Errorf("%w: a setting cannot be set and reset together", ErrInvalidPhotoAsset)
 	}
 	if gap := update.BurstGapSeconds; gap != nil && (*gap < 1 || *gap > 30) {
 		return PhotoSettings{}, fmt.Errorf("%w: burst gap must be 1 to 30 seconds", ErrInvalidPhotoAsset)
@@ -873,13 +882,30 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			return fmt.Errorf("photo settings at revision %d, expected %d: %w", current.Revision, revision, ErrStaleRevision)
 		}
 		next := current
-		if update.Preference != nil || update.ResetPreference || update.BurstGapSeconds == nil {
-			next.Preference = update.Preference
-		}
 		if update.BurstGapSeconds != nil {
 			next.BurstGapSeconds = *update.BurstGapSeconds
 		}
-		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoString(current.Preference, next.Preference) {
+		if update.Preference != nil || update.ResetPreference || update.BurstGapSeconds == nil && update.BackupIntervalSeconds == nil && update.BackupKeepLast == nil && update.HiddenUnlockLifetimeSeconds == nil && !update.ResetBackupInterval && !update.ResetBackupKeepLast && !update.ResetHiddenUnlockLifetime {
+			next.Preference = update.Preference
+		}
+		if update.BackupIntervalSeconds != nil || update.ResetBackupInterval {
+			next.BackupIntervalSeconds = update.BackupIntervalSeconds
+		}
+		if update.BackupKeepLast != nil || update.ResetBackupKeepLast {
+			next.BackupKeepLast = update.BackupKeepLast
+		}
+		if update.HiddenUnlockLifetimeSeconds != nil || update.ResetHiddenUnlockLifetime {
+			next.HiddenUnlockLifetimeSeconds = update.HiddenUnlockLifetimeSeconds
+		}
+		if err := ValidatePhotoSettings(next); err != nil {
+			return err
+		}
+		if update.ValidateSchedule != nil && (!equalPhotoOptional(current.BackupIntervalSeconds, next.BackupIntervalSeconds) || !equalPhotoOptional(current.BackupKeepLast, next.BackupKeepLast)) {
+			if err := update.ValidateSchedule(next); err != nil {
+				return err
+			}
+		}
+		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoOptional(current.Preference, next.Preference) && equalPhotoOptional(current.BackupIntervalSeconds, next.BackupIntervalSeconds) && equalPhotoOptional(current.BackupKeepLast, next.BackupKeepLast) && equalPhotoOptional(current.HiddenUnlockLifetimeSeconds, next.HiddenUnlockLifetimeSeconds) {
 			result = current
 			return nil
 		}
@@ -887,7 +913,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		if err != nil {
 			return err
 		}
-		if active && !equalPhotoString(current.Preference, next.Preference) {
+		if active && !equalPhotoOptional(current.Preference, next.Preference) {
 			return fmt.Errorf("%w: display preference cannot be changed in an audited vault; set the burst gap without a preference", ErrAuditMutationUnsupported)
 		}
 		priorBurst, err := photoBurstSettingsTx(ctx, tx)
@@ -896,13 +922,13 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		}
 		// Read assets before the new preference is visible; reads resolve the display choice.
 		var assets []PhotoAsset
-		if !equalPhotoString(current.Preference, next.Preference) {
+		if !equalPhotoOptional(current.Preference, next.Preference) {
 			if assets, err = allPhotoAssetsTx(ctx, tx); err != nil {
 				return err
 			}
 		}
 		next.Revision, next.UpdatedAt = current.Revision+1, nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds,backup_interval_seconds=excluded.backup_interval_seconds,backup_keep_last=excluded.backup_keep_last,hidden_unlock_lifetime_seconds=excluded.hidden_unlock_lifetime_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds, next.BackupIntervalSeconds, next.BackupKeepLast, next.HiddenUnlockLifetimeSeconds); err != nil {
 			return err
 		}
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
@@ -921,7 +947,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		}
 		for _, asset := range assets {
 			choice := selectPhotoDisplay(asset.Files, next.Preference, asset.DisplayOverrideFileID)
-			if equalPhotoString(asset.DisplayFileID, choice.FileID) {
+			if equalPhotoOptional(asset.DisplayFileID, choice.FileID) {
 				continue
 			}
 			if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {

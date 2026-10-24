@@ -509,6 +509,9 @@ func apiProblemError(e api.Error) error {
 			detail = e.Detail
 		}
 	} else {
+		if e.Status == http.StatusUnprocessableEntity && e.Code == "validation" && len(e.Errors) > 0 {
+			e.Detail += "; " + strings.Join(e.Errors, "; ")
+		}
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
 	if e.Redaction != nil {

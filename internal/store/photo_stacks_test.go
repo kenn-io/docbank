@@ -1143,6 +1143,7 @@ func TestPhotoSettingsUpdates(t *testing.T) {
 		{Preference: new("jpeg"), BurstGapSeconds: new(5)},
 		{ResetPreference: true, Preference: new("image")},
 		{BurstGapSeconds: new(0)},
+		{BackupIntervalSeconds: new(int64(9223372037))},
 	} {
 		_, err = s.SetPhotoSettings(t.Context(), 1, invalid)
 		require.ErrorIs(t, err, ErrInvalidPhotoAsset)
@@ -1166,18 +1167,38 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	burstPhotos(t, s, 1)
-	_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image"), BurstGapSeconds: new(4)})
+	_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image"), BurstGapSeconds: new(4), BackupIntervalSeconds: new(int64(3600)), BackupKeepLast: new(5), HiddenUnlockLifetimeSeconds: new(int64(900))})
 	require.NoError(t, err)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	require.Contains(t, exported.String(), `"burst_gap_seconds":4`)
 	require.Contains(t, exported.String(), `,"representative_sequence":null`)
+	restoredOverrides := newTestStore(t)
+	require.NoError(t, restoredOverrides.ImportMetadata(t.Context(), strings.NewReader(exported.String())))
+	overrides, err := restoredOverrides.PhotoSettings(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, new(int64(3600)), overrides.BackupIntervalSeconds)
+	require.Equal(t, new(5), overrides.BackupKeepLast)
+	require.Equal(t, new(int64(900)), overrides.HiddenUnlockLifetimeSeconds)
+	largest := newTestStore(t)
+	require.NoError(t, largest.ImportMetadata(t.Context(), strings.NewReader(strings.ReplaceAll(exported.String(), `"backup_interval_seconds":3600`, `"backup_interval_seconds":9223372036`))))
+	largestSettings, err := largest.PhotoSettings(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, new(int64(9223372036)), largestSettings.BackupIntervalSeconds)
+	for _, bad := range []string{
+		strings.ReplaceAll(exported.String(), `"backup_interval_seconds":3600`, `"backup_interval_seconds":-1`),
+		strings.ReplaceAll(exported.String(), `"backup_keep_last":5`, `"backup_keep_last":0`),
+		strings.ReplaceAll(exported.String(), `"hidden_unlock_lifetime_seconds":900`, `"hidden_unlock_lifetime_seconds":86401`),
+	} {
+		require.ErrorContains(t, newTestStore(t).ImportMetadata(t.Context(), strings.NewReader(bad)), "invalid photo settings metadata")
+	}
 	missingSequence := strings.ReplaceAll(exported.String(), `,"representative_sequence":null`, "")
 	require.NotContains(t, missingSequence, `"representative_sequence"`)
 	require.ErrorContains(t, newTestStore(t).ImportMetadata(t.Context(), strings.NewReader(missingSequence)), "representative_sequence")
 	legacySettings := strings.ReplaceAll(exported.String(), `,"burst_gap_seconds":4`, "")
 	v1 := strings.ReplaceAll(strings.ReplaceAll(legacySettings, `,"representative_sequence":null`, ""), `"version":2`, `"version":1`)
 	v1 = strings.ReplaceAll(v1, `"flag_owner":"",`, "")
+	v1 = strings.NewReplacer(`"backup_interval_seconds":3600,`, "", `"backup_keep_last":5,`, "", `"hidden_unlock_lifetime_seconds":900,`, "").Replace(v1)
 	require.Contains(t, strings.SplitN(v1, "\n", 2)[0], `"version":1`)
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(v1)))
@@ -1188,6 +1209,9 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, new("image"), settings.Preference)
 	require.Equal(t, 2, settings.BurstGapSeconds)
+	require.Nil(t, settings.BackupIntervalSeconds)
+	require.Nil(t, settings.BackupKeepLast)
+	require.Nil(t, settings.HiddenUnlockLifetimeSeconds)
 	for _, sequence := range []struct {
 		name string
 		wire string

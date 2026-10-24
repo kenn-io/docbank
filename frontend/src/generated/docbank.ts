@@ -6286,11 +6286,17 @@ export const PhotoSettingsPreference = {
 export interface PhotoSettings {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @nullable */
+  backup_interval_seconds?: number | null;
+  /** @nullable */
+  backup_keep_last?: number | null;
   /**
      * @minimum 1
      * @maximum 30
      */
   burst_gap_seconds: number;
+  /** @nullable */
+  hidden_unlock_lifetime_seconds?: number | null;
   /** @nullable */
   preference?: PhotoSettingsPreference;
   /** @minimum 1 */
@@ -7687,7 +7693,7 @@ export interface SetPhotoExcludedRequest {
 }
 
 /**
- * Omit to keep the display preference when changing the burst gap, or reset it otherwise.
+ * Omit to keep the preference when updating other fields, or reset it for an empty update.
  * @nullable
  */
 export type SetPhotoSettingsRequestPreference = typeof SetPhotoSettingsRequestPreference[keyof typeof SetPhotoSettingsRequestPreference] | null;
@@ -7702,6 +7708,17 @@ export interface SetPhotoSettingsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
+     * Omit to keep the override.
+     * @minimum 0
+     * @maximum 9223372036
+     */
+  backup_interval_seconds?: number;
+  /**
+     * Omit to keep the override.
+     * @minimum 1
+     */
+  backup_keep_last?: number;
+  /**
      * Omit to keep the burst gap.
      * @minimum 1
      * @maximum 30
@@ -7709,11 +7726,23 @@ export interface SetPhotoSettingsRequest {
      */
   burst_gap_seconds?: number | null;
   /**
-     * Omit to keep the display preference when changing the burst gap, or reset it otherwise.
+     * Omit to keep the override.
+     * @minimum 1
+     * @maximum 86400
+     */
+  hidden_unlock_lifetime_seconds?: number;
+  /**
+     * Omit to keep the preference when updating other fields, or reset it for an empty update.
      * @nullable
      */
   preference?: SetPhotoSettingsRequestPreference;
-  /** Reset the display preference, including when changing the burst gap. Conflicts with preference. */
+  /** Reset the backup interval to config inheritance. */
+  reset_backup_interval?: boolean;
+  /** Reset retention to config inheritance. */
+  reset_backup_keep_last?: boolean;
+  /** Reset Hidden unlock lifetime to five minutes. */
+  reset_hidden_unlock_lifetime?: boolean;
+  /** Reset preference to its default. Conflicts with preference. */
   reset_preference?: boolean;
 }
 

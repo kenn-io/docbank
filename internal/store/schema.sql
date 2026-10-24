@@ -2411,6 +2411,9 @@ CREATE TABLE IF NOT EXISTS photo_library_settings (
     revision     INTEGER NOT NULL DEFAULT 1,
     updated_at   TEXT NOT NULL,
     burst_gap_seconds INTEGER,
+    backup_interval_seconds INTEGER,
+    backup_keep_last INTEGER,
+    hidden_unlock_lifetime_seconds INTEGER,
     representative_sequence INTEGER
 );
 

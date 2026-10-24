@@ -3,7 +3,10 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,15 +22,16 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
 
-func backupTestDeps(t *testing.T) Deps {
+func backupTestDeps(t *testing.T, drivers ...sqlite.Driver) Deps {
 	t.Helper()
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	metadata, err := store.Open(filepath.Join(root, "docbank.db"), drivers...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	dir := filepath.Join(root, "blobs")
@@ -38,12 +42,13 @@ func backupTestDeps(t *testing.T) Deps {
 	return Deps{Store: metadata, Blobs: blobs, VaultRoot: root, Gate: NewOperationGate(), Logger: slog.New(slog.DiscardHandler)}
 }
 
-func scheduledDeps(t *testing.T) Deps {
+func scheduledDeps(t *testing.T, drivers ...sqlite.Driver) Deps {
 	t.Helper()
-	d := backupTestDeps(t)
+	d := backupTestDeps(t, drivers...)
 	cfg := config.Default()
 	cfg.Backup = config.BackupConfig{Repo: filepath.Join(t.TempDir(), "repo"), Interval: config.Duration(time.Hour), KeepLast: 1}
 	d.Cfg = cfg
+	d.BackupScheduleWake = make(chan struct{}, 1)
 	return d
 }
 
@@ -68,7 +73,7 @@ func TestBackupScheduleDeadlineAfterResume(t *testing.T) {
 					finished <- waitBackupDeadline(t.Context(), deadline, func() time.Time {
 						// Adjust wall time independently of timer time for sleep or clock correction.
 						return time.Now().Add(time.Duration(suspended.Load()))
-					})
+					}, nil, nil)
 				}()
 				synctest.Wait()
 				suspended.Store(int64(tc.suspend))
@@ -112,7 +117,7 @@ func TestBackupScheduleCaptureAndRetention(t *testing.T) {
 		require.NoError(t, err)
 		time.Sleep(time.Second)
 		schedule := backupSchedule{}
-		_, _, err = schedule.capture(t.Context(), d, d.Logger, false)
+		_, _, err = schedule.capture(t.Context(), d, d.Logger, d.Cfg.Backup, false)
 		require.NoError(t, err)
 		points, err := repo.ListSnapshots()
 		require.NoError(t, err)
@@ -121,7 +126,7 @@ func TestBackupScheduleCaptureAndRetention(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 		firstScheduled := points[0].SnapshotID
 		time.Sleep(time.Hour)
-		_, _, err = schedule.capture(t.Context(), d, d.Logger, false)
+		_, _, err = schedule.capture(t.Context(), d, d.Logger, d.Cfg.Backup, false)
 		require.NoError(t, err)
 		points, err = repo.ListSnapshots()
 		require.NoError(t, err)
@@ -241,4 +246,265 @@ func TestBackupScheduleLogsUnchangedFailuresOnce(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestBackupScheduleRuntimeOverrides(t *testing.T) {
+	t.Parallel()
+	t.Run("interval", testBackupScheduleRuntimeIntervalOverrides)
+	t.Run("retention preserves deadline", testBackupScheduleRuntimeRetentionOverride)
+}
+
+func testBackupScheduleRuntimeRetentionOverride(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		d.Cfg.Backup.Interval = config.Duration(24 * time.Hour)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+		require.NoError(t, err)
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		_, err = backup.Forget(t.Context(), repo, backup.ForgetOptions{SnapshotIDs: []string{points[0].SnapshotID}, AllowEmpty: true})
+		require.NoError(t, err)
+		// Model a backward clock correction without moving synctest's timer clock.
+		points[0].CreatedAt = time.Now().Add(48 * time.Hour).Format(time.RFC3339)
+		_, err = repo.WriteManifest(points[0])
+		require.NoError(t, err)
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		synctest.Wait()
+		time.Sleep(23 * time.Hour)
+		_, err = d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupKeepLast: new(2)})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
+		synctest.Wait()
+		unchanged, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Equal(t, points, unchanged, "retention changes wait for the next capture")
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2, "capture at the original deadline must use the updated retention")
+	})
+}
+
+func testBackupScheduleRuntimeIntervalOverrides(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		d.Cfg.Backup.Interval, d.Cfg.Backup.KeepLast = 0, 0
+		d.Cfg.Server.APIKey = "synthetic-key"
+		d.Tracker = NewActivityTracker()
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		manual, err := backupapp.Create(t.Context(), repo, "test", d.Store, d.Blobs, backup.CreateOptions{Tag: "manual"})
+		require.NoError(t, err)
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		require.Empty(t, d.Jobs.Snapshot())
+		time.Sleep(time.Second)
+		server := NewServer(d)
+		defer server.Close()
+		put := func(revision string, body string) {
+			req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/v1/photos/settings", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Api-Key", d.Cfg.Server.APIKey)
+			req.Header.Set("If-Match", revision)
+			res := httptest.NewRecorder()
+			server.Handler().ServeHTTP(res, req)
+			require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+		}
+		_, err = d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(3600)), BackupKeepLast: new(1)})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		synctest.Wait()
+		require.Len(t, d.Jobs.Snapshot(), 1)
+		require.Zero(t, d.Tracker.IdleFor())
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2)
+		time.Sleep(30 * time.Minute)
+		_, err = d.Store.SetPhotoSettings(t.Context(), 2, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(7200))})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		unchanged, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Equal(t, points, unchanged)
+		time.Sleep(30 * time.Minute)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 2)
+		require.NotEqual(t, unchanged, points)
+		_, err = repo.LoadManifest(manual.SnapshotID)
+		require.NoError(t, err)
+		put(`"3"`, `{"reset_backup_interval":true}`)
+		synctest.Wait()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		require.Positive(t, d.Tracker.IdleFor())
+		time.Sleep(3 * time.Hour)
+		synctest.Wait()
+		unchanged, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Equal(t, points, unchanged)
+		_, err = d.Store.SetPhotoSettings(t.Context(), 4, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(7200))})
+		require.NoError(t, err)
+		d.BackupScheduleWake <- struct{}{}
+		synctest.Wait()
+		time.Sleep(time.Second)
+		require.Zero(t, d.Tracker.IdleFor(), "re-enabled schedule must hold the daemon during its disabled wait")
+		require.NoError(t, d.Jobs.Shutdown(t.Context()))
+		put(`"5"`, `{"backup_interval_seconds":3600}`)
+	})
+}
+
+func TestBackupScheduleInvalidEffectiveConfig(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		d := scheduledDeps(t)
+		d.Tracker = NewActivityTracker()
+		d.Cfg.Backup.Interval, d.Cfg.Backup.KeepLast = 0, 0
+		// Metadata restore validates overrides independently of this daemon's config.
+		_, err := d.Store.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{BackupIntervalSeconds: new(int64(3600))})
+		require.NoError(t, err)
+		repo, err := backup.Init(d.Cfg.Backup.Repo)
+		require.NoError(t, err)
+		var logs bytes.Buffer
+		d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+		d.Jobs = jobs.New(t.Context(), d.Logger)
+		defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+		require.NoError(t, StartBackupSchedule(t.Context(), d))
+		synctest.Wait()
+		require.Contains(t, d.Jobs.Snapshot()[0].Error, "positive keep_last")
+		require.Contains(t, logs.String(), "positive keep_last")
+		time.Sleep(time.Second)
+		require.Zero(t, d.Tracker.IdleFor(), "enabled invalid schedule must hold the daemon")
+		points, err := repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Empty(t, points, "invalid retention must prevent capture")
+		_, err = d.Store.SetPhotoSettings(t.Context(), 2, store.PhotoSettingsUpdate{BackupKeepLast: new(1)})
+		require.NoError(t, err)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		points, err = repo.ListSnapshots()
+		require.NoError(t, err)
+		require.Len(t, points, 1)
+		require.Empty(t, d.Jobs.Snapshot()[0].Error)
+		require.NoError(t, d.Jobs.Shutdown(t.Context()))
+		time.Sleep(time.Second)
+		require.Positive(t, d.Tracker.IdleFor(), "shutdown must release the schedule hold")
+	})
+}
+
+func TestBackupScheduleSettingsReadRetry(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		duringWait     bool
+		futureSnapshot bool
+	}{
+		{name: "initial read"},
+		{name: "deadline read", duringWait: true},
+		{name: "future snapshot deadline read", duringWait: true, futureSnapshot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				driver := &backupReadContentionDriver{Driver: store.DefaultSQLiteDriver()}
+				d := scheduledDeps(t, driver)
+				repo, err := backup.Init(d.Cfg.Backup.Repo)
+				require.NoError(t, err)
+				if tc.futureSnapshot {
+					d.Cfg.Backup.Interval = config.Duration(24 * time.Hour)
+					_, err = createScheduledBackupSnapshot(t.Context(), repo, d)
+					require.NoError(t, err)
+					points, err := repo.ListSnapshots()
+					require.NoError(t, err)
+					require.Len(t, points, 1)
+					_, err = backup.Forget(t.Context(), repo, backup.ForgetOptions{SnapshotIDs: []string{points[0].SnapshotID}, AllowEmpty: true})
+					require.NoError(t, err)
+					// Model a backward clock correction without moving synctest's timer clock.
+					points[0].CreatedAt = time.Now().Add(48 * time.Hour).Format(time.RFC3339)
+					_, err = repo.WriteManifest(points[0])
+					require.NoError(t, err)
+				}
+				db, err := driver.Driver.Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate, BusyTimeout: time.Millisecond})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, db.Close()) }()
+				db.SetMaxOpenConns(1)
+				d.Jobs = jobs.New(t.Context(), d.Logger)
+				defer func() { require.NoError(t, d.Jobs.Shutdown(t.Context())) }()
+				if tc.duringWait {
+					require.NoError(t, startBackupSchedule(d))
+					synctest.Wait()
+					if tc.futureSnapshot {
+						time.Sleep(24*time.Hour - 2*time.Minute)
+					} else {
+						time.Sleep(time.Hour)
+					}
+					synctest.Wait()
+				}
+				before, err := repo.ListSnapshots()
+				require.NoError(t, err)
+				// Release idle store connections so the external locker alone owns the lock.
+				for _, pool := range driver.dbs {
+					pool.SetMaxOpenConns(1)
+					pool.SetMaxIdleConns(0)
+				}
+				_, err = db.ExecContext(t.Context(), "PRAGMA locking_mode=EXCLUSIVE")
+				require.NoError(t, err)
+				tx, err := db.BeginTx(t.Context(), nil)
+				require.NoError(t, err)
+				defer func() { _ = tx.Rollback() }()
+				if !tc.duringWait {
+					require.NoError(t, startBackupSchedule(d))
+				} else {
+					time.Sleep(time.Minute)
+				}
+				synctest.Wait()
+				status := d.Jobs.Snapshot()[0]
+				require.Equal(t, jobs.StatusRunning, status.Status)
+				require.Contains(t, status.Error, "locked")
+				for _, pool := range driver.dbs {
+					pool.SetMaxIdleConns(1)
+				}
+				require.NoError(t, tx.Rollback())
+				require.NoError(t, db.Close())
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				require.Empty(t, d.Jobs.Snapshot()[0].Error)
+				points, err := repo.ListSnapshots()
+				require.NoError(t, err)
+				require.Len(t, points, 1)
+				if tc.futureSnapshot {
+					require.NotEqual(t, before[0].SnapshotID, points[0].SnapshotID, "a read retry must capture at the original deadline despite the future timestamp")
+				} else if tc.duringWait {
+					require.Equal(t, before, points, "a read retry must preserve the successful capture's deadline")
+				}
+			})
+		})
+	}
+}
+
+type backupReadContentionDriver struct {
+	sqlite.Driver
+
+	dbs []*sql.DB
+}
+
+func (d *backupReadContentionDriver) Open(path string, opts sqlite.OpenOptions) (*sql.DB, error) {
+	opts.BusyTimeout = time.Millisecond
+	db, err := d.Driver.Open(path, opts)
+	if err == nil {
+		d.dbs = append(d.dbs, db)
+	}
+	return db, err
 }

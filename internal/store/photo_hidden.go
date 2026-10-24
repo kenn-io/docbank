@@ -279,7 +279,15 @@ func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string,
 			return fmt.Errorf("creating hidden session token: %w", err)
 		}
 		token = base64.RawURLEncoding.EncodeToString(bytes)
-		expiry = s.hiddenNow().Add(5 * time.Minute)
+		settings, err := photoSettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		lifetime := 5 * time.Minute
+		if settings.HiddenUnlockLifetimeSeconds != nil {
+			lifetime = time.Duration(*settings.HiddenUnlockLifetimeSeconds) * time.Second
+		}
+		expiry = s.hiddenNow().Add(lifetime)
 		return nil
 	})
 	if err != nil {

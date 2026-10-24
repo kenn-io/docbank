@@ -410,7 +410,7 @@
       <h1>Hidden</h1>
       {#if hiddenState.configured}<p>
           Forgotten passcode? Run <code>docbank photos hidden reset</code>.
-        </p>{:else}<p>Unlocks for five minutes.</p>{/if}
+        </p>{/if}
       {#if lockoutDescription}<p id="hidden-lockout" class="lockout" role="status">
           {lockDeadline
             ? `Too many attempts. Try again after ${new Date(lockDeadline).toLocaleTimeString()}.`
