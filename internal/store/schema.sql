@@ -2573,9 +2573,6 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
     UNIQUE (content_version_id, person_id, role)
 );
 
-CREATE INDEX IF NOT EXISTS person_document_assertions_person
-    ON person_document_assertions(person_id, action, content_version_id);
-
 CREATE TABLE IF NOT EXISTS photo_faces (
     face_id TEXT PRIMARY KEY NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,

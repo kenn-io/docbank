@@ -3942,7 +3942,7 @@ it.each([
     if (!hidden) {
       const search = await screen.findByRole("searchbox", { name: "Search photos" });
       await fireEvent.input(search, { target: { value: "stale search" } });
-      await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+      await fireEvent.submit(search.closest("form")!);
     }
     await screen.findByRole("button", { name: `Select ${other.name}` });
     await fireEvent.doubleClick(await screen.findByRole("button", { name: `Select ${item.name}` }));
