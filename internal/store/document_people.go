@@ -294,7 +294,7 @@ func peopleBoundToActorKeyTx(ctx context.Context, tx *sql.Tx, actorKey string) (
 			if errors.Is(err, ErrNotFound) {
 				// A retained unlinked tuple is an explicit suppression. Represent it
 				// as retired to prevent both publication and address fallback.
-				return []Person{{PersonID: value.personID, State: "retired"}}, nil
+				return []Person{{PersonID: value.personID, State: personStateRetired}}, nil
 			}
 			if err != nil {
 				return nil, err

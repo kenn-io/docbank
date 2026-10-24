@@ -1630,6 +1630,11 @@ export interface CreatePhotoFaceRequest {
   box?: FaceBox;
   face_id?: string;
   person_id?: string;
+  /**
+     * New person name for a whole-photo mark with a caller-chosen UUIDv4 person_id; reuse both fields for retries. Limited to 200 UTF-8 bytes
+     * @nullable
+     */
+  person_name?: string | null;
 }
 
 export interface CreateTagRequest {
@@ -4802,6 +4807,21 @@ export interface PersonExternalUID {
   uid: string;
 }
 
+export interface PersonFacePreview {
+  asset_id: string;
+  box?: FaceBox;
+  content_version_id: string;
+  generation_id: string;
+  rotation: number;
+}
+
+export interface PersonFacePreviewPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 3 */
+  items: PersonFacePreview[];
+}
+
 export interface PersonMergeMovedCounts {
   assertions: number;
   custodian_assignments: number;
@@ -4829,7 +4849,10 @@ export interface PersonMergeReceipt {
 }
 
 export interface PersonSummary {
+  created_at: string;
   display_name: string;
+  display_name_folded: string;
+  identity_label?: string;
   person_id: string;
   revision: number;
   state: string;
@@ -4840,6 +4863,7 @@ export interface PersonPage {
   readonly $schema?: string;
   items: PersonSummary[];
   next_cursor?: string;
+  same_name_continues?: boolean;
 }
 
 export interface PersonSplitReceipt {
@@ -6172,9 +6196,12 @@ export interface PhotoFaceDecisionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   action: PhotoFaceDecisionRequestAction;
+  assertion_id?: string;
   face_id?: string;
   operation_id?: string;
   person_id?: string;
+  /** @maxLength 200 */
+  person_name?: string;
   person_revision?: number;
   /** @minimum 0 */
   revision?: number;
@@ -6186,6 +6213,12 @@ export interface PhotoFaceDecisionResult {
   receipt_id: string;
 }
 
+export interface PhotoFacePerson {
+  display_name: string;
+  person_id: string;
+  state: string;
+}
+
 export interface PhotoFacePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6193,6 +6226,8 @@ export interface PhotoFacePage {
   assertions: PhotoPersonAssertion[];
   /** @maxItems 1000 */
   faces: PhotoFace[];
+  /** @maxItems 1000 */
+  people: PhotoFacePerson[];
 }
 
 export interface PhotoFaceResult {
@@ -6570,6 +6605,7 @@ export type PreparePhotoPreviewRequestSize = typeof PreparePhotoPreviewRequestSi
 
 
 export const PreparePhotoPreviewRequestSize = {
+  grid: 'grid',
   fit: 'fit',
   large: 'large',
 } as const;
@@ -6579,6 +6615,7 @@ export interface PreparePhotoPreviewRequest {
   readonly $schema?: string;
   content_version_id: string;
   hidden?: boolean;
+  person_id?: string;
   size: PreparePhotoPreviewRequestSize;
 }
 
@@ -9347,6 +9384,10 @@ export type HidePhotoAssetHeaders = {
 'If-Match': string;
 };
 
+export type ReadPhotoPreviewParams = {
+person_id?: string;
+};
+
 export type ReadPhotoPreviewHeaders = {
 'If-None-Match'?: string;
 };
@@ -9374,6 +9415,10 @@ operation_id?: string;
 
 export type PromotePhotoNodeHeaders = {
 'If-Match'?: string;
+};
+
+export type ListPersonFacePreviewsParams = {
+hidden?: boolean;
 };
 
 export type SetPhotoSettingsHeaders = {
@@ -16896,7 +16941,7 @@ export const getPreparePhotoPreviewUrl = (assetId: string,) => {
 }
 
 /**
- * @summary Prepare a fit or large preview for the current photo display
+ * @summary Prepare a display preview or an assigned source grid preview
  */
 export const preparePhotoPreview = async (assetId: string,
     preparePhotoPreviewRequest: NonReadonly<PreparePhotoPreviewRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoPreviewSlot> => {
@@ -16927,12 +16972,20 @@ return sessionJSON<PhotoPreviewSlot>(getPreparePhotoPreviewUrl(assetId),
 
 
 export const getReadPhotoPreviewUrl = (assetId: string,
-    generationId: string,) => {
+    generationId: string,
+    params?: ReadPhotoPreviewParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/previews/${encodeURIComponent(String(generationId))}`
+  return stringifiedParams.length > 0 ? `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/previews/${encodeURIComponent(String(generationId))}?${stringifiedParams}` : `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/previews/${encodeURIComponent(String(generationId))}`
 }
 
 /**
@@ -16941,6 +16994,7 @@ export const getReadPhotoPreviewUrl = (assetId: string,
  */
 export const readPhotoPreview = (assetId: string,
     generationId: string,
+    params?: ReadPhotoPreviewParams,
     headers?: ReadPhotoPreviewHeaders, options?: Parameters<typeof sessionPhotoPreview>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
@@ -16957,7 +17011,7 @@ export const readPhotoPreview = (assetId: string,
     }
     return headers;
   };
-return sessionPhotoPreview<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
+return sessionPhotoPreview<Blob>(getReadPhotoPreviewUrl(assetId,generationId,params),
   {
     ...options,
     method: 'GET',
@@ -17850,6 +17904,39 @@ return sessionJSON<PhotoAsset>(getPromotePhotoNodeUrl(nodeId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(promotePhotoNodeRequest)
+  }
+);}
+
+
+
+export const getListPersonFacePreviewsUrl = (personId: string,
+    params?: ListPersonFacePreviewsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/photos/people/${encodeURIComponent(String(personId))}/face-previews?${stringifiedParams}` : `/api/v1/photos/people/${encodeURIComponent(String(personId))}/face-previews`
+}
+
+/**
+ * @summary Read up to three linked source-version photos in timeline order
+ */
+export const listPersonFacePreviews = async (personId: string,
+    params?: ListPersonFacePreviewsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonFacePreviewPage> => {
+
+  return sessionJSON<PersonFacePreviewPage>(getListPersonFacePreviewsUrl(personId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

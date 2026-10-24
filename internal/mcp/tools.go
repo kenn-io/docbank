@@ -78,7 +78,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
 	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
-	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by folded name prefix.", schemas: findPeopleSchemas},
+	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by prefix of any word in the folded name.", schemas: findPeopleSchemas},
 	{name: "get_person", title: "Get person", description: "Read one canonical person and its split selectors.", schemas: getPersonSchemas},
 	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},
 	{name: "get_package", title: "Get package", description: "Read one load-file package and its retained source authority.", schemas: getPackageSchemas},
@@ -92,7 +92,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "get_photo_asset", title: "Get photo asset", description: "Read a photo asset by asset or node identity. Pass next_file_offset as file_offset to continue through its files.", schemas: getPhotoAssetSchemas},
-	{name: "get_photo_faces", title: "Get photo faces", description: "Read face boxes and depicted people for one photo version. Each named face includes its person_id and action. Pass next_offset as offset to continue.", schemas: getPhotoFacesSchemas},
+	{name: "get_photo_faces", title: "Get photo faces", description: "Read face boxes, depicted-person assertions, and their canonical people for one photo version. Each named face includes its person_id and action; people supplies display_name and state for the returned page. Pass next_offset as offset to continue.", schemas: getPhotoFacesSchemas},
 }
 
 var processingToolDefinition = toolDefinition{

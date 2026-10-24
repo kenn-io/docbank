@@ -43,21 +43,28 @@ export class PhotoPreviewDisplay {
   retire() {
     this.controller.abort();
   }
-  async show(objectURL: string, level: number, onshow: () => void) {
+  async show(
+    objectURL: string,
+    level: number,
+    onshow: () => void,
+    ondecoded?: (image: HTMLImageElement) => void,
+  ) {
     if (this.signal.aborted) {
       URL.revokeObjectURL(objectURL);
       return;
     }
     this.urls.add(objectURL);
+    const image = new Image();
     try {
-      const image = new Image();
       image.src = objectURL;
       await image.decode();
     } catch (cause) {
       if (this.urls.delete(objectURL)) URL.revokeObjectURL(objectURL);
       throw cause;
     }
-    if (this.signal.aborted || level < this.rank) return;
+    if (this.signal.aborted) return;
+    ondecoded?.(image);
+    if (level < this.rank) return;
     this.rank = level;
     onshow();
     for (const url of this.inherited) {
@@ -78,6 +85,8 @@ export class PhotoPreviewLoader {
   quality = $state("");
   failure = $state<{ rank: number; message: string; action?: "reload" | "fit" | "large" }>();
   retrying = $state(false);
+  fit = $state.raw<{ url: string; content_version_id: string; width: number; height: number }>();
+  fitFailure = $state<PhotoPreviewLoader["failure"]>();
   private largeStarted = false;
   readonly active = new PhotoPreviewDisplay();
   private timer?: ReturnType<typeof setTimeout>;
@@ -111,11 +120,26 @@ export class PhotoPreviewLoader {
     this.active.dispose();
   }
   show(blobURL: string, level: number, label: string) {
-    return this.active.show(blobURL, level, () => {
-      this.url = blobURL;
-      this.quality = label;
-      if (this.failure && this.failure.rank <= level) this.failure = undefined;
-    });
+    return this.active.show(
+      blobURL,
+      level,
+      () => {
+        this.url = blobURL;
+        this.quality = label;
+        if (this.failure && this.failure.rank <= level) this.failure = undefined;
+      },
+      (image) => {
+        if (level === 1 && this.photo) {
+          this.fit = {
+            url: blobURL,
+            content_version_id: this.photo.content_version_id,
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          };
+          this.fitFailure = undefined;
+        }
+      },
+    );
   }
   fail(result: NonNullable<PhotoPreviewLoader["failure"]>) {
     untrack(() => {
@@ -144,6 +168,12 @@ export class PhotoPreviewLoader {
       );
       const slot = result.slot;
       if (slot.state !== "ready" || !slot.generation_id) {
+        if (size === "fit" && !active.signal.aborted)
+          this.fitFailure = {
+            rank: 1,
+            message: "Preview unavailable",
+            action: slot.state === "missing" ? "fit" : undefined,
+          };
         if (slot.state !== "missing")
           this.fail({
             rank: level,
@@ -161,11 +191,13 @@ export class PhotoPreviewLoader {
       const reload =
         cause instanceof APIError &&
         (cause.code === "photo_display_changed" || cause.status === 404);
-      this.fail({
+      const failure = {
         rank: level,
         message: cause instanceof Error ? cause.message : String(cause),
-        action: reload ? "reload" : size === "grid" ? undefined : size,
-      });
+        action: reload ? ("reload" as const) : size === "grid" ? undefined : size,
+      };
+      if (size === "fit" && !active.signal.aborted) this.fitFailure = failure;
+      this.fail(failure);
       if (!active.signal.aborted && size === "large") this.largeStarted = false;
     }
   }
@@ -179,8 +211,7 @@ export class PhotoPreviewLoader {
     if (!this.photo || this.largeStarted || this.quality === "original") return;
     void this.load("large");
   }
-  async retry() {
-    const action = this.failure?.action;
+  async retry(action = this.failure?.action) {
     if (this.retrying || !this.photo || (action !== "fit" && action !== "large")) return;
     this.retrying = true;
     try {

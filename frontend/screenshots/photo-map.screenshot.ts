@@ -91,7 +91,16 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     const providerHost = `127.0.0.1:${(provider.address() as AddressInfo).port}`;
     await exec(
       "go",
-      ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", "-map", vault, "15"],
+      [
+        "run",
+        "-tags",
+        "fts5",
+        "./frontend/screenshots/photos-fixture.go",
+        "-map",
+        "-current-metadata",
+        vault,
+        "15",
+      ],
       { cwd: repository, env, timeout: 180_000 },
     );
     const disabledURL = new URL(await run("web", "--no-browser"));

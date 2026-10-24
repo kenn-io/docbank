@@ -35,6 +35,8 @@ it.each([
       configurable: true,
       value: vi.fn(async () => {}),
     });
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
+    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
     const item = photo(1);
     item.previews.grid = { state: "missing" };
     const current = {

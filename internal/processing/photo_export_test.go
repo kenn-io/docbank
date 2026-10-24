@@ -975,10 +975,7 @@ func TestPhotoExportOversizedJPEGXMP(t *testing.T) {
 func TestPhotoExportRAWSelectionAndSourceMetadataFailures(t *testing.T) {
 	t.Parallel()
 	t.Run("ICC fallback", func(t *testing.T) {
-		data := syntheticRAWPreviewTIFFCandidates(1,
-			syntheticRAWPreviewCandidate{data: mediatest.JPEG(12, 8, color.White), orientation: 1},
-			syntheticRAWPreviewCandidate{data: mediatest.JPEG(3, 2, color.Black)},
-		)
+		data := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(12, 8, color.White), Orientation: 1}, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(3, 2, color.Black)})
 		firstIFD := int(binary.LittleEndian.Uint32(data[22:26]))
 		for index := range int(binary.LittleEndian.Uint16(data[firstIFD:])) {
 			entry := firstIFD + 2 + index*12
@@ -1096,7 +1093,7 @@ func TestPhotoExportRAWSelectionAndSourceMetadataFailures(t *testing.T) {
 			}
 		}
 	}
-	missing := syntheticRAWPreviewTIFF(1)
+	missing := mediatest.TIFFWithEmbeddedJPEG(1)
 	_, _, err = renderPhotoExport(t.Context(), missing, photoRenderInput(missing, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
 	require.ErrorIs(t, err, bundle.ErrUnavailable)
 	for _, packet := range []string{`<x:xmpmeta xmlns:x="adobe:ns:meta/"><broken>`, photoSidecarHeader + `><xmp:Thumbnails><bad:Credit/></xmp:Thumbnails>` + photoSidecarFooter} {
@@ -1512,7 +1509,7 @@ func TestRenderPhotoExportRejectsJPEGAbovePreviewSourceLimit(t *testing.T) {
 		mediaType string
 	}{
 		{"jpeg", jpegData, "image/jpeg"},
-		{"embedded RAW", syntheticRAWPreviewTIFF(1, jpegData), "image/x-adobe-dng"},
+		{"embedded RAW", mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: jpegData}), "image/x-adobe-dng"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

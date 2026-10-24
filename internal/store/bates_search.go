@@ -81,7 +81,7 @@ func (s BatesArtifactSelector) normalized(ctx context.Context, tx *sql.Tx) (Bate
 			return BatesArtifactSelector{}, ErrInvalidBatesSelector
 		}
 		var state string
-		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=?`, personID).Scan(&state); err != nil || state == "retired" {
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=?`, personID).Scan(&state); err != nil || state == personStateRetired {
 			return BatesArtifactSelector{}, ErrInvalidBatesSelector
 		}
 		s.PersonID = personID
