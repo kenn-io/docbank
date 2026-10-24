@@ -2718,7 +2718,7 @@ it.each(["resolution", "background import"])(
     const photos = workspaceWithPreparedPhoto(before);
     photos.total = 1;
     photos.filtersOpen = true;
-    photos.query = photos.baseQuery = { ...photos.query, text: "Harbor" };
+    photos.query = { ...photos.query, text: "Harbor" };
     vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([before]));
     const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
     vi.spyOn(photos, "preview").mockResolvedValue({ state: "ready", generation_id: "fit" });
