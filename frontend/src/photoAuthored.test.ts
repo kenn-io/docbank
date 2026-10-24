@@ -796,6 +796,40 @@ it.each([false, true])(
   },
 );
 
+// A live update refreshes the prepared stack in the background: the old members stay usable
+// until the new read lands, and a failed read keeps them and leaves the change pending.
+it("keeps the prepared stack usable while a live update refreshes it", async () => {
+  const editor = editorWithTargets();
+  const sibling = preparedPhoto(3, { asset_id: "other", file_id: "other-file" });
+  const stack = () => [...structuredClone(targets), sibling];
+  const revisions = () => editor.stackTargets.map((target) => target.revision);
+  const fetcher = vi.fn().mockResolvedValue(response({ assets: [asset], targets: stack() }));
+  vi.stubGlobal("fetch", fetcher);
+  await editor.prepareStack(["asset", "other"], false);
+  expect(revisions()).toEqual([1, 1, 1]);
+  let finish!: (response: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)));
+  const refreshing = editor.invalidate({ ids: new Set(), idFree: true });
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  expect(editor.stackLoading).toBe(false);
+  expect(editor.needsStack(["asset", "other"], false)).toBe(false);
+  expect(revisions()).toEqual([1, 1, 1]);
+  const latest = stack().map((target) => ({ ...target, revision: 7 }));
+  fetcher.mockResolvedValue(response({ assets: [asset], targets: latest }));
+  finish(response({ assets: [asset], targets: latest.slice(0, 2) }));
+  await refreshing;
+  expect(editor.stackLoading).toBe(false);
+  expect(revisions()).toEqual([7, 7, 7]);
+  fetcher.mockResolvedValueOnce(response({ assets: [asset], targets: latest.slice(0, 2) }));
+  fetcher.mockResolvedValueOnce(response({ detail: "Metadata unavailable" }, 503));
+  await expect(editor.invalidate({ ids: new Set(), idFree: true })).rejects.toThrow(
+    "Metadata unavailable",
+  );
+  expect(editor.stackLoading).toBe(false);
+  expect(revisions()).toEqual([7, 7, 7]);
+  editor.dispose();
+});
+
 // A quiet read in flight when a write starts is dropped: it must neither hold the write up
 // behind Hidden access nor land on revisions the write has already moved on.
 function editAfterQuietRead(editor: PhotoAuthoredEditor) {

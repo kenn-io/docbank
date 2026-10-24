@@ -350,18 +350,22 @@ export class PhotoAuthoredEditor {
   }
   async reload(keepError = false, quiet = false) {
     if (this.busy || this.loading) return;
-    // Stack members prepare again once the stack is actionable.
-    this.stackRead.abort();
-    this.setStack([]);
-    this.stackKey = "";
-    this.stackError = "";
-    this.stackLoading = false;
+    // A quiet reload keeps the stack usable and refreshes it after the targets; any other
+    // reload drops it, and its members prepare again once the stack is actionable.
+    const stack = quiet && this.stackKey ? (JSON.parse(this.stackKey) as [boolean, string[]]) : [];
+    if (!stack.length) {
+      this.stackRead.abort();
+      this.setStack([]);
+      this.stackKey = "";
+      this.stackError = "";
+      this.stackLoading = false;
+    }
     if (!this.targets.length) {
       this.conflict = false;
       if (!keepError) this.error = "";
-      return;
+      return stack.length ? this.prepareStack(stack[1]!, stack[0]!, false, true) : undefined;
     }
-    return this.prepare(
+    const prepared = await this.prepare(
       {
         asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
         hidden: this.scope?.hidden,
@@ -371,6 +375,9 @@ export class PhotoAuthoredEditor {
       keepError,
       quiet,
     );
+    return prepared && stack.length
+      ? this.prepareStack(stack[1]!, stack[0]!, false, true)
+      : prepared;
   }
   reviewMembers() {
     this.membershipChanged = false;
@@ -613,17 +620,21 @@ export class PhotoAuthoredEditor {
     return this.stackKey !== JSON.stringify([hidden, assetIDs]);
   }
   /** Prepare complete stack membership independently of the browser selection. */
-  async prepareStack(assetIDs: string[], hidden: boolean, retry = false) {
+  async prepareStack(assetIDs: string[], hidden: boolean, retry = false, quiet = false) {
     const key = JSON.stringify([hidden, assetIDs]);
-    if (this.controller.signal.aborted || (key === this.stackKey && !retry)) return;
+    if (this.controller.signal.aborted || (key === this.stackKey && !retry && !quiet)) return;
+    // A quiet read keeps the current members and loading flags until it replaces the members.
+    if (quiet && this.stackLoading) return;
     this.stackKey = key;
     this.stackRead.abort();
     const controller = (this.stackRead = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
-    this.setStack([]);
-    this.stackLoading = true;
-    this.stackError = "";
-    this.error = "";
+    if (!quiet) {
+      this.setStack([]);
+      this.stackLoading = true;
+      this.stackError = "";
+      this.error = "";
+    }
     try {
       const prepared = await this.request(() =>
         api.preparePhotoAuthored(
@@ -631,14 +642,16 @@ export class PhotoAuthoredEditor {
           this.options(signal),
         ),
       );
-      if (!signal.aborted) this.setStack(prepared.targets);
+      if (signal.aborted || (quiet && (this.busy || this.dirty))) return;
+      this.setStack(prepared.targets);
+      return true;
     } catch (cause) {
-      if (!signal.aborted) {
-        this.stackError = this.error = this.failure(cause);
-        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
-      }
+      if (signal.aborted) return;
+      if (quiet) throw cause;
+      this.stackError = this.error = this.failure(cause);
+      this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
     } finally {
-      if (!signal.aborted) this.stackLoading = false;
+      if (!signal.aborted && !quiet) this.stackLoading = false;
     }
   }
   /**

@@ -1455,6 +1455,28 @@ it("keeps newer Cull values after a delayed stack receipt", async () => {
   photos.dispose();
 });
 
+it("keeps Keep all and Exit cull usable while an ID-free update refreshes the stack", async () => {
+  const { cull, photos } = await reviewThree();
+  await act(() => {
+    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+  });
+  await readyButton("Keep all");
+  let finish!: (prepared: Awaited<ReturnType<typeof api.preparePhotoAuthored>>) => void;
+  vi.mocked(api.preparePhotoAuthored).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  const refreshing = act(() => photos.changed(idFreeChange));
+  await waitFor(() => expect(finish).toBeDefined());
+  for (const name of ["Keep all", "Exit cull"])
+    expect(screen.getByRole("button", { name }).matches(":disabled")).toBe(false);
+  await act(async () => {
+    finish(photoPreparation([preparedPhoto(1), preparedPhoto(2)]));
+    await refreshing;
+  });
+  await readyButton("Keep all");
+  photos.dispose();
+});
+
 it("leaves saved progress alone when a live lookup finishes after Exit", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
