@@ -784,6 +784,8 @@
   // single-photo viewers read their own photos again. Starting while a list is still
   // loading would abort that read, so the pass waits for it.
   async function photoChanged(change: PhotoChange) {
+    // A concealed Library reloads when access is checked again, so the change waits for that.
+    if (!photoValidated && !hiddenMode) return false;
     const lists = [
       photoState?.photos,
       albumPhotos,
@@ -819,7 +821,9 @@
   }
   $effect(() => {
     const session = webSession;
-    if (!session || !photoMode || !(photoValidated || hiddenMode)) return;
+    // Concealment and access checks do not reopen the stream; that would drop changes and
+    // force another full refresh after every navigation.
+    if (!session || !photoMode) return;
     // A dropped stream reconnects on its own, so only a second drop in a row is shown.
     let drops = 0;
     const watcher = watchPhotoEvents(

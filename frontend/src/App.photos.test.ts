@@ -4135,6 +4135,29 @@ it.each(["first page", "album list", "staged retry"])(
   },
 );
 
+it("keeps one event stream while moving between Photos views", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const stop = vi.fn();
+  vi.mocked(photoEvents.watchPhotoEvents).mockReturnValue({ stop, reconnect() {} });
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const started = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.length;
+  for (const path of ["/photos/albums", "/photos"]) {
+    history.pushState(null, "", path);
+    await fireEvent(window, new PopStateEvent("popstate"));
+  }
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  expect(vi.mocked(photoEvents.watchPhotoEvents).mock.calls.length).toBe(started);
+  expect(stop).not.toHaveBeenCalled();
+});
+
 it("rereads page one after an identified event is deferred behind a failed foreground refresh", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   livePhotoStubs();
