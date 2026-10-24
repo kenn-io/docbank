@@ -887,6 +887,32 @@ it.each([
   },
 );
 
+it("refuses a queued Hidden edit once a live refresh drops one of its photos", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  editor.targets = ["a", "b"].map((id, index) =>
+    preparedPhoto(index + 1, { asset_id: id, file_id: `${id}-file` }),
+  );
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  let release!: () => void;
+  void access.run(() => new Promise<void>((resolve) => (release = resolve)));
+  await vi.waitFor(() => expect(release).toBeDefined());
+  const refresh = vi.fn();
+  const edit = editor.edit({ asset_ids: ["a", "b"] }, { rating: 5 }, true, refresh);
+  expect(editor.busy).toBe(true);
+  editor.revalidate(new Set(["a"]));
+  expect(editor.conflict).toBe(true);
+  release();
+  await edit;
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(editor.conflict).toBe(true);
+  expect(editor.patch).toEqual({ rating: 5 });
+  expect(editor.notice).toBe("Reload metadata before editing.");
+  editor.dispose();
+});
+
 it.each(["assigned tags", "edit counts", "Undo counts"])(
   "refreshes keywords while preserving %s",
   async (behavior) => {

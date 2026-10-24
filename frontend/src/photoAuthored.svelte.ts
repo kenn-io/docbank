@@ -562,33 +562,37 @@ export class PhotoAuthoredEditor {
         ...(this.keywords.length ? ["keywords"] : []),
       ];
       if (beforeWrite && !(await beforeWrite())) return;
-      const receipt = await this.request(() =>
-        api.editPhotoAuthored(
-          {
-            targets: this.files.map(
-              ({
-                asset_id,
-                asset_revision,
-                file_id,
-                revision,
-                node_revision,
-                content_version_id,
-              }) => ({
-                asset_id,
-                asset_revision,
-                file_id,
-                revision,
-                node_revision,
-                content_version_id,
-              }),
+      // A queued edit starts after a live refresh may have dropped some of its photos.
+      const receipt = await this.request(async () =>
+        this.conflict
+          ? undefined
+          : api.editPhotoAuthored(
+              {
+                targets: this.files.map(
+                  ({
+                    asset_id,
+                    asset_revision,
+                    file_id,
+                    revision,
+                    node_revision,
+                    content_version_id,
+                  }) => ({
+                    asset_id,
+                    asset_revision,
+                    file_id,
+                    revision,
+                    node_revision,
+                    content_version_id,
+                  }),
+                ),
+                patch: this.patch,
+                rotation_delta: this.rotationDelta,
+                keywords: this.keywords,
+              },
+              this.options(),
             ),
-            patch: this.patch,
-            rotation_delta: this.rotationDelta,
-            keywords: this.keywords,
-          },
-          this.options(),
-        ),
       );
+      if (!receipt) return this.unavailable("Reload metadata before editing.");
       this.accept(receipt);
       this.patch = {};
       this.rotationDelta = undefined;
