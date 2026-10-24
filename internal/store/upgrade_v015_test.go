@@ -235,6 +235,9 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				var current int
 				require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata`).Scan(&current))
 				assert.Equal(t, currentStorageSchemaVersion, current)
+				claimRequired, err := s.BackupClaimRequired(t.Context())
+				require.NoError(t, err)
+				assert.False(t, claimRequired, "an in-place upgrade preserves backup authority")
 				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 				require.NoError(t, err)
 				require.Nil(t, asset.HiddenAt)
@@ -286,7 +289,7 @@ func TestReleasedStorageSchemasRequireAdapters(t *testing.T) { //nolint:parallel
 	releasedStorageSchemaVersions = append(append([]int(nil), original...), 27)
 	require.ErrorContains(t, validateReleasedStorageSchemas(), "released storage schema version 27 adapter is missing")
 
-	releasedStorageSchemaVersions = []int{1, 2, 3, 29}
+	releasedStorageSchemaVersions = []int{1, 2, 3, 29, 41}
 	require.ErrorContains(t, validateReleasedStorageSchemas(), "storage schema version 28 has an adapter but no release")
 }
 
