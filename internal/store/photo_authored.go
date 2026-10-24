@@ -115,6 +115,7 @@ type PhotoAuthoredPatch struct {
 }
 
 type photoAuthoredField struct {
+	text       func(*PhotoAuthored) string
 	name       string
 	bit        PhotoAuthoredFields
 	nonDefault func(*PhotoAuthored) bool
@@ -123,10 +124,15 @@ type photoAuthoredField struct {
 	apply      func(PhotoAuthoredPatch, *PhotoAuthored) bool
 }
 
+func (field photoAuthoredField) sameState(a, b *PhotoAuthored) bool {
+	return field.equal(a, b) && a.Confirmed&field.bit == b.Confirmed&field.bit
+}
+
 func authoredField[T comparable](name string, bit PhotoAuthoredFields, value func(*PhotoAuthored) *T, patch func(*PhotoAuthoredPatch) **T) photoAuthoredField {
 	var zero T
 	return photoAuthoredField{
 		name: name, bit: bit,
+		text:       func(v *PhotoAuthored) string { return fmt.Sprint(*value(v)) },
 		nonDefault: func(v *PhotoAuthored) bool { return *value(v) != zero },
 		equal:      func(a, b *PhotoAuthored) bool { return *value(a) == *value(b) },
 		setPatch:   func(p *PhotoAuthoredPatch, v *PhotoAuthored) { *patch(p) = value(v) },
@@ -157,6 +163,16 @@ var photoAuthoredFields = [...]photoAuthoredField{
 		func(v *PhotoAuthored) *int { return &v.Rotation }, func(p *PhotoAuthoredPatch) **int { return &p.Rotation }),
 }
 
+// PhotoAuthoredText returns a stored decision's text for a single authored field.
+func PhotoAuthoredText(v PhotoAuthored, bit PhotoAuthoredFields) string {
+	for _, field := range photoAuthoredFields {
+		if field.bit == bit {
+			return field.text(&v)
+		}
+	}
+	return ""
+}
+
 func (p PhotoAuthoredPatch) apply(v PhotoAuthored) PhotoAuthored {
 	if p.Flag != nil {
 		v.FlagOwner = ""
@@ -184,7 +200,7 @@ type PhotoAuthoredSnapshot struct {
 }
 type PhotoSidecarProvenance struct {
 	NodeID    int64  `json:"node_id"`
-	VersionID string `json:"version_id"`
+	VersionID string `json:"version_id" doc:"The version that supplied the first imported value."`
 	FileID    string `json:"file_id"`
 }
 
@@ -225,6 +241,14 @@ func (r PhotoAuthoredReceipt) afterState() photoAuthoredReceiptAfter {
 
 const maxPhotoAuthoredReceiptJSONBytes = 2 << 20
 
+// photoAuthoredReceiptLimit keeps XMP imports bounded independently of large stack decisions.
+func photoAuthoredReceiptLimit(sidecar *PhotoSidecarProvenance) int {
+	if sidecar != nil {
+		return maxBatchTagReceiptJSONBytes
+	}
+	return maxPhotoAuthoredReceiptJSONBytes
+}
+
 func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 	before, after := slices.Clone(r.Before), slices.Clone(r.After)
 	for i := range before {
@@ -249,7 +273,7 @@ func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 	if err != nil {
 		return err
 	}
-	if len(b)+len(a) > maxPhotoAuthoredReceiptJSONBytes {
+	if len(b)+len(a) > photoAuthoredReceiptLimit(r.Sidecar) {
 		return ErrPhotoEditReceiptLimit
 	}
 	return nil
@@ -285,7 +309,7 @@ func decodePhotoAuthoredReceipt(beforeJSON, afterJSON []byte, id string) (PhotoA
 			return r, err
 		}
 	}
-	if !bytes.Equal(values[0], values[2]) || !bytes.Equal(values[1], values[3]) {
+	if len(beforeJSON)+len(afterJSON) > photoAuthoredReceiptLimit(r.Sidecar) || !bytes.Equal(values[0], values[2]) || !bytes.Equal(values[1], values[3]) {
 		return r, ErrInvalidPhotoAsset
 	}
 	return r, nil
@@ -331,21 +355,10 @@ type photoAuthoredApply struct {
 	// force keeps unchanged targets in the receipt and advances the revision of
 	// every target whose asset has another changed target.
 	force bool
-	// persist drops no-op receipts, checks the receipt size, and writes the receipt.
-	persist bool
 	// loaded supplies already-checked files and nodes. Files read from the
 	// database are added to it, and written node revisions are refreshed in it.
 	loaded      map[string]photoAuthoredLoaded
 	returnFlags bool
-}
-
-// applyPhotoAuthoredTx applies targets and persists the receipt.
-func (s *Store) applyPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []PhotoAuthoredTarget, opts photoAuthoredApply) (PhotoAuthoredReceipt, error) {
-	if len(targets) > maxBatchTagTargets {
-		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
-	}
-	opts.persist = true
-	return s.applyPhotoAuthoredValuesTx(ctx, tx, targets, opts)
 }
 
 func (s *Store) applyPhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, targets []PhotoAuthoredTarget, opts photoAuthoredApply) (PhotoAuthoredReceipt, error) {
@@ -357,7 +370,7 @@ func (s *Store) applyPhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, targ
 	if err != nil {
 		return result, err
 	}
-	if len(result.After) == 0 || opts.persist && !photoAuthoredChanged(result) {
+	if len(result.After) == 0 {
 		return PhotoAuthoredReceipt{Before: []PhotoAuthoredSnapshot{}, After: []PhotoAuthoredSnapshot{}}, nil
 	}
 	id, err := newUUIDv4()
@@ -365,18 +378,10 @@ func (s *Store) applyPhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, targ
 		return result, err
 	}
 	result.ReceiptID = id
-	if opts.persist {
-		if err := checkPhotoAuthoredReceiptSize(result); err != nil {
-			return result, err
-		}
-	}
 	if err := s.writePhotoAuthoredValuesTx(ctx, tx, result, nodes, opts.loaded); err != nil {
 		return result, err
 	}
-	if !opts.persist {
-		return result, nil
-	}
-	return result, persistPhotoAuthoredReceiptTx(ctx, tx, result)
+	return result, nil
 }
 
 // planPhotoAuthoredTx appends each target's before and after snapshot to result
@@ -473,7 +478,29 @@ func photoAuthoredTargetValues(t PhotoAuthoredTarget, f PhotoFile, node Node) (P
 	} else {
 		v = t.Patch.apply(f.Authored())
 	}
+
+	if t.restore == nil {
+		if err := t.Patch.validateText(); err != nil {
+			return v, err
+		}
+	}
 	return v, ValidatePhotoAuthored(v)
+}
+
+// validateText checks the caption, creator, and copyright a patch supplies for XML-safe text.
+func (p PhotoAuthoredPatch) validateText() error {
+	for _, text := range []struct {
+		name  string
+		value *string
+	}{{"caption", p.Caption}, {"creator", p.Creator}, {"copyright", p.Copyright}} {
+		if text.value == nil {
+			continue
+		}
+		if err := ValidatePhotoXMPText(text.name, *text.value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writePhotoAuthoredValuesTx stores each changed snapshot in result and audits it.
@@ -683,4 +710,26 @@ func validatePhotoAuthoredReceipt(r PhotoAuthoredReceipt, id string) error {
 		}
 	}
 	return checkPhotoAuthoredReceiptSize(r)
+}
+
+// ValidatePhotoXMPText enforces the XML 1.0 character range for saved decisions.
+func ValidatePhotoXMPText(field, text string) error {
+	if !utf8.ValidString(text) {
+		return fmt.Errorf("%w: %s contains invalid UTF-8", ErrInvalidPhotoAsset, field)
+	}
+	for _, ch := range text {
+		if ch != 9 && ch != 10 && ch != 13 && (ch < 32 || ch == 0xfffe || ch == 0xffff) {
+			return fmt.Errorf("%w: %s contains XML character U+%04X", ErrInvalidPhotoAsset, field, ch)
+		}
+	}
+	return nil
+}
+
+func ValidatePhotoXMPAuthored(v PhotoAuthored) error {
+	for _, field := range []struct{ name, text string }{{"caption", v.Caption}, {"creator", v.Creator}, {"copyright", v.Copyright}} {
+		if err := ValidatePhotoXMPText(field.name, field.text); err != nil {
+			return err
+		}
+	}
+	return nil
 }

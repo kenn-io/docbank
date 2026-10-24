@@ -361,7 +361,7 @@ func (s *Store) ReplaceContentForIngest(
 			return err
 		}
 		receipt.Node, err = s.observeOperationalIngestTx(
-			ctx, tx, run, receipt.Node, fact, ingestAdded,
+			ctx, tx, run, receipt.Node, fact, ingestAdded, receipt.Node.CurrentVersionID,
 		)
 		if err != nil {
 			return err

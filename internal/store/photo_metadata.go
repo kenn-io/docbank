@@ -271,7 +271,7 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 	if err := ValidatePhotoAuthored(values); err != nil {
 		return err
 	}
-	// Every decision advances the revision; sidecar initialization treats revision 1 as undecided.
+	// Every decision advances the revision, so a file still at revision 1 holds none.
 	if v.Revision == 1 && values != (PhotoAuthored{}) {
 		return errors.New("photo file at revision 1 has authored decisions")
 	}
@@ -298,6 +298,16 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	}
 	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > limit {
 		return errors.New("invalid photo receipt metadata")
+	}
+	if v.Operation == "xmp_sync" {
+		if v.AssetID == nil || validateUUIDv4(*v.AssetID) != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 || v.BeforeJSON != "null" {
+			return errors.New("invalid XMP receipt identity")
+		}
+		_, err := decodePhotoXMPReceipt([]byte(v.AfterJSON))
+		if err != nil {
+			return err
+		}
+		return validateMetadataTime("photo receipt created_at", v.CreatedAt)
 	}
 	if v.Operation == "checkout_commit" {
 		return validateCheckoutCommitReceipt(v)
@@ -475,6 +485,31 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 	}
 	if invalid != 0 {
 		return errors.New("authored undo references an invalid receipt")
+	}
+	// XMP receipts name their original's node and sidecar's, and number each
+	// original's outcomes once. A live settled boundary must exist; Outside
+	// snapshots retain their semantics after their bytes have been pruned.
+	if err := q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_change_receipts r
+ LEFT JOIN photo_files f ON f.file_id=json_extract(r.after_json,'$.file_id')
+ LEFT JOIN photo_files sf ON sf.file_id=json_extract(r.after_json,'$.sync.sidecar.file_id')
+ LEFT JOIN content_versions settled ON settled.version_id=json_extract(r.after_json,'$.sync.settled.version_id')
+ WHERE r.operation='xmp_sync' AND (f.file_id IS NULL OR f.node_id<>json_extract(r.after_json,'$.node_id')
+ OR json_type(r.after_json,'$.sync') IS NOT NULL AND sf.file_id IS NOT NULL AND sf.node_id<>json_extract(r.after_json,'$.sync.sidecar.node_id')
+ OR sf.sidecar_of_file_id=f.file_id AND settled.version_id IS NULL
+ OR settled.node_id<>json_extract(r.after_json,'$.sync.sidecar.node_id')
+ OR EXISTS(SELECT 1 FROM json_each(r.after_json,'$.sync.outside') o JOIN content_versions outside ON outside.version_id=json_extract(o.value,'$.version_id')
+ WHERE outside.node_id<>json_extract(r.after_json,'$.sync.sidecar.node_id'))))`).Scan(&invalid); err != nil {
+		return fmt.Errorf("checking XMP receipt references: %w", err)
+	}
+	if invalid != 0 {
+		return errors.New("XMP receipts reference missing or different nodes")
+	}
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM photo_change_receipts WHERE operation='xmp_sync'
+ GROUP BY json_extract(after_json,'$.file_id') HAVING count(*)>1)`).Scan(&invalid); err != nil {
+		return fmt.Errorf("checking XMP receipt sequence: %w", err)
+	}
+	if invalid != 0 {
+		return errors.New("multiple XMP receipts for one original")
 	}
 	return nil
 }

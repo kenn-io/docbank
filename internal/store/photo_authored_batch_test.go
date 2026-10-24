@@ -67,6 +67,7 @@ func TestPhotoPreparedSkipsTrashedMembersAndRefusesStaleSelection(t *testing.T) 
 			require.Len(t, prepared.Targets, tc.targets)
 			for _, target := range prepared.Targets {
 				require.NotEqual(t, member.ID, target.FileID)
+				require.Equal(t, tc.assets == 1, target.XMP != nil, "only a single photo carries XMP status")
 			}
 			for _, preparedAsset := range prepared.Assets {
 				require.Len(t, preparedAsset.Files, 1)
@@ -243,36 +244,6 @@ func preparedPhotoTargets(ctx context.Context, t *testing.T, s *Store, selection
 		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	return targets
-}
-
-func TestPhotoKeywordOnlyPreservesSidecarInitialization(t *testing.T) {
-	t.Parallel()
-	s, asset, raw, sidecar := authoredSidecar(t)
-	ctx := t.Context()
-	tag, err := s.CreateTag(ctx, "Portfolio")
-	require.NoError(t, err)
-	targets := preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-	receipt, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: targets, Keywords: []PhotoKeywordEdit{{tag.ID, true}}})
-	require.NoError(t, err)
-	for _, file := range receipt.After {
-		require.Equal(t, int64(1), file.Revision)
-	}
-	require.NoError(t, s.ValidateMetadata(ctx))
-	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
-	require.NoError(t, err)
-	current, err := photoFileByIDQuery(ctx, s.db, raw.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), current.Revision)
-	publishPhotoPacket(t, s, sidecar.BlobHash, 5)
-	pending, err := s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 10)
-	require.NoError(t, err)
-	require.Len(t, pending, 1)
-	initialized, err := s.InitializePhotoSidecar(ctx, pending[0])
-	require.NoError(t, err)
-	require.NotEmpty(t, initialized.ReceiptID)
-	current, err = photoFileByIDQuery(ctx, s.db, raw.ID)
-	require.NoError(t, err)
-	require.Equal(t, 5, current.Rating)
 }
 
 func TestPhotoAuthoredBatchConflictsAndAtomicFailure(t *testing.T) {

@@ -27,7 +27,7 @@ func (s *Store) trashAuditedTx(
 	if err != nil {
 		return Node{}, "", err
 	}
-	if err := s.trashNodeTx(tx, node, snapshot.recordedAt); err != nil {
+	if err := s.trashNodeTx(ctx, tx, node, snapshot.recordedAt); err != nil {
 		return Node{}, "", err
 	}
 	resultingNodes := make(map[int64]Node, len(snapshot.priorNodes))

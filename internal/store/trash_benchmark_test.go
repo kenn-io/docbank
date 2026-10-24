@@ -36,7 +36,7 @@ func BenchmarkTrashedRootsPage(b *testing.B) {
 							if err != nil {
 								return err
 							}
-							if err := s.trashNodeTx(tx, node, stamp); err != nil {
+							if err := s.trashNodeTx(ctx, tx, node, stamp); err != nil {
 								return err
 							}
 							if member == 0 {

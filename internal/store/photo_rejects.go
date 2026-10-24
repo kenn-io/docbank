@@ -62,6 +62,7 @@ type PhotoRejectTarget struct {
 	MemberRevision int64  `json:"member_revision" minimum:"1"`
 }
 
+// PhotoRejectsMoved lists the photos moved to trash.
 type PhotoRejectsMoved struct {
 	Moved []string `json:"moved"`
 }
@@ -141,7 +142,7 @@ func photoRejectForMoveTx(
 	if err != nil {
 		return PhotoAsset{}, nil, err
 	}
-	if asset.Revision != target.Revision || (asset.HiddenAt != nil) != hidden {
+	if asset.Revision < target.Revision || (asset.HiddenAt != nil) != hidden || asset.Revision != target.Revision && photoAssetSidecarOnlySinceTx(ctx, tx, asset.ID, target.Revision, asset.Revision) != nil {
 		return PhotoAsset{}, nil, errPhotoRejectsStale
 	}
 	var memberRevision int64
@@ -157,7 +158,10 @@ func photoRejectForMoveTx(
 		if err != nil {
 			return PhotoAsset{}, nil, err
 		}
-		memberRevision += node.Revision
+		if err := photoRejectSidecarReadTx(ctx, tx, file, node); err != nil {
+			return PhotoAsset{}, nil, err
+		}
+		memberRevision += photoRejectRevision(file.Role, node.Revision)
 		nodes = append(nodes, node)
 	}
 	// Content replacement and member trash advance node revisions independently.
@@ -165,6 +169,33 @@ func photoRejectForMoveTx(
 		return PhotoAsset{}, nil, errPhotoRejectsStale
 	}
 	return asset, nodes, nil
+}
+
+// photoRejectSidecarReadTx refuses a linked sidecar whose current version sync has not read yet,
+// since an outside edit there may clear the reject. The worker's own writes and settled versions pass.
+func photoRejectSidecarReadTx(ctx context.Context, tx *sql.Tx, file PhotoFile, node Node) error {
+	if file.Role != PhotoRoleSidecar || file.SidecarOfID == nil {
+		return nil
+	}
+	var unread bool
+	err := tx.QueryRowContext(ctx, `SELECT i.pending AND COALESCE(json_extract(r.after_json,'$.sync.sidecar.version_id'),'')<>? FROM photo_xmp_inputs i
+ LEFT JOIN photo_change_receipts r INDEXED BY photo_change_receipts_xmp_file ON r.operation='xmp_sync' AND CAST(json_extract(r.after_json,'$.file_id') AS TEXT)=i.file_id
+ WHERE i.file_id=?`, node.CurrentVersionID, *file.SidecarOfID).Scan(&unread)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !unread {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return errPhotoRejectsStale
+}
+
+// photoRejectRevision counts originals only: the sync worker rewrites sidecars after a preview.
+func photoRejectRevision(role string, revision int64) int64 {
+	if role == PhotoRoleSidecar {
+		return 0
+	}
+	return revision
 }
 
 // photoRejectMember is one member of an asset with a rejected original.
@@ -266,9 +297,7 @@ func newPhotoRejectsBatch() *photoRejectsBatch {
 	}}
 }
 
-// add classifies one asset's members. An eligible photo that would push the
-// batch past MaxPhotoRejectsMove waits for a later batch while smaller photos
-// after it still fill this one. PhotoMaxFiles keeps every photo within the bound.
+// add classifies one asset's members and fills the move budget with rejects.
 func (b *photoRejectsBatch) add(members []photoRejectMember) {
 	if len(members) == 0 {
 		return
@@ -276,7 +305,7 @@ func (b *photoRejectsBatch) add(members []photoRejectMember) {
 	var memberRevision int64
 	originals, rejected, live := 0, 0, 0
 	for _, member := range members {
-		memberRevision += member.NodeRevision
+		memberRevision += photoRejectRevision(member.Role, member.NodeRevision)
 		if member.TrashedAt == nil {
 			live++
 		}
@@ -293,11 +322,13 @@ func (b *photoRejectsBatch) add(members []photoRejectMember) {
 	}
 	b.out.Photos++
 	b.out.Files += live
+	b.addRejected(members, memberRevision, live)
+}
+
+func (b *photoRejectsBatch) addRejected(members []photoRejectMember, memberRevision int64, live int) {
 	if b.files+live <= MaxPhotoRejectsMove {
 		b.files += live
-		b.out.Targets = append(b.out.Targets, PhotoRejectTarget{
-			AssetID: members[0].AssetID, Revision: members[0].AssetRevision, MemberRevision: memberRevision,
-		})
+		b.out.Targets = append(b.out.Targets, PhotoRejectTarget{AssetID: members[0].AssetID, Revision: members[0].AssetRevision, MemberRevision: memberRevision})
 	}
 }
 

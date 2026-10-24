@@ -136,7 +136,8 @@ var currentSchemaTables = [...]string{
 	"email_document_publications", "email_document_relations",
 	"photo_hidden_credentials", "photo_hidden_failures", "photo_hidden_lockout",
 	"photo_quality_signals", "photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
-	"photo_technical_metadata", "photo_technical_metadata_state", "photo_timeline", "photo_source_claims", "photo_sidecar_considered",
+	"photo_technical_metadata", "photo_technical_metadata_state", "photo_timeline", "photo_source_claims",
+	"photo_xmp_inputs", "photo_xmp_unsettled", "photo_xmp_unsettled_pending",
 	"photo_checkouts", "photo_checkout_entries",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",
@@ -260,37 +261,7 @@ func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema
 		return databaseSchema{}, err
 	}
 	if slices.Contains(vaultMetadata, "schema_version") {
-		var version int
-		if err := db.QueryRow(`
-			SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version); err != nil {
-			return databaseSchema{}, fmt.Errorf("reading storage schema version: %w", err)
-		}
-		if version > currentStorageSchemaVersion {
-			return databaseSchema{}, fmt.Errorf(
-				"opening database: schema version %d is newer than binary schema %d; use a newer docbank binary",
-				version, currentStorageSchemaVersion,
-			)
-		}
-		if version == currentStorageSchemaVersion {
-			if err := validateCurrentSchemaColumns(driver, db, blobs, packs, vaultMetadata); err != nil {
-				return databaseSchema{}, err
-			}
-			return databaseSchema{version: version, current: true}, nil
-		}
-		for i := range releasedStorageSchemas {
-			source := &releasedStorageSchemas[i]
-			if source.version != version {
-				continue
-			}
-			if err := source.validate(db, blobs, packs); err != nil {
-				return databaseSchema{}, err
-			}
-			return databaseSchema{version: version, source: source}, nil
-		}
-		return databaseSchema{}, fmt.Errorf(
-			"opening database: development schema version %d has no supported JSONL cutover; recreate the vault",
-			version,
-		)
+		return classifyVersionedDatabaseSchema(driver, db, blobs, packs, vaultMetadata)
 	}
 
 	// v0.9.0 predates the explicit version marker. Match its complete released
@@ -307,6 +278,41 @@ func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema
 	return databaseSchema{}, fmt.Errorf(
 		"opening database: unsupported schema: unversioned layout (blobs=%s blob_packs=%s)",
 		strings.Join(blobs, ","), strings.Join(packs, ","),
+	)
+}
+
+// classifyVersionedDatabaseSchema accepts only current or supported released layouts.
+func classifyVersionedDatabaseSchema(driver docsqlite.Driver, db *sql.DB, blobs, packs, vaultMetadata []string) (databaseSchema, error) {
+	var version int
+	if err := db.QueryRow(`
+		SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version); err != nil {
+		return databaseSchema{}, fmt.Errorf("reading storage schema version: %w", err)
+	}
+	if version > currentStorageSchemaVersion {
+		return databaseSchema{}, fmt.Errorf(
+			"opening database: schema version %d is newer than binary schema %d; use a newer docbank binary",
+			version, currentStorageSchemaVersion,
+		)
+	}
+	if version == currentStorageSchemaVersion {
+		if err := validateCurrentSchemaColumns(driver, db, blobs, packs, vaultMetadata); err != nil {
+			return databaseSchema{}, err
+		}
+		return databaseSchema{version: version, current: true}, nil
+	}
+	for i := range releasedStorageSchemas {
+		source := &releasedStorageSchemas[i]
+		if source.version != version {
+			continue
+		}
+		if err := source.validate(db, blobs, packs); err != nil {
+			return databaseSchema{}, err
+		}
+		return databaseSchema{version: version, source: source}, nil
+	}
+	return databaseSchema{}, fmt.Errorf(
+		"opening database: development schema version %d has no supported JSONL cutover; recreate the vault",
+		version,
 	)
 }
 

@@ -169,7 +169,7 @@ func TestPhotoExportQualifiedRatingPreservesFlag(t *testing.T) {
 					require.NoError(t, err)
 					packets, err := photoSourcePackets(t.Context(), out, true, true)
 					require.NoError(t, err)
-					actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+					actual, err := readPhotoSidecarValues(t.Context(), packets.xmp)
 					require.NoError(t, err)
 					assert.Equal(t, 3, actual.Rating)
 					assert.Equal(t, tc.flag, actual.Flag)
@@ -455,7 +455,7 @@ func TestPhotoExportMetadataPreservationAndAuthoredEdits(t *testing.T) {
 	assert.NotContains(t, string(merged), "stale-")
 	assert.Contains(t, string(merged), `crs:Exposure="1.25"`)
 	assert.NotContains(t, string(merged), "Old caption")
-	values, err := ReadPhotoSidecar(t.Context(), merged)
+	values, err := readPhotoSidecarValues(t.Context(), merged)
 	require.NoError(t, err)
 	expected := input.Authored
 	expected.Confirmed = 0
@@ -581,7 +581,7 @@ func TestPhotoExportMetadataPreservationAndAuthoredEdits(t *testing.T) {
 			}
 			merged, err := mergePhotoXMP(t.Context(), rotationPacket, store.PhotoExportInput{Authored: authored}, receipt, 1, nil)
 			require.NoError(t, err)
-			actual, err := ReadPhotoSidecar(t.Context(), merged)
+			actual, err := readPhotoSidecarValues(t.Context(), merged)
 			require.NoError(t, err)
 			assert.Equal(t, confirmed != 0 || property != ">", strings.Contains(string(merged), "Rotation"))
 			rotation := 0
@@ -614,7 +614,7 @@ func TestPhotoExportMetadataPreservationAndAuthoredEdits(t *testing.T) {
 					}
 					merged, err := mergePhotoXMP(t.Context(), packet, store.PhotoExportInput{Authored: authored}, receipt, 1, nil)
 					require.NoError(t, err)
-					actual, err := ReadPhotoSidecar(t.Context(), merged)
+					actual, err := readPhotoSidecarValues(t.Context(), merged)
 					require.NoError(t, err)
 					wantFlag, wantRating := "", 0
 					if strings.Contains(property, "4") {
@@ -638,7 +638,7 @@ func TestPhotoExportMetadataPreservationAndAuthoredEdits(t *testing.T) {
 		packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
 		merged, err := mergePhotoXMP(t.Context(), packet, store.PhotoExportInput{Authored: store.PhotoAuthored{Confirmed: store.PhotoConfirmedRating, Rating: 3}}, receipt, 1, nil)
 		require.NoError(t, err)
-		actual, err := ReadPhotoSidecar(t.Context(), merged)
+		actual, err := readPhotoSidecarValues(t.Context(), merged)
 		require.NoError(t, err)
 		flag := "reject"
 		if strings.Contains(property, ">4<") {
@@ -704,7 +704,7 @@ func TestPhotoExportMetadataPreservationAndAuthoredEdits(t *testing.T) {
 					assert.Contains(t, string(merged), `keep:Orientation="77"`)
 					assert.Contains(t, string(merged), ">12345<")
 					if confirmed != 0 {
-						actual, err := ReadPhotoSidecar(t.Context(), merged)
+						actual, err := readPhotoSidecarValues(t.Context(), merged)
 						require.NoError(t, err)
 						if alias.bit == store.PhotoConfirmedRating {
 							assert.Equal(t, 3, actual.Rating)
@@ -736,7 +736,7 @@ func TestPhotoExportMetadataPreservationAndAuthoredEdits(t *testing.T) {
 				}
 			}
 			if confirmed&store.PhotoConfirmedRating != 0 {
-				actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+				actual, err := readPhotoSidecarValues(t.Context(), packets.xmp)
 				require.NoError(t, err)
 				require.Zero(t, actual.Rating)
 			}
@@ -1413,7 +1413,7 @@ func TestPhotoExportXMPKeepsThePhotoSubject(t *testing.T) {
 	for _, subject := range []string{`rdf:about="uuid:photo"`, `rdf:nodeID="photo"`} {
 		exported, err := render(subject)
 		require.NoError(t, err, subject)
-		authored, err := ReadPhotoSidecar(t.Context(), exported)
+		authored, err := readPhotoSidecarValues(t.Context(), exported)
 		require.NoError(t, err, subject)
 		assert.Equal(t, 5, authored.Rating, "%s: the authored rating must describe the photo subject", subject)
 		assert.Contains(t, string(exported), `uuid:other`)
@@ -1464,7 +1464,7 @@ func TestPhotoExportCarriesGIFProfileAndXMP(t *testing.T) {
 			assert.Empty(t, packets.xmp)
 			continue
 		}
-		authored, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+		authored, err := readPhotoSidecarValues(t.Context(), packets.xmp)
 		require.NoError(t, err)
 		assert.Equal(t, "GIF rights", authored.Copyright)
 	}

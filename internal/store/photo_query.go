@@ -190,6 +190,17 @@ func (s *Store) ListPhotoAssets(
 		if err != nil {
 			return err
 		}
+		displayFrom := photoBrowseDisplayFrom
+		if photoXMPQueueRestricted(compiled.Query) {
+			// Seek queued assets before their display files, then sort this small set.
+			displayFrom = `photo_xmp_unsettled xq CROSS JOIN ` + photoBrowseDisplayFrom
+			scope.match.sql = `a.asset_id=xq.asset_id AND (` + scope.match.sql + `)`
+			scope.queue = ` CROSS JOIN photo_xmp_unsettled xq`
+			from = displayFrom
+			if sortField == "added_time" {
+				from += ` CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id`
+			}
+		}
 		if len(request.assetIDs) > 0 {
 			scope.match.sql = `a.asset_id IN (` + placeholders(len(request.assetIDs)) + `) AND (` + scope.match.sql + `)`
 			args := make([]any, 0, len(request.assetIDs)+len(scope.match.args))
@@ -227,7 +238,7 @@ func (s *Store) ListPhotoAssets(
 			}
 		}
 		if boundary == nil {
-			countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + photoBrowseDisplayFrom +
+			countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + displayFrom +
 				` WHERE ` + scope.where())
 			if err != nil {
 				return err
@@ -278,7 +289,7 @@ func (s *Store) ListPhotoAssets(
 					args = append(args, compiled.Query.Filters.SetIDs[0])
 				}
 				if missing {
-					pageFrom = photoBrowseDisplayFrom
+					pageFrom = displayFrom
 					if sortField == "added_time" {
 						continue
 					}
@@ -426,6 +437,8 @@ type photoBrowseScope struct {
 	coverage   CoverageSelection
 	generation string
 	hidden     bool
+	// queue joins the unsettled XMP queue that a queue-restricted match refers to as xq.
+	queue string
 }
 
 // newPhotoBrowseScope checks a configured coverage profile and binds the
