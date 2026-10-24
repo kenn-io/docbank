@@ -155,26 +155,28 @@ export class People {
   }
   // Uncertain writes reload the cards and require fresh selections. Rejected
   // input keeps the cards; stale or missing people also clear the selection.
-  private async recover(cause: unknown, person?: PersonSummary, name?: string) {
-    const epoch = this.epoch;
-    this.writeError = this.failure(cause);
+  private async recover(cause: unknown, epoch: number, person?: PersonSummary, name?: string) {
+    const message = this.failure(cause);
     const status = cause instanceof APIError ? cause.status : 0;
-    if (
-      status === 404 ||
-      status === 412 ||
-      (cause instanceof APIError && cause.code === "person_retired")
-    )
-      this.selected = [];
-    if (status !== 422) await this.load();
+    if (epoch === this.epoch) {
+      this.writeError = message;
+      if (
+        status === 404 ||
+        status === 412 ||
+        (cause instanceof APIError && cause.code === "person_retired")
+      )
+        this.selected = [];
+      if (status !== 422) await this.load();
+    }
     if (status === 0 || status >= 500) {
-      this.selected = [];
+      if (epoch === this.epoch) this.selected = [];
       if (!person || name === undefined) return;
       try {
         let saved: PersonSummary | undefined;
         for (const query of [name]) {
           let cursor: string | undefined;
           do {
-            if (epoch !== this.epoch || this.writer?.signal.aborted) return;
+            if (this.writer?.signal.aborted) return;
             const page = await this.run(() =>
               listPeople(
                 {
@@ -186,7 +188,7 @@ export class People {
                 { session: this.session, signal: this.writer?.signal },
               ),
             );
-            if (epoch !== this.epoch || this.writer?.signal.aborted) return;
+            if (this.writer?.signal.aborted) return;
             saved ??= page.items.find(
               (row) =>
                 row.person_id === person.person_id &&
@@ -230,8 +232,8 @@ export class People {
       }
       return true;
     } catch (cause) {
-      if (!request.signal.aborted && epoch === this.epoch) {
-        await this.recover(cause, person, name.trim());
+      if (!request.signal.aborted) {
+        await this.recover(cause, epoch, person, name.trim());
       }
       return false;
     } finally {
@@ -293,8 +295,7 @@ export class People {
     try {
       const response = await send().catch((cause: unknown) => {
         const status = cause instanceof APIError ? cause.status : 0;
-        if (request.signal.aborted || epoch !== this.epoch || (status !== 0 && status < 500))
-          throw cause;
+        if (request.signal.aborted || (status !== 0 && status < 500)) throw cause;
         return send();
       });
       await readReceipt(response, source, survivor, operationID);
@@ -307,9 +308,9 @@ export class People {
       }
       return true;
     } catch (cause) {
-      if (!request.signal.aborted && epoch === this.epoch) {
-        this.merge = undefined;
-        await this.recover(cause);
+      if (!request.signal.aborted) {
+        if (epoch === this.epoch) this.merge = undefined;
+        await this.recover(cause, epoch);
       }
       return false;
     } finally {

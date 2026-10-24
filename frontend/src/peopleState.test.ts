@@ -256,7 +256,7 @@ it.each(["rename", "merge", "load"])("conceals names after a late %s response", 
         : people.rename(ada, "Ada L");
   people.conceal();
   if (action === "load") finish({ items: [grace] });
-  else reject(new Error("Offline"));
+  else reject(new APIError("Invalid input", 422, "validation"));
   await pending;
   expect(people.items).toEqual([]);
   expect(people.selected).toEqual([]);
@@ -267,6 +267,75 @@ it.each(["rename", "merge", "load"])("conceals names after a late %s response", 
     expect(read).toHaveBeenCalledOnce();
     expect(read.mock.calls[0]![1]!.signal!.aborted).toBe(true);
   } else expect(read).not.toHaveBeenCalled();
+  people.dispose();
+});
+
+it.each([true, false])(
+  "confirms a lost rename response after leaving People, committed=%s",
+  async (committed) => {
+    let reject!: (cause: Error) => void;
+    let rows = [ada];
+    const read = vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
+    vi.spyOn(api, "renamePerson").mockImplementation(
+      () =>
+        new Promise((_, fail) => {
+          if (committed) rows = [{ ...ada, display_name: "Zoe", revision: 3 }];
+          else rows = [];
+          reject = fail;
+        }),
+    );
+    const changed = vi.fn();
+    const people = new People("session", vi.fn(), undefined, changed);
+    people.items = [ada, grace];
+    merging(people);
+    const pending = people.rename(ada, " Zoe ");
+    people.conceal();
+    reject(new TypeError("Response lost"));
+    expect(await pending).toBe(false);
+    if (committed) expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Zoe");
+    else expect(changed).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledExactlyOnceWith(
+      { query: "Zoe", limit: peoplePageSize, photo_summary: true },
+      { session: "session", signal: expect.any(AbortSignal) },
+    );
+    expect(people.items).toEqual([]);
+    expect(people.selected).toEqual([]);
+    expect(people.merge).toBeUndefined();
+    expect(people.writeError).toBe("");
+    people.dispose();
+  },
+);
+
+it("confirms a lost merge response after leaving People without restoring the directory", async () => {
+  let reject!: (cause: Error) => void;
+  let rows = [ada, grace];
+  const read = vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: rows }));
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          rows = [grace];
+          reject = fail;
+        }),
+    )
+    .mockImplementation(async (_, request) => personMergeReceipt(ada, grace, request.operation_id));
+  const changed = vi.fn();
+  const people = new People("session", vi.fn(), undefined, changed);
+  people.items = rows;
+  merging(people);
+  const pending = people.submitMerge();
+  people.conceal();
+  reject(new TypeError("Response lost"));
+  expect(await pending).toBe(true);
+  expect(merge).toHaveBeenCalledTimes(2);
+  expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
+  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+  expect(read).not.toHaveBeenCalled();
+  expect(people.items).toEqual([]);
+  expect(people.selected).toEqual([]);
+  expect(people.merge).toBeUndefined();
+  expect(people.writeError).toBe("");
   people.dispose();
 });
 
