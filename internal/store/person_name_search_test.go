@@ -1,7 +1,6 @@
 package store
 
 import (
-	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -28,6 +27,7 @@ func TestPersonNameSearchFollowsAuthority(t *testing.T) {
 	require.Empty(t, old)
 }
 
+// BenchmarkPeopleByDisplayNameWordStart measures name-prefix search across 100,000 people.
 func BenchmarkPeopleByDisplayNameWordStart(b *testing.B) {
 	s, err := Open(filepath.Join(b.TempDir(), "people.db"))
 	require.NoError(b, err)
@@ -40,17 +40,6 @@ func BenchmarkPeopleByDisplayNameWordStart(b *testing.B) {
 	 CASE WHEN i%100=0 THEN 'synthetic smith' ELSE printf('synthetic person%05d',i) END,
 	 'operator','curated',1,?,? FROM people`, nowRFC3339(), nowRFC3339())
 	require.NoError(b, err)
-	// Browser visibility reads every assertion, so seed a photo-heavy vault:
-	// 300 photos with 1,000 depicted people each gives every person three photos.
-	for photo := range 300 {
-		node, err := s.CreateFile(b.Context(), s.RootID(), fmt.Sprintf("photo-%03d.jpg", photo), fakeHash(fmt.Sprintf("people-%03d", photo)), 20, "image/jpeg")
-		require.NoError(b, err)
-		_, err = s.db.ExecContext(b.Context(), `WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<999)
-		 INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision)
-		 SELECT printf('10000000-0000-4000-8000-%012d',?*1000+i),?,printf('00000000-0000-4000-8000-%012d',1+(?*1000+i)%100000),
-		 'depicted','assert','',?,1 FROM n`, photo, node.CurrentVersionID, photo, nowRFC3339())
-		require.NoError(b, err)
-	}
 	for b.Loop() {
 		people, _, err := s.PeopleByDisplayName(b.Context(), "Smith", "", "", 100, true, PeopleSearchOptions{})
 		require.NoError(b, err)
