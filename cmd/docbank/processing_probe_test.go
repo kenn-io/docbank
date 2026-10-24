@@ -68,7 +68,7 @@ func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing
 		assert.Contains(t, printed.String(), result.FormatID+" "+string(result.Status)+" "+result.ReasonCode)
 	}
 	assert.Contains(t, printed.String(), output)
-	require.ErrorContains(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false), "capability manifest "+strconv.Quote(output)+" already exists; pass --overwrite")
+	require.ErrorContains(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false), "download destination "+strconv.Quote(output)+" already exists; pass --overwrite")
 	preserved, err := os.ReadFile(output)
 	require.NoError(t, err)
 	assert.Equal(t, content, preserved)

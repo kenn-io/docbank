@@ -7,9 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document/mistral"
@@ -77,7 +75,7 @@ func newMistralProbeClient(ctx context.Context, cfg config.Config, profile strin
 }
 
 func runMistralProbe(ctx context.Context, out io.Writer, client *mistral.Client, policy mistral.Policy, seeds, output string, overwrite bool) (retErr error) {
-	destination, err := prepareProbeDestination(output, overwrite)
+	destination, err := prepareGetDestination(output, overwrite)
 	if err != nil {
 		return err
 	}
@@ -131,33 +129,4 @@ func runMistralProbe(ctx context.Context, out io.Writer, client *mistral.Client,
 		return fmt.Errorf("print saved manifest path: %w", err)
 	}
 	return nil
-}
-
-func prepareProbeDestination(raw string, overwrite bool) (string, error) {
-	if !utf8.ValidString(raw) {
-		return "", usageError(fmt.Errorf("capability manifest %s is not valid UTF-8", strconv.QuoteToASCII(raw)))
-	}
-	abs, err := filepath.Abs(raw)
-	if err != nil {
-		return "", fmt.Errorf("resolving capability manifest %q: %w", raw, err)
-	}
-	info, err := os.Lstat(abs)
-	if err == nil {
-		if info.IsDir() {
-			return "", usageError(fmt.Errorf("capability manifest %s is a directory", strconv.Quote(abs)))
-		}
-		if !overwrite {
-			return "", usageError(fmt.Errorf("capability manifest %s already exists; pass --overwrite to replace it", strconv.Quote(abs)))
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("checking capability manifest %s: %w", strconv.Quote(abs), err)
-	}
-	parent, err := os.Stat(filepath.Dir(abs))
-	if err != nil {
-		return "", fmt.Errorf("checking capability manifest directory: %w", err)
-	}
-	if !parent.IsDir() {
-		return "", usageError(fmt.Errorf("capability manifest parent is not a directory: %s", strconv.Quote(filepath.Dir(abs))))
-	}
-	return abs, nil
 }
