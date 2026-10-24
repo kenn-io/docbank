@@ -12,9 +12,9 @@ $legacy = @('./docbank', './internal/store', './cmd/docbank')
 # Seed measured hot packages; distribute the remainder round-robin across all four shards.
 $groups = @{
     1 = @($legacy[1], './internal/daemonconn')
-    2 = @($legacy[0])
+    2 = @($legacy[0], './internal/api')
     3 = @($legacy[2])
-    4 = @('./internal/processing', './internal/api')
+    4 = @('./internal/processing')
 }
 $packages = @('./...')
 if ($Shard -ne 'all' -and [int]$Shard -gt $ShardCount) {
