@@ -174,7 +174,7 @@
           >
           {@render counts(person)}
         </button>
-        {#if unlocked && person.photo_summary?.hidden_count !== undefined}<button
+        {#if unlocked && person.photo_summary && (person.photo_summary.hidden_count ?? 0) > 0}<button
             class="hidden-count"
             type="button"
             onclick={() => onperson(person.person_id, person.display_name, true)}

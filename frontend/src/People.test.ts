@@ -18,6 +18,22 @@ const unlockedAccess = () => {
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   return access;
 };
+it.each([0, 2])("shows a Hidden button only for a positive count, count=%s", async (count) => {
+  const access = unlockedAccess();
+  const people = new People("session", vi.fn(), access);
+  people.items = [{ ...ada, photo_summary: { library_count: 3, hidden_count: count } }];
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const onperson = vi.fn();
+  render(PeopleView, { people, cache, onperson });
+  if (count === 0) expect(screen.queryByRole("button", { name: "0 Hidden photos" })).toBeNull();
+  else {
+    await fireEvent.click(screen.getByRole("button", { name: "2 Hidden photos" }));
+    expect(onperson).toHaveBeenCalledWith(ada.person_id, ada.display_name, true);
+  }
+  people.dispose();
+  access.dispose();
+  await cache.dispose();
+});
 it("blocks manual Search after a failed Hidden lock and reloads after a successful retry", async () => {
   const access = unlockedAccess();
   const hidden = {
