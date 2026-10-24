@@ -206,14 +206,14 @@ func freezeInputMetadata(inputs []document.EmbeddingInput, discloseFilename bool
 			}
 		}
 		input.SourceSpans = slices.Clone(input.SourceSpans)
-		if input.Kind != document.EmbeddingInputOriginalFile || nilInterface(input.Source) {
+		if (input.Kind != document.EmbeddingInputOriginalFile && input.Kind != document.EmbeddingInputImage) || nilInterface(input.Source) {
 			continue
 		}
 		metadata := input.Source.Metadata()
 		if !safeMultipartFilename(metadata.Filename) {
 			return nil, classified(ErrorPermanent, 0)
 		}
-		if !discloseFilename {
+		if !discloseFilename || input.Kind == document.EmbeddingInputImage {
 			metadata.Filename = ""
 		}
 		input.Source = frozenUpload{AuthorizedUpload: input.Source, metadata: metadata}
@@ -233,7 +233,7 @@ func (client *Client) buildManifest(inputs []document.EmbeddingInput, authorizat
 			Index: index, Key: input.Key, Role: input.Role, Kind: input.Kind,
 			HeadingPath: slices.Clone(input.HeadingPath), SourceSpans: manifestSpans(input.SourceSpans),
 		}
-		if input.Kind == document.EmbeddingInputOriginalFile {
+		if input.Kind == document.EmbeddingInputOriginalFile || input.Kind == document.EmbeddingInputImage {
 			metadata := input.Source.Metadata()
 			entry.ByteLength = metadata.ByteLength
 			entry.SHA256 = metadata.SHA256
@@ -277,7 +277,7 @@ func manifestSpans(values []document.ChunkSpan) []ManifestSpan {
 
 func hasOriginalInput(inputs []document.EmbeddingInput) bool {
 	return slices.ContainsFunc(inputs, func(input document.EmbeddingInput) bool {
-		return input.Kind == document.EmbeddingInputOriginalFile
+		return (input.Kind == document.EmbeddingInputOriginalFile || input.Kind == document.EmbeddingInputImage)
 	})
 }
 
@@ -295,7 +295,7 @@ func multipartLength(ctx context.Context, boundary string, manifest []byte, inpu
 	}
 	total := counter.written
 	for _, input := range inputs {
-		if input.Kind == document.EmbeddingInputOriginalFile {
+		if input.Kind == document.EmbeddingInputOriginalFile || input.Kind == document.EmbeddingInputImage {
 			if input.Source.Metadata().ByteLength > maxRequestBytes-total {
 				return 0, errors.New("multipart request length overflow")
 			}
@@ -317,7 +317,7 @@ func writeMultipart(ctx context.Context, writer *multipart.Writer, manifest []by
 		return err
 	}
 	for _, input := range inputs {
-		if input.Kind != document.EmbeddingInputOriginalFile {
+		if input.Kind != document.EmbeddingInputOriginalFile && input.Kind != document.EmbeddingInputImage {
 			continue
 		}
 		metadata := input.Source.Metadata()

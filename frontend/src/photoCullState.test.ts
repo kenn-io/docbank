@@ -860,3 +860,46 @@ it("retries incomplete grouping explicitly without resending the frozen run on f
   expect(cull.run?.groupingIncomplete).toBeFalsy();
   expect(cull.run?.groups).toEqual([ids]);
 });
+
+it("regroups the same frozen members when the image generation changes", async () => {
+  const cull = new PhotoCull("session", storage());
+  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
+    Response.json(await snapshot([photo(1).asset_id, photo(2).asset_id])),
+  );
+  vi.mocked(api.getPhotoSettings).mockResolvedValue({
+    revision: 1,
+    burst_gap_seconds: 2,
+    vector_generation_id: "image-generation-a",
+  });
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+    vector_generation_id: "image-generation-a",
+  });
+  await cull.start(query);
+  vi.mocked(api.groupPhotoStacks).mockClear();
+  vi.mocked(api.getPhotoSettings).mockResolvedValue({
+    revision: 1,
+    burst_gap_seconds: 2,
+    vector_generation_id: "image-generation-b",
+  });
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [[photo(1).asset_id, photo(2).asset_id]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+    vector_generation_id: "image-generation-b",
+  });
+  const ids = cull.run!.ids,
+    checkpoint = cull.run!.checkpoint;
+  await cull.checkSettings();
+  expect(cull.run!.ids).toBe(ids);
+  expect(cull.run!.checkpoint).toBe(checkpoint);
+  expect(cull.currentStack).toEqual([photo(1).asset_id, photo(2).asset_id]);
+  expect(api.groupPhotoStacks).toHaveBeenCalledOnce();
+  expect(vi.mocked(api.groupPhotoStacks).mock.calls[0][0].asset_ids).toEqual([
+    photo(1).asset_id,
+    photo(2).asset_id,
+  ]);
+  await cull.flush();
+});

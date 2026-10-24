@@ -59,7 +59,7 @@ type bridgeFixture struct {
 	client     *embeddingbridge.Client
 }
 
-func newBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
+func newBridgeFixture(t *testing.T, handler http.Handler, kinds ...document.EmbeddingInputKind) bridgeFixture {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -88,6 +88,9 @@ func newBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
 		InputKinds:      []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk},
 		CompatibilityID: modelInput.CompatibilityID, SupportsTextQuery: true, ModelInput: modelInput,
 		SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText},
+	}
+	if len(kinds) > 0 {
+		descriptor.InputKinds = kinds
 	}
 	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
 	require.NoError(t, err)

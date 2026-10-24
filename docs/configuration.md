@@ -929,7 +929,7 @@ and must be supplied separately after restoring a vault.
 
 | Fields | Meaning |
 | --- | --- |
-| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, or `docbank-voyage-embeddings/v1` for rendition chunks and original files. |
+| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, or `docbank-voyage-embeddings/v1` for rendition chunks and original files, or `docbank-standard-embedding-bridge/v1` for image/text retrieval. |
 | `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
 | `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. Voyage text runtimes require an epoch and forbid a revision header. The epoch must equal `model_revision`; an OpenAI-compatible revision header must echo the pinned revision in every response. |
 | `capability_manifest` | Voyage original-file runtimes require an absolute path to a capability manifest matching their model, media policy, and descriptor. Voyage text runtimes forbid this field. |
@@ -941,6 +941,25 @@ Request timeouts must also be positive and at most five minutes. Retry policy
 belongs to the worker, so runtime configuration has no retry-count or retry-delay
 fields. The worker handles transient failures and capacity-driven batch splits.
 It records malformed responses separately from rejected document input.
+
+#### Image/text retrieval
+
+Use `docbank-standard-embedding-bridge/v1` with `input_kind = "image"` for Photos Meaning and Hybrid search. The bridge receives verified, stripped JPEG grid previews and text queries in the same vector space. Originals and filenames stay local. Use the bridge endpoint origin, pinned `model_revision`, provider disclosure, and explicit transport policy described above. Grant image and query-text consent before searching; missing consent, provider access, or an active index returns metadata matches with a visible reason.
+
+```toml
+[processing_profiles.photos]
+embeddings = ["images"]
+
+[embedding_profiles.images]
+input_kind = "image"
+# Supply the remaining pinned profile fields from the provisioned bridge.
+
+[embedding_profiles.images.runtime]
+adapter_contract = "docbank-standard-embedding-bridge/v1"
+endpoint = "https://embedding.example.invalid"
+model_revision = "provisioned-image-model-v1"
+# Supply the disclosure, credentials, limits, and transport policy above.
+```
 
 #### Voyage text retrieval
 

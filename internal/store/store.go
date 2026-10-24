@@ -12,6 +12,7 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 
+	"go.kenn.io/docbank/internal/vectorindex"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -20,6 +21,7 @@ var schemaSQL string
 
 // Store is the single access path to the docbank database.
 type Store struct {
+	photoStackVectors      vectorindex.GenerationCache
 	db                     *sql.DB
 	writeDB                *sql.DB
 	path                   string
@@ -243,7 +245,11 @@ func (s *Store) PrimaryBlobStoreID() string { return s.primaryStoreID }
 func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 
 // Close closes both database pools.
-func (s *Store) Close() error { return errors.Join(s.db.Close(), s.writeDB.Close()) }
+func (s *Store) Close() error {
+	err := errors.Join(s.db.Close(), s.writeDB.Close())
+	s.photoStackVectors.Clear()
+	return err
+}
 
 // Checkpoint truncates the WAL after all application writes have completed.
 // Portable restore uses it before closing a freshly imported database so the

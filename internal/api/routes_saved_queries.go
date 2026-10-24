@@ -10,6 +10,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -232,9 +234,33 @@ func registerSavedQueryRunRoute(
 		if snapshots == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
-		run, page, err := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, store.SnapshotRequest{
-			ReplacesSnapshotID: in.Body.ReplacesSnapshotID, Photos: in.Body.Photos, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
-		}, g.mutate)
+		request := store.SnapshotRequest{ReplacesSnapshotID: in.Body.ReplacesSnapshotID, Photos: in.Body.Photos, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets}
+		if request.Photos {
+			saved, err := d.Store.SavedQueryByID(ctx, in.SavedQueryID)
+			if err != nil {
+				return nil, workspaceQueryError(err)
+			}
+			if saved.Revision != revision {
+				return nil, workspaceQueryError(store.ErrStaleRevision)
+			}
+			value, err := query.Parse(saved.Payload)
+			if err != nil {
+				return nil, workspaceQueryError(err)
+			}
+			request.Query = value
+			if value.Mode != photoQueryModeLexical {
+				ranking := store.PhotoRanking{RequestedMode: value.Mode, ActualMode: photoQueryModeLexical, FallbackReason: "provider_unavailable"}
+				if d.Processing != nil {
+					ranking, err = d.Processing.SearchPhotos(ctx, store.PhotoBrowseRequest{Query: value, Coverage: coverage})
+					if err != nil {
+						return nil, workspaceQueryError(err)
+					}
+				}
+				request.PhotoRanking = &ranking
+				request.SourceMetadataFingerprint = processing.SourceMetadataExtractorFingerprint
+			}
+		}
+		run, page, err := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, request, g.mutate)
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}

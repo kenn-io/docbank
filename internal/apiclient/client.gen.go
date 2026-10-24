@@ -9341,6 +9341,53 @@ func (c *Client) ListPhotoAssets(ctx context.Context, options *ListPhotoAssetsRe
 	return responseParser(ctx, resp)
 }
 
+// RefreshPhotoSnapshotStacks Read current representatives for accepted photo stacks
+func (c *Client) RefreshPhotoSnapshotStacks(ctx context.Context, options *RefreshPhotoSnapshotStacksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RefreshPhotoSnapshotStacksResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/query/stacks",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RefreshPhotoSnapshotStacksResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RefreshPhotoSnapshotStacksResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RefreshPhotoSnapshotStacksResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RefreshPhotoSnapshotStacksErrorResponse](resp, "RefreshPhotoSnapshotStacksErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/query/stacks")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoTimeline Count matching photo assets by recorded capture day
 func (c *Client) GetPhotoTimeline(ctx context.Context, options *GetPhotoTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoTimelineResponse, error) {
 	var err error
@@ -21376,6 +21423,34 @@ func (o *ListPhotoAssetsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// RefreshPhotoSnapshotStacksRequestOptions is the options needed to make a request to RefreshPhotoSnapshotStacks.
+type RefreshPhotoSnapshotStacksRequestOptions struct {
+	Body *RefreshPhotoSnapshotStacksBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RefreshPhotoSnapshotStacksRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RefreshPhotoSnapshotStacksRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RefreshPhotoSnapshotStacksRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RefreshPhotoSnapshotStacksRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetPhotoTimelineRequestOptions is the options needed to make a request to GetPhotoTimeline.
 type GetPhotoTimelineRequestOptions struct {
 	Body *GetPhotoTimelineBody
@@ -26327,6 +26402,8 @@ type LookupPhotoFlagsBody = LookupPhotoFlagsRequest
 
 type ListPhotoAssetsBody = PhotoBrowseRequest
 
+type RefreshPhotoSnapshotStacksBody = PhotoSnapshotStacksRequest
+
 type GetPhotoTimelineBody = PhotoTimelineRequest
 
 type SetPhotoDisplayBody = SetPhotoDisplayRequest
@@ -27696,6 +27773,10 @@ type LookupPhotoFlagsErrorResponse = Error
 type ListPhotoAssetsResponse = api.PhotoBrowsePage
 
 type ListPhotoAssetsErrorResponse = Error
+
+type RefreshPhotoSnapshotStacksResponse = api.PhotoSnapshotStacksResponse
+
+type RefreshPhotoSnapshotStacksErrorResponse = Error
 
 type GetPhotoTimelineResponse = api.PhotoTimeline
 
@@ -29282,6 +29363,10 @@ type PhotoSettings = api.PhotoSettings
 
 type PhotoSidecarProvenance = store.PhotoSidecarProvenance
 
+type PhotoSnapshotStacksRequest = api.PhotoSnapshotStacksRequest
+
+type PhotoSnapshotStacksResponse = api.PhotoSnapshotStacksResponse
+
 type PhotoStack = api.PhotoStack
 
 type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
@@ -29697,6 +29782,10 @@ type SetPhotoDisplayRequest = api.SetPhotoDisplayRequest
 type SetPhotoExcludedRequest = api.SetPhotoExcludedRequest
 
 type SetPhotoSettingsRequest = api.SetPhotoSettingsRequest
+
+type SnapshotFacet = store.SnapshotFacet
+
+type SnapshotFacetValue = store.SnapshotFacetValue
 
 type Sort = query.Sort
 

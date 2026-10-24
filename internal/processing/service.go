@@ -558,6 +558,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 			if err != nil {
 				return nil, err
 			}
+			runtime.catalog = config.Catalog
+			service.embeddings.profiles[configured.record.Fingerprint] = configured.record
 			if existing, exists := registeredEmbeddings[descriptor.Fingerprint]; !exists {
 				if err := service.embeddings.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q embedding %q: %w", name, binding.Name, err)
@@ -728,7 +730,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 ) (Plan, error) {
 	plan := Plan{VaultUID: service.catalog.VaultID(), Selector: selector,
 		ProfileFingerprint: profile.record.Fingerprint, ConsentRequired: true,
-		Estimate:          Estimate{SourceBytes: version.Size, VectorSpaces: len(profile.portable.Embeddings)},
+		Estimate:          Estimate{SourceBytes: version.Size, VectorSpaces: len(profile.portable.Embeddings), Scope: photoDiscoveryScope(profile)},
 		BackupConsequence: "retained derivatives are included in catalog-authorized backups"}
 	if profile.portable.Rendition != nil {
 		hop := FlowHop{Capability: "rendition",
@@ -743,7 +745,6 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "filename")
 		}
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-			plan.Estimate.Scope = "Granting consent automatically queues eligible photos throughout this vault."
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
 			// Only the grid preview leaves the vault, not the original file.
 			view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
@@ -1634,10 +1635,21 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		return nil, err
 	}
 	jobIDs := make([]string, 0, len(profile.portable.Embeddings))
+	bindings := make([]document.EmbeddingBindingV1, 0, len(profile.portable.Embeddings))
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
+	var ineligibleErr error
 	for _, binding := range profile.portable.Embeddings {
 		var generation store.EmbeddingInputGenerationRecord
 		switch binding.InputKind {
+		case document.EmbeddingInputImage:
+			generation, _, err = profile.embeddingRuntimes[binding.Name].ImageGeneration(ctx, profile.record, binding, version.ID)
+			if errors.Is(err, ErrSourceIneligible) {
+				ineligibleErr = err
+				continue
+			}
+			if err != nil {
+				return jobIDs, err
+			}
 		case document.EmbeddingInputOriginalFile:
 			generation = directEmbeddingGeneration(version, profile.record.Fingerprint,
 				fingerprints.EmbeddingInput[binding.Name], binding)
@@ -1683,13 +1695,17 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			return jobIDs, enqueueErr
 		}
 		jobIDs = append(jobIDs, job.ID)
+		bindings = append(bindings, binding)
 		if len(jobIDs) == 1 && onEnqueued != nil {
 			onEnqueued(slices.Clone(jobIDs))
 			ctx = service.lifecycle
 		}
 	}
+	if len(jobIDs) == 0 && profile.portable.Rendition == nil && ineligibleErr != nil {
+		return jobIDs, ineligibleErr
+	}
 	for index, jobID := range jobIDs {
-		binding := profile.portable.Embeddings[index]
+		binding := bindings[index]
 		worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{
 			Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
 			GenerationBlobs: service.blobs, Runtime: profile.embeddingRuntimes[binding.Name], Gate: service.gate,
@@ -2540,9 +2556,12 @@ func embeddingRuntimeDisclosure(supplied RuntimeDisclosure, binding document.Emb
 	value.ModelRevision = descriptor.ModelRevision
 	value.VectorSpace = vectorSpace
 	value.RetainedArtifactRoles = []string{"embedding_input_generation", "embedding_vector_set"}
-	if binding.InputKind == document.EmbeddingInputOriginalFile {
+	switch binding.InputKind {
+	case document.EmbeddingInputOriginalFile:
 		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type", "synthetic_filename"}
-	} else {
+	case document.EmbeddingInputImage:
+		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type"}
+	default:
 		value.MetadataClasses = []string{"chunk_key", "content_derived_heading_path"}
 	}
 	return canonicalRuntimeDisclosure(value, string(descriptor.TrustBoundary))

@@ -15,6 +15,7 @@ const MaxPhotoRejectsMixed = 20
 var errPhotoRejectsStale = fmt.Errorf("%w: preview rejects again", ErrStaleRevision)
 
 type PhotoRejectsRequest struct {
+	AssetIDs []string
 	Query    query.Query
 	Hidden   bool
 	Coverage CoverageSelection
@@ -204,6 +205,9 @@ func (s *Store) photoRejects(
 	compiled, err := compiler.compile(ctx, request.Query, queryResolver{q: q})
 	if err != nil {
 		return PhotoRejectsPreflight{}, err
+	}
+	if request.AssetIDs != nil {
+		compiled.predicate = joinCompiledFragments([]compiledQueryFragment{compiled.predicate, photoMemberFence(request.AssetIDs)}, " AND ")
 	}
 	scope, err := newPhotoBrowseScope(ctx, q, compiled, generation, coverage, request.Hidden)
 	if err != nil {

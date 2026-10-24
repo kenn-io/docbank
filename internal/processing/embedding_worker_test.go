@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"log/slog"
 	"math"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,7 +27,9 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestEmbeddingWorkerPublishesBindingsAndInputKindsIndependently(t *testing.T) {
@@ -673,6 +677,7 @@ func mutateEmbeddingWorkerBinding(t *testing.T, work EmbeddingWork,
 // The rest of this file is a deterministic authority harness. Assertions are
 // made on worker-visible catalog state, never on fake call existence alone.
 type embeddingWorkerFakeCatalog struct {
+	reconcilePage                   func(store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	reconcileError                  func() error
 	mu                              sync.Mutex
 	queue                           []EmbeddingWork
@@ -698,10 +703,13 @@ func (c *embeddingWorkerFakeCatalog) enqueue(work ...EmbeddingWork) {
 	defer c.mu.Unlock()
 	c.queue = append(c.queue, work...)
 }
-func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(context.Context, store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(_ context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.events = append(c.events, "reconcile")
+	if c.reconcilePage != nil {
+		return c.reconcilePage(request)
+	}
 	if c.reconcileError != nil {
 		if err := c.reconcileError(); err != nil {
 			return store.EmbeddingReconcileResult{}, err
@@ -2025,4 +2033,477 @@ func TestEmbeddingWorkerSpacesReconciliationWithoutDelayingQueuedWork(t *testing
 		require.NoError(t, err)
 		require.Equal(t, 2, passes)
 	})
+}
+
+func TestImageEmbeddingRuntimeUsesStrippedGridPreviewAndRejectsInvalidJPEG(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	registry := x.service.EmbeddingRuntimes()
+	profile := x.service.profiles["images"].record
+	generation, _, err := registry.ImageGeneration(t.Context(), profile, x.binding, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	work := EmbeddingWork{ContentVersionID: f.node.CurrentVersionID, ProcessingProfile: profile, Binding: x.binding, Descriptor: x.descriptor, InputGeneration: generation}
+	execution, err := registry.Prepare(t.Context(), work)
+	require.NoError(t, err)
+	defer closeEmbeddingInputs(execution.Inputs)
+	require.Len(t, execution.Inputs, 1)
+	assert.Equal(t, document.EmbeddingInputImage, execution.Inputs[0].Kind)
+	metadata := execution.Inputs[0].Source.Metadata()
+	assert.Equal(t, document.RenditionInputDerivedUpload, metadata.InputKind)
+	assert.Empty(t, metadata.Filename)
+	data, err := io.ReadAll(execution.Inputs[0].Source)
+	require.NoError(t, err)
+	assert.NotEqual(t, f.written.Hash, workerHashBytes(data))
+	assert.Equal(t, metadata.SHA256, workerHashBytes(data))
+	work.ContentVersionID = publishRejectedPreview(t, f)("invalid-preview.jpg").CurrentVersionID
+	_, err = registry.Prepare(t.Context(), work)
+	require.ErrorIs(t, err, ErrEmbeddingInputRejected)
+
+	// Two profiles that share a descriptor register one runtime for it.
+	sibling := x.portable
+	sibling.Embeddings = slices.Clone(x.portable.Embeddings)
+	sibling.Embeddings[0].DisclosureFingerprint = workerHash("sibling-disclosure")
+	shared, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
+	require.NoError(t, err)
+	assert.True(t, shared.EmbeddingRuntimes().Ready())
+	assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
+}
+
+func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture) photoSearchFixture {
+	t.Helper()
+	fake := newEmbeddingWorkerFixture(t)
+	descriptor := fake.descriptor
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(fake.profile.CanonicalProfile, &portable))
+	binding := portable.Embeddings[1]
+	binding.InputKind = document.EmbeddingInputImage
+	binding.Descriptor.Fingerprint = descriptor.Fingerprint
+	portable.Rendition = nil
+	portable.Embeddings = []document.EmbeddingBindingV1{binding}
+	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: descriptor}
+	fake.runtime.consumeOriginal = true
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
+	require.NoError(t, err)
+	return photoSearchFixture{f: f, fake: fake, descriptor: descriptor, portable: portable, binding: binding, provider: provider, service: service}
+}
+
+type photoSearchFixture struct {
+	f          *photoDescriptionFixture
+	fake       *embeddingWorkerFixture
+	descriptor document.EmbeddingDescriptor
+	portable   document.ProcessingProfileV1
+	binding    document.EmbeddingBindingV1
+	provider   *embeddingWorkerProvider
+	service    *Service
+	indexer    *vectorworker.IndexWorker
+}
+
+func newPhotoSearchFixture(t *testing.T) photoSearchFixture {
+	t.Helper()
+	f := newPhotoDescriptionFixture(t)
+	_, err := f.catalog.SetPhotoAssetExcluded(t.Context(), f.asset.ID, f.asset.Revision, true)
+	require.NoError(t, err)
+	f.node, err = f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "last-photo.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+	require.NoError(t, err)
+	f.asset, err = f.catalog.PhotoAssetForNode(t.Context(), f.node.ID)
+	require.NoError(t, err)
+	_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, f.node.CurrentVersionID, f.recipe)
+	require.NoError(t, err)
+	x := newImageEmbeddingService(t, f)
+	fake, descriptor, portable, binding, provider, service := x.fake, x.descriptor, x.portable, x.binding, x.provider, x.service
+	f.grant(t, service, "images")
+	worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: f.catalog, Authority: f.catalog, Blobs: f.blobs, GenerationBlobs: f.blobs, Runtime: service.EmbeddingRuntimes(), Gate: newTestOperationGate(), Owner: "synthetic-images", RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second, AttemptLifetime: 10 * time.Minute, MaxRows: 100, MaxDimensions: 100, MaxVectorBlobBytes: 1 << 20, LeaseDuration: time.Minute, IdleDelay: time.Millisecond, DescriptorFingerprints: []string{descriptor.Fingerprint}})
+	require.NoError(t, err)
+	processed, err := worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, processed)
+	spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: f.catalog, Owner: "synthetic-image-index", Mutate: newTestOperationGate().MutateContext, BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+		return readExactEmbeddingBlob(ctx, f.blobs, member.PayloadBlobHash, member.PayloadSize)
+	}})
+	require.NoError(t, err)
+	_, err = indexer.Rebuild(t.Context(), spaces[0])
+	require.NoError(t, err)
+	return photoSearchFixture{f, fake, descriptor, portable, binding, provider, service, indexer}
+}
+
+func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Service, document.ProcessingProfileV1, *embeddingWorkerProvider) {
+	t.Helper()
+	f, descriptor, portable, binding, provider, service, indexer := x.f, x.descriptor, x.portable, x.binding, x.provider, x.service, x.indexer
+	// Search selection follows active image index authority across profiles.
+	alternateDescriptor := descriptor
+	alternateDescriptor.ModelRevision += "-alternate"
+	alternateDescriptor, err := document.NewEmbeddingDescriptor(alternateDescriptor)
+	require.NoError(t, err)
+	alternate := portable
+	alternate.Embeddings = slices.Clone(portable.Embeddings)
+	alternate.Embeddings[0].Descriptor.Fingerprint = alternateDescriptor.Fingerprint
+	alternateProvider := &embeddingWorkerProvider{runtime: x.fake.runtime, binding: binding.Name, descriptor: alternateDescriptor}
+	two, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: service.principal, Scope: service.scope, Profiles: map[string]ProfileConfig{"z-images": {Profile: portable, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}}, "a-images": {Profile: alternate, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: alternateProvider}}}})
+	require.NoError(t, err)
+	if consent {
+		f.grant(t, two, "a-images")
+	}
+	if indexed {
+		alternateProfile := two.profiles["a-images"]
+		rows, err := f.catalog.ListPhotoAssets(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Mode: "lexical", Syntax: "advanced", Filters: query.Filters{AssetIDs: []string{f.asset.ID}}, Sort: query.Sort{Field: "name", Direction: "asc"}}, PageSize: 1}, nil)
+		require.NoError(t, err)
+		version, err := f.catalog.ContentVersionByID(t.Context(), rows.Items[0].ContentVersionID)
+		require.NoError(t, err)
+		_, err = two.runEmbeddings(t.Context(), version, alternateProfile, two.principal, two.scope, "", nil)
+		require.NoError(t, err)
+
+		_, alternateIDs, err := document.CanonicalProfile(alternate)
+		require.NoError(t, err)
+		_, err = indexer.Rebuild(t.Context(), alternateIDs.VectorSpace[binding.Name])
+		require.NoError(t, err)
+	}
+	return two, alternate, alternateProvider
+}
+
+func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {
+	t.Parallel()
+	x := newPhotoSearchFixture(t)
+	f, fake, binding, service := x.f, x.fake, x.binding, x.service
+	ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+	require.NoError(t, err)
+	require.Equal(t, "semantic", ranked.ActualMode)
+	require.Len(t, ranked.Members, 1)
+	assert.Equal(t, f.asset.ID, ranked.Members[0].AssetID)
+
+	hybrid, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "hybrid", Text: "last-photo", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+	require.NoError(t, err)
+	require.Equal(t, "hybrid", hybrid.ActualMode)
+	require.Len(t, hybrid.Members, 1)
+	require.Equal(t, f.asset.ID, hybrid.Members[0].AssetID)
+	filtered, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Filters: query.Filters{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+	require.NoError(t, err)
+	require.Equal(t, "semantic", filtered.ActualMode)
+	require.Empty(t, filtered.Members)
+	calls := fake.runtime.callCount(binding.Name)
+	unsupported, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "semantic", Text: "sunset OR harbor", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+	require.NoError(t, err)
+	require.Equal(t, "unsupported_query", unsupported.FallbackReason)
+	require.Equal(t, calls, fake.runtime.callCount(binding.Name))
+	// Use one indexed fixture for syntax and lexical-before-semantic ordering.
+	names := []string{"sunset (dune.jpg", "sunset OR zzz.jpg", "sunset beach.jpg", "sunset distant beach.jpg"}
+	_, _, err = f.catalog.Move(t.Context(), f.node.ID, f.catalog.RootID(), names[0], f.node.Revision)
+	require.NoError(t, err)
+	for _, name := range names[1:] {
+		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+		require.NoError(t, err)
+		_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+		require.NoError(t, err)
+		version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, err)
+		_, err = service.runEmbeddings(t.Context(), version, service.profiles["images"], service.principal, service.scope, "", nil)
+		require.NoError(t, err)
+	}
+	spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	for _, space := range spaces {
+		_, err = x.indexer.Rebuild(t.Context(), space)
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		syntax, text string
+		lexical      []string
+	}{
+		{"simple", "sunset (dune", names[:1]},
+		{"simple", "sunset OR zzz", names[1:2]},
+		{"simple", `"sunset beach"`, names[2:]},
+		{"advanced", `"sunset beach"`, names[2:3]},
+	} {
+		t.Run(tc.syntax+" "+tc.text, func(t *testing.T) {
+			ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: tc.syntax, Mode: "hybrid", Text: tc.text, Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+			require.NoError(t, err)
+			require.Equal(t, "hybrid", ranked.ActualMode)
+			require.Empty(t, ranked.FallbackReason)
+			require.Len(t, ranked.Members, 4)
+			var lexical []string
+			for _, member := range ranked.Members[:len(tc.lexical)] {
+				node, err := f.catalog.NodeByID(t.Context(), member.NodeID)
+				require.NoError(t, err)
+				lexical = append(lexical, node.Name)
+			}
+			require.ElementsMatch(t, tc.lexical, lexical)
+		})
+	}
+	t.Run("partial semantic index", func(t *testing.T) {
+		_, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "unindexed.jpg", workerHash("unindexed"), 20, "image/jpeg")
+		require.NoError(t, err)
+		ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+		require.NoError(t, err)
+		require.Equal(t, "semantic", ranked.ActualMode)
+		require.Empty(t, ranked.FallbackReason)
+		require.True(t, ranked.CoverageIncomplete)
+		require.Len(t, ranked.Members, 4)
+	})
+}
+
+func TestSearchPhotosFallsBackToLexical(t *testing.T) {
+	t.Parallel()
+	semantic := func() store.PhotoBrowseRequest {
+		return store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}}
+	}
+	t.Run("consent_required", func(t *testing.T) {
+		t.Parallel()
+		x := newPhotoSearchFixture(t)
+		_, err := x.service.RevokeConsent(t.Context())
+		require.NoError(t, err)
+		ranked, err := x.service.SearchPhotos(t.Context(), semantic())
+		require.NoError(t, err)
+		require.Equal(t, "lexical", ranked.ActualMode)
+		require.Equal(t, "consent_required", ranked.FallbackReason)
+		require.Empty(t, ranked.Members)
+	})
+	t.Run("provider_unavailable", func(t *testing.T) {
+		x := newPhotoSearchFixture(t)
+		binding, provider, service := x.binding, x.provider, x.service
+		logFile, err := os.CreateTemp(t.TempDir(), "search-log")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, logFile.Close()) }()
+		previousLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(logFile, nil)))
+		defer slog.SetDefault(previousLogger)
+		prior := provider.runtime
+		unavailable := newEmbeddingWorkerFixture(t).runtime
+		unavailable.failures[binding.Name] = []error{errors.New("synthetic query provider failure")}
+		provider.runtime = unavailable
+		defer func() { provider.runtime = prior }()
+		ranked, err := service.SearchPhotos(t.Context(), semantic())
+		require.NoError(t, err)
+		require.Equal(t, "lexical", ranked.ActualMode)
+		require.Equal(t, "provider_unavailable", ranked.FallbackReason)
+		logs, err := os.ReadFile(logFile.Name())
+		require.NoError(t, err)
+		require.Contains(t, string(logs), "synthetic query provider failure")
+	})
+}
+
+func TestSearchPhotosUsesLaterAvailableProfile(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, mode       string
+		consent, indexed bool
+		failure          error
+		authorization    bool
+	}{
+		{name: "no consent", mode: "semantic"},
+		{name: "no index", mode: "hybrid", consent: true},
+		{name: "transient failure", mode: "semantic", consent: true, indexed: true, failure: embeddingTransientError{}},
+		{name: "authorization failure", mode: "semantic", consent: true, indexed: true, failure: errors.New("synthetic expired provider key"), authorization: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			x := newPhotoSearchFixture(t)
+			two, _, provider := x.alternate(t, tc.consent, tc.indexed)
+			if tc.failure != nil {
+				unavailable := newEmbeddingWorkerFixture(t).runtime
+				unavailable.failures[x.binding.Name] = []error{tc.failure}
+				provider.runtime = unavailable
+				if tc.authorization {
+					two.profiles["a-images"].embeddingRuntimes[x.binding.Name].classify = func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 }
+				}
+			}
+			ranked, err := two.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: tc.mode, Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+			require.NoError(t, err)
+			require.Equal(t, tc.mode, ranked.ActualMode)
+			require.Len(t, ranked.Members, 1)
+			require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
+			require.Empty(t, ranked.FallbackReason)
+		})
+	}
+}
+
+func TestSearchPhotosDropsPhotoRemovedDuringQueryEncoding(t *testing.T) {
+	t.Parallel()
+	x := newPhotoSearchFixture(t)
+	f, provider, service := x.f, x.provider, x.service
+	removed := false
+	provider.runtime.inspectInputs = func(inputs []document.EmbeddingInput) {
+		require.Len(t, inputs, 1)
+		_, err := f.catalog.TrashPhotoAsset(t.Context(), f.asset.ID, f.asset.Revision)
+		require.NoError(t, err)
+		_, err = f.catalog.TrashEmpty(t.Context(), 0, true)
+		require.NoError(t, err)
+		removed = true
+	}
+	defer func() { provider.runtime.inspectInputs = nil }()
+	ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+	require.NoError(t, err)
+	require.True(t, removed)
+	require.Empty(t, ranked.Members)
+}
+
+func TestEmbeddingWorkerCompletesUnalignedDiscoveryStreams(t *testing.T) {
+	t.Parallel()
+	for _, textFirst := range []bool{true, false} {
+		t.Run(strconv.FormatBool(textFirst), func(t *testing.T) {
+			x := newImageEmbeddingService(t, newPhotoDescriptionFixture(t))
+			f := x.fake
+			f.runtimeRegistry = x.service.embeddings
+			f.descriptor = x.descriptor
+			worker := f.worker(t)
+			now := time.Now().UTC()
+			worker.clock = func() time.Time { return now }
+			calls := 0
+			f.catalog.reconcilePage = func(request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+				calls++
+				if !request.SkipImages {
+					// Real reconciliation pages images only with profiles and a preparer.
+					require.NotEmpty(t, request.ImageProfiles)
+					require.NotNil(t, request.PrepareImageGeneration)
+				}
+				switch calls {
+				case 1:
+					require.False(t, request.SkipGenerations)
+					require.False(t, request.SkipImages)
+					return store.EmbeddingReconcileResult{Next: "text-page-1", ImageNext: store.ImageReconcilePosition{ProfileFingerprint: "images", ContentVersionID: "image-page-1"}}, nil
+				case 2:
+					require.Equal(t, "text-page-1", request.After)
+					require.Equal(t, "image-page-1", request.ImageAfter.ContentVersionID)
+					if textFirst {
+						return store.EmbeddingReconcileResult{ImageNext: store.ImageReconcilePosition{ProfileFingerprint: "images", ContentVersionID: "image-page-2"}}, nil
+					}
+					return store.EmbeddingReconcileResult{Next: "text-page-2"}, nil
+				case 3:
+					require.Equal(t, textFirst, request.SkipGenerations)
+					require.Equal(t, !textFirst, request.SkipImages)
+					return store.EmbeddingReconcileResult{}, nil
+				case 4:
+					require.False(t, request.SkipGenerations)
+					require.False(t, request.SkipImages)
+					require.Empty(t, request.After)
+					require.Empty(t, request.ImageAfter)
+					return store.EmbeddingReconcileResult{}, nil
+				default:
+					t.Fatal("unexpected discovery page")
+					return store.EmbeddingReconcileResult{}, nil
+				}
+			}
+			for range 3 {
+				_, err := worker.ScanOnce(t.Context())
+				require.NoError(t, err)
+			}
+			_, err := worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 3, calls, "completed cycle waits without rescanning")
+			now = now.Add(time.Minute)
+			_, err = worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 4, calls)
+		})
+	}
+}
+
+type rejectedPreviewFixture struct {
+	f       *photoDescriptionFixture
+	fake    *embeddingWorkerFixture
+	worker  *EmbeddingWorker
+	now     time.Time
+	calls   int
+	publish func(name string) store.PhotoAsset
+}
+
+// publishRejectedPreview returns a publisher that adds a photo whose ready
+// preview names a hash-valid blob that is not a JPEG.
+func publishRejectedPreview(t *testing.T, f *photoDescriptionFixture) func(name string) store.Node {
+	t.Helper()
+	rejected, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader([]byte("hash-valid bytes that are not JPEG")))
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{ContractVersion: document.VisualPreviewContractV1, SourceSHA256: f.written.Hash, Recipe: f.recipe, State: document.VisualPreviewReady, Output: &document.VisualPreviewOutputV1{BlobSHA256: rejected.Hash, Size: rejected.Size, MediaType: "image/jpeg", Width: 24, Height: 24}})
+	require.NoError(t, err)
+	return func(name string) store.Node {
+		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+		require.NoError(t, err)
+		_, err = f.catalog.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, new(processingBlobPhysical(t, rejected)))
+		require.NoError(t, err)
+		return node
+	}
+}
+
+func newRejectedPreviewFixture(t *testing.T) *rejectedPreviewFixture {
+	t.Helper()
+	f := newPhotoDescriptionFixture(t)
+	_, err := f.catalog.SetPhotoAssetExcluded(t.Context(), f.asset.ID, f.asset.Revision, true)
+	require.NoError(t, err)
+	publishRejected := publishRejectedPreview(t, f)
+	x := newImageEmbeddingService(t, f)
+	fake, descriptor, binding, service := x.fake, x.descriptor, x.binding, x.service
+	configured := service.profiles["images"]
+	_, err = f.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{Principal: service.principal, Scope: service.scope, ProfileFingerprint: configured.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{"image"}, RetainedArtifactClasses: []string{"embedding_vector_set"}})
+	require.NoError(t, err)
+
+	fake.runtimeRegistry = service.embeddings
+	fake.descriptor = descriptor
+	fixture := &rejectedPreviewFixture{f: f, fake: fake, now: time.Now().UTC()}
+	fake.catalog.reconcilePage = func(request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+		prepare := request.PrepareImageGeneration
+		request.PrepareImageGeneration = func(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+			fixture.calls++
+			return prepare(ctx, profile, binding, version)
+		}
+		return f.catalog.ReconcileEmbeddingJobs(t.Context(), request)
+	}
+	fixture.publish = func(name string) store.PhotoAsset {
+		asset, err := f.catalog.PhotoAssetForNode(t.Context(), publishRejected(name).ID)
+		require.NoError(t, err)
+		return asset
+	}
+	fixture.worker = fake.worker(t)
+	fixture.worker.clock = func() time.Time { return fixture.now }
+	return fixture
+}
+
+func (x *rejectedPreviewFixture) scan(t *testing.T) {
+	t.Helper()
+	_, err := x.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	x.now = x.now.Add(time.Minute)
+}
+
+func TestEmbeddingWorkerRemembersRejectedPreviewUntilRestart(t *testing.T) {
+	t.Parallel()
+	x := newRejectedPreviewFixture(t)
+	x.publish("rejected-preview.jpg")
+	for range 2 {
+		x.scan(t)
+	}
+	require.Equal(t, 1, x.calls)
+
+	restarted := x.fake.worker(t)
+	restarted.clock = x.worker.clock
+	_, err := restarted.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 2, x.calls)
+	var metadata bytes.Buffer
+	require.NoError(t, x.f.catalog.ExportMetadata(t.Context(), &metadata))
+	require.NotContains(t, metadata.String(), `"type":"embedding_input_generation"`)
+	require.NotContains(t, metadata.String(), `"type":"embedding_failure"`)
+}
+
+func TestEmbeddingWorkerBoundsRejectedPreviewMemory(t *testing.T) {
+	t.Parallel()
+	x := newRejectedPreviewFixture(t)
+	const limit = 1024
+	for i := range limit + 1 {
+		x.publish("rejected-" + strconv.Itoa(i) + ".jpg")
+	}
+	for range 30 {
+		if x.calls > limit {
+			break
+		}
+		x.scan(t)
+		require.LessOrEqual(t, len(x.worker.imageRejections), limit)
+	}
+	require.Greater(t, x.calls, limit, "scans reach every rejected preview")
+	settled := x.calls
+	x.scan(t)
+	require.Greater(t, x.calls, settled, "evicted rejections are prepared again")
 }

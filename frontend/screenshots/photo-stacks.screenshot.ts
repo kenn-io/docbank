@@ -31,7 +31,7 @@ test("stacks a burst whose camera details are stale beside current ones", async 
     await expect(page.getByRole("button", { name: "Expand stack of 3 photos" })).toHaveCount(4);
     await expect(
       page.getByText(
-        "Some camera details are missing or outdated. Stacks can change once they update.",
+        "Some photo details or image vectors are missing. Stacks can change as processing finishes.",
       ),
     ).toBeVisible();
     await page.locator(".photo-image").first().click();

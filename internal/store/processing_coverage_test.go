@@ -269,3 +269,16 @@ func TestProcessingCoverageValidatesEachBuildAndSnapshot(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessingCoverageQueuedEmbedding(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	_, err := f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.NoError(t, err)
+	coverage, err := f.s.ProcessingCoverage(t.Context(), ProcessingCoverageScope{ContentVersionIDs: []string{f.node.CurrentVersionID}, ProcessingProfileFingerprint: f.request.Profile.Fingerprint, Bindings: []ProcessingCoverageBinding{{BindingID: f.request.BindingID}}})
+	require.NoError(t, err)
+	require.Len(t, coverage.Embeddings, 1)
+	assert.Equal(t, "rebuilding", coverage.Embeddings[0].State)
+	assert.Equal(t, 1, coverage.Embeddings[0].Rebuilding)
+	assert.Zero(t, coverage.Embeddings[0].Unavailable)
+}

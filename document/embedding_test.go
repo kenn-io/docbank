@@ -437,6 +437,18 @@ func TestEmbeddingContractRejectsUnrepresentableOrMutableInputs(t *testing.T) {
 	authorization.MaxInputBytes = 1 << 20
 	err = document.ValidateEmbeddingProviderRequest(provider, []document.EmbeddingInput{{Key: "source", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: &testEmbeddingUpload{metadata: []document.AuthorizedUploadMetadata{metadata, changed}}}}, authorization)
 	require.ErrorContains(t, err, "changed during validation")
+
+	image := descriptor
+	image.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	image.Fingerprint = ""
+	image, err = document.NewEmbeddingDescriptor(image)
+	require.NoError(t, err)
+	provider = testEmbeddingProvider{descriptor: image}
+	authorization = testEmbeddingAuthorization(image)
+	imageMetadata := testEmbeddingUploadMetadata(6)
+	imageMetadata.MediaFamily, imageMetadata.MediaType, imageMetadata.InputKind = "image", "image/jpeg", document.RenditionInputOriginalFile
+	err = document.ValidateEmbeddingProviderRequest(provider, []document.EmbeddingInput{{Key: "image", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage, Source: &testEmbeddingUpload{metadata: []document.AuthorizedUploadMetadata{imageMetadata}}}}, authorization)
+	require.EqualError(t, err, "image embedding input must use derived JPEG upload metadata")
 }
 
 type testEmbeddingUpload struct {

@@ -131,6 +131,23 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 	return asset, nil
 }
 
+// PhotoAssetIDsForNodes resolves photo membership in one read transaction.
+func (s *Store) PhotoAssetIDsForNodes(ctx context.Context, nodeIDs []int64) (map[int64]string, error) {
+	ids := make(map[int64]string, len(nodeIDs))
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		return queryInChunks(ctx, tx, `SELECT node_id,asset_id FROM photo_files WHERE asset_id IS NOT NULL AND node_id IN (`, nodeIDs, func(rows *sql.Rows) error {
+			var nodeID int64
+			var assetID string
+			if err := rows.Scan(&nodeID, &assetID); err != nil {
+				return err
+			}
+			ids[nodeID] = assetID
+			return nil
+		})
+	})
+	return ids, err
+}
+
 // PhotoSettings returns the virtual or stored vault preference.
 func (s *Store) PhotoSettings(ctx context.Context) (PhotoSettings, error) {
 	var settings PhotoSettings

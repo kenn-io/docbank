@@ -3274,12 +3274,13 @@ export interface GroupPhotoStacksResponse {
      * @maximum 30
      */
   burst_gap_seconds: number;
-  /** Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change. */
+  /** Grouping uses folder, camera, capture time, and current image vectors. Missing details or pending image work can change groups. Ranked pages keep each captured group together. */
   grouping_incomplete?: boolean;
   /** Bursts of two or more submitted photos, in request order; other available photos are single. */
   groups: string[][];
   /** Submitted photos that are no longer live in this library. */
   unavailable_ids: string[];
+  vector_generation_id?: string;
 }
 
 export interface HighlightSetTermV1Schema {
@@ -5843,6 +5844,7 @@ export interface PhotoMapRow {
   asset_id: string;
   /** @nullable */
   capture_time: string | null;
+  display_file_id: string;
   /**
      * Set only when the file modified time, not a capture date, placed the photo.
      * @nullable
@@ -5873,25 +5875,53 @@ export interface PhotoStack {
   representative_id: string;
 }
 
+export interface SnapshotFacetValue {
+  count: number;
+  key: string;
+  label: string;
+  selected: boolean;
+}
+
+export interface SnapshotFacet {
+  available: boolean;
+  dimension: string;
+  /** @nullable */
+  missing: number | null;
+  /** @nullable */
+  other: number | null;
+  reason: string;
+  /** @nullable */
+  total: number | null;
+  values: SnapshotFacetValue[];
+}
+
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  actual_mode?: string;
   /**
      * @minimum 1
      * @maximum 30
      */
   burst_gap_seconds?: number;
+  coverage_incomplete?: boolean;
   facets: PhotoBrowsePageFacetsItem[];
-  /** Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change. */
+  fallback_reason?: string;
+  /** Grouping uses folder, camera, capture time, and current image vectors. Missing details or pending image work can change groups. Ranked pages keep each captured group together. */
   grouping_incomplete?: boolean;
   items: PhotoBrowseRow[];
   map_items?: PhotoMapRow[];
+  member_hash?: string;
   next_cursor?: string;
   relevance_available: boolean;
+  requested_mode?: string;
+  snapshot_id?: string;
   /** Bursts among items when stacks were requested; other items are single photos. */
   stacks?: PhotoStack[];
+  timeline?: SnapshotFacet;
   /** @minimum 0 */
   total: number;
+  truncated?: boolean;
 }
 
 export type PhotoBrowseRequestFacetsItem = typeof PhotoBrowseRequestFacetsItem[keyof typeof PhotoBrowseRequestFacetsItem];
@@ -5932,6 +5962,7 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+  snapshot_id?: string;
   /** Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows. */
   stacks?: boolean;
 }
@@ -6274,6 +6305,8 @@ export interface PhotoRejectsPreflight {
 export interface PhotoRejectsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
   coverage?: WorkspaceQueryCoverage;
   hidden?: boolean;
   query: SavedQueryV1Schema;
@@ -6311,6 +6344,20 @@ export interface PhotoSettings {
   /** @minimum 1 */
   revision: number;
   updated_at?: string;
+  vector_generation_id?: string;
+}
+
+export interface PhotoSnapshotStacksRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{32}$ */
+  snapshot_id: string;
+}
+
+export interface PhotoSnapshotStacksResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  stacks: PhotoStack[];
 }
 
 export type PhotoStackDecisionRequestDecision = typeof PhotoStackDecisionRequestDecision[keyof typeof PhotoStackDecisionRequestDecision];
@@ -7612,12 +7659,15 @@ export type WorkspaceQueryResponseFacetsItem = {
 export interface WorkspaceQueryResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  actual_mode?: string;
   coverage: WorkspaceQueryCoverage;
+  coverage_incomplete?: boolean;
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
   /** @maxItems 8 */
   facets: WorkspaceQueryResponseFacetsItem[];
+  fallback_reason?: string;
   generation: WorkspaceQueryGeneration;
   /** @pattern ^[0-9a-f]{64}$ */
   member_hash: string;
@@ -7630,6 +7680,7 @@ export interface WorkspaceQueryResponse {
   query: SavedQueryV1Schema;
   /** @pattern ^sha256:[0-9a-f]{64}$ */
   query_fingerprint: string;
+  requested_mode?: string;
   /** @maxItems 250 */
   rows: WorkspaceQueryRow[];
   snapshot: boolean;
@@ -7641,6 +7692,7 @@ export interface WorkspaceQueryResponse {
   total: number;
   /** @minimum 0 */
   total_bytes: number;
+  truncated?: boolean;
 }
 
 export interface SavedQueryRunResult {
@@ -8463,6 +8515,7 @@ export interface WorkspaceQueryCreateRequest {
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;
+  snapshot_id?: string;
 }
 
 export interface WorkspaceQueryPageRequest {
@@ -16565,6 +16618,44 @@ return sessionJSON<PhotoBrowsePage>(getListPhotoAssetsUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(photoBrowseRequest)
+  }
+);}
+
+
+
+export const getRefreshPhotoSnapshotStacksUrl = () => {
+
+
+
+
+  return `/api/v1/photos/assets/query/stacks`
+}
+
+/**
+ * @summary Read current representatives for accepted photo stacks
+ */
+export const refreshPhotoSnapshotStacks = async (photoSnapshotStacksRequest: NonReadonly<PhotoSnapshotStacksRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSnapshotStacksResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoSnapshotStacksResponse>(getRefreshPhotoSnapshotStacksUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoSnapshotStacksRequest)
   }
 );}
 

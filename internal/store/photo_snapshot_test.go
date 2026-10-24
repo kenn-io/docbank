@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -271,4 +272,287 @@ func TestPhotoSnapshotCreatePhotoAlbum(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPhotoRankedSnapshotFreezesModeAndAssetOrder(t *testing.T) {
+	t.Parallel()
+	t.Run("reversed order across the page boundary", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		var members []SnapshotMember
+		for i := range 51 {
+			name := fmt.Sprintf("image-%02d.jpg", i)
+			node := browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
+			asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			members = append(members, SnapshotMember{AssetID: asset.ID, NodeID: node.ID, ContentVersionID: node.CurrentVersionID})
+		}
+		slices.Reverse(members)
+		ranking := &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", CoverageIncomplete: true, Members: members}
+		service := NewQuerySnapshotService(s)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		first, err := service.Create(t.Context(), "owner", SnapshotRequest{Photos: true, PageSize: 50, Query: snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: ranking})
+		require.NoError(t, err)
+		require.Equal(t, int64(51), first.Total)
+		require.Equal(t, members[0].AssetID, first.Rows[0].AssetID)
+		current, err := service.CurrentPhotoPage(t.Context(), first, nil)
+		require.NoError(t, err)
+		require.Equal(t, "image-50.jpg", current.Items[0].Name)
+		next, err := service.PhotoPage(t.Context(), "owner", first.SnapshotID, first.NextCursor, SnapshotRequest{Photos: true, Query: first.Query, PageSize: 50})
+		require.NoError(t, err)
+		require.Equal(t, "semantic", next.PhotoRanking.ActualMode)
+		require.True(t, next.PhotoRanking.CoverageIncomplete)
+		require.Equal(t, members[50].AssetID, next.Rows[0].AssetID)
+	})
+	t.Run("facet totals count only captured members", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		var members []SnapshotMember
+		for i := range 70 {
+			name := fmt.Sprintf("pixels-%02d.jpg", i)
+			node := browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
+			asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			if i < 66 {
+				members = append(members, SnapshotMember{AssetID: asset.ID, NodeID: node.ID, ContentVersionID: node.CurrentVersionID})
+			}
+		}
+		service := NewQuerySnapshotService(s)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		first, err := service.Create(t.Context(), "owner", SnapshotRequest{Photos: true, PageSize: 25, Facets: []string{"camera", "capture_day"}, Query: snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Members: members}})
+		require.NoError(t, err)
+		require.Len(t, first.Rows, 25)
+		for _, facet := range first.Facets {
+			require.True(t, facet.Available)
+			require.EqualValues(t, 66, *facet.Total)
+		}
+	})
+	t.Run("member hidden before create is omitted", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ids := burstPhotos(t, s, 3)
+		service := NewQuerySnapshotService(s)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		all := createAllPhotosSnapshot(t, service)
+		require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+		asset, err := s.PhotoAssetByID(t.Context(), ids[0])
+		require.NoError(t, err)
+		_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+		require.NoError(t, err)
+		page := createRankedPhotosSnapshot(t, service, all, false)
+		require.EqualValues(t, 2, page.Total)
+		for _, row := range page.Rows {
+			require.NotEqual(t, ids[0], row.AssetID)
+		}
+	})
+}
+
+// createAllPhotosSnapshot snapshots every photo in capture order so a ranked
+// snapshot can reuse its members.
+func createAllPhotosSnapshot(t *testing.T, service *QuerySnapshotService) SnapshotPage {
+	t.Helper()
+	all, err := service.Create(t.Context(), "owner", SnapshotRequest{Photos: true, Query: captureRequest(t, "asc").Query})
+	require.NoError(t, err)
+	return all
+}
+
+// createRankedPhotosSnapshot ranks the members of all by a semantic query.
+func createRankedPhotosSnapshot(t *testing.T, service *QuerySnapshotService, all SnapshotPage, group bool) SnapshotPage {
+	t.Helper()
+	ranked, err := service.Create(t.Context(), "owner", SnapshotRequest{Photos: true, GroupPhotoStacks: group, Query: snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Members: snapshotMembers(all.Rows)}})
+	require.NoError(t, err)
+	return ranked
+}
+
+func TestPhotoSnapshotCapturePreservesMembersWithCurrentFlags(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, mode string
+		replace    bool
+	}{
+		{"replaced lexical content", "lexical", true},
+		{"replaced ranked content", "semantic", true},
+		{"current ranked flags", "semantic", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			var members []SnapshotMember
+			var nodes []Node
+			for _, name := range []string{"sunset-a.jpg", "sunset-b.jpg"} {
+				node := browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
+				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				nodes = append(nodes, node)
+				members = append(members, SnapshotMember{AssetID: asset.ID, NodeID: node.ID, ContentVersionID: node.CurrentVersionID})
+			}
+			_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: []string{members[1].AssetID}}), Patch: PhotoAuthoredPatch{Flag: new("pick")}})
+			require.NoError(t, err)
+			service := NewQuerySnapshotService(s)
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			request := SnapshotRequest{Photos: true, Query: snapshotTestQuery(t, `{"text":"sunset","sort":{"field":"relevance","direction":"desc"}}`)}
+			if tc.mode == "semantic" {
+				request.Query.Mode = "semantic"
+				request.PhotoRanking = &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Members: members}
+			}
+			first, err := service.Create(t.Context(), "owner", request)
+			require.NoError(t, err)
+			require.EqualValues(t, 2, first.Total)
+			if tc.replace {
+				_, _, err = s.ReplaceContent(t.Context(), nodes[0].ID, nodes[0].Revision, browseHash("replacement"), 20, nodes[0].MimeType)
+				require.NoError(t, err)
+				frozen, err := service.FirstPage(t.Context(), "owner", first.SnapshotID)
+				require.NoError(t, err)
+				require.Equal(t, first.Rows, frozen.Rows)
+			} else {
+				for i, flag := range []string{"pick", ""} {
+					_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: []string{members[i].AssetID}}), Patch: PhotoAuthoredPatch{Flag: new(flag)}})
+					require.NoError(t, err)
+				}
+			}
+			capture, err := service.CapturePhotoSnapshot(t.Context(), "owner", first.SnapshotID, SnapshotRequest{PageSize: 50})
+			require.NoError(t, err)
+			require.Equal(t, first.Total, capture.Total)
+			require.Equal(t, snapshotMembers(first.Rows), snapshotMembers(capture.Rows))
+			require.Equal(t, first.MemberHash, capture.MemberHash)
+			if !tc.replace {
+				require.NotNil(t, capture.Rows[0].Flag)
+				require.NotNil(t, capture.Rows[1].Flag)
+				require.Equal(t, "pick", *capture.Rows[0].Flag)
+				require.Empty(t, *capture.Rows[1].Flag)
+			}
+		})
+	}
+	t.Run("capture pages a burst crossing 250 rows", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		run, err := s.BeginIngest(t.Context(), "cli", "synthetic long burst")
+		require.NoError(t, err)
+		for i := range 251 {
+			stamp := time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Second).Format(time.RFC3339)
+			stackPhoto(t, s, run, fmt.Sprintf("/burst/frame-%03d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
+		}
+		browse, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 1000}, nil)
+		require.NoError(t, err)
+		members := make([]SnapshotMember, len(browse.Items))
+		for i, row := range browse.Items {
+			members[i] = SnapshotMember{AssetID: row.AssetID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID}
+		}
+		service := NewQuerySnapshotService(s)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		first, err := service.Create(t.Context(), "owner", SnapshotRequest{Photos: true, GroupPhotoStacks: true, PageSize: 250, Query: snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Members: members}})
+		require.NoError(t, err)
+		require.Len(t, first.Rows, 251)
+		require.Empty(t, first.NextCursor)
+		captured, err := service.CapturePhotoSnapshot(t.Context(), "owner", first.SnapshotID, SnapshotRequest{PageSize: 250})
+		require.NoError(t, err)
+		require.Len(t, captured.Rows, 250)
+		require.False(t, captured.GroupPhotoStacks)
+		require.NotEmpty(t, captured.NextCursor)
+		last, err := service.Page(t.Context(), "owner", captured.SnapshotID, captured.NextCursor)
+		require.NoError(t, err)
+		require.Len(t, last.Rows, 1)
+		require.Empty(t, last.NextCursor)
+	})
+}
+
+func TestPhotoRankedSnapshotKeepsWholeStacksAtTheirBestRank(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, fingerprint string
+		incomplete        bool
+	}{
+		{"best rank across pages", "", false},
+		{"outdated extractor metadata discloses incomplete grouping", browseHash("current-extractor"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			run, err := s.BeginIngest(t.Context(), "cli", "synthetic ranked stacks")
+			require.NoError(t, err)
+			a := stackPhoto(t, s, run, "/burst/a.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond)
+			b := stackPhoto(t, s, run, "/other/b.jpg", "2024-06-10T12:00:01Z", document.SourceMetadataPrecisionSecond)
+			c := stackPhoto(t, s, run, "/burst/c.jpg", "2024-06-10T12:00:02Z", document.SourceMetadataPrecisionSecond)
+			var members []SnapshotMember
+			for _, id := range []string{c, b, a} {
+				page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"asset_ids":[%q]}}`, id)), PageSize: 1}, nil)
+				require.NoError(t, err)
+				row := page.Items[0]
+				members = append(members, SnapshotMember{AssetID: id, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID})
+			}
+			service := NewQuerySnapshotService(s)
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			first, err := service.Create(t.Context(), "owner", SnapshotRequest{SourceMetadataFingerprint: tc.fingerprint, Photos: true, GroupPhotoStacks: true, PageSize: 1, Query: snapshotTestQuery(t, `{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PhotoRanking: &PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Members: members}})
+			require.NoError(t, err)
+			require.Equal(t, tc.incomplete, first.PhotoGroupingIncomplete)
+			require.Len(t, first.Rows, 2)
+			require.Equal(t, c, first.Rows[0].AssetID)
+			require.Equal(t, a, first.Rows[1].AssetID)
+			next, err := service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
+			require.NoError(t, err)
+			require.Len(t, next.Rows, 1)
+			require.Equal(t, b, next.Rows[0].AssetID)
+			previous, err := service.Page(t.Context(), "owner", first.SnapshotID, next.PrevCursor)
+			require.NoError(t, err)
+			require.Equal(t, first.Rows, previous.Rows)
+		})
+	}
+	t.Run("representatives track choices, undo, flags, and trash", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		ids := burstPhotos(t, s, 4)
+		service := NewQuerySnapshotService(s)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		ranked := createRankedPhotosSnapshot(t, service, createAllPhotosSnapshot(t, service), true)
+		require.Len(t, ranked.PhotoStacks, 1)
+		receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: ids[2]})
+		require.NoError(t, err)
+		stacks, err := service.PhotoStackRepresentatives(t.Context(), "owner", ranked.SnapshotID)
+		require.NoError(t, err)
+		require.Equal(t, ids[2], stacks[0].RepresentativeID)
+		require.Equal(t, ranked.PhotoStacks[0].AssetIDs, stacks[0].AssetIDs)
+		_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
+		require.NoError(t, err)
+		stacks, err = service.PhotoStackRepresentatives(t.Context(), "owner", ranked.SnapshotID)
+		require.NoError(t, err)
+		require.Equal(t, ids[0], stacks[0].RepresentativeID)
+		_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[3:], Limit: MaxPhotoStackTargets}), Patch: PhotoAuthoredPatch{Rating: new(4), Flag: new("pick"), Rotation: new(90)}})
+		require.NoError(t, err)
+		stacks, err = service.PhotoStackRepresentatives(t.Context(), "owner", ranked.SnapshotID)
+		require.NoError(t, err)
+		require.Equal(t, ids[3], stacks[0].RepresentativeID)
+		page, err := service.CurrentPhotoPage(t.Context(), ranked, nil)
+		require.NoError(t, err)
+		require.Len(t, page.Stacks, 1)
+		require.Equal(t, ids[3], page.Stacks[0].RepresentativeID)
+		require.Len(t, page.Items, 4)
+		for _, row := range page.Items {
+			if row.AssetID != ids[3] {
+				continue
+			}
+			require.Equal(t, 4, row.Rating)
+			require.Equal(t, "pick", row.Flag)
+			require.Equal(t, 90, row.Rotation)
+			asset, err := s.PhotoAssetByID(t.Context(), row.AssetID)
+			require.NoError(t, err)
+			require.Equal(t, asset.Revision, row.Revision)
+		}
+		after, err := service.FirstPage(t.Context(), "owner", ranked.SnapshotID)
+		require.NoError(t, err)
+		require.Equal(t, ranked.MemberHash, after.MemberHash)
+		require.Equal(t, snapshotMembers(ranked.Rows), snapshotMembers(after.Rows))
+		asset, err := s.PhotoAssetByID(t.Context(), ids[0])
+		require.NoError(t, err)
+		node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
+		require.NoError(t, err)
+		_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+		require.NoError(t, err)
+		stacks, err = service.PhotoStackRepresentatives(t.Context(), "owner", ranked.SnapshotID)
+		require.NoError(t, err)
+		require.Len(t, stacks, 1)
+		require.Equal(t, ids[1:], stacks[0].AssetIDs)
+		require.Equal(t, ids[3], stacks[0].RepresentativeID)
+		_, err = service.PhotoStackRepresentatives(t.Context(), "other", ranked.SnapshotID)
+		require.ErrorIs(t, err, ErrSnapshotGone)
+	})
 }

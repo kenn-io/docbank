@@ -277,11 +277,10 @@ func runServe(ctx context.Context) (retErr error) {
 	if emailPDFRuntime != nil {
 		requestEmailPDF = emailPDFRuntime.Submit
 	}
-	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
+	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg)
 	if err != nil {
 		return fmt.Errorf("configuring embedding runtimes: %w", err)
 	}
-	embeddingRuntimeRegistry := embeddingRuntimes.registry
 	processingProfiles, err := executableProcessingProfiles(cfg, embeddingRuntimes)
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
@@ -353,6 +352,7 @@ func runServe(ctx context.Context) (retErr error) {
 			return fmt.Errorf("starting photo descriptions: %w", err)
 		}
 	}
+	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {
 			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{

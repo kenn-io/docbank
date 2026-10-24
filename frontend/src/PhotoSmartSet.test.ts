@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import PhotoSmartSet from "./PhotoSmartSet.svelte";
-import { Photos } from "./photos.svelte.js";
+import { Photos, photoQuery } from "./photos.svelte.js";
 import { PhotoAlbums } from "./photoAlbums.svelte.js";
 import { updateSavedQuery } from "./savedQueries.js";
 import { parseQuery, queryFingerprint } from "./query.js";
@@ -492,6 +492,64 @@ it("keeps a frozen result when album saving waits for another album change", asy
   expect(photos.frozen).toBe(frozen);
   expect(photos.frozenExpired).toBe(false);
   expect(fetcher).not.toHaveBeenCalled();
+  photos.dispose();
+  albums.dispose();
+});
+
+it("shows the frozen snapshot's search status", async () => {
+  const photos = new Photos("session", vi.fn(), false, {
+    ...photoQuery,
+    mode: "semantic",
+    text: "sunset",
+  });
+  const albums = new PhotoAlbums("session", vi.fn());
+  const payload = photos.savedPhotoQuery;
+  const fingerprint = await queryFingerprint(payload);
+  const observed = "2026-10-01T00:00:00Z";
+  const expires = new Date(Date.now() + 60_000).toISOString();
+  photos.smartSet = savedSmartSetFixture(payload, fingerprint);
+  photos.setFrozen({
+    run: {
+      comparison: { definition_changed: false, hash_changed: false, total_delta: 0 },
+      expires_at: expires,
+      member_hash: "b".repeat(64),
+      photos: true,
+      query_fingerprint: fingerprint,
+      ran_at: observed,
+      run_id: "00000000-0000-4000-8000-000000000003",
+      saved_query_id: "00000000-0000-4000-8000-000000000001",
+      saved_query_revision: 1,
+      snapshot_id: "a".repeat(32),
+      total: 12,
+      total_bytes: 0,
+    },
+    snapshot: {
+      actual_mode: "semantic",
+      coverage: { configuration: "unconfigured" },
+      coverage_incomplete: true,
+      created_at: observed,
+      dependencies: [],
+      expires_at: expires,
+      facets: [],
+      generation: { kind: "native" },
+      member_hash: "b".repeat(64),
+      observed_at: observed,
+      page_size: 250,
+      query: payload,
+      query_fingerprint: fingerprint,
+      requested_mode: "semantic",
+      rows: [],
+      snapshot: true,
+      snapshot_fingerprint: `sha256:${"c".repeat(64)}`,
+      snapshot_id: "a".repeat(32),
+      total: 12,
+      total_bytes: 0,
+      truncated: true,
+    },
+  });
+  render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
+  // The truncated and coverage-incomplete snapshot each get a search status, beside the frozen summary; the wording belongs to PhotoSearchStatus.test.ts.
+  expect(await screen.findAllByRole("status")).toHaveLength(3);
   photos.dispose();
   albums.dispose();
 });

@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/docbank/internal/vectorindex"
 )
 
 // MaxPhotoStackFrames bounds a stack to one decision request. A longer
@@ -23,6 +25,11 @@ const MaxPhotoStackTargets = 2_000
 
 // MaxPhotoStackGroupIDs bounds one explicit-ID grouping request to a Cull run.
 const MaxPhotoStackGroupIDs = 250_000
+
+const (
+	photoStackImageWindowSeconds    = 60
+	photoStackImageSimilarityCutoff = 0.95
+)
 
 const photoStackKeyLayout = "2006-01-02T15:04:05.000000000"
 
@@ -37,6 +44,8 @@ type PhotoStack struct {
 // photoStackFrame is one live asset's grouping input. Folder is empty when the
 // photo cannot join a stack.
 type photoStackFrame struct {
+	ImageMissing     bool
+	ImageVector      []float32
 	AssetID          string
 	Folder           string
 	CameraMake       string
@@ -60,11 +69,9 @@ func (frame *photoStackFrame) applyMetadataFingerprint(actual, expected string) 
 	}
 }
 
-// photoStackAnyStale reports whether any frame was read by an outdated
-// extractor. Its serial is unknown, so a decision that changes flags refuses
-// the stack until backfill reads it.
+// photoStackAnyStale reports outdated metadata or pending eligible image work.
 func photoStackAnyStale(frames map[string]photoStackFrame) bool {
-	return slices.ContainsFunc(slices.Collect(maps.Values(frames)), func(frame photoStackFrame) bool { return frame.Stale })
+	return slices.ContainsFunc(slices.Collect(maps.Values(frames)), func(frame photoStackFrame) bool { return frame.Stale || frame.ImageMissing })
 }
 
 // photoStackPartition separates camera streams before chaining capture times.
@@ -94,8 +101,18 @@ func photoStackReach(key string, gap int, forward bool) (string, bool) {
 
 // photoStackChained reports whether next follows previous in one stack.
 func photoStackChained(previous, next photoStackFrame, gap int) bool {
+	if previous.Folder == "" || previous.partition() != next.partition() {
+		return false
+	}
 	reach, ok := photoStackReach(previous.SortKey, gap, true)
-	return ok && previous.Folder != "" && previous.partition() == next.partition() && next.SortKey <= reach
+	if ok && next.SortKey <= reach {
+		return true
+	}
+	reach, ok = photoStackReach(previous.SortKey, photoStackImageWindowSeconds, true)
+	if !ok || next.SortKey > reach || len(previous.ImageVector) == 0 || len(previous.ImageVector) != len(next.ImageVector) {
+		return false
+	}
+	return vectorindex.Cosine(previous.ImageVector, next.ImageVector)+1e-7 >= photoStackImageSimilarityCutoff
 }
 
 // groupPhotoStackFrames returns the stacks among frames, each in ascending
@@ -174,13 +191,13 @@ func newPhotoStack(group []photoStackFrame) PhotoStack {
 
 // groupRankedPhotoPage groups only the returned relevance matches. Each burst
 // occupies its highest-ranked member's position, keeping rank order within it.
-func groupRankedPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, hidden bool, gap int, fingerprint string) error {
+func (s *Store) groupRankedPhotoPage(ctx context.Context, q metadataQuerier, page *PhotoBrowsePage, hidden bool, gap int, fingerprint string) error {
 	ids := make([]string, len(page.Items))
 	rows := make(map[string]PhotoBrowseRow, len(page.Items))
 	for i, row := range page.Items {
 		ids[i], rows[row.AssetID] = row.AssetID, row
 	}
-	frames, err := photoStackFrames(ctx, q, ids, hidden, fingerprint)
+	frames, err := s.photoStackFrames(ctx, q, ids, hidden, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -242,7 +259,7 @@ const photoStackCameraColumns = `COALESCE(p.camera_make_folded,''),COALESCE(p.ca
 const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,COALESCE(pl.sort_key,''),` + photoStackCameraColumns + `,` + photoStackFileCount
 
 // photoStackFrames reads the live, visible members of ids. Missing IDs are unavailable.
-func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
+func (s *Store) photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
 	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+`,COALESCE(mg.extractor_fingerprint,'') FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
@@ -254,6 +271,9 @@ func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidd
 		frames[frame.AssetID] = frame
 		return nil
 	})
+	if err == nil {
+		err = s.hydratePhotoStackVectors(ctx, q, frames)
+	}
 	return frames, err
 }
 
@@ -282,7 +302,7 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool,
 			return err
 		}
 		gap = settings.BurstGapSeconds
-		frames, err := photoStackFrames(ctx, tx, ids, hidden, fingerprint)
+		frames, err := s.photoStackFrames(ctx, tx, ids, hidden, fingerprint)
 		if err != nil {
 			return err
 		}
@@ -358,7 +378,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		}
 		// Only the observed query or frozen run defines membership, so unseen
 		// neighboring imports stay untouched.
-		found, err := photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
+		found, err := s.photoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
 		if err != nil {
 			return err
 		}

@@ -428,6 +428,12 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 				}},
 			}}}
 	}
+	imageEvidence := func(report *api.DocumentSearchReport) *api.DocumentEvidenceReference {
+		evidence := &report.Results[0].Evidence[0]
+		evidence.InputKind, evidence.InputID = "image", "preview"
+		evidence.BuildID, evidence.TimeSpan = "", nil
+		return evidence
+	}
 	tests := []struct {
 		name   string
 		mutate func(*api.DocumentSearchReport)
@@ -470,6 +476,15 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 		{name: "inconsistent evidence identity", mutate: func(report *api.DocumentSearchReport) {
 			report.Results[0].Evidence[0].EmbeddingSetID = ""
 		}},
+		{name: "image build", mutate: func(report *api.DocumentSearchReport) {
+			imageEvidence(report).BuildID = strings.Repeat("f", 64)
+		}},
+		{name: "image time", mutate: func(report *api.DocumentSearchReport) {
+			imageEvidence(report).TimeSpan = &api.MediaTimeSpan{StartMS: 0, EndMS: 1000}
+		}},
+		{name: "image identity", mutate: func(report *api.DocumentSearchReport) {
+			imageEvidence(report).InputGenerationID = ""
+		}},
 		{name: "relative path", mutate: func(report *api.DocumentSearchReport) {
 			report.Results[0].Path = "visible.pdf"
 		}},
@@ -503,6 +518,17 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, versionID, report.Results[0].ContentVersionID)
+
+	image := validReport()
+	imageEvidence(&image)
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, image))
+	}))
+	t.Cleanup(imageServer.Close)
+	report, err = daemonconn.New(imageServer.URL, serverKey).SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, "image", report.Results[0].Evidence[0].InputKind)
 }
 
 func TestProcessingClientAcceptsOneSelectedResultPerBuild(t *testing.T) {

@@ -766,7 +766,7 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"capability":         enumSchema("rendition", "embedding", "query_embedding"),
 		"provider_id":        stringSchema(128),
 		"trust_boundary":     enumSchema("local_process", "operator_network", "hosted_provider"),
-		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "derived_upload", "rendition_chunk", "query_text"), "maxItems": 4, "uniqueItems": true},
+		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "derived_upload", "rendition_chunk", "query_text", "image"), "maxItems": 5, "uniqueItems": true},
 		"runtime_disclosure": runtimeDisclosure,
 		"disclose_filename":  booleanSchema(),
 		"filename":           stringSchema(255),

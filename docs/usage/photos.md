@@ -188,7 +188,13 @@ the timeline does not block Documents queries.
 Search filenames, camera or lens names, and location labels in the Photos
 top-bar search box and press Enter. Using the clear button or Escape to clear the box also reruns an applied search. Search opens in relevance order, with one tile per asset even
 when several paired files match. Choose Capture date to
-return to date browsing. Relevance shows the best 250 matches and the full total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture placement descending, then asset ID.
+return to date browsing. Relevance shows the best 250 matches and the total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture placement descending, then asset ID.
+
+Choose **Metadata**, **Meaning**, or **Hybrid** beside the search box. Meaning searches what photos show through a configured image/text embedding provider. Hybrid combines metadata relevance with visual meaning. Both always use relevance order, including during metadata fallback, and retain supported photo filters. Their membership, order, and stack groups stay fixed while paging. Flags, ratings, rotation, previews, and stack representatives show current values when each page loads. Refresh runs the search again.
+
+Meaning and Hybrid retain up to 1,000 ranked matches. When more matches exist, the results show that limit. Counts, Select all, export, and Cull use the retained matches. Narrow the search to retrieve a smaller scope. Metadata fallback shows the best 250 metadata matches. Choose Metadata and sort by capture date to see all. Cull captures compact frozen members when it starts.
+
+When the provider, consent, or image index is unavailable, a status line explains why metadata matches are shown. Advanced Boolean queries that cannot preserve their meaning also use metadata search. Expired provider credentials also use metadata fallback. Docbank sign-in failures remain errors.
 
 Open **Filters** beside the title to narrow the grid by Camera, Lens, Year, Location, and Albums. Filters starts closed and loads counts when you open it. Its badge counts active filters you can edit in the panel, counting both ends of a range once. Counts cover the
 whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
@@ -639,7 +645,7 @@ Hidden unlock and lock remain available. Setup, change, disable, reset, hide, an
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error.
+optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, `snapshot_id`, and `hidden`. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error.
 Omit `hidden` or set it to `false` for visible photos. `hidden: true` selects
 only hidden photos and requires an active unlock on every page.
 Request `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or
@@ -651,7 +657,13 @@ The web app requests counts separately from tile pages, with `page_size: 1` and 
 Facet time, member, or byte limits return an unavailable reason. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
 continuation. Editing a saved query invalidates its earlier cursor. Cursors
-expire 15 minutes after issuance. Relevance returns one page of up to `page_size` matches, the full total, and no `next_cursor`. A cursor with relevance returns `invalid_photo_cursor`. Other sorts read live results, so file changes can move assets across the previous page boundary.
+expire 15 minutes after issuance. In metadata mode (`lexical`), relevance returns one page of up to `page_size` matches, the total, and no `next_cursor`. A metadata cursor with relevance returns `invalid_photo_cursor`. Other metadata sorts read live results, so file changes can move assets across the previous page boundary.
+
+Meaning (`semantic`) and Hybrid (`hybrid`) freeze their ranked matches. Their responses include `snapshot_id`, the captured membership `member_hash`, `requested_mode`, and `actual_mode`. Send the same `snapshot_id`, query, page size, projection, and stack option with each ranked cursor; omitting `snapshot_id` returns `invalid_photo_cursor`. Ranked pages keep complete burst and image-similarity groups together and may exceed the requested page size. Counts, facets, and the timeline describe the captured matches.
+
+After choosing a stack representative, changing flags, or undoing an edit, `POST /api/v1/photos/assets/query/stacks` with `{"snapshot_id":"…"}` returns current representatives for the accepted groups. This read preserves each group's captured membership and order.
+
+`coverage_incomplete: true` means some photos in the filtered scope lack current image vectors; available image matches remain ranked. `truncated: true` means retrieval bounds left matches outside the captured set of up to 1,000 photos. Whole-result actions use the captured asset IDs. If image search falls back, `actual_mode` is `lexical` and `fallback_reason` explains why. Fallback uses live metadata paging without a snapshot; action requests use the same query in `lexical` mode.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `location:"Paris, Île-de-France, France"`, `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
@@ -786,13 +798,13 @@ Metadata JSONL v1 includes `trash` and `restore` receipts recording the operatio
 
 ## Map
 
-Map opened from an album plots that album's GPS photos. Otherwise, it plots GPS photos matching the current Library search and filters. Hidden is never mapped. Results sort by capture date.
+Map opened from an album plots that album's GPS photos. Otherwise, it plots GPS photos matching the current Library search and filters. Hidden is never mapped. Metadata results sort by capture date; Meaning and Hybrid results sort by relevance.
 
 Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank. Choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer. Escape returns focus to the marker or its cluster and retains the map position. The map also keeps its position when an access check conceals and refreshes it. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
 
 ![Map with photo clusters beside the photos in view](https://docbank.ai/assets/generated/photo-map-enabled-1440-dark.png)
 
-Map uses album membership when opened from an album. Otherwise it inherits Library's text, filters and date. It sorts by capture date, then adds GPS eligibility. Each visit starts a fresh result and selection. Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. When more match, Map says how many it's showing. Narrow the search, filters or date to see older photos. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
+Map uses album membership when opened from an album. Otherwise it inherits Library's text, filters and date. It adds GPS eligibility and retains the search mode's order. Each visit starts a fresh result and selection. Metadata Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. Meaning and Hybrid Map show up to 1,000 matches, including during metadata fallback. Map shows the search status and says how many of the best matches it's showing when relevance results are capped. Narrow the search, filters or date to see older photos. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
 
 ## Cull and compare
 
@@ -806,7 +818,11 @@ Library groups adjacent capture times from the same import folder, camera make, 
 
 ![Library showing collapsed burst stacks, each with a frame count](https://docbank.ai/assets/generated/web-photo-stacks.png)
 
+Meaning and Hybrid keep their result membership, order, stack groups, and search status while paging. Flags, ratings, rotation, previews, and stack representatives show current values on each page. Ranked pages keep each stack at its highest-ranked match. Hidden view uses authorized metadata matches and explains the fallback. Cull refreshes grouping from current folder, camera, capture-time details, and image vectors when you retry, keeping the captured photos and saved progress. A newly activated image generation also triggers regrouping.
+
 Set **Burst gap (seconds)** from 1 to 30 to regroup existing photos. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read; background extraction retries them. A notice says groups can change after details update, and Cull refreshes them when you choose **Retry grouping** or change the burst gap.
+
+Activating an image index adds an edge between adjacent frames in the same folder and camera stream when their cosine similarity is at least 0.95 and their capture times are at most 60 seconds apart. These edges supplement the configured burst gap. Missing vectors retain metadata grouping; eligible pending image work marks grouping incomplete. Meaning and Hybrid results, Cull, and stack decisions use this rule; capture-date browsing stacks by the burst gap only. Every grouping uses the store-selected active image generation with the lowest vector-space ID. Ranked snapshots retain their captured groups; Cull and decisions regroup those captured members against the current generation.
 
 In Cull, use H/L to move between stacks and J/K to move within a stack. Check frames in the filmstrip and choose **Keep selected** to retain those frames. Flags owned by another decision stay unchanged. Navigation preserves the checked frames; starting a new pass or regrouping clears them. A Cull stack holds only frames in the current pass, so a frame the pass excludes keeps its flag. **Keep all** picks every frame in the stack. **Keep current (Return)** picks the viewed frame and rejects the rest. Later Return decisions replace earlier Return assignments only for frames still owned by Return. Stack decisions update every live member file together, including paired originals, with one receipt and one Undo.
 

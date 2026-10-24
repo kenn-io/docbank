@@ -98,3 +98,18 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	require.Equal(t, "photo_snapshot_member_not_in_library", decodeProblem(t, body).Code)
 }
+
+func TestSavedPhotoRun(t *testing.T) {
+	t.Parallel()
+	ts, vault, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), []string{"sunset.jpg"})
+	saved, err := vault.CreateSavedQuery(t.Context(), "Meaning", "", store.SavedQueryKindQuery, []byte(`{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`))
+	require.NoError(t, err)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"If-Match": `"1"`}, api.SavedQueryRunRequest{Photos: true, PageSize: 50})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var result api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Equal(t, "semantic", result.Snapshot.RequestedMode)
+	require.NotEmpty(t, result.Run.RunID)
+	require.Equal(t, "semantic", result.Snapshot.ActualMode)
+	require.Empty(t, result.Snapshot.FallbackReason)
+}

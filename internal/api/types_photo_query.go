@@ -12,6 +12,7 @@ import (
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
+	SnapshotID string                 `json:"snapshot_id,omitempty"`
 	Stacks     bool                   `json:"stacks,omitempty" doc:"Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows."`
 	Projection string                 `json:"projection,omitempty" enum:"map"`
 	Hidden     bool                   `json:"hidden,omitempty"`
@@ -87,6 +88,7 @@ type PhotoBrowseRow struct {
 type PhotoMapRow struct {
 	Rotation         int      `json:"rotation" enum:"0,90,180,270"`
 	AssetID          string   `json:"asset_id" format:"uuid"`
+	DisplayFileID    string   `json:"display_file_id" format:"uuid"`
 	Revision         int64    `json:"revision" minimum:"1"`
 	Name             string   `json:"name"`
 	CaptureTime      *string  `json:"capture_time" nullable:"true"`
@@ -106,16 +108,38 @@ type PhotoStack struct {
 	RepresentativeID string   `json:"representative_id" format:"uuid"`
 }
 
+// PhotoSearchStatus describes how photo results were ranked.
+type PhotoSearchStatus struct {
+	RequestedMode      string `json:"requested_mode,omitempty"`
+	ActualMode         string `json:"actual_mode,omitempty"`
+	FallbackReason     string `json:"fallback_reason,omitempty"`
+	Truncated          bool   `json:"truncated,omitempty"`
+	CoverageIncomplete bool   `json:"coverage_incomplete,omitempty"`
+}
+
+func fromStorePhotoSearchStatus(ranking *store.PhotoRanking) PhotoSearchStatus {
+	if ranking == nil {
+		return PhotoSearchStatus{}
+	}
+	return PhotoSearchStatus{RequestedMode: ranking.RequestedMode, ActualMode: ranking.ActualMode,
+		FallbackReason: ranking.FallbackReason, Truncated: ranking.Truncated, CoverageIncomplete: ranking.CoverageIncomplete}
+}
+
 type PhotoBrowsePage struct {
-	GroupingIncomplete bool             `json:"grouping_incomplete,omitempty" doc:"Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change."`
-	BurstGapSeconds    int              `json:"burst_gap_seconds,omitempty" minimum:"1" maximum:"30"`
-	Stacks             []PhotoStack     `json:"stacks,omitempty" doc:"Bursts among items when stacks were requested; other items are single photos."`
-	MapItems           []PhotoMapRow    `json:"map_items,omitempty"`
-	Items              []PhotoBrowseRow `json:"items"`
-	Total              int64            `json:"total" minimum:"0"`
-	Facets             []WorkspaceFacet `json:"facets"`
-	NextCursor         string           `json:"next_cursor,omitempty"`
-	RelevanceAvailable bool             `json:"relevance_available"`
+	PhotoSearchStatus
+
+	Timeline           *store.SnapshotFacet `json:"timeline,omitempty"`
+	MemberHash         string               `json:"member_hash,omitempty"`
+	SnapshotID         string               `json:"snapshot_id,omitempty"`
+	GroupingIncomplete bool                 `json:"grouping_incomplete,omitempty" doc:"Grouping uses folder, camera, capture time, and current image vectors. Missing details or pending image work can change groups. Ranked pages keep each captured group together."`
+	BurstGapSeconds    int                  `json:"burst_gap_seconds,omitempty" minimum:"1" maximum:"30"`
+	Stacks             []PhotoStack         `json:"stacks,omitempty" doc:"Bursts among items when stacks were requested; other items are single photos."`
+	MapItems           []PhotoMapRow        `json:"map_items,omitempty"`
+	Items              []PhotoBrowseRow     `json:"items"`
+	Total              int64                `json:"total" minimum:"0"`
+	Facets             []WorkspaceFacet     `json:"facets"`
+	NextCursor         string               `json:"next_cursor,omitempty"`
+	RelevanceAvailable bool                 `json:"relevance_available"`
 }
 
 // Schema makes missing measurements nullable while sharing the signals definition.
@@ -179,4 +203,13 @@ func fromStorePhotoTimeline(projection store.SnapshotProjection) (PhotoTimeline,
 		Coverage: wire.Coverage, ObservedAt: wire.ObservedAt,
 		Facets: []PhotoCaptureDayFacet{PhotoCaptureDayFacet(wire.Facets[0])},
 	}, nil
+}
+
+// PhotoSnapshotStacksRequest selects the accepted groups without rerunning search.
+type PhotoSnapshotStacksRequest struct {
+	SnapshotID string `json:"snapshot_id" pattern:"^[0-9a-f]{32}$"`
+}
+
+type PhotoSnapshotStacksResponse struct {
+	Stacks []PhotoStack `json:"stacks"`
 }

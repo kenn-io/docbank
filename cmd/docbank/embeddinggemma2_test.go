@@ -43,7 +43,7 @@ func TestEmbeddingGemma2TextRuntime(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	cfg, descriptor := embeddingGemma2Config(t, server.URL, variable)
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
 	provider := bundle.providers["semantic"]
 	assert.Equal(t, 768, descriptor.Dimension)
@@ -113,7 +113,7 @@ func TestEmbeddingGemma2TextRuntime(t *testing.T) {
 			p.Runtime, p.Embedder = new(*p.Runtime), new(*p.Embedder)
 			mutate(&p)
 			changed.EmbeddingProfiles = map[string]config.EmbeddingProfileConfig{"semantic": p}
-			_, err := configureEmbeddingRuntimeBundle(changed, unavailableEmbeddingBlobs{}, t.TempDir())
+			_, err := configureEmbeddingRuntimeBundle(changed)
 			require.ErrorContains(t, err, "descriptor differs from portable binding")
 		})
 	}

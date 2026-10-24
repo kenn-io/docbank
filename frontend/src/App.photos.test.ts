@@ -2920,7 +2920,7 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   expect(unloadBlocked()).toBe(false);
 });
 
-it("guards reload for a failed cull decision after vault identity arrives", async () => {
+async function openSyntheticCull() {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
@@ -2983,11 +2983,32 @@ it("guards reload for a failed cull decision after vault identity arrives", asyn
   await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 1.jpg");
+  return dialog;
+}
+
+it("guards reload for a failed cull decision after vault identity arrives", async () => {
+  const dialog = await openSyntheticCull();
   await fireEvent.keyDown(dialog.querySelector(".photo-cull")!, { key: "x" });
   await within(dialog).findByRole("button", { name: "Discard edit" });
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);
   expect(event.defaultPrevented).toBe(true);
+});
+
+it("polls cull settings while culling photos", async () => {
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      poll = callback as () => void;
+      return 0 as unknown as ReturnType<typeof setInterval>;
+    }
+    return interval(callback, delay, ...args);
+  });
+  const checkSettings = vi.spyOn(PhotoCull.prototype, "checkSettings").mockResolvedValue();
+  await openSyntheticCull();
+  await act(async () => poll());
+  expect(checkSettings).toHaveBeenCalledOnce();
 });
 
 it("closes the viewer to the grid after refusing a typed photo hash", async () => {
@@ -3033,7 +3054,7 @@ it("closes the viewer to the grid after refusing a typed photo hash", async () =
   expect(location.hash).not.toContain("photo=");
 });
 
-async function applyAlbumKeyword() {
+async function applyAlbumKeyword(ranked = false) {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -3078,17 +3099,36 @@ async function applyAlbumKeyword() {
     assignment_count: 1,
   };
   const before = preparedPhoto(1);
-  const rotated = { ...before, revision: 2, values: { ...before.values, rotation: 90 as const } };
+  const rotated = {
+    ...before,
+    revision: 2,
+    values: {
+      ...before.values,
+      rotation: ranked ? (0 as const) : (90 as const),
+      flag: ranked ? ("reject" as const) : ("" as const),
+    },
+  };
   const edited = { ...rotated, revision: 3 };
   let documentRevision = 1;
   let keywordApplied = false;
   let editCount = 0;
-  const fetcher = vi.fn(async (url: string) => {
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
     if (url.endsWith("/photos/albums")) {
       albumRotations.push(coverRotation);
       return albumResponse([{ ...album, cover_rotation: coverRotation }]);
     }
-    if (url.endsWith("/photos/assets/query")) return albumResponse({ items: [photo(1)], total: 1 });
+    if (url.endsWith("/photos/assets/query")) {
+      const query = JSON.parse(String(init.body)).query;
+      const libraryRanked = ranked && query.mode !== "lexical" && !query.filters?.set_ids;
+      return albumResponse({
+        items: libraryRanked ? [photo(1), photo(2)] : [photo(1)],
+        total: libraryRanked ? 2 : 1,
+        ...(libraryRanked && {
+          snapshot_id: "ranked",
+          stacks: [{ asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" }],
+        }),
+      });
+    }
     if (url === "/api/v1/path?path=%2F") return albumResponse(root);
     if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0")
       return albumResponse({
@@ -3149,12 +3189,38 @@ async function applyAlbumKeyword() {
   const changed = vi.spyOn(Photos.prototype, "metadataChanged");
   render(App);
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  if (ranked) {
+    await fireEvent.click(screen.getByRole("combobox", { name: "Find by: Metadata" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Meaning" }));
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search photos" }), {
+      target: { value: "sunset" },
+    });
+    await fireEvent.submit(
+      screen.getByRole("searchbox", { name: "Search photos" }).closest("form")!,
+    );
+    await waitFor(() =>
+      expect(
+        fetcher.mock.calls.some(([url, init]) => {
+          if (!url.endsWith("/photos/assets/query")) return false;
+          const { query } = JSON.parse(String(init.body));
+          return query.mode === "semantic" && query.text === "sunset";
+        }),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("searchbox", { name: "Search photos" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+  }
   await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-  await fireEvent.keyDown(window, { key: "r" });
-  await waitFor(() => expect(albumRotations).toContain(90));
+  await fireEvent.keyDown(window, { key: ranked ? "x" : "r" });
+  if (!ranked) await waitFor(() => expect(albumRotations).toContain(90));
   await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
   await waitFor(() => expect((changed.mock.contexts[1] as Photos).authored.busy).toBe(false));
+  if (ranked) return { changed, album, fetcher, albumRotations };
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: /Keyword:/ }).hasAttribute("disabled")).toBe(false),
@@ -3994,4 +4060,12 @@ it("closes Hidden setup and reports an expired session after a 401 save", async 
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
   expect(hidden.size).toBe(0);
+});
+
+it("refreshes a ranked sibling Library after an accepted reject receipt", async () => {
+  const refresh = vi.spyOn(Photos.prototype, "refreshStackRepresentatives").mockResolvedValue();
+  const { changed } = await applyAlbumKeyword(true);
+  const library = changed.mock.contexts[0] as Photos;
+  await waitFor(() => expect(refresh.mock.contexts).toContain(library));
+  expect(changed.mock.calls[0][0]).toEqual(expect.objectContaining({ receipt_id: "rotated" }));
 });

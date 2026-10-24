@@ -582,3 +582,40 @@ it("decodes photo timeline counts without accepting snapshot authority", async (
     ),
   ).rejects.toThrow("values exceeds its bound");
 });
+
+it("retains photo ranking status on captured snapshot pages", async () => {
+  const meaning = parseQuery(
+    '{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}',
+  );
+  const status = {
+    requested_mode: "semantic",
+    actual_mode: "semantic",
+    truncated: true,
+    coverage_incomplete: true,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      jsonResponse(
+        await page({
+          query: meaning,
+          query_fingerprint: await queryFingerprint(meaning),
+          rows: [{ ...row(2, version2, blob2, 20), asset_id: tagID, flag: "" }],
+          facets: [],
+          ...status,
+        }),
+      ),
+    ),
+  );
+  const result = await createSnapshot(
+    "session",
+    meaning,
+    {
+      photos: true,
+      page_size: 50,
+      snapshot_id: snapshotID,
+    },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject(status);
+});

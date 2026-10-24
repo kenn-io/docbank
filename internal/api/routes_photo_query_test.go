@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -16,16 +17,19 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/kit/packstore"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -694,4 +698,273 @@ func TestLookupPhotoFlags(t *testing.T) {
 			require.Equal(t, []store.PhotoFlagRow{{AssetID: liveID, Flag: ""}}, result.Items)
 		})
 	}
+}
+
+func TestPhotoMeaningHiddenFallsBackWithinUnlockedView(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "hidden-sunset.jpg", testHash("hidden-sunset"), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	request := api.PhotoBrowseRequest{Hidden: true, Query: api.QueryPayload(`{"mode":"semantic","text":"sunset","sort":{"field":"name","direction":"asc"}}`), PageSize: 1}
+	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(t.Context(), "unlock", "synthetic-passcode", "")
+	require.NoError(t, err)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", map[string]string{"Cookie": cookie}, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Equal(t, "hidden_photos", page.FallbackReason)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, asset.ID, page.Items[0].AssetID)
+}
+
+func photoImageHTTPFixture(t *testing.T, provider processingTestEmbeddingProvider, names []string, unavailable ...*atomic.Bool) (*httptest.Server, *testStore, []string) {
+	t.Helper()
+	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	var err error
+	provider.descriptor, err = document.NewEmbeddingDescriptor(provider.descriptor)
+	require.NoError(t, err)
+	var embedding document.EmbeddingProvider = provider
+	if len(unavailable) > 0 {
+		embedding = togglePhotoImageProvider{EmbeddingProvider: provider, unavailable: unavailable[0]}
+	}
+	return photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": embedding}, names, false)
+}
+
+// photoImageHTTPProfilesFixture ingests names as photos; distinctCaptures gives each its own pixels and capture time so they group as one burst.
+func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.EmbeddingProvider, names []string, distinctCaptures bool) (*httptest.Server, *testStore, []string) {
+	t.Helper()
+	var service *processing.Service
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+		profiles := map[string]processing.ProfileConfig{}
+		for name, provider := range providers {
+			descriptor := provider.Descriptor()
+			profile := processingTestProfile(document.RenditionDescriptor{})
+			profile.Rendition = nil
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			profile.RetentionDisclosure.TrustBoundary = string(descriptor.TrustBoundary)
+			profile.Embeddings = []document.EmbeddingBindingV1{{Activation: document.EmbeddingOptional, AuthorizationFingerprint: processingTestHash("embedding-authorization"), CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:test", Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, Dimensions: descriptor.Dimension, DisclosureFingerprint: processingTestHash("embedding-disclosure"), DocumentFormatter: descriptor.DocumentFormatter, InputKind: document.EmbeddingInputImage, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: descriptor.Metric, Model: descriptor.Model, ModelInput: descriptor.ModelInput, Name: "semantic", Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter, ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}}
+			profiles[name] = processing.ProfileConfig{Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"semantic": provider}}
+		}
+		gate := api.NewOperationGate()
+		deps.Gate = gate
+		var err error
+		service, err = processing.NewService(processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: profiles})
+		require.NoError(t, err)
+		deps.Processing = service
+	})
+	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
+	require.NoError(t, err)
+	recipe, err := processing.VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	run, err := catalog.BeginIngest(t.Context(), "cli", "synthetic similarity")
+	require.NoError(t, err)
+	for i, name := range names {
+		var node store.Node
+		if distinctCaptures {
+			hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.RGBA{R: uint8(i * 80), A: 255})))
+			require.NoError(t, err)
+			node, err = catalog.IngestFileExact(t.Context(), run, catalog.RootID(), name, hash, size, "image/jpeg", "/synthetic/"+name, "2024-02-01T12:00:00Z")
+			require.NoError(t, err)
+			stamp := fmt.Sprintf("2024-02-01T12:00:%02dZ", i*10)
+			canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: stamp, Normalized: stamp, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneUTC}}}}})
+			require.NoError(t, err)
+			_, err = catalog.PublishSourceMetadata(t.Context(), hash, processing.SourceMetadataExtractorFingerprint, canonical)
+			require.NoError(t, err)
+		} else {
+			node, err = catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, "image/jpeg")
+			require.NoError(t, err)
+		}
+
+		_, err = processing.EnsureVisualPreview(t.Context(), catalog.Store, catalog.Blobs, node.CurrentVersionID, recipe)
+		require.NoError(t, err)
+		for name := range providers {
+			selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: i == 0})
+			require.NoError(t, err)
+		}
+	}
+	spaces, err := catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: catalog.Store, Owner: "syntax-images", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, Mutate: api.NewOperationGate().MutateContext, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+		reader, err := catalog.Blobs.OpenContext(ctx, member.PayloadBlobHash)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { require.NoError(t, reader.Close()) }()
+		return io.ReadAll(reader)
+	}})
+	require.NoError(t, err)
+	for _, space := range spaces {
+		_, err = indexer.Rebuild(t.Context(), space)
+		require.NoError(t, err)
+	}
+	return ts, catalog, spaces
+}
+
+type togglePhotoImageProvider struct {
+	document.EmbeddingProvider
+
+	unavailable *atomic.Bool
+}
+
+func (p togglePhotoImageProvider) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+	if p.unavailable.Load() {
+		return document.EmbeddingResult{}, errors.New("synthetic provider unavailable")
+	}
+	return p.EmbeddingProvider.Embed(ctx, inputs, authorization)
+}
+
+func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
+	t.Parallel()
+	unavailable := new(atomic.Bool)
+	ts, catalog, _ := photoImageHTTPFixture(t, newProcessingTestEmbeddingProvider(t), []string{"sunset-00.jpg"}, unavailable)
+	hash, size, err := catalog.Blobs.Write(bytes.NewReader(mediatest.JPEG(24, 24, color.White)))
+	require.NoError(t, err)
+	for i := 1; i < 51; i++ {
+		_, err := catalog.CreateFile(t.Context(), catalog.RootID(), fmt.Sprintf("sunset-%02d.jpg", i), hash, size, "image/jpeg")
+		require.NoError(t, err)
+	}
+	const mode = "semantic"
+	request := api.PhotoBrowseRequest{Query: api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"sunset","sort":{"field":"name","direction":"asc"}}`, mode)), PageSize: 50}
+	unavailable.Store(true)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var first api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.Equal(t, "provider_unavailable", first.FallbackReason)
+	require.NotEmpty(t, first.NextCursor)
+	require.Equal(t, mode, first.RequestedMode)
+	require.Equal(t, "lexical", first.ActualMode)
+	require.Len(t, first.Items, 50)
+	unavailable.Store(false)
+	request.Cursor = first.NextCursor
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var next api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &next))
+	require.Equal(t, "lexical", next.ActualMode)
+	require.Equal(t, "provider_unavailable", next.FallbackReason)
+	require.Empty(t, next.SnapshotID)
+	require.Len(t, next.Items, 1)
+	require.Equal(t, "sunset-50.jpg", next.Items[0].Name)
+	request.Cursor = ""
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &next))
+	require.Equal(t, mode, next.ActualMode)
+	require.NotEmpty(t, next.SnapshotID)
+}
+
+func TestPhotoStackGenerationStaysLocalAfterConsentRevoked(t *testing.T) {
+	t.Parallel()
+	provider := newProcessingTestEmbeddingProvider(t)
+	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	var err error
+	provider.descriptor, err = document.NewEmbeddingDescriptor(provider.descriptor)
+	require.NoError(t, err)
+	ts, _, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": &provider, "same-space": &provider}, []string{"one.jpg", "two.jpg"}, true)
+	response, body := do(t, ts, http.MethodGet, "/api/v1/photos/settings", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var before api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(body), &before))
+	require.NotEmpty(t, before.VectorGenerationID)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), Stacks: true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Stacks, 1)
+	require.Len(t, page.Stacks[0].AssetIDs, 2)
+
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/consent/revocations", nil, document.ProcessingConsentRevocationRequest{Principal: "embedded:operator", Scope: "document-processing"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/settings", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var after api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(body), &after))
+	require.Equal(t, before.VectorGenerationID, after.VectorGenerationID)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", nil, api.GroupPhotoStacksRequest{AssetIDs: page.Stacks[0].AssetIDs})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var grouped api.GroupPhotoStacksResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+	require.Equal(t, before.VectorGenerationID, grouped.VectorGenerationID)
+	require.Equal(t, [][]string{page.Stacks[0].AssetIDs}, grouped.Groups)
+}
+
+func TestPhotoRankedRoutes(t *testing.T) {
+	t.Parallel()
+	provider := newProcessingTestEmbeddingProvider(t)
+	var calls atomic.Int64
+	provider.onEmbed = func() { calls.Add(1) }
+	provider.descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	var err error
+	provider.descriptor, err = document.NewEmbeddingDescriptor(provider.descriptor)
+	require.NoError(t, err)
+	ts, _, _ := photoImageHTTPProfilesFixture(t, map[string]document.EmbeddingProvider{"private": &provider}, []string{"sunset-a.jpg", "sunset-b.jpg"}, true)
+	t.Run("continuation accepts a capture-sort request", func(t *testing.T) {
+		request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset","sort":{"field":"capture_time","direction":"desc"}}`), PageSize: 1}
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var first api.PhotoBrowsePage
+		require.NoError(t, json.Unmarshal([]byte(body), &first))
+		require.NotEmpty(t, first.NextCursor)
+		request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor
+		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var next api.PhotoBrowsePage
+		require.NoError(t, json.Unmarshal([]byte(body), &next))
+		require.Len(t, next.Items, 1)
+		require.NotEqual(t, first.Items[0].AssetID, next.Items[0].AssetID)
+	})
+	t.Run("capture reuses the accepted ranking with the snapshot row contract", func(t *testing.T) {
+		request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 1}
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var accepted api.PhotoBrowsePage
+		require.NoError(t, json.Unmarshal([]byte(body), &accepted))
+		require.Equal(t, "semantic", accepted.ActualMode)
+		beforeCapture := calls.Load()
+		response, body = do(t, ts, http.MethodPost, "/api/v1/workspace/queries", nil, api.WorkspaceQueryCreateRequest{Photos: true, Query: request.Query, PageSize: 250, SnapshotID: accepted.SnapshotID})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var capture struct {
+			Rows []map[string]any `json:"rows"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &capture))
+		require.Equal(t, beforeCapture, calls.Load(), "capture must reuse the accepted ranking")
+		require.NotEmpty(t, capture.Rows)
+		for _, row := range capture.Rows {
+			for _, key := range []string{"node_id", "content_version_id", "blob_hash", "size", "revision", "name", "path", "mime_type", "media_family", "modified_at", "sort_key", "tags", "collection_ids", "asset_id", "flag"} {
+				require.Contains(t, row, key)
+			}
+			require.Equal(t, "image", row["media_family"])
+			require.Equal(t, "image/jpeg", row["mime_type"])
+			require.NotEmpty(t, row["modified_at"])
+			require.Contains(t, []any{"", "pick", "reject"}, row["flag"])
+			require.IsType(t, []any{}, row["tags"])
+			require.IsType(t, []any{}, row["collection_ids"])
+			require.NotContains(t, row, "photo", "Cull consumes the snapshot row contract")
+		}
+		require.Equal(t, accepted.Items[0].AssetID, capture.Rows[0]["asset_id"])
+	})
+	t.Run("stacks refresh returns the accepted stacks", func(t *testing.T) {
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`), Stacks: true, PageSize: 250})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var accepted api.PhotoBrowsePage
+		require.NoError(t, json.Unmarshal([]byte(body), &accepted))
+		require.NotEmpty(t, accepted.SnapshotID)
+		require.Len(t, accepted.Stacks, 1)
+		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query/stacks", nil, api.PhotoSnapshotStacksRequest{SnapshotID: accepted.SnapshotID})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var refreshed api.PhotoSnapshotStacksResponse
+		require.NoError(t, json.Unmarshal([]byte(body), &refreshed))
+		require.Len(t, refreshed.Stacks, 1)
+		require.ElementsMatch(t, accepted.Stacks[0].AssetIDs, refreshed.Stacks[0].AssetIDs)
+		require.NotEmpty(t, refreshed.Stacks[0].RepresentativeID)
+	})
 }

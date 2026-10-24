@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/embeddingbridge"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/providerhttp"
@@ -28,6 +29,7 @@ import (
 const (
 	openAIEmbeddingAdapter = "docbank-openai-compatible-embeddings/v1"
 	voyageEmbeddingAdapter = "docbank-voyage-embeddings/v1"
+	bridgeEmbeddingAdapter = "docbank-standard-embedding-bridge/v1"
 )
 
 func recoverEmbeddingRuntimeSpool(ctx context.Context, spoolDirectory string) error {
@@ -74,15 +76,12 @@ func (resolver embeddingCredentialSecret) ResolveSecret(ctx context.Context, nam
 }
 
 type embeddingRuntimeBundle struct {
-	registry    *processing.EmbeddingRuntimeRegistry
 	providers   map[string]document.EmbeddingProvider
 	classifiers map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)
 }
 
-func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBlobStore,
-	spoolDirectory string,
-) (embeddingRuntimeBundle, error) {
-	bundle := embeddingRuntimeBundle{registry: processing.NewEmbeddingRuntimeRegistry(),
+func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle, error) {
+	bundle := embeddingRuntimeBundle{
 		providers:   make(map[string]document.EmbeddingProvider),
 		classifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration))}
 	registered := make(map[string]document.EmbeddingProvider)
@@ -110,6 +109,19 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 		var provider document.EmbeddingProvider
 		var classify func(error) (processing.EmbeddingProviderFailure, time.Duration)
 		switch configured.Runtime.AdapterContract {
+		case bridgeEmbeddingAdapter:
+			profile := embeddingbridge.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor, SecretBinding: configured.CredentialBinding,
+				EgressPolicy: providerEgressPolicy(configured.Runtime.ProviderEgressConfig), RequestTimeout: configured.Runtime.RequestTimeout.Std(),
+				MaxBatchItems: configured.MaxBatchItems, MaxInputBytes: configured.MaxInputBytes, MaxRequestBytes: configured.Runtime.MaxRequestBytes, MaxResponseBytes: configured.MaxResponseBytes}
+			descriptor.PolicyFingerprint, err = embeddingbridge.PolicyFingerprint(profile)
+			if err == nil {
+				descriptor, err = document.NewEmbeddingDescriptor(descriptor)
+			}
+			if err == nil {
+				profile.Descriptor = descriptor
+				provider, err = embeddingbridge.New(profile, secrets, nil, &http.Client{})
+			}
+			classify = classifyBridgeEmbeddingError
 		case openAIEmbeddingAdapter:
 			var resolver openaicompat.SecretResolver = secrets
 			binding := configured.CredentialBinding
@@ -153,13 +165,6 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 			bundle.providers[name] = shared
 			bundle.classifiers[name] = classify
 			continue
-		}
-		runtime, err := processing.NewProviderEmbeddingRuntime(provider, blobs, spoolDirectory, classify)
-		if err != nil {
-			return embeddingRuntimeBundle{}, err
-		}
-		if err := bundle.registry.Register(descriptor.Fingerprint, runtime); err != nil {
-			return embeddingRuntimeBundle{}, err
 		}
 		registered[descriptor.Fingerprint] = provider
 		bundle.providers[name] = provider
@@ -253,14 +258,10 @@ func executableProcessingProfiles(cfg config.Config,
 	return profiles, nil
 }
 
-type embeddingRuntimeBlobStore interface {
-	OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser, error)
-}
-
 func configuredEmbeddingDescriptor(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract) document.EmbeddingDescriptor {
 	runtime := profile.Runtime
 	modes := []document.ModelInputMode{modelInput.Document.Mode}
-	supportsQuery := runtime.AdapterContract == openAIEmbeddingAdapter ||
+	supportsQuery := runtime.AdapterContract == bridgeEmbeddingAdapter || runtime.AdapterContract == openAIEmbeddingAdapter ||
 		(runtime.AdapterContract == voyageEmbeddingAdapter && profile.InputKind == string(document.EmbeddingInputRenditionChunk))
 	if supportsQuery && modelInput.Query.Mode != modelInput.Document.Mode {
 		modes = append(modes, modelInput.Query.Mode)
@@ -420,4 +421,19 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 		return processing.EmbeddingProviderTransient, delay
 	}
 	return processing.EmbeddingProviderPermanent, 0
+}
+
+func classifyBridgeEmbeddingError(err error) (processing.EmbeddingProviderFailure, time.Duration) {
+	switch embeddingbridge.Category(err) {
+	case embeddingbridge.ErrorAuthentication:
+		return processing.EmbeddingProviderAuthorization, 0
+	case embeddingbridge.ErrorCapacity:
+		return processing.EmbeddingProviderCapacity, 0
+	case embeddingbridge.ErrorMalformedResponse:
+		return processing.EmbeddingProviderInvalidResponse, 0
+	case embeddingbridge.ErrorTransient, embeddingbridge.ErrorAmbiguousSubmission:
+		return processing.EmbeddingProviderTransient, 0
+	default:
+		return processing.EmbeddingProviderPermanent, 0
+	}
 }

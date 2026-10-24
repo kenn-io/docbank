@@ -150,9 +150,9 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 				JOIN embedding_input_generations g ON g.generation_id=j.generation_id
 				WHERE n.kind='file' AND n.trashed_at IS NULL AND j.profile_fingerprint=? AND j.binding_id=?
 				AND j.input_kind=? AND j.vector_space_id=? AND j.state IN ('queued','running','retry_wait')
-				AND (j.input_kind='original_file' OR EXISTS (
+				AND (j.input_kind='original_file' OR (j.input_kind='image' AND `+currentImageEmbeddingSQL("j.content_version_id", "g.evidence_fingerprint")+`) OR (j.input_kind='rendition_chunk' AND EXISTS (
 					SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
-					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id)) `+filterSQL,
+					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id))) `+filterSQL,
 				append([]any{scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, vectorSpace}, filterArgs...)...)
 			if err != nil {
 				return ProcessingCoverageSnapshot{}, err
