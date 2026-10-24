@@ -18,6 +18,77 @@ const unlockedAccess = () => {
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   return access;
 };
+it("blocks manual Search after a failed Hidden lock and reloads after a successful retry", async () => {
+  const access = unlockedAccess();
+  const hidden = {
+    ...grace,
+    photo_summary: {
+      library_count: 0,
+      hidden_count: 1,
+      face_hidden: true,
+      face: {
+        asset_id: "asset",
+        content_version_id: "version",
+        generation_id: "ready",
+        rotation: 0,
+        box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      },
+    },
+  };
+  vi.stubGlobal(
+    "Image",
+    class {
+      src = "";
+      naturalWidth = 1000;
+      naturalHeight = 800;
+      decode() {
+        return Promise.resolve();
+      }
+    },
+  );
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:hidden-person"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [hidden] });
+  const lock = vi.spyOn(api, "lockPhotoHidden").mockRejectedValueOnce(new TypeError("Lock failed"));
+  const people = new People("session", vi.fn(), access);
+  people.items = [hidden];
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  await screen.findByRole("img", { name: "Face of Grace" });
+  await act(async () => {
+    expect(await access.lock()).toBe(false);
+  });
+  expect(access.lockError).toBe("Lock failed");
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => {
+    expect(people.loading).toBe(false);
+    expect(screen.queryByText("Grace")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Grace 0 Library photos" })).toBeNull();
+    expect(screen.queryByRole("img", { name: "Face of Grace" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "1 Hidden photo" })).toBeNull();
+  });
+  expect(read).not.toHaveBeenCalled();
+  lock.mockResolvedValueOnce({ configured: true });
+  read.mockResolvedValueOnce({ items: [ada] });
+  const scope = access.scope;
+  await act(async () => {
+    expect(await access.lock()).toBe(true);
+  });
+  expect(access.scope).toBeGreaterThan(scope);
+  await act(() => people.load());
+  expect(read).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Ada 3 Library photos" })).toBeTruthy();
+  view.unmount();
+  people.dispose();
+  access.dispose();
+  await cache.dispose();
+});
 it.each([
   ["rename", true],
   ["rename", false],

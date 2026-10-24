@@ -103,6 +103,10 @@ export class People {
   }
   async load(query = this.query, more = false) {
     if (this.disposed) return;
+    if (this.access?.lockError) {
+      this.conceal();
+      return;
+    }
     this.controller?.abort();
     const request = (this.controller = new AbortController());
     const cursor = more ? this.cursor : undefined;
