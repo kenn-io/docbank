@@ -29,7 +29,7 @@ A merge can stop when a face assigned to one person was rejected for the other. 
 2. Withdraw the rejection with `docbank photos faces withdraw-rejection <content-version-id> --face <face-id> --person <rejected-person-id> --revision <face-revision>`.
 3. Select both people again and retry the merge.
 
-A browser merge is refused while Hidden is locked if either person has Hidden photos. Unlock Hidden and retry the merge.
+A browser merge is refused while Hidden is locked if either person has Hidden photos. Unlock Hidden and retry the merge. Browser sessions receive merge receipts with zero moved-evidence counts and an empty absorbed name.
 
 Locked Hidden, excluded, or trashed conflicts return notices without face IDs. Unlock, reinclude, or restore the photo before reviewing its rejection. Locking Hidden clears the selection and dialog.
 

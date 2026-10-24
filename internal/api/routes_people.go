@@ -107,6 +107,10 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
+			if browserSessionRequest(ctx) {
+				receipt.Moved = store.PersonMergeMoved{}
+				receipt.AbsorbedDisplayName = ""
+			}
 			out = &personMergeOutput{ETag: revisionETag(receipt.SurvivorRevisionAfter), Body: fromStorePersonMergeReceipt(receipt)}
 			return nil
 		})

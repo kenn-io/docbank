@@ -134,8 +134,14 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 			return err
 		}
 		if found {
-			if err := s.fenceBrowserMergeReplayTx(ctx, tx, replayed); err != nil {
-				return err
+			if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); visible {
+				survivorID, err := resolvePersonIDTx(ctx, tx, replayed.SurvivorPersonID)
+				if err != nil {
+					return err
+				}
+				if err := s.fenceVisiblePeopleTx(ctx, tx, survivorID); err != nil {
+					return err
+				}
 			}
 			receipt = replayed
 			return nil
@@ -262,78 +268,6 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 		UNION
 		SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN (?,?)
 	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)`, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
-		return err
-	}
-	if hidden {
-		return fmt.Errorf("%w: unlock Hidden and retry the merge", ErrHiddenLocked)
-	}
-	return nil
-}
-
-// A replay may outlive its browser's Hidden unlock and the absorbed person.
-func (s *Store) fenceBrowserMergeReplayTx(ctx context.Context, tx *sql.Tx, receipt PersonMergeReceipt) error {
-	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
-		return nil
-	}
-	survivorID, err := resolvePersonIDTx(ctx, tx, receipt.SurvivorPersonID)
-	if err != nil {
-		return err
-	}
-	if err := s.fenceVisiblePeopleTx(ctx, tx, survivorID); err != nil {
-		return err
-	}
-	if _, err := s.hiddenSession(ctx, tx); !errors.Is(err, ErrHiddenLocked) {
-		return err
-	}
-	versions := make([]string, 0, len(receipt.Moved.DeduplicatedAssertions))
-	for _, removed := range receipt.Moved.DeduplicatedAssertions {
-		versions = append(versions, removed.Assertion.ContentVersionID)
-	}
-	ids, err := json.Marshal(receipt.Moved.AssertionIDs)
-	if err != nil {
-		return err
-	}
-	versionIDs, err := json.Marshal(versions)
-	if err != nil {
-		return err
-	}
-	candidates := make([]string, 0, 2*len(receipt.Moved.FaceCandidates)+len(receipt.Moved.SupersededCandidates))
-	for _, moved := range receipt.Moved.FaceCandidates {
-		candidates = append(candidates, moved.CandidateID, moved.RetainedCandidateID)
-	}
-	candidates = append(candidates, receipt.Moved.SupersededCandidates...)
-	candidateIDs, err := json.Marshal(candidates)
-	if err != nil {
-		return err
-	}
-	assignmentIDs, err := json.Marshal(receipt.Moved.AssignmentIDs)
-	if err != nil {
-		return err
-	}
-	// Only document assignments retain the version that authorized the absorbed
-	// person's visibility. When Hidden photos exist, broader scopes and missing
-	// assignments require unlock because the receipt has no evidence snapshot.
-	var hidden bool
-	if err := tx.QueryRowContext(ctx, `WITH RECURSIVE replay_candidates(candidate_id) AS (
-		SELECT value FROM json_each(?)
-		UNION
-		SELECT json_extract(f.value, '$.retained_candidate_id')
-		FROM person_merges m, json_each(m.moved_json, '$.face_candidates') f
-		JOIN replay_candidates c ON c.candidate_id=json_extract(f.value, '$.candidate_id')
-	)
-	SELECT EXISTS(SELECT 1 FROM (
-		SELECT content_version_id FROM person_document_assertions WHERE assertion_id IN (SELECT value FROM json_each(?))
-		UNION SELECT json_extract(d.value, '$.assertion.ContentVersionID')
-		FROM person_merges m, json_each(m.moved_json, '$.deduplicated_assertions') d
-		WHERE json_extract(d.value, '$.assertion.AssertionID') IN (SELECT value FROM json_each(?))
-		UNION SELECT value FROM json_each(?)
-		UNION SELECT e.content_version_id FROM person_candidate_faces e WHERE e.candidate_id IN (SELECT candidate_id FROM replay_candidates)
-	) moved WHERE NOT `+personVersionVisibleSQL("moved.content_version_id")+`)
-	OR EXISTS(SELECT 1 FROM json_each(?) moved
-		LEFT JOIN custodian_assignments a ON a.assignment_id=moved.value
-		WHERE ((a.assignment_id IS NULL OR a.scope_kind<>'document')
-			AND EXISTS(SELECT 1 FROM photo_assets WHERE hidden_at IS NOT NULL))
-		OR NOT `+personVersionVisibleSQL("a.content_version_id")+`)`, string(candidateIDs), string(ids), string(ids), string(versionIDs), string(assignmentIDs)).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {

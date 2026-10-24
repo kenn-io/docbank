@@ -10,11 +10,86 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestPeopleBrowserMergeReceiptOmitsMovedEvidence(t *testing.T) {
+	t.Parallel()
+	for _, firstClient := range []string{"browser", "api key"} {
+		t.Run(firstClient, func(t *testing.T) {
+			t.Parallel()
+			ts, s := newTestServer(t, nil)
+			ctx := t.Context()
+			survivor, err := s.CreatePerson(ctx, "Visible Survivor", "operator")
+			require.NoError(t, err)
+			absorbed, err := s.CreatePerson(ctx, "Hidden Absorbed", "operator")
+			require.NoError(t, err)
+			for _, person := range []store.Person{survivor, absorbed} {
+				hash, size, err := s.Blobs.Write(strings.NewReader(person.DisplayName))
+				require.NoError(t, err)
+				photo, err := s.CreateFile(ctx, s.RootID(), person.DisplayName+".jpg", hash, size, "image/jpeg")
+				require.NoError(t, err)
+				_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+				require.NoError(t, err)
+				if person.PersonID == absorbed.PersonID {
+					asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+					require.NoError(t, err)
+					require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+					require.NoError(t, err)
+				}
+			}
+			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", browser, map[string]string{"passcode": "synthetic-passcode"})
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			require.Len(t, response.Cookies(), 1)
+			browser["Cookie"] = response.Cookies()[0].String()
+			browser["If-Match"] = `"1"`
+			key := map[string]string{"If-Match": `"1"`}
+			firstHeaders := browser
+			if firstClient == "api key" {
+				firstHeaders = key
+			}
+			path := "/api/v1/people/by-id/" + survivor.PersonID + "/merge"
+			request := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision, "operation_id": "00000000-0000-4000-8000-000000000013"}
+			response, body = do(t, ts, http.MethodPost, path, firstHeaders, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var first api.PersonMergeReceipt
+			require.NoError(t, json.Unmarshal([]byte(body), &first))
+			if firstClient == "browser" {
+				assert.Empty(t, first.AbsorbedDisplayName, "first browser reply")
+				assert.Equal(t, api.PersonMergeMovedCounts{}, first.Moved, "first browser reply")
+			} else {
+				assert.Equal(t, "Hidden Absorbed", first.AbsorbedDisplayName)
+				assert.Equal(t, 1, first.Moved.Assertions)
+			}
+			require.NoError(t, s.LockPhotoHidden(ctx))
+			delete(browser, "Cookie")
+			response, body = do(t, ts, http.MethodPost, path, browser, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var replay api.PersonMergeReceipt
+			require.NoError(t, json.Unmarshal([]byte(body), &replay))
+			assert.Empty(t, replay.AbsorbedDisplayName, "locked browser replay")
+			assert.Equal(t, api.PersonMergeMovedCounts{}, replay.Moved, "locked browser replay")
+			assert.Equal(t, first.MergeID, replay.MergeID)
+			assert.Equal(t, first.OperationID, replay.OperationID)
+			assert.Equal(t, survivor.PersonID, replay.SurvivorPersonID)
+			assert.Equal(t, absorbed.PersonID, replay.AbsorbedPersonID)
+			assert.Equal(t, `"2"`, response.Header.Get("ETag"))
+			response, body = do(t, ts, http.MethodPost, path, key, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var full api.PersonMergeReceipt
+			require.NoError(t, json.Unmarshal([]byte(body), &full))
+			assert.Equal(t, "Hidden Absorbed", full.AbsorbedDisplayName)
+			assert.Equal(t, api.PersonMergeMovedCounts{Assertions: 1}, full.Moved)
+			assert.Equal(t, first.MergeID, full.MergeID)
+		})
+	}
+}
 
 func TestPeopleBrowserMergeReplayAfterChainedMerge(t *testing.T) {
 	t.Parallel()
