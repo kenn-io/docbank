@@ -19,7 +19,7 @@ Select a card to open that person's Library photos, or their Hidden photos when 
 
 Use **Rename** to change the name. The list reloads its first page and applies the current search again. A renamed person disappears from the results if their new name no longer matches.
 
-To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records. The list reloads its first page with current counts. When both people have the same name and the same detail, the dialog also shows each person ID. Active photo filters follow renames and merges.
+To merge two people, check **Select** on both cards, then choose **Merge**. Your selection stays while you search, so you can select people from different searches. Choose **Keep this one** on the person to keep, then confirm. The survivor keeps their name and receives the other person's records. The list reloads its first page with current counts. When both people have the same name and the same detail, the dialog also shows each person ID. Person filters chosen from a card or the face list follow renames and merges. A `person:` name typed in search keeps the old name, so update the search.
 
 If someone else changed or removed either person first, the list reloads its first page; review the current cards and select again. A rejected name keeps your selection, and a failed merge keeps both people selected. An uncertain merge result also reloads the list so you can see whether it completed.
 
@@ -42,8 +42,7 @@ display-name order. Search matches the beginning of any word, so `Smith` finds `
 
 `docbank people list ada`
 
-MCP clients use `find_people`. Cursors are bound to the query and the
-requested person page.
+MCP clients use `find_people`. Cursors are bound to the query, requested projection and ordering, and Hidden state they were read under. An invalid cursor or one from another query or Hidden state returns `people_cursor_expired`.
 
 ## Browser names and visibility
 
