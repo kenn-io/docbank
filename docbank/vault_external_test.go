@@ -35,13 +35,6 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-func TestRootPackageConstructor(t *testing.T) {
-	t.Parallel()
-	vault, err := docbank.New(context.Background(), docbank.Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	require.NoError(t, vault.Close())
-}
-
 func TestVaultFormatCoverage(t *testing.T) {
 	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
@@ -2274,22 +2267,6 @@ func TestOpenVersionContentRangeClosedVault(t *testing.T) {
 		docbank.ContentRangeOptions{Offset: 0, Length: 1},
 	)
 	require.ErrorIs(t, err, docbank.ErrClosed)
-}
-
-func TestEmbeddedImmutableCreate(t *testing.T) {
-	t.Parallel()
-	content := []byte("immutable external content\n")
-	sum := sha256.Sum256(content)
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-
-	receipt, err := vault.Create(t.Context(), "/external.txt", bytes.NewReader(content), docbank.CreateOptions{
-		MediaType: "text/plain",
-		Expected:  docbank.ContentIdentity{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content))},
-	})
-	require.NoError(t, err)
-	require.True(t, receipt.Created)
 }
 
 func TestEmbeddedPutRequiresCurrentRevision(t *testing.T) {

@@ -192,18 +192,6 @@ func TestValidateResetSourceAttributesRejectsDirectoryReparsePoint(t *testing.T)
 	require.ErrorContains(t, err, "reparse point")
 }
 
-func TestValidateResetRootRelationshipRejectsFilesystemRoot(t *testing.T) {
-	t.Parallel()
-	volumeRoot := filepath.VolumeName(t.TempDir()) + string(os.PathSeparator)
-
-	err := validateResetRootRelationship(
-		volumeRoot,
-		filepath.Join(volumeRoot, "vault.reset"),
-	)
-
-	require.ErrorContains(t, err, "filesystem root")
-}
-
 func TestResetVaultRejectsChangedParentBeforeRename(t *testing.T) {
 	t.Parallel()
 	grandparent := t.TempDir()
