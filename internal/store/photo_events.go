@@ -185,7 +185,7 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 }
 
 const photoCaptureDuplicateNodeIDs = `SELECT f.asset_id AS id FROM content_versions v JOIN content_versions pv ON pv.blob_hash=v.blob_hash AND pv.size=v.size JOIN nodes n ON n.id=pv.node_id AND n.current_version_id=pv.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.current_version_id`
-const photoCaptureDuplicateVersionIDs = `SELECT '' AS id WHERE EXISTS(SELECT 1 FROM content_versions pv JOIN nodes n ON n.id=pv.node_id AND n.current_version_id=pv.version_id JOIN photo_files f ON f.node_id=n.id WHERE pv.blob_hash=$row.blob_hash AND pv.size=$row.size)`
+const photoCaptureDuplicateVersionIDs = `SELECT f.asset_id AS id FROM content_versions pv JOIN nodes n ON n.id=pv.node_id AND n.current_version_id=pv.version_id JOIN photo_files f ON f.node_id=n.id WHERE pv.blob_hash=$row.blob_hash AND pv.size=$row.size`
 
 const photoCaptureNodes = "nodes"
 const photoCaptureVersionIDs = `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.content_version_id`

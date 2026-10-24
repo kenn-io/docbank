@@ -171,7 +171,7 @@ func TestPhotoEventsNonPhotoFiltering(t *testing.T) {
 		require.Empty(t, ch, "queue tables are not photo changes")
 	}
 	ordinary := browsePhotoNode(t, s, "ordinary.bin", node.BlobHash, "application/octet-stream")
-	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch))
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, ch), "the photo's duplicate status changed")
 	tag, err := s.CreateTag(t.Context(), "Synthetic duplicate keyword")
 	require.NoError(t, err)
 	nextPhotoWake(t, ch)
@@ -243,6 +243,18 @@ func TestPhotoEventsHiddenTransition(t *testing.T) {
 	_, err := s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events), "hiding asks every viewer to refetch")
+	// Replacing the hidden photo with identical bytes stays invisible to a locked viewer.
+	_, _, err = s.ReplaceContent(t.Context(), asset.Files[0].NodeID, UnconditionalRev, browseHash("transition.jpg"), 20, "image/jpeg")
+	require.NoError(t, err)
+	locked, err := s.VisiblePhotoEvents(t.Context(), nextPhotoWake(t, events))
+	require.NoError(t, err)
+	require.Empty(t, locked)
+	// A visible duplicate still refreshes, by its own ID.
+	duplicate, err := s.PhotoAssetForNode(t.Context(), browsePhotoNode(t, s, "copy.jpg", browseHash("transition.jpg"), "image/jpeg").ID)
+	require.NoError(t, err)
+	locked, err = s.VisiblePhotoEvents(t.Context(), nextPhotoWake(t, events))
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: duplicate.ID}}, locked)
 }
 
 func TestPhotoEventsVisibleAccess(t *testing.T) {
