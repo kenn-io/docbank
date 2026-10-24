@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"testing"
 
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/internal/probecontract"
@@ -83,3 +84,9 @@ func MinimalPDF(label string) []byte { return testfixture.MinimalPDF(label) }
 
 // WriteNativeSeeds writes synthetic native probe seeds into an existing directory.
 func WriteNativeSeeds(directory string) error { return testfixture.WriteNativeSeeds(directory) }
+
+// NewProbeTransport returns an OCR simulator for the synthetic probe fixtures.
+func NewProbeTransport(tb testing.TB) *testfixture.ProbeTransport {
+	tb.Helper()
+	return &testfixture.ProbeTransport{T: tb, Model: mistral.DefaultModel}
+}

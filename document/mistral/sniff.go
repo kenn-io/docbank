@@ -23,12 +23,3 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 func compoundDirectoryNames(reader io.ReaderAt, size int64) (map[string]bool, error) {
 	return formatdetect.CompoundDirectoryNames(reader, size)
 }
-
-func candidateByMediaType(mediaType string) (CandidateFormat, bool) {
-	for _, candidate := range candidateFormats {
-		if candidate.MediaType == mediaType {
-			return candidate, true
-		}
-	}
-	return CandidateFormat{}, false
-}

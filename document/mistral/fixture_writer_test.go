@@ -99,7 +99,7 @@ func TestWriteProbeFixturesPublishesCompleteDeterministicMatrix(t *testing.T) {
 func TestWriteProbeFixturesMissingOrInvalidSeedsLeavesNoDestination(t *testing.T) {
 	destination := newProbeFixtureDestination(t, "fixtures")
 	err := WriteProbeFixtures(t.Context(), destination, FixtureOptions{})
-	require.ErrorContains(t, err, "doc, msg, numbers, ppt, xls")
+	require.EqualError(t, err, "fixture matrix remains incomplete: supply synthetic native seeds named doc, msg, numbers, ppt, xls")
 	assert.NoDirExists(t, destination)
 
 	seeds := writeNativeSeeds(t)

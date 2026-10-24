@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,39 +41,12 @@ func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing
 	configured := cfg.RenditionProfiles["documents"]
 	policy, err := configured.MistralPolicy()
 	require.NoError(t, err)
+	transport := mistraltest.NewProbeTransport(t)
 	client, err := mistral.NewClient(policy, mistral.ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{
 		Transport: mistralProbeTransport(func(request *http.Request) (*http.Response, error) {
 			assert.Equal(t, "https://api.eu.mistral.ai/v1/ocr", request.URL.String())
 			assert.Equal(t, "Bearer synthetic-key", request.Header.Get("Authorization"))
-			var input struct {
-				Pages    string `json:"pages"`
-				Document struct {
-					URL string `json:"document_url"`
-				} `json:"document"`
-			}
-			require.NoError(t, json.UnmarshalRead(request.Body, &input))
-			mediaType := strings.TrimPrefix(strings.SplitN(input.Document.URL, ";base64,", 2)[0], "data:")
-			var formatID string
-			for _, candidate := range mistral.CandidateFormats() {
-				if candidate.MediaType == mediaType {
-					formatID = candidate.ID
-					break
-				}
-			}
-			require.NotEmpty(t, formatID)
-			sentinel, err := mistral.ProbeFixtureSentinel(formatID)
-			require.NoError(t, err)
-			units := 1
-			if formatID == "pdf" && input.Pages != "0-0" {
-				units = 2
-			}
-			pages := make([]map[string]any, units)
-			for index := range pages {
-				pages[index] = map[string]any{"index": index, "markdown": sentinel}
-			}
-			body, err := json.Marshal(map[string]any{"model": mistral.DefaultModel, "pages": pages, "usage_info": map[string]int{"pages_processed": units}})
-			require.NoError(t, err)
-			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: request}, nil
+			return transport.RoundTrip(request)
 		}),
 	}})
 	require.NoError(t, err)
@@ -95,7 +68,7 @@ func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing
 		assert.Contains(t, printed.String(), result.FormatID+" "+string(result.Status)+" "+result.ReasonCode)
 	}
 	assert.Contains(t, printed.String(), output)
-	require.Error(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false))
+	require.ErrorContains(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false), "capability manifest "+strconv.Quote(output)+" already exists; pass --overwrite")
 	preserved, err := os.ReadFile(output)
 	require.NoError(t, err)
 	assert.Equal(t, content, preserved)
