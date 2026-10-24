@@ -361,6 +361,31 @@ it.each(["network failure", 503])("replays an uncertain merge after %s once", as
   people.dispose();
 });
 
+it("replays a merge when its response body fails", async () => {
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  const merge = vi
+    .spyOn(api, "mergePerson")
+    .mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError("Response body lost"));
+          },
+        }),
+        { status: 200 },
+      ),
+    )
+    .mockImplementation(async (_, request) => personMergeReceipt(ada, grace, request.operation_id));
+  const changed = vi.fn();
+  const people = new People("session", vi.fn(), undefined, changed);
+  merging(people);
+  expect(await people.submitMerge()).toBe(true);
+  expect(merge).toHaveBeenCalledTimes(2);
+  expect(merge.mock.calls[1]).toEqual(merge.mock.calls[0]);
+  expect(changed).toHaveBeenCalledExactlyOnceWith("ada", "Grace", "grace");
+  people.dispose();
+});
+
 it.each([404, 412, 503, "invalid receipt"])(
   "leaves a merge unconfirmed after replay %s",
   async (result) => {

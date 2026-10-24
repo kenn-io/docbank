@@ -279,8 +279,8 @@ export class People {
     const epoch = this.epoch;
     const { source, survivor } = roles;
     const operationID = randomUUID();
-    const send = () =>
-      this.run(() =>
+    const send = async () => {
+      const response = await this.run(() =>
         mergePerson(
           survivor.person_id,
           {
@@ -292,13 +292,14 @@ export class People {
           { session: this.session, signal: request.signal },
         ),
       );
+      await readReceipt(response, source, survivor, operationID);
+    };
     try {
-      const response = await send().catch((cause: unknown) => {
+      await send().catch((cause: unknown) => {
         const status = cause instanceof APIError ? cause.status : 0;
         if (request.signal.aborted || (status !== 0 && status < 500)) throw cause;
         return send();
       });
-      await readReceipt(response, source, survivor, operationID);
       if (request.signal.aborted) return false;
       this.onchanged(source.person_id, survivor.display_name, survivor.person_id);
       if (epoch === this.epoch) {
