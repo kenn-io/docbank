@@ -95,6 +95,78 @@ it.each([
     await cache.dispose();
   },
 );
+it.each([
+  ["rename", 0, true],
+  ["rename", 503, true],
+  ["rename", 0, false],
+  ["rename", 503, false],
+  ["merge", 0, true],
+  ["merge", 503, true],
+  ["merge", 0, false],
+  ["merge", 503, false],
+] as const)(
+  "requires reselection after uncertain %s HTTP %s, committed=%s",
+  async (operation, status, committed) => {
+    let rows = [ada, grace];
+    const saved = { ...grace, display_name: "Grace Hopper", revision: 5 };
+    const lost = () => {
+      throw status ? new APIError("Response lost", status, "") : new TypeError("Response lost");
+    };
+    vi.spyOn(api, "listPeople").mockImplementation(async (params) => ({
+      items: rows.filter((row) => row.display_name.includes(params?.query ?? "")),
+    }));
+    vi.spyOn(api, "renamePerson").mockImplementation(async () => {
+      if (committed) rows = [ada, saved];
+      return lost();
+    });
+    vi.spyOn(api, "mergePerson").mockImplementation(async (id, request, headers) => {
+      if (operation === "merge") {
+        if (committed) rows = [grace];
+        return lost();
+      }
+      expect(id).toBe("grace");
+      expect(request.absorbed_person_id).toBe("ada");
+      expect(request.absorbed_revision).toBe(2);
+      if (headers["If-Match"] !== '"5"')
+        throw new APIError("Person changed", 412, "stale_revision");
+      rows = [saved];
+      return personMergeReceipt(ada, saved, request.operation_id);
+    });
+    const changed = vi.fn();
+    const people = new People("session", vi.fn(), undefined, changed);
+    people.items = rows;
+    const cache = new PhotoPreviewCache("session", vi.fn());
+    render(PeopleView, { people, cache, onperson: vi.fn() });
+    await act(async () => {
+      people.toggle(ada);
+      people.toggle(grace);
+      if (operation === "rename") await people.rename(grace, "Grace Hopper");
+      else {
+        people.startMerge();
+        people.keep("grace");
+        people.confirmMerge(true);
+        await people.submitMerge();
+      }
+    });
+    expect(people.selected).toEqual([]);
+    for (const checkbox of screen.getAllByRole("checkbox"))
+      expect((checkbox as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+    if (operation === "rename" && committed) {
+      await fireEvent.click(screen.getByRole("checkbox", { name: /^Select Grace Hopper/ }));
+      await fireEvent.click(screen.getByRole("checkbox", { name: /^Select Ada/ }));
+      await act(async () => {
+        people.startMerge();
+        people.keep("grace");
+        people.confirmMerge(true);
+        expect(await people.submitMerge()).toBe(true);
+      });
+      expect(changed).toHaveBeenLastCalledWith("ada", "Grace Hopper", "grace");
+    }
+    people.dispose();
+    await cache.dispose();
+  },
+);
 it("keeps the search text with the applied query when the view returns", async () => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const people = new People("session", vi.fn());

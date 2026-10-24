@@ -149,9 +149,8 @@ export class People {
     this.writeError = "";
     return request;
   }
-  // recover reports a failed write and discards only what it invalidates: a
-  // rejected input keeps the cards, and only a stale or missing person clears
-  // the selection.
+  // Uncertain writes reload the cards and require fresh selections. Rejected
+  // input keeps the cards; stale or missing people also clear the selection.
   private async recover(cause: unknown, person: PersonSummary, name: string, survivorID?: string) {
     const epoch = this.epoch;
     this.writeError = this.failure(cause);
@@ -164,6 +163,7 @@ export class People {
       this.selected = [];
     if (status !== 422) await this.load();
     if (status === 0 || status >= 500) {
+      this.selected = [];
       try {
         let saved: PersonSummary | undefined;
         for (const query of survivorID ? [name, person.display_name] : [name]) {
