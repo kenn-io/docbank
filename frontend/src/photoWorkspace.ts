@@ -9,6 +9,7 @@ export interface PhotoWorkspace {
 
 export function concealPhotoWorkspace(workspace?: PhotoWorkspace) {
   workspace?.photos.cancelPending();
+  workspace?.photos.concealMetadata();
   return workspace?.cache.dispose();
 }
 

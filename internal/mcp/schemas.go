@@ -208,12 +208,12 @@ func listPackageCustodiansSchemas() (schema, schema) {
 func findPeopleSchemas() (schema, schema) {
 	person := objectSchema(schema{
 		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), schemaStateField: enumSchema("provisional", "curated"),
-		schemaRevisionField: integerSchema(1, 0),
+		schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(), "display_name_folded": stringSchema(0), "identity_label": stringSchema(0),
 	}, personIDField, "display_name", schemaStateField, schemaRevisionField)
 	return rootObjectSchema(schema{
 			"query": stringSchema(document.MaxPersonDisplayNameBytes), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 		}), rootObjectSchema(withPrivateCache(schema{
-			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters),
+			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters), "same_name_continues": booleanSchema(),
 		}), cacheRequired("items")...)
 }
 
@@ -925,13 +925,17 @@ func getPhotoFacesSchemas() (schema, schema) {
 		"limit":              integerSchema(1, maxPhotoFacesToolPageSize),
 	}, "content_version_id")
 	output := rootObjectSchema(withPrivateCache(schema{
-		"faces":            arraySchema(photoFaceSchema(), maxPhotoFacesToolPageSize),
-		"assertions":       arraySchema(personAssertionSchema(enumSchema("depicted")), maxPhotoFacesToolPageSize),
+		"faces":      arraySchema(photoFaceSchema(), maxPhotoFacesToolPageSize),
+		"assertions": arraySchema(personAssertionSchema(enumSchema("depicted")), maxPhotoFacesToolPageSize),
+		"people": arraySchema(objectSchema(schema{
+			personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes),
+			schemaStateField: enumSchema("provisional", "curated", "retired"),
+		}, personIDField, "display_name", schemaStateField), 2*maxPhotoFacesToolPageSize),
 		"total_faces":      integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		"total_assertions": integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		schemaOffsetField:  integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		"next_offset":      integerSchema(1, document.MaxPhotoRecordsPerVersion),
-	}), "faces", "assertions", "total_faces", "total_assertions", schemaOffsetField, "ttlMs", "cacheScope")
+	}), "faces", "assertions", "people", "total_faces", "total_assertions", schemaOffsetField, "ttlMs", "cacheScope")
 	return input, output
 }
 

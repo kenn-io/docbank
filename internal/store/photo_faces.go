@@ -94,7 +94,98 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
 	return err
 }
 
-func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, error) {
+type PhotoFacePerson struct {
+	PersonID    string `json:"person_id" format:"uuid"`
+	DisplayName string `json:"display_name"`
+	State       string `json:"state"`
+}
+
+type PersonFacePreview struct {
+	AssetID          string            `json:"asset_id" format:"uuid"`
+	ContentVersionID string            `json:"content_version_id" format:"uuid"`
+	GenerationID     string            `json:"generation_id"`
+	Rotation         int               `json:"rotation"`
+	Box              *document.FaceBox `json:"box,omitzero"`
+}
+
+type PersonFacePreviewPage struct {
+	Items []PersonFacePreview `json:"items" maxItems:"3"`
+}
+
+const rejectedFaceMatchPredicate = `c.reason='face_match' AND c.state='rejected'`
+
+func personFacePreviewsQuery(hidden bool) string {
+	return `WITH linked AS NOT MATERIALIZED (
+ SELECT member.asset_id,boxed_face.face_id
+ FROM person_document_assertions assertion
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id
+ CROSS JOIN nodes source_node ON source_node.id=cv.node_id
+ CROSS JOIN photo_files member ON member.node_id=source_node.id
+  AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id") + `
+ JOIN persons person ON person.person_id=assertion.person_id AND person.state<>'retired'
+ LEFT JOIN photo_faces boxed_face ON boxed_face.assertion_id=assertion.assertion_id
+  AND boxed_face.content_version_id=assertion.content_version_id
+ WHERE assertion.person_id=? AND assertion.role='depicted' AND assertion.action='assert'
+ ), linked_assets AS MATERIALIZED (
+ SELECT asset_id,MAX(face_id IS NOT NULL) has_box FROM linked GROUP BY asset_id
+ ), asset_page AS MATERIALIZED (
+ SELECT a.asset_id,COALESCE(pl.sort_key,'') sort_key
+ FROM linked_assets CROSS JOIN ` + photoBrowseDisplayFrom + `
+ WHERE a.asset_id=linked_assets.asset_id AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(hidden) + `
+ ORDER BY linked_assets.has_box DESC,COALESCE(pl.sort_key,'') DESC,a.asset_id ASC LIMIT 3
+ ), candidates AS (
+ SELECT asset_page.asset_id,cv.version_id,member.rotation,face.x,face.y,face.width,face.height,
+ asset_page.sort_key,COALESCE(g.generation_id,'') generation_id,
+ CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN 1 ELSE 0 END ready,
+ ROW_NUMBER() OVER (PARTITION BY asset_page.asset_id ORDER BY
+ (face.width IS NOT NULL) DESC,(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
+ face.width*face.height DESC,cv.version_id,face.face_id) crop_rank
+ FROM asset_page CROSS JOIN photo_files member ON member.asset_id=asset_page.asset_id
+ CROSS JOIN nodes source_node ON source_node.id=member.node_id
+ CROSS JOIN content_versions cv ON cv.node_id=source_node.id AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id") + `
+ CROSS JOIN person_document_assertions assertion ON assertion.content_version_id=cv.version_id
+  AND assertion.person_id=?1 AND assertion.role='depicted' AND assertion.action='assert'
+ LEFT JOIN photo_faces face ON face.assertion_id=assertion.assertion_id AND face.content_version_id=cv.version_id
+ LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=?2
+ )
+ SELECT asset_id,version_id,rotation,x,y,width,height,CASE WHEN ready=1 THEN generation_id ELSE '' END
+ FROM candidates WHERE crop_rank=1 ORDER BY sort_key DESC,asset_id ASC`
+}
+
+// PersonFacePreviews returns up to three exact source versions in timeline order.
+func (s *Store) PersonFacePreviews(ctx context.Context, personID, gridRecipe string, hidden bool) (PersonFacePreviewPage, error) {
+	page := PersonFacePreviewPage{Items: []PersonFacePreview{}}
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		if hidden {
+			if _, err := s.hiddenSession(ctx, tx); err != nil {
+				return err
+			}
+		}
+		// Bound the asset page before expanding and ranking its crop candidates.
+		rows, err := tx.QueryContext(ctx, personFacePreviewsQuery(hidden), personID, gridRecipe)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var preview PersonFacePreview
+			var x, y, width, height sql.NullFloat64
+			if err := rows.Scan(&preview.AssetID, &preview.ContentVersionID, &preview.Rotation, &x, &y, &width, &height, &preview.GenerationID); err != nil {
+				return err
+			}
+			if width.Valid {
+				preview.Box = &document.FaceBox{X: x.Float64, Y: y.Float64, Width: width.Float64, Height: height.Float64}
+			}
+			page.Items = append(page.Items, preview)
+		}
+		return rows.Err()
+	})
+	return page, err
+}
+
+// PhotoFacePersonNames reads faces, assertions, and their people in one snapshot.
+func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, []PhotoFacePerson, error) {
+	people := make([]PhotoFacePerson, 0)
 	var faces []PhotoFace
 	assertions := make([]PersonDocumentAssertion, 0)
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
@@ -109,24 +200,31 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
+		rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,a.photo_mark,p.display_name,p.state FROM person_document_assertions a JOIN persons p ON p.person_id=a.person_id WHERE a.content_version_id=? AND a.role='depicted' AND (a.action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) ORDER BY a.person_id,a.assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
-			assertion, err := scanMarkedPersonAssertion(rows)
-			if err != nil {
+			var assertion PersonDocumentAssertion
+			var person PhotoFacePerson
+			if err := rows.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role,
+				&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision, &assertion.PhotoMark,
+				&person.DisplayName, &person.State); err != nil {
 				return err
 			}
 			if len(assertions) == document.MaxPhotoRecordsPerVersion {
 				return ErrInvalidPhotoFace
 			}
 			assertions = append(assertions, assertion)
+			person.PersonID = assertion.PersonID
+			if len(people) == 0 || people[len(people)-1].PersonID != person.PersonID {
+				people = append(people, person)
+			}
 		}
 		return rows.Err()
 	})
-	return faces, assertions, err
+	return faces, assertions, people, err
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
@@ -237,14 +335,34 @@ func replayPhotoFaceTx(ctx context.Context, tx *sql.Tx, existing PhotoFace, pers
 }
 
 // MarkPersonInPhoto records a depicted edge without an invented face box.
-func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID string) (PersonDocumentAssertion, error) {
-	if validateUUIDv4(personID) != nil {
+func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, personName string) (PersonDocumentAssertion, error) {
+	if personID == "" || (personName != "" && !validPersonName(personName)) {
+		return PersonDocumentAssertion{}, ErrInvalidPhotoFace
+	}
+	if personID != "" && validateUUIDv4(personID) != nil {
 		return PersonDocumentAssertion{}, ErrInvalidPerson
 	}
 	var assertion PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		if err := s.currentFacePhotoQuery(ctx, tx, versionID); err != nil {
 			return err
+		}
+		if personName != "" {
+			var name, state string
+			err := tx.QueryRowContext(ctx, `SELECT display_name,state FROM persons WHERE person_id=?`, personID).Scan(&name, &state)
+			if errors.Is(err, sql.ErrNoRows) {
+				_, err = createPersonWithIDTx(ctx, tx, personID, personName, "operator")
+			} else if err == nil {
+				if state == personStateRetired {
+					return ErrNotFound
+				}
+				if name != personName {
+					return ErrInvalidPhotoFace
+				}
+			}
+			if err != nil {
+				return err
+			}
 		}
 		var err error
 		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID)

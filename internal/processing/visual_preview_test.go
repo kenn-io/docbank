@@ -341,7 +341,7 @@ func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {
 func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
 	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
-	source := syntheticRAWPreviewTIFF(6, preview)
+	source := mediatest.TIFFWithEmbeddedJPEG(6, mediatest.TIFFJPEGPreview{Data: preview})
 	digest := sha256.Sum256(source)
 
 	for _, mediaType := range []string{
@@ -366,8 +366,8 @@ func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
 func TestProduceVisualPreviewAcceptsSingleStripDNGPreview(t *testing.T) {
 	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
-	source := syntheticRAWPreviewTIFFCandidates(1, syntheticRAWPreviewCandidate{
-		data: preview, singleStrip: true,
+	source := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{
+		Data: preview, SingleStrip: true,
 	})
 	digest := sha256.Sum256(source)
 
@@ -385,7 +385,7 @@ func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing
 	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
 	invalid := make([]byte, len(preview)+1)
-	source := syntheticRAWPreviewTIFF(1, preview, invalid)
+	source := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: preview}, mediatest.TIFFJPEGPreview{Data: invalid})
 	digest := sha256.Sum256(source)
 
 	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
@@ -401,8 +401,8 @@ func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing
 func TestProduceVisualPreviewUsesCandidateCameraRAWOrientation(t *testing.T) {
 	t.Parallel()
 	preview := mediatest.JPEG(4, 3, color.White)
-	source := syntheticRAWPreviewTIFFCandidates(6, syntheticRAWPreviewCandidate{
-		data: preview, orientation: 1,
+	source := mediatest.TIFFWithEmbeddedJPEG(6, mediatest.TIFFJPEGPreview{
+		Data: preview, Orientation: 1,
 	})
 	digest := sha256.Sum256(source)
 
@@ -447,7 +447,7 @@ func TestProduceVisualPreviewRecordsMissingCameraRAWPreview(t *testing.T) {
 
 func TestProduceVisualPreviewRecordsInvalidCameraRAWPreviewRange(t *testing.T) {
 	t.Parallel()
-	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
+	source := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(3, 2, color.White)})
 	previewIFD := int(binary.LittleEndian.Uint32(source[22:26]))
 	binary.LittleEndian.PutUint32(source[previewIFD+10:previewIFD+14], uint32(len(source)+1))
 	digest := sha256.Sum256(source)
@@ -669,7 +669,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 func TestProduceVisualPreviewKeepsCameraRAWReadErrorsRetryable(t *testing.T) {
 	t.Parallel()
 	readErr := errors.New("injected read failure")
-	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
+	source := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(3, 2, color.White)})
 	digest := sha256.Sum256(source)
 	reader := &failingVisualPreviewReadSeeker{
 		Reader: bytes.NewReader(source), failAtSeek: 2, err: readErr,
@@ -704,84 +704,6 @@ func syntheticJPEGSegment(tb testing.TB, source []byte, marker byte, payload []b
 	result = append(result, header...)
 	result = append(result, payload...)
 	return append(result, source[2:]...)
-}
-
-func syntheticRAWPreviewTIFF(orientation uint16, previews ...[]byte) []byte {
-	candidates := make([]syntheticRAWPreviewCandidate, len(previews))
-	for index, preview := range previews {
-		candidates[index].data = preview
-	}
-	return syntheticRAWPreviewTIFFCandidates(orientation, candidates...)
-}
-
-type syntheticRAWPreviewCandidate struct {
-	data        []byte
-	orientation uint16
-	singleStrip bool
-}
-
-func syntheticRAWPreviewTIFFCandidates(
-	rootOrientation uint16, previews ...syntheticRAWPreviewCandidate,
-) []byte {
-	const (
-		headerSize     = 8
-		rootEntries    = 1
-		rootIFDSize    = 2 + rootEntries*12 + 4
-		firstIFDOffset = headerSize + rootIFDSize
-	)
-	ifdOffsets := make([]int, len(previews))
-	previewOffset := firstIFDOffset
-	for index, preview := range previews {
-		ifdOffsets[index] = previewOffset
-		entries := 2
-		if preview.singleStrip {
-			entries++
-		}
-		if preview.orientation != 0 {
-			entries++
-		}
-		previewOffset += 2 + entries*12 + 4
-	}
-	totalSize := previewOffset
-	for _, preview := range previews {
-		totalSize += len(preview.data)
-	}
-	source := make([]byte, totalSize)
-	copy(source, "II")
-	binary.LittleEndian.PutUint16(source[2:4], 42)
-	binary.LittleEndian.PutUint32(source[4:8], headerSize)
-	externalOffset := totalSize
-	writeSyntheticTIFFIFD(source, headerSize,
-		[]syntheticTIFFEntry{tiffShort(visualPreviewRAWOrientationTag, rootOrientation)}, &externalOffset)
-	if len(ifdOffsets) > 0 {
-		binary.LittleEndian.PutUint32(source[22:26], uint32(ifdOffsets[0]))
-	}
-	for index, preview := range previews {
-		ifdOffset := ifdOffsets[index]
-		offsetTag := uint16(visualPreviewRAWOffsetTag)
-		lengthTag := uint16(visualPreviewRAWLengthTag)
-		var entries []syntheticTIFFEntry
-		if preview.singleStrip {
-			offsetTag = visualPreviewRAWStripOffsetsTag
-			lengthTag = visualPreviewRAWStripByteCountsTag
-			entries = append(entries, tiffShort(visualPreviewRAWCompressionTag, visualPreviewRAWJPEGCompression))
-		}
-		entries = append(entries,
-			tiffLong(offsetTag, uint32(previewOffset)),
-			tiffLong(lengthTag, uint32(len(preview.data))),
-		)
-		if preview.orientation != 0 {
-			entries = append(entries, tiffShort(visualPreviewRAWOrientationTag, preview.orientation))
-		}
-		writeSyntheticTIFFIFD(source, ifdOffset, entries, &externalOffset)
-		if index+1 < len(previews) {
-			nextOffset := ifdOffset + 2 + len(entries)*12
-			binary.LittleEndian.PutUint32(source[nextOffset:nextOffset+4], uint32(ifdOffsets[index+1]))
-		}
-		copy(source[previewOffset:], preview.data)
-		previewOffset += len(preview.data)
-	}
-	return source
 }
 
 func syntheticPNGChunk(t *testing.T, source []byte, chunkType string, payload []byte) []byte {
@@ -959,7 +881,7 @@ func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
 				source = syntheticJPEGSegment(t, source, 0xe1, append([]byte("Exif\x00\x00"), tiff...))
 			}
 			if test.raw {
-				source = syntheticRAWPreviewTIFF(test.orientation, source)
+				source = mediatest.TIFFWithEmbeddedJPEG(test.orientation, mediatest.TIFFJPEGPreview{Data: source})
 				mediaType = "image/x-adobe-dng"
 			}
 			digest := sha256.Sum256(source)

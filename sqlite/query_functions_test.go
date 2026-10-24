@@ -48,6 +48,12 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 		require.Equal(t, want, key.String)
 	}
 
+	// NUL bytes reach the function through each driver's argument passing.
+	var nul bool
+	require.NoError(t, db.QueryRowContext(t.Context(),
+		`SELECT docbank_person_name_starts_with_word_v1(?, ?)`, "mary_jane", "mary_jane\x00x").Scan(&nul))
+	require.False(t, nul)
+
 	// Force a second physical connection: the predicate must not depend on the
 	// first connection's local registration or pool reuse.
 	first, err := db.Conn(t.Context())
@@ -60,4 +66,8 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 	require.NoError(t, second.QueryRowContext(t.Context(),
 		`SELECT docbank_query_media_family_v1('application/pdf', 'report.txt')`).Scan(&family))
 	require.Equal(t, "document", family)
+	var matches bool
+	require.NoError(t, second.QueryRowContext(t.Context(),
+		`SELECT docbank_person_name_starts_with_word_v1('john—smith', 'smith')`).Scan(&matches))
+	require.True(t, matches)
 }

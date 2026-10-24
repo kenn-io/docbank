@@ -56,6 +56,10 @@ Keep the tab open until the import finishes. This also works when you sign in to
 
 ## Record faces and people
 
+The inspector's name search includes active operator assertions on visible versions, except blind-copy assertions, before document-people publication. People known only from automatic sensitive evidence or blind-copy assertions stay omitted. People backed only by locked Hidden photos appear after unlock. Manually created unlinked people remain searchable with blank identity labels. Automatically provisioned exact-identifier people need a visible assertion or non-sensitive published document link before their names appear. See [browser names and visibility](people.md#browser-names-and-visibility). The picker explains the duplicate risk. Create the person directly and merge a duplicate after unlock.
+
+If a name search fails, choose Retry to repeat that page. Completed choices remain available after a later page fails. Create person appears after the search completes.
+
 Use a photo file's `current_version_id` from `docbank stat <path-or-id> --json` to record an observation:
 
 ```sh
@@ -82,11 +86,11 @@ docbank photos faces key <content-version-id> --face <face-id> --person <person-
 docbank photos faces undo <receipt-id>
 ```
 
-Each correction returns `receipt_id`. The CLI prints an operation UUID before sending a decision or undo; retry with the same inputs and `--operation-id` to recover its receipt after a lost response. HTTP decisions accept `operation_id` in the body; undo accepts it as a query parameter. Undo restores changed records while their saved revisions still match; edits to unrelated faces stay intact. A later edit returns `412 stale_revision`; read again before deciding. Undo also returns a receipt, so it can be undone. A rejected assigned person loses that face assignment atomically. Naming clears that face's rejection and dismissal while preserving decisions for other faces in a group. List returns `rejected_person_ids` and `dismissed`. Each face allows up to 1,000 rejected people; another rejection returns `409 photo_face_limit`.
+Each correction returns `receipt_id`. The CLI prints an operation UUID before sending a decision or undo; retry with the same inputs and `--operation-id` to recover its receipt after a lost response. HTTP decisions accept `operation_id` in the body; undo accepts it as a query parameter. Undo restores changed records while their saved revisions still match; edits to unrelated faces stay intact. A later edit returns `412 stale_revision`; read again before deciding. Undo also returns a receipt, so it can be undone unless it retired the person created by a new-name face decision; undoing that undo returns not found. A rejected assigned person loses that face assignment atomically. Naming clears that face's rejection and dismissal while preserving decisions for other faces in a group. List returns `rejected_person_ids` and `dismissed`. Each face allows up to 1,000 rejected people; another rejection returns `409 photo_face_limit`.
 
-Retracting the last face assignment leaves a neutral `withdrawn` assertion unless an independent whole-photo mark remains. Assertions expose `photo_mark` for that mark; withdrawing it through the Go store method `Store.AssertDocumentPerson` clears it. HTTP and CLI currently cannot withdraw a standalone whole-photo mark. Withdrawn assertions leave room for new depicted people. Explicit suppressions remain separate. Withdraw a rejection without changing the face's assignment with `faces withdraw-rejection`. Clear a key face with `faces key` and omit `--face`, using only `--person-revision`. Read the key face with `people show`; choosing a visible replacement works while the old key's photo is locked.
+Retracting the last face assignment leaves a neutral `withdrawn` assertion unless an independent whole-photo mark remains. Assertions expose `photo_mark` for that mark; withdrawing it through the Go store method `Store.AssertDocumentPerson` clears it. Clear a standalone whole-photo mark in the browser or send HTTP `retract` with its `assertion_id` and assertion revision. Withdrawn assertions leave room for new depicted people. Explicit suppressions remain separate. Withdraw a rejection without changing the face's assignment with `faces withdraw-rejection`. Clear a key face with `faces key` and omit `--face`, using only `--person-revision`. Read the key face with `people show`; choosing a visible replacement works while the old key's photo is locked.
 
-MCP `get_photo_faces` reads up to 100 face boxes and depicted-person records per page, reducing the page size to fit its response byte limit. Each named face includes its `person_id` and `action`. Pass `next_offset` as `offset` for the next page. MCP can't unlock Hidden photos. Manual faces and whole-photo marks use HTTP or the CLI.
+MCP `get_photo_faces` reads up to 100 face boxes and depicted-person records per page, reducing the page size to fit its response byte limit. Each named face includes its `person_id` and `action`. The page's `people` list provides the canonical `display_name` and `state` for people referenced by its faces and assertions, including retired labels. A smaller page includes only its own people. Pass `next_offset` as `offset` for the next page. MCP can't unlock Hidden photos. Manual faces and whole-photo marks use HTTP or the CLI.
 
 New faces require the addressed current, live, included image or RAW member. Retained image and RAW versions remain readable and correctable until purge. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection is unavailable. Face boxes stay fixed; person decisions can be corrected and undone.
 
@@ -705,7 +709,7 @@ keep their generation identity. Only ready slots include a generation URL and
 JPEG output metadata. Read that URL with the browser session header.
 Credentials stay out of URLs.
 
-Visible preview responses use `Cache-Control: private, no-cache`: the browser may keep
+Visible display-preview responses use `Cache-Control: private, no-cache`: the browser may keep
 bytes but must check with the server before reusing them. Hidden previews require
 an active unlock and use `Cache-Control: no-store`, including `304` responses. A matching
 `If-None-Match` returns `304` after the server checks the session, current
@@ -718,10 +722,11 @@ The initial count evaluates the whole query. Later pages seek from the last
 sort key. Queries that collapse duplicate content still evaluate the complete
 matching population to choose representatives before returning a page.
 
-`POST /api/v1/photos/assets/{asset_id}/preview` prepares a `fit` or `large`
+`POST /api/v1/photos/assets/{asset_id}/preview` prepares a `grid`, `fit`, or `large`
 preview for the supplied `content_version_id`. Include `hidden: true` and an active unlock cookie to prepare a hidden photo. It returns the same preview
 slot shape as browsing, reuses retained terminal outcomes, and refuses an
 excluded, trashed, or changed display. Each request has a 30-second bound.
+For namesake crops, include `person_id` with `size: "grid"` to prepare an assigned source version. Preparation and byte reads require its live photo membership, active assignment, and Hidden access. Source reads use `no-store`.
 Camera, lens, exposure, dimensions, and orientation come from the current
 display's technical metadata. When map tiles are configured, browser Map-projection
 rows include the selected display file's nullable GPS latitude and longitude.
@@ -830,3 +835,23 @@ Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl
 Select 2–8 photos and choose **Compare** in the selection bar. Zoom, pan, and arrow-key navigation move the panes together. **Z** toggles 1:1 for each displayed preview. Choose **Manual closeup**, then click a face or draw a region on a full frame. Matching crop tiles appear below the full frames; **Clear closeup** removes them. The closeup uses your chosen location rather than automatic face detection.
 
 ![Compare showing three photos side by side](https://docbank.ai/assets/generated/web-photo-compare.png)
+
+### People in photos
+
+Once a photo preview appears, choose **Add face**. Drag a box around a face, or focus the photo's face control, position it with the arrow keys, and press Enter. Escape cancels placement. If a create request has an uncertain result, **Retry face** or Enter retries the same box. A new placement waits until the pending request is resolved.
+
+In the inspector's **People** section, choose a name from the search results or choose **Create person**. Each face has its own name picker. Creating a person and naming the face save together; a revision conflict creates neither. After an uncertain response, the picker reloads the face before another choice.
+
+Created people remain after you clear their photo assignment or remove their face. Removed faces still count toward the photo's 1,000-face limit. Use `docbank people retire` to retire an unwanted person.
+
+Names allow up to 200 UTF-8 bytes. Duplicate names are allowed; choose **Create person** for a different person with the same name, and merge people later if needed. See [browser names and visibility](people.md#browser-names-and-visibility) for search eligibility and duplicate-name recognition.
+
+Name search ignores case and matches the start of any word. For example, **Smith** finds **John Smith** and **John—Smith**. Letters, numbers, and combining marks stay within a word; punctuation and other separators start a new one. Search text is literal, including `%` and `_`. Choose **Load more** to reach later results.
+
+Open a named face’s picker and choose **Clear name** to remove its name. Choose **Remove face** to dismiss a mistaken box and its closeup. Choose **Clear whole-photo mark** to clear a photo-wide mark while keeping any named faces. Removing an assigned face or clearing a whole-photo mark asks for confirmation. Removed faces cannot be restored in the browser. Choose **Mark person in photo** to select an existing person or create a person from a new name. The person and whole-photo mark save together. HTTP callers supply `person_name` with a caller-chosen UUIDv4 `person_id` and reuse both fields when retrying. A name without an ID or an existing ID with a different name returns `422 invalid_photo_face`; a retired person returns `404 not_found`. A retry with the same ID and name reuses the saved assertion. Removing an unnamed manual face is immediate because you can redraw it. The face-decision API retains undo receipts.
+
+Each face shares its number across the inspector, Loupe, and Cull closeup. Cull restores face captions after a rating refresh, including when the photo leaves the Library filter. Removing a face closes gaps in those numbers. Unnamed faces read **Face N**. Choose **Load more** to finish the search before **Create person** becomes available. The [namesake chooser](people.md#browser-names-and-visibility) lists identity details and loads face previews when you expand a candidate.
+
+Choose an active person's name beside the picker to filter photos to that person. Library links open Library; Hidden links stay in the unlocked Hidden view. This clears the text search and shows every match in capture-time order. Naming or clearing a face refreshes loaded views with person filters or search text in the same Hidden scope. Choose **Retry** after a People page error, including an empty first page. Retired names keep their labels and correction controls. Face labels follow the photo through rotation, zoom, and pan.
+
+Cull shows whole-photo marks first, then one closeup per face in creation order, matching the Face N labels. Closeups share the fit preview already loaded for the photo and rotate with it. If that preview is unavailable, each tile says **No preview**; choose **Retry preview** to try again.

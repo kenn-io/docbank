@@ -29,11 +29,13 @@
     cache,
     onclose,
     onmetadatachanged,
+    onfacephoto,
   }: {
     cull: PhotoCull;
     photos: Photos;
     cache: PhotoPreviewCache;
     onclose: () => void;
+    onfacephoto?: (photo: PhotoBrowseRow | undefined) => void;
     onmetadatachanged?: (receipt: PhotoAuthoredReceipt, tags: Tag[]) => void;
   } = $props();
   const editor = untrack(
@@ -50,6 +52,7 @@
   onDestroy(() => {
     cull.cancel();
     reloadController.abort();
+    onfacephoto?.(undefined);
   });
   let container = $state<HTMLDivElement>();
   const focus = () => restorePhotoReviewFocus(() => container);
@@ -57,6 +60,11 @@
     void focus();
   });
   let photo = $state<PhotoBrowseRow>();
+  const faces = untrack(() => photos.faceEditor);
+  $effect(() => {
+    const row = !loading && !error && photo?.asset_id === cull.currentID ? photo : undefined;
+    untrack(() => onfacephoto?.(row));
+  });
   let error = $state("");
   let loading = $state(false);
   let lookupAttempt = $state(0);
@@ -529,6 +537,7 @@
       {:else}
         <div class="body">
           {#if photo}<PhotoStage
+              {faces}
               {photo}
               {photos}
               {cache}

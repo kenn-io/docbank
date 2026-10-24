@@ -19,7 +19,9 @@ const (
 type PhotoFaceDecisionRequest struct {
 	OperationID    string `json:"operation_id,omitzero" format:"uuid"`
 	FaceID         string `json:"face_id,omitzero" format:"uuid"`
+	AssertionID    string `json:"assertion_id,omitzero" format:"uuid"`
 	PersonID       string `json:"person_id,omitzero" format:"uuid"`
+	PersonName     string `json:"person_name,omitzero" maxLength:"200"`
 	Action         string `json:"action" enum:"name,retract,reject,dismiss,key,withdraw_rejection"`
 	Revision       int64  `json:"revision,omitzero" minimum:"0"`
 	PersonRevision int64  `json:"person_revision,omitzero"`
@@ -41,6 +43,7 @@ type PhotoFaceDecisionState struct {
 }
 
 type PhotoFaceDecisionReceipt struct {
+	CreatedPerson faceDecisionPerson     `json:"created_person,omitzero"`
 	RequestSHA256 string                 `json:"request_sha256,omitzero"`
 	ReceiptID     string                 `json:"receipt_id"`
 	Before        PhotoFaceDecisionState `json:"before"`
@@ -49,6 +52,7 @@ type PhotoFaceDecisionReceipt struct {
 }
 
 type photoFaceReceiptAfter struct {
+	CreatedPerson faceDecisionPerson     `json:"created_person,omitzero"`
 	RequestSHA256 string                 `json:"request_sha256,omitzero"`
 	ReceiptID     string                 `json:"receipt_id"`
 	After         PhotoFaceDecisionState `json:"after"`
@@ -71,6 +75,7 @@ func decodeFaceDecisionReceipt(before, after []byte, id string) (PhotoFaceDecisi
 	r.ReceiptID = state.ReceiptID
 	r.After = state.After
 	r.UndoOf = state.UndoOf
+	r.CreatedPerson = state.CreatedPerson
 	return r, validateFaceDecisionReceipt(r, id)
 }
 
@@ -167,7 +172,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	return state, nil
 }
 
-func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after PhotoFaceDecisionState, undo, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
+func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after PhotoFaceDecisionState, createdPerson faceDecisionPerson, undo, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
 	id := operationID
 	var err error
 	if id == "" {
@@ -229,7 +234,7 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	slices.SortFunc(after.Assertions, func(a, b PersonDocumentAssertion) int { return cmp.Compare(a.AssertionID, b.AssertionID) })
 	before.Candidates, after.Candidates = changedFaceRows(before.Candidates, after.Candidates)
 	before.People, after.People = changedFaceRows(before.People, after.People)
-	result := PhotoFaceDecisionReceipt{RequestSHA256: requestSHA, ReceiptID: id, Before: before, After: after, UndoOf: undo}
+	result := PhotoFaceDecisionReceipt{RequestSHA256: requestSHA, ReceiptID: id, Before: before, After: after, UndoOf: undo, CreatedPerson: createdPerson}
 	for _, state := range []PhotoFaceDecisionState{before, after} {
 		for _, person := range state.People {
 			if person.KeyFaceID != "" && person.KeyFaceContentVersionID == "" {
@@ -243,7 +248,7 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	if err = checkFaceDecisionReceiptSize(result); err != nil {
 		return result, err
 	}
-	afterState := photoFaceReceiptAfter{RequestSHA256: requestSHA, ReceiptID: id, After: after, UndoOf: undo}
+	afterState := photoFaceReceiptAfter{RequestSHA256: requestSHA, ReceiptID: id, After: after, UndoOf: undo, CreatedPerson: createdPerson}
 	var assetID string
 	if err = tx.QueryRowContext(ctx, `SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, before.VersionID).Scan(&assetID); err != nil {
 		return result, err
@@ -261,7 +266,7 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 func checkFaceDecisionReceiptSize(r PhotoFaceDecisionReceipt) error {
 	const id = "00000000-0000-4000-8000-000000000000"
 	before, after := reserveFaceDecisionRevisions(r.Before), reserveFaceDecisionRevisions(r.After)
-	state := photoFaceReceiptAfter{RequestSHA256: r.RequestSHA256, ReceiptID: id, After: after, UndoOf: id}
+	state := photoFaceReceiptAfter{RequestSHA256: r.RequestSHA256, ReceiptID: id, After: after, UndoOf: id, CreatedPerson: r.CreatedPerson}
 	b, err := json.Marshal(before, json.Deterministic(true))
 	if err != nil {
 		return err
@@ -303,6 +308,12 @@ func reserveFaceDecisionRevisions(state PhotoFaceDecisionState) PhotoFaceDecisio
 var faceCandidateActions = []string{faceDecisionName, faceDecisionReject, "dismiss", "withdraw_rejection"}
 
 func validateFaceDecisionRequest(request PhotoFaceDecisionRequest) error {
+	if request.AssertionID != "" && (validateUUIDv4(request.AssertionID) != nil || request.Action != "retract" || request.FaceID != "") {
+		return ErrInvalidPhotoFace
+	}
+	if request.PersonName != "" && (request.Action != faceDecisionName || request.PersonID != "" || !validPersonName(request.PersonName)) {
+		return ErrInvalidPhotoFace
+	}
 	if request.OperationID != "" && validateUUIDv4(request.OperationID) != nil {
 		return ErrInvalidPhotoFace
 	}
@@ -315,10 +326,10 @@ func validateFaceDecisionRequest(request PhotoFaceDecisionRequest) error {
 	if slices.Contains([]string{"retract", "dismiss"}, request.Action) && request.PersonID != "" || request.Action == "key" && request.PersonRevision < 1 {
 		return ErrInvalidPhotoFace
 	}
-	if request.FaceID == "" && request.Action != "key" {
+	if request.FaceID == "" && request.AssertionID == "" && request.Action != "key" {
 		return ErrInvalidPhotoFace
 	}
-	if slices.Contains([]string{faceDecisionName, faceDecisionReject, "withdraw_rejection", "key"}, request.Action) && request.PersonID == "" {
+	if slices.Contains([]string{faceDecisionName, faceDecisionReject, "withdraw_rejection", "key"}, request.Action) && request.PersonID == "" && request.PersonName == "" {
 		return ErrInvalidPhotoFace
 	}
 	return nil
@@ -356,6 +367,15 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
+	var createdPerson faceDecisionPerson
+	if request.PersonName != "" {
+		person, err := createPersonTx(ctx, tx, request.PersonName, "operator")
+		if err != nil {
+			return PhotoFaceDecisionReceipt{}, err
+		}
+		request.PersonID = person.PersonID
+		createdPerson = faceDecisionPerson{PersonID: person.PersonID, Revision: person.Revision}
+	}
 	request.PersonID, err = decisionPersonTx(ctx, tx, request)
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
@@ -365,12 +385,24 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 		personIDs = append(personIDs, request.PersonID)
 	}
 	var assigned PersonDocumentAssertion
-	if face.AssertionID != "" {
-		assigned, err = personAssertionByIDTx(ctx, tx, face.AssertionID)
+	assertionID := cmp.Or(request.AssertionID, face.AssertionID)
+	if assertionID != "" {
+		assigned, err = personAssertionByIDTx(ctx, tx, assertionID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return PhotoFaceDecisionReceipt{}, ErrNotFound
+		}
 		if err != nil {
 			return PhotoFaceDecisionReceipt{}, err
 		}
 		personIDs = append(personIDs, assigned.PersonID)
+	}
+	if request.AssertionID != "" {
+		if assigned.Revision != request.Revision {
+			return PhotoFaceDecisionReceipt{}, ErrStaleRevision
+		}
+		if assigned.ContentVersionID != versionID || assigned.Role != "depicted" || !assigned.PhotoMark || assigned.Action != "assert" {
+			return PhotoFaceDecisionReceipt{}, ErrInvalidPhotoFace
+		}
 	}
 	stateVersion := versionID
 	if request.Action == "key" && request.FaceID == "" {
@@ -384,7 +416,9 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	if request.Action == "key" {
+	if request.AssertionID != "" {
+		_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=0,revision=revision+1,action=CASE WHEN EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN action ELSE 'withdrawn' END WHERE assertion_id=?`, request.AssertionID)
+	} else if request.Action == "key" {
 		err = setKeyFaceTx(ctx, tx, request, assigned)
 	} else {
 		err = s.applyFaceDecisionTx(ctx, tx, &before, request, face, assigned.PersonID)
@@ -402,14 +436,15 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 			return PhotoFaceDecisionReceipt{}, err
 		}
 	}
-	if err = advancePersonBindingEpochForVersionTx(ctx, tx, stateVersion); err != nil {
+	err = advancePersonBindingEpochForVersionTx(ctx, tx, stateVersion)
+	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
 	after, err := s.faceDecisionStateTx(ctx, tx, stateVersion, face.FaceID, personIDs, withCandidates, faceStateCandidateIDs(before)...)
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	return writeFaceDecisionReceiptTx(ctx, tx, before, after, "", request.OperationID, requestSHA)
+	return writeFaceDecisionReceiptTx(ctx, tx, before, after, createdPerson, "", request.OperationID, requestSHA)
 }
 
 // decisionFaceTx loads the requested face and checks its revision. A key
@@ -627,6 +662,22 @@ func undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionRece
 	if err = relinkUndoAssertionsTx(ctx, tx, r, detached, attached); err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
+	if r.CreatedPerson.PersonID != "" {
+		var unused bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p
+			WHERE p.person_id=? AND p.state<>'retired' AND p.revision=?
+			AND NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=p.person_id
+				AND NOT (a.role='depicted' AND a.action='withdrawn' AND a.content_version_id=?))
+			AND NOT EXISTS(SELECT 1 FROM custodian_assignments c WHERE c.person_id=p.person_id AND c.retired_at IS NULL))`,
+			r.CreatedPerson.PersonID, r.CreatedPerson.Revision, r.After.VersionID).Scan(&unused); err != nil {
+			return PhotoFaceDecisionReceipt{}, err
+		}
+		if unused {
+			if _, err = retirePersonTx(ctx, tx, r.CreatedPerson.PersonID, r.CreatedPerson.Revision); err != nil {
+				return PhotoFaceDecisionReceipt{}, err
+			}
+		}
+	}
 	if err = requireFaceDecisionUndoLimitsTx(ctx, tx, r); err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
@@ -642,7 +693,7 @@ func undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionRece
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	return writeFaceDecisionReceiptTx(ctx, tx, current, after, r.ReceiptID, operationID, requestSHA)
+	return writeFaceDecisionReceiptTx(ctx, tx, current, after, faceDecisionPerson{}, r.ReceiptID, operationID, requestSHA)
 }
 
 // fenceFaceDecisionUndoTx returns the current rows the receipt touched,
@@ -823,6 +874,15 @@ func restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFac
 		if a.Revision == r.After.Assertions[i].Revision {
 			continue
 		}
+		if a.PhotoMark && !r.After.Assertions[i].PhotoMark {
+			resolved, err := resolveActiveCandidatePersonTx(ctx, tx, a.PersonID)
+			if err != nil {
+				return err
+			}
+			if resolved != a.PersonID {
+				return ErrStaleRevision
+			}
+		}
 		if a.Action == personAssertionActionWithdrawn && a.Revision > 0 {
 			var shared bool
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=? AND face_id NOT IN (SELECT value FROM json_each(?)))`, a.AssertionID, faces).Scan(&shared); err != nil {
@@ -832,7 +892,7 @@ func restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFac
 				return ErrStaleRevision
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,revision=revision+1 WHERE assertion_id=?`, a.Revision, a.Action, a.Action, a.PhotoMark, a.AssertionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='assert' AND ?=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'withdrawn' WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,revision=revision+1 WHERE assertion_id=?`, a.Action, a.PhotoMark, a.Revision, a.Action, a.Action, a.PhotoMark, a.AssertionID); err != nil {
 			return err
 		}
 	}
@@ -880,6 +940,18 @@ func requireFaceDecisionUndoLimitsTx(ctx context.Context, tx *sql.Tx, r PhotoFac
 }
 
 func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
+	if r.CreatedPerson != (faceDecisionPerson{}) && (validateUUIDv4(r.CreatedPerson.PersonID) != nil || r.CreatedPerson.Revision < 1 || r.UndoOf != "") {
+		return ErrInvalidPhotoFace
+	}
+	if r.CreatedPerson.PersonID != "" {
+		if !slices.ContainsFunc(r.After.Assertions, func(a PersonDocumentAssertion) bool {
+			return a.PersonID == r.CreatedPerson.PersonID && a.ContentVersionID == r.After.VersionID && a.Role == personAssertionRoleDepicted && a.Action == personAssertionActionAssert
+		}) || slices.ContainsFunc(r.After.People, func(p faceDecisionPerson) bool {
+			return p.PersonID == r.CreatedPerson.PersonID
+		}) {
+			return ErrInvalidPhotoFace
+		}
+	}
 	if r.RequestSHA256 != "" && validateCatalogSHA256(r.RequestSHA256, "face decision request") != nil {
 		return ErrInvalidPhotoFace
 	}
@@ -897,6 +969,19 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 	}
 	for i, a := range r.After.Assertions {
 		b := r.Before.Assertions[i]
+		if b.PhotoMark != a.PhotoMark {
+			// Clear and its inverses change one existing assertion only.
+			if len(r.After.Assertions) != 1 || len(r.After.Faces) != 0 || len(r.After.Candidates) != 0 || len(r.After.People) != 0 || b.Revision < 1 || a.Revision != b.Revision+1 {
+				return ErrInvalidPhotoFace
+			}
+			if b.PhotoMark {
+				if b.Action != personAssertionActionAssert || a.Action != personAssertionActionAssert && a.Action != personAssertionActionWithdrawn {
+					return ErrInvalidPhotoFace
+				}
+			} else if r.UndoOf == "" || a.Action != personAssertionActionAssert || b.Action != personAssertionActionAssert && b.Action != personAssertionActionWithdrawn {
+				return ErrInvalidPhotoFace
+			}
+		}
 		if b.Revision < 0 || a.Revision < b.Revision {
 			return ErrInvalidPhotoFace
 		}
@@ -906,7 +991,7 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 			}
 			b.Revision = 1
 		}
-		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.PhotoMark != a.PhotoMark || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
+		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != personAssertionRoleDepicted || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
 			return ErrInvalidPhotoFace
 		}
 	}
@@ -959,7 +1044,7 @@ func (s *Store) readFaceDecisionsTx(ctx context.Context, tx *sql.Tx, faces []Pho
 	for i, f := range faces {
 		index[f.FaceID] = i
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE c.reason='face_match' AND c.state='rejected' AND f.content_version_id=? ORDER BY 1,2`, faces[0].ContentVersionID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND f.content_version_id=? ORDER BY 1,2`, faces[0].ContentVersionID)
 	if err != nil {
 		return err
 	}
@@ -1129,7 +1214,8 @@ type faceWithdrawalHistory map[string][]PhotoFaceDecisionReceipt
 
 // automatic reports whether an earlier face decision withdrew the assertion
 // as a side effect of detaching its last face, rather than an operator
-// withdrawing it directly.
+// withdrawing it directly. A whole-photo clear detaches no face, so it never
+// counts.
 func (h faceWithdrawalHistory) automatic(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (bool, error) {
 	receipts, ok := h[assertion.ContentVersionID]
 	if !ok {
@@ -1147,8 +1233,9 @@ func (h faceWithdrawalHistory) automatic(ctx context.Context, tx *sql.Tx, assert
 		active := slices.ContainsFunc(receipt.Before.Assertions, func(a PersonDocumentAssertion) bool {
 			return a.AssertionID == assertion.AssertionID && a.Action == personAssertionActionAssert
 		})
+		linkedBefore := slices.ContainsFunc(receipt.Before.Faces, func(f PhotoFace) bool { return f.AssertionID == assertion.AssertionID })
 		referenced := slices.ContainsFunc(receipt.After.Faces, func(f PhotoFace) bool { return f.AssertionID == assertion.AssertionID })
-		if detached && active && !referenced {
+		if detached && active && linkedBefore && !referenced {
 			return true, nil
 		}
 	}
