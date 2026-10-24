@@ -1,5 +1,6 @@
 import {
   listPeople,
+  getPerson,
   renamePerson,
   mergePerson,
   type Person,
@@ -152,7 +153,8 @@ export class People {
   // recover reports a failed write and discards only what it invalidates: a
   // rejected input keeps the cards, and only a stale or missing person clears
   // the selection.
-  private async recover(cause: unknown) {
+  private async recover(cause: unknown, person: PersonSummary, name: string, survivorID?: string) {
+    const epoch = this.epoch;
     this.writeError = this.failure(cause);
     const status = cause instanceof APIError ? cause.status : 0;
     if (
@@ -162,6 +164,27 @@ export class People {
     )
       this.selected = [];
     if (status !== 422) await this.load();
+    if (status === 0 || status >= 500) {
+      try {
+        const saved = await this.run(() =>
+          getPerson(person.person_id, undefined, {
+            session: this.session,
+            signal: this.writer?.signal,
+          }),
+        );
+        if (epoch !== this.epoch || this.writer?.signal.aborted) return;
+        if (
+          survivorID
+            ? saved.person_id === survivorID && saved.reached_through_person_id === person.person_id
+            : saved.person_id === person.person_id &&
+              saved.display_name === name &&
+              saved.revision > person.revision
+        )
+          this.onchanged(person.person_id, saved.display_name, ...(survivorID ? [survivorID] : []));
+      } catch (recoveryCause) {
+        this.failure(recoveryCause);
+      }
+    }
   }
   async rename(person: PersonSummary, name: string) {
     const request = this.begin();
@@ -192,7 +215,7 @@ export class People {
       return true;
     } catch (cause) {
       if (!request.signal.aborted && epoch === this.epoch) {
-        await this.recover(cause);
+        await this.recover(cause, person, name.trim());
       }
       return false;
     } finally {
@@ -263,7 +286,7 @@ export class People {
     } catch (cause) {
       if (!request.signal.aborted && epoch === this.epoch) {
         this.merge = undefined;
-        await this.recover(cause);
+        await this.recover(cause, source, survivor.display_name, survivor.person_id);
       }
       return false;
     } finally {

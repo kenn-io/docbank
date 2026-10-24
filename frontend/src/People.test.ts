@@ -18,6 +18,47 @@ const unlockedAccess = () => {
   access.acceptState({ configured: true, expires_in: 60, expires_at: "later" }, Date.now());
   return access;
 };
+it.each(["rename", "merge"])(
+  "propagates a recovered %s after a lost response",
+  async (operation) => {
+    const saved = { ...grace, display_name: "Grace Hopper", revision: 5 };
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [saved] });
+    vi.spyOn(api, "renamePerson").mockRejectedValue(new TypeError("Response lost"));
+    vi.spyOn(api, "mergePerson").mockRejectedValue(new TypeError("Response lost"));
+    vi.spyOn(api, "getPerson").mockResolvedValue({
+      ...(await personResponse(saved).json()),
+      assertions: [],
+      identities: [],
+      external_identities: [],
+      assertions_truncated: false,
+      ...(operation === "merge" ? { reached_through_person_id: ada.person_id } : {}),
+    });
+    const changed = vi.fn();
+    const people = new People("session", vi.fn(), undefined, changed);
+    people.items = [ada, grace];
+    const cache = new PhotoPreviewCache("session", vi.fn());
+    render(PeopleView, { people, cache, onperson: vi.fn() });
+    await act(async () => {
+      if (operation === "rename") await people.rename(grace, "Grace Hopper");
+      else {
+        people.toggle(ada);
+        people.toggle(grace);
+        people.startMerge();
+        people.keep(grace.person_id);
+        people.confirmMerge(true);
+        await people.submitMerge();
+      }
+    });
+    expect(screen.getByRole("button", { name: "Grace Hopper 2 Library photos" })).toBeTruthy();
+    expect(changed).toHaveBeenCalledExactlyOnceWith(
+      operation === "rename" ? grace.person_id : ada.person_id,
+      "Grace Hopper",
+      ...(operation === "merge" ? [grace.person_id] : []),
+    );
+    people.dispose();
+    await cache.dispose();
+  },
+);
 it("keeps the search text with the applied query when the view returns", async () => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const people = new People("session", vi.fn());
