@@ -184,6 +184,7 @@ export class PhotoAuthoredEditor {
   private writes = 0;
   private beginWrite() {
     this.read.abort();
+    this.stackRead.abort();
     this.busy = true;
     return ++this.writes;
   }

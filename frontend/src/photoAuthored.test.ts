@@ -832,7 +832,7 @@ it("keeps the prepared stack usable while a live update refreshes it", async () 
 
 // A quiet read in flight when a write starts is dropped: it must neither hold the write up
 // behind Hidden access nor land on revisions the write has already moved on.
-function editAfterQuietRead(editor: PhotoAuthoredEditor) {
+function editAfterQuietRead(editor: PhotoAuthoredEditor, stack = false) {
   const receipt = {
     receipt_id: "receipt",
     after: targets.map((target) => ({
@@ -853,14 +853,20 @@ function editAfterQuietRead(editor: PhotoAuthoredEditor) {
       : Promise.resolve(response(receipt)),
   );
   vi.stubGlobal("fetch", fetcher);
-  void editor.reload(false, true);
+  if (stack) void editor.prepareStack(["asset"], false, false, true);
+  else void editor.reload(false, true);
   const edit = editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
   return { edit, fetcher, answer: () => answer() };
 }
 
-it.each([false, true])(
-  "drops a pending quiet metadata read when an edit starts (Hidden access: %s)",
-  async (hidden) => {
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "drops a pending quiet metadata read when an edit starts (Hidden access: %s, stack: %s)",
+  async (hidden, stack) => {
     const editor = new PhotoAuthoredEditor(
       "session",
       vi.fn(),
@@ -869,7 +875,7 @@ it.each([false, true])(
     );
     editor.targets = structuredClone(targets);
     editor.asset = structuredClone(asset);
-    const { edit, fetcher, answer } = editAfterQuietRead(editor);
+    const { edit, fetcher, answer } = editAfterQuietRead(editor, stack);
     await vi.waitFor(() =>
       expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
     );
@@ -877,6 +883,7 @@ it.each([false, true])(
     answer();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(editor.targets.map((target) => target.revision)).toEqual([7, 7]);
+    expect(editor.targets.map((target) => target.values.rating)).toEqual([5, 5]);
   },
 );
 
