@@ -40,7 +40,7 @@ func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	central := bytes.Index(container, []byte("PK\x01\x02"))
 	require.NotEqual(t, -1, central)
 	container[central+8] |= 1
-	passwordErr := errors.New("open /synthetic/private/passwords.txt: permission denied")
+	passwordErr := errors.New("password file read failed")
 	for _, tc := range []struct {
 		name, mime string
 		data       []byte

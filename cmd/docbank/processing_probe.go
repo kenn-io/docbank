@@ -75,7 +75,7 @@ func newMistralProbeClient(ctx context.Context, cfg config.Config, profile strin
 }
 
 func runMistralProbe(ctx context.Context, out io.Writer, client *mistral.Client, policy mistral.Policy, seeds, output string, overwrite bool) (retErr error) {
-	destination, err := prepareGetDestination(output, overwrite)
+	destination, err := prepareOutputDestination("capability manifest", output, overwrite)
 	if err != nil {
 		return err
 	}
@@ -93,6 +93,9 @@ func runMistralProbe(ctx context.Context, out io.Writer, client *mistral.Client,
 	}
 	if err := safefileio.EnsurePrivateDir(spool); err != nil {
 		return fmt.Errorf("prepare probe spool: %w", err)
+	}
+	if _, err := fmt.Fprintf(out, "Probing %d Mistral OCR formats; this can take several minutes\n", len(mistral.CandidateFormats())); err != nil {
+		return fmt.Errorf("print probe progress: %w", err)
 	}
 	manifest, err := mistral.RunCapabilityProbe(ctx, client, mistral.ProbeConfig{Fixtures: mistral.ProbeFixtureConfig{
 		FixtureDirectory: fixtures, SpoolDirectory: spool, MaxSpoolBytes: int64(len(mistral.CandidateFormats())) * policy.Values().MaxDocumentBytes, MinFreeBytes: 1,

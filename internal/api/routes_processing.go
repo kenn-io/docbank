@@ -88,6 +88,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		plan, err := d.Processing.Plan(planCtx, selector)
 		if err != nil {
+			logPDFPasswordsFailure(ctx, d, err)
 			return nil, fromProcessingError(err)
 		}
 		return &planOutput{Body: fromProcessingPlan(plan)}, nil
@@ -123,6 +124,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 				default:
 				}
 			})
+			logPDFPasswordsFailure(ctx, d, err)
 			done <- startResult{job: job, err: err}
 		}()
 		var first processing.Job
@@ -439,6 +441,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		return &searchOutput{Body: report}, nil
 	})
+}
+
+func logPDFPasswordsFailure(ctx context.Context, d Deps, err error) {
+	if errors.Is(err, processing.ErrPDFPasswordsUnreadable) {
+		d.Logger.InfoContext(ctx, "document processing refused", "error_code", "rendition_operator_required", "error", err)
+	}
 }
 
 func processingTerminalEvent(job processing.Job, runErr error, status processing.Status, statusErr error) ProcessingJobEvent {

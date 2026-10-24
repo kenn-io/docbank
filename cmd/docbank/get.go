@@ -189,35 +189,39 @@ func stageAndPublishGet(
 }
 
 func prepareGetDestination(raw string, overwrite bool) (string, error) {
+	return prepareOutputDestination("download destination", raw, overwrite)
+}
+
+func prepareOutputDestination(label, raw string, overwrite bool) (string, error) {
 	if !utf8.ValidString(raw) {
-		return "", usageError(fmt.Errorf("download destination %s is not valid UTF-8",
-			strconv.QuoteToASCII(raw)))
+		return "", usageError(fmt.Errorf("%s %s is not valid UTF-8",
+			label, strconv.QuoteToASCII(raw)))
 	}
 	abs, err := filepath.Abs(raw)
 	if err != nil {
-		return "", fmt.Errorf("resolving download destination %q: %w", raw, err)
+		return "", fmt.Errorf("resolving %s %q: %w", label, raw, err)
 	}
 	info, err := os.Lstat(abs)
 	if err == nil {
 		if info.IsDir() {
-			return "", usageError(fmt.Errorf("download destination %s is a directory",
-				strconv.Quote(abs)))
+			return "", usageError(fmt.Errorf("%s %s is a directory",
+				label, strconv.Quote(abs)))
 		}
 		if !overwrite {
 			return "", usageError(fmt.Errorf(
-				"download destination %s already exists; pass --overwrite to replace it",
-				strconv.Quote(abs)))
+				"%s %s already exists; pass --overwrite to replace it",
+				label, strconv.Quote(abs)))
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("checking download destination %s: %w", strconv.Quote(abs), err)
+		return "", fmt.Errorf("checking %s %s: %w", label, strconv.Quote(abs), err)
 	}
 	parent, err := os.Stat(filepath.Dir(abs))
 	if err != nil {
-		return "", fmt.Errorf("checking download destination directory: %w", err)
+		return "", fmt.Errorf("checking %s directory: %w", label, err)
 	}
 	if !parent.IsDir() {
-		return "", usageError(fmt.Errorf("download destination parent is not a directory: %s",
-			strconv.Quote(filepath.Dir(abs))))
+		return "", usageError(fmt.Errorf("%s parent is not a directory: %s",
+			label, strconv.Quote(filepath.Dir(abs))))
 	}
 	return abs, nil
 }

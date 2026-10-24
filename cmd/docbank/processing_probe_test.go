@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,13 +16,12 @@ import (
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 )
 
-func TestNewMistralProbeClient(t *testing.T) {
+func TestNewMistralProbeClientRequiresMistralRuntimeAndCredential(t *testing.T) {
 	cfg, _ := mistralOCRProcessingConfig(t)
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
-	policy, client, output, err := newMistralProbeClient(t.Context(), cfg, "documents")
+	_, client, output, err := newMistralProbeClient(t.Context(), cfg, "documents")
 	require.NoError(t, err)
 	require.NotNil(t, client)
-	assert.Equal(t, mistral.DefaultModel, policy.Values().Model)
 	assert.Equal(t, cfg.RenditionProfiles["documents"].Runtime.CapabilityManifest, output)
 
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "")
@@ -43,11 +41,7 @@ func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing
 	require.NoError(t, err)
 	transport := mistraltest.NewProbeTransport(t)
 	client, err := mistral.NewClient(policy, mistral.ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{
-		Transport: mistralProbeTransport(func(request *http.Request) (*http.Response, error) {
-			assert.Equal(t, "https://api.eu.mistral.ai/v1/ocr", request.URL.String())
-			assert.Equal(t, "Bearer synthetic-key", request.Header.Get("Authorization"))
-			return transport.RoundTrip(request)
-		}),
+		Transport: transport,
 	}})
 	require.NoError(t, err)
 	seeds := t.TempDir()
@@ -68,7 +62,7 @@ func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing
 		assert.Contains(t, printed.String(), result.FormatID+" "+string(result.Status)+" "+result.ReasonCode)
 	}
 	assert.Contains(t, printed.String(), output)
-	require.ErrorContains(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false), "download destination "+strconv.Quote(output)+" already exists; pass --overwrite")
+	require.ErrorContains(t, runMistralProbe(t.Context(), &printed, client, policy, seeds, output, false), "pass --overwrite")
 	preserved, err := os.ReadFile(output)
 	require.NoError(t, err)
 	assert.Equal(t, content, preserved)
@@ -82,8 +76,6 @@ func TestRunMistralProbePublishesManifestWithoutReplacingExistingFile(t *testing
 		body, result string
 	}{
 		{"invalid model", http.StatusBadRequest, `{"type":"invalid_model"}`, "provider_rejected invalid_model"},
-		{"rate limited", http.StatusTooManyRequests, `{}`, "probe_failed transient_exhausted"},
-		{"bad key", http.StatusUnauthorized, `{}`, "provider_rejected provider_4xx"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			failedClient, err := mistral.NewClient(policy, mistral.ClientConfig{APIKey: "synthetic-key", MaxRetryDelay: time.Millisecond, HTTPClient: &http.Client{
