@@ -320,7 +320,7 @@ func verifyRestoredRenditionHeads(
 	if _, err := rebuildRestoredVectorIndexes(ctx, metadata, physical); err != nil {
 		return err
 	}
-	return nil
+	return metadata.RequireBackupClaim(ctx)
 }
 
 func rebuildRestoredVectorIndexes(ctx context.Context, metadata *store.Store, reader store.RenditionBlobReader) (vectorworker.IndexRestoreReport, error) {

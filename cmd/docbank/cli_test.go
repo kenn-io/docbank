@@ -810,6 +810,31 @@ func requireJob(t *testing.T, list api.JobList, name string) api.Job {
 	return job
 }
 
+func TestConfiguredBackupsCaptureAndKeepDaemonAlive(t *testing.T) {
+	home := t.TempDir()
+	repository := filepath.Join(t.TempDir(), "repo")
+	_, err := backup.Init(repository)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[server]\nidle_timeout = \"30ms\"\n[backup]\nrepo = \""+filepath.ToSlash(repository)+"\"\ninterval = \"24h\"\nkeep_last = 2\n",
+	), 0o600))
+	t.Setenv("DOCBANK_HOME", home)
+	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
+	startTestDaemon(t, home)
+	require.Eventually(t, func() bool {
+		out, err := runCLI(t, "backup", "list", "--json")
+		if err != nil {
+			return false
+		}
+		var points api.BackupSnapshotList
+		return json.Unmarshal([]byte(out), &points) == nil && len(points.Items) == 1
+	}, 5*time.Second, 25*time.Millisecond)
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // idle shutdown uses a wall-clock ticker behind a real loopback listener
+	_, _, found, err := daemonconn.Find(t.Context(), home)
+	require.NoError(t, err)
+	require.True(t, found)
+}
+
 func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(

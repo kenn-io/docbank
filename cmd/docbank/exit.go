@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
@@ -75,7 +76,8 @@ func commandExitCode(err error, started bool) int {
 		errors.Is(err, store.ErrInvalidBatchMove) ||
 		errors.Is(err, store.ErrInvalidVersionPrune) ||
 		errors.Is(err, store.ErrInvalidAuditCursor) || errors.Is(err, store.ErrInvalidPhotoAsset) ||
-		errors.Is(err, store.ErrPhotoNodeNotEligible) {
+		errors.Is(err, store.ErrPhotoNodeNotEligible) ||
+		errors.Is(err, backupapp.ErrRepositoryOwnerConflict) || errors.Is(err, backupapp.ErrRepositoryClaimRequired) {
 		return exitUsage
 	}
 	if code, ok := daemonconn.ProblemCode(err); ok &&

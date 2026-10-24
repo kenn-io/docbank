@@ -16,6 +16,7 @@ export function laneTitle(lane: string): string {
     salvage: "Storage salvage",
     "derive:visual-previews": "Visual previews",
     "storage:pack": "Automatic packing",
+    "backup:scheduled": "Scheduled backup",
   };
   return titles[lane] ?? lane.replaceAll(":", " · ").replaceAll("-", " ").replaceAll("_", " ");
 }
