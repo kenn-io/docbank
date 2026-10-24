@@ -263,11 +263,21 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 		return err
 	}
 	var hidden bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (
+	// Package assignments have no shared photo-membership resolver. Require an
+	// unlock for them only when the vault contains a Hidden photo.
+	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	SELECT EXISTS(SELECT 1 FROM (
 		SELECT content_version_id FROM person_document_assertions WHERE person_id IN (?,?)
 		UNION
 		SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN (?,?)
-	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)`, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
+		UNION
+		SELECT content_version_id FROM custodian_assignments WHERE person_id IN (?,?) AND scope_kind='document'
+		UNION
+		SELECT n.current_version_id FROM custodian_assignments ca JOIN collection_members cm ON cm.ingest_id=ca.ingest_id JOIN nodes n ON n.id=cm.node_id
+		WHERE ca.person_id IN (?,?) AND ca.scope_kind='collection'
+	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)
+	OR (EXISTS(SELECT 1 FROM custodian_assignments WHERE person_id IN (?,?) AND scope_kind='package')
+		AND EXISTS(SELECT 1 FROM photo_assets WHERE hidden_at IS NOT NULL))`, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
 		return err
 	}
 	if hidden {

@@ -9,6 +9,121 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func TestBrowserMergeHiddenCustodian(t *testing.T) {
+	t.Parallel()
+	for _, scopeKind := range []string{"document", "collection", "package"} {
+		for _, ownerRole := range []string{"absorbed", "survivor"} {
+			t.Run(scopeKind+"/"+ownerRole, func(t *testing.T) {
+				t.Parallel()
+				s := newTestStore(t)
+				ctx := t.Context()
+				survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+				require.NoError(t, err)
+				absorbed, err := s.CreatePerson(ctx, "Grace", "operator")
+				require.NoError(t, err)
+				for _, person := range []Person{survivor, absorbed} {
+					photo := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
+					_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+					require.NoError(t, err)
+				}
+				hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("hidden"), "image/jpeg")
+				scope := CustodianScope{Kind: "document", NodeID: hidden.ID, ContentVersionID: hidden.CurrentVersionID}
+				switch scopeKind {
+				case "collection":
+					ingest, err := s.BeginIngest(ctx, "cli", "Synthetic photos")
+					require.NoError(t, err)
+					addCollectionMembership(t, s, ingest, hidden.ID, "hidden.jpg", nil)
+					scope = CustodianScope{Kind: "collection", IngestID: ingest.ID()}
+				case "package":
+					pkg, _ := seedReceivedPackage(t, s, "synthetic-custody")
+					scope = CustodianScope{Kind: "package", PackageID: pkg.PackageID}
+				}
+				owner := absorbed
+				if ownerRole == "survivor" {
+					owner = survivor
+				}
+				assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: owner.PersonID,
+					RawLabel: owner.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
+				require.NoError(t, err)
+				asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+				require.NoError(t, err)
+				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+				require.NoError(t, err)
+				require.NoError(t, s.LockPhotoHidden(ctx))
+				operation := uuid.NewString()
+				_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+				require.ErrorIs(t, err, ErrHiddenLocked)
+				after, err := s.custodianByID(ctx, assignment.AssignmentID)
+				require.NoError(t, err)
+				require.Equal(t, assignment, after)
+				for _, person := range []Person{survivor, absorbed} {
+					after, through, err := s.PersonByID(ctx, person.PersonID)
+					require.NoError(t, err)
+					require.Empty(t, through)
+					require.Equal(t, person, after)
+				}
+				token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+				require.NoError(t, err)
+				_, err = s.MergePersons(WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
+				require.NoError(t, err)
+				after, err = s.custodianByID(ctx, assignment.AssignmentID)
+				require.NoError(t, err)
+				require.Equal(t, survivor.PersonID, *after.PersonID)
+				expectedRevision := assignment.Revision
+				if ownerRole == "absorbed" {
+					expectedRevision++
+				}
+				require.Equal(t, expectedRevision, after.Revision)
+			})
+		}
+	}
+}
+
+func TestBrowserMergeCustodianWithoutHiddenEvidence(t *testing.T) {
+	t.Parallel()
+	for _, scopeKind := range []string{"document", "collection", "package"} {
+		t.Run(scopeKind, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			absorbed, err := s.CreatePerson(ctx, "Grace", "operator")
+			require.NoError(t, err)
+			photo := browsePhotoNode(t, s, "visible.jpg", fakeHash("visible"), "image/jpeg")
+			scope := CustodianScope{Kind: "document", NodeID: photo.ID, ContentVersionID: photo.CurrentVersionID}
+			switch scopeKind {
+			case "collection":
+				ingest, err := s.BeginIngest(ctx, "cli", "Synthetic photos")
+				require.NoError(t, err)
+				addCollectionMembership(t, s, ingest, photo.ID, "visible.jpg", nil)
+				scope = CustodianScope{Kind: "collection", IngestID: ingest.ID()}
+			case "package":
+				pkg, _ := seedReceivedPackage(t, s, "synthetic-custody")
+				scope = CustodianScope{Kind: "package", PackageID: pkg.PackageID}
+			}
+			assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: absorbed.PersonID,
+				RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
+			require.NoError(t, err)
+			if scopeKind != "package" {
+				hidden := browsePhotoNode(t, s, "unrelated.jpg", fakeHash("unrelated"), "image/jpeg")
+				asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+				require.NoError(t, err)
+				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+				require.NoError(t, err)
+			}
+			_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+			require.NoError(t, err)
+			after, err := s.custodianByID(ctx, assignment.AssignmentID)
+			require.NoError(t, err)
+			require.Equal(t, survivor.PersonID, *after.PersonID)
+			require.Equal(t, assignment.Revision+1, after.Revision)
+		})
+	}
+}
+
 func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
 	t.Parallel()
 	t.Run("assertion", func(t *testing.T) {
