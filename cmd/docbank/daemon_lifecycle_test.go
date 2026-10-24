@@ -29,6 +29,15 @@ var docbankBuilds = map[string]struct {
 	err error
 }{}
 
+// ensureDocbankBuildDir allocates the shared build directory on first use,
+// so test processes that never build a binary leave no directory behind.
+func ensureDocbankBuildDir() (err error) {
+	if docbankBuildDir == "" {
+		docbankBuildDir, err = os.MkdirTemp("", "docbank-test-binaries-")
+	}
+	return err
+}
+
 func buildDocbank(tb testing.TB) string {
 	tb.Helper()
 	return buildDocbankVersion(tb, "")
@@ -46,12 +55,8 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	build, ok := docbankBuilds[v]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
-			if docbankBuildDir == "" {
-				var err error
-				docbankBuildDir, err = os.MkdirTemp("", "docbank-test-binaries-")
-				if err != nil {
-					return "", err
-				}
+			if err := ensureDocbankBuildDir(); err != nil {
+				return "", err
 			}
 			name := fmt.Sprintf("docbank-%d", len(docbankBuilds))
 			if runtime.GOOS == "windows" {

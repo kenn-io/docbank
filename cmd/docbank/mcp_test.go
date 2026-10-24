@@ -104,7 +104,7 @@ func TestMCPCatalogChildLeavesTempDirEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMCPCommandWriteFlagsSelectTools$")
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMCPCommandWriteFlagsSelectTools$") //nolint:gosec // The test binary re-runs itself as the catalog child.
 	command.Env = append(os.Environ(), "DOCBANK_TEST_MCP_TOOL_CATALOG=mcp", "DOCBANK_HOME="+t.TempDir(), "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
 	out, err := command.CombinedOutput()
 	require.NoError(t, err, string(out))
