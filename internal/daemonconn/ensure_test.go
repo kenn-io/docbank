@@ -186,16 +186,21 @@ func TestEnsureRefusesLockedVaultBeforeStarting(t *testing.T) {
 			started = true
 			return kitdaemon.RuntimeRecord{}, nil
 		})
-	assert.ErrorIs(t, err, home.ErrVaultLocked)
-	assert.ErrorContains(t, err, "this vault is in use by another process, such as a docbank daemon outside this sandbox; run docbank there")
+	require.ErrorIs(t, err, home.ErrVaultLocked)
+	require.ErrorContains(t, err, "this vault is in use by another process, such as a docbank daemon outside this sandbox or a restore; run docbank where it runs")
 	assert.False(t, started)
 	assert.False(t, result.Started)
 }
 
-func TestEnsureStartsOverDeadRuntimeRecord(t *testing.T) {
-	root := t.TempDir()
-	rec := NewRecord("127.0.0.1:1", "key", "token", "")
-	rec.PID = 1 << 30
+func TestEnsureStartsOverGoneRuntimeIdentityWithoutSignalingLivePID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("earlier-boot process identities require Linux")
+	}
+	root, rec := startUnresponsiveRuntime(t)
+	fields := strings.Split(string(rec.ProcessIdentityV2), ":")
+	require.Len(t, fields, 4)
+	fields[1] = "11111111-2222-3333-4444-555555555555"
+	rec.ProcessIdentityV2 = kitdaemon.ProcessIdentity(strings.Join(fields, ":"))
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	started := false
@@ -207,9 +212,11 @@ func TestEnsureStartsOverDeadRuntimeRecord(t *testing.T) {
 			require.NoError(t, lock.Release())
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
 		})
+	assert.True(t, kitdaemon.ProcessAlive(rec.PID), "the live helper must never be signaled for a gone identity")
 	require.NoError(t, err)
 	assert.True(t, started)
 	assert.True(t, result.Started)
+	assert.Nil(t, result.Replaced)
 }
 
 func TestEnsureStartsWithMissingVault(t *testing.T) {
@@ -219,7 +226,7 @@ func TestEnsureStartsWithMissingVault(t *testing.T) {
 		func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
 			started = true
 			_, err := os.Stat(filepath.Dir(root))
-			assert.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
+			require.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
 			return NewRecord("127.0.0.1:2", "key", "token", ""), nil
 		})
 	require.NoError(t, err)
