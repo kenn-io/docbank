@@ -339,11 +339,15 @@ it("confirms a lost merge response after leaving People without restoring the di
   people.dispose();
 });
 
-it.each([0, 503])("replays an uncertain merge HTTP %s once", async (status) => {
+it.each(["network failure", 503])("replays an uncertain merge after %s once", async (status) => {
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
   const merge = vi
     .spyOn(api, "mergePerson")
-    .mockRejectedValueOnce(new APIError("Response lost", status, ""))
+    .mockRejectedValueOnce(
+      typeof status === "number"
+        ? new APIError("Response lost", status, "")
+        : new TypeError("Response lost"),
+    )
     .mockImplementation(async (_, request) => personMergeReceipt(ada, grace, request.operation_id));
   const changed = vi.fn();
   const people = new People("session", vi.fn(), undefined, changed);
@@ -366,7 +370,7 @@ it.each([404, 412, 503, "invalid receipt"])(
     }));
     const merge = vi
       .spyOn(api, "mergePerson")
-      .mockRejectedValueOnce(new APIError("Response lost", 0, ""))
+      .mockRejectedValueOnce(new TypeError("Response lost"))
       .mockImplementation(async () => {
         if (typeof result === "number") throw new APIError("Unconfirmed", result, "");
         return Response.json({});
