@@ -501,9 +501,14 @@ export class Photos {
     return { status: "boundary" };
   }
 
+  authHandled(cause: unknown) {
+    return (
+      cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403))
+    );
+  }
+
   private authFailure(cause: unknown) {
-    const expired =
-      cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403));
+    const expired = this.authHandled(cause);
     if (expired) this.onauthfailure(cause);
     return expired;
   }
@@ -687,7 +692,7 @@ export class Photos {
 
   // setQuery replaces the search, filter, or album scope. It clears the selected
   // date and the timeline counts, which describe the previous scope.
-  setQuery(query: Query) {
+  setQuery(query: Query, onrejected?: (cause: unknown) => void) {
     if (this.disposed || this.hiding || this.trashing || !this.authored.canChangeTarget()) return;
     this.cancelPending();
     let next: Query;
@@ -695,6 +700,7 @@ export class Photos {
       next = parseQuery(canonicalQuery(query));
     } catch (cause) {
       this.error = cause instanceof Error ? cause.message : String(cause);
+      onrejected?.(cause);
       return;
     }
     this.baseQuery = next;
@@ -742,7 +748,9 @@ export class Photos {
     }
   }
 
-  async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<boolean | void> {
+  async loadMore(
+    preserve?: () => (() => Promise<void>) | undefined,
+  ): Promise<{ accepted: true; empty: boolean } | { accepted: false; cause: unknown } | void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
     if (this.projection && this.replacement) {
       await this.retry(preserve);
@@ -800,10 +808,10 @@ export class Photos {
         this.needsFacets = true;
         void this.retryFacets();
       }
-      return !controller.signal.aborted;
+      if (!controller.signal.aborted) return { accepted: true, empty: this.total === 0 };
     } catch (cause) {
       if (controller.signal.aborted) return;
-      this.authFailure(cause);
+      const handled = this.authFailure(cause);
       this.expired =
         cause instanceof APIError &&
         ["cursor_expired", "invalid_photo_cursor"].includes(cause.code);
@@ -814,6 +822,7 @@ export class Photos {
           : cause instanceof Error
             ? cause.message
             : String(cause);
+      if (!handled) return { accepted: false, cause };
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }

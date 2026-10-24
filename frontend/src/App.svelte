@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure, reportSearch } from "./action-events.js";
   import PhotoSearch from "./PhotoSearch.svelte";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
@@ -1751,7 +1751,8 @@
   async function runSearch(
     preferredSelectedID = selectedID,
     queryOverride?: string,
-  ): Promise<string | undefined> {
+    submitted = false,
+  ): Promise<{ type: string; empty: boolean } | undefined> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
@@ -1782,7 +1783,7 @@
     naturalRerankPending = false;
     try {
       if (mode === "names" || !profile) {
-        accepted = await runLegacySearch(
+        const outcome = await runLegacySearch(
           query,
           requestedTagID,
           request,
@@ -1791,7 +1792,8 @@
           session,
           controller.signal,
         );
-        return accepted ? "text" : undefined;
+        accepted = !!outcome;
+        return outcome;
       }
       const mapped = naturalSearchRequest(mode, profile);
       if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
@@ -1806,6 +1808,15 @@
         accepted = true;
         naturalSearchNote = "No live documents match the current filter.";
         loading = false;
+        // No search ran, so there is no search_run; a submission still counts as an empty search.
+        if (submitted) {
+          try {
+            parseQuery(JSON.stringify({ text: query }));
+          } catch {
+            return;
+          }
+          reportAction(session, "search_empty", mapped.mode === "auto" ? "lexical" : mapped.mode);
+        }
         return;
       }
       const baseRequest: generated.DocumentSearchRequest = {
@@ -1845,7 +1856,8 @@
       loading = false;
       searchPending = false;
       // The base results are accepted, so the search counts however reranking ends.
-      if (!naturalSearchRerank(profile, mode, naturalRerank)) return baseReport.actual_mode;
+      let outcome = { type: baseReport.actual_mode, empty: baseRows.length === 0 };
+      if (!naturalSearchRerank(profile, mode, naturalRerank)) return outcome;
       naturalRerankPending = true;
       try {
         const reranked = await documentSearch(
@@ -1860,13 +1872,13 @@
           naturalSearchMode !== mode ||
           !naturalRerank
         )
-          return baseReport.actual_mode;
+          return outcome;
         if (reranked.reranking?.outcome !== "applied") {
           naturalSearchNote = rerankingNote(
             reranked.reranking?.outcome ?? "failed",
             reranked.reranking?.cause,
           );
-          return baseReport.actual_mode;
+          return outcome;
         }
         const rerankedRows = await hydrateProcessingRows(
           reranked,
@@ -1883,7 +1895,7 @@
           naturalSearchMode !== mode ||
           !naturalRerank
         )
-          return baseReport.actual_mode;
+          return outcome;
         applySearchRows(
           rerankedRows,
           query,
@@ -1894,6 +1906,7 @@
           true,
         );
         naturalSearchNote = rerankingNote("applied");
+        outcome = { type: reranked.actual_mode, empty: rerankedRows.length === 0 };
       } catch (cause) {
         if (cause instanceof APIError && cause.status === 401) {
           handleFailure(cause);
@@ -1909,12 +1922,14 @@
           naturalSearchNote = `Reranking failed: ${cause instanceof Error ? cause.message : String(cause)}. Base results remain.`;
         }
       }
-      return baseReport.actual_mode;
+      return outcome;
     } catch (cause) {
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-      else if (mode === "names" || !profile) handleFailure(cause);
-      else {
+      else if (mode === "names" || !profile) {
+        handleFailure(cause);
+        if (submitted) reportFailure(session, "search", cause);
+      } else {
         const note = naturalSearchFallbackNote(
           cause instanceof Error ? cause.message : String(cause),
         );
@@ -1922,7 +1937,7 @@
         naturalRerank = false;
         naturalRerankPending = false;
         try {
-          accepted = await runLegacySearch(
+          const outcome = await runLegacySearch(
             query,
             requestedTagID,
             request,
@@ -1932,10 +1947,13 @@
             controller.signal,
             note,
           );
-          return accepted ? "text" : undefined;
+          accepted = !!outcome;
+          return outcome;
         } catch (fallbackCause) {
-          if (request === generation && session === webSession && !controller.signal.aborted)
+          if (request === generation && session === webSession && !controller.signal.aborted) {
             handleFailure(fallbackCause);
+            if (submitted) reportFailure(session, "search", fallbackCause);
+          }
         }
       }
     } finally {
@@ -1973,12 +1991,12 @@
     session: string,
     signal: AbortSignal,
     note = "",
-  ): Promise<boolean> {
+  ): Promise<{ type: string; empty: boolean } | undefined> {
     const report = await generated.search(
       { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
       { session, signal },
     );
-    if (request !== generation || session !== webSession || signal.aborted) return false;
+    if (request !== generation || session !== webSession || signal.aborted) return;
     if ((report.tag_id ?? "") !== requestedTagID)
       throw new Error("Search results did not honor the selected tag filter.");
     const nextRows = report.hits.map((hit: SearchHit) => ({
@@ -1996,7 +2014,7 @@
     );
     naturalSearchNote = note;
     loading = false;
-    return true;
+    return { type: "text", empty: nextRows.length === 0 };
   }
 
   function applySearchRows(
@@ -2499,7 +2517,10 @@
     }
   }
 
-  async function runSnapshot(query: Query, options: SnapshotOptions): Promise<"text" | undefined> {
+  async function runSnapshot(
+    query: Query,
+    options: SnapshotOptions,
+  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
     if (batchTagsContext === "snapshot") batchTagsTargets = null;
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -2512,8 +2533,9 @@
   }
 
   async function submitSnapshot(query: Query, options: SnapshotOptions): Promise<void> {
-    const type = await runSnapshot(query, options);
-    if (type) reportAction(webSession, "search_run", type);
+    const outcome = await runSnapshot(query, options);
+    if (outcome?.type === "failed") reportFailure(webSession, "search", outcome.cause);
+    else if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
   }
 
   function runSnapshotAgain(): void {
@@ -3286,8 +3308,8 @@
                 class="search"
                 onsubmit={(event) => {
                   event.preventDefault();
-                  void runSearch().then((type) => {
-                    if (type) reportAction(webSession, "search_run", type);
+                  void runSearch(undefined, undefined, true).then((outcome) => {
+                    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
                   });
                 }}
               >
@@ -3426,8 +3448,8 @@
                 onnavigate={navigatePhotos}
                 smartDisabled={photoState.photos.hiding || photoState.photos.trashing}
                 onopensmart={(saved) => {
-                  if (saved.kind === "query" && photoState && photoState.photos.openSmartSet(saved))
-                    navigatePhotos("/photos");
+                  if (saved.kind !== "query" || !photoState) return;
+                  if (photoState.photos.openSmartSet(saved)) navigatePhotos("/photos");
                 }}
               />{/if}
           {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace
@@ -4751,9 +4773,9 @@
           <div class="telemetry-note">
             <p>
               Docbank reports when the daemon runs, the web app opens, you open a screen, and you
-              add, search, or open documents so the team can count vaults in use. It also reports
-              how long a browser or terminal session lasted, as a rough bucket. Reporting is on by
-              default.
+              add, search, or open documents, and when a search finds nothing or a search, add, or
+              open you ran fails, so the team can count vaults in use. It also reports how long a
+              browser or terminal session lasted, as a rough bucket. Reporting is on by default.
             </p>
             <p>
               Reports go to PostHog with a random ID for this vault, the app version, operating

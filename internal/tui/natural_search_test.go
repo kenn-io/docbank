@@ -23,9 +23,95 @@ func naturalSearchReport(nodeID int64, versionID, excerpt string) api.DocumentSe
 		Coverage: api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
 		Results: []api.DocumentSearchResult{{
 			VaultUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", NodeID: nodeID,
-			ContentVersionID: versionID, Rank: 1, Path: "/README.txt", Excerpt: excerpt,
+			ContentVersionID: versionID, Rank: 1, LexicalRank: 1, Path: "/README.txt", Excerpt: excerpt,
 			Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}},
 		}},
+	}
+}
+
+func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reply", true: "replaced pending"}[replaced], func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			fake.naturalSearch = api.DocumentSearchReport{
+				RequestedMode: "lexical", ActualMode: "lexical",
+				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
+			}
+			fake.naturalRerankSearch = fake.naturalSearch
+			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode = naturalLexical
+			model.naturalRerank = true
+			model.requestID, model.reportSearchID = 7, 7
+			model.naturalSearchID = 3
+			base := model.loadNaturalSearch("missing", model.requestID)()
+			model, rerank := updateModel(t, model, base)
+			require.NotNil(t, rerank)
+			assert.Empty(t, fake.actions)
+			if replaced {
+				model.requestID, model.reportSearchID = 8, 8
+				model.naturalSearchID = 4
+				base = model.loadNaturalSearch("another", model.requestID)()
+				model, rerank = updateModel(t, model, base)
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				rerank = batch[0]
+			} else {
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				model, rerank = updateModel(t, model, batch[0]())
+			}
+			runModelCommand(t, model, rerank)
+			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
+			assert.Equal(t, want, fake.actions)
+		})
+	}
+}
+
+func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
+	for _, baseEmpty := range []bool{true, false} {
+		t.Run(map[bool]string{true: "empty base gains rows", false: "nonempty base loses rows"}[baseEmpty], func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			readme := fake.nodes["/README.txt"]
+			nonempty := naturalSearchReport(readme.ID, readme.CurrentVersionID, "excerpt")
+			fake.naturalSearch, fake.naturalRerankSearch = nonempty, nonempty
+			wantRows := 0
+			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
+			if baseEmpty {
+				readme.TrashedAt = "2026-10-20T12:00:00Z"
+				fake.nodes["/README.txt"] = readme
+				wantRows = 1
+				want = []actionCall{{event: "search_run", searchType: "lexical"}}
+			}
+			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode, model.naturalRerank = naturalLexical, true
+			model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
+			base := model.loadNaturalSearch("report", model.requestID)()
+			model, cmd := updateModel(t, model, base)
+			require.True(t, model.naturalRerankPending)
+			if baseEmpty {
+				require.Empty(t, model.rows)
+				readme.TrashedAt = ""
+			} else {
+				require.Len(t, model.rows, 1)
+				readme.TrashedAt = "2026-10-20T12:00:00Z"
+			}
+			fake.nodes["/README.txt"] = readme
+			assert.Empty(t, fake.actions)
+			batch, ok := cmd().(tea.BatchMsg)
+			require.True(t, ok)
+			model, cmd = updateModel(t, model, batch[0]())
+			runModelCommand(t, model, cmd)
+			assert.Len(t, model.rows, wantRows)
+			assert.Equal(t, want, fake.actions)
+		})
 	}
 }
 
@@ -41,6 +127,8 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	report := fake.nodes["/docs/report.txt"]
 	fake.naturalRerankSearch.Results = append(fake.naturalRerankSearch.Results,
 		naturalSearchReport(report.ID, report.CurrentVersionID, "another result").Results...)
+	fake.naturalRerankSearch.Results[1].Rank = 2
+	fake.naturalRerankSearch.Results[1].LexicalRank = 2
 	fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
 
 	model, err := New(t.Context(), fake)
@@ -789,29 +877,64 @@ func TestNaturalSearchInactiveSettingsDoNotSubmit(t *testing.T) {
 	assert.True(t, model.naturalRerank)
 }
 
-func TestNaturalSearchEmptyFenceDoesNotScheduleRerank(t *testing.T) {
-	fake := newFakeBackend()
-	fake.sourceFence.Fence.ContentVersionIDs = nil
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.requestID = 4
-	model.reportSearchID = model.requestID
-	model.naturalSearchID = 2
-	model.naturalProfiles = fake.profiles
-	model.naturalMode = naturalLexical
-	model.naturalRerank = true
+func TestNaturalSearchEmptyFenceReportsSubmissionsAsEmptyWithoutRun(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		query     string
+		mode      string
+		unbound   bool
+		submitted bool
+		rerank    bool
+		want      []actionCall
+	}{
+		{name: "submitted lexical with rerank on", mode: naturalLexical, submitted: true, rerank: true, want: []actionCall{{event: "search_empty", searchType: "lexical"}}},
+		{name: "submitted hybrid", mode: naturalHybrid, submitted: true, want: []actionCall{{event: "search_empty", searchType: "hybrid"}}},
+		{name: "submitted auto without a binding runs lexical", mode: naturalAuto, unbound: true, submitted: true, want: []actionCall{{event: "search_empty", searchType: "lexical"}}},
+		{name: "refresh or mode change", mode: naturalHybrid},
+		{name: "over-long submitted query", query: strings.Repeat("q", 8193), mode: naturalHybrid, submitted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.sourceFence.Fence.ContentVersionIDs = nil
+			if tc.unbound {
+				fake.profiles[0].QueryEmbeddingBindings = nil
+			}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.requestID = 4
+			if tc.submitted {
+				model.reportSearchID = model.requestID
+			}
+			model.naturalSearchID = 2
+			model.naturalProfiles = fake.profiles
+			model.naturalMode = tc.mode
+			model.naturalRerank = tc.rerank
 
-	message := model.loadNaturalSearch("nothing", model.requestID)()
-	baseMessage, ok := message.(naturalSearchBaseLoadedMsg)
-	require.True(t, ok)
-	updated, rerank := model.applyNaturalSearchBase(baseMessage)
-	result, ok := updated.(Model)
-	require.True(t, ok)
-	require.Nil(t, rerank)
-	assert.False(t, result.naturalRerankPending)
-	assert.Zero(t, result.reportSearchID)
-	assert.Empty(t, fake.naturalSearchRequests)
-	assert.Equal(t, naturalLexical, result.naturalResultMode)
+			text := tc.query
+			if text == "" {
+				text = "nothing"
+			}
+			base, ok := model.loadNaturalSearch(text, model.requestID)().(naturalSearchBaseLoadedMsg)
+			require.True(t, ok)
+			updated, cmd := model.applyNaturalSearchBase(base)
+			result, ok := updated.(Model)
+			require.True(t, ok)
+			assert.Zero(t, result.reportSearchID)
+			if tc.want == nil {
+				require.Nil(t, cmd)
+			} else {
+				require.NotNil(t, cmd)
+				cmd()
+			}
+			assert.Equal(t, tc.want, fake.actions)
+			if tc.rerank {
+				// An empty fence has nothing to rerank, even when reranking is on.
+				assert.False(t, result.naturalRerankPending)
+				assert.Empty(t, fake.naturalSearchRequests)
+				assert.Equal(t, naturalLexical, result.naturalResultMode)
+			}
+		})
+	}
 }
 
 func TestNaturalSearchRerankNotesPreserveReceiptOutcomeAndCause(t *testing.T) {
@@ -861,17 +984,7 @@ func TestNaturalSearchReportsBaseModeWhenRerankSettles(t *testing.T) {
 	require.NoError(t, err)
 	model.naturalProfiles = backend.profiles
 	model.naturalMode, model.naturalRerank = naturalAuto, true
-	model.searching = true
-	model.searchInput.SetValue("report")
-	model, _ = updateModel(t, model, key(tea.KeyEnter))
-	base := naturalSearchBaseLoadedMsg{
-		requestID: model.requestID, searchID: model.naturalSearchID, query: "report", naturalMode: naturalAuto,
-		request: api.DocumentSearchRequest{Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"version"}}},
-		report:  api.DocumentSearchReport{ActualMode: "lexical"},
-		rows:    []row{{node: api.Node{ID: 3, Kind: "file"}, path: "/report"}},
-	}
-	model, cmd := updateModel(t, model, base)
-	require.True(t, model.naturalRerankPending)
+	model, reply, cmd := deferRerankedSearch(t, model, "report", "lexical")
 	require.NotNil(t, cmd)
 	// Run every base command, but hold its replies until the pending check.
 	commands := []tea.Cmd{cmd}
@@ -885,27 +998,31 @@ func TestNaturalSearchReportsBaseModeWhenRerankSettles(t *testing.T) {
 		}
 	}
 	assert.Empty(t, backend.actions)
-	reply := naturalSearchRerankLoadedMsg{
-		requestID: model.requestID, searchID: model.naturalSearchID, naturalMode: naturalAuto,
-		err: errors.New("provider unavailable"),
-	}
 	model, cmd = updateModel(t, model, reply)
 	runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"search_run:lexical"}, backend.actions)
+	assert.Equal(t, []actionCall{{event: "search_run", searchType: "lexical"}}, backend.actions)
 }
 
 // deferRerankedSearch submits query and accepts its base results while the rerank stays pending.
 func deferRerankedSearch(t *testing.T, model Model, query, actualMode string) (Model, naturalSearchRerankLoadedMsg, tea.Cmd) {
 	t.Helper()
+	backend, ok := model.backend.(*fakeBackend)
+	require.True(t, ok)
+	readme := backend.nodes["/README.txt"]
+	backend.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "base")
+	backend.naturalSearch.RequestedMode, backend.naturalSearch.ActualMode = "hybrid", actualMode
+	if actualMode == "lexical" {
+		model.naturalProfiles[0].QueryEmbeddingBindings = nil
+		backend.naturalSearch.RequestedMode = "auto"
+	}
+	backend.naturalRerankSearch = backend.naturalSearch
+	backend.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
 	model.searching = true
 	model.searchInput.SetValue(query)
 	model, _ = updateModel(t, model, key(tea.KeyEnter))
-	base := naturalSearchBaseLoadedMsg{
-		requestID: model.requestID, searchID: model.naturalSearchID, query: query, naturalMode: naturalAuto,
-		request: api.DocumentSearchRequest{Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"version"}}},
-		report:  api.DocumentSearchReport{ActualMode: actualMode},
-		rows:    []row{{node: api.Node{ID: 3, Kind: "file"}, path: "/report"}},
-	}
+	base, ok := model.loadNaturalSearch(query, model.requestID)().(naturalSearchBaseLoadedMsg)
+	require.True(t, ok)
+	require.NoError(t, base.err)
 	model, cmd := updateModel(t, model, base)
 	require.True(t, model.naturalRerankPending)
 	reply := naturalSearchRerankLoadedMsg{
@@ -959,7 +1076,7 @@ func TestNaturalSearchReportsSupersededRerankOnce(t *testing.T) {
 			assert.Empty(t, backend.actions)
 			model, cmd := updateModel(t, model, reply)
 			runModelCommand(t, model, cmd)
-			assert.Equal(t, []string{"search_run:hybrid"}, backend.actions)
+			assert.Equal(t, []actionCall{{event: "search_run", searchType: "hybrid"}}, backend.actions)
 		})
 	}
 }
@@ -975,14 +1092,14 @@ func TestNaturalSearchReportsReplacedRerankedSearchOnce(t *testing.T) {
 	model, second, cmd := deferRerankedSearch(t, model, "second", "lexical")
 	// Replacing a pending search reports it now; its late reply adds nothing.
 	runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"search_run:hybrid"}, backend.actions)
+	assert.Equal(t, []actionCall{{event: "search_run", searchType: "hybrid"}}, backend.actions)
 	model, cmd = updateModel(t, model, first)
 	if cmd != nil {
 		runModelCommand(t, model, cmd)
 	}
 	model, cmd = updateModel(t, model, second)
 	runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"search_run:hybrid", "search_run:lexical"}, backend.actions)
+	assert.Equal(t, []actionCall{{event: "search_run", searchType: "hybrid"}, {event: "search_run", searchType: "lexical"}}, backend.actions)
 }
 
 func TestNaturalSearchRefreshRestartsPendingQuery(t *testing.T) {

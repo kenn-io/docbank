@@ -63,6 +63,16 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 			return err
 		}
 	}
+	c, err := daemonconn.Ensure(cmd.Context())
+	if err != nil {
+		return err
+	}
+	published := false
+	defer func() {
+		if !published && !errors.Is(retErr, os.ErrExist) {
+			reportFailure(cmd, c, "open", retErr, false)
+		}
+	}()
 	progressOutput := cmd.ErrOrStderr()
 	if getJSON {
 		progressOutput = io.Discard
@@ -74,7 +84,6 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("creating private download staging: %w", err)
 	}
-	published := false
 	defer func() {
 		if cleanupErr := staging.removeAll(); cleanupErr != nil {
 			if published {
@@ -88,10 +97,6 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 		}
 	}()
 
-	c, err := daemonconn.Ensure(cmd.Context())
-	if err != nil {
-		return err
-	}
 	node, err := selector.resolveIncludingTrash(cmd.Context(), c)
 	if err != nil {
 		return err
@@ -119,7 +124,7 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 		}
 		return err
 	}
-	reportAction(cmd, c, "document_opened", "", false)
+	reportAction(cmd, c, "document_opened", "", "", false)
 	published = true
 
 	receipt := getReceipt{

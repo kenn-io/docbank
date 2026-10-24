@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, DetailDrawer, IconButton, TextInput } from "@kenn-io/kit-ui";
@@ -289,6 +289,7 @@
     controller = new AbortController();
     let refreshNeeded = false;
     let added = false;
+    let failedCause: unknown;
     try {
       for (const item of items) {
         if (stopping || disabledReason || controller.signal.aborted) break;
@@ -346,6 +347,7 @@
               : cause instanceof Error
                 ? cause.message
                 : String(cause);
+          failedCause ??= cause;
           if (cause instanceof APIError && cause.status === 401) {
             onauthfailure(cause);
             break;
@@ -371,9 +373,11 @@
         checkpoint = undefined;
       }
     } catch (cause) {
+      failedCause ??= cause;
       showError(cause);
     } finally {
       if (added) reportAction(session, "document_added");
+      if (failedCause) reportFailure(session, "add", failedCause);
       running = false;
       controller = null;
       if (refreshNeeded) {

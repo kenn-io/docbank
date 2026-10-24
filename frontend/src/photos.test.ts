@@ -2793,7 +2793,7 @@ it("recovers smart sets without stale identities", async () => {
   const selection = new Photos("session", vi.fn());
   selection.rememberSmartSet(old);
   const pending = selection.recoverSmartSet();
-  selection.openSmartSet(opened);
+  await selection.openSmartSet(opened);
   finishPending(savedSmartSetResponse(old));
   await pending;
   expect(selection.smartSet?.id).toBe(opened.id);
@@ -2821,6 +2821,42 @@ it("recovers smart sets without stale identities", async () => {
   deleted.dispose();
 });
 
+it("remembers a smart set before its first search fails", async () => {
+  const saved = await savedSmartSet();
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(Response.json({ detail: "Unavailable" }, { status: 503 }));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("session", vi.fn());
+  expect(photos.openSmartSet(saved)).toBe(true);
+  expect(photos.smartSet?.id).toBe(saved.id);
+  expect(localStorage.length).toBe(1);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).query).toMatchObject({
+    text: "rating:5",
+    syntax: "advanced",
+    filters: { kinds: ["photo", "video"] },
+  });
+  await waitFor(() => expect(photos.error).toBe("Unavailable"));
+  photos.dispose();
+});
+
+it.each([
+  { status: 401, code: "unauthorized", hidden: false },
+  { status: 403, code: "hidden_locked", hidden: true },
+])("retains search error state after access failure: $code", async ({ status, code, hidden }) => {
+  stubPhotoFetch(
+    vi.fn().mockResolvedValue(Response.json({ detail: "Access denied", code }, { status })),
+  );
+  const onauth = vi.fn();
+  const photos = new Photos("session", onauth, hidden);
+  expect(await photos.loadMore()).toBeUndefined();
+  expect(onauth).toHaveBeenCalledOnce();
+  expect(photos.error).toBe("Access denied");
+  expect(photos.loading).toBe(false);
+  photos.dispose();
+});
+
 it.each(["hiding", "trashing"] as const)(
   "rejects smart-set opening during %s",
   async (mutation) => {
@@ -2829,11 +2865,11 @@ it.each(["hiding", "trashing"] as const)(
     stubPhotoFetch(fetcher);
     const photos = new Photos("session", vi.fn());
     photos[mutation] = true;
-    expect(photos.openSmartSet(saved)).toBe(false);
+    expect(await photos.openSmartSet(saved)).toBe(false);
     expect(photos.smartSet).toBeUndefined();
     expect(fetcher).not.toHaveBeenCalled();
     photos[mutation] = false;
-    expect(photos.openSmartSet(saved)).toBe(true);
+    expect(await photos.openSmartSet(saved)).toBe(true);
     expect(photos.smartSet?.id).toBe(saved.id);
     expect(JSON.parse(fetcher.mock.calls[0][1].body).query).toMatchObject({
       text: "rating:5",

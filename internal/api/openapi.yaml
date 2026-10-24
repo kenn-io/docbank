@@ -19289,6 +19289,9 @@ components:
             - 5_to_30m
             - over_30m
           type: string
+        kind:
+          description: Required for error_shown. add, search, and open are sent as given; any other string is sent as other.
+          type: string
         screen:
           description: The screen shown. Other values return 400 for screen_viewed.
           enum:
@@ -19323,7 +19326,7 @@ components:
             - operations
           type: string
         search_type:
-          description: The executed search mode. Required for search_run.
+          description: The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty.
           enum:
             - text
             - semantic
@@ -20861,7 +20864,7 @@ paths:
                   type: string
                 properties:
                   $ref: "#/components/schemas/TelemetryEventProperties"
-                  description: Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, and search_run requires search_type.
+                  description: Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, search_run and search_empty require search_type; error_shown requires kind.
               required:
                 - event
               type: object
@@ -20884,7 +20887,7 @@ paths:
                 type: object
           description: Event queued, or dropped because telemetry is off
         "400":
-          description: Malformed body, unsupported event, missing or unsupported screen or surface, or search_run with missing or unsupported search_type
+          description: Malformed body, unsupported event, missing or unsupported screen or surface, search_run or search_empty with missing or unsupported search_type, or error_shown with a missing or non-string kind
         "401":
           description: Missing or invalid API key or browser session
         "403":

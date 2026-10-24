@@ -129,6 +129,7 @@ it("keeps nested exact contexts separate and returns to the frozen source and fo
 
 it("cancels related version reads on source change and retains failed targets as visible occurrences", async () => {
   const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   let release!: (value: Response) => void;
   let signal: AbortSignal | null | undefined;
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -172,6 +173,8 @@ it("cancels related version reads on source change and retains failed targets as
     expect(screen.queryByText(`Exact related version ${child.version_id}`)).toBeNull(),
   );
   expect(fetch.mock.calls.some(([input]) => String(input) === "/api/v1/nodes/2")).toBe(false);
+  // The read that a source change cancelled is not a failed open.
+  expect(failure).not.toHaveBeenCalled();
   await view.rerender({
     session: "session",
     source: selected,
@@ -195,4 +198,48 @@ it("cancels related version reads on source change and retains failed targets as
     within(screen.getByRole("region", { name: "Outgoing attachments" })).getAllByRole("listitem"),
   ).toHaveLength(1);
   expect(action).not.toHaveBeenCalled();
+  expect(failure).toHaveBeenCalledExactlyOnceWith(
+    "session",
+    "open",
+    expect.objectContaining({ status: 404 }),
+  );
+});
+
+it("reports one failed open when alternating documents reaches the navigation limit", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const route = String(input);
+    for (const target of [root, child]) {
+      if (route === `/api/v1/versions/${target.version_id}`) return Response.json(version(target));
+      if (route === `/api/v1/nodes/${target.node_id}`) return Response.json(node(target));
+      if (route.includes(`parent_version_id=${target.version_id}`))
+        return Response.json(page(target === root ? relation(root, child) : undefined));
+      if (route.includes(`child_version_id=${target.version_id}`))
+        return Response.json(page(target === child ? relation(root, child) : undefined));
+    }
+    throw new Error(`Unexpected ${route}`);
+  });
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 1,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
+  for (let index = 0; index < 32; index++) {
+    const name =
+      index % 2 === 0
+        ? "Open attachment nested.eml, part 1.2"
+        : "Open parent of nested.eml, part 1.2";
+    await fireEvent.click(await screen.findByRole("button", { name }));
+    await waitFor(() => expect(action).toHaveBeenCalledTimes(index + 1));
+  }
+  expect(failure).not.toHaveBeenCalled();
+  await fireEvent.click(
+    await screen.findByRole("button", { name: "Open attachment nested.eml, part 1.2" }),
+  );
+  await screen.findByText(/Navigation depth limit reached/);
+  expect(failure).toHaveBeenCalledExactlyOnceWith("session", "open", expect.any(Error));
+  expect(action).toHaveBeenCalledTimes(32);
 });
