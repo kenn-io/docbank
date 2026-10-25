@@ -2056,3 +2056,55 @@ function photoSuggestion(overrides: Partial<api.PhotoSuggestion>): api.PhotoSugg
 function preparedSuggestions(suggestions: api.PhotoSuggestion[], prepared = targets) {
   return response({ assets: [asset], targets: prepared, suggestions });
 }
+
+it("foreground edits bypass live tag reads", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  editor.targets = [preparedPhoto(1, { tags: ["assigned"] })];
+  let release!: (response: Response) => void;
+  const fetcher = vi.fn((url: string, options?: RequestInit) => {
+    if (url.endsWith("/tags/assigned")) {
+      return new Promise<Response>((resolve, reject) => {
+        release = resolve;
+        options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), {
+          once: true,
+        });
+      });
+    }
+    if (url.endsWith("/photos/authored/edit")) {
+      return Promise.resolve(
+        Response.json({
+          receipt_id: "updated",
+          before: [preparedPhoto(1)],
+          after: [
+            preparedPhoto(1, {
+              revision: 2,
+              values: { ...preparedPhoto(1).values, rating: 5 },
+            }),
+          ],
+        }),
+      );
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const reading = expect(editor.refreshAssignedTags()).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  await vi.waitFor(() => expect(release).toBeDefined());
+  const writing = editor.edit({ asset_ids: ["photo-1"] }, { rating: 5 }, false, async () => {});
+  try {
+    await vi.waitFor(
+      () =>
+        expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/authored/edit"))).toBe(
+          true,
+        ),
+      { timeout: 150 },
+    );
+  } finally {
+    release(Response.json({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 }));
+    await reading;
+    await writing;
+    editor.dispose();
+  }
+});

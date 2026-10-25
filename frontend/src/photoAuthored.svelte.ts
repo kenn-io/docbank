@@ -149,11 +149,15 @@ export class PhotoAuthoredEditor {
     void this.resolveAssignedTags();
   }
   private pendingTags = new Map<string, Promise<api.Tag | undefined>>();
-  private readTag(id: string, refresh = false) {
+  // Background reads give way to any edit or new preparation, which abort `read`.
+  private backgroundSignal() {
+    return AbortSignal.any([this.read.signal, this.controller.signal]);
+  }
+  private readTag(id: string, refresh = false, signal?: AbortSignal) {
     if (refresh) this.pendingTags.delete(id);
     const pending = this.pendingTags.get(id);
     if (pending) return pending;
-    const request = this.request(() => api.getTag(id, this.options()))
+    const request = this.request(() => api.getTag(id, this.options(signal)))
       .then((tag) => {
         if (this.pendingTags.get(id) !== request || this.controller.signal.aborted) return;
         this.reconcile(tag);
@@ -333,7 +337,7 @@ export class PhotoAuthoredEditor {
   /** Reads assigned tags again for renames and deletions outside the catalog page. */
   async refreshAssignedTags() {
     const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
-    await settleReads(ids.map((id) => this.readTag(id, true)));
+    await settleReads(ids.map((id) => this.readTag(id, true, this.backgroundSignal())));
   }
   // Either choice can import unrelated outside changes.
   private async publishXMPKeywords(
