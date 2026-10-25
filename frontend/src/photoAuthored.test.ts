@@ -872,6 +872,38 @@ it.each([false, true])(
   },
 );
 
+// The first stack read can be in flight with nothing else prepared; the change must still reread it.
+it("rereads a stack still preparing when a live change arrives, so a decision carries its new revisions", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const stack = (revision: number) =>
+    structuredClone(targets).map((target) => ({ ...target, revision }));
+  let finish!: (response: Response) => void;
+  const fetcher = vi
+    .fn()
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
+    .mockResolvedValue(response({ assets: [asset], targets: stack(2) }));
+  vi.stubGlobal("fetch", fetcher);
+  const preparing = editor.prepareStack(["asset"], false);
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  const refreshing = editor.invalidate();
+  finish(response({ assets: [asset], targets: stack(1) }));
+  await preparing;
+  await refreshing;
+  expect(editor.stackTargets.map((target) => target.revision)).toEqual([2, 2]);
+  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "stack-receipt",
+    before: [],
+    after: [],
+  });
+  await editor.decideStack(
+    { asset_ids: ["asset"], decision: "all", current_id: "asset", burst_gap_seconds: 3 },
+    vi.fn(),
+    { observed: [] },
+  );
+  expect(decide.mock.calls[0]![0].targets).toMatchObject([{ revision: 2 }, { revision: 2 }]);
+  editor.dispose();
+});
+
 // A live update refreshes the prepared stack in the background: the old members stay usable
 // until the new read lands, and a failed read keeps them and leaves the change pending.
 it("keeps the prepared stack usable while a live update refreshes it", async () => {

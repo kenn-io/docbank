@@ -402,6 +402,7 @@ export class PhotoAuthoredEditor {
     if (this.stackLoading) {
       this.stackLoading = false;
       this.stackKey = "";
+      this.preparedWaiters.splice(0).forEach((resolve) => resolve());
     }
     this.busy = true;
     return ++this.writes;
@@ -590,14 +591,15 @@ export class PhotoAuthoredEditor {
       this.endWrite(write);
     }
   }
-  // Waiters for the current read; live invalidation runs after it settles.
+  // Waiters for the current read or stack preparation; live invalidation runs after it settles.
   private preparedWaiters: (() => void)[] = [];
   // A change that arrived while a draft, a read, or a conflict held the targets still waits for its reread.
   private queued = false;
   async invalidate() {
     const scope = this.scope;
     this.queued = true;
-    while (this.loading) await new Promise<void>((resolve) => this.preparedWaiters.push(resolve));
+    while (this.loading || this.stackLoading)
+      await new Promise<void>((resolve) => this.preparedWaiters.push(resolve));
     if (
       this.scope !== scope ||
       this.busy ||
@@ -944,7 +946,10 @@ export class PhotoAuthoredEditor {
       this.stackError = this.error = this.failure(cause);
       this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
     } finally {
-      if (!signal.aborted && !quiet) this.stackLoading = false;
+      if (!signal.aborted && !quiet) {
+        this.stackLoading = false;
+        this.preparedWaiters.splice(0).forEach((resolve) => resolve());
+      }
     }
   }
   /**
