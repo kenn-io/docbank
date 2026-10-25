@@ -382,6 +382,11 @@ export class PhotoAuthoredEditor {
   private beginWrite() {
     this.read.abort();
     this.stackRead.abort();
+    // The aborted preparation no longer clears its own loading flag, so release it here and let the caller restart it.
+    if (this.stackLoading) {
+      this.stackLoading = false;
+      this.stackKey = "";
+    }
     this.busy = true;
     return ++this.writes;
   }

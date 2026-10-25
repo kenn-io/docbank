@@ -1338,6 +1338,24 @@ it("asks for a refresh when the conflict changed before the choice", async () =>
   editor.dispose();
 });
 
+it("lets the stack prepare again when a write that interrupted it fails", async () => {
+  const editor = withXMP(editorWithTargets(), structuredClone(conflict));
+  let finish!: (value: api.PhotoAuthoredPreparation) => void;
+  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  vi.spyOn(api, "resolvePhotoXMP").mockRejectedValue(new Error("offline"));
+  const preparing = editor.prepareStack(["asset", "other"], false);
+  await vi.waitFor(() => expect(editor.stackLoading).toBe(true));
+  await editor.resolveXMP("raw", "catalog");
+  expect(editor.error).toBe("offline");
+  expect(editor.stackLoading).toBe(false);
+  expect(editor.needsStack(["asset", "other"], false)).toBe(true);
+  finish(photoPreparation(structuredClone(targets)));
+  await preparing;
+  editor.dispose();
+});
+
 it("invalidates old XMP conflict details after an authored edit", async () => {
   vi.useFakeTimers();
   const before = { ...targets[0]!, revision: 2, node_revision: 2 };
