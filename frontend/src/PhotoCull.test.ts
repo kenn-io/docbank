@@ -5,7 +5,6 @@ import PhotoCullView from "./PhotoCull.svelte";
 import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
-import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { photo, photoPreparation, preparedPhoto } from "./photo-test-fixtures.js";
 import type { PhotoBrowseRow } from "./generated/docbank.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -273,7 +272,6 @@ async function reviewPhoto(
   store?: ReturnType<typeof photoCullStorage>,
   options: {
     lookupError?: Error;
-    hiddenAccess?: HiddenAccess;
     onmetadatachanged?: () => void;
   } = {},
 ) {
@@ -307,9 +305,7 @@ async function reviewPhoto(
       autoAdvance,
     },
   };
-  const photos = new Photos("session", vi.fn(), false, undefined, {
-    hiddenAccess: options.hiddenAccess,
-  });
+  const photos = new Photos("session", vi.fn());
   const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(row);
   if (options.lookupError) lookup.mockRejectedValueOnce(options.lookupError);
   vi.spyOn(photos, "lookupMany").mockResolvedValue([row]);
@@ -319,9 +315,7 @@ async function reviewPhoto(
     cull,
     photos,
     cache: {
-      get: vi.fn(async (_asset: string, id: string) =>
-        Object.assign(new Blob(["synthetic-photo"]), { id }),
-      ),
+      get: vi.fn(async () => new Blob(["synthetic-photo"])),
     } as unknown as PhotoPreviewCache,
     onclose,
     onmetadatachanged: options.onmetadatachanged,
