@@ -216,6 +216,28 @@ it("keeps Next disabled through a live pass while a move is pending", async () =
   photos.dispose();
 });
 
+it("re-enables navigation after a live pass replaces the destination lookup", async () => {
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  const { photos, dialog } = compare(rows);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  vi.spyOn(photos, "moveGroup").mockResolvedValue({
+    status: "moved",
+    ids: [rows[1]!.asset_id, rows[2]!.asset_id],
+  });
+  let stale!: (rows: ReturnType<typeof photo>[]) => void;
+  vi.mocked(photos.lookupMany).mockImplementationOnce(() => new Promise((done) => (stale = done)));
+  const next = within(dialog).getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  await fireEvent.click(next);
+  await waitFor(() => expect(stale).toBeTypeOf("function"));
+  // The live reread takes over the destination lookup and finishes the navigation.
+  await photos.changed({});
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  await waitFor(() => expect(next.disabled).toBe(false));
+  stale([]);
+  expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]);
+  photos.dispose();
+});
+
 it("preserves the closeup when the destination lookup fails", async () => {
   const { photos, dialog } = compare([photo(1), photo(2), photo(3), photo(4)]);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));

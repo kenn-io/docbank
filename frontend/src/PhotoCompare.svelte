@@ -44,6 +44,8 @@
   async function load(members: string[], live = false) {
     reading?.abort();
     const controller = (reading = new AbortController());
+    // A destination that is not shown yet belongs to a finished move, whichever read delivers it.
+    const arriving = members !== selected;
     errors = [];
     loading = true;
     try {
@@ -68,8 +70,8 @@
     } finally {
       if (!controller.signal.aborted) {
         loading = false;
-        // Only the move that set this clears it; a live reread finishing mid-move must not.
-        if (!live) moving = false;
+        // A live reread finishing while the move itself is pending must not clear it.
+        if (!live || arriving) moving = false;
       }
     }
   }
