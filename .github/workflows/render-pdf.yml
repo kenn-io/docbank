@@ -4,6 +4,7 @@ name: Render PDF
 # must exercise this job without changing the main-pinned CI workflow.
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches: [main]
 
@@ -34,14 +35,27 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Disable recommended apt packages
-        run: echo 'APT::Install-Recommends "false";' | sudo tee /etc/apt/apt.conf.d/99no-install-recommends
+      - name: Select package archive cache key
+        id: apt_key
+        run: echo "key=pdf-apt-${ImageOS}-${ImageVersion}-$(dpkg --print-architecture)-${{ hashFiles('.github/workflows/render-pdf.yml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore package archives
+        id: apt_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pdf-apt-archives
+          key: ${{ steps.apt_key.outputs.key }}
+
+      - name: Download package archives on a cache miss
+        if: steps.apt_cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/pdf-apt-staging/partial" "$RUNNER_TEMP/pdf-apt-archives"
+          sudo apt-get update
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-staging" install --download-only --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
+          cp "$RUNNER_TEMP"/pdf-apt-staging/*.deb "$RUNNER_TEMP/pdf-apt-archives/"
 
       - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
-        with:
-          packages: libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
-          version: ${{ env.ImageOS }}-${{ env.ImageVersion }}
+        run: sudo apt-get install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
 
       - name: Run mandatory page rendering proof
         env:
@@ -90,3 +104,13 @@ jobs:
           go test -tags fts5 -v ./document/internal/providerutil/sandbox/ ./document/trafilatura/ -count=1
           go test -tags fts5 -v ./document/renderpdf/ -run '^TestLibreOffice' -count=1
           go test -tags fts5 -v ./document/mistral/ -run '^(TestDOCXLibreOfficeRoute|TestRenderLaneLibreOfficeRoute)$' -count=1
+
+      - name: Save package archives
+        if: >-
+          steps.apt_cache.outputs.cache-hit != 'true'
+          && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+          || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pdf-apt-archives
+          key: ${{ steps.apt_key.outputs.key }}
