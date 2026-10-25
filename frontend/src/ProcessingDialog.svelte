@@ -7,19 +7,17 @@
   import { Button, Checkbox, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { startProcessing } from "./receipts.js";
+  import { formatBytes } from "./format.js";
   import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
   import {
     consentLabel,
     externalDestinations,
     describeClasses,
-    formatBytes,
     ineligibleSentence,
     keptSentence,
     processingPurpose,
     processingSetupURL,
-    purposeDone,
-    purposeRunning,
-    purposeTitle,
+    purposeLabels,
     whereSentences,
   } from "./processing-summary.js";
   import type {
@@ -60,7 +58,8 @@
   const selected = $derived(options.find((option) => option.name === profileName) ?? null);
   const plan = $derived(selected?.plan ?? null);
   const purpose = $derived(plan ? processingPurpose(plan) : "extract");
-  const title = $derived(purposeTitle(purpose));
+  const labels = $derived(purposeLabels[purpose]);
+  const title = $derived(labels.title);
   const done = $derived(status?.state === "completed");
   const failed = $derived(status?.state === "failed" || !!status?.failure_code);
   const canRun = $derived(
@@ -404,7 +403,7 @@
             Failed{status?.failure_code ? `: ${status.failure_code.replaceAll("_", " ")}` : "."}
           </p>
         {:else if done}
-          <p>{purposeDone(purpose)}</p>
+          <p>{labels.done}</p>
         {:else if job}
           <p class="muted">Running in the background.</p>
         {:else if coverageSentence(coverage)}
@@ -433,7 +432,7 @@
   {/if}
   {#if plan}
     <Button size="sm" tone="info" surface="solid" disabled={!canRun} onclick={() => void execute()}>
-      {#if running}<Spinner size={14} /> {purposeRunning(purpose)}{:else}{title}{/if}
+      {#if running}<Spinner size={14} /> {labels.running}{:else}{title}{/if}
     </Button>
   {/if}
 {/snippet}
@@ -523,9 +522,6 @@
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
     cursor: pointer;
-  }
-  .details[open] {
-    gap: var(--space-3);
   }
   .details[open] > :global(*:not(summary)) {
     margin-top: var(--space-3);

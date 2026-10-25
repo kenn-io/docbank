@@ -1,12 +1,13 @@
 <script lang="ts">
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
-  import XIcon from "@lucide/svelte/icons/x";
-  import { Chip, DetailDrawer, IconButton, Spinner } from "@kenn-io/kit-ui";
+  import { Chip, Spinner } from "@kenn-io/kit-ui";
+  import DrawerShell from "./DrawerShell.svelte";
   import CopyValue from "./CopyValue.svelte";
   import { APIError } from "./api-transport.js";
   import { type Node, type ProvenanceFact, type ProvenancePage } from "./generated/docbank.js";
   import { basename, formatDate } from "./format.js";
+  import { sourcePaths } from "./collections.js";
 
   let {
     session,
@@ -63,15 +64,7 @@
   }
 
   function sourceReferences(fact: ProvenanceFact): string[] {
-    let values: unknown;
-    try {
-      values = JSON.parse(fact.source_description);
-    } catch {
-      values = fact.source_description;
-    }
-    return (Array.isArray(values) ? values : [values]).filter(
-      (value): value is string => typeof value === "string" && value !== fact.original_path,
-    );
+    return sourcePaths(fact).filter((value) => value !== fact.original_path);
   }
 
   function sourceLabel(fact: ProvenanceFact): string {
@@ -97,19 +90,14 @@
   }
 </script>
 
-<DetailDrawer width="min(520px, 100vw)" ariaLabel={`Provenance for ${documentName}`} {onclose}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <h2>Document provenance</h2>
-        <strong>{documentName}</strong>
-      </div>
-      <IconButton size="sm" ariaLabel="Close provenance" onclick={onclose}
-        ><XIcon size="14" aria-hidden="true" /></IconButton
-      >
-    </div>
-  {/snippet}
+<DrawerShell
+  title="Document provenance"
+  ariaLabel={`Provenance for ${documentName}`}
+  closeLabel="Close provenance"
+  {onclose}
+>
   <div class="provenance-history">
+    <strong class="document-name">{documentName}</strong>
     {#if currentPath}<CopyValue value={currentPath} label="document path" />{/if}
     {#if loading}
       <div class="loading" role="status"><Spinner size={16} /> Loading provenance…</div>
@@ -175,28 +163,13 @@
         </p>{/if}
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    width: 100%;
-    min-width: 0;
-  }
-  .drawer-heading > div {
-    min-width: 0;
-  }
-  h2 {
-    margin: 0 0 var(--space-1);
-    font-size: var(--font-size-lg);
-  }
-  .drawer-heading strong {
+  .document-name {
+    display: block;
+    margin-bottom: var(--space-2);
     font-size: var(--font-size-sm);
-    font-weight: 400;
-    color: var(--text-muted);
     overflow-wrap: anywhere;
   }
   .provenance-history {

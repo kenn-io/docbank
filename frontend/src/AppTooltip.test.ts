@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import IconAction from "./IconAction.svelte";
-import { TOOLTIP_DELAY_MS } from "./tooltip.js";
+import { TOOLTIP_DELAY_MS } from "./AppTooltip.svelte";
 
 afterEach(() => {
   cleanup();

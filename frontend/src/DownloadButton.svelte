@@ -24,7 +24,6 @@
     version,
     source,
     authorizationRevision,
-    label = "Download",
     surface = "solid",
     onauthfailure,
   }: {
@@ -33,7 +32,6 @@
     version?: ContentVersion;
     source?: SelectedSource;
     authorizationRevision?: number;
-    label?: string;
     surface?: "solid" | "soft";
     onauthfailure: (cause: unknown) => void;
   } = $props();
@@ -139,7 +137,7 @@
       Cancel
     {:else}
       <DownloadIcon size="14" aria-hidden="true" />
-      {label}
+      Download
     {/if}
   </Button>
   {#if progress}

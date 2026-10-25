@@ -6,7 +6,6 @@
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import { Button, CopyButton, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
   import "./toolForm.css";
-  import { displayName, sourcePaths } from "./collectionNames.js";
   import InspectorDetails from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
   import { type Node } from "./generated/docbank.js";
@@ -14,7 +13,9 @@
     collectionMembers,
     collectionLabel,
     collections,
+    displayName,
     setCollectionLabel,
+    sourcePaths,
     type Collection,
     type CollectionLabel,
   } from "./collections.js";

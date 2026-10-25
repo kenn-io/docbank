@@ -1,11 +1,14 @@
+<script module lang="ts">
+  // One hover delay for every tooltip, so a pointer crossing the page doesn't flash bubbles.
+  export const TOOLTIP_DELAY_MS = 700;
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { Tooltip } from "@kenn-io/kit-ui";
-  import { TOOLTIP_DELAY_MS } from "./tooltip.js";
 
-  // The app's only tooltip. A control with nothing to say keeps its wrapper, so
-  // gaining or losing a reason never remounts the control; app.css hides the
-  // empty bubble.
+  // A control with nothing to say keeps its wrapper, so gaining or losing a
+  // reason never remounts the control; app.css hides the empty bubble.
   let {
     text = "",
     side = "bottom",

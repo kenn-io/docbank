@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportFailure, reportSearch } from "./action-events.js";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
-  import XIcon from "@lucide/svelte/icons/x";
-  import { Chip, DetailDrawer, IconButton, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Chip, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import DrawerShell from "./DrawerShell.svelte";
   import { APIError } from "./api-transport.js";
   import { documentSimilar } from "./receipts.js";
   import { processingSetupURL } from "./processing-summary.js";
@@ -101,9 +101,11 @@
       });
       if (request !== generation) return;
       report = next;
-      if (next.state !== "unavailable") reportAction(session, "search_run", "semantic");
+      if (next.state !== "unavailable")
+        reportSearch(session, "semantic", next.results.length === 0);
     } catch (cause) {
       fail(request, cause);
+      if (request === generation && error) reportFailure(session, "search", cause);
     } finally {
       if (request === generation) busy = false;
     }
@@ -116,20 +118,9 @@
   }
 </script>
 
-<DetailDrawer width="min(560px, 100vw)" ariaLabel="Similar documents" onclose={close}>
-  {#snippet header()}
-    <div class="heading">
-      <div>
-        <strong>Similar documents</strong>
-        <small title={path}>{path}</small>
-      </div>
-      <IconButton size="sm" ariaLabel="Close similar documents" onclick={close}>
-        <XIcon size="14" aria-hidden="true" />
-      </IconButton>
-    </div>
-  {/snippet}
-
+<DrawerShell title="Similar documents" closeLabel="Close similar documents" onclose={close}>
   <section class="similar" aria-label="Similar documents">
+    <p class="file" title={path}>{path}</p>
     {#if loading && profiles.length === 0}
       <p class="muted"><Spinner size={14} /> Loading…</p>
     {:else if error}
@@ -184,25 +175,10 @@
       {/if}
     {/if}
   </section>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    width: 100%;
-  }
-  .heading > div {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .heading strong {
-    font-size: var(--font-size-lg);
-  }
-  .heading small {
+  .file {
     overflow: hidden;
     color: var(--text-muted);
     font-family: var(--font-mono);

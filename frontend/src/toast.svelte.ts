@@ -1,5 +1,5 @@
-export type ToastAction = { label: string; run: () => void | Promise<void> };
-export type Toast = {
+type ToastAction = { label: string; run: () => void | Promise<void> };
+type Toast = {
   id: number;
   message: string;
   tone: "neutral" | "danger";
@@ -20,7 +20,7 @@ export function getToasts(): Toast[] {
 
 export function showToast(
   message: string,
-  options: { action?: ToastAction; tone?: Toast["tone"]; durationMs?: number } = {},
+  options: { action?: ToastAction; tone?: Toast["tone"] } = {},
 ): number {
   const tone = options.tone ?? "neutral";
   const id = ++nextID;
@@ -28,10 +28,7 @@ export function showToast(
   toasts = [...toasts, { id, message, tone, action: options.action }];
   timers.set(
     id,
-    setTimeout(
-      () => dismissToast(id),
-      options.durationMs ?? (tone === "danger" ? ERROR_MS : DEFAULT_MS),
-    ),
+    setTimeout(() => dismissToast(id), tone === "danger" ? ERROR_MS : DEFAULT_MS),
   );
   return id;
 }

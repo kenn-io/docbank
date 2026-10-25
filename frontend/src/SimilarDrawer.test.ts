@@ -53,7 +53,7 @@ function setup(scope: string[] = [versionID], bindings = ["semantic"]) {
 
 describe("similar documents drawer", () => {
   it("searches the loaded view and groups identical copies", async () => {
-    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const action = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
     const similar = vi
       .spyOn(processingAPI, "documentSimilar")
       .mockResolvedValue({ ...report, results: [{ ...report.results[0]!, duplicate_count: 1 }] });
@@ -64,11 +64,11 @@ describe("similar documents drawer", () => {
       versionID,
       report.source.content_version_id,
     ]);
-    expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_run", "semantic");
+    expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "semantic", false);
   });
 
   it("stays silent when the file has no vectors yet", async () => {
-    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const action = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
     vi.spyOn(processingAPI, "documentSimilar").mockResolvedValue({
       ...report,
       state: "unavailable",
@@ -79,6 +79,14 @@ describe("similar documents drawer", () => {
       await screen.findByText("This file has no search vectors yet. Process it first."),
     ).toBeTruthy();
     expect(action).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed similar search once", async () => {
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+    vi.spyOn(processingAPI, "documentSimilar").mockRejectedValue(new Error("Similar failed"));
+    setup();
+    expect(await screen.findByText("Similar failed")).toBeTruthy();
+    expect(failure).toHaveBeenCalledExactlyOnceWith("short-lived", "search", expect.any(Error));
   });
 
   it("asks to narrow a view above the comparison limit", async () => {

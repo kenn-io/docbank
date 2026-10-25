@@ -7,7 +7,7 @@ export interface NaturalSearchRequestMode {
   binding_id?: string;
 }
 
-export function naturalQueryBindings(profile: ProcessingProfileSummary): string[] {
+function naturalQueryBindings(profile: ProcessingProfileSummary): string[] {
   return profile.query_embedding_bindings ?? profile.embedding_bindings;
 }
 
@@ -43,7 +43,7 @@ export function naturalSearchRerank(
   return enabled && mode !== "names" && profile?.reranking_available ? true : undefined;
 }
 
-export function evidenceKindLabel(kind: string): string {
+function evidenceKindLabel(kind: string): string {
   switch (kind) {
     case "node_name":
       return "Name";
@@ -80,8 +80,4 @@ export function naturalSearchFallbackNote(cause: string): string {
   return detail
     ? `Natural-language search unavailable: ${detail}. Showing names and text.`
     : "Natural-language search unavailable. Showing names and text.";
-}
-
-export function directFileEvidenceNote(): string {
-  return "Direct-file result; no text excerpt.";
 }

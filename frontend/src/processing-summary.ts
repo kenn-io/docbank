@@ -4,7 +4,10 @@ export type ProcessingPurpose = "extract" | "transcribe" | "describe" | "index";
 
 export const processingSetupURL = "https://docbank.ai/docs/usage/configuration/";
 
-const purposeLabels: Record<ProcessingPurpose, { title: string; running: string; done: string }> = {
+export const purposeLabels: Record<
+  ProcessingPurpose,
+  { title: string; running: string; done: string }
+> = {
   extract: {
     title: "Extract text",
     running: "Extracting…",
@@ -32,18 +35,6 @@ export function processingPurpose(plan: ProcessingPlan): ProcessingPurpose {
   return "extract";
 }
 
-export function purposeTitle(purpose: ProcessingPurpose): string {
-  return purposeLabels[purpose].title;
-}
-
-export function purposeRunning(purpose: ProcessingPurpose): string {
-  return purposeLabels[purpose].running;
-}
-
-export function purposeDone(purpose: ProcessingPurpose): string {
-  return purposeLabels[purpose].done;
-}
-
 const providerNames: Record<string, string> = {
   docling: "Docling",
   mistral: "Mistral",
@@ -53,7 +44,7 @@ const providerNames: Record<string, string> = {
 };
 
 /** Names a provider by the family prefix of its descriptor ID. */
-export function providerName(providerID: string): string {
+function providerName(providerID: string): string {
   const family = providerID.split(".")[0] ?? providerID;
   return providerNames[family] ?? family;
 }
@@ -81,7 +72,7 @@ function joinWords(words: string[]): string {
   return `${words.slice(0, -1).join(", ")}, and ${words.at(-1)}`;
 }
 
-export interface Destination {
+interface Destination {
   name: string;
   host: string;
   boundary: string;
@@ -163,18 +154,6 @@ export function ineligibleSentence(reason: string): string {
     ineligibleReasons[reason] ??
     `This profile can't process this file (${reason.replaceAll("_", " ")}).`
   );
-}
-
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
-  const units = ["KB", "MB", "GB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
 const classWords: Record<string, string> = {

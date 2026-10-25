@@ -2,12 +2,12 @@
   import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
 
   // Identifiers and hashes: copyable when needed, out of the way otherwise.
-  let { facts, label = "Technical details" }: { facts: InspectorFact[]; label?: string } = $props();
+  let { facts }: { facts: InspectorFact[] } = $props();
 </script>
 
 <details class="technical">
   <summary>Details</summary>
-  <InspectorDetails {facts} {label} />
+  <InspectorDetails {facts} label="Technical details" />
 </details>
 
 <style>

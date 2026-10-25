@@ -6,7 +6,7 @@
   import { Button, Chip, IconButton, Spinner, Table } from "@kenn-io/kit-ui";
   import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
-  import { type StorageStatus, type StorageStoreStatus } from "./generated/docbank.js";
+  import { type StorageStatus } from "./generated/docbank.js";
   import { formatBytes } from "./format.js";
 
   interface Props {

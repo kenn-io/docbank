@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  directFileEvidenceNote,
   evidenceKindLabels,
   naturalSearchFallbackNote,
   naturalSearchPlaceholder,
@@ -64,7 +63,6 @@ describe("natural search mapping", () => {
       "Semantic",
       "Document text",
     ]);
-    expect(directFileEvidenceNote()).toContain("no text excerpt");
     expect(rerankingNote("degraded", "timed_out")).toContain("timed_out");
     expect(naturalSearchFallbackNote("search failed")).toContain("names and text");
   });

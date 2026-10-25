@@ -161,24 +161,6 @@
   gap: var(--space-4);
 }
 
-.tool-file {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  min-width: 0;
-}
-
-.tool-file > strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-file > span {
-  color: var(--text-muted);
-}
-
 .tool-stats {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

@@ -3,7 +3,7 @@ import {
   consentLabel,
   keptSentence,
   processingPurpose,
-  purposeTitle,
+  purposeLabels,
   whereSentences,
 } from "./processing-summary.js";
 import { doclingHop, embeddingHops, hop, plan } from "./processing-test-fixtures.js";
@@ -55,21 +55,21 @@ describe("processing summary", () => {
   });
 
   it("titles the dialog by what the profile produces", () => {
-    expect(purposeTitle(processingPurpose(plan("text")))).toBe("Extract text");
+    expect(purposeLabels[processingPurpose(plan("text"))].title).toBe("Extract text");
     const transcript = hop({
       runtime_disclosure: {
         ...hop().runtime_disclosure,
         retained_artifact_roles: ["provider_transcript"],
       },
     });
-    expect(purposeTitle(processingPurpose(plan("audio", { flow: [transcript] })))).toBe(
+    expect(purposeLabels[processingPurpose(plan("audio", { flow: [transcript] }))].title).toBe(
       "Transcribe",
     );
     const photo = hop({ input_classes: ["derived_upload"] });
-    expect(purposeTitle(processingPurpose(plan("photos", { flow: [photo] })))).toBe(
+    expect(purposeLabels[processingPurpose(plan("photos", { flow: [photo] }))].title).toBe(
       "Describe photo",
     );
-    expect(purposeTitle(processingPurpose(plan("vectors", { flow: embeddingHops })))).toBe(
+    expect(purposeLabels[processingPurpose(plan("vectors", { flow: embeddingHops }))].title).toBe(
       "Index for search",
     );
   });

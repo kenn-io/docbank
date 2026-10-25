@@ -18,8 +18,7 @@
   } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
-  import { collections, type Collection } from "./collections.js";
-  import { displayName } from "./collectionNames.js";
+  import { collections, displayName, type Collection } from "./collections.js";
   import * as api from "./generated/docbank.js";
   import type {
     DateCandidate,

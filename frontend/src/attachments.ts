@@ -34,13 +34,6 @@ export interface RelationPage {
   total: number;
   next?: RelationCursor;
 }
-export interface PublicationReceipt {
-  operation_id: string;
-  request_digest: string;
-  created_at: string;
-  inventory_state: "complete" | "partial";
-  relations: AttachmentRelation[];
-}
 export type RelationDirection = "incoming" | "outgoing";
 export const relationPageSize = 50;
 export const relationDisplayLimit = 1000;
@@ -221,54 +214,6 @@ export function appendRelationPage(first: RelationPage, next: RelationPage): Rel
     invalid("relations changed or exceeded the display limit");
   return { ...next, items };
 }
-export function validatePublication(raw: unknown, sample: AttachmentRelation): PublicationReceipt {
-  const value = object(raw);
-  keys(value, ["operation_id", "request_digest", "created_at", "inventory_state", "relations"]);
-  if (matching(value.operation_id, operation) !== sample.operation_id)
-    invalid("publication identity does not agree");
-  const state = text(value.inventory_state);
-  const created = text(value.created_at);
-  if (
-    !["complete", "partial"].includes(state) ||
-    !Number.isFinite(Date.parse(created)) ||
-    !Array.isArray(value.relations) ||
-    value.relations.length > 1000
-  )
-    invalid("invalid publication inventory");
-  const relations = value.relations.map((raw, index) => {
-    const entry = relation(raw);
-    if (
-      entry.operation_id !== sample.operation_id ||
-      entry.order !== index + 1 ||
-      !sameIdentity(entry.parent, sample.parent) ||
-      entry.generation_id !== sample.generation_id ||
-      entry.attachment_id !== sample.attachment_id
-    )
-      invalid("publication relations do not agree");
-    return entry;
-  });
-  const receipt: PublicationReceipt = {
-    operation_id: sample.operation_id,
-    request_digest: matching(value.request_digest, sha),
-    created_at: created,
-    inventory_state: state as PublicationReceipt["inventory_state"],
-    relations,
-  };
-  assertPublicationAgreement(receipt, [sample]);
-  return receipt;
-}
-export function assertPublicationAgreement(
-  receipt: PublicationReceipt,
-  entries: AttachmentRelation[],
-): void {
-  for (const entry of entries) {
-    if (
-      entry.operation_id === receipt.operation_id &&
-      JSON.stringify(receipt.relations[entry.order - 1]) !== JSON.stringify(entry)
-    )
-      invalid("publication and displayed occurrence do not agree");
-  }
-}
 async function readBoundedJSON(
   session: string,
   route: string,
@@ -320,20 +265,6 @@ export async function readRelationPage(
     selected,
     direction,
     cursor,
-  );
-}
-export async function readPublication(
-  session: string,
-  sample: AttachmentRelation,
-  signal: AbortSignal,
-): Promise<PublicationReceipt> {
-  return validatePublication(
-    await readBoundedJSON(
-      session,
-      generated.getGetEmailDocumentPublicationUrl(sample.operation_id),
-      signal,
-    ),
-    sample,
   );
 }
 export async function readRelatedSource(

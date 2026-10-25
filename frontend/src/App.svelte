@@ -7,7 +7,6 @@
   import { photoSearchSort } from "./photoSearch.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
-  import ActivityIcon from "@lucide/svelte/icons/activity";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
@@ -25,7 +24,6 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import BookmarkIcon from "@lucide/svelte/icons/bookmark";
   import TagIcon from "@lucide/svelte/icons/tag";
-  import HistoryIcon from "@lucide/svelte/icons/history";
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import {
@@ -99,7 +97,7 @@
   import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
   import QueryBar from "./QueryBar.svelte";
   import { searchSyntaxOptions } from "./searchSyntax.js";
-  import { loadCollectionNames } from "./collectionNames.js";
+  import { loadCollectionNames } from "./collections.js";
   import PanelResizer from "./PanelResizer.svelte";
   import { readPanelWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
@@ -111,7 +109,6 @@
   import { readQueryHighlights } from "./queryHighlights.js";
   import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
-  import TagLabel from "./TagLabel.svelte";
   import TagPicker from "./TagPicker.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
   import AppTooltip from "./AppTooltip.svelte";
@@ -151,7 +148,7 @@
     type TagAssignmentReceipt,
   } from "./generated/docbank.js";
   import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
-  import { basename, formatBytes, formatDate } from "./format.js";
+  import { formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
   import { sortTags } from "./tagPresentation.js";
   import {
