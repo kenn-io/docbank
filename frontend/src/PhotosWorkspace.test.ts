@@ -3290,6 +3290,57 @@ it("keeps shortcuts and stack decisions usable during refresh", async () => {
   photos.dispose();
 });
 
+it("burst-gap editing remains available during a live refresh", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.started = true;
+  photos.total = 1;
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))));
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const input = screen.getByRole("spinbutton", { name: "Burst gap (seconds)" }) as HTMLInputElement;
+  expect(input.disabled).toBe(false);
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(finish).toBeDefined());
+  await tick();
+  expect(input.disabled).toBe(false);
+  await act(async () => {
+    finish(Response.json({ items: [photo(1)], total: 1 }));
+    await refreshing;
+  });
+  photos.dispose();
+});
+
+it("stack recovery remains available during a live refresh", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.authored.targets = [];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  const row = { ...photo(1), stack };
+  photos.items = [row];
+  photos.selectLoaded();
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(
+    photoPreparation([preparedPhoto(1), preparedPhoto(2)]),
+  );
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))));
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+  await act(() => {
+    photos.authored.conflict = true;
+  });
+  const button = screen.getByRole("button", { name: "Reload stack" }) as HTMLButtonElement;
+  expect(button.disabled).toBe(false);
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(finish).toBeDefined());
+  await tick();
+  expect(button.disabled).toBe(false);
+  await act(async () => {
+    finish(Response.json({ items: [row], total: 1, stacks: [stack] }));
+    await refreshing;
+  });
+  photos.dispose();
+});
+
 it("keeps newer Library values across an older live read", async () => {
   const before = preparedPhoto(1);
   const photos = workspaceWithPreparedPhoto(before);

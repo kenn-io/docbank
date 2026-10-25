@@ -310,7 +310,7 @@
     editor.unavailable(
       editor.conflict
         ? "Reload metadata before editing."
-        : photos.loading
+        : photos.blocking
           ? "Photos are loading. Try again when they finish."
           : photos.hiding || photos.trashing
             ? "A photo change is in progress. Try again when it finishes."
@@ -1241,7 +1241,7 @@
                   min="1"
                   max="30"
                   value={photos.burstGapSeconds}
-                  disabled={photos.loading || editor.busy}
+                  disabled={photos.blocking || editor.busy}
                   onchange={async (event) => {
                     const input = event.currentTarget;
                     await photos.setBurstGap(input.valueAsNumber, preserve);
@@ -1491,7 +1491,7 @@
                     >{/if}
                   {#if editor.conflict}<Button
                       size="sm"
-                      disabled={photos.loading || editor.busy || editor.loading}
+                      disabled={photos.blocking || editor.busy || editor.loading}
                       onclick={() => void reloadStack()}>Reload stack</Button
                     >
                   {:else if editor.stackError}<Button
