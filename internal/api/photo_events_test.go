@@ -32,7 +32,7 @@ func readPhotoChangeData(t *testing.T, reader *bufio.Scanner, body io.Closer) st
 	return ""
 }
 
-func TestPhotoEventsForwardsHiddenCookie(t *testing.T) {
+func TestPhotoEventsReachLockedStream(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
@@ -43,21 +43,18 @@ func TestPhotoEventsForwardsHiddenCookie(t *testing.T) {
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	unlock, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "synthetic-passcode"})
-	require.Equal(t, http.StatusOK, unlock.StatusCode, body)
-	cookie := unlock.Cookies()[0]
-	token := cookie.Value
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/photos/events", nil)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
-	request.AddCookie(cookie)
-	response, err := ts.Client().Do(request)
+	// This stream carries no Hidden unlock.
+	response, err := ts.Client().Get(ts.URL + "/api/v1/photos/events")
 	require.NoError(t, err)
 	defer func() { _ = response.Body.Close() }()
 	scanner := bufio.NewScanner(response.Body)
-	asset, err = s.SetPhotoAssetExcluded(store.WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, true)
+	_, err = s.SetPhotoAssetExcluded(store.WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"asset_id":"`+asset.ID+`"}`, readPhotoChangeData(t, scanner, response.Body))
+	require.JSONEq(t, `{}`, readPhotoChangeData(t, scanner, response.Body))
 }
+
 func TestPhotoEventsStreamLimitAndShutdown(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)

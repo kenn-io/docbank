@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// subscribeWarm subscribes and runs one empty write outside the timer, so the
+// measurement covers steady-state trigger cost rather than the one-time install.
+func subscribeWarm(b *testing.B, s *Store) func() {
+	_, stop := s.SubscribePhotoEvents()
+	require.NoError(b, s.withStorageTx(b.Context(), func(*sql.Tx) error { return nil }))
+	return stop
+}
+
 // BenchmarkPhotoImportMetadata imports a fixed batch into a fresh synthetic
 // catalog each iteration. It includes committed metadata transactions, but no
 // blob I/O; fixture creation and checkpointing are outside the timer.
@@ -60,7 +68,7 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 					require.NoError(b, s.Checkpoint(b.Context()))
 					stop := func() {}
 					if subscribed {
-						_, stop = s.SubscribePhotoEvents()
+						stop = subscribeWarm(b, s)
 					}
 					b.StartTimer()
 					for i, group := range groups {
@@ -104,7 +112,7 @@ func BenchmarkNonPhotoIngest(b *testing.B) {
 				require.NoError(b, s.Checkpoint(b.Context()))
 				stop := func() {}
 				if subscribed {
-					_, stop = s.SubscribePhotoEvents()
+					stop = subscribeWarm(b, s)
 				}
 				b.StartTimer()
 				for i := range files {

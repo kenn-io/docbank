@@ -323,20 +323,16 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, tx.Rollback())
 	}
-	var events []PhotoEvent
-	if capture {
-		events = finishPhotoCapture(ctx, tx)
-	}
+	changed := capture && photoChanged(ctx, tx)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 	if dropped {
 		s.photoEvents.installed.Store(false)
 	}
-	if !capture && s.hasPhotoSubscribers() {
-		events = []PhotoEvent{{}}
+	if changed || !capture && s.hasPhotoSubscribers() {
+		s.publishPhotoChange()
 	}
-	s.publishPhotoEvents(events)
 	return nil
 }
 
