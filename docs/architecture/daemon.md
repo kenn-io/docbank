@@ -54,6 +54,9 @@ During graceful shutdown, the daemon:
 6. Removes the runtime record used for discovery.
 
 HTTP draining and background-task draining each have a ten-second ceiling.
+A daemon hosting MCP HTTP drains MCP first, for at most half of the HTTP
+budget, so in-flight MCP reads can finish against its API. A read still
+running after that is cancelled, leaving the rest of the budget for the API.
 Clients allow 25 seconds for graceful exit before forced termination. The extra
 time covers scheduling and cleanup without consuming either drain budget.
 
@@ -174,7 +177,8 @@ A background-spawned daemon (started via auto-start, `daemon start`, or
 `daemon restart`) exits after `[server] idle_timeout` (default 30
 minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
-`docbank daemon run` never idles out. It runs until signaled or stopped.
+`docbank daemon run`, or any daemon hosting MCP HTTP, never idles out. It runs
+until signaled or stopped.
 An open photo event stream counts as an in-flight request, so a visible Photos tab keeps a background daemon from reaching its idle timeout.
 
 ## Background tasks

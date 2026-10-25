@@ -194,7 +194,8 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   using an SSH tunnel from another machine.
 - **`idle_timeout`**: how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank daemon run` ignores this and never idles out.
+  Foreground `docbank daemon run` ignores this and never idles out. A daemon
+  hosting MCP HTTP also never idles out.
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
@@ -202,10 +203,12 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] listen`**: explicit IPv4 or IPv6 address and port for the
   daemon's read-only MCP HTTP listener, such as `"127.0.0.1:7341"`. Empty keeps
-  it disabled. `DOCBANK_MCP_HTTP_LISTEN` overrides TOML; an explicit
-  `docbank daemon run --mcp-http-listen` overrides both, including an empty
-  flag value to disable hosting. Hostnames and IPv6 zones are rejected.
-  Standalone `docbank mcp --transport http` uses only its own `--listen` flag.
+  it disabled. A nonempty `DOCBANK_MCP_HTTP_LISTEN` overrides TOML. Hostnames
+  and IPv6 zones are rejected. Standalone `docbank mcp --transport http` uses
+  only its own `--listen` flag. Every daemon start then needs the MCP bearer,
+  including automatic startup from a CLI command: if that command's
+  environment lacks the bearer variable, the daemon refuses to start. Prefer
+  the environment variable when only one supervised daemon should host MCP.
 - **`[mcp.http] credential_binding`**: names the separate inbound credential
   used by both daemon-hosted MCP HTTP and `docbank mcp --transport http`. An empty value leaves stdio available
   but makes HTTP startup fail unless an environment binding is selected.

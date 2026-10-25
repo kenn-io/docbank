@@ -80,11 +80,12 @@ through a trusted tunnel, but it must be able to set the Authorization header.
 Clients that require the MCP HTTP OAuth flow are not supported.
 
 To host the same read-only HTTP tools inside the daemon, set
-`DOCBANK_MCP_HTTP_LISTEN=127.0.0.1:7341` or run
-`docbank daemon run --mcp-http-listen 127.0.0.1:7341`. The daemon uses the same
-credential and Host rules. Hosting is disabled by default; credential settings
-alone do not enable it. MCP reads use that daemon's API and drain before the
-API closes. Invalid credentials or a failed bind stop daemon startup. Restart
+`DOCBANK_MCP_HTTP_LISTEN=127.0.0.1:7341` or `[mcp.http] listen`. The daemon
+uses the same credential and Host rules. Hosting is disabled by default;
+credential settings alone do not enable it. MCP reads use that daemon's API.
+On shutdown, in-flight reads get up to five seconds to finish before the API
+closes. A daemon hosting MCP does not idle out. Invalid credentials or a failed
+bind stop daemon startup. Restart
 the daemon to rotate its bearer. See the [configuration reference](../configuration.md#mcp-http-credential)
 and [container example](containers.md#run-mcp-in-the-same-container).
 

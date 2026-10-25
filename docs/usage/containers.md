@@ -138,8 +138,9 @@ The listener is disabled by default. A credential or Host setting alone does
 not enable it.
 
 An invalid selected credential, a bearer equal to the effective daemon API
-key, or a failed MCP bind stops daemon startup. Stopping the daemon drains MCP
-reads before closing its API and releases both listeners. The container's
+key, or a failed MCP bind stops daemon startup. Stopping the daemon gives
+in-flight MCP reads up to five seconds to finish before closing its API, then
+releases both listeners. The container's
 restart policy supervises the one daemon; restart it after changing MCP
 settings or rotating the bearer.
 

@@ -1588,7 +1588,7 @@ See [Backup and restore](usage/backup.md) for the procedure.
 ## docbank daemon
 
 ```
-docbank daemon run [--mcp-http-listen <ip:port>]
+docbank daemon run
 docbank daemon start
 docbank daemon status [--json]
 docbank daemon restart
@@ -1612,8 +1612,8 @@ for explicit control, such as inspecting logs before sending data commands.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
 
-`daemon run --mcp-http-listen <ip:port>` opts into hosting read-only MCP HTTP
-tools in the daemon process. Hosting is disabled by default. See the
+`DOCBANK_MCP_HTTP_LISTEN` or `[mcp.http] listen` opts into hosting read-only
+MCP HTTP tools in the daemon process. Hosting is disabled by default. See the
 [configuration reference](configuration.md#mcp-http-credential) for credential
 settings and the [MCP guide](usage/mcp.md#connect-over-a-trusted-network) for
 Host settings and client access.

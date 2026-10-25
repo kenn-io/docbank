@@ -312,14 +312,9 @@ const (
 // and waits for it to exit so TempDir removal never races a live daemon.
 func startServe(t *testing.T) (stop func()) {
 	t.Helper()
-	return startServeWith(t, runServe)
-}
-
-func startServeWith(t *testing.T, run func(context.Context) error) (stop func()) {
-	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- run(ctx) }()
+	go func() { done <- runServe(ctx) }()
 	stop = sync.OnceFunc(func() {
 		cancel()
 		select {

@@ -9,13 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -155,33 +153,30 @@ func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
 	}
 }
 
-func TestDaemonMCPHTTPListenFlagOverridesEnvironmentAndTOML(t *testing.T) {
-	for _, explicit := range []bool{false, true} {
-		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
-			root := daemonMCPEnvironment(t)
-			require.NotNil(t, daemonRunCmd.Flags().Lookup("mcp-http-listen"))
-			if explicit {
-				require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[mcp.http]\nlisten='127.0.0.1:7341'\n"), 0o600))
-				t.Setenv("DOCBANK_MCP_HTTP_LISTEN", "invalid-listen")
-			}
-			// With no listener, the selected but missing secret stays unread.
-			t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", filepath.Join(root, "missing"))
-			stop := startServeWith(t, func(ctx context.Context) error {
-				cmd := &cobra.Command{}
-				cmd.SetContext(ctx)
-				cmd.Flags().String("mcp-http-listen", "", "")
-				if explicit {
-					if err := cmd.Flags().Parse([]string{"--mcp-http-listen="}); err != nil {
-						return fmt.Errorf("parsing daemon MCP flags: %w", err)
-					}
-				}
-				return daemonRunCmd.RunE(cmd, nil)
-			})
-			record := waitForDaemon(t, root)
-			stop()
-			assertDaemonMCPCleanedUp(t, root, record.Address)
-		})
-	}
+func TestDaemonMCPHTTPDisabledLeavesSelectedCredentialUnread(t *testing.T) {
+	root := daemonMCPEnvironment(t)
+	// With no listener, the selected but missing secret stays unread.
+	t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", filepath.Join(root, "missing"))
+	stop := startServe(t)
+	record := waitForDaemon(t, root)
+	stop()
+	assertDaemonMCPCleanedUp(t, root, record.Address)
+}
+
+func TestDaemonMCPHTTPDisablesBackgroundIdleTimeout(t *testing.T) {
+	root := daemonMCPEnvironment(t)
+	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
+	t.Setenv("DOCBANK_MCP_HTTP_LISTEN", "127.0.0.1:0")
+	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "synthetic-mcp-bearer")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"30ms\"\n"), 0o600))
+	stop := startServe(t)
+	record := waitForDaemon(t, root)
+	time.Sleep(250 * time.Millisecond) //nolint:kennlint // the daemon's idle ticker runs on the wall clock behind a real loopback listener, so synctest can't host it
+	_, _, found, err := daemonconn.Find(t.Context(), root)
+	require.NoError(t, err)
+	assert.True(t, found, "hosted MCP must keep a background daemon alive")
+	stop()
+	assertDaemonMCPCleanedUp(t, root, record.Address)
 }
 
 func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
@@ -212,7 +207,7 @@ func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 	stop, done := make(chan struct{}), make(chan error, 1)
 	go func() {
 		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{"API", apiHTTP, apiListener}, {"MCP HTTP", mcpHTTP, mcpListener}}, mcpHTTP,
-			func(context.Context) error { return nil })
+			func() {}, func(context.Context) error { return nil })
 	}()
 	t.Cleanup(func() { _ = mcpHTTP.Close(); _ = apiHTTP.Close() })
 	result := make(chan string, 1)
@@ -245,17 +240,25 @@ func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	started, canceled := make(chan struct{}), make(chan struct{})
+	started, canceled, jobsStopped := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	jobsStoppedBeforeCancel := false
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-r.Context().Done()
+		select {
+		case <-jobsStopped:
+			jobsStoppedBeforeCancel = true
+		default:
+		}
 		close(canceled)
 	})}
 	t.Cleanup(func() { _ = server.Close() })
 	stop, done := make(chan struct{}), make(chan error, 1)
+	var apiShutdownErr error
 	go func() {
 		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{"MCP HTTP", server, listener}}, server,
-			func(context.Context) error { return nil })
+			func() { close(jobsStopped) },
+			func(ctx context.Context) error { apiShutdownErr = ctx.Err(); return nil })
 	}()
 	requestDone := make(chan struct{})
 	go func() {
@@ -268,7 +271,10 @@ func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 	<-started
 	close(stop)
 	require.ErrorIs(t, <-done, context.DeadlineExceeded)
+	// A stalled MCP read must leave the API its own share of the deadline.
+	require.NoError(t, apiShutdownErr)
 	<-canceled
+	assert.True(t, jobsStoppedBeforeCancel, "jobs stop before the MCP drain")
 	<-requestDone
 }
 
@@ -282,7 +288,7 @@ func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
 	mcpHTTP, apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second}, &http.Server{ReadHeaderTimeout: 10 * time.Second}
 	err = serveDaemonHTTP(t.Context(), nil,
 		[]servingHTTP{{"API", apiHTTP, apiListener}, {"MCP HTTP", mcpHTTP, listener}}, mcpHTTP,
-		func(context.Context) error { return nil })
+		func() {}, func(context.Context) error { return nil })
 	require.ErrorIs(t, err, net.ErrClosed)
 	require.ErrorContains(t, err, "daemon MCP HTTP server")
 	// Shutdown can precede the API goroutine's entry into Serve.
@@ -294,7 +300,7 @@ func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
 	}, daemonShutdownTimeout, 10*time.Millisecond)
 }
 
-func TestDaemonMCPHTTPListenFlagSelectsMountedBinding(t *testing.T) {
+func TestDaemonMCPHTTPTOMLListenSelectsMountedBinding(t *testing.T) {
 	root := daemonMCPEnvironment(t)
 	address := unusedMCPAddress(t)
 	secret := filepath.Join(root, "mcp-bearer")
@@ -305,22 +311,13 @@ func TestDaemonMCPHTTPListenFlagSelectsMountedBinding(t *testing.T) {
 	require.NoError(t, file.Close())
 	t.Setenv("SYNTHETIC_MCP_BEARER_FILE", secret)
 	t.Setenv("SYNTHETIC_MCP_BEARER", "")
-	t.Setenv("DOCBANK_MCP_HTTP_LISTEN", "invalid-env-listen")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(`[mcp.http]
-listen = "invalid-toml-listen"
+listen = "`+address+`"
 credential_binding = "credential:inbound"
 [credential_bindings.inbound]
 environment_variable = "SYNTHETIC_MCP_BEARER"
 `), 0o600))
-	stop := startServeWith(t, func(ctx context.Context) error {
-		cmd := &cobra.Command{}
-		cmd.SetContext(ctx)
-		cmd.Flags().String("mcp-http-listen", "", "")
-		if err := cmd.Flags().Parse([]string{"--mcp-http-listen=" + address}); err != nil {
-			return fmt.Errorf("parsing daemon MCP flags: %w", err)
-		}
-		return daemonRunCmd.RunE(cmd, nil)
-	})
+	stop := startServe(t)
 	record := waitForDaemon(t, root)
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+address+"/mcp", strings.NewReader("{}"))
 	require.NoError(t, err)

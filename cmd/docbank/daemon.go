@@ -60,15 +60,7 @@ var daemonRunCmd = &cobra.Command{
 		"in the background; useful directly for debugging.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		var listenOverride *string
-		if cmd.Flags().Changed("mcp-http-listen") {
-			listen, err := cmd.Flags().GetString("mcp-http-listen")
-			if err != nil {
-				return fmt.Errorf("reading --mcp-http-listen: %w", err)
-			}
-			listenOverride = &listen
-		}
-		err := runServeWithMCPListen(cmd.Context(), listenOverride)
+		err := runServe(cmd.Context())
 		if err != nil && os.Getenv(daemonconn.EnvBackgroundDaemon) == "1" {
 			_ = daemonconn.WriteDaemonStartProblem(cmd.ErrOrStderr(), err)
 		}
@@ -134,15 +126,7 @@ func removeWebBootstrap(root string) {
 	}
 }
 
-func init() {
-	daemonRunCmd.Flags().String("mcp-http-listen", "", "host read-only authenticated MCP HTTP on an explicit IP and port (plain HTTP requires a trusted network)")
-}
-
-func runServe(ctx context.Context) error {
-	return runServeWithMCPListen(ctx, nil)
-}
-
-func runServeWithMCPListen(ctx context.Context, listenOverride *string) (retErr error) {
+func runServe(ctx context.Context) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
@@ -183,9 +167,6 @@ func runServeWithMCPListen(ctx context.Context, listenOverride *string) (retErr 
 		return fmt.Errorf("%w: %w", daemonconn.ErrDaemonConfigInvalid, err)
 	}
 
-	if listenOverride != nil {
-		cfg.MCP.HTTP.Listen = *listenOverride
-	}
 	var mcpToken string
 	if cfg.MCP.HTTP.Listen != "" {
 		if err := docmcp.ValidateHTTPListenAddress(cfg.MCP.HTTP.Listen); err != nil {
@@ -621,7 +602,7 @@ func runServeWithMCPListen(ctx context.Context, listenOverride *string) (retErr 
 	}
 
 	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
-		cfg.Storage.PackInterval.Std() == 0 {
+		cfg.Storage.PackInterval.Std() == 0 && mcpHTTP == nil {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
 			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
 			return nil
@@ -639,11 +620,10 @@ func runServeWithMCPListen(ctx context.Context, listenOverride *string) (retErr 
 		logger.Info("docbank MCP HTTP listening", "addr", mcpListener.Addr().String())
 	}
 
-	return serveDaemonHTTP(sigCtx, stopCh, servers, mcpHTTP, func(shutdownCtx context.Context) error {
+	return serveDaemonHTTP(sigCtx, stopCh, servers, mcpHTTP, func() {
 		logger.Info("docbank daemon shutting down")
 		jobSupervisor.Stop()
-		return srv.Shutdown(shutdownCtx)
-	})
+	}, srv.Shutdown)
 }
 
 type servingHTTP struct {
@@ -652,10 +632,15 @@ type servingHTTP struct {
 	listener net.Listener
 }
 
-// serveDaemonHTTP keeps the local API available until MCP reads have drained.
-// All listeners share one deadline, including session cleanup and forced closes.
+// mcpDrainTimeout caps the MCP drain so API shutdown keeps the rest of the
+// shared drain deadline for processing, sessions, and its own listeners.
+const mcpDrainTimeout = daemon.HTTPDrainTimeout / 2
+
+// serveDaemonHTTP keeps the local API available until MCP reads have drained
+// or their share of the drain deadline expires. All listeners share one
+// deadline, including session cleanup and forced closes.
 func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []servingHTTP,
-	mcpHTTP *http.Server, shutdownAPI func(context.Context) error,
+	mcpHTTP *http.Server, stopJobs func(), shutdownAPI func(context.Context) error,
 ) error {
 	type serveResult struct {
 		name string
@@ -677,13 +662,18 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 	case <-ctx.Done():
 	case <-stopCh:
 	}
+	stopJobs()
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(), daemon.HTTPDrainTimeout)
 	defer cancel()
 	// Drain MCP while its API-backed reads can still complete against the API.
+	// Force-closing a stalled read cancels its request context.
 	var shutdownErr error
 	if mcpHTTP != nil {
-		if err := mcpHTTP.Shutdown(shutdownCtx); err != nil {
+		mcpCtx, cancelMCP := context.WithTimeout(shutdownCtx, mcpDrainTimeout)
+		err := mcpHTTP.Shutdown(mcpCtx)
+		cancelMCP()
+		if err != nil {
 			_ = mcpHTTP.Close()
 			shutdownErr = fmt.Errorf("draining daemon MCP HTTP requests: %w", err)
 		}
