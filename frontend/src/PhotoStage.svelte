@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
   import { previewSlotsKey, type PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -57,11 +57,13 @@
       photos,
       cache,
       untrack(() => current),
+      untrack(() => loader),
     );
     loader = active;
     active.restoreZoom(() => image?.isZoomed());
-    return () => active.dispose();
+    return () => active.retire();
   });
+  onDestroy(() => loader.dispose());
   async function retry() {
     if (loader.failure?.action !== "reload") {
       const active = loader;

@@ -25,9 +25,23 @@ export async function loadPhotoPreview(
 export class PhotoPreviewDisplay {
   private controller = new AbortController();
   private urls = new Set<string>();
+  // Images a replaced display left on screen; they go once this display shows its own.
+  private inherited = new Set<string>();
   rank = -1;
   get signal() {
     return this.controller.signal;
+  }
+  adopt(previous: PhotoPreviewDisplay) {
+    this.rank = previous.rank;
+    for (const url of previous.urls) {
+      this.urls.add(url);
+      this.inherited.add(url);
+    }
+    previous.urls.clear();
+  }
+  /** Stops pending loads and keeps the images, which the next display may still show. */
+  retire() {
+    this.controller.abort();
   }
   async show(objectURL: string, level: number, onshow: () => void) {
     if (this.signal.aborted) {
@@ -46,6 +60,11 @@ export class PhotoPreviewDisplay {
     if (this.signal.aborted || level < this.rank) return;
     this.rank = level;
     onshow();
+    for (const url of this.inherited) {
+      this.urls.delete(url);
+      URL.revokeObjectURL(url);
+    }
+    this.inherited.clear();
   }
   dispose() {
     this.controller.abort();
@@ -66,10 +85,26 @@ export class PhotoPreviewLoader {
     private photos: Photos,
     private cache: PhotoPreviewCache,
     readonly photo?: PhotoBrowseRow,
+    previous?: PhotoPreviewLoader,
   ) {
+    // The same version keeps its image until a successor loads, whatever happens to the reread.
+    if (
+      photo &&
+      previous?.photo?.asset_id === photo.asset_id &&
+      previous.photo.content_version_id === photo.content_version_id
+    ) {
+      this.url = previous.url;
+      this.quality = previous.quality;
+      this.active.adopt(previous.active);
+    } else previous?.dispose();
     if (!photo) return;
     void this.load("grid");
     this.timer = setTimeout(() => void this.load("fit"), 150);
+  }
+  /** Stops loading but keeps the displayed image for a successor to inherit. */
+  retire() {
+    clearTimeout(this.timer);
+    this.active.retire();
   }
   dispose() {
     clearTimeout(this.timer);

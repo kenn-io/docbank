@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -98,11 +98,17 @@
     void reloadRevision;
     const selected = untrack(() => photo);
     busy = false;
-    const active = new PhotoPreviewLoader(photos, cache, selected);
+    const active = new PhotoPreviewLoader(
+      photos,
+      cache,
+      selected,
+      untrack(() => loader),
+    );
     loader = active;
     active.restoreZoom(() => image?.isZoomed());
-    return () => active.dispose();
+    return () => active.retire();
   });
+  onDestroy(() => loader.dispose());
   $effect(() =>
     prefetchPreviews(
       photos,

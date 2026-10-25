@@ -1347,8 +1347,13 @@ it.each([
     await waitFor(() =>
       expect((photos.items[0] as PhotoBrowseRow).content_version_id).toBe(fresh.content_version_id),
     );
+    // The viewer keeps its fit image while the reloaded photo prepares, so count that photo's prepares.
+    await waitFor(() =>
+      expect(preview.mock.calls.filter(([row]) => row.asset_id === "photo-1")).toHaveLength(
+        preparations + 1,
+      ),
+    );
     await screen.findByText("Fit preview");
-    await waitFor(() => expect(preview).toHaveBeenCalledTimes(preparations + 1));
     expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2"]);
     expect(photos.cursor).toBe("next");
     expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
