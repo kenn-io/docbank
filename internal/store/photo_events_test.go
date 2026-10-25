@@ -97,6 +97,32 @@ func TestPhotoEventsOneSignalPerCommit(t *testing.T) {
 	})
 }
 
+// publishRenditionHead stages a build and its lexical generation, then publishes the head on its own.
+// Staging commits signal too, so they are drained and only the publication can satisfy the caller.
+func publishRenditionHead(t *testing.T, s *Store, events <-chan struct{}, node Node, profile ProcessingProfileRecord) {
+	t.Helper()
+	build := catalogRenditionBuild(s, profile)
+	build.ID = testSHA256([]byte(node.CurrentVersionID + "complete"))
+	build.SourceSHA256 = node.BlobHash
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	attachment := RenditionAttachmentRecord{
+		ID: testSHA256([]byte(node.CurrentVersionID + profile.Fingerprint)), VaultID: s.VaultID(),
+		ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile, AttachedAt: nowRFC3339(),
+	}
+	generation, err := s.StageLexicalGeneration(t.Context(), lexicalReplacementGenerationIDForTest(t, s))
+	require.NoError(t, err)
+	select {
+	case <-events:
+	default:
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
+		ContentVersionID:             node.CurrentVersionID,
+		ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID:                 attachment.ID,
+		PublishedAt:                  nowRFC3339(),
+	}, generation.ID))
+}
+
 func TestPhotoEventsSignalWhatPhotosRead(t *testing.T) {
 	t.Parallel()
 	s, _, documents, profile := collectionCoverageFixture(t, 2)
@@ -133,9 +159,9 @@ func TestPhotoEventsSignalWhatPhotosRead(t *testing.T) {
 		// A document build moves the shared search generation, which changes which photos a text query matches.
 		// The first publication inserts the head; the second moves it.
 		{"unrelated rendition head move", func() error {
-			collectionCoveragePublish(t, s, documents[0], profile, "complete")
+			publishRenditionHead(t, s, events, documents[0], profile)
 			requirePhotoSignal(t, events, "a new head")
-			collectionCoveragePublish(t, s, documents[1], profile, "complete")
+			publishRenditionHead(t, s, events, documents[1], profile)
 			return nil
 		}},
 	} {
