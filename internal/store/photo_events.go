@@ -20,16 +20,6 @@ type PhotoEvent struct {
 	hiddenOnly bool   // Internal access scope survives ID-free batching.
 }
 
-// CollapsePhotoEvents keeps one event per photo. More than
-// PhotoEventIDLimit photos, or any ID-free event, becomes one ID-free refetch.
-func CollapsePhotoEvents(events []PhotoEvent) []PhotoEvent {
-	batch := photoEventBatch{}
-	for _, event := range events {
-		batch.add(event)
-	}
-	return batch.events()
-}
-
 // Every capture and overflow uses the same bounded fold, including its access scope.
 type photoEventBatch struct {
 	byID       map[string]PhotoEvent

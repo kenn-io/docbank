@@ -227,12 +227,6 @@ func TestPhotoEventsOverflowCollapses(t *testing.T) {
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch))
 }
 
-func TestPhotoEventsCollapseBatch(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, []PhotoEvent{{}}, CollapsePhotoEvents([]PhotoEvent{{AssetID: "a"}, {}}))
-	require.Equal(t, []PhotoEvent{{AssetID: "a"}}, CollapsePhotoEvents([]PhotoEvent{{AssetID: "a"}, {AssetID: "a"}}))
-}
-
 func TestPhotoEventsHiddenTransition(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
