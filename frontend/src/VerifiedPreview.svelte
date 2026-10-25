@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -99,17 +99,16 @@
   }
   async function openRelated(target: AttachmentIdentity): Promise<void> {
     cancelNavigation();
-    if (relatedSources.length >= 32) {
-      navigationError =
-        "Navigation depth limit reached. Return to an earlier document to continue.";
-      return;
-    }
     const pending = new AbortController();
     navigationController = pending;
     const request = navigationEpoch;
     navigationPending = true;
     navigationError = "";
     try {
+      if (relatedSources.length >= 32)
+        throw new Error(
+          "Navigation depth limit reached. Return to an earlier document to continue.",
+        );
       const next = await readRelatedSource(session, target, pending.signal);
       if (request !== navigationEpoch || pending.signal.aborted) return;
       relatedSources = [...relatedSources, next];
@@ -117,6 +116,7 @@
       activeTab = parseMediaType(next.mimeType) === "message/rfc822" ? "attachments" : "preview";
     } catch (cause) {
       if (request !== navigationEpoch || pending.signal.aborted) return;
+      reportFailure(session, "open", cause);
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
       else navigationError = cause instanceof Error ? cause.message : String(cause);
     } finally {

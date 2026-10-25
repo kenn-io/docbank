@@ -63,7 +63,7 @@ func registerDaemonOpenAPI(api huma.API) {
 		}},
 		Responses: map[string]*huma.Response{
 			"202": jsonResponse("Event queued, or dropped because telemetry is off", reflect.TypeFor[TelemetryEventReceipt]()),
-			"400": {Description: "Malformed body, unsupported event, missing or unsupported screen or surface, or search_run with missing or unsupported search_type"},
+			"400": {Description: "Malformed body, unsupported event, missing or unsupported screen or surface, search_run or search_empty with missing or unsupported search_type, or error_shown with a missing or non-string kind"},
 			"401": {Description: "Missing or invalid API key or browser session"},
 			"403": {Description: "Browser session does not permit this request"},
 			"413": {Description: "Request body exceeds 64 KiB"},

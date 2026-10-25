@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import FileUpIcon from "@lucide/svelte/icons/file-up";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -110,6 +110,7 @@
     running = true;
     let refreshNeeded = false;
     let added = false;
+    let failedCause: unknown;
     let authFailed = false;
 
     for (const queued of items) {
@@ -176,17 +177,20 @@
             error:
               "Upload outcome is unconfirmed. Refreshing the folder; retry this file after running `docbank web` again.",
           });
+          failedCause ??= cause;
           break;
         }
         updateItem(queued.id, {
           state: "failed",
           error: cause instanceof Error ? cause.message : String(cause),
         });
+        failedCause ??= cause;
         if (cause instanceof UploadChannelError) break;
       }
     }
 
     if (added) reportAction(session, "document_added");
+    if (failedCause) reportFailure(session, "add", failedCause);
     if (controller === active) {
       controller = null;
       running = false;

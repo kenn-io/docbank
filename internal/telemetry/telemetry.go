@@ -3,6 +3,7 @@ package telemetry
 
 import (
 	"log/slog"
+	"slices"
 	"time"
 
 	"go.kenn.io/kit/telemetry/posthog"
@@ -17,6 +18,8 @@ const (
 	EventSessionEnded   = "session_ended"
 	EventDocumentAdded  = "document_added"
 	EventSearchRun      = "search_run"
+	EventSearchEmpty    = "search_empty"
+	EventErrorShown     = "error_shown"
 	EventDocumentOpened = "document_opened"
 	// HeartbeatJobName is the supervised job that sends daemon_active.
 	HeartbeatJobName = "telemetry:heartbeat"
@@ -60,6 +63,7 @@ func New(opts Options) *Reporter {
 		}
 	}
 	surface := posthog.RequireProperty("surface", posthog.AllowStringValues("web", "tui", "cli"))
+	searchType := posthog.RequireProperty("search_type", posthog.AllowStringValues("text", "semantic", "hybrid"))
 	reporter, err := posthog.NewReporter(posthog.Options{
 		Logger:      logger,
 		APIKey:      opts.apiKey,
@@ -76,9 +80,11 @@ func New(opts Options) *Reporter {
 		posthog.WithAllowedEvent(EventAppOpened),
 		posthog.WithAllowedEvent(EventDocumentAdded, surface),
 		posthog.WithAllowedEvent(EventDocumentOpened, surface),
-		posthog.WithAllowedEvent(EventSearchRun,
+		posthog.WithAllowedEvent(EventSearchRun, surface, searchType),
+		posthog.WithAllowedEvent(EventSearchEmpty, surface, searchType),
+		posthog.WithAllowedEvent(EventErrorShown,
 			surface,
-			posthog.RequireProperty("search_type", posthog.AllowStringValues("text", "semantic", "hybrid"))),
+			posthog.RequireProperty("kind", outcomeKind)),
 		posthog.WithAllowedEvent(EventScreenViewed,
 			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),
 			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui"))),
@@ -119,4 +125,12 @@ func SearchType(actualMode string) string {
 		return "text"
 	}
 	return actualMode
+}
+
+func outcomeKind(value any) (any, bool) {
+	kind, ok := value.(string)
+	if ok && !slices.Contains([]string{"add", "search", "open"}, kind) {
+		kind = "other"
+	}
+	return kind, ok
 }

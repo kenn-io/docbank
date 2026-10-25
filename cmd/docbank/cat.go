@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -31,25 +32,45 @@ files use "docbank rendition window"; for an older version use
 		}
 		n, err := selector.resolveIncludingTrash(cmd.Context(), c)
 		if err != nil {
+			reportFailure(cmd, c, "open", err, false)
 			return err
 		}
 		if n.Kind == "dir" {
-			return fmt.Errorf("%q: %w", args[0], store.ErrNotFile)
+			err := fmt.Errorf("%q: %w", args[0], store.ErrNotFile)
+			reportFailure(cmd, c, "open", err, false)
+			return err
 		}
 		// Read the immutable version selected by Stat. A concurrent replacement
 		// may advance the node, but it cannot make this stream silently switch
 		// to different bytes.
 		rc, err := c.VersionContent(cmd.Context(), n.CurrentVersionID)
 		if err != nil {
+			reportFailure(cmd, c, "open", err, false)
 			return err
 		}
 		defer func() { _ = rc.Close() }()
-		if _, err := rc.CopyVerified(cmd.OutOrStdout()); err != nil {
+		output := &catOutput{Writer: cmd.OutOrStdout()}
+		if _, err := rc.CopyVerified(output); err != nil {
+			if !isClosedOutputPipe(output.err) {
+				reportFailure(cmd, c, "open", err, false)
+			}
 			return fmt.Errorf("streaming %q: %w", args[0], err)
 		}
-		reportAction(cmd, c, "document_opened", "", false)
+		reportAction(cmd, c, "document_opened", "", "", false)
 		return nil
 	},
+}
+
+type catOutput struct {
+	io.Writer
+
+	err error
+}
+
+func (w *catOutput) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	w.err = err
+	return n, err
 }
 
 func init() { rootCmd.AddCommand(catCmd) }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportFailure, reportSearch } from "./action-events.js";
   import { untrack } from "svelte";
   import { SearchInput, SelectDropdown } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
@@ -18,16 +18,25 @@
   $effect(() => {
     syntax = appliedSyntax;
   });
-  function submit() {
+  function submit(explicit = false) {
     const text = search.trim();
-    const pending = photos.setQuery({
-      ...photos.query,
-      text: search,
-      syntax,
-      sort: photoSearchSort({ text: search, syntax }),
-    });
-    void pending?.then((accepted) => {
-      if (accepted && text) reportAction(photos.session, "search_run", "text");
+    const pending = photos.setQuery(
+      {
+        ...photos.query,
+        text: search,
+        syntax,
+        sort: photoSearchSort({ text: search, syntax }),
+      },
+      explicit
+        ? (cause) => {
+            if (text) reportFailure(photos.session, "search", cause);
+          }
+        : undefined,
+    );
+    void pending?.then((outcome) => {
+      if (!explicit || !text || !outcome) return;
+      if (outcome.accepted) return reportSearch(photos.session, "text", outcome.empty);
+      reportFailure(photos.session, "search", outcome.cause);
     });
     return pending;
   }
@@ -37,7 +46,7 @@
   class="search"
   onsubmit={(event) => {
     event.preventDefault();
-    submit();
+    submit(true);
   }}
 >
   <SearchInput

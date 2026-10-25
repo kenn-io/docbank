@@ -59,6 +59,90 @@ beforeEach(() => {
   vi.stubGlobal("File", NodeFile);
 });
 
+it.each(["conflict", "auth", "abort", "after item failure"])(
+  "reports outer Add failures once with exclusions: %s",
+  async (outcome) => {
+    const failure = vi.spyOn(actions, "reportFailure");
+    const telemetry = vi.fn().mockResolvedValue(Response.json({ status: "queued" }));
+    vi.stubGlobal("fetch", telemetry);
+    const module = await import("./photoImportStorage.js");
+    const createStorage = module.photoImportStorage;
+    let rejectSaved = false;
+    vi.spyOn(module, "photoImportStorage").mockImplementation((id, session) => {
+      const storage = createStorage(id, session);
+      return {
+        ...storage,
+        async saved() {
+          if (rejectSaved)
+            throw outcome === "auth"
+              ? new APIError("Session expired", 401, "unauthorized")
+              : new DOMException("Canceled", "AbortError");
+          return storage.saved();
+        },
+      };
+    });
+    const channel: PhotoImportTransport = {
+      planPhotoImport: vi
+        .fn()
+        .mockResolvedValue({ import_id: "outer", groups: [[0], [1]], unsupported: [] }),
+      uploadPhotoGroup: vi.fn().mockRejectedValue(new APIError("Upload failed", 500, "internal")),
+    };
+    const auth = vi.fn();
+    render(PhotoImportDrawer, {
+      channel,
+      vaultID: "outer-failure",
+      session: "session",
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: auth,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+      target: { files: files().slice(0, 2) },
+    });
+    const add = await screen.findByRole("button", { name: "Add 2 groups" });
+    const storage = createStorage("outer-failure", "session");
+    if (outcome === "conflict" || outcome === "after item failure") {
+      const checkpoint = await storage.load();
+      const change = () => storage.replace({ ...checkpoint!, revision: "other-tab" }, checkpoint);
+      if (outcome === "conflict") await change();
+      else
+        vi.mocked(channel.uploadPhotoGroup).mockImplementationOnce(async () => {
+          await change();
+          throw new APIError("Upload failed", 500, "internal");
+        });
+    } else {
+      rejectSaved = true;
+    }
+    await fireEvent.click(add);
+    if (outcome === "auth") await waitFor(() => expect(auth).toHaveBeenCalledOnce());
+    else
+      await screen.findByText(
+        outcome === "abort"
+          ? /Canceled/
+          : "Import progress changed in another tab. Close and reopen Add photos.",
+      );
+    expect(failure).toHaveBeenCalledExactlyOnceWith(
+      "session",
+      "add",
+      expect.objectContaining({ name: outcome === "abort" ? "AbortError" : "APIError" }),
+    );
+    if (outcome === "auth" || outcome === "abort") expect(telemetry).not.toHaveBeenCalled();
+    else {
+      expect(telemetry).toHaveBeenCalledOnce();
+      expect(JSON.parse(telemetry.mock.calls[0][1].body)).toEqual({
+        event: "error_shown",
+        properties: { surface: "web", kind: "add" },
+      });
+    }
+  },
+);
+
 afterEach(() => {
   vi.unstubAllGlobals();
   cleanup();
@@ -197,6 +281,7 @@ it.each([false, true])(
   "uses the plan, uploads groups in order, reports totals, and refreshes once: skipped=%s",
   async (skipped) => {
     const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
     const selected = files();
     const channel: PhotoImportTransport = {
       planPhotoImport: vi.fn().mockResolvedValue({
@@ -235,6 +320,7 @@ it.each([false, true])(
     });
     await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(failure).not.toHaveBeenCalled();
     if (skipped) {
       expect(action).not.toHaveBeenCalled();
       return;
@@ -432,6 +518,7 @@ it("stops after the current group when cancelled", async () => {
 });
 
 it("reports ambiguous and failed groups and uses the chosen destination", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const selected = [
     files()[0],
     files()[1],
@@ -479,6 +566,11 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
   expect(screen.getByText("Ambiguous: 1")).toBeTruthy();
   expect(screen.getByText("Failed: 1")).toBeTruthy();
   expect(screen.getByText("Hash mismatch")).toBeTruthy();
+  expect(failure).toHaveBeenCalledExactlyOnceWith(
+    "session",
+    "add",
+    expect.objectContaining({ message: "Hash mismatch" }),
+  );
   expect(channel.planPhotoImport).toHaveBeenCalledWith(
     expect.any(Array),
     "/photos",

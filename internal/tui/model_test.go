@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,8 +22,12 @@ import (
 	"go.kenn.io/docbank/internal/telemetry"
 )
 
+type actionCall struct {
+	event, searchType, kind string
+}
+
 type fakeBackend struct {
-	actions                   []string
+	actions                   []actionCall
 	screenErr                 error
 	screens                   []string
 	nodes                     map[string]api.Node
@@ -2769,8 +2774,8 @@ func rowIDs(rows []row) []int64 {
 	return ids
 }
 
-func (f *fakeBackend) ReportAction(_ context.Context, event, searchType string) error {
-	f.actions = append(f.actions, event+":"+searchType)
+func (f *fakeBackend) ReportAction(_ context.Context, event, searchType, kind string) error {
+	f.actions = append(f.actions, actionCall{event: event, searchType: searchType, kind: kind})
 	return nil
 }
 
@@ -2876,7 +2881,7 @@ func TestEnterOpenReportsDocumentOpened(t *testing.T) {
 	model.rows = []row{{node: backend.nodes["/README.txt"]}}
 	model, command := updateModel(t, model, key(tea.KeyEnter))
 	runModelCommand(t, model, command)
-	assert.Equal(t, []string{"document_opened:"}, backend.actions)
+	assert.Equal(t, []actionCall{{event: "document_opened"}}, backend.actions)
 }
 
 func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
@@ -2894,7 +2899,7 @@ func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
 				var cmd tea.Cmd
 				model, cmd = updateModel(t, model, oldReply)
 				model = runModelCommand(t, model, cmd)
-				assert.Equal(t, []string{"search_run:text"}, backend.actions)
+				assert.Equal(t, []actionCall{{event: "search_run", searchType: "text"}}, backend.actions)
 				backend.actions = nil
 			}
 			model, cmd := updateModel(t, model, naturalProfilesLoadedMsg{
@@ -2909,7 +2914,8 @@ func TestProfileDiscoveryPreservesPendingSearchAction(t *testing.T) {
 			}
 			assert.Equal(t, "report", model.searchQuery)
 			if pending {
-				assert.Equal(t, []string{"search_run:hybrid"}, backend.actions)
+				runs := slices.DeleteFunc(slices.Clone(backend.actions), func(action actionCall) bool { return action.event != "search_run" })
+				assert.Equal(t, []actionCall{{event: "search_run", searchType: "hybrid"}}, runs)
 			} else {
 				assert.Empty(t, backend.actions)
 			}
@@ -2923,17 +2929,28 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 		mode             string
 		fallback         bool
 		failedSubmission bool
-		want             string
+		want             []actionCall
 		checkReruns      bool
 	}{
-		{name: "names", mode: naturalNames, want: "search_run:text", checkReruns: true},
-		{name: "auto", mode: naturalAuto, want: "search_run:hybrid"},
-		{name: "fallback", mode: naturalHybrid, fallback: true, want: "search_run:text"},
-		{name: "refresh after failure", mode: naturalNames, failedSubmission: true, want: "search_run:text"},
+		{name: "names", mode: naturalNames, want: []actionCall{{event: "search_run", searchType: "text"}}, checkReruns: true},
+		{name: "auto", mode: naturalAuto, want: []actionCall{{event: "search_run", searchType: "hybrid"}}},
+		{name: "fallback", mode: naturalHybrid, fallback: true, want: []actionCall{{event: "search_run", searchType: "text"}}},
+		{name: "refresh after failure", mode: naturalNames, failedSubmission: true, want: []actionCall{{event: "search_run", searchType: "text"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := newFakeBackend()
 			backend.naturalSearch.ActualMode = "hybrid"
+			// Empty reporting has its own tests; this one watches only search_run.
+			only := func(event string) []actionCall {
+				var out []actionCall
+				for _, action := range backend.actions {
+					if action.event == event {
+						out = append(out, action)
+					}
+				}
+				return out
+			}
+			runs := func() []actionCall { return only("search_run") }
 			model, err := New(t.Context(), backend)
 			require.NoError(t, err)
 			model.naturalMode = tc.mode
@@ -2951,14 +2968,17 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
 			}
-			require.Equal(t, []string{tc.want}, backend.actions)
+			require.Equal(t, tc.want, runs())
 			if tc.failedSubmission {
 				model.searching = true
 				model.searchInput.SetValue("failed query")
 				model, _ = updateModel(t, model, key(tea.KeyEnter))
 				backend.err = errors.New("search failed")
 				model, cmd = updateModel(t, model, model.loadSearch("failed query", model.requestID)())
-				require.Nil(t, cmd)
+				require.NotNil(t, cmd)
+				cmd()
+				// The failure shows an error but runs no search, so only error_shown is new.
+				require.Equal(t, append(slices.Clone(tc.want), actionCall{event: "error_shown", kind: "search"}), backend.actions)
 				require.Equal(t, "report", model.searchQuery)
 				backend.err = nil
 				model, _ = updateModel(t, model, runeKey('r'))
@@ -2966,7 +2986,11 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
-				assert.Equal(t, []string{tc.want}, backend.actions)
+				assert.Equal(t, tc.want, runs())
+				backend.err = errors.New("refresh failed")
+				model, _ = updateModel(t, model, runeKey('r'))
+				_, cmd = updateModel(t, model, model.loadSearch("report", model.requestID)())
+				assert.Nil(t, cmd)
 			}
 			if !tc.checkReruns {
 				return
@@ -2977,7 +3001,7 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
-				assert.Equal(t, []string{tc.want}, backend.actions)
+				assert.Equal(t, tc.want, runs())
 			}
 			model.searching = true
 			model.searchInput.SetValue("report")
@@ -2987,12 +3011,12 @@ func TestSearchActionReportsSubmissionsAndKeepsRerunsSilent(t *testing.T) {
 				model = runModelCommand(t, model, cmd)
 			}
 			// Tab above cycled the mode away from names, so a new submission reports hybrid.
-			assert.Equal(t, []string{tc.want, "search_run:hybrid"}, backend.actions)
+			assert.Equal(t, append(slices.Clone(tc.want), actionCall{event: "search_run", searchType: "hybrid"}), runs())
 		})
 	}
 }
 
-func TestSimilarSearchReportsOnlyCurrentSuccessfulResults(t *testing.T) {
+func TestSimilarSearchReportsRunEmptyAndFailureOnlyForCurrentResults(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
@@ -3004,12 +3028,12 @@ func TestSimilarSearchReportsOnlyCurrentSuccessfulResults(t *testing.T) {
 		request, similar uint64
 		state            string
 		err              error
-		want             int
+		wantActions      []actionCall
 	}{
-		{"superseded", 4, 1, "ready", nil, 0},
-		{"failed", 5, 2, "", errors.New("synthetic failure"), 0},
-		{"unavailable", 5, 2, "unavailable", nil, 0},
-		{"empty results", 5, 2, "ready", nil, 1},
+		{"superseded", 4, 1, "ready", nil, nil},
+		{"failed", 5, 2, "", errors.New("synthetic failure"), []actionCall{{event: "error_shown", kind: "search"}}},
+		{"unavailable", 5, 2, "unavailable", nil, nil},
+		{"empty results", 5, 2, "ready", nil, []actionCall{{event: "search_run", searchType: "semantic"}, {event: "search_empty", searchType: "semantic"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend.actions = nil
@@ -3017,10 +3041,44 @@ func TestSimilarSearchReportsOnlyCurrentSuccessfulResults(t *testing.T) {
 			if cmd != nil {
 				runModelCommand(t, model, cmd)
 			}
-			assert.Len(t, backend.actions, tc.want)
-			if tc.want > 0 {
-				assert.Equal(t, "search_run:semantic", backend.actions[0])
-			}
+			assert.Equal(t, tc.wantActions, backend.actions)
+		})
+	}
+}
+
+func TestEmptyArmedSearchReportsRunAndEmpty(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.requestID = 7
+	model.reportSearchID = 7
+	msg := searchLoadedMsg{requestID: 7, query: "missing"}
+	_, cmd := updateModel(t, model, msg)
+	runModelCommand(t, model, cmd)
+	assert.Equal(t, []actionCall{{event: "search_run", searchType: "text"}, {event: "search_empty", searchType: "text"}}, backend.actions)
+}
+
+func TestProcessingSearchReportsOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		report api.DocumentSearchReport
+		want   []actionCall
+	}{
+		{"failed", errors.New("synthetic failure"), api.DocumentSearchReport{}, []actionCall{{event: "error_shown", kind: "search"}}},
+		{"empty", nil, api.DocumentSearchReport{ActualMode: "hybrid"}, []actionCall{{event: "search_run", searchType: "hybrid"}, {event: "search_empty", searchType: "hybrid"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.processingOpen = true
+			model.processingRequestID, model.processingSearchID = 5, 2
+			_, cmd := updateModel(t, model, processingSearchLoadedMsg{
+				requestID: 5, searchID: 2, err: tc.err, report: tc.report,
+			})
+			runModelCommand(t, model, cmd)
+			assert.Equal(t, tc.want, backend.actions)
 		})
 	}
 }

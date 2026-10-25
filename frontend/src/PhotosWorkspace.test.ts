@@ -64,7 +64,11 @@ vi.mock("./PhotoMap.svelte", () => ({
   },
 }));
 
-vi.mock("./action-events.js", () => ({ reportAction: vi.fn() }));
+vi.mock("./action-events.js", () => ({
+  reportAction: vi.fn(),
+  reportSearch: vi.fn(),
+  reportFailure: vi.fn(),
+}));
 
 const tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 };
 
@@ -86,6 +90,8 @@ afterEach(() => {
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
   vi.mocked(actions.reportAction).mockClear();
+  vi.mocked(actions.reportSearch).mockClear();
+  vi.mocked(actions.reportFailure).mockClear();
   vi.restoreAllMocks();
   localStorage.clear();
   new Photos("scoped", vi.fn()).setDensity("comfortable");
@@ -1840,11 +1846,20 @@ it("reopens the map where it was after a remount", async () => {
   photos.dispose();
 });
 
-function openMapViewerSetup() {
+function openMapViewerSetup(mapMode = true, hidden = false) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
-  photos.items = [mapPhoto(1), mapPhoto(2)];
+  const photos = new Photos("scoped", vi.fn(), hidden, photoQuery, {
+    projection: mapMode ? "map" : undefined,
+  });
+  photos.items = mapMode ? [mapPhoto(1), mapPhoto(2)] : [photo(1), photo(2)];
   photos.total = 2;
   photos.started = true;
   vi.spyOn(photos, "resume").mockResolvedValue();
@@ -1852,7 +1867,7 @@ function openMapViewerSetup() {
   const preview = vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   const props = {
     photos,
-    mapMode: true,
+    mapMode,
     tiles: {
       tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
       host: "tiles.example.org",
@@ -1872,10 +1887,51 @@ async function openMapViewer({ props, view }: ReturnType<typeof openMapViewerSet
   await view.rerender({ ...props, photoID: "photo-1" });
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
 }
-it.each(["success", "failure", "closed"] as const)(
-  "reports Map opens after the viewer's lookup succeeds, outcome=%s",
-  async (outcome) => {
-    const { photos, lookup, props, view } = openMapViewerSetup();
+it.each([true, false])(
+  "reports an open denied access only outside Hidden, hidden=%s",
+  async (hidden) => {
+    const { photos, lookup, props, view } = openMapViewerSetup(true, hidden);
+    lookup.mockRestore();
+    const onauth = vi.spyOn(photos, "onauthfailure");
+    stubPhotoFetch(
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { code: hidden ? "hidden_locked" : "forbidden", detail: "Access denied" },
+            { status: 403 },
+          ),
+        ),
+    );
+    props.onphotochange.mockReturnValue(true);
+    await vi.dynamicImportSettled();
+    map.onvisible!([mapPhoto(1)]);
+    await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+    await view.rerender({ ...props, photoID: "photo-1" });
+    await screen.findByText("Access denied");
+    if (hidden) {
+      expect(onauth).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 403 }));
+      expect(actions.reportFailure).not.toHaveBeenCalled();
+    } else {
+      expect(onauth).not.toHaveBeenCalled();
+      expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+        "scoped",
+        "open",
+        expect.objectContaining({ status: 403 }),
+      );
+    }
+    expect(actions.reportAction).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);
+it.each(
+  [false, true].flatMap((mapMode) =>
+    ["success", "failure", "closed", "stepped"].map((outcome) => ({ mapMode, outcome })),
+  ),
+)(
+  "reports explicit photo opens once, map=$mapMode outcome=$outcome",
+  async ({ mapMode, outcome }) => {
+    const { photos, lookup, props, view } = openMapViewerSetup(mapMode);
     props.onphotochange.mockReturnValue(true);
     let resolve!: (row: PhotoBrowseRow) => void;
     let reject!: (cause: Error) => void;
@@ -1887,24 +1943,35 @@ it.each(["success", "failure", "closed"] as const)(
         }),
     );
     await vi.dynamicImportSettled();
-    map.onvisible!([mapPhoto(1)]);
+    if (mapMode) map.onvisible!([mapPhoto(1)]);
     await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+    // A grid refresh can remove the clicked row before the viewer receives its id.
+    if (!mapMode) photos.items = [];
     await view.rerender({ ...props, photoID: "photo-1" });
-    // The viewer's own lookup decides the report; opening adds no second lookup.
     expect(lookup).toHaveBeenCalledExactlyOnceWith("photo-1", expect.any(AbortSignal));
     expect(actions.reportAction).not.toHaveBeenCalled();
+    expect(actions.reportFailure).not.toHaveBeenCalled();
     if (outcome === "closed") {
       await fireEvent.click(await screen.findByRole("button", { name: "Close photo viewer" }));
       await view.rerender({ ...props, photoID: "" });
+    } else if (outcome === "stepped") {
+      photos.items = [photo(2)];
+      await view.rerender({ ...props, photoID: "photo-2" });
     }
     await act(async () => {
-      if (outcome === "failure")
-        reject(new APIError("This photo is no longer in this view.", 404, "not_found"));
-      else resolve(photo(1));
+      if (outcome === "success") resolve(photo(1));
+      else reject(new APIError("This photo is no longer in this view.", 404, "not_found"));
     });
     if (outcome === "success")
       expect(actions.reportAction).toHaveBeenCalledExactlyOnceWith("scoped", "document_opened");
     else expect(actions.reportAction).not.toHaveBeenCalled();
+    if (outcome === "failure")
+      expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+        "scoped",
+        "open",
+        expect.objectContaining({ status: 404 }),
+      );
+    else expect(actions.reportFailure).not.toHaveBeenCalled();
     photos.dispose();
   },
 );

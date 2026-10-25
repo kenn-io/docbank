@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportFailure, reportSearch } from "./action-events.js";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -246,9 +246,12 @@
       });
       if (request !== generation) return;
       searchReport = nextReport;
-      reportAction(session, "search_run", nextReport.actual_mode);
+      reportSearch(session, nextReport.actual_mode, nextReport.results.length === 0);
     } catch (cause) {
-      if (request === generation) handleFailure(cause);
+      if (request === generation) {
+        handleFailure(cause);
+        reportFailure(session, "search", cause);
+      }
     } finally {
       if (request === generation) searching = false;
     }
@@ -272,12 +275,16 @@
       });
       if (request === generation && id === similarID) {
         similarReport = report;
-        if (report.state !== "unavailable") reportAction(session, "search_run", "semantic");
+        if (report.state !== "unavailable")
+          reportSearch(session, "semantic", report.results.length === 0);
       }
     } catch (cause) {
       if (request === generation && id === similarID) {
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-        else similarError = cause instanceof Error ? cause.message : String(cause);
+        else {
+          similarError = cause instanceof Error ? cause.message : String(cause);
+          reportFailure(session, "search", cause);
+        }
       }
     } finally {
       if (request === generation && id === similarID) similarBusy = false;

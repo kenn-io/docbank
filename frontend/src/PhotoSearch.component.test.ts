@@ -6,10 +6,16 @@ import { Photos } from "./photos.svelte.js";
 import { stubPhotoTimeline } from "./photo-test-fixtures.js";
 import { tick } from "svelte";
 
-vi.mock("./action-events.js", () => ({ reportAction: vi.fn() }));
+vi.mock("./action-events.js", () => ({
+  reportAction: vi.fn(),
+  reportSearch: vi.fn(),
+  reportFailure: vi.fn(),
+}));
 
 beforeEach(() => {
   vi.mocked(actions.reportAction).mockClear();
+  vi.mocked(actions.reportSearch).mockClear();
+  vi.mocked(actions.reportFailure).mockClear();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -52,10 +58,11 @@ it.each(["simple", "advanced"] as const)("submits %s text", async (syntax) => {
       syntax,
       filters: { cameras: ["Synthetic camera"] },
     }),
+    expect.any(Function),
   );
   photos.query = { ...photos.query, text: "camera" };
   await fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
-  expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ text: "", syntax }));
+  expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ text: "", syntax }), undefined);
   photos.dispose();
 });
 
@@ -128,6 +135,7 @@ it("applies the draft when the search mode changes", async () => {
   await fireEvent.click(await screen.findByRole("option", { name: "Plain words" }));
   expect(submit).toHaveBeenLastCalledWith(
     expect.objectContaining({ text: "rating:5", syntax: "simple" }),
+    undefined,
   );
   photos.query = { ...photos.query, text: "camera" };
   await tick();
@@ -139,6 +147,7 @@ it("applies the draft when the search mode changes", async () => {
   await fireEvent.click(await screen.findByRole("option", { name: "Query syntax" }));
   expect(submit).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ text: "", syntax: "advanced" }),
+    undefined,
   );
   photos.query = { ...photos.query, text: "" };
   await tick();
@@ -149,37 +158,119 @@ it("applies the draft when the search mode changes", async () => {
   photos.dispose();
 });
 
-it("reports completed photo searches while blank and canceled searches stay silent", async () => {
+it("reports Photos search outcomes for explicit submissions", async () => {
   stubPhotoTimeline();
-  const action = vi.mocked(actions.reportAction);
-  let finish!: (response: Response) => void;
-  const fetcher = vi.fn(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] })));
+  const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
-  const submit = vi.spyOn(photos, "setQuery");
+  photos.query = { ...photos.query, text: "Nikon" };
   render(PhotoSearch, { photos });
+  const outcomes = [
+    Response.json({ items: [{ id: "a" }], total: 1, facets: [] }),
+    Response.json({ items: [], total: 0, facets: [] }),
+    new Response("unavailable", { status: 500 }),
+  ];
+  for (const [name, next] of [
+    ["Plain words", "Query syntax"],
+    ["Query syntax", "Plain words"],
+    ["Plain words", "Query syntax"],
+  ]) {
+    fetcher.mockResolvedValueOnce(outcomes.shift());
+    await fireEvent.click(screen.getByRole("combobox", { name: `Search mode: ${name}` }));
+    await fireEvent.click(await screen.findByRole("option", { name: next }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    await waitFor(() => expect(photos.loading).toBe(false));
+    fetcher.mockClear();
+  }
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(actions.reportFailure).not.toHaveBeenCalled();
   const search = screen.getByRole("searchbox", { name: "Search photos" });
-  await fireEvent.input(search, { target: { value: "   " } });
-  await fireEvent.submit(search.closest("form")!);
-  await waitFor(() => expect(photos.loading).toBe(false));
-  expect(action).not.toHaveBeenCalled();
+  fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
   await fireEvent.input(search, { target: { value: "Nikon" } });
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() =>
-    expect(action).toHaveBeenCalledExactlyOnceWith("scoped", "search_run", "text"),
+    expect(actions.reportSearch).toHaveBeenCalledExactlyOnceWith("scoped", "text", true),
   );
-  action.mockClear();
-  fetcher.mockClear();
-  submit.mockClear();
-  fetcher.mockImplementation(() => new Promise<Response>((resolve) => (finish = resolve)));
-  await fireEvent.input(search, { target: { value: "river" } });
+  vi.mocked(actions.reportSearch).mockClear();
+  await fireEvent.input(search, { target: { value: "Canon" } });
   await fireEvent.submit(search.closest("form")!);
-  expect(fetcher).toHaveBeenCalledOnce();
-  photos.dispose();
-  await act(async () => {
-    finish(Response.json({ items: [], total: 0, facets: [] }));
-    await submit.mock.results[0].value;
-  });
-  expect(action).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+      "scoped",
+      "search",
+      expect.objectContaining({ status: 500 }),
+    ),
+  );
+  vi.mocked(actions.reportFailure).mockClear();
+  fetcher.mockResolvedValueOnce(Response.json({ items: [], total: 0, facets: [] }));
+  await fireEvent.input(search, { target: { value: "   " } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(photos.loading).toBe(false));
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(actions.reportFailure).not.toHaveBeenCalled();
+
+  fetcher.mockClear();
+  await fireEvent.input(search, { target: { value: "q".repeat(8193) } });
+  await fireEvent.submit(search.closest("form")!);
+  expect(photos.error).toContain("8192");
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+      "scoped",
+      "search",
+      expect.objectContaining({ message: expect.stringContaining("8192") }),
+    ),
+  );
+  vi.mocked(actions.reportFailure).mockClear();
+
+  fetcher.mockImplementationOnce(
+    (_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) =>
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason)),
+      ),
+  );
+  await fireEvent.input(search, { target: { value: "Fuji" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(photos.loading).toBe(true));
+  await act(() => photos.dispose());
+  expect(actions.reportSearch).not.toHaveBeenCalled();
+  expect(actions.reportFailure).not.toHaveBeenCalled();
 });
+
+it.each([
+  { hidden: true, code: "hidden_locked", handled: true },
+  { hidden: false, code: "forbidden", handled: false },
+])(
+  "reports submitted search failures only when access cleanup does not handle them, hidden=$hidden",
+  async ({ hidden, code, handled }) => {
+    stubPhotoTimeline();
+    const onauth = vi.fn(() => photos.dispose());
+    const photos = new Photos("scoped", onauth, hidden);
+    photos.started = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ code, detail: "Access denied" }, { status: 403 })),
+    );
+    render(PhotoSearch, { photos });
+    const search = screen.getByRole("searchbox", { name: "Search photos" });
+    await fireEvent.input(search, { target: { value: "harbor" } });
+    await fireEvent.submit(search.closest("form")!);
+    if (handled) {
+      await waitFor(() => expect(onauth).toHaveBeenCalledOnce());
+      expect(actions.reportFailure).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() =>
+        expect(actions.reportFailure).toHaveBeenCalledExactlyOnceWith(
+          "scoped",
+          "search",
+          expect.objectContaining({ status: 403, code }),
+        ),
+      );
+      expect(onauth).not.toHaveBeenCalled();
+    }
+    expect(actions.reportSearch).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);

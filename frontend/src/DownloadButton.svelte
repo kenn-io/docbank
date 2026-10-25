@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import XIcon from "@lucide/svelte/icons/x";
@@ -106,6 +106,7 @@
       } else if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
       } else {
+        reportFailure(activeSession, "open");
         failed = true;
         outcome = cause instanceof Error ? cause.message : String(cause);
       }

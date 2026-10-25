@@ -8086,7 +8086,7 @@ export const TelemetryEventPropertiesScreen = {
 } as const;
 
 /**
- * The executed search mode. Required for search_run.
+ * The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty.
  */
 export type TelemetryEventPropertiesSearchType = typeof TelemetryEventPropertiesSearchType[keyof typeof TelemetryEventPropertiesSearchType];
 
@@ -8112,9 +8112,11 @@ export const TelemetryEventPropertiesSurface = {
 export interface TelemetryEventProperties {
   /** How long a session_ended session lasted. */
   duration_bucket?: TelemetryEventPropertiesDurationBucket;
+  /** Required for error_shown. add, search, and open are sent as given; any other string is sent as other. */
+  kind?: string;
   /** The screen shown. Other values return 400 for screen_viewed. */
   screen?: TelemetryEventPropertiesScreen;
-  /** The executed search mode. Required for search_run. */
+  /** The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty. */
   search_type?: TelemetryEventPropertiesSearchType;
   /** The interface that sent the event. */
   surface?: TelemetryEventPropertiesSurface;
@@ -8561,7 +8563,7 @@ export type ReportTelemetryEventBody = {
      * @minLength 1
      */
   event: string;
-  /** Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, and search_run requires search_type. */
+  /** Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, search_run and search_empty require search_type; error_shown requires kind. */
   properties?: TelemetryEventProperties;
 };
 

@@ -3,6 +3,7 @@ import * as downloads from "./download.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import DownloadButton from "./DownloadButton.svelte";
+import { APIError } from "./api-transport.js";
 import type { SelectedSource } from "./selectedSource.js";
 
 afterEach(() => {
@@ -56,28 +57,77 @@ it("aborts an in-flight exact download on same-node version or session change", 
   expect(screen.queryByText(/Verified/)).toBeNull();
 });
 
-it.each([true, false])("reports only a verified completed download (%s)", async (succeeds) => {
-  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
-  const selected = source("11111111-1111-4111-8111-111111111111", "a".repeat(64));
-  const prepare = vi.spyOn(downloads, "prepareExactDownload");
-  if (succeeds)
-    prepare.mockResolvedValue({
-      url: "/verified",
-      name: "report.txt",
-      versionID: selected.versionID,
-      blobHash: selected.blobHash,
-      size: 12,
+it.each([
+  {
+    name: "success",
+    succeeds: true,
+    cancels: false,
+    message: /browser save started/,
+    cause: undefined,
+  },
+  {
+    name: "failure",
+    succeeds: false,
+    cancels: false,
+    message: "Digest mismatch",
+    cause: new Error("Digest mismatch"),
+  },
+  {
+    name: "cancel",
+    succeeds: false,
+    cancels: true,
+    message: /cancelled/,
+    cause: new DOMException("The operation was aborted.", "AbortError"),
+  },
+])(
+  "reports only a verified completed download ($name)",
+  async ({ succeeds, cancels, message, cause }) => {
+    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+    const selected = source("11111111-1111-4111-8111-111111111111", "a".repeat(64));
+    const prepare = vi.spyOn(downloads, "prepareExactDownload");
+    if (succeeds)
+      prepare.mockResolvedValue({
+        url: "/verified",
+        name: "report.txt",
+        versionID: selected.versionID,
+        blobHash: selected.blobHash,
+        size: 12,
+      });
+    else if (cancels)
+      prepare.mockImplementation(
+        (_session, _source, _revision, _mode, signal) =>
+          new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(cause))),
+      );
+    else prepare.mockRejectedValue(cause);
+    const offer = vi.spyOn(downloads, "offerPreparedDownload").mockImplementation(() => {});
+    render(DownloadButton, {
+      session: "session",
+      source: selected,
+      authorizationRevision: 9,
+      onauthfailure: vi.fn(),
     });
-  else prepare.mockRejectedValue(new Error("Digest mismatch"));
-  const offer = vi.spyOn(downloads, "offerPreparedDownload").mockImplementation(() => {});
+    await fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    if (cancels) await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByText(message);
+    expect(action.mock.calls).toEqual(succeeds ? [["session", "document_opened"]] : []);
+    expect(failure.mock.calls).toEqual(succeeds || cancels ? [] : [["session", "open"]]);
+    expect(offer).toHaveBeenCalledTimes(succeeds ? 1 : 0);
+  },
+);
+
+it("leaves sign-in failures to the authentication handler", async () => {
+  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
+  const cause = new APIError("Unauthorized", 401, "unauthorized");
+  vi.spyOn(downloads, "prepareExactDownload").mockRejectedValue(cause);
+  const onauthfailure = vi.fn();
   render(DownloadButton, {
     session: "session",
-    source: selected,
-    authorizationRevision: 9,
-    onauthfailure: vi.fn(),
+    source: source("11111111-1111-4111-8111-111111111111", "a".repeat(64)),
+    onauthfailure,
   });
+
   await fireEvent.click(screen.getByRole("button", { name: "Download" }));
-  await screen.findByText(succeeds ? /browser save started/ : "Digest mismatch");
-  expect(action.mock.calls).toEqual(succeeds ? [["session", "document_opened"]] : []);
-  expect(offer).toHaveBeenCalledTimes(succeeds ? 1 : 0);
+  await waitFor(() => expect(onauthfailure).toHaveBeenCalledWith(cause));
+  expect(failure).not.toHaveBeenCalled();
 });

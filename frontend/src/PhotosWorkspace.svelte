@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import { reportAction } from "./action-events.js";
+  import { reportAction, reportFailure } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
   import { APIError } from "./api-transport.js";
@@ -537,6 +537,10 @@
       photos.items = photos.items.filter((item) => item.asset_id !== id);
     }
     detailError = cause instanceof Error ? cause.message : String(cause);
+    if (id === openIntent && photoID === id) {
+      openIntent = "";
+      if (!photos.authHandled(cause)) reportFailure(photos.session, "open", cause);
+    }
   }
   // Reads the open photo again, since a change can affect it without moving its revision.
   // It takes over from any detail read in flight, so an older answer never lands after it.

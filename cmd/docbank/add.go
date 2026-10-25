@@ -44,7 +44,7 @@ Exit 1 if any file failed (each failure is listed).`,
 	Use:     "add <path>...",
 	Short:   "Import files or directory trees into the vault",
 	Args:    cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 		abs := make([]string, len(args))
 		for i, a := range args {
 			// Windows absolute-path resolution converts through UTF-16 and can
@@ -62,6 +62,14 @@ Exit 1 if any file failed (each failure is listed).`,
 		}
 		if addPreflight && addReplace {
 			return usageError(errors.New("--replace cannot be used with --preflight"))
+		}
+		var mode backupProgressMode
+		if !addJSON && !addPreflight {
+			var err error
+			mode, err = progressModeFromFlag("add", addProgress)
+			if err != nil {
+				return err
+			}
 		}
 		opts := daemonconn.IngestOptions{Include: addInclude, Exclude: addExclude, Replace: addReplace}
 		c, err := daemonconn.Ensure(cmd.Context())
@@ -88,6 +96,11 @@ Exit 1 if any file failed (each failure is listed).`,
 			}
 			return nil
 		}
+		defer func() {
+			if !isClosedOutputPipe(retErr) {
+				reportFailure(cmd, c, "add", retErr, false)
+			}
+		}()
 		var rep api.IngestReport
 		if addJSON {
 			response, requestErr := c.API().Ingest(cmd.Context(), &apiclient.IngestRequestOptions{Body: &apiclient.IngestBody{Paths: abs, Dest: addDest, Include: opts.Include, Exclude: opts.Exclude, Replace: opts.Replace, CollectionLabel: opts.CollectionLabel}})
@@ -97,10 +110,6 @@ Exit 1 if any file failed (each failure is listed).`,
 			}
 
 		} else {
-			mode, modeErr := progressModeFromFlag("add", addProgress)
-			if modeErr != nil {
-				return modeErr
-			}
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
 			rep, err = c.IngestStream(cmd.Context(), abs, addDest, opts, renderer.handle)
@@ -108,9 +117,15 @@ Exit 1 if any file failed (each failure is listed).`,
 		if err != nil {
 			return err
 		}
+		if rep.Added > 0 {
+			reportAction(cmd, c, "document_added", "", "", false)
+		}
+		if len(rep.Failed) > 0 {
+			retErr = fmt.Errorf("%d file(s) failed to import", len(rep.Failed))
+		}
 		if addJSON {
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
-			if err := json.MarshalEncode(enc, rep); err != nil {
+			if err := json.MarshalEncode(enc, rep); err != nil && retErr == nil {
 				return fmt.Errorf("encoding ingest report: %w", err)
 			}
 		} else {
@@ -120,13 +135,7 @@ Exit 1 if any file failed (each failure is listed).`,
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed: %s: %s\n", f.Path, f.Error)
 			}
 		}
-		if rep.Added > 0 {
-			reportAction(cmd, c, "document_added", "", false)
-		}
-		if len(rep.Failed) > 0 {
-			return fmt.Errorf("%d file(s) failed to import", len(rep.Failed))
-		}
-		return nil
+		return retErr
 	},
 }
 

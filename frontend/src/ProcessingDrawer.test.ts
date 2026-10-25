@@ -113,12 +113,13 @@ describe("document processing drawer", () => {
     expect(screen.getByText("Narrow this view to at most 4,096 file versions.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Find similar" })).toBeNull();
   });
-  it("reports completed version and similar searches and keeps unavailable results silent", async () => {
-    const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  it("reports completed, empty, and failed version and similar searches and keeps unavailable results silent", async () => {
+    const action = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+    const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
     const similar = vi
       .spyOn(processingAPI, "documentSimilar")
       .mockResolvedValue(contract.similar_report as DocumentSimilarReport);
-    vi.spyOn(processingAPI, "documentSearch").mockResolvedValue({
+    const search = vi.spyOn(processingAPI, "documentSearch").mockResolvedValue({
       requested_mode: "auto",
       actual_mode: "lexical",
       coverage: {
@@ -137,7 +138,7 @@ describe("document processing drawer", () => {
     await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
     await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
     await screen.findByText(contract.similar_report.results[0]!.path);
-    expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_run", "semantic");
+    expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "semantic", false);
     similar.mockResolvedValue({
       ...contract.similar_report,
       state: "unavailable",
@@ -146,15 +147,28 @@ describe("document processing drawer", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
     await screen.findByText(/Unavailable: no current embedding/);
     expect(action).toHaveBeenCalledTimes(1);
+    similar.mockResolvedValue({ ...contract.similar_report, results: [] } as DocumentSimilarReport);
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    await waitFor(() => expect(action).toHaveBeenCalledTimes(2));
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search this document version" }), {
       target: { value: "synthetic" },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
-    await waitFor(() => expect(action).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(action).toHaveBeenCalledTimes(3));
     expect(action.mock.calls).toEqual([
-      ["short-lived", "search_run", "semantic"],
-      ["short-lived", "search_run", "lexical"],
+      ["short-lived", "semantic", false],
+      ["short-lived", "semantic", true],
+      ["short-lived", "lexical", true],
     ]);
+    expect(failure).not.toHaveBeenCalled();
+    search.mockRejectedValue(new Error("Search failed"));
+    similar.mockRejectedValue(new Error("Similar failed"));
+    await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
+    await waitFor(() => expect(failure).toHaveBeenCalledTimes(1));
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    await waitFor(() => expect(failure).toHaveBeenCalledTimes(2));
+    expect(failure.mock.calls.map(([, kind]) => kind)).toEqual(["search", "search"]);
+    expect(action).toHaveBeenCalledTimes(3);
   });
 
   it("uses the success tone for a completed job", async () => {

@@ -46,18 +46,18 @@ export class SnapshotWorkspace {
     this.overlays = {};
   }
 
-  async run(query: Query, options: SnapshotOptions): Promise<"text" | undefined> {
+  async run(
+    query: Query,
+    options: SnapshotOptions,
+  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
     this.invalidateActions();
     const epoch = this.epoch;
     const session = this.getSession();
     await this.snapshotSession().run(query, options);
-    if (
-      epoch === this.epoch &&
-      session === this.getSession() &&
-      this.state.status === "ready" &&
-      !this.state.error
-    )
-      return "text";
+    if (epoch !== this.epoch || session !== this.getSession()) return;
+    const { error, status, page } = this.state;
+    if (error) return { type: "failed", cause: error };
+    if (status === "ready") return { type: "text", empty: page?.rows.length === 0 };
   }
 
   private invalidateActions(): void {
