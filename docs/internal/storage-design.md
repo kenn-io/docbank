@@ -492,11 +492,11 @@ the catalog.
 
 | Case | CGo, no subscriber | CGo, one subscriber | Pure Go, no subscriber | Pure Go, one subscriber |
 | --- | --- | --- | --- | --- |
-| Import new photos, 100 existing | 1.63 | 1.59 | 6.97 | 8.63 |
-| Import edited photos, 100 existing | 1.16 | 1.48 | 5.11 | 6.01 |
-| Import new photos, 10,000 existing | 1.86 | 1.92 | 7.28 | 8.64 |
-| Import edited photos, 10,000 existing | 1.67 | 1.42 | 5.26 | 5.88 |
-| Ingest 1,000 documents | 0.54 | 0.59 | 3.29 | 4.20 |
+| Import new photos, 100 existing | 1.31 | 1.47 | 7.13 | 8.18 |
+| Import edited photos, 100 existing | 1.18 | 1.44 | 5.29 | 6.01 |
+| Import new photos, 10,000 existing | 1.59 | 1.79 | 7.29 | 8.80 |
+| Import edited photos, 10,000 existing | 1.31 | 1.43 | 5.07 | 6.30 |
+| Ingest 1,000 documents | 0.48 | 0.53 | 3.50 | 4.14 |
 
 Live refresh rereads the complete loaded prefix because a change can insert,
 remove, or reorder photos anywhere in it. Library uses 250-photo pages, so a
