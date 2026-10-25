@@ -1395,6 +1395,61 @@ it("keeps the previous groups when a live regroup fails and tries again on the r
   expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
 });
 
+async function reviewTwoStacks() {
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  const review = await reviewPhoto(rows[0]);
+  const { cull, photos } = review;
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      groups: [
+        ["photo-1", "photo-2"],
+        ["photo-3", "photo-4"],
+      ],
+      burstGapSeconds: 2,
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select Photo 2.jpg" }));
+  await readyButton("Keep selected");
+  return review;
+}
+
+it("keeps checked frames in a stack that a live regroup leaves unchanged", async () => {
+  const { photos } = await reviewTwoStacks();
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [["photo-1", "photo-2"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await act(() => photos.changed(photoChange("photo-3", "photo-4")));
+  const checkbox = screen.getByRole("checkbox", { name: "Select Photo 2.jpg" }) as HTMLInputElement;
+  expect(checkbox.checked).toBe(true);
+  expect((await readyButton("Keep selected")).matches(":disabled")).toBe(false);
+});
+
+it("clears checked frames when a live regroup changes their stack", async () => {
+  const { photos } = await reviewTwoStacks();
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [["photo-1", "photo-2", "photo-3"], ["photo-4"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await act(() => photos.changed(photoChange("photo-2", "photo-3")));
+  const checkbox = screen.getByRole("checkbox", { name: "Select Photo 2.jpg" }) as HTMLInputElement;
+  expect(checkbox.checked).toBe(false);
+  expect(
+    (screen.getByRole("button", { name: "Keep selected" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+});
+
 it.each([
   ["a run photo", photoChange("photo-1"), 2, false],
   ["a photo outside the run", photoChange("photo-9"), 1, false],

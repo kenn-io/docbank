@@ -101,8 +101,14 @@
     const [run, groups] = [cull.run, cull.run?.groups];
     const key = groups === selectionGroups ? selectionGroupsKey : JSON.stringify(groups);
     const [runID, runPass] = [run?.checkpoint.runID, run?.checkpoint.pass];
-    if (runID !== selectionRun || runPass !== selectionPass || key !== selectionGroupsKey) {
-      selectedFrames = [];
+    if (runID !== selectionRun || runPass !== selectionPass) selectedFrames = [];
+    else if (key !== selectionGroupsKey) {
+      // New groups clear only the checks in stacks that changed.
+      const stackOf = (list: string[][] | undefined, id: string) =>
+        list?.find((group) => group.includes(id))?.join();
+      selectedFrames = untrack(() =>
+        selectedFrames.filter((id) => stackOf(selectionGroups, id) === stackOf(groups, id)),
+      );
     }
     [selectionRun, selectionPass] = [runID, runPass];
     [selectionGroups, selectionGroupsKey] = [groups, key];
