@@ -756,6 +756,33 @@ it("keeps newer assigned tag reads and retains choices on errors", async () => {
   editor.dispose();
 });
 
+it("waits for every keyword read before a refresh pass fails", async () => {
+  const editor = editorWithTargets();
+  editor.targets = [preparedPhoto(1, { tags: ["down", "slow"] })];
+  let finish!: () => void;
+  const fetcher = vi.fn((url: string) =>
+    url.endsWith("/tags/down")
+      ? Promise.resolve(response({ detail: "Down" }, 503))
+      : new Promise<Response>(
+          (resolve) =>
+            (finish = () =>
+              resolve(response({ id: "slow", name: "Slow", revision: 1, assignment_count: 1 }))),
+        ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const slowReads = () => fetcher.mock.calls.filter(([url]) => url.endsWith("/tags/slow")).length;
+  let settled = false;
+  const refreshing = editor.refreshAssignedTags().finally(() => (settled = true));
+  const failure = expect(refreshing).rejects.toThrow("Down");
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(settled).toBe(false);
+  finish();
+  await failure;
+  expect(slowReads()).toBe(1);
+  editor.dispose();
+});
+
 it("retries a live keyword read outside the catalog before consuming the pending change", async () => {
   const editor = editorWithTargets();
   editor.tags = [{ id: "catalog", name: "Catalog keyword" }] as Tag[];

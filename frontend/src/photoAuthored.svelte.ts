@@ -1,6 +1,6 @@
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import { affectsPhoto, type PhotoChange } from "./photoEvents.js";
+import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 type PreparedFile = api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget;
@@ -307,7 +307,7 @@ export class PhotoAuthoredEditor {
     const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
       (id) => !known.has(id),
     );
-    await Promise.all(
+    await settleReads(
       missing.map((id) =>
         this.readTag(id).catch((cause) => {
           if (required) throw cause;
@@ -326,7 +326,7 @@ export class PhotoAuthoredEditor {
   /** Reads assigned tags again for renames and deletions outside the catalog page. */
   async refreshAssignedTags() {
     const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
-    await Promise.all(ids.map((id) => this.readTag(id, true)));
+    await settleReads(ids.map((id) => this.readTag(id, true)));
   }
   // Either choice can import unrelated outside changes.
   private async publishXMPKeywords(
