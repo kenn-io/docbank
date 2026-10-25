@@ -179,7 +179,7 @@ func TestPhotoEventsNonPhotoFiltering(t *testing.T) {
 	require.Empty(t, ch)
 	_, err = s.AssignTag(t.Context(), tag.ID, ordinary.ID, ordinary.Revision)
 	require.NoError(t, err)
-	require.Empty(t, ch, "tagging a non-photo changes no photo")
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch), "tagging a non-photo changes a keyword's count, so every viewer refetches")
 	_, _, err = s.Trash(t.Context(), ordinary.ID, UnconditionalRev)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, ch))
@@ -295,19 +295,20 @@ func TestPhotoEventsFileAndNodeOwnership(t *testing.T) {
 	photoCaptureWrite(t, s, events, one, `UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, a.ID)
 	photoCaptureWrite(t, s, events, one, `INSERT OR REPLACE INTO photo_timeline(file_id,sort_key,day) SELECT file_id,'2026-01-02','2026-01-02' FROM photo_files WHERE node_id=?`, first.ID)
 	photoCaptureWrite(t, s, events, one, `UPDATE nodes SET name='renamed.jpg' WHERE id=?`, first.ID)
-	// Assignments name only the tagged photo; the tag's revision bump stays quiet.
+	// An assignment also updates the tag's count and revision, which asks every viewer to refetch.
+	refetch := []PhotoEvent{{}}
 	assigned, err := s.AssignTag(t.Context(), tag.ID, first.ID, UnconditionalRev)
 	require.NoError(t, err)
-	require.Equal(t, one, nextPhotoWake(t, events))
+	require.Equal(t, refetch, nextPhotoWake(t, events))
 	_, err = s.UnassignTag(t.Context(), tag.ID, first.ID, assigned.Node.Revision)
 	require.NoError(t, err)
-	require.Equal(t, one, nextPhotoWake(t, events))
+	require.Equal(t, refetch, nextPhotoWake(t, events))
 	_, err = s.BatchTags(t.Context(), BatchTagRequest{
 		OperationID: uuid.NewString(), TagID: tag.ID, Assign: true,
 		Nodes: []BatchTagTarget{{NodeID: second.ID, Revision: second.Revision}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []PhotoEvent{{AssetID: b.ID}}, nextPhotoWake(t, events))
+	require.Equal(t, refetch, nextPhotoWake(t, events))
 	photoCaptureWrite(t, s, events, []PhotoEvent{{AssetID: b.ID}}, `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, identity, second.ID, observation.Fact.IngestID, "/synthetic/second.jpg")
 	// Text eligibility is reachable on an attached sidecar with a supported text MIME.
 	photoCaptureWrite(t, s, events, one, `DELETE FROM text_searchable_versions WHERE version_id=?`, sidecar.CurrentVersionID)

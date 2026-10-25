@@ -136,8 +136,9 @@ func (s *Store) publishPhotoEvents(events []PhotoEvent) {
 // same transaction. Photos reads use the captured person, assertion, and
 // face rows, while person_identities and person_splits serve identity/split replay.
 // Tag assignments and album membership name the affected photos through nodes and
-// photo_set_members; tags and photo_sets capture only definition columns, so the
-// revision bumps those changes also make stay quiet. Person aliases and external
+// photo_set_members. Every tags update asks viewers to refetch, so an assignment's count and
+// revision refresh in open pickers; photo_sets captures only definition columns, so the
+// revision bumps album membership changes also make stay quiet. Person aliases and external
 // identities update persons in the same transaction, which supplies their notification.
 // photo_change_receipts records history alongside captured authority changes. XMP conflicts
 // and refusals add only a receipt, so photo_xmp_unsettled, which feeds xmp: searches, is captured.
@@ -171,7 +172,7 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{"photo_set_members", `SELECT $row.asset_id AS id`, ""},
 	{"photo_library_settings", `SELECT '' AS id`, ""},
 	{"photo_hidden_credentials", `SELECT '' AS id`, ""},
-	{"tags", `SELECT '' AS id`, "OLD.name IS NOT NEW.name"},
+	{"tags", `SELECT '' AS id`, ""},
 	{"persons", `SELECT '' AS id`, ""},
 	{"saved_queries", `SELECT '' AS id`, ""},
 	{"collection_labels", `SELECT '' AS id`, ""},
