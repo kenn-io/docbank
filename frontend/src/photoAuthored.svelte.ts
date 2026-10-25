@@ -1,6 +1,6 @@
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
+import { settleReads } from "./photoEvents.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 type PreparedFile = api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget;
@@ -318,9 +318,7 @@ export class PhotoAuthoredEditor {
   }
   private async resolveAssignedTags(required = false, signal?: AbortSignal) {
     const known = new Set(this.tags.map((tag) => tag.id));
-    const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
-      (id) => !known.has(id),
-    );
+    const missing = [...this.keptTagIDs].filter((id) => !known.has(id));
     await settleReads(
       missing.map((id) =>
         this.readTag(id, false, signal).catch((cause) => {
@@ -330,16 +328,15 @@ export class PhotoAuthoredEditor {
       ),
     );
   }
-  /** Puts a freshly read tag in the catalog: renamed in place, or added when a target uses it. */
+  /** Puts a freshly read tag in the catalog: renamed in place, or added when a target or a staged keyword uses it. */
   private reconcile(tag: api.Tag) {
     if (this.tags.some((value) => value.id === tag.id))
       this.tags = this.tags.map((value) => (value.id === tag.id ? tag : value));
-    else if (this.targets.some((target) => target.tags.includes(tag.id)))
-      this.tags = [...this.tags, tag];
+    else if (this.keptTagIDs.has(tag.id)) this.tags = [...this.tags, tag];
   }
-  /** Reads assigned tags again for renames and deletions outside the catalog page. */
+  /** Reads assigned and staged tags again for renames and deletions outside the catalog page. */
   async refreshAssignedTags() {
-    const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
+    const ids = [...this.keptTagIDs];
     await settleReads(
       ids.map((id) =>
         this.readTag(id, true, AbortSignal.any([this.tagReads.signal, this.controller.signal])),
@@ -437,7 +434,7 @@ export class PhotoAuthoredEditor {
     this.stackKey = "";
     this.stackError = "";
     this.stackLoading = false;
-    this.pendingChange = undefined;
+    this.queued = false;
     this.preparedWaiters.splice(0).forEach((resolve) => resolve());
     this.asset = undefined;
     this.suggestions = [];
@@ -595,13 +592,11 @@ export class PhotoAuthoredEditor {
   }
   // Waiters for the current read; live invalidation runs after it settles.
   private preparedWaiters: (() => void)[] = [];
-  private pendingChange?: PhotoChange;
-  async invalidate(change: PhotoChange) {
+  // A change that arrived while a draft, a read, or a conflict held the targets still waits for its reread.
+  private queued = false;
+  async invalidate() {
     const scope = this.scope;
-    this.pendingChange = {
-      ids: new Set([...(this.pendingChange?.ids ?? []), ...change.ids]),
-      idFree: change.idFree || !!this.pendingChange?.idFree,
-    };
+    this.queued = true;
     while (this.loading) await new Promise<void>((resolve) => this.preparedWaiters.push(resolve));
     if (
       this.scope !== scope ||
@@ -609,22 +604,21 @@ export class PhotoAuthoredEditor {
       this.dirty ||
       this.conflict ||
       this.concealed ||
-      this.controller.signal.aborted ||
-      !this.pendingChange
+      this.controller.signal.aborted
     )
       return;
-    const pending = this.pendingChange;
-    let consumed = true;
-    if (this.prepared.some((target) => affectsPhoto(pending, target.asset_id)))
-      consumed = !!(await this.reload(false, true));
-    else if (
-      !this.targets.length &&
-      scope &&
-      (scope.query || scope.asset_ids?.some((id) => affectsPhoto(pending, id)))
-    )
-      consumed = !!(await this.prepare(scope, false, false, true));
-    // Retain affected changes when their read was discarded.
-    if (consumed && this.pendingChange === pending) this.pendingChange = undefined;
+    this.queued = false;
+    try {
+      let read: boolean | undefined = true;
+      if (this.prepared.length) read = await this.reload(false, true);
+      else if (!this.targets.length && (scope?.query || scope?.asset_ids?.length))
+        read = await this.prepare(scope, false, false, true);
+      // A discarded read leaves the change queued.
+      if (!read) this.queued = true;
+    } catch (cause) {
+      this.queued = true;
+      throw cause;
+    }
   }
   async reload(keepError = false, quiet = false) {
     if (this.busy || this.loading) return;
@@ -710,8 +704,8 @@ export class PhotoAuthoredEditor {
     this.refreshPending();
   }
   private refreshPending() {
-    if (this.pendingChange)
-      void this.invalidate(this.pendingChange).catch((cause) => {
+    if (this.queued)
+      void this.invalidate().catch((cause) => {
         if (!this.controller.signal.aborted) {
           this.error = this.failure(cause);
           this.conflict = true;

@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { readPhotoEvents, watchPhotoEvents } from "./photoEvents.js";
 import type { PhotoChange } from "./photoEvents.js";
-import { idFreeChange, photoChange } from "./photo-test-fixtures.js";
 
 const encoder = new TextEncoder();
 function stream(chunks: string[]) {
@@ -50,7 +49,7 @@ it("refreshes a follower once on start without opening a stream while another ta
   const refresh = vi.fn((_change: PhotoChange) => Promise.resolve());
   const follower = watchPhotoEvents("synthetic", refresh, vi.fn());
   await vi.advanceTimersByTimeAsync(0);
-  expect(refresh).toHaveBeenCalledExactlyOnceWith(idFreeChange);
+  expect(refresh).toHaveBeenCalledExactlyOnceWith({});
   expect(fetch).not.toHaveBeenCalled();
   follower.stop();
 });
@@ -61,15 +60,15 @@ it("recognizes change frames, bounds incomplete frames, and cancels reads", asyn
     stream([
       ": keepalive\r",
       "\n\r\nevent: cha",
-      'nge\r\ndata: {"asset_id":\r\n',
-      'data: "photo-a"}\r',
+      "nge\r\ndata: {\r\n",
+      "data: }\r",
       "\n\r",
       "\ndata: {}\n\n",
     ]),
     new AbortController().signal,
     received,
   );
-  expect(received.mock.calls).toEqual([[{ asset_id: "photo-a" }], [{}]]);
+  expect(received).toHaveBeenCalledTimes(2);
   await expect(
     readPhotoEvents(stream([`data: ${"x".repeat(65537)}`]), new AbortController().signal, vi.fn()),
   ).rejects.toThrow("frame limit");
@@ -82,7 +81,7 @@ it("recognizes change frames, bounds incomplete frames, and cancels reads", asyn
   expect(cancelled).toHaveBeenCalledOnce();
 });
 
-it("authenticates, names the changed photos, and queues exactly one more pass for events during a pass", async () => {
+it("authenticates and queues exactly one more pass for events during a pass", async () => {
   vi.useFakeTimers();
   const { stream, fetch } = serveStream();
   let release!: () => void;
@@ -93,11 +92,10 @@ it("authenticates, names the changed photos, and queues exactly one more pass fo
     "synthetic",
   );
   refresh.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
-  stream.write('data: {"asset_id":"open"}\n\n');
+  stream.write("data: {}\n\n");
   await vi.advanceTimersByTimeAsync(1000);
-  expect(refresh).toHaveBeenLastCalledWith(photoChange("open"));
   expect(refresh).toHaveBeenCalledTimes(2);
-  for (const id of ["later", "later", "last"]) stream.write(`data: {"asset_id":"${id}"}\n\n`);
+  for (let i = 0; i < 3; i++) stream.write("data: {}\n\n");
   await vi.advanceTimersByTimeAsync(5000);
   expect(refresh).toHaveBeenCalledTimes(2);
   release();
@@ -106,11 +104,10 @@ it("authenticates, names the changed photos, and queues exactly one more pass fo
   expect(refresh).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(1000);
   expect(refresh).toHaveBeenCalledTimes(3);
-  expect(refresh).toHaveBeenLastCalledWith(photoChange("later", "last"));
   await vi.advanceTimersByTimeAsync(10_000);
   expect(refresh).toHaveBeenCalledTimes(3);
-  // Reconnecting, as after a Hidden unlock change, swaps the stream and refetches.
-  watcher.reconnect();
+  // Returning to a hidden tab swaps the stream and refetches.
+  document.dispatchEvent(new Event("visibilitychange"));
   await vi.advanceTimersByTimeAsync(1000);
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(stream.cancel).toHaveBeenCalledOnce();
@@ -120,7 +117,7 @@ it("authenticates, names the changed photos, and queues exactly one more pass fo
   expect(stream.cancel).toHaveBeenCalledTimes(2);
 });
 
-it("forwards the owner's changed photo to followers and takes it from the owner's channel", async () => {
+it("forwards the owner's change to followers and takes it from the owner's channel", async () => {
   vi.resetModules();
   const { watchPhotoEvents } = await import("./photoEvents.js");
   vi.useFakeTimers();
@@ -142,17 +139,15 @@ it("forwards the owner's changed photo to followers and takes it from the owner'
   const refresh = vi.fn((_change: PhotoChange) => Promise.resolve());
   const owner = watchPhotoEvents("synthetic", refresh, vi.fn());
   await vi.advanceTimersByTimeAsync(0);
-  stream.write('data: {"asset_id":"photo-a"}\n\n');
+  const announced = posted.length;
+  stream.write("data: {}\n\n");
   await vi.advanceTimersByTimeAsync(0);
-  expect(posted.at(-1)).toEqual({ asset_id: "photo-a" });
+  expect(posted.length).toBe(announced + 1);
   await vi.advanceTimersByTimeAsync(1000);
   refresh.mockClear();
-  hear({ asset_id: "photo-b" });
+  hear(null);
   await vi.advanceTimersByTimeAsync(1000);
-  expect(refresh).toHaveBeenLastCalledWith(photoChange("photo-b"));
-  hear({});
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(refresh).toHaveBeenLastCalledWith(idFreeChange);
+  expect(refresh).toHaveBeenCalledOnce();
   owner.stop();
 });
 
@@ -174,7 +169,6 @@ it("reports each time the stream opens, including after a failed connection", as
   await vi.advanceTimersByTimeAsync(1);
   // A change can land before the server subscribes, so the connect asks for a refetch too.
   expect(refresh).toHaveBeenCalledTimes(2);
-  expect(refresh).toHaveBeenLastCalledWith(idFreeChange);
   watcher.stop();
 });
 
@@ -191,21 +185,20 @@ it("lets a pass that only retries a failed one resume, but not one with new even
   const watcher = watchPhotoEvents("synthetic", refresh, vi.fn());
   await vi.advanceTimersByTimeAsync(0);
   expect(refresh.mock.calls[0]![0].resume).toBeUndefined();
-  stream.write('data: {"asset_id":"a"}\n\n');
+  stream.write("data: {}\n\n");
   await vi.advanceTimersByTimeAsync(1000);
   expect(refresh).toHaveBeenCalledTimes(2);
   // Nothing new arrived while recovering, so the retry keeps what the failed pass staged.
   await vi.advanceTimersByTimeAsync(1000);
   expect(refresh).toHaveBeenCalledTimes(3);
-  expect(refresh.mock.calls[2]![0]).toMatchObject({ resume: true, ids: new Set(["a"]) });
+  expect(refresh.mock.calls[2]![0]).toMatchObject({ resume: true });
   // A new event while the retry runs means the pages it staged may be stale when it fails.
-  stream.write('data: {"asset_id":"b"}\n\n');
+  stream.write("data: {}\n\n");
   await vi.advanceTimersByTimeAsync(0);
   fail(new Error("Page two failed"));
   await vi.advanceTimersByTimeAsync(5000);
   expect(refresh).toHaveBeenCalledTimes(4);
   expect(refresh.mock.calls[3]![0].resume).toBeUndefined();
-  expect(refresh.mock.calls[3]![0].ids).toEqual(new Set(["a", "b"]));
   watcher.stop();
 });
 
@@ -239,17 +232,5 @@ it("retries a failed pass with backoff and a pass that asks to wait without a fa
   await vi.advanceTimersByTimeAsync(30_000);
   expect(refresh).toHaveBeenCalledTimes(4);
   expect(failure).not.toHaveBeenCalled();
-  watcher.stop();
-});
-
-it("asks for a full refetch when a pass would name more than 64 photos", async () => {
-  vi.useFakeTimers();
-  const { stream } = serveStream();
-  const refresh = vi.fn((_change: PhotoChange) => Promise.resolve());
-  const watcher = watchPhotoEvents("synthetic", refresh, vi.fn());
-  await vi.advanceTimersByTimeAsync(0);
-  for (let i = 0; i < 65; i++) stream.write(`data: {"asset_id":"photo-${i}"}\n\n`);
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(refresh.mock.calls[1][0]).toEqual(idFreeChange);
   watcher.stop();
 });

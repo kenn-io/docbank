@@ -2,7 +2,6 @@ import { File as NodeFile } from "node:buffer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
-  idFreeChange,
   photoMetadataResponse,
   photoPreparation,
   photoTimelineCounts,
@@ -17,6 +16,7 @@ import {
 } from "./photo-test-fixtures.js";
 import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
+import { sessionResponse } from "./api-transport.js";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
@@ -46,7 +46,7 @@ vi.mock("./photoImportStorage.js", async (importOriginal) => ({
 }));
 
 beforeEach(() => {
-  vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue({ stop() {}, reconnect() {} });
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue({ stop() {} });
 });
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
@@ -3482,13 +3482,13 @@ it("loads keywords beyond the first catalog page", async () => {
   expect(
     await within(inspector).findByRole("option", { name: /Beyond the first page/ }),
   ).toBeTruthy();
-  // An ID-free live change reloads the catalog without dropping a staged keyword's definition.
+  // A live change reloads the catalog without dropping a staged keyword's definition.
   await fireEvent.click(within(inspector).getByRole("option", { name: /Beyond the first page/ }));
   await fireEvent.click(within(inspector).getByRole("button", { name: "Add keyword" }));
   const assigned = () =>
     within(inspector).getByRole("list", { name: "Assigned keywords" }).textContent;
   expect(assigned()).toContain("Beyond the first page");
-  await act(() => photoEventPass()(idFreeChange));
+  await act(() => photoEventPass()({}));
   expect(assigned()).toContain("Beyond the first page");
   const editor = prepare.mock.contexts.at(-1) as PhotoAuthoredEditor;
   await editor.onXMPChanged!(undefined, [{ ...last, revision: 2, assignment_count: 1 }]);
@@ -4212,9 +4212,8 @@ it("routes a live pass to the open viewer after initial paging fails", async () 
   await within(viewer).findByText("Photo 1.jpg");
   await screen.findByText("Paging down");
   changed.mockClear();
-  const change = { ids: new Set(["photo-1"]), idFree: false };
-  await act(() => photoEventPass()(change));
-  expect(changed).toHaveBeenCalledWith({ ...change, listRefreshed: true });
+  await act(() => photoEventPass()({}));
+  expect(changed).toHaveBeenCalledWith({ listRefreshed: true });
 });
 
 it.each(["first page", "album list", "staged retry"])(
@@ -4267,8 +4266,7 @@ it.each(["first page", "album list", "staged retry"])(
     if (mode === "first page") {
       await waitFor(() => expect(finishFirstPage).toBeDefined());
       // Import events wait for the first page instead of aborting it.
-      expect(await photoEventPass()({ ids: new Set(), idFree: true })).toBe(false);
-      expect(await photoEventPass()({ ids: new Set(["photo-1"]), idFree: false })).toBe(false);
+      expect(await photoEventPass()({})).toBe(false);
       expect(firstPage?.aborted).toBe(false);
       expect(requests.lists).toBe(1);
       finishFirstPage(Response.json({ items: [photo(1)], total: 1 }));
@@ -4277,21 +4275,18 @@ it.each(["first page", "album list", "staged retry"])(
     await waitFor(() => expect(library!.loading).toBe(false));
     if (mode === "first page") {
       const tags = requests.tags;
-      // The event that waited for the first page rereads page one once the list is idle.
-      await photoEventPass()({ ids: new Set(["photo-1"]), idFree: false });
+      // The event that waited for the first page rereads page one and the definitions once the list is idle.
+      await photoEventPass()({});
       await screen.findByRole("checkbox", { name: "Select photo Renamed.jpg" });
       expect(requests.lists).toBe(2);
-      expect(requests.tags).toBe(tags);
-      await photoEventPass()(idFreeChange);
-      expect(requests.lists).toBe(3);
       expect(requests.tags).toBeGreaterThan(tags);
     } else if (mode === "staged retry") {
-      await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: true });
-      await photoEventPass()({ ids: new Set(["photo-9"]), idFree: false, resume: undefined });
+      await photoEventPass()({ resume: true });
+      await photoEventPass()({ resume: undefined });
       expect(seen).toEqual([true, false]);
     } else {
       const before = requests.albums;
-      await photoEventPass()(idFreeChange);
+      await photoEventPass()({});
       expect(requests.albums).toBeGreaterThan(before);
     }
   },
@@ -4301,7 +4296,7 @@ it("keeps one event stream while moving between Photos views", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   livePhotoStubs();
   const stop = vi.fn();
-  vi.mocked(photoEvents.watchPhotoEvents).mockReturnValue({ stop, reconnect() {} });
+  vi.mocked(photoEvents.watchPhotoEvents).mockReturnValue({ stop });
   stubPhotoFetch(async (url) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
     if (url.endsWith("/photos/albums")) return Response.json([]);
@@ -4320,39 +4315,36 @@ it("keeps one event stream while moving between Photos views", async () => {
   expect(stop).not.toHaveBeenCalled();
 });
 
-it("reconnects the event stream when the Hidden unlock changes", async () => {
+it("defers a live pass while a write is in flight and runs it once the write settles", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   livePhotoStubs();
-  const reconnect = vi.fn();
-  vi.mocked(photoEvents.watchPhotoEvents).mockReturnValue({ stop() {}, reconnect });
-  let poll!: () => void;
-  const interval = globalThis.setInterval;
-  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
-    if (delay !== 2000) return interval(callback, delay, ...args);
-    poll = callback as () => void;
-    return 0 as unknown as ReturnType<typeof setInterval>;
+  let finishWrite!: () => void;
+  let lists = 0;
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/synthetic-write"))
+      return new Promise<Response>((resolve) => (finishWrite = () => resolve(Response.json({}))));
+    if (url.endsWith("/photos/assets/query")) {
+      lists++;
+      return Response.json({ items: [photo(1)], total: 1 });
+    }
+    return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
   });
-  let expires: string | undefined = undefined;
-  stubPhotoFetch(
-    vi.fn(async (url: string) => {
-      if (url.endsWith("/photos/hidden"))
-        return Response.json({ configured: true, change_id: "first", expires_at: expires });
-      if (url.endsWith("/photos/assets/query"))
-        return Response.json({ items: [photo(1)], total: 1 });
-      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
-    }),
-  );
   render(App);
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
-  poll();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(reconnect).not.toHaveBeenCalled();
-  expires = "2099-01-01T00:00:00Z";
-  poll();
-  await waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
-  poll();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(reconnect).toHaveBeenCalledOnce();
+  await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+  const before = lists;
+  const write = sessionResponse("/api/v1/photos/synthetic-write", {
+    session: "synthetic",
+    method: "POST",
+  });
+  expect(await photoEventPass()({})).toBe(false);
+  expect(lists).toBe(before);
+  finishWrite();
+  await write;
+  expect(await photoEventPass()({})).not.toBe(false);
+  expect(lists).toBeGreaterThan(before);
 });
 
 it("clears the live update alert once the event stream opens again", async () => {

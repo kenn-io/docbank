@@ -471,29 +471,32 @@ Matching still requires a live file, a compatible photo role, and unsuperseded
 provenance. Matching edited files become new content versions on their existing nodes. A node shared with another active source path keeps its content;
 an edit from one path becomes a separate file.
 
-While a live photo stream is open, every storage write passes through the capture
-the writer connection arms with temp triggers, which the last subscriber removes.
-Photo imports pay it, and so do writes that touch no photo. Run
-`BenchmarkPhotoImportMetadata` (its `subscriber=true` cases) and
+While a live photo stream is open, the writer connection carries temp triggers
+on every real table in the main schema except the ones `photoUnwatchedTables`
+lists. A trigger only records that something changed, in a one-row temp table, and
+a commit that left a row there signals every stream once. Photo imports pay for
+the triggers, and so do writes that touch no photo. The last subscriber removes
+them. Run `BenchmarkPhotoImportMetadata` (its `subscriber=true` cases) and
 `BenchmarkNonPhotoIngest` with `-benchtime=3x`, with and without CGo, for current
 figures.
 
-The first write after a subscriber arrives also installs the triggers. Each
-benchmark iteration opens a fresh store, so every figure spreads one install over
-its batch (32 photos, or 1,000 documents). With no subscriber the first write
-drops the triggers and imports run at the unsubscribed speed.
+The first write after a subscriber arrives also installs the triggers. The
+benchmarks subscribe and run one empty write before the timer starts, so the
+figures below are steady-state: they leave out the one-time install. With no
+subscriber the first write drops the triggers and imports run at the unsubscribed
+speed.
 
-Figures at `-benchtime=3x` on an AMD EPYC 7763, in milliseconds per file. An
-import batch is 32 files, and the existing count is the photos already in the
-catalog.
+Steady-state figures at `-benchtime=3x` on an AMD EPYC 7763, in milliseconds per
+file. An import batch is 32 files, and the existing count is the photos already in
+the catalog.
 
 | Case | CGo, no subscriber | CGo, one subscriber | Pure Go, no subscriber | Pure Go, one subscriber |
 | --- | --- | --- | --- | --- |
-| Import new photos, 100 existing | 1.48 | 1.98 | 6.94 | 9.33 |
-| Import edited photos, 100 existing | 1.30 | 2.02 | 4.89 | 6.86 |
-| Import new photos, 10,000 existing | 1.53 | 2.26 | 7.67 | 9.55 |
-| Import edited photos, 10,000 existing | 1.51 | 1.68 | 5.26 | 7.19 |
-| Ingest 1,000 documents | 0.50 | 0.57 | 3.45 | 4.50 |
+| Import new photos, 100 existing | 1.63 | 1.59 | 6.97 | 8.63 |
+| Import edited photos, 100 existing | 1.16 | 1.48 | 5.11 | 6.01 |
+| Import new photos, 10,000 existing | 1.86 | 1.92 | 7.28 | 8.64 |
+| Import edited photos, 10,000 existing | 1.67 | 1.42 | 5.26 | 5.88 |
+| Ingest 1,000 documents | 0.54 | 0.59 | 3.29 | 4.20 |
 
 Live refresh rereads the complete loaded prefix because a change can insert,
 remove, or reorder photos anywhere in it. Library uses 250-photo pages, so a
@@ -503,6 +506,15 @@ runs one pass at a time; changes during a pass queue one further pass. The next
 pass waits at least one second or twice the previous pass's duration, whichever
 is longer. Each pass and its required rest spend at most one third of their
 combined time refreshing, including the other workspace reads in the pass.
+
+Events carry no photo, so every pass rereads what the tab shows: loaded lists,
+the open photo, Compare's destination, a completed Cull's regrouped stacks and
+unflagged remainder, the keyword and saved-query definitions, and the metadata
+editor's targets and stack. A pass waits while the tab has a write in flight.
+The API transport counts requests other than GET and HEAD from the call until the
+response headers arrive, and skips POSTs that only read, such as the photo list
+query, so scrolling never defers a pass. A deferred pass runs again after the
+usual spacing.
 
 Reproduce the browser measurement with
 `DOCBANK_PHOTO_IMPORT_MEASURE=1 make photo-tabs-browser-test`; it writes
@@ -518,12 +530,13 @@ transfer still grows with the loaded prefix and the number of passes. Keep
 full-prefix refresh: this append-only fixture doesn't establish a safe shortcut
 for changes that reorder the prefix.
 
-Capture a table when its writes can change a Photos list, viewer, or metadata
-read. A photo or file key alone doesn't make a table a dependency. Audit and
-export state, document-only metadata, and scheduling caches stay outside
-capture. A work queue is captured only for the columns a Photos read shows, as
-`rendition_jobs` is for its state, phase, and failure code. Receipt and binding
-tables written with a captured authority row need no separate trigger.
+Triggers cover every real main-schema table except those that no Photos read
+touches: job queues and attempt logs, leases, and `storage_operations*`. The rule
+is what Photos reads, not who writes: a document build that moves search or
+duplicate state still signals. A table nobody has listed signals too, so a missed
+table costs one extra refresh instead of a stale view. `rendition_jobs` signals
+only when its state, phase, or failure code changes. A test checks that every
+unwatched table exists in the schema.
 
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited

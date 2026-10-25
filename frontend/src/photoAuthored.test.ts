@@ -758,6 +758,25 @@ it("keeps newer assigned tag reads and retains choices on errors", async () => {
   editor.dispose();
 });
 
+it("rereads a staged keyword renamed off the catalog page", async () => {
+  const editor = editorWithTargets();
+  const tag = (name: string) => ({ id: "staged", name, revision: 1, assignment_count: 0 }) as Tag;
+  const other = { id: "other", name: "Other" } as Tag;
+  editor.catalog([tag("Travel"), other]);
+  editor.stage({}, [{ tag_id: "staged", assign: true }]);
+  // The rename moved the keyword past the refreshed catalog page.
+  editor.catalog([other]);
+  expect(editor.tags.map((value) => value.name)).toEqual(["Other", "Travel"]);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response(tag("Voyages"))),
+  );
+  await editor.refreshAssignedTags();
+  expect(editor.tags.map((value) => value.name)).toEqual(["Other", "Voyages"]);
+  expect(editor.keywords).toEqual([{ tag_id: "staged", assign: true }]);
+  editor.dispose();
+});
+
 it("waits for every keyword read before a refresh pass fails", async () => {
   const editor = editorWithTargets();
   editor.targets = [preparedPhoto(1, { tags: ["down", "slow"] })];
@@ -785,7 +804,7 @@ it("waits for every keyword read before a refresh pass fails", async () => {
   editor.dispose();
 });
 
-it("retries a live keyword read outside the catalog before consuming the pending change", async () => {
+it("retries a live keyword read outside the catalog before consuming the queued change", async () => {
   const editor = editorWithTargets();
   editor.tags = [{ id: "catalog", name: "Catalog keyword" }] as Tag[];
   const latest = targets.map((target) => ({ ...target, tags: ["external"] }));
@@ -803,15 +822,12 @@ it("retries a live keyword read outside the catalog before consuming the pending
     }),
   );
   try {
-    await expect(editor.invalidate({ ids: new Set(["asset"]), idFree: false })).rejects.toThrow(
-      "Keywords unavailable",
-    );
+    await expect(editor.invalidate()).rejects.toThrow("Keywords unavailable");
     expect(editor.tags.map((tag) => tag.id)).toEqual(["catalog"]);
-    // The watcher retries the same identified change after a failed read.
-    await editor.invalidate({ ids: new Set(["asset"]), idFree: false });
+    // The watcher retries the pass after a failed read.
+    await editor.invalidate();
     expect(editor.tags).toContainEqual(keyword);
     expect(reads).toBe(2);
-    await editor.invalidate({ ids: new Set(["other-asset"]), idFree: false });
     expect(prepares).toBe(2);
   } finally {
     editor.dispose();
@@ -833,7 +849,7 @@ it.each([false, true])(
       .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
       .mockImplementation(async () => response({ assets: [asset], targets: latest }));
     vi.stubGlobal("fetch", fetcher);
-    const refreshing = editor.invalidate({ ids: new Set(["asset"]), idFree: false });
+    const refreshing = editor.invalidate();
     await vi.waitFor(() => expect(finish).toBeDefined());
     editor.stage({ caption: "Draft" });
     finish(response({ assets: [asset], targets: latest }));
@@ -869,7 +885,7 @@ it("keeps the prepared stack usable while a live update refreshes it", async () 
   expect(revisions()).toEqual([1, 1, 1]);
   let finish!: (response: Response) => void;
   fetcher.mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)));
-  const refreshing = editor.invalidate({ ids: new Set(), idFree: true });
+  const refreshing = editor.invalidate();
   await vi.waitFor(() => expect(finish).toBeDefined());
   expect([editor.stackLoading, editor.loading, editor.busy]).toEqual([false, false, false]);
   expect(editor.needsStack(["asset", "other"], false)).toBe(false);
@@ -882,9 +898,7 @@ it("keeps the prepared stack usable while a live update refreshes it", async () 
   expect(revisions()).toEqual([7, 7, 7]);
   fetcher.mockResolvedValueOnce(response({ assets: [asset], targets: latest.slice(0, 2) }));
   fetcher.mockResolvedValueOnce(response({ detail: "Metadata unavailable" }, 503));
-  await expect(editor.invalidate({ ids: new Set(), idFree: true })).rejects.toThrow(
-    "Metadata unavailable",
-  );
+  await expect(editor.invalidate()).rejects.toThrow("Metadata unavailable");
   expect(editor.stackLoading).toBe(false);
   expect(revisions()).toEqual([7, 7, 7]);
   editor.dispose();
@@ -1172,7 +1186,7 @@ it("reads external metadata retained while an edit response is pending", async (
   vi.stubGlobal("fetch", fetcher);
   const editing = editor.edit({ asset_ids: ["asset"] }, { caption: "My edit" }, false, vi.fn());
   await vi.waitFor(() => expect(finish).toBeDefined());
-  await editor.invalidate({ ids: new Set(["asset"]), idFree: false });
+  await editor.invalidate();
   finish(
     response({
       receipt_id: "edited",

@@ -121,7 +121,7 @@
   import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
-  import { APIError, isCurrentSessionError } from "./api-transport.js";
+  import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import {
     changeNodeTag,
     documentSearch,
@@ -535,9 +535,7 @@
   );
   let photoAccessError = $state("");
   let photoChangeID: string | undefined;
-  let photoExpiresAt: string | null | undefined;
   let photoEventError = $state("");
-  let reconnectPhotoEvents: (() => void) | undefined;
   let revalidatedChangeID: string | undefined | null = null;
   let photoAccessChecked = false;
   let photoConcealed = false;
@@ -581,9 +579,6 @@
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState, configuredVersion: number) {
     hiddenAccess?.recordConfigured(result.configured, configuredVersion);
-    // The event stream binds the Hidden unlock when it connects, so an unlock change needs a new one.
-    if (photoAccessChecked && result.expires_at !== photoExpiresAt) reconnectPhotoEvents?.();
-    photoExpiresAt = result.expires_at;
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && changed) await invalidateLibrary(false);
@@ -648,7 +643,6 @@
       discardLibrary();
       photoValidated = false;
       photoChangeID = undefined;
-      photoExpiresAt = undefined;
       photoAccessChecked = false;
     };
   });
@@ -780,12 +774,14 @@
       if (!hidden) void invalidateLibrary(false);
     };
   });
-  // Any change open views could show refreshes them: lists reload their loaded prefix, and
+  // Any commit to data Photos reads refreshes every open view: lists reload their loaded prefix, and
   // single-photo viewers read their own photos again. Starting while a list is still
   // loading would abort that read, so the pass waits for it.
   async function photoChanged(change: PhotoChange) {
     // A concealed Library reloads when access is checked again, so the change waits for that.
     if (!photoValidated && !hiddenMode) return false;
+    // Edits never wait for a pass; the pass waits for them.
+    if (mutationsInFlight()) return false;
     const lists = [
       photoState?.photos,
       albumPhotos,
@@ -800,7 +796,7 @@
       await settleReads([
         photosChanged(undefined, undefined, true),
         hiddenWorkspace?.refresh(true),
-        change.idFree ? refreshDefinitions() : undefined,
+        refreshDefinitions(),
       ]);
       listRefreshed = true;
     } finally {
@@ -838,10 +834,8 @@
         photoEventError = "";
       },
     );
-    reconnectPhotoEvents = watcher.reconnect;
     return () => {
       watcher.stop();
-      reconnectPhotoEvents = undefined;
       photoEventError = "";
     };
   });

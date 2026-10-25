@@ -8,7 +8,7 @@
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
   import { APIError } from "./api-transport.js";
-  import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
+  import { settleReads, type PhotoChange } from "./photoEvents.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import {
@@ -246,7 +246,6 @@
     editor.tagsLoading = tagsLoading;
     editor.tagsTotal = tagsTotal;
   });
-  let changedDuringWrite: PhotoChange | undefined;
   $effect(() => {
     editor.onXMPChanged = async (receipt, tags = []) => {
       if (photoID) {
@@ -287,12 +286,7 @@
       detailController?.abort();
       reload = { id: photoID };
     }
-    const change = changedDuringWrite;
-    if (change) {
-      await refresh(true);
-      if (photoID) await revalidateDetail(photoID);
-      if (changedDuringWrite === change) changedDuringWrite = undefined;
-    } else if (
+    if (
       forceRefresh ||
       (refreshList && (refreshing || (photos.started && photos.reloadsAfter(rotations))))
     )
@@ -578,13 +572,10 @@
   }
   $effect(() =>
     photos.watch((change: PhotoChange) => {
-      if (editor.busy) changedDuringWrite = change;
       return settleReads([
-        photoID && affectsPhoto(change, photoID)
-          ? revalidateDetail(photoID, change.listRefreshed)
-          : undefined,
+        photoID ? revalidateDetail(photoID, change.listRefreshed) : undefined,
         // The editor retains changes until the user clears a draft.
-        editor.invalidate(change),
+        editor.invalidate(),
       ]);
     }),
   );

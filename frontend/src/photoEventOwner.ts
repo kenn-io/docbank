@@ -1,16 +1,15 @@
 const photoEventOwner = "docbank-photo-events";
 
-// The owner forwards each event to the other tabs. The Hidden unlock cookie is shared
-// across them, so every tab may see the same photos and the same IDs.
+// The owner forwards each change to the other tabs.
 let channel: BroadcastChannel | undefined;
 const photoEventChannel = () => (channel ??= new BroadcastChannel(photoEventOwner));
 
-export function announcePhotoEvent(event: object) {
-  photoEventChannel().postMessage(event);
+export function announcePhotoEvent() {
+  photoEventChannel().postMessage(null);
 }
 
-export function onPhotoEventSignal(receive: (event: unknown) => void) {
-  const listener = ({ data }: MessageEvent) => receive(data);
+export function onPhotoEventSignal(receive: () => void) {
+  const listener = () => receive();
   photoEventChannel().addEventListener("message", listener);
   return () => photoEventChannel().removeEventListener("message", listener);
 }

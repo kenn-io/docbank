@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import PhotoCompare from "./PhotoCompare.svelte";
 import { APIError } from "./api-transport.js";
 import { Photos } from "./photos.svelte.js";
-import { idFreeChange, photo, photoChange } from "./photo-test-fixtures.js";
+import { photo } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 
 afterEach(() => {
@@ -230,15 +230,13 @@ it("preserves the closeup when the destination lookup fails", async () => {
   photos.dispose();
 });
 
-it("reads the shown photos again after a change that names them or after ID-free churn", async () => {
+it("reads the shown photos again on every change", async () => {
   const rows = [photo(1), photo(2), photo(3)];
   const { photos, dialog } = compare(rows);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
   const closeup = within(dialog).getByRole("button", { name: "Manual closeup" });
   closeup.focus();
   const lookup = vi.mocked(photos.lookupMany);
-  await photos.changed(photoChange("photo-3"));
-  expect(lookup).toHaveBeenCalledOnce();
   lookup.mockResolvedValueOnce([
     {
       ...rows[0]!,
@@ -247,7 +245,7 @@ it("reads the shown photos again after a change that names them or after ID-free
     },
     rows[1]!,
   ]);
-  await photos.changed(photoChange("photo-1"));
+  await photos.changed({});
   await waitFor(() => expect(names(dialog)).toEqual(["Renamed.jpg", "Photo 2.jpg"]));
   await waitFor(() =>
     expect(
@@ -258,7 +256,7 @@ it("reads the shown photos again after a change that names them or after ID-free
     ).toEqual({ state: "ready", generation_id: "grid-1" }),
   );
   lookup.mockResolvedValueOnce([rows[0]!]);
-  await photos.changed(idFreeChange);
+  await photos.changed({});
   await within(dialog).findByText("1 selected photo is unavailable.");
   expect(names(dialog)).toEqual(["Photo 1.jpg"]);
   // Live rereads leave keyboard focus where it was.
@@ -287,9 +285,13 @@ it.each(["replacement", "failure"])(
     await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
     await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
     if (mode === "replacement") {
-      lookup.mockResolvedValueOnce([rows[1]!, { ...rows[2]!, name: "Replaced.jpg" }]);
-      await photos.changed(photoChange("photo-3"));
-      expect(lookup.mock.calls[2]![0]).toEqual(["photo-2", "photo-3"]);
+      lookup.mockImplementation(async (ids) =>
+        ids.includes("photo-3")
+          ? [rows[1]!, { ...rows[2]!, name: "Replaced.jpg" }]
+          : rows.slice(0, 2),
+      );
+      await photos.changed({});
+      expect(lookup.mock.calls.map(([ids]) => ids)).toContainEqual(["photo-2", "photo-3"]);
       await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Replaced.jpg"]));
       stale(rows.slice(1, 3));
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -299,7 +301,7 @@ it.each(["replacement", "failure"])(
         if (ids.includes("photo-3")) throw new APIError("Service unavailable", 503, "unavailable");
         return [rows[1]!];
       });
-      await expect(photos.changed(photoChange("photo-1"))).rejects.toThrow("Service unavailable");
+      await expect(photos.changed({})).rejects.toThrow("Service unavailable");
       await within(dialog).findByText("1 selected photo is unavailable.");
       expect(within(dialog).queryByRole("img", { name: "Photo 1.jpg" })).toBeNull();
       expect(within(dialog).getByRole("region", { name: "Photo 2.jpg" })).toBe(survivor);

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack, tick } from "svelte";
-  import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
+  import { settleReads } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { patchPhotoRows } from "./photoRows.js";
@@ -207,37 +207,16 @@
   });
   // A live change reads the shown photos and the stack groups again and swaps them in place. Nothing
   // here sets `loading`, `busy`, or `stackLoading`, so shortcuts, Undo, navigation, and Exit keep working.
-  let runIDs: { ids: string[]; set: Set<string> } | undefined;
-  let writesInFlight = 0;
-  let changedDuringWrite: PhotoChange | undefined;
-  async function revalidate(change: PhotoChange) {
-    if (writesInFlight || editor.busy) changedDuringWrite = change;
-    const ids = cull.run!.ids;
-    if (runIDs?.ids !== ids) runIDs = { ids, set: new Set(ids) };
-    const held = change.idFree || [...change.ids].some((id) => runIDs!.set.has(id));
-    if (held) cull.flagsChanged();
-    const shown = shownIDs.filter((id) => affectsPhoto(change, id));
+  async function revalidate() {
+    cull.flagsChanged();
     await settleReads([
       // New capture times can move frames between stacks, so the groups are read again too.
-      held ? cull.regroup(true) : undefined,
-      shown.length ? reread(shown) : undefined,
+      cull.regroup(true),
+      shownIDs.length ? reread(shownIDs) : undefined,
       cull.complete ? revalidateRemainder() : undefined,
       // Prepared stack revisions are read again, so a decision checks the refreshed rows.
-      editor.invalidate(change),
+      editor.invalidate(),
     ]);
-  }
-  async function reconcileWriteChanges() {
-    const change = changedDuringWrite;
-    if (!change || writesInFlight || reloadController.signal.aborted) return;
-    try {
-      await reread(shownIDs);
-      if (changedDuringWrite === change) changedDuringWrite = undefined;
-    } catch (cause) {
-      if (!reloadController.signal.aborted) {
-        editor.error = cause instanceof Error ? cause.message : String(cause);
-        editor.conflict = true;
-      }
-    }
   }
   async function revalidateRemainder() {
     await passTransition;
@@ -373,13 +352,7 @@
     } finally {
       checkingDecision = false;
     }
-    writesInFlight++;
-    try {
-      await editor.undo(refresh);
-    } finally {
-      writesInFlight--;
-      await reconcileWriteChanges();
-    }
+    await editor.undo(refresh);
   }
   function stageDecision(
     selected: PhotoBrowseRow,
@@ -411,36 +384,30 @@
       checkingDecision = false;
     }
     const id = selected.asset_id;
-    writesInFlight++;
-    try {
-      await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
-        beforeWrite: () => cull.verifyDecision(),
-        beforeStage: retry ? undefined : (targets) => stageDecision(selected, patch, targets),
-        viewed: retry
-          ? undefined
-          : {
-              content_version_id: selected.content_version_id,
-            },
-      });
-      await tick();
-      if (editor.error || editor.dirty || editor.conflict) return;
-      reconcile(editor.targets);
-      announcement =
-        patch.flag !== undefined
-          ? `${selected.name}: ${patch.flag || "flag cleared"}`
-          : `${selected.name}: ${patch.rating} stars`;
-      if (editor.fileID) {
-        announcement += " (shown file only)";
-        editor.noticeTone = "warning";
-        editor.notice = `${selected.name}: changed only the shown file. Its paired file has a different ${patch.flag !== undefined ? "flag" : "rating"}.`;
-      }
-      if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) {
-        if (advanceToNextStack) cull.moveStack(1);
-        else cull.move(1);
-      }
-    } finally {
-      writesInFlight--;
-      await reconcileWriteChanges();
+    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
+      beforeWrite: () => cull.verifyDecision(),
+      beforeStage: retry ? undefined : (targets) => stageDecision(selected, patch, targets),
+      viewed: retry
+        ? undefined
+        : {
+            content_version_id: selected.content_version_id,
+          },
+    });
+    await tick();
+    if (editor.error || editor.dirty || editor.conflict) return;
+    reconcile(editor.targets);
+    announcement =
+      patch.flag !== undefined
+        ? `${selected.name}: ${patch.flag || "flag cleared"}`
+        : `${selected.name}: ${patch.rating} stars`;
+    if (editor.fileID) {
+      announcement += " (shown file only)";
+      editor.noticeTone = "warning";
+      editor.notice = `${selected.name}: changed only the shown file. Its paired file has a different ${patch.flag !== undefined ? "flag" : "rating"}.`;
+    }
+    if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) {
+      if (advanceToNextStack) cull.moveStack(1);
+      else cull.move(1);
     }
   }
   async function retryDecision() {
@@ -521,43 +488,37 @@
       checkingDecision = false;
     }
     const id = photo.asset_id;
-    writesInFlight++;
-    try {
-      const success = await editor.decideStack(
-        {
-          hidden: photos.hidden,
-          asset_ids: stack,
-          current_id: id,
-          decision,
-          selected_ids:
-            decision === "selected" ? selectedFrames.filter((id) => stack.includes(id)) : undefined,
-          burst_gap_seconds: cull.run!.burstGapSeconds!,
-        },
-        refresh,
-        {
-          observed: [
-            photo,
-            ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
-          ],
-          beforeWrite: () => cull.verifyDecision(),
-        },
-      );
-      if (!success) return;
-      announcement =
-        decision === "representative"
-          ? "Representative chosen"
-          : decision === "all"
-            ? "Stack kept"
-            : decision === "selected"
-              ? "Selected frames kept"
-              : "Current frame kept";
-      await tick();
-      if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
-        cull.moveStack(1);
-    } finally {
-      writesInFlight--;
-      await reconcileWriteChanges();
-    }
+    const success = await editor.decideStack(
+      {
+        hidden: photos.hidden,
+        asset_ids: stack,
+        current_id: id,
+        decision,
+        selected_ids:
+          decision === "selected" ? selectedFrames.filter((id) => stack.includes(id)) : undefined,
+        burst_gap_seconds: cull.run!.burstGapSeconds!,
+      },
+      refresh,
+      {
+        observed: [
+          photo,
+          ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
+        ],
+        beforeWrite: () => cull.verifyDecision(),
+      },
+    );
+    if (!success) return;
+    announcement =
+      decision === "representative"
+        ? "Representative chosen"
+        : decision === "all"
+          ? "Stack kept"
+          : decision === "selected"
+            ? "Selected frames kept"
+            : "Current frame kept";
+    await tick();
+    if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
+      cull.moveStack(1);
   }
   function close() {
     if (canChangeTarget()) onclose();

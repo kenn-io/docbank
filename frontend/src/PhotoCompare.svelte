@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from "svelte";
-  import { affectsPhoto, settleReads, type PhotoChange } from "./photoEvents.js";
+  import { settleReads } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { Button, Modal } from "@kenn-io/kit-ui";
@@ -79,14 +79,9 @@
   });
   // A live change reads the shown photos again, and the destination of a move in flight.
   $effect(() =>
-    photos.watch((change: PhotoChange) => {
-      const shownChanged = selected.some((id) => affectsPhoto(change, id));
-      if (!shownChanged && !target.some((id) => affectsPhoto(change, id))) return;
-      return settleReads([
-        shownChanged && target !== selected ? revalidateDisplayed() : undefined,
-        load(target, true),
-      ]);
-    }),
+    photos.watch(() =>
+      settleReads([target !== selected ? revalidateDisplayed() : undefined, load(target, true)]),
+    ),
   );
   async function move(direction: -1 | 1) {
     if (moving || photos.blocking) return;

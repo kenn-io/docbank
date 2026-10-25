@@ -16,8 +16,6 @@ import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
-  idFreeChange,
-  photoChange,
   photoMetadataResponse,
   photoPreparation,
   preparedPhoto,
@@ -3125,15 +3123,13 @@ it("reads the open photo again on a live change and conceals its cached image on
   const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(row);
   viewerWithCachedImage(photos, lookup);
   await screen.findByText("Fit preview");
-  await act(() => photos.changed(photoChange("photo-2")));
-  expect(lookup).toHaveBeenCalledOnce();
   lookup.mockResolvedValueOnce({ ...row, name: "Renamed.jpg" });
-  await act(() => photos.changed(idFreeChange));
+  await act(() => photos.changed({}));
   expect(lookup).toHaveBeenCalledTimes(2);
   await screen.findByRole("dialog", { name: "Photo viewer, Renamed.jpg" });
   expect(screen.getByText("Fit preview")).toBeTruthy();
   lookup.mockRejectedValueOnce(new APIError("This photo is no longer in this view.", 404, "x"));
-  await act(() => photos.changed(idFreeChange));
+  await act(() => photos.changed({}));
   await screen.findByText("This photo is no longer in this view.");
   expect(screen.queryByText("Fit preview")).toBeNull();
   expect(screen.getByText("No preview")).toBeTruthy();
@@ -3155,7 +3151,7 @@ it.each([undefined, "map"] as const)(
     lookup.mockResolvedValue({ ...photo(1), name: "Looked up.jpg" });
     await act(async () => {
       photos.items = [refreshed];
-      await photos.changed({ ...photoChange("photo-1"), listRefreshed: true });
+      await photos.changed({ listRefreshed: true });
     });
     await screen.findByRole("dialog", {
       name: `Photo viewer, ${projection ? "Looked up.jpg" : "Refreshed.jpg"}`,
@@ -3174,7 +3170,7 @@ it("ignores a live detail response after leaving and returning to Photos", async
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   let finish!: (row: PhotoBrowseRow) => void;
   lookup.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
-  const changing = photos.changed(photoChange("photo-1"));
+  const changing = photos.changed({});
   await waitFor(() => expect(finish).toBeDefined());
   view.unmount();
   stubPhotoFetch(async () =>
@@ -3221,13 +3217,13 @@ it.each([
     await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
     if (older === "live") {
       await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-      void photos.changed(photoChange("photo-1"));
+      void photos.changed({});
       await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
     }
     const name = newer === "navigation" ? "Photo 2.jpg" : "Newer.jpg";
     lookup.mockResolvedValueOnce(newer === "navigation" ? photo(2) : { ...row, name });
     if (newer === "navigation") await rerender({ photoID: "photo-2" });
-    else await act(() => photos.changed(photoChange("photo-1")));
+    else await act(() => photos.changed({}));
     await screen.findByRole("dialog", { name: `Photo viewer, ${name}` });
     settle();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3248,9 +3244,8 @@ it("forwards live changes to the editor while Metadata is open", async () => {
     photoID: "",
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
-  const change = photoChange("photo-1");
-  await act(() => photos.changed(change));
-  expect(invalidate).toHaveBeenCalledWith(change);
+  await act(() => photos.changed({}));
+  expect(invalidate).toHaveBeenCalledOnce();
   photos.dispose();
 });
 
@@ -3337,7 +3332,7 @@ it("keeps newer Library values across an older live read", async () => {
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   let finishRead!: (row: PhotoBrowseRow) => void;
   lookup.mockImplementationOnce(() => new Promise((resolve) => (finishRead = resolve)));
-  const reading = photos.changed(photoChange("photo-1"));
+  const reading = photos.changed({});
   await waitFor(() => expect(finishRead).toBeDefined());
   shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
   await waitFor(() => expect(edit).toHaveBeenCalledOnce());

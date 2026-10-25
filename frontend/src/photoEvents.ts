@@ -5,35 +5,13 @@ import {
   withPhotoEventOwnership,
 } from "./photoEventOwner.js";
 
-export type PhotoEvent = { asset_id?: string };
-
-/** The photos changed since the last pass, or an ID-free change that could have touched any of them. */
-export type PhotoChange = {
-  ids: ReadonlySet<string>;
-  idFree: boolean;
-  resume?: boolean;
-  listRefreshed?: boolean;
-};
-
-export const affectsPhoto = (change: PhotoChange, id: string) =>
-  change.idFree || change.ids.has(id);
+/** What the next pass should know: its retry may keep pages an earlier attempt already read, and the lists have reloaded. */
+export type PhotoChange = { resume?: boolean; listRefreshed?: boolean };
 
 /** Waits for every read, then throws the first failure, so a pass never starts over a read still running. */
 export async function settleReads(reads: (Promise<unknown> | undefined)[]) {
   const failed = (await Promise.allSettled(reads)).find((result) => result.status === "rejected");
   if (failed) throw failed.reason;
-}
-
-function parsePhotoEvent(value: unknown): PhotoEvent {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const event = value as Record<string, unknown>;
-  if (Object.keys(event).some((key) => key !== "asset_id")) return {};
-  if (
-    event.asset_id !== undefined &&
-    (typeof event.asset_id !== "string" || event.asset_id.length === 0)
-  )
-    return {};
-  return event as PhotoEvent;
 }
 
 export const photoEventIdleTimeout = 45_000;
@@ -42,7 +20,7 @@ const frameLimit = 65536;
 export async function readPhotoEvents(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  receive: (event: PhotoEvent) => void,
+  receive: () => void,
   timeout = photoEventIdleTimeout,
 ) {
   const reader = body.getReader(),
@@ -62,15 +40,7 @@ export async function readPhotoEvents(
         const data = [...buffered.slice(0, match.index).matchAll(/^data: ?(.*)$/gm)]
           .map((line) => line[1])
           .join("\n");
-        if (data) {
-          let value: unknown;
-          try {
-            value = JSON.parse(data);
-          } catch {
-            value = undefined;
-          }
-          receive(parsePhotoEvent(value));
-        }
+        if (data) receive();
         buffered = buffered.slice(match.index + match[0].length);
       }
       if (buffered.length > frameLimit) throw new Error("Photo event exceeds frame limit");
@@ -99,7 +69,6 @@ async function openPhotoEvents(session: string, signal: AbortSignal) {
 }
 
 const passSpacing = 1000;
-const maxChangedIDs = 64;
 
 /**
  * Keeps open photo views current. Events only mark the watcher dirty; one pass at a time
@@ -116,13 +85,11 @@ export function watchPhotoEvents(
   let stopped = false,
     running = false,
     dirty = false,
-    idFree = false,
     failures = 0,
     connections = 0,
     resumable = false,
     newer = false,
     notBefore = 0;
-  let ids = new Set<string>();
   let controller = new AbortController();
   let pass: ReturnType<typeof setTimeout> | undefined,
     retry: ReturnType<typeof setTimeout> | undefined;
@@ -131,46 +98,36 @@ export function watchPhotoEvents(
     clearTimeout(pass);
     pass = setTimeout(() => void run(), Math.max(0, notBefore - Date.now()));
   };
-  // More changed photos than a pass can name, like any ID-free change, ask for a full refetch.
-  const queue = (change: PhotoChange) => {
-    dirty = true;
-    idFree ||= change.idFree;
-    for (const id of change.ids) ids.add(id);
-    if (idFree || ids.size > maxChangedIDs) {
-      idFree = true;
-      ids = new Set();
-    }
-    schedule();
-  };
-  const mark = (event: PhotoEvent = {}) => {
+  const mark = () => {
     newer = true;
     resumable = false;
-    queue({ ids: new Set(event.asset_id ? [event.asset_id] : []), idFree: !event.asset_id });
+    dirty = true;
+    schedule();
   };
   // A failed pass stays queued; with nothing new since, its retry may keep the pages it read.
-  const requeue = (change: PhotoChange) => {
-    queue(change);
+  const requeue = () => {
+    dirty = true;
     resumable = !newer;
+    schedule();
   };
   const run = async () => {
     pass = undefined;
     if (stopped || running || !dirty || document.visibilityState !== "visible") return;
-    const change = { ids, idFree, resume: resumable || undefined };
-    ids = new Set();
-    idFree = dirty = newer = false;
+    const change = { resume: resumable || undefined };
+    dirty = newer = false;
     running = true;
     const began = Date.now();
     let delay = passSpacing;
     try {
       if ((await refresh(change)) === false) {
-        queue(change);
+        dirty = true;
         resumable = false;
       } else {
         failures = 0;
         resumable = false;
       }
     } catch {
-      requeue(change);
+      requeue();
       delay = Math.min(30_000, passSpacing * 2 ** failures++);
     } finally {
       running = false;
@@ -187,11 +144,11 @@ export function watchPhotoEvents(
         connections = 0;
         opened();
         // The server subscribes before it sends headers and replays nothing, so refetch what came earlier.
-        announcePhotoEvent({});
+        announcePhotoEvent();
         mark();
-        await readPhotoEvents(body, signal, (event) => {
-          announcePhotoEvent(event);
-          mark(event);
+        await readPhotoEvents(body, signal, () => {
+          announcePhotoEvent();
+          mark();
         });
       });
     } catch (cause) {
@@ -212,9 +169,8 @@ export function watchPhotoEvents(
     if (refetch) mark();
     void connect();
   };
-  // Also the way to reopen the stream when the Hidden unlock changes, since the server binds it at connect.
   const reconnect = () => open(true);
-  const unlisten = onPhotoEventSignal((event) => mark(parsePhotoEvent(event)));
+  const unlisten = onPhotoEventSignal(mark);
   const dispose = () => {
     stopped = true;
     controller.abort();
@@ -226,5 +182,5 @@ export function watchPhotoEvents(
   document.addEventListener("visibilitychange", reconnect);
   // Followers can miss changes before their listener exists, even while another tab owns the stream.
   open(true);
-  return { stop: dispose, reconnect };
+  return { stop: dispose };
 }

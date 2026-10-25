@@ -33,6 +33,20 @@ export interface SessionOptions extends RequestInit {
   session?: string;
 }
 
+// Reads that use POST for their request body, so scrolling or typing a search never defers a pass.
+// A missed entry only delays one refresh pass.
+const readOnlyPosts =
+  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse)$/;
+
+let mutations = 0;
+
+/** Counts requests that may write, from the call until their response headers arrive. */
+export const mutationsInFlight = () => mutations;
+
+const mutates = (url: string, method = "GET") =>
+  !["GET", "HEAD"].includes(method.toUpperCase()) &&
+  !readOnlyPosts.test(url.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]*/i, "").split(/[?#]/, 1)[0]!);
+
 // Orval's transport hook adds the scoped credential and preserves problem details.
 export async function sessionResponse<_T>(
   url: string,
@@ -45,12 +59,19 @@ export async function sessionResponse<_T>(
   }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
-  const response = await fetch(url, {
-    ...init,
-    headers,
-    credentials: "same-origin",
-    redirect: "error",
-  });
+  const writing = mutates(url, init.method);
+  if (writing) mutations++;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers,
+      credentials: "same-origin",
+      redirect: "error",
+    });
+  } finally {
+    if (writing) mutations--;
+  }
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
     try {

@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { APIError, isCurrentSessionError, sessionResponse } from "./api-transport.js";
+import {
+  APIError,
+  isCurrentSessionError,
+  mutationsInFlight,
+  sessionResponse,
+} from "./api-transport.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -12,6 +17,37 @@ it("sends the scoped browser session header and sets redirect behavior", async (
   expect(request?.credentials).toBe("same-origin");
   const headers = new Headers(request?.headers);
   expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
+});
+
+it("counts writes from the call until their response headers, and ignores reads", async () => {
+  let answer!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    () => new Promise<Response>((resolve) => (answer = resolve)),
+  );
+  for (const [url, method] of [
+    ["/api/v1/photos/assets/query", "POST"],
+    ["/api/v1/photos/assets/photo-1/preview", "POST"],
+    ["/api/v1/queries/parse", "POST"],
+    ["/api/v1/photos/events", "GET"],
+  ] as const) {
+    const reading = sessionResponse(url, { session: "tab", method });
+    expect(mutationsInFlight()).toBe(0);
+    answer(Response.json({}));
+    await reading;
+  }
+  const writing = sessionResponse("/api/v1/photos/authored/edit?trace=1", {
+    session: "tab",
+    method: "POST",
+  });
+  expect(mutationsInFlight()).toBe(1);
+  answer(Response.json({}, { status: 503 }));
+  await expect(writing).rejects.toBeInstanceOf(APIError);
+  expect(mutationsInFlight()).toBe(0);
+  vi.mocked(globalThis.fetch).mockRejectedValueOnce(new TypeError("offline"));
+  await expect(
+    sessionResponse("/api/v1/photos/authored/edit", { session: "tab", method: "PUT" }),
+  ).rejects.toThrow("offline");
+  expect(mutationsInFlight()).toBe(0);
 });
 
 it("binds authorization failures to the session that issued the request", async () => {
