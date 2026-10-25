@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -487,4 +488,28 @@ func TestPhotoEventsSuggestionDismissal(t *testing.T) {
 	_, err := s.RespondPhotoSuggestion(t.Context(), proposal.ID, dismissalOf(t.Context(), t, s, proposal))
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
+}
+
+func TestPhotoEventsMixedVisibilityFolderRename(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	folder, err := s.Mkdir(ctx, s.RootID(), "Original folder")
+	require.NoError(t, err)
+	// Many hidden photos make it near certain that any capture limit would leave out the visible one.
+	for i := range 20 * PhotoEventIDLimit {
+		_, err := s.CreateFile(ctx, folder.ID, fmt.Sprintf("hidden-%04d.jpg", i), fakeHash(fmt.Sprintf("%04x", i)), 20, "image/jpeg")
+		require.NoError(t, err)
+	}
+	_, err = s.db.Exec(`UPDATE photo_assets SET hidden_at=?`, time.Now().UTC().Format(timestampLayout))
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, folder.ID, "visible.jpg", fakeHash("aaaa"), 20, "image/jpeg")
+	require.NoError(t, err)
+	events := watchPhotoChanges(t, s)
+	_, _, err = s.Move(ctx, folder.ID, s.RootID(), "Renamed folder", UnconditionalRev)
+	require.NoError(t, err)
+	visible, err := s.VisiblePhotoEvents(ctx, nextPhotoWake(t, events))
+	require.NoError(t, err)
+	require.NotEmpty(t, visible, "a locked viewer refreshes its visible photo after its folder is renamed")
 }
