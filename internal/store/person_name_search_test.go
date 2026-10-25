@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -39,20 +40,17 @@ func BenchmarkPeopleByDisplayNameWordStart(b *testing.B) {
 	 CASE WHEN i%100=0 THEN 'synthetic smith' ELSE printf('synthetic person%05d',i) END,
 	 'operator','curated',1,?,? FROM people`, nowRFC3339(), nowRFC3339())
 	require.NoError(b, err)
-	// Browser visibility reads every assertion, so seed a photo-heavy vault.
-	// The rows reference no real versions; only the person search reads them.
-	conn, err := s.db.Conn(b.Context())
-	require.NoError(b, err)
-	_, err = conn.ExecContext(b.Context(), `PRAGMA foreign_keys=OFF`)
-	require.NoError(b, err)
-	_, err = conn.ExecContext(b.Context(), `WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<300000)
-	 INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision)
-	 SELECT printf('10000000-0000-4000-8000-%012d',i),printf('20000000-0000-4000-8000-%012d',i),
-	 printf('00000000-0000-4000-8000-%012d',1+i%100000),'depicted','assert','',?,1 FROM n`, nowRFC3339())
-	require.NoError(b, err)
-	_, err = conn.ExecContext(b.Context(), `PRAGMA foreign_keys=ON`)
-	require.NoError(b, err)
-	require.NoError(b, conn.Close())
+	// Browser visibility reads every assertion, so seed a photo-heavy vault:
+	// 300 photos with 1,000 depicted people each gives every person three photos.
+	for photo := range 300 {
+		node, err := s.CreateFile(b.Context(), s.RootID(), fmt.Sprintf("photo-%03d.jpg", photo), fakeHash(fmt.Sprintf("people-%03d", photo)), 20, "image/jpeg")
+		require.NoError(b, err)
+		_, err = s.db.ExecContext(b.Context(), `WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<999)
+		 INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision)
+		 SELECT printf('10000000-0000-4000-8000-%012d',?*1000+i),?,printf('00000000-0000-4000-8000-%012d',1+(?*1000+i)%100000),
+		 'depicted','assert','',?,1 FROM n`, photo, node.CurrentVersionID, photo, nowRFC3339())
+		require.NoError(b, err)
+	}
 	for b.Loop() {
 		people, err := s.PeopleByDisplayName(b.Context(), "Smith", "", "", 100, true)
 		require.NoError(b, err)
