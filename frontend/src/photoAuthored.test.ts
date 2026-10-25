@@ -2109,3 +2109,52 @@ it("foreground edits bypass live tag reads", async () => {
     editor.dispose();
   }
 });
+
+it("re-reads assigned tags after a failed edit keeps its draft", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  editor.targets = structuredClone(targets).map((target) => ({ ...target, tags: ["assigned"] }));
+  editor.asset = structuredClone(asset);
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    init.signal?.throwIfAborted();
+    return url.endsWith("/tags/assigned")
+      ? response({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 })
+      : response({ detail: "Edit unavailable" }, 503);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  await editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  expect(editor.dirty).toBe(true);
+  await editor.refreshAssignedTags();
+  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/tags/assigned"))).toHaveLength(
+    1,
+  );
+  editor.dispose();
+});
+
+it("sends an edit without waiting for a stalled keyword lookup of a quiet read", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  const tagged = structuredClone(targets).map((target) => ({ ...target, tags: ["unlisted"] }));
+  const fetcher = vi.fn((url: string, init: RequestInit) => {
+    if (url.endsWith("/prepare"))
+      return Promise.resolve(response({ assets: [asset], targets: tagged }));
+    if (url.endsWith("/tags/unlisted"))
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }),
+      );
+    return Promise.resolve(response({ receipt_id: "receipt", before: [], after: [] }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const reading = editor.prepare({ asset_ids: ["asset"] }, false, false, true);
+  const settled = reading;
+  await vi.waitFor(() =>
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/tags/unlisted"))).toBe(true),
+  );
+  void editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  await vi.waitFor(
+    () => expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
+    { timeout: 150 },
+  );
+  await settled;
+  editor.dispose();
+});

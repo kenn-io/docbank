@@ -149,12 +149,15 @@ export class PhotoAuthoredEditor {
     void this.resolveAssignedTags();
   }
   private pendingTags = new Map<string, Promise<api.Tag | undefined>>();
-  // Background reads give way to any edit or new preparation, which abort `read`.
-  private backgroundSignal() {
-    return AbortSignal.any([this.read.signal, this.controller.signal]);
+  // Background reads give way to any edit or new preparation, which replace this controller.
+  private tagReads = new AbortController();
+  private cancelTagReads() {
+    this.tagReads.abort();
+    this.tagReads = new AbortController();
   }
+  // A read with its own signal never reuses a pending one, which could outlive that signal.
   private readTag(id: string, refresh = false, signal?: AbortSignal) {
-    if (refresh) this.pendingTags.delete(id);
+    if (refresh || signal) this.pendingTags.delete(id);
     const pending = this.pendingTags.get(id);
     if (pending) return pending;
     const request = this.request(() => api.getTag(id, this.options(signal)))
@@ -313,14 +316,14 @@ export class PhotoAuthoredEditor {
   private xmpAssets(targets: typeof this.targets) {
     return [...new Set(targets.filter((target) => target.xmp).map((target) => target.asset_id))];
   }
-  private async resolveAssignedTags(required = false) {
+  private async resolveAssignedTags(required = false, signal?: AbortSignal) {
     const known = new Set(this.tags.map((tag) => tag.id));
     const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
       (id) => !known.has(id),
     );
     await settleReads(
       missing.map((id) =>
-        this.readTag(id).catch((cause) => {
+        this.readTag(id, false, signal).catch((cause) => {
           if (required) throw cause;
           if (!this.controller.signal.aborted) this.tagsError = this.failure(cause);
         }),
@@ -337,7 +340,11 @@ export class PhotoAuthoredEditor {
   /** Reads assigned tags again for renames and deletions outside the catalog page. */
   async refreshAssignedTags() {
     const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
-    await settleReads(ids.map((id) => this.readTag(id, true, this.backgroundSignal())));
+    await settleReads(
+      ids.map((id) =>
+        this.readTag(id, true, AbortSignal.any([this.tagReads.signal, this.controller.signal])),
+      ),
+    );
   }
   // Either choice can import unrelated outside changes.
   private async publishXMPKeywords(
@@ -392,6 +399,7 @@ export class PhotoAuthoredEditor {
   private writes = 0;
   private beginWrite() {
     this.read.abort();
+    this.cancelTagReads();
     this.stackRead.abort();
     // The aborted preparation no longer clears its own loading flag, so release it here and let the caller restart it.
     if (this.stackLoading) {
@@ -481,6 +489,7 @@ export class PhotoAuthoredEditor {
     quiet = false,
   ) {
     this.read.abort();
+    this.cancelTagReads();
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([
       controller.signal,
@@ -522,7 +531,7 @@ export class PhotoAuthoredEditor {
       this.suggestionsError = "";
       this.conflict = this.membershipChanged;
       this.watchXMP(true);
-      if (quiet) await this.resolveAssignedTags(true);
+      if (quiet) await this.resolveAssignedTags(true, signal);
       else void this.resolveAssignedTags();
       if (!this.tags.length && !this.tagsLoading && !this.tagsError)
         void this.loadTags?.().catch((cause) => {
