@@ -270,6 +270,11 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
+Documentation browser checks run in Microsoft's public Playwright image, with
+the image version taken from the installed `@playwright/test` package.
+Render PDF restores LibreOffice and Poppler from an apt cache keyed by runner
+image; any run may save the cache on a miss, after downloading the packages.
+
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
 by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
 cache), and each Windows architecture. Only `main` pushes save, once per group

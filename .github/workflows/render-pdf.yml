@@ -34,10 +34,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Disable recommended apt packages
+        run: echo 'APT::Install-Recommends "false";' | sudo tee /etc/apt/apt.conf.d/99no-install-recommends
+
       - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
+        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        with:
+          packages: libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
+          version: ${{ env.ImageOS }}-${{ env.ImageVersion }}
 
       - name: Run mandatory page rendering proof
         env:
