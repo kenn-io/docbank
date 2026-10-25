@@ -8,6 +8,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,12 +22,19 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 )
 
 func TestRedactionVerifyCLI(t *testing.T) {
 	f := newRedactionVerifyFixture(t)
 	data := f.archive(t, "valid")
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	t.Setenv("TMP", scratch)
+	t.Setenv("TEMP", scratch)
 	digest := fmt.Sprintf("%x", sha256.Sum256(data))
 	output, err := runCLI(t, append(f.args, "--json")...)
 	require.NoError(t, err)
@@ -37,9 +49,34 @@ func TestRedactionVerifyCLI(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, output, digest)
 	require.Contains(t, output, strconv.Itoa(len(data)))
-	require.Contains(t, output, "Receipt and sanitized text match the supplied review.")
-	require.Contains(t, output, "PDF contents were not compared with the review.")
+	require.Contains(t, output, "PDF masks and text match the supplied review.")
+	require.Contains(t, output, "Unmasked image content and producer identity were not verified.")
 	require.Contains(t, output, "Compare the archive SHA-256 with the render-time value.")
+	entries, err := os.ReadDir(scratch)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestRedactionVerifyRejectsSelfConsistentPDF(t *testing.T) {
+	for _, scenario := range []string{"non-PDF", "unmasked PDF"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newRedactionVerifyFixture(t)
+			data := f.archive(t, scenario)
+			scratch := t.TempDir()
+			t.Setenv("TMPDIR", scratch)
+			t.Setenv("TMP", scratch)
+			t.Setenv("TEMP", scratch)
+			_, err := daemonconn.VerifyRedactionArchive(t.Context(), bytes.NewReader(data), int64(len(data)), f.review)
+			require.NoError(t, err, "archive hashes and CRCs must agree before the stronger check")
+			output, err := runCLI(t, append(f.args, "--json")...)
+			require.Error(t, err)
+			require.Equal(t, 6, commandExitCode(err, true))
+			require.Empty(t, output)
+			entries, err := os.ReadDir(scratch)
+			require.NoError(t, err)
+			require.Empty(t, entries)
+		})
+	}
 }
 
 func TestRedactionVerifyErrors(t *testing.T) {
@@ -142,8 +179,11 @@ func newRedactionVerifyFixture(t *testing.T) redactionVerifyFixture {
 
 func (f redactionVerifyFixture) archive(t *testing.T, scenario string) []byte {
 	t.Helper()
-	// PDF semantics belong to the render qualification; this tests ZIP admission.
-	pdf, text := []byte("synthetic PDF payload"), []byte("[REDACTED] KEEP SECRET\f")
+	pdf := redactionVerifyPDF(t, f.review, scenario == "unmasked PDF")
+	if scenario == "non-PDF" {
+		pdf = []byte("self-consistently hashed non-PDF payload")
+	}
+	text := []byte("[REDACTED] KEEP SECRET\f")
 	if scenario == "changed text" {
 		text = []byte("SECRET KEEP SECRET\f")
 	}
@@ -179,4 +219,43 @@ func redactionFixtureDigest(data []byte) processing.RedactionFileDigest {
 	return processing.RedactionFileDigest{
 		Size: int64(len(data)), SHA256: fmt.Sprintf("%x", sha256.Sum256(data)),
 	}
+}
+
+// Generate from the reviewed runs without any original PDF or page runtime.
+// The malicious variant deliberately bypasses WriteFresh's mask binding using
+// the rendition writer, then hashes the resulting well-formed PDF honestly.
+func redactionVerifyPDF(t *testing.T, review processing.RedactionReview, unmask bool) []byte {
+	t.Helper()
+	page := review.Resolved.Pages[0]
+	pixels := image.NewNRGBA(image.Rect(0, 0, 2550, 3300))
+	draw.Draw(pixels, pixels.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
+	masks, err := pdfproduction.PlanPixels(page, review.Resolved.RedactBoxes, review.Recipe)
+	require.NoError(t, err)
+	for _, mask := range masks {
+		draw.Draw(pixels, mask, image.NewUniform(color.Black), image.Point{}, draw.Src)
+	}
+	if unmask {
+		pixels.SetNRGBA(masks[0].Min.X+1, masks[0].Min.Y+1, color.NRGBA{R: 255, A: 255})
+	}
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, pixels))
+	data := encoded.Bytes()
+	layout := redaction.PageLayout{Source: page, Output: page}
+	layoutJSON, err := canonical.Marshal(layout)
+	require.NoError(t, err)
+	a := pdfproduction.PageArtifact{Page: page, Layout: layout, LayoutSHA256: redactionFixtureDigest(layoutJSON).SHA256,
+		ResolvedSHA256: review.Resolved.SHA256, Runs: review.Resolved.Runs, Endorsements: []redaction.Endorsement{},
+		EndorsementsSHA256: redactionFixtureDigest([]byte("[]")).SHA256,
+		PNGSHA256:          redactionFixtureDigest(data).SHA256, PNGSize: int64(len(data)),
+		OpenPNG: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }}
+	var out bytes.Buffer
+	options := pdfproduction.PDFWriteOptions{Recipe: review.Recipe, StagingDirectory: t.TempDir(), MaxBytes: review.Recipe.MaxStagingBytes}
+	sequence := &redactionPageSequence{artifact: a}
+	if unmask {
+		err = pdfproduction.WriteRendition(t.Context(), &out, sequence, options)
+	} else {
+		err = pdfproduction.WriteFresh(t.Context(), &out, sequence, review.Resolved, options)
+	}
+	require.NoError(t, err)
+	return out.Bytes()
 }

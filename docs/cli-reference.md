@@ -1221,10 +1221,12 @@ native PDF. Render saves one ZIP containing the fresh PDF, sanitized text and
 receipt. See [Review and render a native PDF](usage/document-processing.md#review-and-render-a-native-pdf)
 for masks, review files, runtime requirements and refusal handling.
 
-Verify checks a saved ZIP offline, without the source or a PDF runtime. It
+Verify checks a saved ZIP offline, without the source, a daemon or a configured
+page runtime. Embedded PDFium checks the PDF's masks, text and structure against
+the review. The command uses one private temporary archive snapshot and
 prints the checked receipt and the complete archive's size and SHA-256; `--json`
-returns `{ "receipt": ..., "size": ..., "sha256": ... }`. It does not compare
-PDF contents with the review or authenticate the producer. Compare the archive
+returns `{ "receipt": ..., "size": ..., "sha256": ... }`. It cannot compare
+unmasked image content with the source or authenticate the producer. Compare the archive
 digest with the render-time value. See
 [Check and retain a saved archive](usage/document-processing.md#check-and-retain-a-saved-archive)
 for limits, exit codes and recovery.

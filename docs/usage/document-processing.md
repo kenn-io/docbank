@@ -211,19 +211,28 @@ docbank redaction verify preparation.json masks.json review.json redacted.zip
 docbank redaction verify preparation.json masks.json review.json redacted.zip --json
 ```
 
-This command runs offline, without a daemon, source PDF or page/PDF runtime.
+This command runs offline, without a daemon, source PDF or configured page runtime.
 It checks the ZIP inventory, entry checksums, receipt bindings and sanitized
-text against the review. It prints the complete archive's SHA-256 and byte
+text, then uses embedded PDFium to check the PDF against the review. Every
+reviewed mask must be opaque black, the searchable text and its placement must
+match the reviewed runs, and the file must have the fresh writer's structure.
+It prints the complete archive's SHA-256 and byte
 count, plus the receipt. JSON output is `{ "receipt": ..., "size": ..., "sha256": ... }`.
 The archive must be a regular file of at most 544 MiB. Keep it unchanged while
-the check runs. The verifier uses the current preparation and recipe contracts;
+the command captures it. All checks use one private temporary ZIP snapshot,
+which is removed before success is printed. Allow up to 544 MiB of temporary
+storage; a memory-backed temporary directory consumes RAM outside the process
+RSS limit. Verification has a ten-minute deadline and a 60-second limit per page.
+It accepts up to 16 pages at 300 DPI, within the render recipe's image and text limits.
+The verifier uses the current preparation and recipe contracts;
 it does not promise compatibility with every future format.
 
-The PDF's contents are **not compared with the review**. Someone who replaces
-both the PDF and its hash in the receipt can pass these checks. Compare the
-reported whole-archive SHA-256 with the value saved from `redaction render`, or
+Success means the PDF implements the reviewed masks and text. It does **not**
+prove that unmasked image content matches the source or authenticate the producer.
+Changes outside the masks can pass if the receipt hashes are updated too.
+Compare the reported whole-archive SHA-256 with the value saved from `redaction render`, or
 with a trusted vault version's `blob_hash`. The archive's own receipt is not
-that independent record. Success also does not authenticate who produced it.
+that independent record.
 
 To retain the ZIP in a vault, use ordinary file storage:
 
@@ -239,9 +248,10 @@ Keep the preparation, masks and review separately: they contain unredacted
 evidence and are not included in the ZIP. Backing up the ZIP alone does not
 recover those inputs. Deleting the source PDF does not prevent offline checks.
 
-Malformed local JSON inputs exit 2; changed review bindings exit 4; archive
-integrity failures exit 6. Opening the archive, reading it, cancellation and
-output failures exit 1. No success result is printed on validation failure.
+Malformed local JSON inputs exit 2; changed review bindings exit 4; archive or PDF
+integrity failures exit 6. A renderer RSS refusal exits 5 and can be retried when
+memory use is lower. Opening, reading, staging or cleaning up files, cancellation,
+timeouts, engine failures and output failures exit 1. No success result is printed on validation failure.
 Check the exit status even when output was partially written.
 
 ## Convert documents with Docling

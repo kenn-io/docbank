@@ -28,7 +28,7 @@ const maxFreshTextObject = 8 << 20
 func freshPhysicalPointDecimal(value int64) (string, error) {
 	rational := new(big.Rat).SetFrac(new(big.Int).Mul(big.NewInt(value), big.NewInt(72)), big.NewInt(10000))
 	if rational.Num().BitLen() > 63 {
-		return "", errors.New("fresh physical point coordinate exceeds bounds")
+		return "", pdfIntegrity("fresh physical point coordinate exceeds bounds")
 	}
 	result := strings.TrimRight(strings.TrimRight(rational.FloatString(4), "0"), ".")
 	if result == "-0" || result == "" {
@@ -47,7 +47,7 @@ type freshIndex struct {
 
 func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages int) (*freshIndex, error) {
 	if pages < 1 || pages > maxPageCount || size < 128 || size > maxPDFFileBytes {
-		return nil, errors.New("invalid fresh PDF envelope bounds")
+		return nil, pdfIntegrity("invalid fresh PDF envelope bounds")
 	}
 	tail := make([]byte, 128)
 	if _, err := reader.ReadAt(tail, size-128); err != nil {
@@ -55,18 +55,18 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 	}
 	_, after, ok0 := bytes.CutLast(tail, []byte("startxref\n"))
 	if !ok0 {
-		return nil, errors.New("missing fresh PDF trailer")
+		return nil, pdfIntegrity("missing fresh PDF trailer")
 	}
 	startText, ok := strings.CutSuffix(string(after), "\n%%EOF\n")
 	start, err := strconv.ParseInt(startText, 10, 64)
 	if !ok || err != nil || startText != strconv.FormatInt(start, 10) || start < int64(len(freshHeader)) || start >= size {
-		return nil, errors.New("invalid fresh PDF trailer")
+		return nil, pdfIntegrity("invalid fresh PDF trailer")
 	}
 	count := 6 + pages*8
 	head := fmt.Sprintf("%d 0 obj\n<< /Type /XRef /Size %d /Root 1 0 R /W [1 8 2] /Length %d >>\nstream\n", count-1, count, count*11)
 	foot := fmt.Sprintf("%sstartxref\n%d\n%%%%EOF\n", freshStreamEnd, start)
 	if size-start != int64(len(head)+count*11+len(foot)) {
-		return nil, errors.New("unexplained fresh xref envelope bytes")
+		return nil, pdfIntegrity("unexplained fresh xref envelope bytes")
 	}
 	r := contextReader{ctx, io.NewSectionReader(reader, start, size-start)}
 	if err := expectFreshBytes(r, head); err != nil {
@@ -80,14 +80,14 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 		return nil, err
 	}
 	if !bytes.Equal(data[:11], []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255}) {
-		return nil, errors.New("invalid fresh xref free entry")
+		return nil, pdfIntegrity("invalid fresh xref free entry")
 	}
 	index := &freshIndex{reader: reader, offsets: make([]int64, count), ends: make([]int64, count)}
 	for id := 1; id < count; id++ {
 		entry := data[id*11 : (id+1)*11]
 		offset := binary.BigEndian.Uint64(entry[1:9])
 		if entry[0] != 1 || entry[9] != 0 || entry[10] != 0 || offset >= uint64(size) {
-			return nil, errors.New("invalid fresh xref entry")
+			return nil, pdfIntegrity("invalid fresh xref entry")
 		}
 		index.offsets[id] = int64(offset) //nolint:gosec // Offset is bounded by the validated positive file size.
 	}
@@ -99,7 +99,7 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 	}
 	order = append(order, 2, count-1)
 	if index.offsets[1] != int64(len(freshHeader)) || index.offsets[count-1] != start {
-		return nil, errors.New("invalid fresh object envelope")
+		return nil, pdfIntegrity("invalid fresh object envelope")
 	}
 	for i, id := range order {
 		end := size
@@ -107,7 +107,7 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 			end = index.offsets[order[i+1]]
 		}
 		if end <= index.offsets[id] {
-			return nil, errors.New("fresh objects are reordered or overlap")
+			return nil, pdfIntegrity("fresh objects are reordered or overlap")
 		}
 		index.ends[id] = end
 	}
@@ -129,7 +129,7 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 	}
 	fontHead := fmt.Sprintf("3 0 obj\n<< /Length1 %d /Length %d >>\nstream\n", len(fontBytes), len(fontBytes))
 	if index.ends[3]-index.offsets[3] != int64(len(fontHead)+len(fontBytes)+len(freshStreamEnd)) {
-		return nil, errors.New("invalid embedded font envelope")
+		return nil, pdfIntegrity("invalid embedded font envelope")
 	}
 	fontReader := contextReader{ctx, index.section(3)}
 	if err := expectFreshBytes(fontReader, fontHead); err != nil {
@@ -140,7 +140,7 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 		return nil, err
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != fontSHA256 {
-		return nil, errors.New("fresh embedded font identity mismatch")
+		return nil, pdfIntegrity("fresh embedded font identity mismatch")
 	}
 	if err := expectFreshBytes(fontReader, freshStreamEnd); err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func expectFreshBytes(r io.Reader, expected string) error {
 			return err
 		}
 		if string(buffer[:n]) != expected[:n] {
-			return errors.New("unexpected fresh PDF grammar or unexplained bytes")
+			return pdfIntegrity("unexpected fresh PDF grammar or unexplained bytes")
 		}
 		expected = expected[n:]
 	}
@@ -170,7 +170,7 @@ func (f *freshIndex) section(id int) *io.SectionReader {
 func (f *freshIndex) expectObject(ctx context.Context, id int, body string) error {
 	expected := fmt.Sprintf("%d 0 obj\n%s\nendobj\n", id, body)
 	if f.ends[id]-f.offsets[id] != int64(len(expected)) {
-		return fmt.Errorf("unexpected fresh object %d extent", id)
+		return fmt.Errorf("%w: unexpected fresh object %d extent", ErrPDFIntegrity, id)
 	}
 	return expectFreshBytes(contextReader{ctx, f.section(id)}, expected)
 }
@@ -178,7 +178,7 @@ func (f *freshIndex) expectObject(ctx context.Context, id int, body string) erro
 func (f *freshIndex) smallObject(ctx context.Context, id int) ([]byte, error) {
 	n := f.ends[id] - f.offsets[id]
 	if n <= 0 || n > maxFreshTextObject {
-		return nil, errors.New("fresh text object exceeds bounds")
+		return nil, pdfIntegrity("fresh text object exceeds bounds")
 	}
 	data := make([]byte, n)
 	_, err := io.ReadFull(contextReader{ctx, f.section(id)}, data)
@@ -193,12 +193,12 @@ func (f *freshIndex) stream(ctx context.Context, id int, dict string) ([]byte, e
 	prefix := fmt.Sprintf("%d 0 obj\n<< %s /Length ", id, dict)
 	rest, ok := bytes.CutPrefix(data, []byte(prefix))
 	if !ok {
-		return nil, errors.New("unexpected fresh stream dictionary")
+		return nil, pdfIntegrity("unexpected fresh stream dictionary")
 	}
 	length, rest, ok := bytes.Cut(rest, []byte(" >>\nstream\n"))
 	n, err := strconv.Atoi(string(length))
 	if !ok || err != nil || n < 0 || string(length) != strconv.Itoa(n) || n > len(rest) || len(rest)-n != len(freshStreamEnd) || string(rest[n:]) != freshStreamEnd {
-		return nil, errors.New("invalid fresh stream extent or trailing bytes")
+		return nil, pdfIntegrity("invalid fresh stream extent or trailing bytes")
 	}
 	return rest[:n], nil
 }
@@ -232,7 +232,7 @@ func (c *freshImageComparison) Write(p []byte) (int, error) {
 			return total, err
 		}
 		if !bytes.Equal(c.buffer[:n], p[:n]) {
-			return total, errors.New("fresh image stream differs from canonical staged pixels")
+			return total, pdfIntegrity("fresh image stream differs from canonical staged pixels")
 		}
 		total += n
 		p = p[n:]
@@ -243,7 +243,7 @@ func (c *freshImageComparison) Write(p []byte) (int, error) {
 func (c *freshImageComparison) row(rgba []byte) error {
 	for x := range len(c.rgb) / 3 {
 		if rgba[x*4+3] != 255 {
-			return errors.New("final page pixels must be opaque")
+			return pdfIntegrity("final page pixels must be opaque")
 		}
 		copy(c.rgb[x*3:x*3+3], rgba[x*4:x*4+3])
 	}
@@ -260,7 +260,7 @@ func (c *freshImageComparison) finish() error {
 	}
 	var extra [1]byte
 	if n, err := c.actual.Read(extra[:]); n != 0 || !errors.Is(err, io.EOF) {
-		return errors.New("fresh image has unexplained compressed bytes")
+		return pdfIntegrity("fresh image has unexplained compressed bytes")
 	}
 	return nil
 }
@@ -294,11 +294,11 @@ func (f *freshIndex) page(ctx context.Context, number int, a PageArtifact, recip
 	lengthText, ended := strings.CutSuffix(lengthText, "\nendobj\n")
 	length, err := strconv.ParseInt(lengthText, 10, 64)
 	if !ok || !ended || err != nil || length <= 0 || length > int64(w)*int64(h)*4+1<<20 || lengthText != strconv.FormatInt(length, 10) {
-		return nil, errors.New("invalid fresh image length object")
+		return nil, pdfIntegrity("invalid fresh image length object")
 	}
 	head := fmt.Sprintf("%d 0 obj\n<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Interpolate false /Filter /FlateDecode /Length %d 0 R >>\nstream\n", base+1, w, h, base+2)
 	if f.ends[base+1]-f.offsets[base+1] != int64(len(head))+length+int64(len(freshStreamEnd)) {
-		return nil, errors.New("unexpected fresh image stream extent")
+		return nil, pdfIntegrity("unexpected fresh image stream extent")
 	}
 	if err := expectFreshBytes(contextReader{ctx, f.section(base + 1)}, head); err != nil {
 		return nil, err
@@ -336,7 +336,7 @@ func (f *freshIndex) page(ctx context.Context, number int, a PageArtifact, recip
 
 func (f *freshIndex) fontWidths(ctx context.Context, id, gidID int, unicode map[uint16]string, gids []byte) (map[uint16]int, error) {
 	if len(gids) != (len(unicode)+1)*2 || gids[0] != 0 || gids[1] != 0 {
-		return nil, errors.New("invalid fresh CIDToGIDMap extent")
+		return nil, pdfIntegrity("invalid fresh CIDToGIDMap extent")
 	}
 	font, err := sfnt.Parse(fontBytes)
 	if err != nil {
@@ -348,7 +348,7 @@ func (f *freshIndex) fontWidths(ctx context.Context, id, gidID int, unicode map[
 		}
 		glyph, err := font.GlyphIndex(nil, glyphRune([]rune(text)[0]))
 		if err != nil || glyph == 0 || binary.BigEndian.Uint16(gids[int(cid)*2:]) != uint16(glyph) {
-			return nil, errors.New("fresh CID glyph differs from pinned Unicode font")
+			return nil, pdfIntegrity("fresh CID glyph differs from pinned Unicode font")
 		}
 	}
 	data, err := f.smallObject(ctx, id)
@@ -358,7 +358,7 @@ func (f *freshIndex) fontWidths(ctx context.Context, id, gidID int, unicode map[
 	prefix := fmt.Sprintf("%d 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /NotoSansJP /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 4 0 R /CIDToGIDMap %d 0 R /DW 1000 /W [", id, gidID)
 	rest, ok := strings.CutPrefix(string(data), prefix)
 	if !ok {
-		return nil, errors.New("unexpected fresh CID font dictionary")
+		return nil, pdfIntegrity("unexpected fresh CID font dictionary")
 	}
 	widths := make(map[uint16]int, len(unicode))
 	for cid := 1; cid <= len(unicode); cid++ {
@@ -366,13 +366,13 @@ func (f *freshIndex) fontWidths(ctx context.Context, id, gidID int, unicode map[
 		widthText, tail, closed := strings.Cut(rest, "] ")
 		width, err := strconv.Atoi(widthText)
 		if !ok || !closed || err != nil || widthText != strconv.Itoa(width) || width != 1000 {
-			return nil, errors.New("unexpected fresh CID width")
+			return nil, pdfIntegrity("unexpected fresh CID width")
 		}
 		widths[uint16(cid)] = width
 		rest = tail
 	}
 	if rest != "] >>\nendobj\n" {
-		return nil, errors.New("extra fresh CID widths or dictionary bytes")
+		return nil, pdfIntegrity("extra fresh CID widths or dictionary bytes")
 	}
 	return widths, nil
 }
@@ -389,7 +389,7 @@ func parseFreshContent(ctx context.Context, content []byte, unicode map[uint16]s
 	first := fmt.Sprintf("q %s 0 0 %s 0 0 cm /Im0 Do Q\n", pageWidth, pageHeight)
 	rest, ok := strings.CutPrefix(string(content), first)
 	if !ok {
-		return nil, errors.New("unexpected fresh image content operators")
+		return nil, pdfIntegrity("unexpected fresh image content operators")
 	}
 	used := make(map[uint16]bool)
 	advances := make([]float64, 0, len(a.Runs)+len(a.Endorsements))
@@ -411,19 +411,19 @@ func parseFreshContent(ctx context.Context, content []byte, unicode map[uint16]s
 		}
 		rest, ok = strings.CutPrefix(rest, "/"+role+" BMC\n")
 		if !ok {
-			return nil, errors.New("unexpected fresh content role")
+			return nil, pdfIntegrity("unexpected fresh content role")
 		}
 		line, tail, ok := strings.Cut(rest, "\nEMC\n")
 		if !ok {
-			return nil, errors.New("unterminated fresh text occurrence")
+			return nil, pdfIntegrity("unterminated fresh text occurrence")
 		}
 		_, after, ok0 := strings.Cut(line, " Tm <")
 		if !ok0 {
-			return nil, errors.New("missing fresh text codes")
+			return nil, pdfIntegrity("missing fresh text codes")
 		}
 		encoded, ok := strings.CutSuffix(after, "> Tj ET")
 		if !ok || len(encoded) == 0 || len(encoded)%4 != 0 {
-			return nil, errors.New("invalid fresh text codes")
+			return nil, pdfIntegrity("invalid fresh text codes")
 		}
 		var decoded strings.Builder
 		advance := 0
@@ -436,17 +436,17 @@ func parseFreshContent(ctx context.Context, content []byte, unicode map[uint16]s
 			cid, err := strconv.ParseUint(encoded[pos:pos+4], 16, 16)
 			value, exists := unicode[uint16(cid)]
 			if err != nil || !exists || fmt.Sprintf("%04X", cid) != encoded[pos:pos+4] {
-				return nil, errors.New("invalid fresh text CID")
+				return nil, pdfIntegrity("invalid fresh text CID")
 			}
 			if !used[uint16(cid)] && int(cid) != len(used)+1 {
-				return nil, errors.New("fresh CID first-use order mismatch")
+				return nil, pdfIntegrity("fresh CID first-use order mismatch")
 			}
 			used[uint16(cid)] = true
 			decoded.WriteString(value)
 			advance += widths[uint16(cid)]
 		}
 		if decoded.String() != text || advance <= 0 {
-			return nil, errors.New("fresh decoded text differs from sanitized evidence")
+			return nil, pdfIntegrity("fresh decoded text differs from sanitized evidence")
 		}
 		xscale := float64(box.X1-box.X0) * 72 * 100 / (float64(advance) * float64(size))
 		x, err := freshPhysicalPointDecimal(box.X0)
@@ -459,13 +459,13 @@ func parseFreshContent(ctx context.Context, content []byte, unicode map[uint16]s
 		}
 		expected := fmt.Sprintf("BT /F0 %.3f Tf 3 Tr %.9f 0 0 1 %s %s Tm <%s> Tj ET", float64(size)/1000, xscale, x, y, encoded)
 		if line != expected {
-			return nil, errors.New("unexpected fresh text operators or geometry")
+			return nil, pdfIntegrity("unexpected fresh text operators or geometry")
 		}
 		advances = append(advances, float64(advance))
 		rest = tail
 	}
 	if rest != "" || len(used) != len(unicode) {
-		return nil, errors.New("unexplained fresh text content or unused mappings")
+		return nil, pdfIntegrity("unexplained fresh text content or unused mappings")
 	}
 	return advances, nil
 }
@@ -481,11 +481,11 @@ func parseFreshCMap(ctx context.Context, data []byte) (map[uint16]string, error)
 		return nil, err
 	}
 	if len(data) > 7<<20 {
-		return nil, errors.New("oversized ToUnicode program")
+		return nil, pdfIntegrity("oversized ToUnicode program")
 	}
 	rest, ok := strings.CutPrefix(string(data), cmapPrefix)
 	if !ok {
-		return nil, errors.New("invalid ToUnicode preamble")
+		return nil, pdfIntegrity("invalid ToUnicode preamble")
 	}
 	result := make(map[uint16]string)
 	scalars := make(map[rune]bool)
@@ -498,7 +498,7 @@ func parseFreshCMap(ctx context.Context, data []byte) (map[uint16]string, error)
 		countText, valid := strings.CutSuffix(line, " beginbfchar")
 		count, err := strconv.Atoi(countText)
 		if !ok || !valid || err != nil || count < 1 || count > 100 || previousCount != 100 || countText != strconv.Itoa(count) || len(result)+count > 65535 {
-			return nil, errors.New("invalid ToUnicode block")
+			return nil, pdfIntegrity("invalid ToUnicode block")
 		}
 		rest = tail
 		previousCount = count
@@ -508,11 +508,11 @@ func parseFreshCMap(ctx context.Context, data []byte) (map[uint16]string, error)
 			destination, valid := strings.CutPrefix(line, prefix)
 			destination, closed := strings.CutSuffix(destination, ">")
 			if !ok || !valid || !closed || len(destination) != 4 && len(destination) != 8 {
-				return nil, errors.New("invalid ToUnicode mapping length or CID")
+				return nil, pdfIntegrity("invalid ToUnicode mapping length or CID")
 			}
 			for _, c := range destination {
 				if (c < '0' || c > '9') && (c < 'A' || c > 'F') {
-					return nil, errors.New("invalid ToUnicode hexadecimal syntax")
+					return nil, pdfIntegrity("invalid ToUnicode hexadecimal syntax")
 				}
 			}
 			first, _ := strconv.ParseUint(destination[:4], 16, 16) // Validated hexadecimal above.
@@ -520,21 +520,21 @@ func parseFreshCMap(ctx context.Context, data []byte) (map[uint16]string, error)
 			if len(destination) == 8 {
 				second, _ := strconv.ParseUint(destination[4:], 16, 16)
 				if first < 0xD800 || first > 0xDBFF || second < 0xDC00 || second > 0xDFFF {
-					return nil, errors.New("invalid ToUnicode surrogate pair")
+					return nil, pdfIntegrity("invalid ToUnicode surrogate pair")
 				}
 				value = utf16.DecodeRune(rune(first), rune(second))
 			} else if utf16.IsSurrogate(value) {
-				return nil, errors.New("isolated ToUnicode surrogate")
+				return nil, pdfIntegrity("isolated ToUnicode surrogate")
 			}
 			if scalars[value] {
-				return nil, errors.New("duplicate ToUnicode destination")
+				return nil, pdfIntegrity("duplicate ToUnicode destination")
 			}
 			scalars[value] = true
 			result[uint16(len(result)+1)] = string(value) //nolint:gosec // Block preflight bounds the total to 65535.
 		}
 		rest, ok = strings.CutPrefix(rest, "endbfchar\n")
 		if !ok {
-			return nil, errors.New("unterminated ToUnicode block")
+			return nil, pdfIntegrity("unterminated ToUnicode block")
 		}
 	}
 	return result, nil
