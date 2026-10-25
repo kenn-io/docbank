@@ -321,18 +321,6 @@ export async function readVerifiedPreview(
   }
 }
 
-// Whether the browser has any preview for this media type, ignoring size and
-// parameters, which previewEligibility reports on its own.
-export function hasPreviewType(rawMediaType: string): boolean {
-  const mediaType = (rawMediaType.split(";")[0] ?? "").trim().toLowerCase();
-  return (
-    (mediaType.startsWith("text/") && mediaType !== "text/html") ||
-    mediaType === "application/json" ||
-    mediaType === "application/x-ndjson" ||
-    ["image/png", "image/jpeg", "image/webp", "application/pdf"].includes(mediaType)
-  );
-}
-
 export function previewEligibility(
   rawMediaType: string,
   size: number,

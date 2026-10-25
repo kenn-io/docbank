@@ -110,6 +110,9 @@ it("merges recent versions and imports, copies source paths, and opens complete 
   expect(screen.queryByRole("button", { name: "Added from command line" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "All versions" }));
   expect(onversions).toHaveBeenCalledOnce();
+  // Older imports stay reachable although recent ones already show their source paths.
+  await fireEvent.click(screen.getByRole("button", { name: "All imports" }));
+  expect(onprovenance).toHaveBeenCalledOnce();
 });
 
 it("keeps readable history when one read fails and retries the missing history", async () => {

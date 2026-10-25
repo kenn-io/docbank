@@ -776,7 +776,8 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	out, err := runCLI(t, "jobs")
 	require.NoError(t, err)
 	assert.Contains(t, out, "extract:plain-text")
-	assert.Contains(t, out, "running")
+	// Workers waiting for work are idle, not running.
+	assert.Regexp(t, `extract:plain-text\s+idle\s`, out)
 
 	var got api.JobList
 	require.Eventually(t, func() bool {

@@ -1259,6 +1259,15 @@ type Job struct {
 	CancelRequested   bool             `json:"cancel_requested,omitzero"`
 }
 
+// DisplayStatus reports a worker that is waiting for work as idle instead of
+// running, so a quiet vault doesn't list every worker as busy.
+func (j Job) DisplayStatus() string {
+	if j.Status == "running" && !j.Busy {
+		return "idle"
+	}
+	return j.Status
+}
+
 type LaneControl struct {
 	Lane              string `json:"lane"`
 	Paused            bool   `json:"paused"`

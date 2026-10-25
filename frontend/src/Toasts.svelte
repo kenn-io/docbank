@@ -20,6 +20,8 @@
         role={toast.tone === "danger" ? "alert" : "status"}
         onmouseenter={() => holdToast(toast.id)}
         onmouseleave={() => releaseToast(toast.id)}
+        onfocusin={() => holdToast(toast.id)}
+        onfocusout={() => releaseToast(toast.id)}
       >
         <span class="message">{toast.message}</span>
         {#if toast.action}

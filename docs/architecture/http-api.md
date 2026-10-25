@@ -1224,7 +1224,8 @@ A hidden `GET /api/daemon/web-map-tiles/{z}/{x}/{y}` (not in the OpenAPI documen
 
 Browser session tokens authenticate only the routes used by the built-in
 document, photo browsing, album, tag-definition/assignment, saved-definition, recoverable-trash,
-storage, job, configured-backup, verified-download, map-tile, and usage-event workflows.
+folder-upload directory creation (`POST /api/v1/nodes`, directories only), storage, job,
+configured-backup, verified-download, map-tile, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket

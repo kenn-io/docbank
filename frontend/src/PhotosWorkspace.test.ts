@@ -1814,6 +1814,28 @@ it("starts metadata open and remembers the toggle across the library, viewer, an
   photos.dispose();
 });
 
+it("opens the viewer with details open on double-click after the panel was collapsed", async () => {
+  localStorage.setItem("docbank.photoMetadata", "closed");
+  const photos = workspaceWithPreparedPhoto();
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
+  const onphotochange = vi.fn().mockReturnValue(true);
+  const props = {
+    photos,
+    onphotochange,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: "",
+  };
+  const view = render(PhotosWorkspace, props);
+  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  await fireEvent.doubleClick(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
+  await view.rerender({ ...props, photoID: "photo-1" });
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  expect(within(viewer).getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+  photos.dispose();
+});
+
 it("keeps the metadata toggle usable when browser storage is blocked", async () => {
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
     throw new Error("Blocked");

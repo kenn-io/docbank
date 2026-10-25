@@ -3,9 +3,29 @@
   import XIcon from "@lucide/svelte/icons/x";
   import { localPreferenceStorage } from "./browser-storage.js";
   import * as generated from "./generated/docbank.js";
+  import type { BrowserTelemetryQuietReason } from "@kenn-io/kit-ui/utils/browser-telemetry";
 
-  let { session, onmanage }: { session: string; onmanage?: () => void } = $props();
+  let {
+    session,
+    reporting,
+    onmanage,
+  }: {
+    session: string;
+    // The reporter that knows whether the daemon accepts usage data.
+    reporting?: {
+      onQuietChange(
+        listener: (quiet: boolean, reason: BrowserTelemetryQuietReason) => void,
+      ): () => void;
+    };
+    onmanage?: () => void;
+  } = $props();
   let key = $state("");
+  let enabled = $state(false);
+
+  $effect(() => {
+    enabled = false;
+    return reporting?.onQuietChange((_quiet, reason) => (enabled = reason === "enabled"));
+  });
 
   function dismissed(storageKey: string): boolean {
     try {
@@ -43,7 +63,7 @@
   });
 </script>
 
-{#if key}
+{#if key && enabled}
   <aside class="notice kit-popover-card" aria-label="Anonymous usage">
     <span>Docbank sends anonymous usage data.</span>
     {#if onmanage}<button type="button" class="link" onclick={manage}

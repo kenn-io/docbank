@@ -735,7 +735,10 @@
   function open(id: string, element: HTMLElement) {
     if (!editor.canChangeTarget()) return;
     captureReturn(element);
-    if (onphotochange(id, "open")) openIntent = id;
+    if (onphotochange(id, "open")) {
+      openIntent = id;
+      metadataOpen = true;
+    }
   }
   async function move(direction: -1 | 1) {
     if (!editor.canChangeTarget()) return;

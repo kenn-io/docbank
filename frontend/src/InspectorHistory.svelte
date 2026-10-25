@@ -131,7 +131,7 @@
         </li>
       {:else}{#if !error}<li class="muted">No history recorded</li>{/if}{/each}
     </ol>
-    {#if imports.length && !entries.some((entry) => entry.path)}<div>
+    {#if imports.length}<div>
         <Button size="sm" surface="soft" onclick={onprovenance}>All imports</Button>
       </div>{/if}
   {/if}

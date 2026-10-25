@@ -160,7 +160,7 @@ func newFakeBackend() *fakeBackend {
 		},
 		jobs: []api.Job{
 			{
-				Name: "text-extraction", Status: "running",
+				Name: "text-extraction", Status: "running", Busy: true,
 				StartedAt: "2026-07-22T12:00:00Z",
 			},
 			{

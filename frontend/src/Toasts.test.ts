@@ -32,3 +32,16 @@ it("expires on its own, announces errors as alerts, and keeps three at most", as
   for (const name of ["a", "b", "c"]) showToast(name);
   expect(getToasts().map((toast) => toast.message)).toEqual(["a", "b", "c"]);
 });
+
+it("stays open while one of its controls has keyboard focus", async () => {
+  vi.useFakeTimers();
+  render(Toasts);
+  showToast("Moved “a” to trash", { action: { label: "Undo", run: vi.fn() } });
+  const undo = await screen.findByRole("button", { name: "Undo" });
+  await fireEvent.focusIn(undo);
+  vi.advanceTimersByTime(20_000);
+  expect(getToasts()).toHaveLength(1);
+  await fireEvent.focusOut(undo);
+  vi.advanceTimersByTime(4001);
+  expect(getToasts()).toHaveLength(0);
+});

@@ -81,8 +81,8 @@ test("import collections, label conflicts and stable document navigation", async
     await page.goto(webURL.toString()).catch(() => {
       throw new Error("Synthetic browser navigation failed");
     });
-    await page.getByRole("button", { name: "Import collections", exact: true }).click();
-    const drawer = page.getByRole("dialog", { name: "Import collections" });
+    await page.getByRole("button", { name: "Import history", exact: true }).click();
+    const drawer = page.getByRole("dialog", { name: "Import history" });
     await drawer
       .getByRole("button", { name: "Browse import Discovery batch", exact: true })
       .click();
@@ -156,7 +156,7 @@ test("import collections, label conflicts and stable document navigation", async
       path: path.join(screenshots, "web-collection-quality-suggestion.png"),
       animations: "disabled",
     });
-    await page.getByRole("button", { name: "Import collections", exact: true }).click();
+    await page.getByRole("button", { name: "Import history", exact: true }).click();
     await drawer
       .getByRole("button", {
         name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,
@@ -180,7 +180,7 @@ test("import collections, label conflicts and stable document navigation", async
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(page.getByRole("cell", { name: "review-notes.txt", exact: true })).toHaveCount(0);
     await run("mv", "/review-notes.txt", "/Discovery/review-notes.txt");
-    await page.getByRole("button", { name: "Import collections", exact: true }).click();
+    await page.getByRole("button", { name: "Import history", exact: true }).click();
     await drawer
       .getByRole("button", {
         name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,

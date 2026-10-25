@@ -12,10 +12,12 @@ import (
 func TestJobsDisplaysLaneControlState(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, writeJobs(&out, []api.Job{
-		{Name: "derive:visual-previews", Lane: "derive:visual-previews", Status: "running", Controllable: true, Paused: true, Concurrency: 3, CanSetConcurrency: true},
+		{Name: "derive:visual-previews", Lane: "derive:visual-previews", Status: "running", Busy: true, Controllable: true, Paused: true, Concurrency: 3, CanSetConcurrency: true},
 		{Name: "derive:renditions", Status: "running"},
 		{Name: "storage:operation", Status: "queued", Kind: "photo_checkout_commit", Lane: "photo_checkout", Controllable: true},
 	}))
+	assert.Regexp(t, `derive:visual-previews\s+running\s`, out.String())
+	assert.Regexp(t, `derive:renditions\s+idle\s`, out.String())
 	assert.Contains(t, out.String(), "paused limit=3")
 	assert.NotContains(t, out.String(), "lane=derive:visual-previews")
 	assert.Contains(t, out.String(), "read-only")

@@ -58,6 +58,31 @@ async function retainSendingAction(): Promise<string> {
   return prepared.action_id;
 }
 
+it("reports a retained run with unknown progress state as unreadable", async () => {
+  await retainSendingAction();
+  await new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open("docbank-action-journal-v1", 1);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const database = open.result;
+      const transaction = database.transaction("actions", "readwrite");
+      const store = transaction.objectStore("actions");
+      const read = store.get(vaultID);
+      read.onsuccess = () => store.put({ ...read.result, state: "from-a-newer-build" });
+      transaction.oncomplete = () => {
+        database.close();
+        resolve();
+      };
+      transaction.onerror = () => reject(transaction.error);
+    };
+  });
+  const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
+
+  await workspace.refreshRetained();
+
+  expect(workspace.retained).toBe("unreadable");
+});
+
 it("notices an unfinished run without touching its in-flight batch", async () => {
   const actionID = await retainSendingAction();
   const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());

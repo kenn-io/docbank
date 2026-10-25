@@ -58,6 +58,14 @@ describe("activity lanes", () => {
     expect(after.map(({ key }) => key)).toEqual(idle.map(({ key }) => key));
   });
 
+  it("keeps a queued operation visible before a worker picks it up", () => {
+    const [lane] = jobLanes([job({ status: "queued", busy: false, can_cancel: true })]);
+    expect(lane.visible).toBe(true);
+    expect(lane.members).toHaveLength(1);
+    const [idle] = jobLanes([job({ status: "completed", busy: false })]);
+    expect(idle.visible).toBe(false);
+  });
+
   it("groups by API lane, summing only active progress", () => {
     const control = {
       lane: "photo_checkout",
@@ -73,6 +81,7 @@ describe("activity lanes", () => {
           name: "storage:b",
           operation_id: "b",
           status: "queued",
+          busy: false,
           total_objects: 7,
           completed_objects: 1,
         }),
@@ -99,6 +108,7 @@ describe("activity lanes", () => {
           kind: "photo_checkout_commit",
           lane: "photo_checkout",
           status: "queued",
+          busy: false,
           completed_objects: 1,
           total_objects: 3,
         }),
@@ -118,7 +128,8 @@ describe("activity lanes", () => {
       title: "Photo checkout",
       completed: 1,
       total: 3,
-      active: true,
+      active: false,
+      visible: true,
       control,
     });
     expect(

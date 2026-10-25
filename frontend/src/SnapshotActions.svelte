@@ -13,11 +13,10 @@
   import { Button, Modal, SegmentedControl, Spinner } from "@kenn-io/kit-ui";
   import TagPicker from "./TagPicker.svelte";
   import type { Tag } from "./generated/docbank.js";
-  import { APIError } from "./api-transport.js";
   import { randomUUID } from "./crypto.js";
   import type { SelectionTarget } from "./selection.js";
   import { ACTION_MAX_BYTES } from "./actionRecovery.js";
-  import { changeBatchTags, type BatchTagReceipt, type BatchTagRequest } from "./batch-tags.js";
+  import { runBatchTagChange, type BatchTagReceipt, type BatchTagRequest } from "./batch-tags.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
 
   interface Props {
@@ -98,33 +97,29 @@
   async function submit(request: BatchTagRequest): Promise<void> {
     applying = true;
     failure = "";
-    try {
-      const confirmed = await changeBatchTags(session, request);
-      if (!alive) return;
+    const outcome = await runBatchTagChange(session, request);
+    if (!alive) return;
+    applying = false;
+    if (outcome.kind === "confirmed") {
       uncertain = undefined;
-      receipt = confirmed;
-      onchanged?.(confirmed);
-    } catch (cause) {
-      if (!alive) return;
-      if (cause instanceof APIError && cause.status >= 400 && cause.status < 500) {
-        uncertain = undefined;
-        if (cause.status === 401) {
-          onauthfailure(cause);
-          return;
-        }
-        stale = cause.code === "stale_revision" || cause.code === "not_found";
-        failure = stale
-          ? "Some documents changed. Close and select them again."
-          : cause instanceof Error
-            ? cause.message
-            : String(cause);
-      } else {
-        // The daemon may have committed; Retry resends the same operation identity.
-        uncertain = request;
-        failure = "The result is unknown.";
+      receipt = outcome.receipt;
+      onchanged?.(outcome.receipt);
+    } else if (outcome.kind === "unknown") {
+      // The daemon may have committed; Retry resends the same operation identity.
+      uncertain = request;
+      failure = "The result is unknown.";
+    } else {
+      uncertain = undefined;
+      if (outcome.kind === "auth") {
+        onauthfailure(outcome.cause);
+        return;
       }
-    } finally {
-      if (alive) applying = false;
+      stale = outcome.stale;
+      failure = stale
+        ? "Some documents changed. Close and select them again."
+        : outcome.cause instanceof Error
+          ? outcome.cause.message
+          : String(outcome.cause);
     }
   }
 

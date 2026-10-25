@@ -1368,3 +1368,61 @@ it("returns to automatic meaning search with the typed draft when plain words is
     expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", query: "revised report" }),
   );
 });
+
+it("sorts a meaning search from Advanced without turning it into a lexical snapshot", async () => {
+  const small = { ...node(2, "small.txt", baseVersion), size: 10 };
+  const large = { ...node(3, "large.txt", rerankedVersion), size: 500 };
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: [small, large],
+    baseReport: report("hybrid", [
+      result(small, 1, "small excerpt"),
+      result(large, 2, "large excerpt"),
+    ]),
+  });
+  render(App);
+  await submitSearch("annual report");
+  await screen.findByText("small excerpt");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Sort by: Path" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Size" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull(),
+  );
+  const names = () =>
+    screen
+      .getAllByRole("row")
+      .map((row) => row.textContent ?? "")
+      .filter((text) => text.includes("txt"));
+  await waitFor(() => expect(names()[0]).toContain("large.txt"));
+  expect(screen.queryByRole("region", { name: "Frozen query results" })).toBeNull();
+  expect(
+    harness.fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries"),
+  ).toBe(false);
+  expect(
+    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+  ).toBe("annual report");
+});
+
+it("keeps the applied search text when Advanced is cancelled", async () => {
+  installHarness({ profiles: [], files: [], baseReport: report("lexical", []) });
+  render(App);
+  await submitSearch("annual report");
+  await waitFor(() => expect(screen.queryByRole("status", { name: /search/i })).toBeNull());
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+  ).toBe("annual report");
+});

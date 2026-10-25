@@ -572,10 +572,11 @@ result. Name/content collisions keep the ordinary ingest suffix behavior
 rather than overwriting a document. Selecting a local file never changes or
 removes the source.
 
-The folder picker keeps each file's relative path. Directory creation currently
-returns `browser sessions cannot use this endpoint`, so folder uploads cannot
-complete. Server-filesystem ingest, watched-inbox configuration, and replacing
-an existing document remain CLI or authenticated API workflows.
+The folder picker keeps each file's relative path. The browser creates the
+matching subfolders under the destination (reusing any that already exist)
+before it uploads the files inside them. Server-filesystem ingest,
+watched-inbox configuration, and replacing an existing document remain CLI or
+authenticated API workflows.
 
 ## Import a mailbox
 
@@ -1138,6 +1139,7 @@ accepts that credential for the following operations:
 | Read retained email metadata and MIME parts | Source version, decoder generation, part, role, byte size, and SHA-256 are checked before display. Browser reads cannot start decoding. |
 | Read page geometry and images, request or cancel page rendering | Binds the source revision, version, page, frame, and renderer recipe. The inspector requests one page at a time. |
 | Move to trash or restore | Requires the selected node ID and its current revision. |
+| Create a folder (`POST /api/v1/nodes` with no query string) | Makes directories only, for folder uploads. File creation stays on the upload channel. |
 | Add or remove a tag assignment | Requires the selected node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision. Deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
@@ -1155,7 +1157,8 @@ or **Advanced** to [validate and run a complete query](#edit-a-complete-query).
 Upload uses a separate WebSocket: a connection that never reconnects during the
 session. The browser must prove it holds the upload secret before sending any
 file bytes. Upload can create only file nodes beneath the live
-directory selected in the browser. The daemon independently checks the
+directory selected in the browser. Folder uploads also create the subfolders they
+need through `POST /api/v1/nodes`, which makes directories only. The daemon independently checks the
 caller-declared hash and size, as it does for other remote writers.
 
 These permissions do not allow emptying trash, document mutations other than

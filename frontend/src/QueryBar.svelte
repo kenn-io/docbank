@@ -18,7 +18,7 @@
     open?: boolean;
     showExpression?: boolean;
     profiles?: ProcessingProfileSummary[];
-    ondirty?: (dirty: boolean) => void;
+    ondirty?: (dirty: boolean, state: { invalid: boolean; options: SnapshotOptions }) => void;
     oncancel: () => void;
     query: Query;
     profile?: string;
@@ -189,12 +189,23 @@
     return () => invalidate();
   });
 
+  function currentOptions(): SnapshotOptions {
+    const selectedProfile = executionProfile.trim();
+    return {
+      ...(selectedProfile ? { profile: selectedProfile } : {}),
+      page_size: pageSize,
+      facets: requestedFacets,
+    };
+  }
+
   function notifyDirty() {
+    const invalid = schemaError !== "" || profileError !== "";
     ondirty?.(
-      Boolean(schemaError) ||
+      invalid ||
         canonicalQuery(draft) !== initialQuery ||
         executionProfile !== initialProfile ||
         pageSize !== originalPageSize,
+      { invalid, options: currentOptions() },
     );
   }
 
@@ -214,12 +225,7 @@
 
   function run(): void {
     if (schemaError || profileError || executionError) return;
-    const selectedProfile = executionProfile.trim();
-    onrun(draft, {
-      ...(selectedProfile ? { profile: selectedProfile } : {}),
-      page_size: pageSize,
-      facets: requestedFacets,
-    });
+    onrun(draft, currentOptions());
   }
 </script>
 

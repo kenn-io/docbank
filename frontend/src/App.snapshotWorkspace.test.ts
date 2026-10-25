@@ -740,6 +740,83 @@ it("refreshes live metadata and download authority after tagging an inspected fr
   );
 });
 
+it("keeps the filtered result in view after trashing an inspected frozen row", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const frozen = row(1);
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const live = {
+    ...root,
+    id: 1,
+    parent_id: 1000,
+    kind: "file",
+    name: frozen.name,
+    path: frozen.path,
+    revision: 3,
+    current_version_id: frozen.content_version_id,
+    blob_hash: frozen.blob_hash,
+    size: frozen.size,
+    mime_type: frozen.mime_type,
+  };
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  const searches: Query[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.includes("/children?"))
+      return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0")
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/workspace/queries") {
+      searches.push(JSON.parse(String(init?.body)).query);
+      return json(snapshot(initialQuery, [frozen], {}, 1));
+    }
+    if (url === "/api/v1/nodes/1") return json(live);
+    if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0")
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/audit/status?node_id=1") return json({ enabled: false, scopes: [] });
+    if (url === "/api/v1/nodes/1/trash" && init?.method === "POST")
+      return json({ ...live, revision: 4, trashed_at: "2026-09-11T13:00:00Z" });
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Move to trash" }));
+  await screen.findByText(`Moved “${frozen.name}” to trash`);
+  await waitFor(() => expect(searches).toHaveLength(2));
+  expect(searches[1]).toMatchObject({ text: initialQuery.text, filters: initialQuery.filters });
+  expect(screen.getByRole("region", { name: "Frozen query results" })).toBeTruthy();
+});
+
 it("reports a submitted frozen run that finds nothing or fails", async () => {
   const searchAction = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});

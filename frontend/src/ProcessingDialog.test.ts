@@ -41,6 +41,7 @@ function setup(
   plans: Record<string, ProcessingPlan>,
   run: () => Promise<Response> = async () => completed(),
   initiallyGranted: string[] = [],
+  failing: string[] = [],
 ) {
   const granted = new Set<string>(initiallyGranted);
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -57,6 +58,7 @@ function setup(
       );
     if (path === "/api/v1/processing/plans") {
       const name = JSON.parse(String(init?.body)).selector.profile as string;
+      if (failing.includes(name)) return new Response("plan failed", { status: 500 });
       const active = granted.has(name);
       return Response.json({
         ...plans[name],
@@ -143,6 +145,17 @@ describe("processing dialog", () => {
       option.textContent?.trim(),
     );
     expect(options).toEqual(["docling", "text"]);
+  });
+
+  it("names a profile whose plan couldn't be built instead of dropping it silently", async () => {
+    setup(
+      { docling: plan("docling", { flow: [doclingHop] }), text: plan("text") },
+      undefined,
+      [],
+      ["docling"],
+    );
+    expect(await screen.findByText(/Couldn't check docling/)).toBeTruthy();
+    expect(screen.queryByText(/Couldn't check text/)).toBeNull();
   });
 
   it("says when no profile handles the file type", async () => {

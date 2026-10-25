@@ -7,7 +7,7 @@
   import { randomUUID } from "./crypto.js";
   import type { SelectionTarget } from "./selection.js";
   import {
-    changeBatchTags,
+    runBatchTagChange,
     previewBatchTags,
     type BatchTagRequest,
     type BatchTagReceipt,
@@ -100,9 +100,11 @@
     pending = true;
     failure = "";
     closingUncertain = false;
-    try {
-      const receipt = await changeBatchTags(session, request);
-      if (!alive) return;
+    const outcome = await runBatchTagChange(session, request);
+    if (!alive) return;
+    pending = false;
+    if (outcome.kind === "confirmed") {
+      const receipt = outcome.receipt;
       uncertain = undefined;
       currentTargets = receipt.nodes.map((node) => ({
         node_id: node.node_id,
@@ -111,22 +113,15 @@
       notice = `Operation confirmed: ${receipt.nodes.filter((node) => node.changed).length} changed, ${receipt.nodes.filter((node) => !node.changed).length} already in the requested state.`;
       onchanged(receipt);
       await loadPreview();
-    } catch (cause) {
-      if (!alive) return;
-      if (cause instanceof APIError && cause.status >= 400 && cause.status < 500) {
-        uncertain = undefined;
-        stale = cause.code === "stale_revision" || cause.code === "not_found";
-        if (cause.status === 401) {
-          onauthfailure(cause);
-          return;
-        }
-      } else {
-        uncertain = request;
-      }
-      failure = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      if (alive) pending = false;
+      return;
     }
+    uncertain = outcome.kind === "unknown" ? request : undefined;
+    if (outcome.kind === "auth") {
+      onauthfailure(outcome.cause);
+      return;
+    }
+    if (outcome.kind === "rejected") stale = outcome.stale;
+    failure = outcome.cause instanceof Error ? outcome.cause.message : String(outcome.cause);
   }
 
   function change(assign: boolean) {

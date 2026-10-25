@@ -40,7 +40,7 @@ export function dismissToast(id: number): void {
   toasts = toasts.filter((toast) => toast.id !== id);
 }
 
-// Hovering a toast holds it open so the action stays reachable.
+// Hovering or focusing a toast holds it open so the action stays reachable.
 export function holdToast(id: number): void {
   const timer = timers.get(id);
   if (timer !== undefined) clearTimeout(timer);

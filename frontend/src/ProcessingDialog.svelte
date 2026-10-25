@@ -45,6 +45,8 @@
 
   let options = $state<Option[]>([]);
   let profileName = $state("");
+  // Profiles whose plan couldn't be built; they would otherwise vanish without a word.
+  let unavailable = $state<string[]>([]);
   let coverage = $state<CoverageReport | null>(null);
   let job = $state<ProcessingJob | null>(null);
   let status = $state<ProcessingStatus | null>(null);
@@ -127,10 +129,12 @@
       const planned = await Promise.allSettled(profiles.map((item) => planProfile(item.name)));
       if (request !== generation) return;
       const next: Option[] = [];
+      const failed: string[] = [];
       for (const [index, result] of planned.entries()) {
         if (result.status === "rejected") {
           if (result.reason instanceof APIError && result.reason.status === 401)
             throw result.reason;
+          failed.push(profiles[index]!.name);
           continue;
         }
         if (unsupportedReasons.has(result.value.rendition_ineligible_reason ?? "")) continue;
@@ -139,6 +143,7 @@
       const failure = planned.find((result) => result.status === "rejected");
       if (next.length === 0 && failure?.status === "rejected") throw failure.reason;
       options = next;
+      unavailable = failed;
       profileName =
         next.find((option) => option.name === keep)?.name ??
         next.find((option) => !option.plan.consent_required)?.name ??
@@ -369,6 +374,9 @@
             onchange={chooseProfile}
           />
         </div>
+      {/if}
+      {#if unavailable.length}
+        <p class="muted">Couldn't check {unavailable.join(", ")}. Try again later.</p>
       {/if}
       <ul class="summary">
         {#each whereSentences(plan) as sentence (sentence)}

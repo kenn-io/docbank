@@ -14,7 +14,7 @@
   import PageViewer from "./PageViewer.svelte";
   import { parseMediaType, type HighlightTerm } from "./query.js";
   import { resolveRenditionText, type RenditionObservation } from "./renditionText.js";
-  import { hasPreviewType, previewEligibility } from "./download.js";
+  import { previewEligibility } from "./download.js";
   import type {
     LiveSelectedSource,
     RelatedSelectedSource,
@@ -78,7 +78,7 @@
   const displayedObservation = $derived(duplicateSource || relatedSource ? undefined : observed);
   const isEmail = $derived(parseMediaType(displayedSource.mimeType) === "message/rfc822");
   // An email has its own tab; its Preview would only say it cannot render.
-  const showPreview = $derived(!isEmail || hasPreviewType(displayedSource.mimeType));
+  const showPreview = $derived(!isEmail);
   const fallbackTab = $derived(showPreview ? "preview" : "email");
   const displayedTab = $derived(
     (activeTab === "text" && redundantText) || (activeTab === "email" && !isEmail)

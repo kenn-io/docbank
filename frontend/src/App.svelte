@@ -44,6 +44,7 @@
     Spinner,
     Table,
     TableHeaderCell,
+    ThemeToggle,
     TopBar,
     ROOT_SCOPE,
     createShortcutManager,
@@ -105,7 +106,7 @@
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import TagRunNotice from "./TagRunNotice.svelte";
-  import { parseQuery, type Query } from "./query.js";
+  import { canonicalQuery, parseQuery, type Query } from "./query.js";
   import { readQueryHighlights } from "./queryHighlights.js";
   import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
@@ -113,7 +114,6 @@
   import TrashDrawer from "./TrashDrawer.svelte";
   import AppTooltip from "./AppTooltip.svelte";
   import IconAction from "./IconAction.svelte";
-  import ThemeButton from "./ThemeButton.svelte";
   import Toasts from "./Toasts.svelte";
   import { clearToasts, showToast } from "./toast.svelte.js";
   import { moveToTrash, parentPath, undoTrash } from "./trashActions.js";
@@ -1072,6 +1072,8 @@
   let queryEditorVersion = $state(0);
   let queryDraftFromDefinition = $state(false);
   let queryDraftRevision = 0;
+  // What Advanced holds that the query itself doesn't: run options, and whether it can run.
+  let queryDraftSettings = $state<{ invalid: boolean; options: SnapshotOptions } | null>(null);
   let savedQueryDraft = $state<Query | null>(null);
   let queryEditorInitial = $state<Query>(parseQuery("{}"));
   let queryURLError = $state("");
@@ -1742,6 +1744,7 @@
     savedQueryDraft = null;
     querySettingsApplied = false;
     queryDraftChanged = false;
+    queryDraftSettings = null;
     queryDraftFromDefinition = false;
     queryDraftRevision++;
     const url = new URL(location.href);
@@ -2370,29 +2373,70 @@
   }
 
   function clearSearch(): void {
-    searchQuery = "";
     const wasSnapshot = snapshotActive;
     if (wasSnapshot) {
       leaveSnapshotMode();
       querySettingsApplied = false;
       discardQueryDraft();
     }
+    searchQuery = "";
     if (!wasSnapshot && !activeQuery && !searchPending) return;
     if (tagFilterID) void loadTaggedNodes(tagFilterID);
     else if (directory) void loadDirectory(directory.id, false);
   }
 
   async function submitDocumentSearch(): Promise<void> {
-    if (searchSyntax === "advanced" || querySettingsApplied || queryDraftChanged) {
+    // A draft sorted only keeps an ordinary search; its sort is applied to the results.
+    const draft = currentQueryDraft();
+    const sortOnly =
+      !snapshotActive &&
+      !querySettingsApplied &&
+      searchSyntax === "simple" &&
+      naturalProfile &&
+      queryDraftChanged &&
+      !queryDraftSettings?.invalid &&
+      isSortOnly(draft)
+        ? draft.sort
+        : undefined;
+    if (!sortOnly && (searchSyntax === "advanced" || querySettingsApplied || queryDraftChanged)) {
+      // A draft Advanced can't run yet must show its error instead of running the last valid one.
+      if (queryDraftSettings?.invalid) {
+        queryBarOpen = true;
+        return;
+      }
       querySettingsApplied ||= queryDraftChanged;
-      await submitSnapshot(currentQueryDraft(), snapshot.state.options ?? { page_size: 100 });
+      await submitSnapshot(
+        draft,
+        queryDraftSettings?.options ?? snapshot.state.options ?? { page_size: 100 },
+      );
       return;
     }
-    savedQueryDraft = null;
-    replaceQueryURL(null);
+    closeQueryDraft();
     naturalSearchMode = naturalProfile ? "auto" : "names";
     const outcome = await runSearch(undefined, undefined, true);
+    if (sortOnly) applyResultSort(sortOnly);
     if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+  }
+
+  // Advanced changed nothing but the order.
+  function isSortOnly(query: Query): boolean {
+    const ordinary = ordinaryQuery();
+    return (
+      canonicalQuery({ ...query, text: ordinary.text, sort: ordinary.sort }) ===
+      canonicalQuery(ordinary)
+    );
+  }
+
+  function applyResultSort(sort: Query["sort"]): void {
+    const fields: Partial<Record<Query["sort"]["field"], SortField>> = {
+      name: "name",
+      path: "name",
+      modified_at: "modified",
+      media_type: "type",
+      size: "size",
+    };
+    sortField = fields[sort.field] ?? "relevance";
+    sortDirection = sort.direction;
   }
 
   function changeSearchSyntax(value: string): void {
@@ -2790,6 +2834,7 @@
       if (revision === queryDraftRevision) {
         queryBarOpen = false;
         queryDraftChanged = false;
+        queryDraftSettings = null;
         queryDraftFromDefinition = false;
       }
       reportSearch(webSession, outcome.type, outcome.empty);
@@ -3019,7 +3064,9 @@
     void photosChanged();
     void hiddenWorkspace?.refresh();
     void loadTagCatalog();
-    refreshDocumentsView();
+    // Reloading the live view would end a frozen result; run it again with its own query.
+    if (snapshotActive) runSnapshotAgain();
+    else refreshDocumentsView();
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -3056,7 +3103,6 @@
       const { receipt, message } = await moveToTrash(session, target, currentInspectorPath);
       if (session !== webSession) return;
       reloadAfterChange();
-      runSnapshotAgain();
       showToast(message, { action: { label: "Undo", run: () => undoMove(session, receipt) } });
     } catch (cause) {
       failToast(cause, session);
@@ -3070,7 +3116,6 @@
       const { notice } = await undoTrash(session, receipt);
       if (session !== webSession) return;
       reloadAfterChange();
-      if (snapshotActive) runSnapshotAgain();
       if (notice) showToast(notice);
     } catch (cause) {
       failToast(cause, session);
@@ -3257,6 +3302,10 @@
   function currentQueryDraft(): Query {
     const existing = savedQueryDraft ?? snapshot.state.query;
     if (existing) return { ...existing, text: searchQuery, syntax: searchSyntax };
+    return ordinaryQuery();
+  }
+
+  function ordinaryQuery(): Query {
     return {
       ...parseQuery("{}"),
       text: searchQuery,
@@ -3404,15 +3453,22 @@
     }
   }
 
-  function discardQueryDraft(): void {
+  function closeQueryDraft(): void {
     queryDraftRevision++;
     queryDraftFromDefinition = false;
     queryBarOpen = false;
     queryDraftChanged = false;
+    queryDraftSettings = null;
     savedQueryDraft = null;
-    searchQuery = snapshot.state.query?.text ?? "";
-    searchSyntax = snapshot.state.query?.syntax ?? "simple";
     replaceQueryURL(null);
+  }
+
+  // Cancel puts the search box back to the search that is applied.
+  function discardQueryDraft(): void {
+    closeQueryDraft();
+    searchQuery =
+      snapshot.state.query?.text ?? (searchPending ? submittedSearchQuery : activeQuery);
+    searchSyntax = snapshot.state.query?.syntax ?? "simple";
   }
 
   function closeQueryEditor(): void {
@@ -3470,7 +3526,11 @@
   </main>
 {:else}
   <div class="app-shell">
-    <TelemetryNotice session={webSession} onmanage={() => openPanel({ kind: "telemetry" })} />
+    <TelemetryNotice
+      session={webSession}
+      reporting={telemetryReporting}
+      onmanage={() => openPanel({ kind: "telemetry" })}
+    />
     <Toasts />
     <nav class="app-nav" class:open={navOpen} aria-label="Docbank navigation">
       <div class="brand">
@@ -3754,7 +3814,7 @@
                 onclick={openShortcutHelp}><KeyboardIcon size="16" aria-hidden="true" /></IconAction
               >
             {/if}
-            <ThemeButton />
+            <ThemeToggle />
             <IconAction
               ariaLabel={keySession ? "Sign out" : "Lock web session"}
               onclick={() => void lock()}
@@ -3956,11 +4016,24 @@
               runError={snapshot.state.error?.message}
               profiles={naturalProfiles}
               onchange={keepQueryDraft}
-              ondirty={(dirty) => {
+              ondirty={(dirty, settings) => {
                 queryDraftRevision++;
                 queryDraftChanged = queryDraftFromDefinition || dirty;
+                queryDraftSettings = settings;
               }}
               onrun={(query, options) => {
+                if (
+                  !snapshotActive &&
+                  activeQuery &&
+                  naturalSearchMode !== "names" &&
+                  naturalProfile &&
+                  searchSyntax === "simple" &&
+                  isSortOnly(query)
+                ) {
+                  applyResultSort(query.sort);
+                  discardQueryDraft();
+                  return;
+                }
                 querySettingsApplied = true;
                 void submitSnapshot(query, options);
               }}
@@ -4833,6 +4906,8 @@
           }}
           onopenquery={(query) => {
             closePanel(panel)();
+            // The saved query's filters are settings: a new search text keeps them.
+            querySettingsApplied = true;
             void submitSnapshot(query, snapshot.state.options ?? {});
           }}
           onclose={closePanel(panel)}

@@ -86,7 +86,7 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
       active: members.some((member) => member.busy),
       failed: failed !== undefined,
       visible:
-        members.some((member) => member.busy) ||
+        active.length > 0 ||
         failed !== undefined ||
         controls.some((control) => control.lane === lane && control.paused),
     };

@@ -117,6 +117,7 @@ export class ActionJournal implements ActionJournalAccess {
   static async peek(vaultID: string): Promise<PersistedAction | null> {
     const journal = await this.#connect(vaultID);
     try {
+      await journal.#validateStoredAction();
       return await journal.load();
     } finally {
       journal.#database.close();
