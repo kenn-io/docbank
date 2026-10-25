@@ -1346,7 +1346,8 @@ No flag enables another flag's tools; combine the flags to allow more than one
 kind of work.
 
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
-catalogs, transport limits, caching, and unsupported capabilities.
+catalogs, transport limits, caching, and unsupported capabilities. For read-only
+HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 
 ## docbank trash
 
@@ -1587,7 +1588,7 @@ See [Backup and restore](usage/backup.md) for the procedure.
 ## docbank daemon
 
 ```
-docbank daemon run
+docbank daemon run [--mcp-http-listen <ip:port>]
 docbank daemon start
 docbank daemon status [--json]
 docbank daemon restart
@@ -1610,6 +1611,12 @@ Data commands start a daemon automatically when needed. Use `daemon start`
 for explicit control, such as inspecting logs before sending data commands.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
+
+`daemon run --mcp-http-listen <ip:port>` opts into hosting read-only MCP HTTP
+tools in the daemon process. Hosting is disabled by default. See the
+[configuration reference](configuration.md#mcp-http-credential) for credential
+settings and the [MCP guide](usage/mcp.md#connect-over-a-trusted-network) for
+Host settings and client access.
 
 Start, restart, and automatic startup also replace an incompatible daemon.
 If its version or API protocol differs from the invoking binary, the CLI stops

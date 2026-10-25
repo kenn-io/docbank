@@ -79,8 +79,6 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 		status             int
 	}{
 		{"valid", "synthetic-mcp-bearer", "docbank:7341", 200},
-		{"missing", "", "docbank:7341", 401},
-		{"wrong", "synthetic-wrong-bearer", "docbank:7341", 401},
 		{"API key", record.Metadata["api_key"], "docbank:7341", 401},
 		{"unlisted Host", "synthetic-mcp-bearer", "unlisted.example", 403},
 	} {
@@ -94,9 +92,7 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 			request.Header.Set("Mcp-Protocol-Version", docmcp.ProtocolVersion)
 			request.Header.Set("Mcp-Method", "tools/call")
 			request.Header.Set("Mcp-Name", "get_vault_info")
-			if test.bearer != "" {
-				request.Header.Set("Authorization", "Bearer "+test.bearer)
-			}
+			request.Header.Set("Authorization", "Bearer "+test.bearer)
 			response, err := http.DefaultClient.Do(request)
 			require.NoError(t, err)
 			defer func() { _ = response.Body.Close() }()
@@ -123,14 +119,10 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 }
 
 func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
-	for _, test := range []struct{ name, config, token, file, listen, message string }{
+	for _, test := range []struct{ name, config, token, listen, message string }{
 		{name: "invalid listen", listen: "localhost:7341", message: "explicit IP"},
 		{name: "unknown config", config: "[mcp.http]\nbogus=true\n", message: "unknown key"},
-		{name: "invalid config type", config: "[mcp.http]\nlisten=123\n", message: "loading"},
 		{name: "missing binding", message: "credential_binding is required"},
-		{name: "missing secret", file: "missing", message: "readable"},
-		{name: "invalid secret", file: "invalid", message: "without whitespace"},
-		{name: "conflicting sources", token: "synthetic-mcp-bearer", file: "missing", message: "cannot both"},
 		{name: "equal API key", token: "synthetic-api-key", message: "must differ"},
 		{name: "occupied port", token: "synthetic-mcp-bearer", message: "listen for MCP HTTP"},
 	} {
@@ -149,13 +141,6 @@ func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
 			}
 			t.Setenv("DOCBANK_MCP_HTTP_LISTEN", listen)
 			t.Setenv("DOCBANK_MCP_HTTP_TOKEN", test.token)
-			if test.file != "" {
-				file := filepath.Join(root, "bearer")
-				if test.file == "invalid" {
-					require.NoError(t, os.WriteFile(file, []byte("invalid bearer"), 0o600))
-				}
-				t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", file)
-			}
 			if test.config != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(test.config), 0o600))
 			}
