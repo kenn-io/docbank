@@ -38,6 +38,7 @@
     mapPhotoLimit,
     maxComparePhotos,
     capturedNewest,
+    datedPhotoFacets,
     type Photos,
     type PhotoReturn,
   } from "./photos.svelte.js";
@@ -754,7 +755,7 @@
     ),
   );
   const searchable = $derived(searchablePhotoView(albumID, mapMode));
-  const activeFilters = $derived(activeFilterCount(photos.query.filters));
+  const activeFilters = $derived(activeFilterCount(photos.query.filters, datedPhotoFacets));
   const filtered = $derived(
     searchable &&
       (Boolean(photos.query.text.trim()) ||
@@ -1241,9 +1242,6 @@
                 /></label
               >
             </div>{/if}
-          {#if photos.total > maxPhotoExportMembers}<p class="photo-export-limit">
-              Select up to {maxPhotoExportMembers} photos to export.
-            </p>{/if}
           {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
           {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
@@ -1867,12 +1865,6 @@
     transform: translateX(-50%);
     border-radius: 999px;
     z-index: 4;
-  }
-  .photo-export-limit {
-    margin: 0;
-    padding: var(--space-2) var(--space-5);
-    font-size: var(--font-size-sm);
-    color: var(--text-muted);
   }
   .photo-bar,
   .photo-stack-controls {

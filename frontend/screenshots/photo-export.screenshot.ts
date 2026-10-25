@@ -62,11 +62,10 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
       }
     };
     if (count > 16) {
-      await expect(
-        page.getByText("Select up to 16 photos to export.", { exact: true }),
-      ).toBeVisible();
       await page.getByRole("button", { name: "More photo actions", exact: true }).click();
-      await expect(page.getByRole("menuitem", { name: /^Export all/ })).toBeDisabled();
+      await expect(
+        page.getByRole("menuitem", { name: "Export all (limit 16 photos)", exact: true }),
+      ).toBeDisabled();
       await page.keyboard.press("Escape");
 
       await capture("scope-limit");

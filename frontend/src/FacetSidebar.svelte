@@ -1,6 +1,7 @@
 <script lang="ts">
   import { canonicalQuery, parseQuery, type Query, type QueryFilters } from "./query.js";
   import type { SnapshotPage } from "./snapshots.js";
+  import { facetFilterFields } from "./facetFilters.js";
 
   type Facet = SnapshotPage["facets"][number];
   type FacetValue = Facet["values"][number];
@@ -75,16 +76,21 @@
     },
   };
   const arrayFields = {
-    camera: "cameras",
-    lens: "lenses",
-    location: "locations",
-    set: "set_ids",
-    collections: "collection_ids",
-    tags: "tag_ids",
-    media_family: "media_families",
-    extension: "extensions",
-    text_coverage: "text_coverage",
+    camera: facetFilterFields.camera[0],
+    lens: facetFilterFields.lens[0],
+    location: facetFilterFields.location[0],
+    set: facetFilterFields.set[0],
+    collections: facetFilterFields.collections[0],
+    tags: facetFilterFields.tags[0],
+    media_family: facetFilterFields.media_family[0],
+    extension: facetFilterFields.extension[0],
+    text_coverage: facetFilterFields.text_coverage[0],
   } as const;
+  const [modifiedAfter, modifiedBefore] = facetFilterFields.modified;
+  const [sizeMin, sizeMax] = facetFilterFields.size;
+  const [hasDuplicates] = facetFilterFields.duplicates;
+  const [captureAfter, captureBefore] = facetFilterFields.year;
+  const [ratingMin, ratingMax] = facetFilterFields.rating;
   const sizeRanges: Record<string, { min?: number; max?: number; label: string }> = {
     lt_1_mib: { max: (1 << 20) - 1, label: "Less than 1 MiB" },
     "1_mib_to_10_mib": { min: 1 << 20, max: (10 << 20) - 1, label: "1 MiB to 10 MiB" },
@@ -129,18 +135,18 @@
       const range = monthRange(value.key);
       return Boolean(
         range &&
-        query.filters.modified_after === range.after &&
-        query.filters.modified_before === range.before,
+        query.filters[modifiedAfter] === range.after &&
+        query.filters[modifiedBefore] === range.before,
       );
     }
     if (dimension === "size") {
       const range = sizeRanges[value.key];
       return Boolean(
-        range && query.filters.size_min === range.min && query.filters.size_max === range.max,
+        range && query.filters[sizeMin] === range.min && query.filters[sizeMax] === range.max,
       );
     }
     if (dimension === "duplicates")
-      return value.key === "duplicate" && query.filters.has_duplicates === true;
+      return value.key === "duplicate" && query.filters[hasDuplicates] === true;
     return value.selected;
   }
 
@@ -172,14 +178,14 @@
       onchange(
         changed({
           ...query.filters,
-          rating_min: active ? undefined : rating,
-          rating_max: active ? undefined : rating,
+          [ratingMin]: active ? undefined : rating,
+          [ratingMax]: active ? undefined : rating,
         }),
       );
       return;
     }
     if (dimension === "flag" || dimension === "label") {
-      const field = dimension === "flag" ? "flags" : "labels";
+      const [field] = facetFilterFields[dimension];
       const key = value.key === "none" ? "" : value.key;
       const current = query.filters[field] ?? [];
       const values = current.includes(key as never)
@@ -193,8 +199,8 @@
       onchange(
         changed({
           ...query.filters,
-          capture_after: active ? undefined : `${value.key}-01-01`,
-          capture_before: active ? undefined : yearBefore(value.key),
+          [captureAfter]: active ? undefined : `${value.key}-01-01`,
+          [captureBefore]: active ? undefined : yearBefore(value.key),
         }),
       );
       return;
@@ -210,8 +216,8 @@
       onchange(
         changed({
           ...query.filters,
-          modified_after: active ? undefined : range.after,
-          modified_before: active ? undefined : range.before,
+          [modifiedAfter]: active ? undefined : range.after,
+          [modifiedBefore]: active ? undefined : range.before,
         }),
       );
       return;
@@ -223,8 +229,8 @@
       onchange(
         changed({
           ...query.filters,
-          size_min: active ? undefined : range.min,
-          size_max: active ? undefined : range.max,
+          [sizeMin]: active ? undefined : range.min,
+          [sizeMax]: active ? undefined : range.max,
         }),
       );
       return;
@@ -233,7 +239,7 @@
       onchange(
         changed({
           ...query.filters,
-          has_duplicates: query.filters.has_duplicates ? undefined : true,
+          [hasDuplicates]: query.filters[hasDuplicates] ? undefined : true,
         }),
       );
     }

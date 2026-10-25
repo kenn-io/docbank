@@ -114,7 +114,7 @@ export const mapPhotoLimit = 20_000;
 const mapPageLimit = 20;
 const photoFacets = ["camera", "lens", "location", "set", "rating", "flag", "label"] as const;
 // Year also exposes capture ranges retained by saved searches.
-const datedPhotoFacets = [...photoFacets, "year"] as const;
+export const datedPhotoFacets = [...photoFacets, "year"] as const;
 // One move can audit-trash up to 1,000 files in a single writer transaction.
 const photoRejectsTimeout = 300_000;
 const densityKey = "docbank.photos.density";
