@@ -35,6 +35,7 @@ func TestPeopleMCPToolsAreReads(t *testing.T) {
 
 // peopleMCPServer serves MCP person tools from a real daemon over a fresh vault.
 func peopleMCPServer(t *testing.T) (*store.Store, func(string, map[string]any) map[string]any) {
+	t.Helper()
 	vault := t.TempDir()
 	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
@@ -249,7 +250,7 @@ func TestFindPeoplePagesWithinResponseLimit(t *testing.T) {
 		}
 		cursor, _ := page["next_cursor"].(string)
 		if cursor == "" {
-			require.Greater(t, pages, 0, "a full page should not fit in one response")
+			require.Positive(t, pages, "a full page should not fit in one response")
 			break
 		}
 		arguments = map[string]any{"limit": 250, "cursor": cursor}
