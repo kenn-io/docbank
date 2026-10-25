@@ -625,7 +625,7 @@ export class PhotoAuthoredEditor {
       let read: boolean | undefined = true;
       if (this.prepared.length) read = await this.reload(false, true);
       else if (!this.targets.length && (scope?.query || scope?.asset_ids?.length))
-        read = await this.prepare(scope, false, false, true);
+        read = await this.prepare({ ...scope, skip_unavailable: true }, false, false, true);
       // A discarded read leaves the change queued.
       if (!read) this.queued = true;
     } catch (cause) {

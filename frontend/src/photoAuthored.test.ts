@@ -955,6 +955,29 @@ it("keeps an edit counted as a write while its keyword lookup and refresh run", 
   editor.dispose();
 });
 
+it.each([412, 404])(
+  "finishes a live reread once the selected photo was removed outside (HTTP %i)",
+  async (status) => {
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    let removed = false;
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      if (!removed) return response({ assets: [asset], targets: structuredClone(targets) });
+      // Only a read that skips unavailable photos survives the removal.
+      return JSON.parse(String(init.body)).skip_unavailable
+        ? response({ assets: [], targets: [] })
+        : response({ detail: "The photo is gone" }, status);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await editor.prepare({ asset_ids: ["asset"] });
+    removed = true;
+    editor.revalidate(new Set());
+    expect(editor.targets).toEqual([]);
+    await editor.invalidate();
+    expect(editor.targets).toEqual([]);
+    editor.dispose();
+  },
+);
+
 it("lets a waiting live change finish when the editor is disposed during a stack read", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
   vi.stubGlobal(
