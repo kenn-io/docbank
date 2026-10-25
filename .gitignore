@@ -3,8 +3,9 @@
 /.superpowers/
 /docs/superpowers/
 
-# Local binaries
+# Local binaries and container OCI archives
 /bin/
+/dist/
 
 # Frontend dependencies and generated embed output
 node_modules/
@@ -13,7 +14,6 @@ internal/web/dist/*
 !internal/web/dist/.keep
 
 # docs build
-/dist/
 **/__pycache__/
 /.cache/docs-assets/
 /site/

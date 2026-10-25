@@ -16,7 +16,8 @@ target "oci" {
   platforms  = ["linux/${arch}"]
 
   args = {
-    VERSION = VERSION
+    # Release tags carry a "v"; native archives stamp the bare version.
+    VERSION = trimprefix(VERSION, "v")
     COMMIT  = COMMIT
   }
 
