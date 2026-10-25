@@ -810,8 +810,15 @@ func publishAttachmentForTest(
 	t *testing.T, s *Store, attachment RenditionAttachmentRecord,
 ) error {
 	t.Helper()
+	return publishRenditionForTest(
+		t, s, attachment, nowRFC3339(), lexicalReplacementGenerationIDForTest(t, s),
+	)
+}
+
+func lexicalReplacementGenerationIDForTest(t *testing.T, s *Store) string {
+	t.Helper()
 	var generationID string
-	err := s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		rows, err := readCatalogLexicalManifestRowsTx(t.Context(), tx, "")
 		if err != nil {
 			return err
@@ -822,13 +829,8 @@ func publishAttachmentForTest(
 		}
 		generationID = lexicalReplacementGenerationID(rows, buildIDs)
 		return nil
-	})
-	if err != nil {
-		return err
-	}
-	return publishRenditionForTest(
-		t, s, attachment, nowRFC3339(), generationID,
-	)
+	}))
+	return generationID
 }
 
 func seedRenditionCatalogVersions(t *testing.T, s *Store) []string {

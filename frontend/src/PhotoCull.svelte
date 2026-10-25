@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack, tick } from "svelte";
+  import { settleReads } from "./photoEvents.js";
   import { restorePhotoReviewFocus } from "./photoReview.js";
   import "./photoReview.css";
   import { patchPhotoRows } from "./photoRows.js";
@@ -42,6 +43,7 @@
         photos.session,
         photos.onauthfailure,
         photos.authored.undoState,
+        photos.hiddenAccess,
       )),
   );
   $effect(() => {
@@ -87,6 +89,8 @@
   let railError = $state("");
   let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
+  // The current photo and its rail, each once.
+  const shownIDs = $derived([...new Set([currentID, ...rail])].filter((id): id is string => !!id));
   const complete = $derived(cull.complete);
   let selectedFrames = $state<string[]>([]);
   let selectionRun: string | undefined;
@@ -97,8 +101,14 @@
     const [run, groups] = [cull.run, cull.run?.groups];
     const key = groups === selectionGroups ? selectionGroupsKey : JSON.stringify(groups);
     const [runID, runPass] = [run?.checkpoint.runID, run?.checkpoint.pass];
-    if (runID !== selectionRun || runPass !== selectionPass || key !== selectionGroupsKey) {
-      selectedFrames = [];
+    if (runID !== selectionRun || runPass !== selectionPass) selectedFrames = [];
+    else if (key !== selectionGroupsKey) {
+      // New groups clear only the checks in stacks that changed.
+      const stackOf = (list: string[][] | undefined, id: string) =>
+        list?.find((group) => group.includes(id))?.join();
+      selectedFrames = untrack(() =>
+        selectedFrames.filter((id) => stackOf(selectionGroups, id) === stackOf(groups, id)),
+      );
     }
     [selectionRun, selectionPass] = [runID, runPass];
     [selectionGroups, selectionGroupsKey] = [groups, key];
@@ -106,6 +116,14 @@
   const pass = $derived(checkpoint.pass);
   let lastLookupAttempt = 0;
   let lastPass: string[] | undefined;
+  // Foreground, rail, and live reads share one owner per photo: the newest read of a photo
+  // wins, and an older answer for it is dropped whichever arrives last.
+  const owners = new Map<string, object>();
+  function claim(ids: string[]) {
+    const read = {};
+    for (const id of ids) owners.set(id, read);
+    return (id: string) => owners.get(id) === read;
+  }
   $effect(() => {
     const id = currentID;
     const changedPass = pass !== lastPass;
@@ -137,19 +155,20 @@
     error = "";
     loading = !!id && !held;
     view = { ...fittedPhotoView };
+    const owns = claim(id && !held ? [id] : []);
     if (id && !held)
       void photos
         .lookup(id, controller.signal)
         .then((row) => {
-          if (!controller.signal.aborted) photo = row;
+          if (!controller.signal.aborted && owns(id)) photo = row;
         })
         .catch((cause) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !owns(id)) return;
           error = cause instanceof Error ? cause.message : String(cause);
           if (cause instanceof APIError && cause.status === 404) cull.unavailable(id);
         })
         .finally(() => {
-          if (!controller.signal.aborted) loading = false;
+          if (!controller.signal.aborted && owns(id)) loading = false;
         });
     return () => controller.abort();
   });
@@ -157,12 +176,22 @@
     const held = untrack(() => neighbors).filter((row) => rail.includes(row.asset_id));
     const loaded = new Set(held.map((row) => row.asset_id));
     const ids = rail.filter((id) => id !== currentID && !loaded.has(id));
+    const window = new Set(rail);
     const controller = new AbortController();
+    const owns = claim(ids);
     railError = "";
     railLoading = true;
     void (ids.length ? photos.lookupMany(ids, controller.signal) : Promise.resolve([]))
       .then((rows) => {
-        if (!controller.signal.aborted) neighbors = [...held, ...rows];
+        if (controller.signal.aborted) return;
+        const fresh = rows.filter((row) => owns(row.asset_id));
+        neighbors = [
+          ...neighbors.filter(
+            (row) =>
+              window.has(row.asset_id) && !fresh.some((item) => item.asset_id === row.asset_id),
+          ),
+          ...fresh,
+        ];
       })
       .catch((cause) => {
         if (!controller.signal.aborted)
@@ -176,6 +205,46 @@
   $effect(() => {
     if (complete && pass) untrack(() => void cull.checkRemainder());
   });
+  // A live change reads the shown photos and the stack groups again and swaps them in place. Nothing
+  // here sets `loading`, `busy`, or `stackLoading`, so shortcuts, Undo, navigation, and Exit keep working.
+  async function revalidate() {
+    cull.flagsChanged();
+    await settleReads([
+      // New capture times can move frames between stacks, so the groups are read again too.
+      cull.regroup(true),
+      shownIDs.length ? reread(shownIDs) : undefined,
+      cull.complete ? revalidateRemainder() : undefined,
+      // Prepared stack revisions are read again, so a decision checks the refreshed rows.
+      editor.invalidate(),
+    ]);
+  }
+  async function revalidateRemainder() {
+    await passTransition;
+    if (!reloadController.signal.aborted && cull.complete) await cull.checkRemainder(true);
+  }
+  async function reread(ids: string[]) {
+    const owns = claim(ids);
+    const signal = AbortSignal.any([reloadController.signal, AbortSignal.timeout(60_000)]);
+    const rows = new Map((await photos.lookupMany(ids, signal)).map((row) => [row.asset_id, row]));
+    if (signal.aborted) return;
+    ids = ids.filter(owns);
+    neighbors = [
+      ...neighbors.filter((row) => !ids.includes(row.asset_id)),
+      ...ids.flatMap((item) => rows.get(item) ?? []),
+    ];
+    const id = currentID;
+    if (id && ids.includes(id)) loading = false;
+    if (!id || !ids.includes(id) || (photo && photo.asset_id !== id)) return;
+    if (rows.has(id)) {
+      photo = rows.get(id);
+      error = "";
+    } else {
+      photo = undefined;
+      error = "This photo is no longer in this view.";
+      cull.unavailable(id);
+    }
+  }
+  $effect(() => photos.watch(revalidate));
   $effect(() =>
     prefetchPreviews(
       photos,
@@ -186,12 +255,17 @@
   function canChangeTarget() {
     return !busy && !editor.conflict && editor.canChangeTarget();
   }
+  let passTransition: Promise<void> | undefined;
   async function nextPass(followUp = false) {
     if (!canChangeTarget()) return;
     checkingDecision = true;
+    const transition = (passTransition = cull.nextPass(followUp, (message) =>
+      confirmation!.confirm(message, "Reset pass"),
+    ));
     try {
-      await cull.nextPass(followUp, (message) => confirmation!.confirm(message, "Reset pass"));
+      await transition;
     } finally {
+      if (passTransition === transition) passTransition = undefined;
       checkingDecision = false;
     }
   }
@@ -217,6 +291,7 @@
   async function reloadHeldRows() {
     const held = [...(photo ? [photo] : []), ...neighbors];
     if (!held.length) return;
+    const owns = claim(held.map((row) => row.asset_id));
     try {
       const fresh = new Map(
         (
@@ -226,7 +301,8 @@
           )
         ).map((row) => [row.asset_id, row]),
       );
-      const latest = (row: PhotoBrowseRow) => fresh.get(row.asset_id) ?? row;
+      const latest = (row: PhotoBrowseRow) =>
+        (owns(row.asset_id) && fresh.get(row.asset_id)) || row;
       const flagged = held.some((row) => latest(row).flag !== row.flag);
       if (photo) photo = latest(photo);
       neighbors = neighbors.map(latest);
@@ -243,8 +319,15 @@
     representatives: PhotoAuthoredReceipt["representatives"] = [],
   ) {
     const receipt = { after: targets, representatives };
+    const before = [photo, ...neighbors];
     if (photo) [photo] = patchPhotoRows([photo], receipt);
     neighbors = patchPhotoRows(neighbors, receipt);
+    // The write's result is the newest read of every row it changed.
+    claim(
+      [photo, ...neighbors]
+        .filter((row, index): row is PhotoBrowseRow => !!row && row !== before[index])
+        .map((row) => row.asset_id),
+    );
   }
   async function decide(patch: PhotoAuthoredPatch, nextStack = false) {
     if (
@@ -333,25 +416,32 @@
       await applyDecision(photo, { ...editor.patch }, true);
       return;
     }
-    editor.loading = true;
+    checkingDecision = true;
+    const id = photo.asset_id;
+    const ids = cull.currentStack ?? [id];
+    const owns = claim(ids);
     try {
-      const ids = cull.currentStack ?? [photo.asset_id];
       const rows = cull.currentStack
         ? await photos.lookupMany(ids, reloadController.signal)
-        : [await photos.lookup(photo.asset_id, reloadController.signal)];
-      const row = rows.find((row) => row.asset_id === photo!.asset_id);
+        : [await photos.lookup(id, reloadController.signal)];
+      if (reloadController.signal.aborted || !owns(id) || currentID !== id) return;
+      const row = rows.find((row) => row.asset_id === id);
       if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      if (reloadController.signal.aborted) return;
-      neighbors = [...neighbors.filter((row) => !ids.includes(row.asset_id)), ...rows];
+      // A newer read of a stack member keeps its row.
+      const owned = ids.filter(owns);
+      neighbors = [
+        ...neighbors.filter((row) => !owned.includes(row.asset_id)),
+        ...rows.filter((row) => owned.includes(row.asset_id)),
+      ];
       photo = row;
       view = { ...fittedPhotoView };
       editor.reset();
       if (cull.currentStack) await cull.regroup();
     } catch (cause) {
-      if (!reloadController.signal.aborted)
+      if (!reloadController.signal.aborted && owns(id) && currentID === id)
         editor.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      editor.loading = false;
+      checkingDecision = false;
     }
   }
   // Hold every member's revisions once a stack is current, so its decision checks what was shown.

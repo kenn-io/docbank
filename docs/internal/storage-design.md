@@ -471,6 +471,74 @@ Matching still requires a live file, a compatible photo role, and unsuperseded
 provenance. Matching edited files become new content versions on their existing nodes. A node shared with another active source path keeps its content;
 an edit from one path becomes a separate file.
 
+While a live photo stream is open, the writer connection carries temp triggers
+on every real table in the main schema except the ones `photoUnwatchedTables`
+lists. A trigger only records that something changed, in a one-row temp table, and
+a commit that left a row there signals every stream once. Photo imports pay for
+the triggers, and so do writes that touch no photo. The last subscriber removes
+them. Run `BenchmarkPhotoImportMetadata` (its `subscriber=true` cases) and
+`BenchmarkNonPhotoIngest` with `-benchtime=3x`, with and without CGo, for current
+figures.
+
+The first write after a subscriber arrives also installs the triggers. The
+benchmarks subscribe and run one empty write before the timer starts, so the
+figures below are steady-state: they leave out the one-time install. With no
+subscriber the first write drops the triggers and imports run at the unsubscribed
+speed.
+
+Steady-state figures at `-benchtime=3x` on an AMD EPYC 7763, in milliseconds per
+file. An import batch is 32 files, and the existing count is the photos already in
+the catalog.
+
+| Case | CGo, no subscriber | CGo, one subscriber | Pure Go, no subscriber | Pure Go, one subscriber |
+| --- | --- | --- | --- | --- |
+| Import new photos, 100 existing | 1.31 | 1.47 | 7.13 | 8.18 |
+| Import edited photos, 100 existing | 1.18 | 1.44 | 5.29 | 6.01 |
+| Import new photos, 10,000 existing | 1.59 | 1.79 | 7.29 | 8.80 |
+| Import edited photos, 10,000 existing | 1.31 | 1.43 | 5.07 | 6.30 |
+| Ingest 1,000 documents | 0.48 | 0.53 | 3.50 | 4.14 |
+
+Live refresh rereads the complete loaded prefix because a change can insert,
+remove, or reorder photos anywhere in it. Library uses 250-photo pages, so a
+loaded prefix of N photos takes at most max(1, ceil(N / 250)) list requests per
+pass. Map uses 1,000-photo pages and caps its prefix at 20,000 photos. Each tab
+runs one pass at a time; changes during a pass queue one further pass. The next
+pass waits at least one second or twice the previous pass's duration, whichever
+is longer. Each pass and its required rest spend at most one third of their
+combined time refreshing, including the other workspace reads in the pass.
+
+Events carry no photo, so every pass rereads what the tab shows: loaded lists,
+the open photo, Compare's destination, a completed Cull's regrouped stacks and
+unflagged remainder, the keyword and saved-query definitions, and the metadata
+editor's targets and stack. A pass waits while the tab has a write in flight.
+The API transport counts requests other than GET and HEAD from the call until
+the caller has the answer, which for JSON writes is after the body is read, and
+skips POSTs that only read, such as the photo list query, so scrolling never
+defers a pass. A deferred pass runs again after the
+usual spacing.
+
+Reproduce the browser measurement with
+`DOCBANK_PHOTO_IMPORT_MEASURE=1 make photo-tabs-browser-test`; it writes
+`bin/photo-tabs-proof/photo-import-refresh.json` unless the capture directory is
+overridden. The probe imports 10,000 synthetic camera files beside 1,000 seeded
+photos in one Chromium tab. The incoming files have 2020 modified times, before
+the seeded photos' 2022 capture times, so the loaded prefix stays at 1,000 rows.
+The probe measures the list request chain, excluding the pass's other workspace
+reads and image decoding.
+
+The scheduler bounds concurrent work and the rest between passes. Total
+transfer still grows with the loaded prefix and the number of passes. Keep
+full-prefix refresh: this append-only fixture doesn't establish a safe shortcut
+for changes that reorder the prefix.
+
+Triggers cover every real main-schema table except those that no Photos read
+touches: job queues and attempt logs, leases, and `storage_operations*`. The rule
+is what Photos reads, not who writes: a document build that moves search or
+duplicate state still signals. A table nobody has listed signals too, so a missed
+table costs one extra refresh instead of a stale view. `rendition_jobs` signals
+on every write, including a claim heartbeat, because its update time ranks
+coverage results. A test checks that every unwatched table exists in the schema.
+
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited
 display in one transaction, including excluded and empty assets, while asset

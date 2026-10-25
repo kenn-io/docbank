@@ -83,9 +83,9 @@
   export function captureReturn() {
     photoWorkspace?.captureReturn();
   }
-  export async function refresh() {
-    if (workspaceVisible) await photoWorkspace?.refresh();
-    else await checkAccess();
+  export async function refresh(live = false) {
+    if (workspaceVisible) await photoWorkspace?.refresh(live);
+    else if (!live) await checkAccess();
   }
   export function lock() {
     return action("lock");

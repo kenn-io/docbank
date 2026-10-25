@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { previewSlotsKey, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import type { PhotoView } from "./photoView.js";
   import { PhotoPreviewLoader } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
@@ -38,7 +38,15 @@
   let current = $state.raw(untrack(() => photo));
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
   let reloadRevision = $state(0);
-  const identity = $derived(`${current.asset_id}:${current.content_version_id}`);
+  let image = $state<PhotoLoupeImage>();
+  // A row replaced with a newly published preview starts a new load. The loader's own slot
+  // updates change the row in place, so they leave the identity alone.
+  const identity = $derived.by(() => {
+    const row = current;
+    return untrack(() =>
+      [row.asset_id, row.content_version_id, previewSlotsKey(row.previews)].join(":"),
+    );
+  });
   $effect(() => {
     current = photo;
   });
@@ -49,10 +57,13 @@
       photos,
       cache,
       untrack(() => current),
+      untrack(() => loader),
     );
     loader = active;
-    return () => active.dispose();
+    active.restoreZoom(() => image?.isZoomed());
+    return () => active.retire();
   });
+  onDestroy(() => loader.dispose());
   async function retry() {
     if (loader.failure?.action !== "reload") {
       const active = loader;
@@ -86,6 +97,7 @@
 
 <div class="photo-stage">
   <PhotoLoupeImage
+    bind:this={image}
     url={loader.url}
     name={current.name}
     rotation={current.rotation}

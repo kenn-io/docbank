@@ -28,29 +28,37 @@
   let smartTotal = $state(0);
   let smartLoading = $state(false);
   let smartGeneration = 0;
+  let resetFailed = false;
   async function loadSmartSets(reset = false) {
+    reset ||= resetFailed;
     if (smartLoading && !reset) return;
     const generation = reset ? ++smartGeneration : smartGeneration;
-    if (reset) {
-      smartSets = [];
-      smartOffset = 0;
-      smartTotal = 0;
-    }
+    // A reset rebuilds as many pages as were listed, then swaps them in at once.
+    const rebuilt = reset ? smartOffset : 0;
+    let offset = reset ? 0 : smartOffset;
+    const listed = reset ? [] : smartSets;
     smartLoading = true;
     smartError = "";
     try {
-      const page = await listSavedQueries(albums.session, "query", smartOffset, 100, true);
-      if (!alive || generation !== smartGeneration) return;
-      const seen = new Set(smartSets.map((saved) => saved.id));
-      for (const saved of page.items)
-        if (!seen.has(saved.id)) {
-          seen.add(saved.id);
-          smartSets.push(saved);
-        }
-      smartOffset += page.items.length;
-      smartTotal = page.items.length ? page.total : smartOffset;
+      let page;
+      do {
+        page = await listSavedQueries(albums.session, "query", offset, 100, true);
+        if (!alive || generation !== smartGeneration) return;
+        const seen = new Set(listed.map((saved) => saved.id));
+        for (const saved of page.items)
+          if (!seen.has(saved.id)) {
+            seen.add(saved.id);
+            listed.push(saved);
+          }
+        offset += page.items.length;
+      } while (page.items.length && offset < rebuilt && offset < page.total);
+      smartSets = listed;
+      smartOffset = offset;
+      smartTotal = page.items.length ? page.total : offset;
+      resetFailed = false;
     } catch (cause) {
       if (alive && generation === smartGeneration) {
+        resetFailed = reset;
         if (cause instanceof APIError && cause.status === 401) albums.onauthfailure(cause);
         smartError = cause instanceof Error ? cause.message : String(cause);
       }
@@ -61,8 +69,10 @@
   onMount(() => {
     if (!onopensmart) return;
     void loadSmartSets();
-    return subscribeSavedQueries((session) => {
-      if (session === albums.session) void loadSmartSets(true);
+    return subscribeSavedQueries(async (session) => {
+      if (session !== albums.session) return;
+      await loadSmartSets(true);
+      if (smartError) throw new Error(smartError);
     });
   });
   let alive = true;

@@ -4,7 +4,7 @@ import { tick } from "svelte";
 import PhotoSmartSet from "./PhotoSmartSet.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoAlbums } from "./photoAlbums.svelte.js";
-import { updateSavedQuery } from "./savedQueries.js";
+import { refreshDefinitionViews, updateSavedQuery } from "./savedQueries.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 import { savedSmartSet as savedSmartSetFixture } from "./photo-test-fixtures.js";
 import * as generated from "./generated/docbank.js";
@@ -494,4 +494,22 @@ it("keeps a frozen result when album saving waits for another album change", asy
   expect(fetcher).not.toHaveBeenCalled();
   photos.dispose();
   albums.dispose();
+});
+
+it("rejects a definition refresh when the open smart set cannot be read", async () => {
+  const payload = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const photos = new Photos("session", vi.fn());
+  photos.smartSet = savedSmartSetFixture(payload, await queryFingerprint(payload));
+  const albums = new PhotoAlbums("session", vi.fn());
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/photos/albums")
+        ? Response.json([])
+        : Response.json({ detail: "Down" }, { status: 503 }),
+    ),
+  );
+  render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
+  await tick();
+  await expect(refreshDefinitionViews("session")).rejects.toThrow("Down");
 });

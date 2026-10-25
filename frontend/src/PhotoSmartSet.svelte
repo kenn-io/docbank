@@ -52,7 +52,7 @@
   onMount(() => {
     if (!photos.smartSet) void photos.recoverSmartSet();
     return subscribeSavedQueries((session) => {
-      if (session === photos.session) void photos.recoverSmartSet();
+      if (session === photos.session) return photos.recoverSmartSet(true);
     });
   });
   onDestroy(() => controller.abort());
@@ -202,7 +202,7 @@
         ).toLocaleTimeString()}</span
       >
     </div>
-    <Button size="sm" disabled={busy || photos.loading} onclick={() => void freeze()}
+    <Button size="sm" disabled={busy || photos.blocking} onclick={() => void freeze()}
       >{busy ? "Freezing…" : "Freeze again"}</Button
     >
     <Button
@@ -219,7 +219,7 @@
     >
   {:else if photos.frozenExpired && !dialog}
     <span role="alert">Frozen results expired.</span>
-    {#if saved}<Button size="sm" disabled={busy || photos.loading} onclick={() => void freeze()}
+    {#if saved}<Button size="sm" disabled={busy || photos.blocking} onclick={() => void freeze()}
         >Freeze again</Button
       >{/if}
   {:else if saved}
@@ -227,7 +227,7 @@
       <strong class="smart-set-name">{saved.name}</strong>
       <span class="smart-set-kind">Smart set</span>
     </span>
-    <Button size="sm" disabled={busy || photos.loading} onclick={() => void freeze()}
+    <Button size="sm" disabled={busy || photos.blocking} onclick={() => void freeze()}
       >{busy ? "Freezing…" : "Freeze results"}</Button
     >
   {:else}
@@ -237,7 +237,7 @@
     <Button
       size="sm"
       tone="info"
-      disabled={busy || photos.loading}
+      disabled={busy || photos.blocking}
       onclick={() => {
         name = "";
         error = "";

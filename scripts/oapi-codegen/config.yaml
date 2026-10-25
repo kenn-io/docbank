@@ -12,3 +12,8 @@ user-templates:
   types.tmpl: scripts/oapi-codegen/types.tmpl
   client-options.tmpl: scripts/oapi-codegen/client-options.tmpl
   client.tmpl: scripts/oapi-codegen/client.tmpl
+
+# Browser event streams use the existing streaming transport directly.
+filter:
+  exclude:
+    operation-ids: [photoEvents]

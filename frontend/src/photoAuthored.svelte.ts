@@ -1,5 +1,6 @@
 import * as api from "./generated/docbank.js";
-import { APIError } from "./api-transport.js";
+import { APIError, holdMutations } from "./api-transport.js";
+import { settleReads } from "./photoEvents.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 type PreparedFile = api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget;
@@ -70,7 +71,12 @@ export class PhotoAuthoredEditor {
     return this.stackFiles;
   }
   private setStack(targets: PreparedFile[]) {
-    this.stackIDs = this.hold(targets.map((target) => this.stackTarget(target)));
+    // A draft keeps the revisions it started from, so Apply still reports an outside change.
+    const keep = (target: PreparedFile) =>
+      this.dirty && this.editIDs.has(target.file_id)
+        ? (this.held[target.file_id] ?? target)
+        : target;
+    this.stackIDs = this.hold(targets.map((target) => this.stackTarget(keep(target))));
     this.prune();
   }
   private stackTarget(target: PreparedFile) {
@@ -131,8 +137,15 @@ export class PhotoAuthoredEditor {
   inspectedID = $state("");
   loadTags?: () => Promise<void>;
   loadMoreTags?: () => Promise<void>;
+  // Tags the targets carry or a staged keyword edit names keep their definitions through a new catalog.
+  private get keptTagIDs() {
+    return new Set([
+      ...this.targets.flatMap((target) => target.tags),
+      ...this.keywords.map((edit) => edit.tag_id),
+    ]);
+  }
   catalog(tags: api.Tag[]) {
-    const assigned = new Set(this.targets.flatMap((target) => target.tags)),
+    const assigned = this.keptTagIDs,
       supplied = new Set(tags.map((tag) => tag.id));
     this.tags = [
       ...tags,
@@ -140,7 +153,36 @@ export class PhotoAuthoredEditor {
     ];
     void this.resolveAssignedTags();
   }
-  private pendingTags = new Map<string, Promise<void>>();
+  private pendingTags = new Map<string, Promise<api.Tag | undefined>>();
+  // Background reads give way to any edit or new preparation, which replace this controller.
+  private tagReads = new AbortController();
+  private cancelTagReads() {
+    this.tagReads.abort();
+    this.tagReads = new AbortController();
+  }
+  // A read with its own signal never reuses a pending one, which could outlive that signal.
+  private readTag(id: string, refresh = false, signal?: AbortSignal) {
+    if (refresh || signal) this.pendingTags.delete(id);
+    const pending = this.pendingTags.get(id);
+    if (pending) return pending;
+    const request = this.request(() => api.getTag(id, this.options(signal)))
+      .then((tag) => {
+        if (this.pendingTags.get(id) !== request || this.controller.signal.aborted) return;
+        this.reconcile(tag);
+        return tag;
+      })
+      .catch((cause) => {
+        if (!(cause instanceof APIError && cause.status === 404)) throw cause;
+        if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
+          this.tags = this.tags.filter((tag) => tag.id !== id);
+        return undefined;
+      })
+      .finally(() => {
+        if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
+      });
+    this.pendingTags.set(id, request);
+    return request;
+  }
   private xmpTimer?: ReturnType<typeof setTimeout>;
   private xmpRead?: AbortController;
   private xmpAttempts = 0;
@@ -279,32 +321,32 @@ export class PhotoAuthoredEditor {
   private xmpAssets(targets: typeof this.targets) {
     return [...new Set(targets.filter((target) => target.xmp).map((target) => target.asset_id))];
   }
-  private async resolveAssignedTags() {
+  private async resolveAssignedTags(required = false, signal?: AbortSignal) {
     const known = new Set(this.tags.map((tag) => tag.id));
-    const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
-      (id) => !known.has(id) && !this.pendingTags.has(id),
+    const missing = [...this.keptTagIDs].filter((id) => !known.has(id));
+    await settleReads(
+      missing.map((id) =>
+        this.readTag(id, false, signal).catch((cause) => {
+          if (required) throw cause;
+          if (!this.controller.signal.aborted) this.tagsError = this.failure(cause);
+        }),
+      ),
     );
-    for (const id of missing) {
-      const request = this.request(() => api.getTag(id, this.options()))
-        .then((tag) => {
-          if (
-            this.pendingTags.get(id) === request &&
-            !this.controller.signal.aborted &&
-            this.targets.some((target) => target.tags.includes(id)) &&
-            !this.tags.some((value) => value.id === id)
-          )
-            this.tags = [...this.tags, tag];
-        })
-        .catch((cause) => {
-          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
-            this.tagsError = this.failure(cause);
-        })
-        .finally(() => {
-          if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
-        });
-      this.pendingTags.set(id, request);
-    }
-    await Promise.all(this.pendingTags.values());
+  }
+  /** Puts a freshly read tag in the catalog: renamed in place, or added when a target or a staged keyword uses it. */
+  private reconcile(tag: api.Tag) {
+    if (this.tags.some((value) => value.id === tag.id))
+      this.tags = this.tags.map((value) => (value.id === tag.id ? tag : value));
+    else if (this.keptTagIDs.has(tag.id)) this.tags = [...this.tags, tag];
+  }
+  /** Reads assigned and staged tags again for renames and deletions outside the catalog page. */
+  async refreshAssignedTags() {
+    const ids = [...this.keptTagIDs];
+    await settleReads(
+      ids.map((id) =>
+        this.readTag(id, true, AbortSignal.any([this.tagReads.signal, this.controller.signal])),
+      ),
+    );
   }
   // Either choice can import unrelated outside changes.
   private async publishXMPKeywords(
@@ -324,21 +366,12 @@ export class PhotoAuthoredEditor {
   private async refreshKeywordIDs(ids: string[] = []) {
     const changed = new Set(ids);
     if (!changed.size) return [];
-    for (const id of changed) this.pendingTags.delete(id);
     const refreshed = await Promise.all(
-      [...changed].map(async (id) => {
-        try {
-          const tag = await this.request(() => api.getTag(id, this.options()));
-          if (this.controller.signal.aborted) return;
-          if (this.tags.some((value) => value.id === id))
-            this.tags = this.tags.map((value) => (value.id === id ? tag : value));
-          else if (this.targets.some((target) => target.tags.includes(id)))
-            this.tags = [...this.tags, tag];
-          return tag;
-        } catch (cause) {
+      [...changed].map((id) =>
+        this.readTag(id, true).catch((cause) => {
           if (!this.controller.signal.aborted) this.tagsError = this.failure(cause);
-        }
-      }),
+        }),
+      ),
     );
     return refreshed.filter((tag): tag is api.Tag => !!tag);
   }
@@ -367,11 +400,22 @@ export class PhotoAuthoredEditor {
   // A write releases busy before its list refresh, so a later write may own busy by the time this one settles.
   private writes = 0;
   private beginWrite() {
+    this.read.abort();
+    this.cancelTagReads();
+    this.stackRead.abort();
+    // The aborted preparation no longer clears its own loading flag, so release it here and let the caller restart it.
+    if (this.stackLoading) {
+      this.stackLoading = false;
+      this.stackKey = "";
+      this.preparedWaiters.splice(0).forEach((resolve) => resolve());
+    }
     this.busy = true;
     return ++this.writes;
   }
   private endWrite(write: number) {
-    if (write === this.writes) this.busy = false;
+    if (write !== this.writes || !this.busy) return;
+    this.busy = false;
+    this.refreshPending();
   }
   canChangeTarget() {
     if (this.loading || this.stackLoading) {
@@ -396,6 +440,8 @@ export class PhotoAuthoredEditor {
     this.stackKey = "";
     this.stackError = "";
     this.stackLoading = false;
+    this.queued = false;
+    this.preparedWaiters.splice(0).forEach((resolve) => resolve());
     this.asset = undefined;
     this.suggestions = [];
     this.suggestionsError = "";
@@ -417,6 +463,7 @@ export class PhotoAuthoredEditor {
     this.loading = false;
     this.concealed = true;
     this.validating = true;
+    this.preparedWaiters.splice(0).forEach((resolve) => resolve());
   }
   revalidate(eligible: Set<string>) {
     const targets = this.targets.filter((target) => eligible.has(target.asset_id));
@@ -436,12 +483,27 @@ export class PhotoAuthoredEditor {
     this.concealed = false;
     this.watchXMP(true);
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false, keepError = false) {
+  // A quiet read keeps `loading` clear, so edits do not wait for it: a write on stale
+  // revisions is refused by the server and reloads. It gives way to any edit, and throws on failure.
+  async prepare(
+    scope: api.PhotoAuthoredPrepareRequest,
+    reload = false,
+    keepError = false,
+    quiet = false,
+  ) {
     this.read.abort();
+    this.cancelTagReads();
     const controller = (this.read = new AbortController());
-    const signal = AbortSignal.any([controller.signal, this.controller.signal]);
-    this.loading = true;
-    if (!keepError) this.error = "";
+    const signal = AbortSignal.any([
+      controller.signal,
+      this.controller.signal,
+      AbortSignal.timeout(30_000),
+    ]);
+    this.scope = scope;
+    if (!quiet) {
+      this.loading = true;
+      if (!keepError) this.error = "";
+    }
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
     try {
       const prepared = await this.request(() =>
@@ -449,7 +511,7 @@ export class PhotoAuthoredEditor {
       );
       if (!Array.isArray(prepared.assets) || !Array.isArray(prepared.targets))
         throw new Error("Metadata response was incomplete. Reload metadata.");
-      if (signal.aborted) return;
+      if (signal.aborted || (quiet && (this.busy || this.dirty || this.loading))) return;
       if (
         previous &&
         (prepared.targets.length !== previous.size ||
@@ -458,9 +520,7 @@ export class PhotoAuthoredEditor {
         this.membershipChanged = true;
         if (!prepared.targets.some((target) => target.file_id === this.fileID)) this.fileID = "";
       }
-      this.targets = previous
-        ? prepared.targets.filter((target) => previous.has(target.file_id))
-        : prepared.targets;
+      this.targets = prepared.targets.filter((target) => !previous || previous.has(target.file_id));
       const asset = prepared.assets.length === 1 ? prepared.assets[0] : undefined;
       this.asset = asset
         ? {
@@ -472,20 +532,24 @@ export class PhotoAuthoredEditor {
         : undefined;
       this.suggestions = prepared.suggestions ?? [];
       this.suggestionsError = "";
-      this.scope = scope;
       this.conflict = this.membershipChanged;
       this.watchXMP(true);
-      void this.resolveAssignedTags();
+      if (quiet) await this.resolveAssignedTags(true, signal);
+      else void this.resolveAssignedTags();
       if (!this.tags.length && !this.tagsLoading && !this.tagsError)
         void this.loadTags?.().catch((cause) => {
           if (!signal.aborted) this.tagsError = this.failure(cause);
         });
+      return true;
     } catch (cause) {
-      if (!signal.aborted) this.error = this.failure(cause);
+      if (controller.signal.aborted || this.controller.signal.aborted) return;
+      if (quiet) throw cause;
+      this.error = this.failure(cause);
     } finally {
-      if (!signal.aborted) {
+      if (!controller.signal.aborted && !this.controller.signal.aborted && !quiet) {
         this.loading = false;
         if (this.notice === "Metadata is loading. Try again when it finishes.") this.notice = "";
+        this.preparedWaiters.splice(0).forEach((resolve) => resolve());
       }
     }
   }
@@ -519,12 +583,14 @@ export class PhotoAuthoredEditor {
         this.receiptID = result.authored_receipt.receipt_id;
         this.undoState.summary = `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
       }
-      this.endWrite(write);
-      await this.reload();
-      const refreshedTags = result.authored_receipt
-        ? await this.refreshKeywords(result.authored_receipt)
-        : [];
-      await refresh?.(result.authored_receipt, refreshedTags);
+      await holdMutations(async () => {
+        this.endWrite(write);
+        await this.reload();
+        const refreshedTags = result.authored_receipt
+          ? await this.refreshKeywords(result.authored_receipt)
+          : [];
+        await refresh?.(result.authored_receipt, refreshedTags);
+      });
     } catch (cause) {
       this.suggestionsError = this.failure(cause);
       this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
@@ -532,20 +598,60 @@ export class PhotoAuthoredEditor {
       this.endWrite(write);
     }
   }
-  async reload(keepError = false) {
+  // Waiters for the current read or stack preparation; live invalidation runs after it settles.
+  private preparedWaiters: (() => void)[] = [];
+  // A change that arrived while a draft, a read, or a conflict held the targets still waits for its reread.
+  private queued = false;
+  async invalidate() {
+    const scope = this.scope;
+    this.queued = true;
+    while (
+      (this.loading || this.stackLoading) &&
+      this.scope === scope &&
+      !this.controller.signal.aborted
+    )
+      await new Promise<void>((resolve) => this.preparedWaiters.push(resolve));
+    if (
+      this.scope !== scope ||
+      this.busy ||
+      this.dirty ||
+      this.conflict ||
+      this.concealed ||
+      this.controller.signal.aborted
+    )
+      return;
+    this.queued = false;
+    try {
+      let read: boolean | undefined = true;
+      if (this.prepared.length) read = await this.reload(false, true);
+      else if (!this.targets.length && (scope?.query || scope?.asset_ids?.length))
+        read = await this.prepare({ ...scope, skip_unavailable: true }, false, false, true);
+      // A discarded read leaves the change queued.
+      if (!read) this.queued = true;
+    } catch (cause) {
+      this.queued = true;
+      throw cause;
+    }
+  }
+  async reload(keepError = false, quiet = false) {
     if (this.busy || this.loading) return;
-    // Stack members prepare again once the stack is actionable.
-    this.stackRead.abort();
-    this.setStack([]);
-    this.stackKey = "";
-    this.stackError = "";
-    this.stackLoading = false;
+    // A quiet reload keeps the stack usable and refreshes it after the targets; any other
+    // reload drops it, and its members prepare again once the stack is actionable.
+    const stack = quiet && this.stackKey ? (JSON.parse(this.stackKey) as [boolean, string[]]) : [];
+    if (!stack.length) {
+      this.stackRead.abort();
+      this.setStack([]);
+      this.stackKey = "";
+      this.stackError = "";
+      this.stackLoading = false;
+      this.preparedWaiters.splice(0).forEach((resolve) => resolve());
+    }
     if (!this.targets.length) {
       this.conflict = false;
       if (!keepError) this.error = "";
-      return;
+      return stack.length ? this.prepareStack(stack[1]!, stack[0]!, false, true) : undefined;
     }
-    await this.prepare(
+    const prepared = await this.prepare(
       {
         asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
         hidden: this.scope?.hidden,
@@ -553,7 +659,11 @@ export class PhotoAuthoredEditor {
       },
       true,
       keepError,
+      quiet,
     );
+    return prepared && stack.length
+      ? this.prepareStack(stack[1]!, stack[0]!, false, true)
+      : prepared;
   }
   reviewMembers() {
     this.membershipChanged = false;
@@ -605,6 +715,16 @@ export class PhotoAuthoredEditor {
       this.conflict = false;
       this.membershipChanged = false;
     }
+    this.refreshPending();
+  }
+  private refreshPending() {
+    if (this.queued)
+      void this.invalidate().catch((cause) => {
+        if (!this.controller.signal.aborted) {
+          this.error = this.failure(cause);
+          this.conflict = true;
+        }
+      });
   }
   member(fileID: string) {
     if (!this.dirty) this.fileID = fileID;
@@ -743,33 +863,37 @@ export class PhotoAuthoredEditor {
         ...(this.keywords.length ? ["keywords"] : []),
       ];
       if (beforeWrite && !(await beforeWrite())) return;
-      const receipt = await this.request(() =>
-        api.editPhotoAuthored(
-          {
-            targets: this.files.map(
-              ({
-                asset_id,
-                asset_revision,
-                file_id,
-                revision,
-                node_revision,
-                content_version_id,
-              }) => ({
-                asset_id,
-                asset_revision,
-                file_id,
-                revision,
-                node_revision,
-                content_version_id,
-              }),
+      // A queued edit starts after a live refresh may have dropped some of its photos.
+      const receipt = await this.request(async () =>
+        this.conflict
+          ? undefined
+          : api.editPhotoAuthored(
+              {
+                targets: this.files.map(
+                  ({
+                    asset_id,
+                    asset_revision,
+                    file_id,
+                    revision,
+                    node_revision,
+                    content_version_id,
+                  }) => ({
+                    asset_id,
+                    asset_revision,
+                    file_id,
+                    revision,
+                    node_revision,
+                    content_version_id,
+                  }),
+                ),
+                patch: this.patch,
+                rotation_delta: this.rotationDelta,
+                keywords: this.keywords,
+              },
+              this.options(),
             ),
-            patch: this.patch,
-            rotation_delta: this.rotationDelta,
-            keywords: this.keywords,
-          },
-          this.options(),
-        ),
       );
+      if (!receipt) return this.unavailable("Reload metadata before editing.");
       this.accept(receipt);
       this.patch = {};
       this.rotationDelta = undefined;
@@ -780,9 +904,11 @@ export class PhotoAuthoredEditor {
       }
       this.receiptID = receipt.receipt_id;
       this.undoState.summary = `${receipt.after.length} file${receipt.after.length === 1 ? "" : "s"} updated: ${edits.join(", ")}`;
-      const tags = await this.refreshKeywords(receipt);
-      this.endWrite(write);
-      await refresh(receipt, tags);
+      await holdMutations(async () => {
+        const tags = await this.refreshKeywords(receipt);
+        this.endWrite(write);
+        await refresh(receipt, tags);
+      });
       if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) {
@@ -803,17 +929,21 @@ export class PhotoAuthoredEditor {
     return this.stackKey !== JSON.stringify([hidden, assetIDs]);
   }
   /** Prepare complete stack membership independently of the browser selection. */
-  async prepareStack(assetIDs: string[], hidden: boolean, retry = false) {
+  async prepareStack(assetIDs: string[], hidden: boolean, retry = false, quiet = false) {
     const key = JSON.stringify([hidden, assetIDs]);
-    if (this.controller.signal.aborted || (key === this.stackKey && !retry)) return;
+    if (this.controller.signal.aborted || (key === this.stackKey && !retry && !quiet)) return;
+    // A quiet read keeps the current members and loading flags until it replaces the members.
+    if (quiet && this.stackLoading) return;
     this.stackKey = key;
     this.stackRead.abort();
     const controller = (this.stackRead = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
-    this.setStack([]);
-    this.stackLoading = true;
-    this.stackError = "";
-    this.error = "";
+    if (!quiet) {
+      this.setStack([]);
+      this.stackLoading = true;
+      this.stackError = "";
+      this.error = "";
+    }
     try {
       const prepared = await this.request(() =>
         api.preparePhotoAuthored(
@@ -821,14 +951,19 @@ export class PhotoAuthoredEditor {
           this.options(signal),
         ),
       );
-      if (!signal.aborted) this.setStack(prepared.targets);
+      if (signal.aborted || (quiet && (this.busy || this.dirty))) return;
+      this.setStack(prepared.targets);
+      return true;
     } catch (cause) {
-      if (!signal.aborted) {
-        this.stackError = this.error = this.failure(cause);
-        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
-      }
+      if (signal.aborted) return;
+      if (quiet) throw cause;
+      this.stackError = this.error = this.failure(cause);
+      this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
     } finally {
-      if (!signal.aborted) this.stackLoading = false;
+      if (!signal.aborted && !quiet) {
+        this.stackLoading = false;
+        this.preparedWaiters.splice(0).forEach((resolve) => resolve());
+      }
     }
   }
   /**
@@ -930,8 +1065,10 @@ export class PhotoAuthoredEditor {
       }
       this.receiptID = receipt.receipt_id;
       this.undoState.summary = receipt.after.length ? "Stack updated" : "Representative chosen";
-      this.endWrite(write);
-      await refresh(receipt, []);
+      await holdMutations(async () => {
+        this.endWrite(write);
+        await refresh(receipt, []);
+      });
       return true;
     } catch (cause) {
       if (!this.controller.signal.aborted) {
@@ -964,9 +1101,11 @@ export class PhotoAuthoredEditor {
       }
       this.notice = receipt.receipt_id ? "Edit undone" : "No changes to undo";
       if (!receipt.receipt_id) return;
-      const tags = await this.refreshKeywords(receipt);
-      this.endWrite(write);
-      await refresh(receipt, tags);
+      await holdMutations(async () => {
+        const tags = await this.refreshKeywords(receipt);
+        this.endWrite(write);
+        await refresh(receipt, tags);
+      });
       if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) {
@@ -984,5 +1123,8 @@ export class PhotoAuthoredEditor {
     this.controller.abort();
     this.read.abort();
     this.stackRead.abort();
+    this.loading = false;
+    this.stackLoading = false;
+    this.preparedWaiters.splice(0).forEach((resolve) => resolve());
   }
 }

@@ -33,6 +33,7 @@ type Store struct {
 	photoPublicationTreeMu sync.RWMutex
 	photoPublicationMu     sync.Mutex
 	photoPublicationLocks  map[string]*photoPublicationLock
+	photoEvents            photoEventFeed
 	photoHiddenNow         func() time.Time
 	photoHiddenAuthMu      sync.Mutex // Serialize session creation and revocation across database commits.
 	photoHiddenSessionsMu  sync.Mutex
@@ -243,7 +244,10 @@ func (s *Store) PrimaryBlobStoreID() string { return s.primaryStoreID }
 func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 
 // Close closes both database pools.
-func (s *Store) Close() error { return errors.Join(s.db.Close(), s.writeDB.Close()) }
+func (s *Store) Close() error {
+	s.closePhotoEvents()
+	return errors.Join(s.db.Close(), s.writeDB.Close())
+}
 
 // Checkpoint truncates the WAL after all application writes have completed.
 // Portable restore uses it before closing a freshly imported database so the
@@ -302,6 +306,14 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(retErr, err)
 		}
 	}()
+	capture, dropped := s.hasPhotoSubscribers(), false
+	if capture {
+		if capture, err = s.photoEvents.beginPhotoCapture(ctx, tx); err != nil {
+			return err
+		}
+	} else if s.photoEvents.installed.Load() {
+		dropped = s.photoEvents.dropPhotoCapture(ctx, tx)
+	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)
@@ -311,8 +323,15 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, tx.Rollback())
 	}
+	changed := capture && photoChanged(ctx, tx)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
+	}
+	if dropped {
+		s.photoEvents.installed.Store(false)
+	}
+	if changed || !capture && s.hasPhotoSubscribers() {
+		s.publishPhotoChange()
 	}
 	return nil
 }

@@ -3,8 +3,9 @@ import { cleanup, render, screen, fireEvent, within } from "@testing-library/sve
 import userEvent from "@testing-library/user-event";
 import { tick } from "svelte";
 import * as api from "./generated/docbank.js";
-import { APIError } from "./api-transport.js";
+import { APIError, mutationsInFlight } from "./api-transport.js";
 import { PhotoAuthoredEditor, PhotoUndoState } from "./photoAuthored.svelte.js";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { photoPreparation, preparedPhoto } from "./photo-test-fixtures.js";
 import PhotoInspector from "./PhotoInspector.svelte";
 import type { PhotoAsset, PhotoPreparedTarget, Tag } from "./generated/docbank.js";
@@ -513,7 +514,7 @@ it.each(["write", "draft", "loading"])(
   async (kind) => {
     const editor = new PhotoAuthoredEditor("scoped", vi.fn());
     let finish!: (response: Response) => void;
-    let preparing: Promise<void> | undefined;
+    let preparing: ReturnType<typeof editor.prepare> | undefined;
     if (kind === "write") {
       editor.busy = true;
       await editor.edit({}, { rating: 5 }, false, vi.fn());
@@ -687,6 +688,465 @@ it("shows field diagnostics for a failed edit and keeps its draft and Undo", asy
   expect(editor.error).toBe("Caption is too long; field=body.patch.caption!");
   expect(editor.patch).toEqual({ caption: "draft" });
   expect(editor.receiptID).toBe("prior");
+  editor.dispose();
+});
+
+it.each(["catalog first", "preparation first"])(
+  "removes a deleted keyword from choices and preserves the draft, %s",
+  async (order) => {
+    const editor = editorWithTargets();
+    const remaining = { id: "remaining", name: "Portfolio" } as Tag;
+    editor.targets[0]!.tags = ["deleted"];
+    editor.catalog([{ id: "deleted", name: "Gone" } as Tag, remaining]);
+    let finish!: (value: api.PhotoAuthoredPreparation) => void;
+    vi.spyOn(api, "preparePhotoAuthored").mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    vi.spyOn(api, "getTag").mockRejectedValue(new APIError("Missing", 404, "not_found"));
+    const preparation = editor.prepare({ asset_ids: ["asset"] });
+    editor.stage({ caption: "Draft caption", rating: 5 });
+    const refreshCatalog = async () => {
+      editor.catalog([remaining]);
+      await editor.refreshAssignedTags();
+    };
+    if (order === "catalog first") await refreshCatalog();
+    finish({
+      assets: [asset],
+      targets: structuredClone(targets).map((target) => ({ ...target, tags: ["deleted"] })),
+    });
+    await preparation;
+    if (order === "preparation first") await refreshCatalog();
+    expect(editor.tags).toEqual([remaining]);
+    expect(editor.patch).toEqual({ caption: "Draft caption", rating: 5 });
+    editor.dispose();
+  },
+);
+
+it("keeps newer assigned tag reads over an older answer", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const tag = (id: string, name: string, revision = 1) =>
+    ({ id, name, revision, assignment_count: 1 }) as Tag;
+  editor.targets = [preparedPhoto(1, { tags: ["renamed"] })];
+  let older!: () => void;
+  const fetcher = vi.fn(async (url: string) =>
+    url.endsWith("/tags/renamed")
+      ? response(tag("renamed", "New name", 2))
+      : response({ detail: "Missing" }, 404),
+  );
+  fetcher.mockImplementationOnce(
+    () =>
+      new Promise<Response>(
+        (resolve) => (older = () => resolve(response(tag("renamed", "Old name")))),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  editor.catalog([]);
+  await vi.waitFor(() => expect(older).toBeDefined());
+  editor.tags = [tag("renamed", "Old name"), tag("other", "Other")];
+  await editor.refreshAssignedTags();
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
+  older();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(editor.tags.map((value) => value.name)).toEqual(["New name", "Other"]);
+  editor.dispose();
+});
+
+it("rereads a staged keyword renamed off the catalog page", async () => {
+  const editor = editorWithTargets();
+  const tag = (name: string) => ({ id: "staged", name, revision: 1, assignment_count: 0 }) as Tag;
+  const other = { id: "other", name: "Other" } as Tag;
+  editor.catalog([tag("Travel"), other]);
+  editor.stage({}, [{ tag_id: "staged", assign: true }]);
+  // The rename moved the keyword past the refreshed catalog page.
+  editor.catalog([other]);
+  expect(editor.tags.map((value) => value.name)).toEqual(["Other", "Travel"]);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response(tag("Voyages"))),
+  );
+  await editor.refreshAssignedTags();
+  expect(editor.tags.map((value) => value.name)).toEqual(["Other", "Voyages"]);
+  expect(editor.keywords).toEqual([{ tag_id: "staged", assign: true }]);
+  editor.dispose();
+});
+
+it("waits for every keyword read before a refresh pass fails", async () => {
+  const editor = editorWithTargets();
+  editor.targets = [preparedPhoto(1, { tags: ["down", "slow"] })];
+  let finish!: () => void;
+  const fetcher = vi.fn((url: string) =>
+    url.endsWith("/tags/down")
+      ? Promise.resolve(response({ detail: "Down" }, 503))
+      : new Promise<Response>(
+          (resolve) =>
+            (finish = () =>
+              resolve(response({ id: "slow", name: "Slow", revision: 1, assignment_count: 1 }))),
+        ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const slowReads = () => fetcher.mock.calls.filter(([url]) => url.endsWith("/tags/slow")).length;
+  let settled = false;
+  const refreshing = editor.refreshAssignedTags().finally(() => (settled = true));
+  const failure = expect(refreshing).rejects.toThrow("Down");
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(settled).toBe(false);
+  finish();
+  await failure;
+  expect(slowReads()).toBe(1);
+  editor.dispose();
+});
+
+it("retries a live keyword read outside the catalog before consuming the queued change", async () => {
+  const editor = editorWithTargets();
+  editor.tags = [{ id: "catalog", name: "Catalog keyword" }] as Tag[];
+  const latest = targets.map((target) => ({ ...target, tags: ["external"] }));
+  const keyword = { id: "external", name: "External keyword" } as Tag;
+  let reads = 0;
+  let prepares = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/prepare")) {
+        prepares++;
+        return response({ assets: [asset], targets: latest });
+      }
+      return ++reads === 1 ? response({ detail: "Keywords unavailable" }, 503) : response(keyword);
+    }),
+  );
+  try {
+    await expect(editor.invalidate()).rejects.toThrow("Keywords unavailable");
+    expect(editor.tags.map((tag) => tag.id)).toEqual(["catalog"]);
+    // The watcher retries the pass after a failed read.
+    await editor.invalidate();
+    expect(editor.tags).toContainEqual(keyword);
+    expect(reads).toBe(2);
+    expect(prepares).toBe(2);
+  } finally {
+    editor.dispose();
+  }
+});
+
+it.each([false, true])(
+  "refreshes after Clear edits when a draft discarded a live response, failed=%s",
+  async (failed) => {
+    const editor = editorWithTargets();
+    const latest = targets.map((target) => ({
+      ...target,
+      revision: 2,
+      values: { ...target.values, caption: "Saved update" },
+    }));
+    let finish!: (response: Response) => void;
+    const fetcher = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
+      .mockImplementation(async () => response({ assets: [asset], targets: latest }));
+    vi.stubGlobal("fetch", fetcher);
+    const refreshing = editor.invalidate();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    editor.stage({ caption: "Draft" });
+    finish(response({ assets: [asset], targets: latest }));
+    await refreshing;
+    expect(editor.value("caption")).toBe("Draft");
+    expect(editor.targets.map((target) => target.revision)).toEqual([1, 1]);
+    if (failed) {
+      ui(editor);
+      fetcher.mockRejectedValueOnce(new APIError("Metadata unavailable", 503, "unavailable"));
+    }
+    editor.clearDraft();
+    if (failed) {
+      await vi.waitFor(() => expect(editor.error).toBe("Metadata unavailable"));
+      expect((screen.getByLabelText("Caption") as HTMLTextAreaElement).disabled).toBe(true);
+      await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+    }
+    await vi.waitFor(() => expect(editor.value("caption")).toBe("Saved update"));
+    expect(editor.targets.map((target) => target.revision)).toEqual([2, 2]);
+    editor.dispose();
+  },
+);
+
+// The first stack read can be in flight with nothing else prepared; the change must still reread it.
+it("rereads a stack still preparing when a live change arrives", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const stack = (revision: number) =>
+    structuredClone(targets).map((target) => ({ ...target, revision }));
+  let finish!: (response: Response) => void;
+  const fetcher = vi
+    .fn()
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)))
+    .mockResolvedValue(response({ assets: [asset], targets: stack(2) }));
+  vi.stubGlobal("fetch", fetcher);
+  const preparing = editor.prepareStack(["asset"], false);
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  const refreshing = editor.invalidate();
+  finish(response({ assets: [asset], targets: stack(1) }));
+  await preparing;
+  await refreshing;
+  expect(editor.stackTargets.map((target) => target.revision)).toEqual([2, 2]);
+  editor.dispose();
+});
+
+it("keeps a draft's original revisions when a stack read lands after the draft starts", async () => {
+  const editor = editorWithTargets();
+  const stack = (revision: number) =>
+    structuredClone(targets).map((target) => ({ ...target, revision }));
+  let finish!: () => void;
+  const edits: { targets: { revision: number }[] }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init: RequestInit) => {
+      if (url.endsWith("/prepare"))
+        return new Promise<Response>((resolve) => {
+          finish = () => resolve(response({ assets: [asset], targets: stack(2) }));
+        });
+      edits.push(JSON.parse(String(init.body)));
+      return Promise.resolve(response({ detail: "Photo metadata changed." }, 409));
+    }),
+  );
+  const preparing = editor.prepareStack(["asset"], false);
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  // Another tab edits the caption, then a live regroup rereads the stack under this tab's draft.
+  editor.stage({ caption: "Draft" });
+  finish();
+  await preparing;
+  await editor.edit({ asset_ids: ["asset"] }, {}, false, vi.fn());
+  expect(edits[0]!.targets.map((target) => target.revision)).toEqual([1, 1]);
+  expect(editor.conflict).toBe(true);
+  expect(editor.patch).toEqual({ caption: "Draft" });
+  editor.dispose();
+});
+
+it("keeps an edit counted as a write while its keyword lookup and refresh run", async () => {
+  const editor = editorWithTargets();
+  let answerTag!: () => void;
+  let counted = -1;
+  const receipt = {
+    receipt_id: "edited",
+    before: [],
+    after: targets.map((target) => ({
+      file_id: target.file_id,
+      revision: 2,
+      values: { ...target.values, rating: 5 },
+    })),
+    keywords: [{ node_id: 1, tag_id: "kw", after: true }],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) =>
+      url.endsWith("/tags/kw")
+        ? new Promise<Response>((resolve) => {
+            answerTag = () =>
+              resolve(response({ id: "kw", name: "Kw", revision: 1, assignment_count: 1 }));
+          })
+        : Promise.resolve(response(receipt)),
+    ),
+  );
+  const refresh = vi.fn(async () => {
+    counted = mutationsInFlight();
+  });
+  const editing = editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, refresh);
+  await vi.waitFor(() => expect(answerTag).toBeDefined());
+  // Another tab's pass must not read between this receipt and its reconciliation.
+  expect(mutationsInFlight()).toBe(1);
+  answerTag();
+  await editing;
+  expect(counted).toBe(1);
+  expect(mutationsInFlight()).toBe(0);
+  editor.dispose();
+});
+
+it.each([412, 404])(
+  "finishes a live reread once the selected photo was removed outside (HTTP %i)",
+  async (status) => {
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    let removed = false;
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      if (!removed) return response({ assets: [asset], targets: structuredClone(targets) });
+      // Only a read that skips unavailable photos survives the removal.
+      return JSON.parse(String(init.body)).skip_unavailable
+        ? response({ assets: [], targets: [] })
+        : response({ detail: "The photo is gone" }, status);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await editor.prepare({ asset_ids: ["asset"] });
+    removed = true;
+    editor.revalidate(new Set());
+    expect(editor.targets).toEqual([]);
+    await editor.invalidate();
+    expect(editor.targets).toEqual([]);
+    editor.dispose();
+  },
+);
+
+it("lets a waiting live change finish when the editor is disposed during a stack read", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise<Response>(() => {})),
+  );
+  void editor.prepareStack(["asset"], false);
+  await vi.waitFor(() => expect(editor.stackLoading).toBe(true));
+  const waiting = editor.invalidate();
+  editor.dispose();
+  await waiting;
+  expect(editor.stackLoading).toBe(false);
+});
+
+// A live update refreshes the prepared stack in the background: the old members stay usable
+// until the new read lands, and a failed read keeps them and leaves the change pending.
+it("keeps the prepared stack usable while a live update refreshes it", async () => {
+  const editor = editorWithTargets();
+  const sibling = preparedPhoto(3, { asset_id: "other", file_id: "other-file" });
+  const stack = () => [...structuredClone(targets), sibling];
+  const revisions = () => editor.stackTargets.map((target) => target.revision);
+  const fetcher = vi.fn().mockResolvedValue(response({ assets: [asset], targets: stack() }));
+  vi.stubGlobal("fetch", fetcher);
+  await editor.prepareStack(["asset", "other"], false);
+  expect(revisions()).toEqual([1, 1, 1]);
+  let finish!: (response: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)));
+  const refreshing = editor.invalidate();
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  expect([editor.stackLoading, editor.loading, editor.busy]).toEqual([false, false, false]);
+  expect(editor.needsStack(["asset", "other"], false)).toBe(false);
+  expect(revisions()).toEqual([1, 1, 1]);
+  const latest = stack().map((target) => ({ ...target, revision: 7 }));
+  fetcher.mockResolvedValue(response({ assets: [asset], targets: latest }));
+  finish(response({ assets: [asset], targets: latest.slice(0, 2) }));
+  await refreshing;
+  expect(editor.stackLoading).toBe(false);
+  expect(revisions()).toEqual([7, 7, 7]);
+  fetcher.mockResolvedValueOnce(response({ assets: [asset], targets: latest.slice(0, 2) }));
+  fetcher.mockResolvedValueOnce(response({ detail: "Metadata unavailable" }, 503));
+  await expect(editor.invalidate()).rejects.toThrow("Metadata unavailable");
+  expect(editor.stackLoading).toBe(false);
+  expect(revisions()).toEqual([7, 7, 7]);
+  editor.dispose();
+});
+
+// A quiet read in flight when a write starts is dropped: it must neither hold the write up
+// behind Hidden access nor land on revisions the write has already moved on.
+function editAfterQuietRead(editor: PhotoAuthoredEditor, stack = false) {
+  const receipt = {
+    receipt_id: "receipt",
+    after: targets.map((target) => ({
+      file_id: target.file_id,
+      revision: 7,
+      values: { ...target.values, rating: 5 },
+    })),
+  };
+  let answer!: () => void;
+  const fetcher = vi.fn((url: string, init: RequestInit) =>
+    url.endsWith("/prepare")
+      ? new Promise<Response>((resolve, reject) => {
+          answer = () => resolve(response({ assets: [asset], targets: structuredClone(targets) }));
+          const abort = () => reject(new DOMException("", "AbortError"));
+          if (init.signal!.aborted) abort();
+          else init.signal!.addEventListener("abort", abort);
+        })
+      : Promise.resolve(response(receipt)),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  if (stack) void editor.prepareStack(["asset"], false, false, true);
+  else void editor.reload(false, true);
+  const edit = editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  return { edit, fetcher, answer: () => answer() };
+}
+
+async function expectEditDropsQuietMetadataRead(hidden: boolean, stack: boolean) {
+  const editor = new PhotoAuthoredEditor(
+    "session",
+    vi.fn(),
+    undefined,
+    hidden ? new HiddenAccess("session", vi.fn()) : undefined,
+  );
+  editor.targets = structuredClone(targets);
+  editor.asset = structuredClone(asset);
+  const { edit, fetcher, answer } = editAfterQuietRead(editor, stack);
+  await vi.waitFor(() =>
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
+  );
+  await edit;
+  answer();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(editor.targets.map((target) => target.revision)).toEqual([7, 7]);
+  expect(editor.targets.map((target) => target.values.rating)).toEqual([5, 5]);
+  expect(editor.stackTargets).toEqual([]);
+}
+
+async function expectEditIgnoresStalledKeywordLookup(
+  read: "a quiet prepare" | "an assigned-tag refresh",
+) {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  const tagged = structuredClone(targets).map((target) => ({ ...target, tags: ["unlisted"] }));
+  const fetcher = vi.fn((url: string, init: RequestInit) => {
+    if (url.endsWith("/prepare"))
+      return Promise.resolve(response({ assets: [asset], targets: tagged }));
+    if (url.endsWith("/tags/unlisted"))
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }),
+      );
+    return Promise.resolve(response({ receipt_id: "receipt", before: [], after: [] }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  let reading: Promise<unknown>;
+  if (read === "a quiet prepare")
+    reading = editor.prepare({ asset_ids: ["asset"] }, false, false, true);
+  else {
+    editor.targets = tagged;
+    reading = expect(editor.refreshAssignedTags()).rejects.toMatchObject({ name: "AbortError" });
+  }
+  await vi.waitFor(() =>
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/tags/unlisted"))).toBe(true),
+  );
+  void editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  await vi.waitFor(
+    () => expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/edit"))).toBe(true),
+    { timeout: 150 },
+  );
+  await reading;
+  editor.dispose();
+}
+
+it.each([
+  ["a metadata read", () => expectEditDropsQuietMetadataRead(false, false)],
+  ["a metadata read under Hidden access", () => expectEditDropsQuietMetadataRead(true, false)],
+  ["a stack read", () => expectEditDropsQuietMetadataRead(false, true)],
+  ["a stack read under Hidden access", () => expectEditDropsQuietMetadataRead(true, true)],
+  [
+    "a stalled keyword lookup in a quiet prepare",
+    () => expectEditIgnoresStalledKeywordLookup("a quiet prepare"),
+  ],
+  [
+    "a stalled keyword lookup in an assigned-tag refresh",
+    () => expectEditIgnoresStalledKeywordLookup("an assigned-tag refresh"),
+  ],
+])("drops a pending quiet read when an edit starts: %s", (_name, run) => run());
+
+it("refuses a queued Hidden edit once a live refresh drops one of its photos", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  editor.targets = ["a", "b"].map((id, index) =>
+    preparedPhoto(index + 1, { asset_id: id, file_id: `${id}-file` }),
+  );
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  let release!: () => void;
+  void access.run(() => new Promise<void>((resolve) => (release = resolve)));
+  await vi.waitFor(() => expect(release).toBeDefined());
+  const refresh = vi.fn();
+  const edit = editor.edit({ asset_ids: ["a", "b"] }, { rating: 5 }, true, refresh);
+  expect(editor.busy).toBe(true);
+  editor.revalidate(new Set(["a"]));
+  expect(editor.conflict).toBe(true);
+  release();
+  await edit;
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(editor.conflict).toBe(true);
+  expect(editor.patch).toEqual({ rating: 5 });
+  expect(editor.notice).toBe("Reload metadata before editing.");
   editor.dispose();
 });
 
@@ -872,6 +1332,40 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   editor.dispose();
 });
 
+it("reads external metadata retained while an edit response is pending", async () => {
+  const editor = editorWithTargets();
+  let finish!: (response: Response) => void;
+  const latest = targets.map((target) => ({
+    ...target,
+    revision: 3,
+    values: { ...target.values, caption: "External update" },
+  }));
+  const fetcher = vi.fn((url: string) =>
+    url.endsWith("/edit")
+      ? new Promise<Response>((resolve) => (finish = resolve))
+      : Promise.resolve(response({ assets: [asset], targets: latest })),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const editing = editor.edit({ asset_ids: ["asset"] }, { caption: "My edit" }, false, vi.fn());
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await editor.invalidate();
+  finish(
+    response({
+      receipt_id: "edited",
+      before: targets,
+      after: targets.map((target) => ({
+        ...target,
+        revision: 2,
+        values: { ...target.values, caption: "My edit" },
+      })),
+    }),
+  );
+  await editing;
+  await vi.waitFor(() => expect(editor.value("caption")).toBe("External update"));
+  expect(editor.targets.map((target) => target.revision)).toEqual([3, 3]);
+  editor.dispose();
+});
+
 function withXMP(editor: PhotoAuthoredEditor, xmp: api.PhotoXMPState) {
   editor.targets[0]!.xmp = xmp;
   return editor;
@@ -1047,6 +1541,24 @@ it("asks for a refresh when the conflict changed before the choice", async () =>
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ detail: "stale" }, 412)));
   await editor.resolveXMP("raw", "catalog");
   expect(editor.error).toBe("The photo or sidecar changed. Reopen the photo and choose again.");
+  editor.dispose();
+});
+
+it("lets the stack prepare again when a write that interrupted it fails", async () => {
+  const editor = withXMP(editorWithTargets(), structuredClone(conflict));
+  let finish!: (value: api.PhotoAuthoredPreparation) => void;
+  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  vi.spyOn(api, "resolvePhotoXMP").mockRejectedValue(new Error("offline"));
+  const preparing = editor.prepareStack(["asset", "other"], false);
+  await vi.waitFor(() => expect(editor.stackLoading).toBe(true));
+  await editor.resolveXMP("raw", "catalog");
+  expect(editor.error).toBe("offline");
+  expect(editor.stackLoading).toBe(false);
+  expect(editor.needsStack(["asset", "other"], false)).toBe(true);
+  finish(photoPreparation(structuredClone(targets)));
+  await preparing;
   editor.dispose();
 });
 
@@ -1721,3 +2233,24 @@ function photoSuggestion(overrides: Partial<api.PhotoSuggestion>): api.PhotoSugg
 function preparedSuggestions(suggestions: api.PhotoSuggestion[], prepared = targets) {
   return response({ assets: [asset], targets: prepared, suggestions });
 }
+
+it("reads assigned tags with a fresh signal after a failed edit keeps its draft", async () => {
+  const access = new HiddenAccess("session", vi.fn());
+  const editor = new PhotoAuthoredEditor("session", vi.fn(), undefined, access);
+  editor.targets = structuredClone(targets).map((target) => ({ ...target, tags: ["assigned"] }));
+  editor.asset = structuredClone(asset);
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    init.signal?.throwIfAborted();
+    return url.endsWith("/tags/assigned")
+      ? response({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 })
+      : response({ detail: "Edit unavailable" }, 503);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  await editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  expect(editor.dirty).toBe(true);
+  await editor.refreshAssignedTags();
+  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/tags/assigned"))).toHaveLength(
+    1,
+  );
+  editor.dispose();
+});
