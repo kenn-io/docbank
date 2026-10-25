@@ -305,7 +305,9 @@ it.each(["replacement", "failure"])(
       expect(within(dialog).getByRole("region", { name: "Photo 2.jpg" })).toBe(survivor);
       expect(photos.compareView).toEqual(zoom);
       stale(rows.slice(1, 3));
+      const reads = lookup.mock.calls.length;
       await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
+      await waitFor(() => expect(lookup.mock.calls.length).toBeGreaterThan(reads));
       await within(dialog).findByText("Service unavailable");
       expect(lookup.mock.calls.at(-1)![0]).toEqual(["photo-2", "photo-3"]);
       expect(names(dialog)).toEqual(["Photo 2.jpg"]);

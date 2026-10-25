@@ -35,7 +35,7 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, "locks");
 });
 
-it("reconciles a returning follower while the owner keeps the stream", async () => {
+it("refreshes a follower once on start without opening a stream while another tab owns it", async () => {
   vi.useFakeTimers();
   const { fetch } = serveStream();
   Object.defineProperty(navigator, "locks", {

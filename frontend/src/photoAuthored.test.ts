@@ -871,7 +871,7 @@ it("keeps the prepared stack usable while a live update refreshes it", async () 
   fetcher.mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)));
   const refreshing = editor.invalidate({ ids: new Set(), idFree: true });
   await vi.waitFor(() => expect(finish).toBeDefined());
-  expect(editor.stackLoading).toBe(false);
+  expect([editor.stackLoading, editor.loading, editor.busy]).toEqual([false, false, false]);
   expect(editor.needsStack(["asset", "other"], false)).toBe(false);
   expect(revisions()).toEqual([1, 1, 1]);
   const latest = stack().map((target) => ({ ...target, revision: 7 }));
@@ -944,6 +944,7 @@ it.each([
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(editor.targets.map((target) => target.revision)).toEqual([7, 7]);
     expect(editor.targets.map((target) => target.values.rating)).toEqual([5, 5]);
+    expect(editor.stackTargets).toEqual([]);
   },
 );
 

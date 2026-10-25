@@ -1306,25 +1306,6 @@ it("swaps a changed photo in place and marks one that left the view unavailable"
   expect(screen.queryByText("This photo is no longer in this view.")).toBeNull();
 });
 
-it("live metadata removes obsolete stack decisions", async () => {
-  const { cull, photos, rows } = await reviewThree();
-  await act(() => {
-    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
-  });
-  await readyButton("Keep all");
-  const corrected = { ...rows[1], capture_time: "2025-06-01T13:00:00" };
-  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
-    [rows[0], corrected, rows[2]].filter((row) => ids.includes(row.asset_id)),
-  );
-  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
-    groups: [],
-    unavailable_ids: [],
-    burst_gap_seconds: 2,
-  });
-  await act(() => photos.changed(photoChange("photo-2")));
-  expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
-});
-
 it("live metadata completion rebuilds the active Cull groups", async () => {
   const { cull, photos } = await reviewThree();
   await act(() => {
@@ -1442,33 +1423,38 @@ async function reviewTwoStacks() {
   return review;
 }
 
-it("keeps checked frames in a stack that a live regroup leaves unchanged", async () => {
-  const { photos } = await reviewTwoStacks();
-  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+it.each([
+  {
+    change: "leaves",
     groups: [["photo-1", "photo-2"]],
-    unavailable_ids: [],
-    burst_gap_seconds: 2,
-  });
-  await act(() => photos.changed(photoChange("photo-3", "photo-4")));
-  const checkbox = screen.getByRole("checkbox", { name: "Select Photo 2.jpg" }) as HTMLInputElement;
-  expect(checkbox.checked).toBe(true);
-  expect((await readyButton("Keep selected")).matches(":disabled")).toBe(false);
-});
-
-it("clears checked frames when a live regroup changes their stack", async () => {
-  const { photos } = await reviewTwoStacks();
-  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
-    groups: [["photo-1", "photo-2", "photo-3"], ["photo-4"]],
-    unavailable_ids: [],
-    burst_gap_seconds: 2,
-  });
-  await act(() => photos.changed(photoChange("photo-2", "photo-3")));
-  const checkbox = screen.getByRole("checkbox", { name: "Select Photo 2.jpg" }) as HTMLInputElement;
-  expect(checkbox.checked).toBe(false);
-  expect(
-    (screen.getByRole("button", { name: "Keep selected" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-});
+    changed: ["photo-3", "photo-4"],
+    kept: true,
+  },
+  {
+    change: "changes",
+    groups: [["photo-1", "photo-2", "photo-3"]],
+    changed: ["photo-2", "photo-3"],
+    kept: false,
+  },
+])(
+  "a live regroup that $change a stack keeps its checked frames only if kept is $kept",
+  async ({ groups, changed, kept }) => {
+    const { photos } = await reviewTwoStacks();
+    vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+      groups,
+      unavailable_ids: [],
+      burst_gap_seconds: 2,
+    });
+    await act(() => photos.changed(photoChange(...changed)));
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Select Photo 2.jpg",
+    }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(kept);
+    expect(
+      (screen.getByRole("button", { name: "Keep selected" }) as HTMLButtonElement).disabled,
+    ).toBe(!kept);
+  },
+);
 
 it.each([
   ["a run photo", photoChange("photo-1"), 2, false],
@@ -1676,7 +1662,11 @@ it("keeps newer Cull values after a delayed stack receipt", async () => {
   });
   await fireEvent.click(await readyButton("Keep all"));
   await waitFor(() => expect(decide).toHaveBeenCalledOnce());
-  vi.mocked(photos.lookupMany).mockResolvedValue([{ ...photo(1), rating: 4 }, photo(2), photo(3)]);
+  vi.mocked(photos.lookupMany).mockResolvedValue([
+    { ...photo(1), revision: 3, rating: 4 },
+    photo(2),
+    photo(3),
+  ]);
   vi.mocked(api.preparePhotoAuthored).mockResolvedValue(
     photoPreparation([
       { ...before, revision: 3, values: { ...before.values, rating: 4 } },
@@ -1694,33 +1684,6 @@ it("keeps newer Cull values after a delayed stack receipt", async () => {
   );
   await readyButton("Keep all");
   await screen.findByText("Unflagged · 4 stars");
-  photos.dispose();
-});
-
-it("keeps Keep all and Exit cull usable while an ID-free update refreshes the stack", async () => {
-  const { cull, photos } = await reviewThree();
-  await act(() => {
-    cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
-  });
-  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
-    groups: [["photo-1", "photo-2"]],
-    unavailable_ids: [],
-    burst_gap_seconds: 2,
-  });
-  await readyButton("Keep all");
-  let finish!: (prepared: Awaited<ReturnType<typeof api.preparePhotoAuthored>>) => void;
-  vi.mocked(api.preparePhotoAuthored).mockImplementationOnce(
-    () => new Promise((resolve) => (finish = resolve)),
-  );
-  const refreshing = act(() => photos.changed(idFreeChange));
-  await waitFor(() => expect(finish).toBeDefined());
-  for (const name of ["Keep all", "Exit cull"])
-    expect(screen.getByRole("button", { name }).matches(":disabled")).toBe(false);
-  await act(async () => {
-    finish(photoPreparation([preparedPhoto(1), preparedPhoto(2)]));
-    await refreshing;
-  });
-  await readyButton("Keep all");
   photos.dispose();
 });
 

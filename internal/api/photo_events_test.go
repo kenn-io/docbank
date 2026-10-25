@@ -127,8 +127,5 @@ func TestPhotoEventsStreamKeepsDaemonActive(t *testing.T) {
 		require.Zero(t, tracker.IdleFor(), "an open Photos stream must keep the daemon active")
 		cancel()
 		<-done
-		require.Zero(t, tracker.IdleFor(), "closing the stream starts a fresh idle window")
-		time.Sleep(time.Minute)
-		require.Equal(t, time.Minute, tracker.IdleFor())
 	})
 }

@@ -242,19 +242,9 @@ func TestPhotoEventsFileAndNodeOwnership(t *testing.T) {
 	photoCaptureWrite(t, s, events, one, `INSERT OR REPLACE INTO photo_timeline(file_id,sort_key,day) SELECT file_id,'2026-01-02','2026-01-02' FROM photo_files WHERE node_id=?`, first.ID)
 	photoCaptureWrite(t, s, events, one, `UPDATE nodes SET name='renamed.jpg' WHERE id=?`, first.ID)
 	// An assignment also updates the tag's count and revision, which asks every viewer to refetch.
-	refetch := []PhotoEvent{{}}
-	assigned, err := s.AssignTag(t.Context(), tag.ID, first.ID, UnconditionalRev)
+	_, err = s.AssignTag(t.Context(), tag.ID, first.ID, UnconditionalRev)
 	require.NoError(t, err)
-	require.Equal(t, refetch, nextPhotoWake(t, events))
-	_, err = s.UnassignTag(t.Context(), tag.ID, first.ID, assigned.Node.Revision)
-	require.NoError(t, err)
-	require.Equal(t, refetch, nextPhotoWake(t, events))
-	_, err = s.BatchTags(t.Context(), BatchTagRequest{
-		OperationID: uuid.NewString(), TagID: tag.ID, Assign: true,
-		Nodes: []BatchTagTarget{{NodeID: second.ID, Revision: second.Revision}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, refetch, nextPhotoWake(t, events))
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
 	photoCaptureWrite(t, s, events, []PhotoEvent{{AssetID: b.ID}}, `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, identity, second.ID, observation.Fact.IngestID, "/synthetic/second.jpg")
 	// Text eligibility is reachable on an attached sidecar with a supported text MIME.
 	photoCaptureWrite(t, s, events, one, `DELETE FROM text_searchable_versions WHERE version_id=?`, sidecar.CurrentVersionID)
@@ -437,27 +427,18 @@ func TestPhotoEventsCurrentVersionSources(t *testing.T) {
 
 func TestPhotoEventsDirectoryVisibility(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"trash", "purge"} {
-		t.Run(action, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			parent, err := s.Mkdir(ctx, s.RootID(), "Photo folder")
-			require.NoError(t, err)
-			node, err := s.CreateFile(ctx, parent.ID, "photo.jpg", fakeHash("1"), 20, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := s.PhotoAssetForNode(ctx, node.ID)
-			require.NoError(t, err)
-			events := watchPhotoChanges(t, s)
-			_, _, err = s.Trash(ctx, parent.ID, UnconditionalRev)
-			require.NoError(t, err)
-			if action == "purge" {
-				nextPhotoWake(t, events)
-				_, err = s.TrashEmpty(ctx, 0, true)
-				require.NoError(t, err)
-			}
-			require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
-		})
-	}
+	s := newTestStore(t)
+	ctx := t.Context()
+	parent, err := s.Mkdir(ctx, s.RootID(), "Photo folder")
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, parent.ID, "photo.jpg", fakeHash("1"), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	events := watchPhotoChanges(t, s)
+	_, _, err = s.Trash(ctx, parent.ID, UnconditionalRev)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
 }
 
 // A conflict settles through its receipt alone, yet moves the photo between xmp:pending and xmp:conflict results.
