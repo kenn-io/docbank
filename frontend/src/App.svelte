@@ -2305,6 +2305,13 @@
     }
   }
 
+  // A background refresh rereads every page the user has loaded, so none of their options vanish.
+  async function listLoadedTagPages(session: string, listed: number) {
+    const pages: Awaited<ReturnType<typeof generated.listTags>>[] = [];
+    for (let offset = 0; offset === 0 || offset < listed; offset += 1000)
+      pages.push(await generated.listTags({ limit: 1000, offset }, { session }));
+    return { items: pages.flatMap((page) => page.items), total: pages.at(-1)!.total };
+  }
   async function loadTagCatalog(append = false, quiet = false): Promise<void> {
     const request = ++tagCatalogGeneration;
     const session = webSession;
@@ -2314,10 +2321,13 @@
       tagCatalogError = "";
     }
     try {
-      const page = await generated.listTags(
-        { limit: 1000, offset: append ? tagCatalogListed : 0 },
-        { session },
-      );
+      const page =
+        quiet && !append
+          ? await listLoadedTagPages(session, tagCatalogListed)
+          : await generated.listTags(
+              { limit: 1000, offset: append ? tagCatalogListed : 0 },
+              { session },
+            );
       if (request !== tagCatalogGeneration || session !== webSession) return;
       let items = append
         ? [...new Map([...tagCatalog, ...page.items].map((tag) => [tag.id, tag])).values()]

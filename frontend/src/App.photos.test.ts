@@ -3499,6 +3499,8 @@ it("loads keywords beyond the first catalog page", async () => {
   finishCatalog!();
   await act(() => pass);
   expect(picker.getAttribute("aria-expanded")).toBe("true");
+  // The pass rereads every page the user loaded, so their options stay.
+  expect(within(inspector).getByRole("option", { name: /Beyond the first page/ })).toBeTruthy();
   const editor = prepare.mock.contexts.at(-1) as PhotoAuthoredEditor;
   await editor.onXMPChanged!(undefined, [{ ...last, revision: 2, assignment_count: 1 }]);
   await waitFor(() =>
