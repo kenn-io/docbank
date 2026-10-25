@@ -4,6 +4,8 @@ import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import HiddenSetupModal from "./HiddenSetupModal.svelte";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
@@ -19,9 +21,12 @@ import {
   preparedPhoto,
   mapPhoto,
   photo,
+  photoTimelineCounts,
+  stubPhotoTimeline,
   touchTap,
 } from "./photo-test-fixtures.js";
-import { captureDateQuery } from "./photoTimeline.js";
+import type { Query, QuerySort } from "./query.js";
+import * as snapshots from "./snapshots.js";
 import type {
   PhotoAsset,
   PhotoAuthoredReceipt,
@@ -75,6 +80,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
+  stubPhotoTimeline();
 });
 
 afterEach(() => {
@@ -193,7 +199,7 @@ it("disables filters until a delayed Hide finishes", async () => {
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.started = true;
-  photos.baseQuery = photos.query = { ...photos.query, text: "Canon" };
+  photos.query = { ...photos.query, text: "Canon" };
   photos.facets = [
     {
       dimension: "camera",
@@ -260,10 +266,12 @@ it("keeps empty-library guidance when clearing filters", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
   await screen.findByText("Your photo library is empty");
+
   await photos.setQuery({ ...photos.query, filters: { iso_min: 0 } });
   await screen.findByText("No matching photos");
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await screen.findByText("Your photo library is empty");
+  expect(photos.query.filters).toEqual({});
   expect(
     screen.getByText(
       /Choose a folder or files with Add photos\. Large camera cards on the daemon's own disk import faster with docbank photos import\./,
@@ -309,6 +317,8 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   await fireEvent.click(await within(dialog).findByRole("button", { name: "Keep in Docbank" }));
   expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));
+  // The reloaded list shows before the failed move finishes; a new move waits for that.
+  await waitFor(() => expect(photos.trashing).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   const single = screen.getByRole("dialog", { name: "Move selected photos to trash" });
   expect(within(single).getByText(/^Move 1 selected photo and/)).toBeTruthy();
@@ -397,100 +407,6 @@ it("starts no extra detail request after a successful reload", async () => {
   photos.dispose();
 });
 
-it.each([
-  ["2024", "2025-12-15", /^2024/, "2024-01-01", "2025-01-01", "in 2024"],
-  ["2024-02", "2024-02-28", /^February 2024/, "2024-02-01", "2024-03-01", "in February 2024"],
-  ["2024-02-29", "2024-02-28", /^2024-02-29 ·/, "2024-02-29", "2024-03-01", "on 2024-02-29"],
-  ["2025-12", "2025-12-15", /^December 2025/, "2025-12-01", "2026-01-01", "in December 2025"],
-  ["9999", "2025-12-15", /^9999/, "9999-01-01", undefined, "in 9999"],
-])(
-  "stages timeline period %s, retains the grid on failure and restarts paging on Retry",
-  async (date, previous, name, after, before, label) => {
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-    const photos = new Photos("scoped", vi.fn());
-    photos.started = true;
-    photos.view = "timeline";
-    photos.date = previous;
-    photos.query = captureDateQuery(photoQuery, previous);
-    photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
-    photos.total = 100;
-    photos.cursor = "old-page";
-    photos.timeline = {
-      dimension: "capture_day",
-      available: true,
-      total: 210,
-      missing: 10,
-      other: 0,
-      values: [
-        { key: "9999-12-31", label: "9999-12-31", count: 10, selected: false },
-        { key: "2025-12-15", label: "2025-12-15", count: 100, selected: false },
-        { key: "2024-02-29", label: "2024-02-29", count: 100, selected: false },
-      ],
-    };
-    let finish!: (response: Response) => void;
-    const replacement = Array.from({ length: 60 }, (_, index) =>
-      photo(index + 101, `${after}T12:00:00`),
-    );
-    const fetcher = vi
-      .fn()
-      .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ items: replacement, total: 100, next_cursor: "new-page" })),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(200)], total: 100 })));
-    stubPhotoFetch(fetcher);
-    const cache = new PhotoPreviewCache("scoped", vi.fn());
-    const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
-    const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-    await fireEvent.click(cell);
-    const scroll = screen.getByTestId("photo-scroll");
-    scroll.scrollTop = 500;
-    await fireEvent.scroll(scroll);
-    const heading = document.querySelector(".photo-bar .toolbar-actions > span")!.textContent;
-    const button = screen.getByRole(date.length === 4 ? "navigation" : "region", {
-      name: date.length === 4 ? "Timeline years" : "Photo timeline",
-    });
-    await fireEvent.click(
-      [...button.querySelectorAll("button")].find((button) =>
-        name.test(button.textContent!.trim()),
-      )!,
-    );
-    expect(document.querySelector(".photo-bar .toolbar-actions > span")!.textContent).toBe(heading);
-    expect(photos.date).toBe(previous);
-    expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-    expect(scroll.scrollTop).toBe(500);
-    const filters = { capture_after: after, ...(before ? { capture_before: before } : {}) };
-    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ query: { filters } });
-    expect(JSON.parse(fetcher.mock.calls[0][1].body).cursor).toBeUndefined();
-    finish(new Response(JSON.stringify({ detail: "Date unavailable" }), { status: 503 }));
-    await screen.findByText("Date unavailable");
-    expect(document.querySelector(".photo-bar .toolbar-actions > span")!.textContent).toBe(heading);
-    expect(photos.items[0].asset_id).toBe("photo-1");
-    expect(photos.cursor).toBe("old-page");
-    expect(photos.date).toBe(previous);
-    expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-    expect(scroll.scrollTop).toBe(500);
-    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByTitle(`100 photos ${label}`);
-    expect(photos.date).toBe(date);
-    expect(photos.selection.selectedIDs.size).toBe(0);
-    expect(scroll.scrollTop).toBe(0);
-    expect(screen.getByText("210 photos in scope · 10 undated")).toBeTruthy();
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(fetcher.mock.calls[1][1].body).cursor).toBeUndefined();
-    await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
-    await waitFor(() => expect(photos.items).toHaveLength(61));
-    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({
-      cursor: "new-page",
-      query: { filters },
-    });
-    view.unmount();
-    photos.dispose();
-    await cache.dispose();
-  },
-);
-
 it("keeps loaded photos visible on paging failure and selects with touch checkboxes", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
@@ -514,7 +430,6 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
   await screen.findByText("Page unavailable");
-  expect(screen.queryByRole("navigation", { name: "Photo years" })).toBeNull();
   expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   expect(await screen.findByText("1 selected photo")).toBeTruthy();
@@ -522,9 +437,6 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   expect(screen.getByText("2 selected photos")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Select Photo 3.jpg" });
-  expect(
-    screen.getByRole("navigation", { name: "Photo years" }).querySelectorAll("button"),
-  ).toHaveLength(2);
   await waitFor(() => expect(photos.loading).toBe(false));
   fetcher.mockImplementationOnce(() => new Promise(() => {}));
   photos.cursor = "manual-page";
@@ -607,56 +519,6 @@ it("retains visible cells and pending previews across a prepend larger than the 
   photos.dispose();
 });
 
-it("shows both years of a New Year session and jumps to the newest containing group", async () => {
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const photos = new Photos("scoped", vi.fn());
-  photos.items = [
-    photo(1, "2026-02-01T12:00:00"),
-    photo(2, "2025-01-01T01:00:00"),
-    photo(3, "2024-12-31T23:00:00"),
-    photo(4, "0000-01-02"),
-  ];
-  photos.started = true;
-  photos.grouping = "sessions";
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
-  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  const rail = screen.getByRole("navigation", { name: "Photo years" });
-  expect([...rail.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual([
-    "2026",
-    "2025",
-    "2024",
-  ]);
-  const scroll = screen.getByTestId("photo-scroll");
-  const scrollTo = vi.fn();
-  scroll.scrollTo = scrollTo;
-  const newerGroup = scroll.querySelector<HTMLElement>('[data-month="photo-1"]')!;
-  const session = scroll.querySelector<HTMLElement>('[data-month="photo-2"]')!;
-  expect(session.getAttribute("aria-label")).toBe("2024-12-31 · Capture session");
-  expect(
-    [...session.querySelectorAll("[data-asset]")].map((cell) => cell.getAttribute("data-asset")),
-  ).toEqual(["photo-2", "photo-3"]);
-  await fireEvent.click(screen.getByRole("button", { name: "2024" }));
-  expect(scrollTo).toHaveBeenLastCalledWith({
-    top: Math.ceil(Number.parseFloat(newerGroup.style.height)),
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "2025" }));
-  expect(scrollTo).toHaveBeenLastCalledWith({
-    top: Math.ceil(Number.parseFloat(newerGroup.style.height)),
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "2026" }));
-  expect(scrollTo).toHaveBeenLastCalledWith({ top: 0 });
-  photos.items = [...photos.items, photo(5, "2025-02-01T12:00:00")];
-  await screen.findByRole("button", { name: "Select Photo 5.jpg" });
-  await fireEvent.click(screen.getByRole("button", { name: "2025" }));
-  expect(scrollTo).toHaveBeenLastCalledWith({
-    top: Math.ceil(Number.parseFloat(newerGroup.style.height)),
-  });
-  photos.dispose();
-  await cache.dispose();
-});
-
 it("clears selection with Escape from focused photo controls while honoring shortcut suppression", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
@@ -737,7 +599,7 @@ it.each([
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   if (relevance)
-    photos.query = photos.baseQuery = {
+    photos.query = {
       ...photos.query,
       text: "Canon",
       sort: { field: "relevance", direction: "desc" },
@@ -1188,6 +1050,44 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])(
   },
 );
 
+it("shows a suggestion published after the inspector opened once previews refresh", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const prepared = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValueOnce(photoPreparation([preparedPhoto(1)]))
+    .mockResolvedValueOnce({
+      ...photoPreparation([preparedPhoto(1)]),
+      suggestions: [
+        {
+          suggestion_id: "suggestion",
+          content_version_id: "version",
+          target: "file-1",
+          asset_id: "photo-1",
+          asset_revision: 1,
+          source_revision: 1,
+          node_revision: 1,
+          value: { caption: "A harbor.", tags: [], visible_text: "" },
+        },
+      ],
+    });
+  stubPhotoFetch(async () => Response.json({ items: [photo(1)], total: 1 }));
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  photos.authored.stage({ rating: 3 });
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+  await photos.authored.reload();
+  expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+
+  await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh previews" }));
+  await screen.findByRole("region", { name: "Suggested photo metadata" });
+  expect(prepared).toHaveBeenCalledTimes(2);
+  expect(photos.authored.patch).toEqual({ rating: 3 });
+  photos.dispose();
+});
+
 function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map") {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
@@ -1453,8 +1353,13 @@ it.each([
     await waitFor(() =>
       expect((photos.items[0] as PhotoBrowseRow).content_version_id).toBe(fresh.content_version_id),
     );
+    // The viewer keeps its fit image while the reloaded photo prepares, so count that photo's prepares.
+    await waitFor(() =>
+      expect(preview.mock.calls.filter(([row]) => row.asset_id === "photo-1")).toHaveLength(
+        preparations + 1,
+      ),
+    );
     await screen.findByText("Fit preview");
-    await waitFor(() => expect(preview).toHaveBeenCalledTimes(preparations + 1));
     expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2"]);
     expect(photos.cursor).toBe("next");
     expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
@@ -1512,67 +1417,6 @@ it.each(["success", "failure", "interrupted", "late"] as const)(
     expect(lookup).toHaveBeenCalledOnce();
   },
 );
-
-it("switches Grid and Timeline, seeks an empty day and clears its date", async () => {
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const photos = new Photos("scoped", vi.fn());
-  photos.started = true;
-  photos.items = [photo(1)];
-  photos.total = 1;
-  photos.timeline = {
-    dimension: "capture_day",
-    available: true,
-    total: 1,
-    missing: 0,
-    other: 0,
-    values: [{ key: "2024-02-29", label: "2024-02-29", count: 1, selected: false }],
-  };
-  let finish!: (response: Response) => void;
-  const fetcher = vi
-    .fn()
-    .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1)], total: 1 })));
-  stubPhotoFetch(fetcher);
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
-  expect(screen.getByRole("button", { name: "Grid", pressed: true })).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-  expect(screen.getByRole("button", { name: "Timeline", pressed: true })).toBeTruthy();
-  await fireEvent.click(
-    screen.getByRole("navigation", { name: "Timeline years" }).querySelector("button")!,
-  );
-  expect(screen.getByText("1 photo")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
-  expect(screen.queryByTitle("0 photos in 2024")).toBeNull();
-  finish(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }));
-  await screen.findByText("Try again");
-  expect(screen.getByText("1 photo")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
-  expect(screen.queryByTitle("0 photos in 2024")).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: /^Retry$/ }));
-  expect(await screen.findByText("No photos in this year")).toBeTruthy();
-  expect(screen.getByTitle("0 photos in 2024").textContent).toBe("0 photos in 2024");
-  await photos.selectDate("2024-02");
-  expect(await screen.findByText("No photos in this month")).toBeTruthy();
-  expect(screen.getByTitle("0 photos in February 2024").textContent).toBe(
-    "0 photos in February 2024",
-  );
-  await photos.selectDate("2024-02-29");
-  expect(await screen.findByText("No photos on this day")).toBeTruthy();
-  expect(screen.getByTitle("0 photos on 2024-02-29").textContent).toBe("0 photos on 2024-02-29");
-  await fireEvent.click(screen.getByRole("button", { name: "Clear date" }));
-  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  expect(screen.queryByRole("button", { name: "Clear date" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Grid" }));
-  expect(screen.queryByRole("region", { name: "Photo timeline" })).toBeNull();
-  view.unmount();
-  photos.dispose();
-  await cache.dispose();
-});
 
 it("explains the relevance limit and hides it for complete results or capture dates", async () => {
   const photos = new Photos("scoped", vi.fn());
@@ -1948,7 +1792,7 @@ it("shows the Map limit notice only for capped results and bounds loading progre
     },
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
   });
-  const note = `Showing the newest ${mapPhotoLimit.toLocaleString()} of ${(mapPhotoLimit + 1000).toLocaleString()} located photos. Narrow your search or date to see the rest.`;
+  const note = `Showing the newest ${mapPhotoLimit.toLocaleString()} of ${(mapPhotoLimit + 1000).toLocaleString()} located photos. Narrow your search to see the rest.`;
   expect(screen.queryByText(/^Showing the newest /)).toBeNull();
   photos.total = mapPhotoLimit + 1000;
   await screen.findByText(`Loading located photos: 2 of ${mapPhotoLimit.toLocaleString()}`);
@@ -2214,6 +2058,40 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
   photos.dispose();
 });
 
+it("reconciles a Map list refresh after its detail generation changes", async () => {
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:map-preview"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: vi.fn(async () => {}),
+  });
+  const setup = openMapViewerSetup();
+  const { photos, lookup, preview, props } = setup;
+  photos.items = [mapPhoto(1)];
+  const row = photo(1);
+  row.previews.fit = { state: "ready", generation_id: "fit-1" };
+  lookup.mockResolvedValue(row);
+  preview.mockImplementation(async (row) => row.previews.fit);
+  const get = vi.fn(async () => new Blob(["synthetic-photo"]));
+  props.cache.get = get;
+  await openMapViewer(setup);
+  await screen.findByText("Fit preview");
+  lookup.mockResolvedValue({
+    ...row,
+    previews: { ...row.previews, fit: { state: "ready", generation_id: "fit-2" } },
+  });
+  await act(() => {
+    photos.items = [mapPhoto(1)];
+  });
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith("photo-1", "fit-2", expect.any(AbortSignal), false),
+  );
+  photos.dispose();
+});
+
 it("keeps an open Map photo's detail request through appended pages", async () => {
   const setup = openMapViewerSetup();
   const { photos, lookup } = setup;
@@ -2348,9 +2226,8 @@ it("distinguishes an empty Map area from no located photos", async () => {
   await screen.findByText("No located photos");
   photos.dispose();
 });
-it("shows the Map date without Library controls", async () => {
+it("shows the Map count without Library controls", async () => {
   const { photos } = mapRecoverySetup();
-  photos.date = "2024";
   photos.total = 1;
   await vi.dynamicImportSettled();
   await fireEvent.click(screen.getByRole("button", { name: "More photo actions" }));
@@ -2359,10 +2236,8 @@ it("shows the Map date without Library controls", async () => {
   expect(within(menu).queryByRole("menuitem", { name: "Move rejects" })).toBeNull();
   expect(within(menu).queryByRole("menuitem", { name: /^Cull/ })).toBeNull();
   await fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Clear date" })).toBeNull();
   expect(document.querySelector(".photo-stack-controls")).toBeNull();
-  await screen.findByText("1 located photo in 2024");
+  await screen.findByText("1 located photo");
   photos.dispose();
 });
 
@@ -2966,6 +2841,93 @@ it.each(
   },
 );
 
+it.each(["resolution", "background import"])(
+  "refreshes the workspace after an XMP %s",
+  async (change) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "Image",
+      class {
+        src = "";
+        async decode() {}
+      },
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const before = preparedPhoto(1, { file_id: "file-1", xmp: { state: "pending" } });
+    const photos = workspaceWithPreparedPhoto(before);
+    photos.total = 1;
+    photos.filtersOpen = true;
+    photos.query = { ...photos.query, text: "Harbor" };
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([before]));
+    const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "ready", generation_id: "fit" });
+    const receipt = { receipt_id: "xmp-import", before: [], after: [] } as PhotoAuthoredReceipt;
+    const facet = {
+      dimension: "camera",
+      available: true,
+      reason: "",
+      total: 2,
+      values: [{ key: "Canon", label: "Canon", count: 2, selected: false }],
+    };
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json(
+          change === "resolution"
+            ? {
+                items: [{ ...photo(1), rating: 4, rotation: 90 }],
+                total: 1,
+                facets: [],
+              }
+            : {
+                items: [{ ...photo(1), rating: 4, rotation: 90 }, photo(2)],
+                total: 2,
+                facets: [facet],
+              },
+        );
+      const metadata = photoMetadataResponse(url, init);
+      if (metadata) return metadata;
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const view = render(PhotosWorkspace, {
+      photos,
+      photoID: change === "background import" ? "photo-1" : undefined,
+      cache: { get: vi.fn(async () => new Blob(["synthetic"])) } as unknown as PhotoPreviewCache,
+    });
+    const viewer = () => view.container.querySelector(".photo-viewport img");
+    if (change === "resolution") {
+      await tick();
+      await photos.authored.onXMPChanged!(receipt);
+      await waitFor(() => expect(photos.items[0]?.rotation).toBe(90));
+      expect(photos.items).toEqual([{ ...photo(1), rating: 4, rotation: 90 }]);
+      expect(photos.total).toBe(1);
+      expect(photos.facets).toEqual([]);
+    } else {
+      await waitFor(() => expect(viewer()).toBeTruthy());
+      expect(viewer()!.getAttribute("style") ?? "").not.toContain("rotate(90deg)");
+      // The sync worker rotates the photo after the viewer loaded it.
+      lookup.mockClear();
+      lookup.mockResolvedValue({ ...photo(1), rating: 4, rotation: 90 });
+      await photos.authored.onXMPChanged!();
+      await waitFor(() => {
+        expect(photos.items[0]?.rotation).toBe(90);
+        expect(photos.items[0]).toMatchObject({ rating: 4 });
+        expect(photos.total).toBe(2);
+        expect(photos.facets).toEqual([facet]);
+      });
+      await waitFor(() => expect(lookup).toHaveBeenCalled());
+      await waitFor(() => expect(viewer()!.getAttribute("style")).toContain("rotate(90deg)"));
+    }
+    photos.dispose();
+  },
+);
+
 it("toggles the Filters panel", async () => {
   stubPhotoFetch(() => Promise.resolve(Response.json({ items: [photo(1)], total: 1, facets: [] })));
   const photos = new Photos("scoped", vi.fn());
@@ -2992,10 +2954,114 @@ it("toggles the Filters panel", async () => {
   await cache.dispose();
 });
 
+it("edits and clears a saved capture range in the Library Filters panel", async () => {
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    const metadata = photoMetadataResponse(url, init);
+    if (metadata) return metadata;
+    const request = JSON.parse(String(init?.body));
+    return Response.json({
+      items: [photo(1, request.query.filters.capture_after)],
+      total: 1,
+      facets: request.facets?.includes("year")
+        ? [
+            {
+              dimension: "year",
+              available: true,
+              total: 2,
+              missing: 0,
+              other: 0,
+              values: [
+                {
+                  key: "2024",
+                  label: "2024",
+                  count: 1,
+                  selected: request.query.filters.capture_after === "2024-01-01",
+                },
+                {
+                  key: "2023",
+                  label: "2023",
+                  count: 1,
+                  selected: request.query.filters.capture_after === "2023-01-01",
+                },
+              ],
+            },
+          ]
+        : [],
+    });
+  });
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    filters: {
+      capture_after: "2024-01-01",
+      capture_before: "2025-01-01",
+    },
+  });
+  await photos.loadMore();
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await fireEvent.click(
+    screen.getByRole("button", {
+      name: "Filters, 1 active filter",
+    }),
+  );
+  // Year selection and clearing also cover FacetSidebar, which has no separate Year test.
+  const year = await screen.findByRole("group", { name: "Year facet" });
+  await fireEvent.click(within(year).getByRole("button", { name: "2023, 1 photos" }));
+  expect(photos.query.filters.capture_after).toBe("2023-01-01");
+  expect(photos.query.filters.capture_before).toBe("2024-01-01");
+  await waitFor(() => expect(photos.loading).toBe(false));
+  await fireEvent.click(await screen.findByRole("button", { name: "2023, 1 photos, selected" }));
+  expect(photos.query.filters.capture_after).toBeUndefined();
+  expect(photos.query.filters.capture_before).toBeUndefined();
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("retries timeline counts with no loaded photos", async () => {
+  const { photos, cache } = railLibrary();
+  photos.items = [];
+  photos.total = 0;
+  photos.cursor = undefined;
+  photos.timeline = undefined;
+  photos.timelineError = "Timeline counts are unavailable.";
+  vi.mocked(snapshots.fetchPhotoTimeline).mockResolvedValue(photoTimelineCounts([]));
+  render(PhotosWorkspace, { photos, cache });
+  const rail = await screen.findByRole("navigation", { name: "Timeline" });
+  expect(within(rail).getByText("Timeline counts are unavailable.")).toBeTruthy();
+  await fireEvent.click(within(rail).getByRole("button", { name: "Retry timeline" }));
+  await waitFor(() => expect(photos.timelineError).toBe(""));
+  await screen.findByText("Your photo library is empty");
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each(["counts", "error", "pending"])(
+  "shows timeline %s when the initial photo listing fails",
+  async (state) => {
+    const { photos, cache } = railLibrary();
+    photos.items = [];
+    photos.started = false;
+    photos.error = "Photo listing unavailable";
+    if (state !== "counts") photos.timeline = undefined;
+    if (state === "error") photos.timelineError = "Timeline counts are unavailable.";
+    if (state === "pending") photos.timelineLoading = true;
+    render(PhotosWorkspace, { photos, cache });
+    const rail = await screen.findByRole("navigation", { name: "Timeline" });
+    if (state === "counts")
+      expect(within(rail).getByRole("button", { name: "2023, 60 photos" })).toBeTruthy();
+    else if (state === "error")
+      expect(within(rail).getByText("Timeline counts are unavailable.")).toBeTruthy();
+    else expect(within(rail).getByText("Loading…")).toBeTruthy();
+    expect(screen.getByText("Photo listing unavailable")).toBeTruthy();
+    photos.dispose();
+    await cache.dispose();
+  },
+);
+
 it("renders the active filter badge", async () => {
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
-  photos.baseQuery = photos.query = { ...photos.query, filters: { rating_min: 1 } };
+  photos.query = { ...photos.query, filters: { rating_min: 1 } };
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
   expect(screen.getByRole("button", { name: "Filters, 1 active filter" }).textContent).toContain(
@@ -3075,16 +3141,16 @@ it("shows a loading pill while a page loads and Load more when it settles", asyn
   photos.cursor = "next";
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
-  const status = document.querySelector(".photo-results [role=status]");
+  const status = document.querySelector(".photo-results > [role=status]");
   expect(status).toBeTruthy();
   expect(status!.textContent).toBe("");
   await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
   expect(screen.getByText("Loading photos…")).toBeTruthy();
-  expect(document.querySelector(".photo-results [role=status]")).toBe(status);
+  expect(document.querySelector(".photo-results > [role=status]")).toBe(status);
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   finish(Response.json({ items: [photo(61)], total: 100, next_cursor: "last" }));
   await waitFor(() => expect(screen.queryByText("Loading photos…")).toBeNull());
-  expect(document.querySelector(".photo-results [role=status]")).toBe(status);
+  expect(document.querySelector(".photo-results > [role=status]")).toBe(status);
   expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
   photos.dispose();
   await cache.dispose();
@@ -3101,3 +3167,471 @@ it("explains paused grouping beside the Library stack controls", async () => {
   expect(screen.getByRole("spinbutton", { name: "Burst gap (seconds)" })).toBeTruthy();
   photos.dispose();
 });
+
+function viewerWithCachedImage(photos: Photos, lookup: () => Promise<PhotoBrowseRow>) {
+  let counter = 0;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => `blob:synthetic-${++counter}`),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: vi.fn(async () => {}),
+  });
+  vi.spyOn(photos, "lookup").mockImplementation(lookup);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "ready", generation_id: "fit-1" });
+  stubPhotoFetch(vi.fn());
+  return render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn(async () => new Blob(["synthetic-jpeg"])) } as unknown as PhotoPreviewCache,
+    photoID: "photo-1",
+  });
+}
+
+it("reads the open photo again on a live change and conceals its cached image once it is gone", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const row = photo(1);
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(row);
+  viewerWithCachedImage(photos, lookup);
+  await screen.findByText("Fit preview");
+  lookup.mockResolvedValueOnce({ ...row, name: "Renamed.jpg" });
+  await act(() => photos.changed({}));
+  expect(lookup).toHaveBeenCalledTimes(2);
+  await screen.findByRole("dialog", { name: "Photo viewer, Renamed.jpg" });
+  expect(screen.getByText("Fit preview")).toBeTruthy();
+  lookup.mockRejectedValueOnce(new APIError("This photo is no longer in this view.", 404, "x"));
+  await act(() => photos.changed({}));
+  await screen.findByText("This photo is no longer in this view.");
+  expect(screen.queryByText("Fit preview")).toBeNull();
+  expect(screen.getByText("No preview")).toBeTruthy();
+  expect(photos.items).toEqual([]);
+  photos.dispose();
+});
+
+it("keeps View original through an unrelated refresh of the same row", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.viewerReturn = {
+    contextID: photos.contextID,
+    assetID: "photo-1",
+    control: "open",
+    scrollTop: 0,
+  };
+  const row = photo(1);
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue({ ...row });
+  viewerWithCachedImage(photos, lookup);
+  vi.spyOn(photos, "original").mockResolvedValue("blob:original");
+  await screen.findByText("Fit preview");
+  await fireEvent.click(screen.getByRole("button", { name: "View original" }));
+  await screen.findByText("Original");
+  await act(() => photos.changed({}));
+  expect(lookup).toHaveBeenCalled();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.getByText("Original")).toBeTruthy();
+  expect(screen.queryByText("Fit preview")).toBeNull();
+  photos.dispose();
+});
+
+it.each([undefined, "map"] as const)(
+  "reuses a refreshed full row only outside projections, projection=%s",
+  async (projection) => {
+    const photos = workspaceWithPreparedPhoto(preparedPhoto(1), projection);
+    const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(photo(1));
+    viewerWithCachedImage(photos, lookup);
+    await screen.findByText("Fit preview");
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+    const refreshed = projection
+      ? { ...mapPhoto(1), name: "Refreshed.jpg" }
+      : { ...photo(1), name: "Refreshed.jpg", stack };
+    lookup.mockResolvedValue({ ...photo(1), name: "Looked up.jpg" });
+    await act(async () => {
+      photos.items = [refreshed];
+      await photos.changed({ listRefreshed: true });
+    });
+    await screen.findByRole("dialog", {
+      name: `Photo viewer, ${projection ? "Looked up.jpg" : "Refreshed.jpg"}`,
+    });
+    expect(lookup).toHaveBeenCalledTimes(projection ? 2 : 1);
+    expect(photos.items[0]).toEqual(refreshed);
+    expect(screen.getByText("Fit preview")).toBeTruthy();
+    photos.dispose();
+  },
+);
+
+it("ignores a live detail response after leaving and returning to Photos", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(photo(1));
+  const view = viewerWithCachedImage(photos, lookup);
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  let finish!: (row: PhotoBrowseRow) => void;
+  lookup.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  const changing = photos.changed({});
+  await waitFor(() => expect(finish).toBeDefined());
+  view.unmount();
+  stubPhotoFetch(async () =>
+    Response.json({ items: [{ ...photo(1), name: "Fresh.jpg" }], total: 1 }),
+  );
+  await act(() => photos.refresh());
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: "",
+  });
+  await screen.findByRole("button", { name: "Open Fresh.jpg" });
+  await act(async () => {
+    finish({ ...photo(1), name: "Older.jpg" });
+    await changing;
+  });
+  expect(screen.getByRole("button", { name: "Open Fresh.jpg" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Open Older.jpg" })).toBeNull();
+  photos.dispose();
+});
+
+it.each([
+  { older: "foreground", outcome: "answers", newer: "live read" },
+  { older: "foreground", outcome: "fails with 404", newer: "live read" },
+  { older: "live", outcome: "fails with 404", newer: "navigation" },
+])(
+  "keeps the newest detail after $newer when an older $older read $outcome",
+  async ({ older, outcome, newer }) => {
+    const photos = workspaceWithPreparedPhoto();
+    const row = photo(1);
+    let settle!: () => void;
+    const pending = () =>
+      new Promise<PhotoBrowseRow>((resolve, reject) => {
+        settle = () =>
+          outcome === "answers"
+            ? resolve({ ...row, name: "Older.jpg" })
+            : reject(new APIError("This photo is no longer in this view.", 404, "x"));
+      });
+    const lookup = vi.fn<() => Promise<PhotoBrowseRow>>();
+    if (older === "foreground") lookup.mockImplementationOnce(pending);
+    else lookup.mockResolvedValueOnce(row).mockImplementationOnce(pending);
+    const { rerender } = viewerWithCachedImage(photos, lookup);
+    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+    if (older === "live") {
+      await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+      void photos.changed({});
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+    }
+    const name = newer === "navigation" ? "Photo 2.jpg" : "Newer.jpg";
+    lookup.mockResolvedValueOnce(newer === "navigation" ? photo(2) : { ...row, name });
+    if (newer === "navigation") await rerender({ photoID: "photo-2" });
+    else await act(() => photos.changed({}));
+    await screen.findByRole("dialog", { name: `Photo viewer, ${name}` });
+    settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("This photo is no longer in this view.")).toBeNull();
+    expect(screen.getByRole("dialog", { name: `Photo viewer, ${name}` })).toBeTruthy();
+    photos.dispose();
+  },
+);
+
+it("forwards live changes to the metadata editor", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.selectLoaded();
+  const invalidate = vi.spyOn(photos.authored, "invalidate").mockResolvedValue();
+  stubPhotoFetch(vi.fn());
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    photoID: "",
+  });
+  await act(() => photos.changed({}));
+  expect(invalidate).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it("keeps shortcuts and stack decisions usable during refresh", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.authored.targets = [];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  const row = { ...photo(1), stack };
+  photos.items = [row];
+  photos.selectLoaded();
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(
+    photoPreparation([preparedPhoto(1), preparedPhoto(2)]),
+  );
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))));
+  const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue();
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    shortcuts,
+  });
+  await waitFor(() => expect(photos.authored.stackTargets).toHaveLength(2));
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(photos.loading).toBe(true));
+  expect(photos.authored.loading).toBe(false);
+  const gap = screen.getByRole("spinbutton", { name: "Burst gap (seconds)" }) as HTMLInputElement;
+  expect(gap.disabled).toBe(false);
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "4", cancelable: true }));
+  expect(edit).toHaveBeenCalledOnce();
+  expect(screen.queryByText(/Try again when they finish/)).toBeNull();
+  for (const name of ["Keep all", "Keep selected", "Choose representative"]) {
+    expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+  }
+  // A stack conflict mid-refresh still leaves Reload stack usable.
+  await act(() => {
+    photos.authored.conflict = true;
+  });
+  expect((screen.getByRole("button", { name: "Reload stack" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  await act(async () => {
+    finish(Response.json({ items: [row], total: 1, stacks: [stack] }));
+    expect(await refreshing).toBe(true);
+  });
+  photos.dispose();
+});
+
+it("keeps newer Library values across an older live read", async () => {
+  const before = preparedPhoto(1);
+  const photos = workspaceWithPreparedPhoto(before);
+  const shortcuts = createShortcutManager();
+  let finish!: (receipt: PhotoAuthoredReceipt) => void;
+  const receipt = new Promise<PhotoAuthoredReceipt>((resolve) => (finish = resolve));
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockReturnValue(receipt);
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  stubPhotoFetch(async () => Response.json({ items: [{ ...photo(1), rotation: 90 }], total: 1 }));
+  render(PhotosWorkspace, {
+    photos,
+    shortcuts,
+    photoID: "photo-1",
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  let finishRead!: (row: PhotoBrowseRow) => void;
+  lookup.mockImplementationOnce(() => new Promise((resolve) => (finishRead = resolve)));
+  const reading = photos.changed({});
+  await waitFor(() => expect(finishRead).toBeDefined());
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "r", cancelable: true }));
+  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+  expect(edit.mock.calls[0]![0].rotation_delta).toBe(90);
+  await act(() =>
+    finish({
+      receipt_id: "local",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 } }],
+    }),
+  );
+  await waitFor(() => expect(photos.authored.busy).toBe(false));
+  await waitFor(() => expect(photos.items[0]!.rotation).toBe(90));
+  finishRead(photo(1));
+  await reading;
+  expect(photos.items[0]!.rotation).toBe(90);
+  photos.dispose();
+});
+
+// A Library of three months, 60 photos each; only the newest is loaded, and each later page
+// holds the next older month.
+function railLibrary(
+  sort: QuerySort = { field: "capture_time", direction: "desc" },
+  filters: Query["filters"] = {},
+  hiddenAccess?: HiddenAccess,
+) {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const month = (offset: number, date: string) =>
+    Array.from({ length: 60 }, (_, i) => photo(offset + i + 1, date));
+  const pages: Record<string, () => Promise<Response>> = {
+    first: async () =>
+      Response.json({ items: month(0, "2025-06-01"), total: 180, next_cursor: "p2" }),
+    p2: async () =>
+      Response.json({ items: month(60, "2024-06-01"), total: 180, next_cursor: "p3" }),
+    p3: async () => Response.json({ items: month(120, "2023-06-01"), total: 180 }),
+  };
+  const bodies: { cursor?: string; query: unknown }[] = [];
+  stubPhotoFetch(async (_url, init) => {
+    const body = JSON.parse(String(init.body));
+    bodies.push(body);
+    return pages[body.cursor ?? "first"]!();
+  });
+  const photos = new Photos(
+    "scoped",
+    vi.fn(),
+    false,
+    { ...photoQuery, sort, filters },
+    { hiddenAccess },
+  );
+  photos.started = true;
+  photos.items = month(0, "2025-06-01");
+  photos.total = 180;
+  photos.cursor = "p2";
+  photos.timeline = photoTimelineCounts([
+    ["2025-06-01", 60],
+    ["2024-06-01", 60],
+    ["2023-06-01", 60],
+  ]).facets[0];
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  return { photos, cache, pages, bodies };
+}
+
+// Sections stack in the grid, so a month starts below the sections before it.
+function sectionTop(month: string) {
+  let top = 0;
+  for (const section of document.querySelectorAll<HTMLElement>("[data-month]")) {
+    if (section.dataset.month === month) return top;
+    top += Number.parseFloat(section.style.height);
+  }
+  throw new Error(`no section for ${month}`);
+}
+
+it("pages a chosen year in until it arrives, with the query, count, and selection unchanged", async () => {
+  const { photos, cache, bodies } = railLibrary();
+  render(PhotosWorkspace, { photos, cache });
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  const query = JSON.stringify(photos.query);
+  const rail = screen.getByRole("navigation", { name: "Timeline" });
+  await fireEvent.click(within(rail).getByRole("button", { name: "2023, 60 photos" }));
+  const scroll = screen.getByTestId("photo-scroll");
+  await waitFor(() => expect(photos.seek).toBe(""));
+  expect(scroll.scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
+  expect(bodies.every((body) => JSON.stringify(body.query) === query)).toBe(true);
+  expect(screen.getByText("180 photos")).toBeTruthy();
+  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each(["", "river"])("disables the date rail outside capture order, text=%s", async (text) => {
+  const albumID = text ? "" : "00000000-0000-4000-8000-000000000001";
+  const { photos, cache } = railLibrary(
+    { field: text ? "relevance" : "added_time", direction: "desc" },
+    albumID ? { set_ids: [albumID] } : {},
+  );
+  photos.query = { ...photos.query, text };
+  render(PhotosWorkspace, { photos, cache, albumID });
+  const rail = await screen.findByRole("navigation", { name: "Timeline" });
+  expect(
+    within(rail).getByText(`Sort by ${text ? "Capture date" : "Captured"}, newest first.`),
+  ).toBeTruthy();
+  const year = within(rail).getByRole("button", { name: "2023, 60 photos" });
+  expect((year as HTMLButtonElement).disabled).toBe(true);
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("passes loaded stack members to the grid for a date jump without paging", async () => {
+  const { photos, cache, bodies } = railLibrary();
+  // A burst crosses midnight. January's representative hides its December members.
+  const stack = {
+    asset_ids: ["photo-1", "photo-2"],
+    representative_id: "photo-1",
+  };
+  photos.items = [
+    { ...photo(1, "2025-01-01T00:00:00"), stack },
+    { ...photo(2, "2024-12-31T23:59:59"), stack },
+    ...Array.from({ length: 60 }, (_, index) => photo(index + 3, "2024-11-30T12:00:00")),
+  ];
+  photos.total = 122;
+  photos.timeline = photoTimelineCounts([
+    ["2025-01-01", 1],
+    ["2024-12-31", 1],
+    ["2024-11-30", 60],
+    ["2024-10-01", 60],
+  ]).facets[0];
+  const view = render(PhotosWorkspace, { photos, cache });
+  try {
+    await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+    expect(screen.queryByRole("button", { name: "Select Photo 2.jpg" })).toBeNull();
+    const rail = screen.getByRole("navigation", { name: "Timeline" });
+    await fireEvent.click(within(rail).getByRole("button", { name: "2024, 121 photos" }));
+    expect(photos.seek).toBe("");
+    expect(bodies).toEqual([]);
+  } finally {
+    view.unmount();
+    photos.dispose();
+    await cache.dispose();
+  }
+});
+
+it("keeps a jump pending through a paging failure and finishes it on Retry", async () => {
+  const { photos, cache, pages } = railLibrary();
+  const page = pages.p2!;
+  pages.p2 = async () => Response.json({ detail: "Page unavailable" }, { status: 503 });
+  render(PhotosWorkspace, { photos, cache });
+  const rail = await screen.findByRole("navigation", { name: "Timeline" });
+  await fireEvent.click(within(rail).getByRole("button", { name: "2023, 60 photos" }));
+  await screen.findByText("Page unavailable");
+  expect(photos.seek).toBe("2023-06");
+  pages.p2 = page;
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(photos.seek).toBe(""));
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("resumes a date jump after cancelling Hidden setup when its page finished during setup", async () => {
+  const access = new HiddenAccess("scoped", vi.fn());
+  access.configured = false;
+  const { photos, cache, pages, bodies } = railLibrary(undefined, undefined, access);
+  let finish!: (reply: Response) => void;
+  const held = pages.p2!;
+  pages.p2 = () => new Promise<Response>((resolve) => (finish = resolve));
+  render(PhotosWorkspace, { photos, cache });
+  const rail = await screen.findByRole("navigation", { name: "Timeline" });
+  await fireEvent.click(within(rail).getByRole("button", { name: "2023, 60 photos" }));
+  expect(bodies.map((body) => body.cursor)).toEqual(["p2"]);
+  const hide = photos.setHidden("photo-1");
+  await waitFor(() => expect(access.setupPrompt).toBeDefined());
+  const modal = render(HiddenSetupModal, { access });
+  finish(await held());
+  await waitFor(() => expect(photos.loading).toBe(false));
+  expect(photos.items).toHaveLength(120);
+  expect(photos.seek).toBe("2023-06");
+  expect(bodies.map((body) => body.cursor)).toEqual(["p2"]);
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await hide;
+  modal.unmount();
+  await waitFor(() => expect(photos.seek).toBe(""));
+  expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each(["scrolling", "opening a photo", "unmounting"] as const)(
+  "clears a pending jump when %s",
+  async (action) => {
+    const { photos, cache, pages, bodies } = railLibrary();
+    let finish!: (reply: Response) => void;
+    const held = pages.p2!;
+    pages.p2 = () => new Promise<Response>((resolve) => (finish = resolve));
+    const onphotochange = vi.fn();
+    const { unmount } = render(PhotosWorkspace, { photos, cache, onphotochange });
+    const rail = await screen.findByRole("navigation", { name: "Timeline" });
+    await fireEvent.click(within(rail).getByRole("button", { name: "2023, 60 photos" }));
+    expect(photos.seek).toBe("2023-06");
+    if (action === "scrolling") {
+      expect(within(rail).getByRole("button", { name: "Jun 2023, 60 photos" })).toBeTruthy();
+      const scroll = screen.getByTestId("photo-scroll");
+      scroll.scrollTop = 100;
+      await fireEvent.scroll(scroll);
+      expect(within(rail).queryByRole("button", { name: /^Jun 2023/ })).toBeNull();
+    } else if (action === "opening a photo") {
+      await fireEvent.keyDown(screen.getByRole("button", { name: "Select Photo 1.jpg" }), {
+        key: "Enter",
+      });
+      expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
+    } else unmount();
+    expect(photos.seek).toBe("");
+    finish(await held());
+    await waitFor(() => expect(photos.loading).toBe(false));
+    expect(photos.seek).toBe("");
+    if (action === "scrolling") {
+      expect(screen.getByTestId("photo-scroll").scrollTop).toBe(100);
+      expect(photos.items.map((item) => item.asset_id)).toEqual(
+        Array.from({ length: 120 }, (_, index) => `photo-${index + 1}`),
+      );
+      expect(bodies.map((body) => body.cursor)).toEqual(["p2"]);
+    }
+    photos.dispose();
+    await cache.dispose();
+  },
+);

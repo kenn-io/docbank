@@ -25,6 +25,13 @@ func TestRedactionClientArchive(t *testing.T) {
 	masks := redactionClientMasks(prep)
 	review, err := processing.BuildRedactionReview(prep, masks, prep.Selection.Revision)
 	require.NoError(t, err)
+	t.Run("oversized local archive", func(t *testing.T) {
+		reader := &redactionCountingReader{}
+		_, err := VerifyRedactionArchive(t.Context(), reader,
+			processing.MaxRedactionArchiveBytes+1, review)
+		require.ErrorIs(t, err, ErrIntegrity)
+		require.Zero(t, reader.reads, "reject oversized input before reading any ZIP bytes")
+	})
 	request := processing.RedactionRenderRequest{Preparation: prep, Masks: masks, ReviewSHA256: review.SHA256}
 	for _, scenario := range []string{"valid", "review", "changed text", "duplicate", "missing", "extra", "deflate", "digest", "interrupted"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -62,6 +69,13 @@ func TestRedactionClientArchive(t *testing.T) {
 			}
 		})
 	}
+}
+
+type redactionCountingReader struct{ reads int }
+
+func (r *redactionCountingReader) ReadAt([]byte, int64) (int, error) {
+	r.reads++
+	return 0, io.EOF
 }
 
 // PDF semantics belong to the real render qualification, not this wire-protocol fixture.

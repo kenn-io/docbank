@@ -302,7 +302,7 @@ var processingMetadataTables = []metadataRecordCodec{
 		validate: validateMetadataRenditionJob, exportAll: exportRenditionJobs, insert: importMetadataRenditionJob}),
 	newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
 		record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
-		suffix: "ORDER BY job_id,waiter_id", checkExport: true,
+		suffix: "WHERE " + backedUpRenditionJobs + " ORDER BY job_id,waiter_id", checkExport: true,
 		validate: func(value metadataRenditionJobWaiter) error {
 			_, err := validateMetadataRenditionJobWaiter(value)
 			return err
@@ -336,6 +336,10 @@ var (
 		validate: validateMetadataDerivativePurgeSuppression})
 )
 
+// Photo description jobs rebuild after restore; their owner decisions are
+// backed up as suggestion records.
+const backedUpRenditionJobs = `job_id IN (SELECT job_id FROM rendition_jobs WHERE json_extract(execution_identity_json,'$.upload.input_kind')<>'derived_upload')`
+
 func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT job_id,vault_uid,source_sha256,rendition_request_fingerprint,
@@ -346,7 +350,7 @@ func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadata
 		       provider_resume_handle,selected_waiter_id,authorization_grant_id,
 		       authorization_incarnation_id,authorization_revocation_fence,
 		       lexical_generation_id,failure_code,created_at,updated_at
-		FROM rendition_jobs ORDER BY job_id`)
+		FROM rendition_jobs WHERE `+backedUpRenditionJobs+` ORDER BY job_id`)
 	if err != nil {
 		return fmt.Errorf("exporting rendition jobs: %w", err)
 	}
@@ -902,7 +906,7 @@ func validateMetadataRenditionJobWaiter(
 		!slices.Equal(authority.retained, value.RetainedClasses) {
 		return normalizedConsentAuthority{}, errors.New("rendition waiter classes are not canonical")
 	}
-	if err := validateRenditionWaiterInputClasses(authority.inputs); err != nil {
+	if err := validateRenditionWaiterInputClasses(authority.inputs, document.RenditionInputOriginalFile); err != nil {
 		return normalizedConsentAuthority{}, err
 	}
 	if renditionScopedID("waiter", value.JobID, value.ContentVersionID,
@@ -1795,7 +1799,7 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			  SELECT 1 FROM rendition_jobs j
 			  LEFT JOIN rendition_builds b ON b.build_id=j.job_id
 			  WHERE j.phase IN ('build_staged','generation_staged','published')
-			    AND b.build_id IS NULL
+			    AND b.build_id IS NULL AND ` + "j." + backedUpRenditionJobs + `
 			)`},
 	}
 	for _, check := range checks {

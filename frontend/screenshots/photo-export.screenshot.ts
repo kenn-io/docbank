@@ -24,7 +24,6 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     ...process.env,
     DOCBANK_HOME: vault,
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
-    DOCBANK_TELEMETRY_ENABLED: "0",
   };
   const run = async (...args: string[]) =>
     (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();

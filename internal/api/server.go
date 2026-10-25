@@ -105,6 +105,8 @@ type Server struct {
 	termReports   *reporting.Cache
 	reportBudget  report.Budget
 	masterOwner   string
+
+	stopPhotoEvents context.CancelFunc
 }
 
 // NewServer wires all routes and middleware onto a fresh mux. The handler
@@ -241,11 +243,15 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
+	photoEventsContext, stopPhotoEvents := context.WithCancel(context.Background())
+	s.stopPhotoEvents = stopPhotoEvents
+	registerPhotoEvents(photoEventsContext, mux, humaAPI, d)
 	registerPhotoRoutes(humaAPI, d, g)
 	registerPhotoFaceRoutes(humaAPI, d, g)
 	registerPhotoFaceDecisionRoutes(humaAPI, d, g)
 	registerPhotoRejectRoutes(humaAPI, d, g)
 	registerPhotoAuthoredRoutes(humaAPI, d, g)
+	registerPhotoSuggestionRoutes(humaAPI, d, g)
 	registerPhotoHiddenRoutes(humaAPI, d, g)
 	registerPhotoSetRoutes(humaAPI, d, g, s.snapshots)
 	registerPhotoQueryRoutes(humaAPI, d, cursorService, g)
@@ -329,6 +335,9 @@ func (s *Server) Close() {
 // Shutdown revokes browser credentials, closes every accepted upload
 // connection, cancels processing, and waits for their executions to return.
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.stopPhotoEvents != nil {
+		s.stopPhotoEvents()
+	}
 	if s.deps.Processing != nil {
 		s.deps.Processing.Stop()
 	}

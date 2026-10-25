@@ -16,6 +16,7 @@ import (
 )
 
 func TestEmbeddedPackageExportRoundTripsThroughFreshVault(t *testing.T) {
+	t.Parallel()
 	source, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })

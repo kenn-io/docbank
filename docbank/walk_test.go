@@ -13,6 +13,7 @@ import (
 )
 
 func TestWalkKeepsStableSnapshotAcrossMutations(t *testing.T) {
+	t.Parallel()
 	t.Run("subtree mutations before the first page", func(t *testing.T) {
 		vault, err := New(t.Context(), Config{Root: t.TempDir()})
 		require.NoError(t, err)
@@ -106,6 +107,7 @@ func TestWalkKeepsStableSnapshotAcrossMutations(t *testing.T) {
 }
 
 func TestWalkOutlivesCanceledSetupContext(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -127,6 +129,7 @@ func TestWalkOutlivesCanceledSetupContext(t *testing.T) {
 }
 
 func TestWalkOptionallyIncludesTrashedNodes(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -148,6 +151,7 @@ func TestWalkOptionallyIncludesTrashedNodes(t *testing.T) {
 }
 
 func TestWalkPageSizeBounds(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -187,6 +191,7 @@ func TestWalkPageSizeBounds(t *testing.T) {
 }
 
 func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -223,6 +228,7 @@ func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
 }
 
 func TestWalkCloseReleasesReadTransaction(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -238,6 +244,7 @@ func TestWalkCloseReleasesReadTransaction(t *testing.T) {
 }
 
 func TestWalkerZeroValueCloseIsSafe(t *testing.T) {
+	t.Parallel()
 	walker := new(Walker)
 	require.NoError(t, walker.Close())
 	require.NoError(t, walker.Close())

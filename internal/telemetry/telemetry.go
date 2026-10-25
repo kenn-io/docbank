@@ -31,8 +31,6 @@ const (
 
 	application = "docbank"
 	envPrefix   = "DOCBANK"
-	// PostHog project API keys are public ingest identifiers, not credentials.
-	postHogAPIKey = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf" // #nosec G101
 )
 
 // Reporter is kit's PostHog reporter configured for docbank.
@@ -44,6 +42,7 @@ type Options struct {
 	Version  string
 	Commit   string
 	Logger   *slog.Logger // nil uses slog.Default()
+	apiKey   string       // empty uses the key release builds set at link time
 	endpoint string       // tests point the enabled reporter at a loopback server
 }
 
@@ -67,7 +66,7 @@ func New(opts Options) *Reporter {
 	searchType := posthog.RequireProperty("search_type", posthog.AllowStringValues("text", "semantic", "hybrid"))
 	reporter, err := posthog.NewReporter(posthog.Options{
 		Logger:      logger,
-		APIKey:      postHogAPIKey,
+		APIKey:      opts.apiKey,
 		Endpoint:    opts.endpoint,
 		Application: application,
 		EnvPrefix:   envPrefix,

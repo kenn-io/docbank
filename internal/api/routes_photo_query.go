@@ -118,7 +118,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				slots[size] = out
 			}
 			wire.Items[i] = PhotoBrowseRow{
-				AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
+				MatchedAISuggestion: row.MatchedAISuggestion, AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
 				Rotation: row.Rotation,
 				Rating:   row.Rating, Flag: row.Flag,
 				DisplayFileID: row.DisplayFileID, NodeID: row.NodeID,

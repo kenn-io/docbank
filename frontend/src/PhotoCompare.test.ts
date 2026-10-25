@@ -9,6 +9,7 @@ import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
   vi.unstubAllGlobals();
 });
 
@@ -58,6 +59,7 @@ it.each([false, true])(
 function compare(
   rows = [photo(1), photo(2), photo(3)],
   ids = rows.slice(0, 2).map((row) => row.asset_id),
+  cache = { get: vi.fn() } as unknown as PhotoPreviewCache,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -77,7 +79,7 @@ function compare(
   render(PhotoCompare, {
     ids,
     photos,
-    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    cache,
     onclose,
   });
   return { photos, onclose, dialog: screen.getByRole("dialog", { name: "Compare photos" }) };
@@ -193,6 +195,49 @@ it("serializes Next activations until the destination lookup finishes", async ()
   photos.dispose();
 });
 
+it("keeps Next disabled through a live pass while a move is pending", async () => {
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  const { photos, dialog } = compare(rows);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  let finish!: (result: Awaited<ReturnType<Photos["moveGroup"]>>) => void;
+  const move = vi
+    .spyOn(photos, "moveGroup")
+    .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+  const next = within(dialog).getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  await fireEvent.click(next);
+  await waitFor(() => expect(next.disabled).toBe(true));
+  await photos.changed({});
+  expect(next.disabled).toBe(true);
+  await fireEvent.click(next);
+  expect(move).toHaveBeenCalledOnce();
+  finish({ status: "moved", ids: [rows[1]!.asset_id, rows[2]!.asset_id] });
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  await waitFor(() => expect(next.disabled).toBe(false));
+  photos.dispose();
+});
+
+it("re-enables navigation after a live pass replaces the destination lookup", async () => {
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  const { photos, dialog } = compare(rows);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  vi.spyOn(photos, "moveGroup").mockResolvedValue({
+    status: "moved",
+    ids: [rows[1]!.asset_id, rows[2]!.asset_id],
+  });
+  let stale!: (rows: ReturnType<typeof photo>[]) => void;
+  vi.mocked(photos.lookupMany).mockImplementationOnce(() => new Promise((done) => (stale = done)));
+  const next = within(dialog).getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  await fireEvent.click(next);
+  await waitFor(() => expect(stale).toBeTypeOf("function"));
+  // The live reread takes over the destination lookup and finishes the navigation.
+  await photos.changed({});
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  await waitFor(() => expect(next.disabled).toBe(false));
+  stale([]);
+  expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]);
+  photos.dispose();
+});
+
 it("preserves the closeup when the destination lookup fails", async () => {
   const { photos, dialog } = compare([photo(1), photo(2), photo(3), photo(4)]);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
@@ -227,3 +272,91 @@ it("preserves the closeup when the destination lookup fails", async () => {
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
   photos.dispose();
 });
+
+it("reads the shown photos again on every change", async () => {
+  const rows = [photo(1), photo(2), photo(3)];
+  const { photos, dialog } = compare(rows);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  const closeup = within(dialog).getByRole("button", { name: "Manual closeup" });
+  closeup.focus();
+  const lookup = vi.mocked(photos.lookupMany);
+  lookup.mockResolvedValueOnce([
+    {
+      ...rows[0]!,
+      name: "Renamed.jpg",
+      previews: { ...rows[0]!.previews, grid: { state: "ready", generation_id: "grid-1" } },
+    },
+    rows[1]!,
+  ]);
+  await photos.changed({});
+  await waitFor(() => expect(names(dialog)).toEqual(["Renamed.jpg", "Photo 2.jpg"]));
+  await waitFor(() =>
+    expect(
+      vi
+        .mocked(photos.preview)
+        .mock.calls.filter(([row]) => row.asset_id === "photo-1")
+        .at(-1)?.[0].previews.grid,
+    ).toEqual({ state: "ready", generation_id: "grid-1" }),
+  );
+  lookup.mockResolvedValueOnce([rows[0]!]);
+  await photos.changed({});
+  await within(dialog).findByText("1 selected photo is unavailable.");
+  expect(names(dialog)).toEqual(["Photo 1.jpg"]);
+  // Live rereads leave keyboard focus where it was.
+  expect(document.activeElement).toBe(closeup);
+  photos.dispose();
+});
+
+it.each(["replacement", "failure"])(
+  "revalidates a pending destination after a change, %s",
+  async (mode) => {
+    HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:cached-photo");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const rows = [photo(1), photo(2), photo(3), photo(4)];
+    for (const row of rows) row.previews.grid = { state: "ready", generation_id: "grid-1" };
+    const { photos, dialog } = compare(rows, ["photo-1", "photo-2"], {
+      get: vi.fn(async () => new Blob(["synthetic-photo"])),
+    } as unknown as PhotoPreviewCache);
+    await within(dialog).findByRole("img", { name: "Photo 1.jpg" });
+    const survivor = within(dialog).getByRole("region", { name: "Photo 2.jpg" });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "1:1 (Z)" }));
+    const zoom = photos.compareView;
+    const lookup = vi.mocked(photos.lookupMany);
+    let stale!: (rows: ReturnType<typeof photo>[]) => void;
+    lookup.mockImplementationOnce(() => new Promise((done) => (stale = done)));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+    if (mode === "replacement") {
+      lookup.mockImplementation(async (ids) =>
+        ids.includes("photo-3")
+          ? [rows[1]!, { ...rows[2]!, name: "Replaced.jpg" }]
+          : rows.slice(0, 2),
+      );
+      await photos.changed({});
+      expect(lookup.mock.calls.map(([ids]) => ids)).toContainEqual(["photo-2", "photo-3"]);
+      await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Replaced.jpg"]));
+      stale(rows.slice(1, 3));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(names(dialog)).toEqual(["Photo 2.jpg", "Replaced.jpg"]);
+    } else {
+      lookup.mockImplementation(async (ids) => {
+        if (ids.includes("photo-3")) throw new APIError("Service unavailable", 503, "unavailable");
+        return [rows[1]!];
+      });
+      await expect(photos.changed({})).rejects.toThrow("Service unavailable");
+      await within(dialog).findByText("1 selected photo is unavailable.");
+      expect(within(dialog).queryByRole("img", { name: "Photo 1.jpg" })).toBeNull();
+      expect(within(dialog).getByRole("region", { name: "Photo 2.jpg" })).toBe(survivor);
+      expect(photos.compareView).toEqual(zoom);
+      stale(rows.slice(1, 3));
+      const reads = lookup.mock.calls.length;
+      await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
+      await waitFor(() => expect(lookup.mock.calls.length).toBeGreaterThan(reads));
+      await within(dialog).findByText("Service unavailable");
+      expect(lookup.mock.calls.at(-1)![0]).toEqual(["photo-2", "photo-3"]);
+      expect(names(dialog)).toEqual(["Photo 2.jpg"]);
+    }
+    photos.dispose();
+  },
+);

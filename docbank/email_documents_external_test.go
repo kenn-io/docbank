@@ -36,6 +36,7 @@ func (p *emailRecordingProvider) Render(ctx context.Context, upload document.Aut
 }
 
 func TestEmbeddedEmailProcessingRunsConfiguredProvider(t *testing.T) {
+	t.Parallel()
 	plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	profile := embeddedProcessingProfile(t, plain.Descriptor())

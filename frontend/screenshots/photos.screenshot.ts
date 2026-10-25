@@ -1,5 +1,5 @@
 import { revokeWebSession } from "../src/generated/docbank.js";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -166,6 +166,16 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.locator("[data-asset] img").first()).toBeVisible();
     await page.getByRole("button", { name: "Hidden", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    const filters = page.getByRole("button", { name: "Filters", exact: true });
+    await filters.click();
+    await expect(page.getByRole("group", { name: "Year facet" }).getByRole("button")).toHaveCount(
+      1,
+    );
+    await page.screenshot({
+      path: path.join(output!, "web-photos-hidden-year.png"),
+      animations: "disabled",
+    });
+    await filters.click();
     await page.route("**/api/v1/photos/hidden", (route) => route.abort("failed"), { times: 1 });
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible({
       timeout: 6000,
@@ -255,19 +265,22 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
       .getByRole("button", { name: /^Actions for / })
       .click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
-    await expect(page.getByRole("alert")).toHaveText(
-      "1 photo failed: Synthetic stale photo revision",
-    );
+    const unhideFailure = page
+      .getByRole("alert")
+      .getByText("1 photo failed: Synthetic stale photo revision", { exact: true });
+    await expect(unhideFailure).toBeVisible();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/v1/photos/hidden") && response.request().method() === "GET",
     );
-    await expect(page.getByRole("alert")).toHaveText(
-      "1 photo failed: Synthetic stale photo revision",
-    );
+    await expect(unhideFailure).toBeVisible();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
+    await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+    await expect(
+      page.getByRole("menuitem", { name: "Refresh previews", exact: true }),
+    ).toBeEnabled();
+    await page.keyboard.press("Escape");
     await page.screenshot({
       path: path.join(output!, "web-hidden-unhide-failure-dark.png"),
       animations: "disabled",
@@ -333,128 +346,205 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
   });
 });
 
-test("timeline seeks an unloaded leap day and preserves full-scope counts", async ({ page }) => {
+test("timeline keeps a six-digit year count inside its rail", async ({ page }) => {
+  test.setTimeout(600_000);
+  await withPhotoFixture(
+    123456,
+    "rail-count",
+    async (run) => {
+      const url = new URL(await run("web", "--no-browser"));
+      url.pathname = "/photos";
+      await page.goto(url.href);
+      const year = page.getByRole("button", { name: "2022, 123,456 photos", exact: true });
+      await expect(year).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({
+        path: path.join(output!, "rail-count-1440.png"),
+        animations: "disabled",
+      });
+      expect(
+        await year.evaluate((element) => {
+          const rail = element.closest(".rail")!.getBoundingClientRect();
+          return [...element.children].every((child) => {
+            const text = document.createRange();
+            text.selectNodeContents(child);
+            const bounds = text.getBoundingClientRect();
+            return bounds.left >= rail.left && bounds.right <= rail.right;
+          });
+        }),
+      ).toBe(true);
+    },
+    false,
+    ["--single-year"],
+  );
+});
+
+test("timeline scrolls to an unloaded year without filtering", async ({ page }) => {
   test.setTimeout(600_000);
   await withPhotoFixture(10000, "timeline", async (run) => {
-    const webURL = new URL(await run("web", "--no-browser"));
-    webURL.pathname = "/photos";
-    await page.goto(webURL.href);
-    await expect(page.getByText(/10,000 photos/)).toBeVisible();
-    await page.getByRole("button", { name: "Timeline", exact: true }).click();
-    await expect(page.getByText(/10,000\s+photos in scope/)).toBeVisible({ timeout: 35_000 });
-    await expect(
-      page
-        .getByRole("navigation", { name: "Timeline years" })
-        .getByRole("button", { name: /^2018/ }),
-    ).toBeVisible();
-    const views = page.getByRole("navigation", { name: "Photo views" });
-    const gridBounds = await views.getByRole("button", { name: "Grid", exact: true }).boundingBox();
-    const timelineBounds = await views
-      .getByRole("button", { name: "Timeline", exact: true })
-      .boundingBox();
-    expect(timelineBounds!.x - gridBounds!.x - gridBounds!.width).toBeGreaterThan(0);
-    const heading = page.locator(".photo-bar .toolbar-actions > span");
-    const years = page.getByRole("navigation", { name: "Timeline years" });
-    await years.getByRole("button", { name: /^2026/ }).click();
-    await expect(heading).toHaveText("108 photos in 2026");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    const scroll = page.getByTestId("photo-scroll");
-    await scroll.getByRole("checkbox").first().check();
-    await scroll.evaluate((element) => (element.scrollTop = 400));
-    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBe(400);
-    await page.route("**/api/v1/photos/assets/query", (route) => route.abort(), { times: 1 });
-    await years.getByRole("button", { name: /^2025/ }).click();
-    await expect(page.locator(".photo-error")).toBeVisible();
-    await expect(heading).toHaveText("108 photos in 2026");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
-    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBe(400);
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await expect(heading).toHaveText("106 photos in 2025");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect(page.getByText("1 selected photo", { exact: true })).toHaveCount(0);
-    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBe(0);
-    await page.getByRole("button", { name: "December 2025", exact: false }).click();
-    await expect(heading).toHaveText("27 photos in December 2025");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
-    await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
+    const url = new URL(await run("web", "--no-browser"));
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    const rail = page.getByRole("navigation", { name: "Timeline" });
+    await expect(rail.getByRole("button", { name: /^2018, / })).toBeVisible();
+    expect(await page.locator('[data-month^="2018"]').count()).toBe(0);
+    await page.getByTestId("photo-scroll").evaluate((element) => (element.scrollTop = 2000));
+    // Hold the jump's first page so the wheel arrives while the jump is pending.
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => (holding = resolve));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let gated = false;
+    await page.route("**/api/v1/photos/assets/query", async (route) => {
+      const request = route.request().postDataJSON();
+      if (!gated && request.cursor && !request.facets?.length) {
+        gated = true;
+        holding();
+        await gate;
+      }
+      await route.continue();
+    });
+    const chosen = rail.locator(".rail-group.open .rail-year", { hasText: "2018" });
+    await rail.getByRole("button", { name: /^2018, / }).click();
+    await held;
+    // The chosen year opens at once, while the top photo's month stays marked.
+    await expect(chosen).toHaveCount(1);
+    await expect(rail.locator("[aria-current]")).toHaveCount(1);
+    // Wheeling the grid takes the scroll over, which ends the pending jump.
+    await page.getByTestId("photo-scroll").hover({ position: { x: 300, y: 300 } });
+    await page.mouse.wheel(0, 400);
+    await expect(chosen).toHaveCount(0);
+    release();
+    expect(await page.locator('[data-month^="2018"]').count()).toBe(0);
+    await rail.getByRole("button", { name: /^2018, / }).click();
+    await expect(page.locator('[data-month^="2018"]').first()).toBeInViewport({ timeout: 90_000 });
+    await expect(chosen).toHaveCount(1);
+    await expect(rail.locator(".rail-month.active")).toBeVisible();
+    await expect(page.locator(".toolbar-actions > span")).toHaveText("10,000 photos");
     for (const theme of ["light", "dark"]) {
-      await page.evaluate((value) => {
-        localStorage.setItem("docbank-theme", value);
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, theme);
+      await page.evaluate(
+        (value) => document.documentElement.classList.toggle("dark", value === "dark"),
+        theme,
+      );
       await page.screenshot({
         path: path.join(output!, `web-timeline-${theme}.png`),
-        clip: { x: 0, y: 0, width: 1440, height: 640 },
         animations: "disabled",
       });
     }
-    await page.getByRole("button", { name: /^2025-12-15 ·/ }).click();
-    await expect(heading).toHaveText("27 photos on 2025-12-15");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect(page.getByText(/10,000\s+photos in scope/)).toBeVisible();
-    await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
-    await expect
-      .poll(() => page.getByTestId("photo-scroll").locator("img").count())
-      .toBe(await page.locator("[data-asset]").count());
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate((value) => {
-        localStorage.setItem("docbank-theme", value);
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, theme);
-      await page.screenshot({
-        path: path.join(output!, `web-timeline-day-${theme}.png`),
-        clip: { x: 0, y: 0, width: 1440, height: 640 },
-        animations: "disabled",
-      });
+  });
+});
+
+test("closing a photo from the sidebar, then choosing a month, scrolls without filtering", async ({
+  page,
+}) => {
+  test.setTimeout(900_000);
+  await withPhotoFixture(10000, "timeline", async (run) => {
+    const url = new URL(await run("web", "--no-browser"));
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    const count = page.locator(".toolbar-actions > span");
+    const scroll = page.getByTestId("photo-scroll");
+    const sidebar = page.getByRole("navigation", { name: "Docbank navigation" });
+    // Below 640px the sidebar is a drawer.
+    const entry = async (scope: string) => {
+      if (page.viewportSize()!.width < 640)
+        await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+      await sidebar.getByRole("button", { name: new RegExp(`^${scope}`) }).click();
+    };
+    for (const [width, year] of [
+      [1440, "2019"],
+      [400, "2018"],
+    ] as const) {
+      await page.setViewportSize({ width, height: 960 });
+      // Library opens by Captured. Albums require choosing Captured before a date.
+      for (const scope of ["Library", "Paris walks"]) {
+        await entry(scope);
+        await expect(page.getByRole("heading", { name: scope, exact: true })).toBeVisible();
+        await expect(scroll.locator("img").first()).toBeVisible();
+        if (width < 640 && scope === "Library") {
+          await expectToolbarContained(page);
+        }
+        const total = await count.textContent();
+        const sort = page.getByRole("combobox", { name: /^Sort photos/ });
+        if (scope === "Paris walks") {
+          await expect(sort).toContainText("Added");
+          await expect(page.getByText("Sort by Captured, newest first.")).toBeVisible();
+          if (width >= 640) {
+            const rail = page.getByRole("navigation", { name: "Timeline" });
+            await expect(
+              rail.getByRole("button", { name: new RegExp(`^${year}, `) }),
+            ).toBeDisabled();
+          } else {
+            await expect(page.getByRole("combobox", { name: /^Jump to date/ })).toBeDisabled();
+          }
+          await page.evaluate(() => document.fonts.ready);
+          await page.screenshot({
+            path: path.join(output!, `web-timeline-album-added-${width}.png`),
+            animations: "disabled",
+          });
+          await sort.click();
+          await page.getByRole("option", { name: "Captured", exact: true }).click();
+          await expect(sort).toContainText("Captured");
+          await expect(page.getByText("Sort by Captured, newest first.")).toHaveCount(0);
+        }
+        await scroll.locator("[data-asset] .photo-image").first().dblclick();
+        await expect(page.getByRole("dialog", { name: /^Photo viewer/ })).toBeVisible();
+        await entry(scope);
+        await expect(page.getByRole("dialog", { name: /^Photo viewer/ })).toHaveCount(0);
+        if (width >= 640) {
+          const rail = page.getByRole("navigation", { name: "Timeline" });
+          await rail.getByRole("button", { name: new RegExp(`^${year}, `) }).click();
+          // The top photo's year stays open too, so pick a month of the chosen year.
+          await rail
+            .getByRole("button", { name: new RegExp(`^\\w+ ${year}, `) })
+            .first()
+            .click();
+        } else {
+          await page.getByRole("combobox", { name: /^Jump to date/ }).click();
+          await page.getByRole("option", { name: new RegExp(`^${year} · `) }).click();
+        }
+        await expect(page.locator(`[data-month^="${year}"]`).first()).toBeInViewport({
+          timeout: 120_000,
+        });
+        await expect(count).toHaveText(total!);
+        if (scope === "Paris walks") await expect(sort).toContainText("Captured");
+        await expect(scroll.locator("img").first()).toBeVisible();
+        await page.waitForLoadState("networkidle");
+        await page.evaluate(() => document.fonts.ready);
+        await page.screenshot({
+          path: path.join(
+            output!,
+            `web-timeline-sidebar-${scope === "Library" ? "library" : "album"}-${width}.png`,
+          ),
+          animations: "disabled",
+        });
+      }
     }
-    await years.getByRole("button", { name: /^2024/ }).click();
-    await page.getByRole("button", { name: "February 2024", exact: false }).click();
-    await expect(heading).toHaveText("27 photos in February 2024");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
-    await expect(heading).toHaveText("27 photos on 2024-02-29");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect(page.getByText(/10,000\s+photos in scope/)).toBeVisible();
-    await page.getByRole("button", { name: "Clear date", exact: true }).click();
-    await expect(heading).toHaveText("10,000 photos");
-    await page.getByRole("button", { name: "Grid", exact: true }).click();
-    const excludedID = await page.locator("[data-asset]").first().getAttribute("data-asset");
-    await run("photos", "assets", "exclude", excludedID!, "--revision", "1");
-    await page.getByRole("button", { name: "More photo actions" }).click();
-    await page.getByRole("menuitem", { name: "Refresh previews" }).click();
-    await expect(heading).toHaveText("9,999 photos");
-    await page.getByRole("button", { name: "Timeline", exact: true }).click();
-    await expect(page.getByText(/9,999\s+photos in scope/)).toBeVisible({ timeout: 35_000 });
-    await page.getByRole("button", { name: "Grid", exact: true }).click();
-    await run("photos", "assets", "exclude", excludedID!, "--revision", "2", "--excluded=false");
-    await page.getByRole("button", { name: "More photo actions" }).click();
-    await page.getByRole("menuitem", { name: "Refresh previews" }).click();
-    await expect(heading).toHaveText("10,000 photos");
-    await page.getByRole("button", { name: "Timeline", exact: true }).click();
-    await expect(page.getByText(/10,000\s+photos in scope/)).toBeVisible({ timeout: 35_000 });
-    await page
-      .getByRole("navigation", { name: "Timeline years" })
-      .getByRole("button", { name: /^2022/ })
-      .click();
-    await expect(heading).toHaveText("9,104 photos in 2022");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await page.getByRole("button", { name: "Load more", exact: true }).click();
-    await expect(heading).toHaveText("9,104 photos in 2022");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await page.getByRole("button", { name: "June 2022", exact: false }).click();
-    await expect(heading).toHaveText("9,000 photos in June 2022");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await page.getByRole("button", { name: "Load more", exact: true }).click();
-    await expect(heading).toHaveText("9,000 photos in June 2022");
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await page.getByRole("button", { name: /^2022-06-15 ·/ }).click();
-    await expect(page.getByText(/9,0\d\d photos on 2022-06-15/)).toBeVisible();
-    await page.getByRole("button", { name: "Load more", exact: true }).click();
-    await expect(page.getByText("500 loaded", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Clear date", exact: true }).click();
-    await expect(heading).toHaveText("10,000 photos");
+  });
+});
+
+test("a jump to the oldest year of 50,000 photos pages there and is timed", async ({ page }) => {
+  test.setTimeout(900_000);
+  await withPhotoFixture(50000, "timeline", async (run) => {
+    const url = new URL(await run("web", "--no-browser"));
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    const rail = page.getByRole("navigation", { name: "Timeline" });
+    await expect(rail.locator(".rail-year").last()).toBeVisible({ timeout: 60_000 });
+    const oldest = rail.locator(".rail-year").last();
+    const year = (await oldest.getAttribute("aria-label"))!.split(",")[0]!;
+    let requests = 0;
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/v1/photos/assets/query")) requests++;
+    });
+    const started = Date.now();
+    await oldest.click();
+    await expect(page.locator(`[data-month^="${year}"]`).first()).toBeInViewport({
+      timeout: 600_000,
+    });
+    const seconds = (Date.now() - started) / 1000;
+    console.log(`jump to ${year} of 50,000 photos: ${seconds.toFixed(1)}s, ${requests} pages`);
+    await expect(page.locator(".toolbar-actions > span")).toHaveText("50,000 photos");
   });
 });
 
@@ -468,15 +558,16 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
   const { run, seed, dispose } = photoFixture(workspace);
   const requests = new Map<string, number>();
   let listings = 0;
-  let loadedRows = new Set<string>();
+  const loadedAssets = new Set<string>();
+  let interrupted = false;
+  let retried = false;
   page.on("response", async (response) => {
     if (!response.url().endsWith("/photos/assets/query") || !response.ok()) return;
     const request = response.request().postDataJSON();
     if (request.facets?.length) return;
-    const body = await response.json().catch(() => undefined);
-    if (!body?.items) return;
-    if (!request.cursor) loadedRows = new Set();
-    for (const row of body.items) loadedRows.add(row.asset_id);
+    const body = await response.json();
+    if (!request.cursor) loadedAssets.clear();
+    for (const item of body.items ?? []) loadedAssets.add(item.asset_id);
   });
   page.on("request", (request) => {
     if (request.url().includes("/photos/assets/query")) listings++;
@@ -506,7 +597,8 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     let enteredTransition!: () => void;
     const transitionPending = new Promise<void>((resolve) => (enteredTransition = resolve));
     const transitionHold = new Promise<void>((resolve) => (releaseTransition = resolve));
-    await page.route("**/api/v1/photos/assets/query", async (route) => {
+    // Smaller pages make the transition check observable; later steps use the default size.
+    const smallPages = async (route: Route) => {
       const body = route.request().postDataJSON();
       if (body.facets?.length) {
         await route.continue();
@@ -526,12 +618,13 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         await transitionHold;
       }
       await route.fulfill({ response });
-    });
+    };
+    await page.route("**/api/v1/photos/assets/query", smallPages);
     await page.goto(webURL.href);
     await expect(page.getByText("10,000 photos", { exact: true })).toBeVisible();
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect.poll(() => loadedRows.size).toBe(100);
-    await expect(page.getByRole("navigation", { name: "Photo years" })).toHaveCount(0);
+    await expect(
+      page.getByRole("navigation", { name: "Timeline" }).getByRole("button", { name: /^2026, / }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Load more", exact: true }).click();
     await transitionPending;
     const transitionScroll = page.getByTestId("photo-scroll");
@@ -546,13 +639,18 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       )!;
       return { id: cell.dataset.asset!, offset: cell.getBoundingClientRect().top - top };
     });
+    const transitionHeight = await transitionScroll
+      .locator(".grid")
+      .evaluate((element) => element.getBoundingClientRect().height);
     releaseTransition();
-    await expect(page.getByText("10,000 photos", { exact: true })).toBeVisible();
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect.poll(() => loadedRows.size).toBe(200);
-    await expect(
-      page.getByRole("navigation", { name: "Photo years" }).getByRole("button"),
-    ).toHaveCount(2);
+    await expect
+      .poll(() =>
+        transitionScroll
+          .locator(".grid")
+          .evaluate((element) => element.getBoundingClientRect().height),
+      )
+      .toBeGreaterThan(transitionHeight);
+    await expect(page.getByText("Loading photos…", { exact: true })).toHaveCount(0);
     await page.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
     );
@@ -565,7 +663,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
             element.closest(".photo-scroll")!.getBoundingClientRect().top,
         ),
     ).toBeCloseTo(transitionAnchor.offset, 0);
-    await page.unroute("**/api/v1/photos/assets/query");
+    await page.unroute("**/api/v1/photos/assets/query", smallPages);
     await page.goto("about:blank");
     await page.goto(webURL.href);
     await expect(page.getByRole("main", { name: "Photo library" })).toBeVisible();
@@ -573,8 +671,8 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     const scroll = page.getByTestId("photo-scroll");
     await expect(scroll.locator("img").first()).toBeVisible();
     await expect(
-      page.getByRole("navigation", { name: "Photo years" }).getByRole("button"),
-    ).toHaveCount(3);
+      page.getByRole("navigation", { name: "Timeline" }).locator(".rail-year"),
+    ).toHaveCount(9);
     const firstAsset = await page.locator("[data-asset]").first().getAttribute("data-asset");
     await page.locator("[data-asset]").first().getByRole("button").first().click();
     await page.getByRole("combobox", { name: /^Group photos/ }).click();
@@ -594,10 +692,14 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         .getByRole("group", { name: "Camera facet" })
         .getByRole("button", { name: "Canon EOS R6, 5000 photos" }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await expect(page.locator(".photo-facets")).toHaveCount(0);
     for (let count = 0; count < 50; count++) {
-      if (loadedRows.size === 10000) break;
-      const loaded = loadedRows.size;
-      if (loaded === 1750 || loaded === 2750) {
+      await expect(page.getByText("Loading photos…", { exact: true })).toHaveCount(0);
+      if (loadedAssets.size === 10_000) break;
+      const loaded = loadedAssets.size;
+      const interrupting = !interrupted && loaded >= 1750;
+      if (interrupting || (!retried && loaded >= 2750)) {
         let release!: () => void;
         let entered!: () => void;
         const held = new Promise<void>((resolve) => (entered = resolve));
@@ -618,7 +720,8 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           },
           { times: 1 },
         );
-        if (loaded === 2750) {
+        if (!interrupting) {
+          retried = true;
           await page.route("**/api/v1/photos/assets/query", (route) => route.abort("failed"), {
             times: 1,
           });
@@ -638,25 +741,49 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           )!;
           return { id: cell.dataset.asset!, offset: cell.getBoundingClientRect().top - top };
         });
-        if (loaded === 1750) {
+        if (interrupting) {
+          interrupted = true;
           let resumePage!: () => void;
           let requested!: () => void;
+          let resumeContinuation!: () => void;
           const continued = new Promise<void>((resolve) => (resumePage = resolve));
           const pending = new Promise<void>((resolve) => (requested = resolve));
+          const restored = new Promise<void>((resolve) => (resumeContinuation = resolve));
+          const shownRows = new Set(loadedAssets);
+          const heldRoutes: Promise<void>[] = [];
           await page.route("**/api/v1/photos/assets/query", async (route) => {
-            if (!route.request().postDataJSON().facets?.length) {
+            const body = route.request().postDataJSON();
+            if (body.facets?.length) {
               await route.continue();
               return;
             }
-            requested();
-            await continued;
-            await route.continue();
+            if (!body.cursor) {
+              requested();
+              await continued;
+            }
+            const url = new URL(route.request().url());
+            const host = url.host;
+            url.hostname = "127.0.0.1";
+            const response = await route.fetch({
+              url: url.href,
+              headers: { ...(await route.request().allHeaders()), host },
+            });
+            // The restored grid can request the interrupted page before its anchor is checked.
+            const { items } = (await response.json()) as { items: { asset_id: string }[] };
+            if (items.some((row) => !shownRows.has(row.asset_id))) {
+              const handled = restored.then(() => route.fulfill({ response }));
+              heldRoutes.push(handled);
+              return handled;
+            }
+            await route.fulfill({ response });
           });
           await page.getByRole("button", { name: "Documents", exact: true }).click();
           release();
           await page.getByRole("button", { name: "Photos", exact: true }).click();
           await pending;
-          await expect.poll(() => loadedRows.size).toBe(loaded);
+          await expect(page.getByTestId("photo-scroll")).toHaveCount(0);
+          resumePage();
+          await expect(page.getByTestId("photo-scroll")).toBeVisible();
           await expect
             .poll(() =>
               page
@@ -671,11 +798,15 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           await expect
             .poll(() => scroll.locator("img").count())
             .toBe(await page.locator("[data-asset]").count());
-          resumePage();
+          resumeContinuation();
+          // Removing the last route resumes paused requests, so finish the held ones first.
+          await Promise.all(heldRoutes);
           await page.unroute("**/api/v1/photos/assets/query");
         }
         release();
-        await expect(page.locator(".photo-pill")).toHaveCount(0);
+        await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+        await expect(page.getByRole("menuitem", { name: "Refresh previews" })).toBeEnabled();
+        await page.keyboard.press("Escape");
         const offset = await page
           .locator(`[data-asset="${anchor.id}"]`)
           .evaluate(
@@ -687,9 +818,12 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         const settled = listings;
         await page.waitForTimeout(300);
         expect(listings).toBe(settled);
+        if (interrupting) await requestNext();
       } else await requestNext();
-      await expect.poll(() => loadedRows.size).not.toBe(loaded);
-      await expect(page.locator(".photo-pill")).toHaveCount(0);
+      await expect.poll(() => loadedAssets.size).toBeGreaterThan(loaded);
+      await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+      await expect(page.getByRole("menuitem", { name: "Refresh previews" })).toBeEnabled();
+      await page.keyboard.press("Escape");
       expect(await page.locator("[data-asset]").count()).toBeLessThan(200);
       expect(
         await page.evaluate(
@@ -697,31 +831,28 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         ),
       ).toBeLessThan(200);
     }
-    await expect(page.getByText("10,000 photos", { exact: true })).toBeVisible();
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
-    await expect.poll(() => loadedRows.size).toBe(10000);
+    expect(interrupted, "workspace interruption ran after loading at least 1,750 photos").toBe(
+      true,
+    );
+    expect(retried, "failed-page retry ran after loading at least 2,750 photos").toBe(true);
+    expect(loadedAssets.size).toBe(10_000);
+    await expect(page.getByText("10,000 photos")).toBeVisible();
     await page.waitForLoadState("networkidle");
     await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
     await expect(
-      page
-        .getByRole("navigation", { name: "Photo years" })
-        .getByRole("button", { name: "2022", exact: true }),
+      page.getByRole("navigation", { name: "Timeline" }).getByRole("button", { name: /^2022, / }),
     ).toBeVisible();
     await page.getByRole("combobox", { name: /^Group photos/ }).click();
     await page.getByRole("option", { name: "Months", exact: true }).click();
     await scroll.evaluate((element) => (element.scrollTop = element.scrollHeight));
-    const last = page.locator("[data-asset]").last().getByRole("button").first();
-    await last.click({ modifiers: ["Shift"] });
-    await expect
-      .poll(async () =>
-        Number((await page.locator(".selection-summary strong").innerText()).split(" ")[0]),
-      )
-      .toBeGreaterThan(9000);
+    await expect(page.locator(".selection-summary strong")).not.toContainText("All ");
+    await page.getByRole("button", { name: "Select loaded photos", exact: true }).click();
+    await expect(page.locator(".selection-summary strong")).toHaveText("10000 selected photos");
     await expect(page.getByRole("button", { name: "Clear selection", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await page
-      .getByRole("navigation", { name: "Photo years" })
-      .getByRole("button", { name: "2024", exact: true })
+      .getByRole("navigation", { name: "Timeline" })
+      .getByRole("button", { name: /^2024, / })
       .click();
     await expect
       .poll(() =>
@@ -769,13 +900,15 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       },
       { times: 1 },
     );
-    await page.getByRole("button", { name: "More photo actions" }).click();
+    await page.getByRole("button", { name: "More photo actions", exact: true }).click();
     await page.getByRole("menuitem", { name: "Refresh previews" }).click();
     await delayed;
     await page
-      .getByRole("navigation", { name: "Photo years" })
-      .getByRole("button", { name: "2022", exact: true })
+      .getByRole("navigation", { name: "Timeline" })
+      .getByRole("button", { name: /^2022, / })
       .click();
+    expect(await scroll.evaluate((element) => element.scrollTop)).toBeCloseTo(position, 0);
+    release();
     await expect
       .poll(() =>
         scroll.evaluate(
@@ -790,8 +923,11 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       .toContain("2022");
     const latestPosition = await scroll.evaluate((element) => element.scrollTop);
     expect(latestPosition).not.toBe(position);
-    release();
-    await expect(page.locator(".photo-pill")).toHaveCount(0);
+    await page.getByRole("button", { name: "More photo actions", exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Refresh previews" })).toBeEnabled({
+      timeout: 60_000,
+    });
+    await page.keyboard.press("Escape");
     expect(await scroll.evaluate((element) => element.scrollTop)).toBeCloseTo(latestPosition, 0);
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await scroll.evaluate((element) => (element.scrollTop = 0));
@@ -822,15 +958,27 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await page.getByRole("combobox", { name: /^Grid density/ }).click();
     await page.getByRole("option", { name: "Compact", exact: true }).click();
     await page
-      .getByRole("navigation", { name: "Photo years" })
-      .getByRole("button", { name: "2024", exact: true })
+      .getByRole("navigation", { name: "Timeline" })
+      .getByRole("button", { name: /^2024, / })
       .click();
     for (const width of [1440, 400]) {
       await page.setViewportSize({ width, height: 960 });
-      await page
-        .getByRole("navigation", { name: "Photo years" })
-        .getByRole("button", { name: "2024", exact: true })
-        .click();
+      if (width >= 640)
+        await page
+          .getByRole("navigation", { name: "Timeline" })
+          .getByRole("button", { name: /^2024, / })
+          .click();
+      else {
+        await expect(page.getByRole("navigation", { name: "Timeline" })).toBeHidden();
+        await page.getByRole("combobox", { name: /^Jump to date/ }).click();
+        await page.getByRole("option", { name: /^2022 · / }).click();
+        await expect(page.locator('[data-month^="2022"]').first()).toBeInViewport({
+          timeout: 90_000,
+        });
+        await expect(
+          page.getByRole("combobox", { name: /^Jump to date: \w+ 2022$/ }),
+        ).toBeVisible();
+      }
       await page.waitForLoadState("networkidle");
       for (const theme of ["light", "dark"]) {
         await page.evaluate((value) => {
@@ -852,8 +1000,8 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await expect(page.getByRole("combobox", { name: /^Grid density/ })).toContainText("Compact");
     await expect(scroll.locator("img").first()).toBeVisible();
     await expect(
-      page.getByRole("navigation", { name: "Photo years" }).getByRole("button"),
-    ).toHaveCount(3);
+      page.getByRole("navigation", { name: "Timeline" }).locator(".rail-year"),
+    ).toHaveCount(9);
     for (const width of [1440, 400]) {
       await page.setViewportSize({ width, height: 960 });
       await page.waitForLoadState("networkidle");
@@ -891,7 +1039,6 @@ test("photo loupe keeps painted geometry and crop through delayed resolution upg
     ...process.env,
     DOCBANK_HOME: path.join(workspace, "vault"),
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
-    DOCBANK_TELEMETRY_ENABLED: "0",
   };
   const run = async (...args: string[]) =>
     (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
@@ -1109,7 +1256,6 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     ...process.env,
     DOCBANK_HOME: vault,
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
-    DOCBANK_TELEMETRY_ENABLED: "0",
   };
   const run = async (...args: string[]) =>
     (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
@@ -1146,7 +1292,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     assetID = (await opening.getAttribute("data-asset"))!;
     const firstLoadedID = assetID;
     const button = scroll.locator(`[data-asset="${assetID}"] .photo-image`);
-    const separate = scroll.locator("[data-asset]").nth(1);
+    const separate = scroll.locator(`[data-asset]:not([data-asset="${assetID}"])`).first();
     const separateID = (await separate.getAttribute("data-asset"))!;
     await separate.getByRole("checkbox").click();
     await button.dblclick();
@@ -1183,6 +1329,9 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await expect(button).toBeFocused();
     await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
     await scroll.evaluate((element) => (element.scrollTop = 1200));
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     const forwardID = await scroll.evaluate(
       (element) =>
         [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
@@ -1212,6 +1361,9 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await page.keyboard.press("Escape");
     await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
     await scroll.evaluate((element) => (element.scrollTop = 400));
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     const aID = await scroll.evaluate(
       (element) =>
         [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
@@ -1245,6 +1397,9 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
       .poll(() => scroll.evaluate((element) => element.scrollTop))
       .toBeCloseTo(aPosition, 0);
     await scroll.evaluate((element) => (element.scrollTop = 1200));
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     const cID = await scroll.evaluate(
       (element) =>
         [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
@@ -2054,7 +2209,7 @@ test("compact photo actions wrap with full labels and normal gaps", async ({ pag
   });
 });
 
-test("photo layout keeps search and actions above Library and preserves Timeline", async ({
+test("photo layout keeps search and actions above Library with date navigation", async ({
   page,
 }) => {
   test.setTimeout(300_000);
@@ -2064,6 +2219,11 @@ test("photo layout keeps search and actions above Library and preserves Timeline
     url.pathname = "/photos";
     await page.goto(url.href);
     const capture = async (name: string) => {
+      await expect(page.getByText("Loading preview", { exact: true })).toHaveCount(0, {
+        timeout: 60_000,
+      });
+      await expect(page.locator(".photo-cell img").first()).toBeVisible();
+      await page.waitForLoadState("networkidle");
       await expect(page.locator(".photo-facets .photo-loading")).toHaveCount(0);
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
@@ -2133,6 +2293,10 @@ test("photo layout keeps search and actions above Library and preserves Timeline
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
     await expect(page.getByRole("searchbox", { name: "Search photos" })).toBeVisible();
     await expect(page.locator(".photo-facets")).toHaveCount(0);
+    const rail = page.getByRole("navigation", { name: "Timeline" });
+    await rail.getByRole("button", { name: /^2024, / }).click();
+    await expect(rail.locator(".rail-group.open .rail-year")).toContainText("2024");
+    await expect(rail.locator(".rail-foot")).toContainText("undated");
     await expectStackAlignment();
     await capture("library-1440");
     await page.setViewportSize({ width: 320, height: 800 });
@@ -2173,7 +2337,10 @@ test("photo layout keeps search and actions above Library and preserves Timeline
       )
       .toBe(true);
     await expectCompactActions();
-    await expect(page.getByRole("button", { name: "Timeline", exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: /^Jump to date/ }).click();
+    await expect(page.getByRole("option", { name: /undated/ })).toBeDisabled();
+    await capture("jump-open-400");
+    await page.keyboard.press("Escape");
     await expect(page.getByRole("combobox", { name: /^Group photos/ })).toHaveCount(0);
     await capture("library-400");
     await page.getByRole("button", { name: "More photo actions" }).click();
@@ -2186,11 +2353,9 @@ test("photo layout keeps search and actions above Library and preserves Timeline
     await page.keyboard.press("Escape");
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Filters", exact: true }).click();
-    await expect(page.locator(".photo-facets")).toHaveCSS("width", "230px");
     await capture("filters-1440");
     await page.setViewportSize({ width: 400, height: 800 });
     await expectCompactActions();
-    await expect(page.locator(".photo-facets")).toHaveCSS("max-height", "180px");
     await capture("filters-400");
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Filters", exact: true }).click();
@@ -2206,6 +2371,13 @@ test("photo layout keeps search and actions above Library and preserves Timeline
     await expect(page.getByRole("heading", { name: "Paris walks", exact: true })).toBeVisible();
     await expect(page.getByRole("searchbox", { name: "Search photos" })).toHaveCount(0);
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
+    await expect(page.getByRole("combobox", { name: /^Sort photos/ })).toContainText("Added");
+    await expect(rail.getByRole("button", { name: /^2024, / })).toBeDisabled();
+    await page.getByRole("combobox", { name: /^Sort photos/ }).click();
+    await page.getByRole("option", { name: "Captured", exact: true }).click();
+    await rail.getByRole("button", { name: /^2024, / }).click();
+    await expect(page.getByRole("combobox", { name: /^Sort photos/ })).toContainText("Captured");
+    await expect(page.locator('[data-month^="2024"]').first()).toBeInViewport();
     await capture("album-1440");
     await page.setViewportSize({ width: 400, height: 800 });
     await expectCompactActions();
@@ -2213,55 +2385,14 @@ test("photo layout keeps search and actions above Library and preserves Timeline
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Library", exact: true }).click();
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
-    await page.getByRole("button", { name: "Timeline", exact: true }).click();
-    await expect(page.getByRole("navigation", { name: "Timeline years" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Photo timeline" })).toBeVisible();
+    await expect(rail.locator(".rail-year").first()).toBeVisible();
     await capture("timeline-1440");
     await page.setViewportSize({ width: 400, height: 800 });
-    await page
-      .getByRole("navigation", { name: "Timeline years" })
-      .getByRole("button", { name: /^2025/ })
-      .click();
-    await page.getByRole("button", { name: /^December 2025/ }).click();
-    await expect(bar.locator(".toolbar-actions > span")).toHaveText("27 photos in December 2025");
+    await page.getByRole("combobox", { name: /^Jump to date/ }).click();
+    await page.getByRole("option", { name: /^Dec 2025 ·/ }).click();
+    await expect(page.getByRole("combobox", { name: "Jump to date: Dec 2025" })).toBeVisible();
+    await expect(bar.locator(".toolbar-actions > span")).toHaveText("10,000 photos");
     await expectCompactActions();
     await capture("library-month-400");
-    await page.getByRole("button", { name: /^2025-12-15 ·/ }).click();
-    await expect(bar.locator(".toolbar-actions > span")).toHaveText("27 photos on 2025-12-15");
-    await expectCompactActions();
-    await capture("library-day-400");
-    await page.setViewportSize({ width: 320, height: 800 });
-    expect(
-      await count.evaluate((element) => {
-        const value = element.querySelector(".photo-count-value")!;
-        const range = document.createRange();
-        range.selectNodeContents(value);
-        const text = range.getBoundingClientRect();
-        const bounds = value.getBoundingClientRect();
-        const date = element.querySelector(".photo-count-date")!;
-        return (
-          bounds.width >= text.width &&
-          bounds.right <= innerWidth &&
-          date.getBoundingClientRect().right <= innerWidth
-        );
-      }),
-    ).toBe(true);
-    await capture("library-day-320");
-    await page.setViewportSize({ width: 400, height: 800 });
-    await page.getByRole("button", { name: "Filters", exact: true }).click();
-    await expectCompactActions();
-    await capture("library-day-filters-400");
-    await page.setViewportSize({ width: 1440, height: 960 });
-    expect(
-      await count.evaluate((element) => {
-        const value = element.querySelector(".photo-count-value")!.getBoundingClientRect();
-        const date = element.querySelector(".photo-count-date")!.firstChild!;
-        const word = document.createRange();
-        word.setStart(date, 1);
-        word.setEnd(date, 3);
-        return word.getBoundingClientRect().left > value.right + 2;
-      }),
-    ).toBe(true);
-    await capture("library-day-filters-1440");
   });
 });

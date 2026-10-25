@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-23
 ---
 
 # Documentation screenshots
@@ -26,8 +26,12 @@ make docs-screenshots
 
 The command builds the frontend and Docbank binary in `bin/`, seeds owner-private
 synthetic vaults, captures the real interfaces, stops its daemons, and removes
-the vaults. `DOCBANK_TELEMETRY_ENABLED=0` disables telemetry for every spec.
-Do not run another build while a capture is using the binary or embedded assets.
+the vaults. Do not run another build while a capture is using the binary or
+embedded assets.
+
+Before adding a published image, check it against
+[Does this page need a screenshot?](../../docs/README.md#does-this-page-need-a-screenshot)
+and the requirements that follow it.
 
 ## Review and publish the complete set
 
@@ -84,6 +88,8 @@ The album proof uses `DOCBANK_ALBUMS_SCREENSHOT_DIR` to check adding photos by a
 `photo-search.screenshot.ts` uses the same output variable and synthetic fixture
 to check ranked search, whole-library counts, continuation and rows before counts.
 Run either photo spec with the Playwright command above and its filename.
+
+`photo-tabs.screenshot.ts` opens two photo tabs on one daemon, edits a caption in one, and checks that the other updates through a single shared event stream. Run it with `make photo-tabs-browser-test`.
 
 | Variable                        | Photo proof behavior                                                              |
 | ------------------------------- | --------------------------------------------------------------------------------- |

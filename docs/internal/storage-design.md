@@ -471,20 +471,89 @@ Matching still requires a live file, a compatible photo role, and unsuperseded
 provenance. Matching edited files become new content versions on their existing nodes. A node shared with another active source path keeps its content;
 an edit from one path becomes a separate file.
 
+While a live photo stream is open, the writer connection carries temp triggers
+on every real table in the main schema except the ones `photoUnwatchedTables`
+lists. A trigger only records that something changed, in a one-row temp table, and
+a commit that left a row there signals every stream once. Photo imports pay for
+the triggers, and so do writes that touch no photo. The last subscriber removes
+them. Run `BenchmarkPhotoImportMetadata` (its `subscriber=true` cases) and
+`BenchmarkNonPhotoIngest` with `-benchtime=3x`, with and without CGo, for current
+figures.
+
+The first write after a subscriber arrives also installs the triggers. The
+benchmarks subscribe and run one empty write before the timer starts, so the
+figures below are steady-state: they leave out the one-time install. With no
+subscriber the first write drops the triggers and imports run at the unsubscribed
+speed.
+
+Steady-state figures at `-benchtime=3x` on an AMD EPYC 7763, in milliseconds per
+file. An import batch is 32 files, and the existing count is the photos already in
+the catalog.
+
+| Case | CGo, no subscriber | CGo, one subscriber | Pure Go, no subscriber | Pure Go, one subscriber |
+| --- | --- | --- | --- | --- |
+| Import new photos, 100 existing | 1.31 | 1.47 | 7.13 | 8.18 |
+| Import edited photos, 100 existing | 1.18 | 1.44 | 5.29 | 6.01 |
+| Import new photos, 10,000 existing | 1.59 | 1.79 | 7.29 | 8.80 |
+| Import edited photos, 10,000 existing | 1.31 | 1.43 | 5.07 | 6.30 |
+| Ingest 1,000 documents | 0.48 | 0.53 | 3.50 | 4.14 |
+
+Live refresh rereads the complete loaded prefix because a change can insert,
+remove, or reorder photos anywhere in it. Library uses 250-photo pages, so a
+loaded prefix of N photos takes at most max(1, ceil(N / 250)) list requests per
+pass. Map uses 1,000-photo pages and caps its prefix at 20,000 photos. Each tab
+runs one pass at a time; changes during a pass queue one further pass. The next
+pass waits at least one second or twice the previous pass's duration, whichever
+is longer. Each pass and its required rest spend at most one third of their
+combined time refreshing, including the other workspace reads in the pass.
+
+Events carry no photo, so every pass rereads what the tab shows: loaded lists,
+the open photo, Compare's destination, a completed Cull's regrouped stacks and
+unflagged remainder, the keyword and saved-query definitions, and the metadata
+editor's targets and stack. A pass waits while the tab has a write in flight.
+The API transport counts requests other than GET and HEAD from the call until
+the caller has the answer, which for JSON writes is after the body is read, and
+skips POSTs that only read, such as the photo list query, so scrolling never
+defers a pass. A deferred pass runs again after the
+usual spacing.
+
+Reproduce the browser measurement with
+`DOCBANK_PHOTO_IMPORT_MEASURE=1 make photo-tabs-browser-test`; it writes
+`bin/photo-tabs-proof/photo-import-refresh.json` unless the capture directory is
+overridden. The probe imports 10,000 synthetic camera files beside 1,000 seeded
+photos in one Chromium tab. The incoming files have 2020 modified times, before
+the seeded photos' 2022 capture times, so the loaded prefix stays at 1,000 rows.
+The probe measures the list request chain, excluding the pass's other workspace
+reads and image decoding.
+
+The scheduler bounds concurrent work and the rest between passes. Total
+transfer still grows with the loaded prefix and the number of passes. Keep
+full-prefix refresh: this append-only fixture doesn't establish a safe shortcut
+for changes that reorder the prefix.
+
+Triggers cover every real main-schema table except those that no Photos read
+touches: job queues and attempt logs, leases, and `storage_operations*`. The rule
+is what Photos reads, not who writes: a document build that moves search or
+duplicate state still signals. A table nobody has listed signals too, so a missed
+table costs one extra refresh instead of a stale view. `rendition_jobs` signals
+on every write, including a claim heartbeat, because its update time ranks
+coverage results. A test checks that every unwatched table exists in the schema.
+
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited
 display in one transaction, including excluded and empty assets, while asset
 overrides remain unchanged. Human graph, display, exclusion, and preference
-changes append bounded immutable `photo_change_receipts` rows. No-op mutations
-keep their revision and append no receipt.
+changes append bounded immutable `photo_change_receipts` rows. XMP sync replaces
+the current `xmp_sync` row for each original. No-op mutations keep their revision
+and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 41 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 40 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 40 with this binary; opening them fails the schema check. Released JSONL v1 backups through v0.15.2 restore through the logical metadata contract. Copy media through the supported backup and restore flow.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 43 uses the existing deterministic JSONL rebuild for supported released schemas, including schema 41 from v0.16.0, and retains the source database. Schemas 30 through 33, 35 through 40, and 42 remain unsupported, unreleased sources. Recreate development vaults from those schemas with this binary; opening them fails the schema check. Released JSONL v1 backups through v0.16.0 restore through the logical metadata contract. Copy media through the supported backup and restore flow.
 
-The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
+The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. On a first encounter, XMP sync confirms only non-default sidecar values. Once a retained packet exists, removing a previously present property imports a confirmed clear. Undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
-Schema version 41 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
+Schema version 42 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.
@@ -493,6 +562,17 @@ Released photo files retain their graph and gain revision 1 with empty authored 
 `photo_sets` owns album UUID, name, star, revision, optional member cover, and timestamps. `photo_set_members` owns each asset's added date. Membership survives exclusion, trash, detach, and purge. Empty assets retain album choices and added dates; counts, browsing, and effective covers skip them until a file is attached again. Only explicit album operations change album revisions and receipts. Deleting an album clears membership and cover but retains its identity and deletion timestamp for receipt references. Album decisions use the existing logical transaction and audit refusal. Query selection reuses the photo browse compiler, coverage binding, and complete matching population inside that transaction. All changed IDs are recorded in chunks of 256 in `photo_change_receipts` with optional `set_id`; every chunk shares one revision transition. Restore validates structural references, member covers, and deleted-album emptiness. Older album receipts can omit `set_id`.
 
 Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs from Library photo-asset runs. Predecessor comparisons stay within the same mode. Older JSONL run rows default to Documents; photo runs serialize `photos: true`.
+
+XMP sync uses schema 42 and metadata JSONL format 2. Background sync imports linked-sidecar decisions and writes changed catalog decisions without a separate enable step. Each original has one current `xmp_sync` receipt with its status, typed conflicts, and last outside values and settled catalog comparisons. Changed outcomes replace that receipt transactionally; identical retries retain its identity and creation time. Conflicts and refusals retain those comparisons and the exact conflicting values. Import Undo stays in the authored-edit receipt. Sync receipts use a partial index on their stable original file ID. XMP sync and import receipts retain the 1-MiB bound; other authored receipts allow 2 MiB for stack decisions.
+
+- Histories: `Outside` retains supported outside values, their digest, version, composition orientation, and the catalog decisions settled against each property. Unreadable properties keep their last known values; a first unreadable value remains unknown. The last Docbank-written version ID identifies managed packets without storing a second packet. The last published catalog values and confirmation bits detect edits to ignored XML. A separate removal snapshot retains decisions and keywords without replacing successful ancestry.
+- Lineage: each sync compares every outside source's changed head, in observation order, with that source's `Outside` packet, then the current version, when Docbank wrote or committed it, with the settled packet. A source with no packet of its own is a first encounter, even over Docbank's sidecar. A head or the current version interprets rotation against its own ancestor's retained catalog values and source orientation. An omitted rotation property clears only when its ancestor contained that property. Each head advances its own `Outside` entry. A conflict records its source in the receipt, and a choice applies only to that source's version. An outside reversion counts as a change even when its bytes were accepted earlier.
+- Merge: each scalar and the whole `dc:subject` keyword set compares incoming outside values and catalog decisions with its retained comparisons. Divergent keyword sets require one choice for the entire set. A conflict stays open until values agree or a person chooses. Convergence and explicit choices advance the catalog comparison; unrelated edits leave it alone. Rejecting outside rating 4 in favor of catalog 5 retains outside 4 and comparison 5. Any conflict holds the entire packet.
+- Freshness: a flattenable SQL view owns eligibility, extraction readiness, token construction, and pending comparison. The derived `photo_xmp_unsettled` queue narrows candidates by asset and carries no sync authority. Workers, `xmp:pending`, and Inspector compare one live input token with the latest receipt. The token includes file, node, and asset revisions, paired sidecar versions and trash state, extraction readiness and source orientation, audit coverage, and sidecar-name occupancy. Publication rechecks it and the receipt UUID inside the transaction, then saves the final token. `xmp:conflict` includes retained choices during refusals. Hidden photos remain eligible for background work.
+- Publication: imported fields and tags, provenance, sidecar content, undo, and the sync receipt commit together. A receipt overflow rolls the entire transaction back before recording a guarded Invalid outcome. Missing bytes retain Pending and use the backfill retry policy. Malformed, unmergeable, or oversized packets retain the last successful histories. XML character validation names the field and character that must change.
+- Pairing: filename and extension claims must agree with the attached original. Ambiguous or conflicting claims refuse sync. A changed supported decision creates `<original-name>.xmp` when no sidecar exists. Trash and detach capture decisions and keywords in the removal transaction. Recreation stays suppressed while that snapshot matches, including after a rename. Decision or keyword changes, including clears, permit recreation. Restoring the sidecar resumes its successful ancestry.
+- Rescans: accepted source copies preserve the current completed Docbank output and bind provenance to the version with those bytes. Pruning retains the newest bound version for each live outside source path on the sidecar, independently of an original’s sync receipt. New observations replace each path’s retained version; purging the sidecar releases it. Changed bytes replace a current outside version, including a reversion to previously accepted bytes.
+- Restore and purge: format 2 exports and validates the current receipt, outside values, catalog comparisons, and authored Undo reference. Purging an original removes its sync receipt; purging only a sidecar retains the surviving original’s receipt and suppression baseline. The former initialization cache has no authority and is absent from the current schema and canonical table list. Source extraction retains its own generations and heads.
 
 Schema 38 also adds `photo_authored_fts`, which indexes captions, creator, and copyright from `photo_files` in separate columns so phrases stay within a field. It is derived, rebuilt on restore, and excluded from metadata backup.
 
@@ -565,6 +645,16 @@ Burst grouping partitions photos by the timeline `folder_key` and the displayed 
 ### Photo quality signals
 
 Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
+
+### Photo suggestions
+
+Schema 43 adds `photo_suggestions`, one row per content version and producer fingerprint. A row holds the pending caption, tags, and visible text, the dismissed flag, the accepted-caption flag and accepted tags, and an `awaiting` flag for a restored row that regenerates. Pending text lives only in the database. Metadata JSONL carries the `photo_suggestion` record with the decisions and `awaiting`, never the text.
+
+`photo_suggestion_fts` indexes pending text by the row's `id`, with tags joined by a private-use token so a phrase cannot span two tags. `tag_fts` indexes tag names by the tag's rowid, so a photo matches text search through any tag assigned to it. Triggers keep both current, including during restore, and both stay out of metadata backup.
+
+`photo_description_explicit_waiters` marks the waiters an explicit start created. Publication reads it to decide whether a shared description job may replace another producer's dismissal. It records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
+
+`visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical

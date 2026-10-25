@@ -53,8 +53,8 @@
     onloadtags?: () => Promise<void>;
     onloadmoretags?: () => Promise<void>;
     onmetadatachanged?: (
-      receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
-      tags: import("./generated/docbank.js").Tag[],
+      receipt?: import("./generated/docbank.js").PhotoAuthoredReceipt,
+      tags?: import("./generated/docbank.js").Tag[],
     ) => void;
     undoState?: PhotoUndoState;
     onhelp?: () => void;
@@ -83,9 +83,9 @@
   export function captureReturn() {
     photoWorkspace?.captureReturn();
   }
-  export async function refresh() {
-    if (workspaceVisible) await photoWorkspace?.refresh();
-    else await checkAccess();
+  export async function refresh(live = false) {
+    if (workspaceVisible) await photoWorkspace?.refresh(live);
+    else if (!live) await checkAccess();
   }
   export function lock() {
     return action("lock");

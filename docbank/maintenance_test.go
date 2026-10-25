@@ -25,6 +25,7 @@ import (
 )
 
 func TestGarbageCollectBudgetResumesEveryCandidateExactlyOnce(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -59,6 +60,7 @@ func TestGarbageCollectBudgetResumesEveryCandidateExactlyOnce(t *testing.T) {
 }
 
 func TestGarbageCollectRemovesZeroByteLooseBlob(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	created, err := vault.Put(t.Context(), "/empty", strings.NewReader(""), PutOptions{})
 	require.NoError(t, err)
@@ -73,6 +75,7 @@ func TestGarbageCollectRemovesZeroByteLooseBlob(t *testing.T) {
 }
 
 func TestGarbageCollectMissingLooseFileDoesNotCountPhysicalReclamation(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	created, err := vault.Put(t.Context(), "/missing", strings.NewReader("missing"), PutOptions{})
 	require.NoError(t, err)
@@ -89,6 +92,7 @@ func TestGarbageCollectMissingLooseFileDoesNotCountPhysicalReclamation(t *testin
 }
 
 func TestGarbageCollectKeepsLooseBytesWhenLogicalDeletionFails(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	created, err := vault.Put(t.Context(), "/blocked", strings.NewReader("blocked"), PutOptions{})
 	require.NoError(t, err)
@@ -119,6 +123,7 @@ func TestGarbageCollectKeepsLooseBytesWhenLogicalDeletionFails(t *testing.T) {
 }
 
 func TestGarbageCollectRetriesDurablyRecordedLooseRetirement(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	created, err := vault.Put(
 		t.Context(), "/retry.txt", strings.NewReader("durable gc retry"), PutOptions{},
@@ -154,6 +159,7 @@ func TestGarbageCollectRetriesDurablyRecordedLooseRetirement(t *testing.T) {
 }
 
 func TestGarbageCollectAdvancesAcrossLiveOnlyScanWindow(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -197,6 +203,7 @@ func TestGarbageCollectAdvancesAcrossLiveOnlyScanWindow(t *testing.T) {
 }
 
 func TestGarbageCollectDryRunPreservesRowsAndLooseFiles(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -223,6 +230,7 @@ func TestGarbageCollectDryRunPreservesRowsAndLooseFiles(t *testing.T) {
 }
 
 func TestGarbageCollectRetiresSecondaryLooseAuthority(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	root := t.TempDir()
 	secondaryRoot := t.TempDir()
@@ -289,6 +297,7 @@ func TestGarbageCollectRetiresSecondaryLooseAuthority(t *testing.T) {
 }
 
 func TestGarbageCollectPreservesCatalogWhenSecondaryCleanupIsUnavailable(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	ctx := t.Context()
 	secondary, err := vault.metadata.PrepareSecondaryBlobStore(
@@ -321,6 +330,7 @@ func TestGarbageCollectPreservesCatalogWhenSecondaryCleanupIsUnavailable(t *test
 }
 
 func TestGarbageCollectDoesNotScaleWithSingleShardPhysicalOrphans(t *testing.T) {
+	t.Parallel()
 	var reports []GCReport
 	for _, count := range []int{3, 500} {
 		vault := newMaintenanceVault(t, nil)
@@ -343,6 +353,7 @@ func TestGarbageCollectDoesNotScaleWithSingleShardPhysicalOrphans(t *testing.T) 
 }
 
 func TestVerifyBudgetResumesEveryCandidateExactlyOnce(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -380,6 +391,7 @@ func TestVerifyBudgetResumesEveryCandidateExactlyOnce(t *testing.T) {
 }
 
 func TestVerifyCursorResumesPastMalformedStoredHash(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -426,6 +438,7 @@ func TestVerifyCursorResumesPastMalformedStoredHash(t *testing.T) {
 }
 
 func TestVerifyCursorDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -462,6 +475,7 @@ func TestVerifyCursorDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
 }
 
 func TestVerifyDoesNotScaleWithUnrelatedMetadata(t *testing.T) {
+	t.Parallel()
 	baseline := newMaintenanceVault(t, nil)
 	_, err := baseline.Put(t.Context(), "/baseline", strings.NewReader("shared"), PutOptions{})
 	require.NoError(t, err)
@@ -491,6 +505,7 @@ func TestVerifyDoesNotScaleWithUnrelatedMetadata(t *testing.T) {
 }
 
 func TestMaintenanceDefaultObjectAndSoftByteBudgetsAreFinite(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	putMaintenanceFiles(t, vault, DefaultMaintenanceMaxObjects+1)
 
@@ -508,6 +523,7 @@ func TestMaintenanceDefaultObjectAndSoftByteBudgetsAreFinite(t *testing.T) {
 }
 
 func TestMaintenanceCursorIsOpaqueAndOperationBound(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	created := putMaintenanceFiles(t, vault, 2)
 	trashMaintenanceFiles(t, vault, created)
@@ -556,6 +572,7 @@ func TestMaintenanceCursorIsOpaqueAndOperationBound(t *testing.T) {
 }
 
 func TestPackReportsIndexedLooseBacklog(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	putMaintenanceFiles(t, vault, 2)
 
@@ -572,6 +589,7 @@ func TestPackReportsIndexedLooseBacklog(t *testing.T) {
 }
 
 func TestRepackPreservesRawByteBudgetResumeAndCancellation(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	var dead []PutReceipt
 	for batch := range 2 {
@@ -610,6 +628,7 @@ func TestRepackPreservesRawByteBudgetResumeAndCancellation(t *testing.T) {
 }
 
 func TestRepackBoundsDeadPackRetirementWithoutCursor(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	createDeadMaintenancePacks(t, vault, 3)
 
@@ -634,6 +653,7 @@ func TestRepackBoundsDeadPackRetirementWithoutCursor(t *testing.T) {
 }
 
 func TestRepackDeadRetirementFailureReturnsErrorAndDoesNotStarveLaterPack(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	createDeadMaintenancePacks(t, vault, 2)
 	records, err := store.NewPackCatalog(vault.metadata).ListPackRecords(t.Context())
@@ -679,6 +699,7 @@ func TestRepackDeadRetirementFailureReturnsErrorAndDoesNotStarveLaterPack(t *tes
 }
 
 func TestRepackDeadPhaseCursorDefersNewMappingsUntilFreshCycle(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	createDeadMaintenancePacks(t, vault, 2)
 	stable := putMaintenanceFilesAt(t, vault, 950, 1)
@@ -717,6 +738,7 @@ func TestRepackDeadPhaseCursorDefersNewMappingsUntilFreshCycle(t *testing.T) {
 }
 
 func TestRepackAutomaticModeContinuesPastCorruptSparseSource(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	var dead []PutReceipt
 	for batch := range 2 {
@@ -751,6 +773,7 @@ func TestRepackAutomaticModeContinuesPastCorruptSparseSource(t *testing.T) {
 }
 
 func TestRepackPrunesMappingsWithinBudgetWithoutPhysicalPack(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
 		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
@@ -783,6 +806,7 @@ func TestRepackPrunesMappingsWithinBudgetWithoutPhysicalPack(t *testing.T) {
 }
 
 func TestRepackPrunesMappingForPresentPackBeforePhysicalWork(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	created := putMaintenanceFiles(t, vault, 1)
 	packed, err := vault.Pack(t.Context(), PackOptions{})
@@ -811,6 +835,7 @@ func TestRepackPrunesMappingForPresentPackBeforePhysicalWork(t *testing.T) {
 }
 
 func TestRepackStopsAfterNonSourceFailureBeforeLaterPackMutation(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	createSparseMaintenancePacks(t, vault, 2)
 	candidates, _, err := vault.metadata.SparseRepackPage(t.Context(), "", 2,
@@ -832,6 +857,7 @@ func TestRepackStopsAfterNonSourceFailureBeforeLaterPackMutation(t *testing.T) {
 }
 
 func TestRepackProbesWorkAfterPostRewriteRetirementError(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	createSparseMaintenancePacks(t, vault, 2)
 	candidates, _, err := vault.metadata.SparseRepackPage(t.Context(), "", 2,
@@ -860,6 +886,7 @@ func TestRepackProbesWorkAfterPostRewriteRetirementError(t *testing.T) {
 }
 
 func TestRepackIneligibleOnlyScanAdvancesCursor(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	for i := range 9 { // MaxObjects 1 examines eight summaries per deterministic scan window.
 		putMaintenanceFilesAt(t, vault, 1200+i, 1)
@@ -884,6 +911,7 @@ func TestRepackIneligibleOnlyScanAdvancesCursor(t *testing.T) {
 }
 
 func TestRepackMappingScanAdvancesAcrossLiveOnlyWindow(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -934,6 +962,7 @@ func TestRepackMappingScanAdvancesAcrossLiveOnlyWindow(t *testing.T) {
 }
 
 func TestRepackMappingCursorAcceptsEmptyRawHighWater(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -983,6 +1012,7 @@ func TestRepackMappingCursorAcceptsEmptyRawHighWater(t *testing.T) {
 }
 
 func TestRepackSparseCursorSkipsDeadWorkAddedBetweenCalls(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -1048,6 +1078,7 @@ func TestRepackSparseCursorSkipsDeadWorkAddedBetweenCalls(t *testing.T) {
 }
 
 func TestRepackPreservesMappingHighWaterAcrossDeadPackPages(t *testing.T) {
+	t.Parallel()
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			vault := newMaintenanceVault(t, test.driver)
@@ -1115,6 +1146,7 @@ func TestRepackPreservesMappingHighWaterAcrossDeadPackPages(t *testing.T) {
 }
 
 func TestMaintenanceRejectsClosedVault(t *testing.T) {
+	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	require.NoError(t, vault.Close())
@@ -1279,6 +1311,7 @@ func (c *repackFaultCatalog) DeleteEmptyPackRecord(ctx context.Context, packID s
 }
 
 func TestMaintenanceNegativeBudgetsAreRejected(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	_, err := vault.Verify(t.Context(), VerifyOptions{Budget: WorkBudget{MaxObjects: -1}})
 	require.Error(t, err)
@@ -1290,6 +1323,7 @@ func TestMaintenanceNegativeBudgetsAreRejected(t *testing.T) {
 }
 
 func TestMaintenanceOversizedObjectBudgetsAreRejected(t *testing.T) {
+	t.Parallel()
 	vault := newMaintenanceVault(t, nil)
 	oversized := WorkBudget{MaxObjects: MaxMaintenanceObjects + 1}
 	_, err := vault.Verify(t.Context(), VerifyOptions{Budget: oversized})

@@ -12,6 +12,7 @@ import (
 )
 
 func TestVaultMailboxTransferRevisionAndTombstone(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	v, err := New(ctx, Config{Root: t.TempDir()})
 	require.NoError(t, err)
@@ -50,6 +51,7 @@ func TestVaultMailboxTransferRevisionAndTombstone(t *testing.T) {
 }
 
 func TestVaultMailboxTransferNewestReceiptSurvivesRestore(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	v, err := New(ctx, Config{Root: t.TempDir()})
 	require.NoError(t, err)

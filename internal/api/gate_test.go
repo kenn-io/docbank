@@ -252,9 +252,7 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 	case <-metadataCaptured:
 	case captureErr := <-captureDone:
 		require.NoError(t, captureErr)
-		t.Fatal("backup capture finished before the preservation boundary")
-	case <-time.After(5 * time.Second):
-		t.Fatal("backup capture did not reach the preservation boundary")
+		require.FailNow(t, "backup capture finished before the preservation boundary")
 	}
 
 	schedulerCtx, cancelScheduler := context.WithCancel(t.Context())
@@ -331,12 +329,9 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 		t.Fatal("scheduled pack did not stop")
 	}
 	releaseOnce.Do(func() { close(releaseCapture) })
-	select {
-	case captureErr := <-captureDone:
-		require.NoError(t, captureErr)
-	case <-time.After(5 * time.Second):
-		t.Fatal("backup capture did not finish after release")
-	}
+	// Admission was checked while capture was held. Finishing the real backup
+	// now uses the suite's deadline; it is not a five-second storage benchmark.
+	require.NoError(t, <-captureDone)
 }
 
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {

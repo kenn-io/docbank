@@ -50,10 +50,6 @@ func TestPhotoRejectRoutes(t *testing.T) {
 				request.Hidden = true
 			}
 			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/rejects/preflight", headers, request)
-			move := func(targets []store.PhotoRejectTarget) (*http.Response, string) {
-				return do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", headers,
-					api.MovePhotoRejectsRequest{Hidden: request.Hidden, Targets: targets})
-			}
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
 			var preview api.PhotoRejectsPreflight
 			require.NoError(t, json.Unmarshal([]byte(body), &preview))
@@ -62,7 +58,8 @@ func TestPhotoRejectRoutes(t *testing.T) {
 				require.Equal(t, asset.ID, preview.Targets[0].AssetID)
 				return
 			}
-			response, body = move(preview.Targets)
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", headers,
+				api.MovePhotoRejectsRequest{Hidden: request.Hidden, Targets: preview.Targets})
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
 			var moved api.PhotoRejectsMoved
 			require.NoError(t, json.Unmarshal([]byte(body), &moved))

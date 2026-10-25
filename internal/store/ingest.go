@@ -453,7 +453,7 @@ func (s *Store) ingestFileTx(
 					return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("identifying ingest observation for %q: %w", name, err)
 				}
 				receipt.Node, err = s.observeOperationalIngestTx(
-					ctx, tx, run, receipt.Node, provenance, ingestAdded,
+					ctx, tx, run, receipt.Node, provenance, ingestAdded, receipt.Node.CurrentVersionID,
 				)
 				if err != nil {
 					return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err

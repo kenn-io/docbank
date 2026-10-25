@@ -15,9 +15,16 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
-func verifyRedactionArchive(ctx context.Context, file *os.File, size int64, review processing.RedactionReview) (processing.RedactionReceipt, error) {
+// VerifyRedactionArchive checks a saved ZIP against an already validated review.
+// The caller owns the reader and must keep its bytes stable during verification.
+func VerifyRedactionArchive(ctx context.Context, reader io.ReaderAt, size int64,
+	review processing.RedactionReview,
+) (processing.RedactionReceipt, error) {
 	var receipt processing.RedactionReceipt
-	archive, err := zip.NewReader(file, size)
+	if size < 1 || size > processing.MaxRedactionArchiveBytes {
+		return receipt, integrityErrorf("redaction archive size exceeds its bounds")
+	}
+	archive, err := zip.NewReader(reader, size)
 	if err != nil {
 		return receipt, redactionArchiveError(err)
 	}

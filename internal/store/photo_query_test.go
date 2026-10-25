@@ -1697,6 +1697,16 @@ func TestLookupPhotoFlags(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestPhotoBrowseRelevanceKeepsFilenameScoresWithoutSuggestionText(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	strong := browsePhotoNode(t, s, "harbor.jpg", browseHash("strong-harbor"), "image/jpeg")
+	browsePhotoNode(t, s, "a very long holiday weekend away at the harbor with all of the family.jpg", browseHash("weak-harbor"), "image/jpeg")
+	page := browsePhotoPage(t, s, `{"syntax":"advanced","text":"name:harbor","sort":{"field":"relevance","direction":"desc"}}`)
+	require.Len(t, page.Items, 2)
+	require.Equal(t, strong.ID, page.Items[0].NodeID, "the stronger filename match leads, however recent the weaker one is")
+}
+
 func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

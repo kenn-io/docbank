@@ -117,15 +117,22 @@ export class PhotoCull {
       if (this.settingsRead === controller) this.settingsRead = undefined;
     }
   }
-  /** Regroup the current pass's IDs, so a stack never holds a frame the pass doesn't show. */
-  async regroup() {
+  /**
+   * Regroup the current pass's IDs, so a stack never holds a frame the pass doesn't show.
+   * A quiet regroup, for a live change, leaves the controls and the previous groups alone and
+   * throws on failure so the caller retries; one that finds a regroup already loading takes it over.
+   */
+  async regroup(quiet = false) {
     const run = this.run;
     if (!run || this.stale) return;
     const controller = new AbortController();
+    quiet &&= !this.stackLoading;
     this.stackRead?.abort();
     this.stackRead = controller;
-    this.stackLoading = true;
-    this.stackError = "";
+    if (!quiet) {
+      this.stackLoading = true;
+      this.stackError = "";
+    }
     const current = () =>
       !controller.signal.aborted &&
       this.run?.checkpoint.runID === run.checkpoint.runID &&
@@ -137,17 +144,22 @@ export class PhotoCull {
         { session: this.session, signal: controller.signal },
       );
       controller.signal.throwIfAborted();
-      if (current())
+      if (current()) {
         this.run = {
           ...this.run!,
           groups: regrouped.groups,
           groupingIncomplete: regrouped.grouping_incomplete,
           burstGapSeconds: regrouped.burst_gap_seconds,
         };
+        // A quiet regroup can recover an earlier foreground failure.
+        this.stackError = "";
+      }
     } catch (cause) {
-      if (current()) this.stackError = this.sessionFailure(cause);
+      if (!current()) return;
+      if (quiet) throw cause;
+      this.stackError = this.sessionFailure(cause);
     } finally {
-      if (this.stackRead === controller) this.stackLoading = false;
+      if (this.stackRead === controller && !quiet) this.stackLoading = false;
     }
   }
   private passStacks() {
@@ -452,6 +464,7 @@ export class PhotoCull {
     this.flagRead?.abort();
     this.busy = true;
     this.checkingRemainder = remainder;
+    this.error = "";
     return (this.flagRead = new AbortController());
   }
   private finishFlagRead(controller: AbortController) {
@@ -464,12 +477,10 @@ export class PhotoCull {
   flagsChanged() {
     this.remainderPass = undefined;
   }
-  async checkRemainder() {
-    if (!this.run || !this.complete || this.stale) return;
-    const pass = this.run.checkpoint.pass;
-    if (this.remainderPass === pass) return;
+  async checkRemainder(rethrow = false) {
+    const pass = this.run?.checkpoint.pass;
+    if (!this.run || !this.complete || this.stale || this.remainderPass === pass) return;
     const controller = this.beginFlagRead(true);
-    this.error = "";
     this.remainder = false;
     this.remainderPass = undefined;
     try {
@@ -482,7 +493,9 @@ export class PhotoCull {
       this.remainder = this.matches("unflagged", flags).length > 0;
       this.remainderPass = pass;
     } catch (cause) {
-      if (!controller.signal.aborted) this.apiFailure(cause);
+      if (controller.signal.aborted) return;
+      this.apiFailure(cause);
+      if (rethrow) throw cause;
     } finally {
       this.finishFlagRead(controller);
     }
@@ -495,7 +508,6 @@ export class PhotoCull {
     const controller = this.beginFlagRead();
     this.changingPass = true;
     let changed = false;
-    this.error = "";
     try {
       if (
         !followUp &&

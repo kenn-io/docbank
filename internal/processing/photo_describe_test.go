@@ -1,0 +1,815 @@
+package processing
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
+	"io"
+	"log/slog"
+	"math/rand/v2"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/vision"
+	"go.kenn.io/docbank/document/vision/visiontest"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/store"
+)
+
+// photoDescriptionFixture is a vault with one photo, a synthetic vision
+// endpoint, and a service configured with one description profile.
+type photoDescriptionFixture struct {
+	catalog *store.Store
+	blobs   *blob.Store
+	written blob.WriteReceipt
+	node    store.Node
+	asset   store.PhotoAsset
+	recipe  document.VisualPreviewRecipeV1
+	service *Service
+	profile document.ProcessingProfileV1
+	server  *httptest.Server
+	// skew moves the services' clock ahead of real time.
+	skew atomic.Int64
+
+	mu           sync.Mutex
+	probeCalls   int
+	describeBody []byte
+	describes    int
+	probeFails   bool
+	failModel    string
+	dropDescribe bool
+	reply        string
+	onDescribe   func()
+	onProbe      func(call int)
+}
+
+func newPhotoDescriptionFixture(t *testing.T) *photoDescriptionFixture {
+	t.Helper()
+	f := &photoDescriptionFixture{reply: `{"caption":"A white panorama.","tags":["panorama","harbor"],"visible_text":"HELLO"}`}
+	ctx := t.Context()
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	written, err := blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.JPEG(1024, 768, color.White)))
+	require.NoError(t, err)
+	run, err := catalog.BeginIngest(ctx, "cli", "Synthetic photo coverage")
+	require.NoError(t, err)
+	node, err := catalog.IngestFileExact(ctx, run, catalog.RootID(), "synthetic-photo.jpg", written.Hash, written.Size, "image/jpeg", "synthetic-photo.jpg", "", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	recipe, _ := VisualPreviewRecipeForSize("grid")
+	_, err = EnsureVisualPreview(ctx, catalog, blobs, node.CurrentVersionID, recipe)
+	require.NoError(t, err)
+	f.server = httptest.NewServer(f.serve(t))
+	t.Cleanup(f.server.Close)
+	f.catalog, f.blobs, f.written, f.node, f.asset, f.recipe = catalog, blobs, written, node, asset, recipe
+	f.service = f.newService(t, "vision", "synthetic-vision")
+	return f
+}
+
+func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if !assert.NoError(t, err) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var request struct {
+			Model string `json:"model"`
+		}
+		if !assert.NoError(t, json.Unmarshal(body, &request)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		f.mu.Lock()
+		probe := visiontest.IsProbe(body)
+		reply, hook, onProbe := f.reply, f.onDescribe, f.onProbe
+		switch {
+		case probe:
+			f.probeCalls++
+			reply = "red,blue"
+			if onProbe != nil {
+				f.mu.Unlock()
+				onProbe(f.probeCalls)
+				f.mu.Lock()
+			}
+			if f.probeFails {
+				f.mu.Unlock()
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		default:
+			f.describes++
+			f.describeBody = bytes.Clone(body)
+			if f.dropDescribe {
+				f.mu.Unlock()
+				hijacker, ok := w.(http.Hijacker)
+				if !assert.True(t, ok) {
+					return
+				}
+				connection, _, err := hijacker.Hijack()
+				if assert.NoError(t, err) {
+					_ = connection.Close()
+				}
+				return
+			}
+		}
+		if request.Model == f.failModel {
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		f.mu.Unlock()
+		if !probe && hook != nil {
+			hook()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(visiontest.Completion(reply))
+	}
+}
+
+// newService builds a service with one description profile named name.
+func (f *photoDescriptionFixture) newService(t *testing.T, name, model string) *Service {
+	t.Helper()
+	return f.newServiceWith(t, map[string]string{name: model})
+}
+
+// newServiceWith builds a service with a description profile for each name and model.
+func (f *photoDescriptionFixture) newServiceWith(t *testing.T, models map[string]string) *Service {
+	t.Helper()
+	profiles := map[string]ProfileConfig{}
+	for name, model := range models {
+		provider, err := vision.New(vision.Profile{Origin: f.server.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, f.server.Client())
+		require.NoError(t, err)
+		var profile document.ProcessingProfileV1
+		require.NoError(t, json.Unmarshal(workerProcessingProfile(t, provider.Descriptor()).CanonicalProfile, &profile))
+		profile.Rendition.AdapterContract = vision.AdapterContract
+		profile.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+		profile.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+		profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+		f.profile = profile
+		profiles[name] = ProfileConfig{Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}
+	}
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing",
+		Clock:    func() time.Time { return time.Now().UTC().Add(time.Duration(f.skew.Load())) },
+		Profiles: profiles})
+	require.NoError(t, err)
+	return service
+}
+
+func (f *photoDescriptionFixture) selector(name string) Selector {
+	return Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: name}
+}
+
+func (f *photoDescriptionFixture) counts() (probes, describes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.probeCalls, f.describes
+}
+
+// grant records consent for the plan of the service's only profile.
+func (f *photoDescriptionFixture) grant(t *testing.T, service *Service, name string) {
+	t.Helper()
+	plan, err := service.Plan(t.Context(), f.selector(name))
+	require.NoError(t, err)
+	_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: f.selector(name), PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+}
+
+// backfill admits what one automatic pass lists and lets a worker run each job.
+func (f *photoDescriptionFixture) backfill(t *testing.T, service *Service) int {
+	t.Helper()
+	ctx := t.Context()
+	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	require.NoError(t, err)
+	for _, target := range targets {
+		require.NoError(t, service.admitPhotoDescription(ctx, target))
+	}
+	f.runWorker(t, service)
+	return len(targets)
+}
+
+func (f *photoDescriptionFixture) runWorker(t *testing.T, service *Service) {
+	t.Helper()
+	require.NoError(t, f.drainWorker(t.Context(), service))
+}
+
+// drainWorker runs the rendition worker until the queue is empty. It returns
+// the error instead of asserting, so a goroutine can call it.
+func (f *photoDescriptionFixture) drainWorker(ctx context.Context, service *Service) error {
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
+	if err != nil {
+		return err
+	}
+	for {
+		processed, err := worker.RunOne(ctx)
+		if err != nil || !processed {
+			return err
+		}
+	}
+}
+
+// waitingDescriptions counts description requests that have not completed.
+func (f *photoDescriptionFixture) waitingDescriptions(t *testing.T) int {
+	t.Helper()
+	count, err := f.catalog.UnclaimedPhotoDescriptionWaiters(t.Context(), f.service.profiles["vision"].record.Fingerprint, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	return count
+}
+
+func (f *photoDescriptionFixture) suggestions(t *testing.T) []store.PhotoSuggestion {
+	t.Helper()
+	prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}})
+	require.NoError(t, err)
+	return prepared.Suggestions
+}
+
+func TestPhotoDescriptionProfileCoverageHasNoRenditionClass(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	fence := SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{f.node.CurrentVersionID}}
+
+	coverage, err := f.service.Coverage(t.Context(), "vision", fence)
+	require.NoError(t, err)
+	require.Equal(t, "complete", coverage.State, "a description profile attaches no rendition to cover")
+	require.False(t, coverage.Renditions.Required)
+}
+
+func TestPhotoDescriptionFlow(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	selector := f.selector("vision")
+
+	plan, err := f.service.Plan(ctx, selector)
+	require.NoError(t, err)
+	require.Equal(t, []string{"derived_upload"}, plan.Flow[0].InputClasses)
+	require.Contains(t, plan.Estimate.Scope, "queues eligible photos throughout this vault")
+	require.NotContains(t, plan.BackupConsequence, "throughout this vault", "the backup field describes backups only")
+	require.Empty(t, plan.Flow[0].RuntimeDisclosure.RetainedArtifactRoles)
+	preview, reason, err := photoDescriptionPreview(ctx, f.catalog, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Equal(t, preview.Generation.Preview.Output.Size, plan.Estimate.SourceBytes, "the estimate counts the preview bytes uploaded, not the original file")
+	require.Less(t, plan.Estimate.SourceBytes, f.written.Size)
+	require.Equal(t, retainedRenditionClasses(f.service.profiles["vision"].portable), plan.RetainedClasses, "the plan states the classes consent authorizes")
+	_, err = f.service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.ErrorIs(t, err, ErrConsentRequired)
+	probes, describes := f.counts()
+	require.Zero(t, probes+describes, "nothing leaves the vault before consent")
+	require.Zero(t, f.backfill(t, f.service), "automatic work waits for consent")
+
+	f.grant(t, f.service, "vision")
+	require.Equal(t, 1, f.backfill(t, f.service))
+	probes, describes = f.counts()
+	require.Equal(t, 1, probes, "the provider is probed once under the grant")
+	require.Equal(t, 1, describes)
+	f.mu.Lock()
+	body := string(f.describeBody)
+	f.mu.Unlock()
+	require.NotContains(t, body, f.node.Name, "the file name stays home")
+
+	_, err = f.catalog.ActiveRendition(ctx, f.node.CurrentVersionID, f.service.profiles["vision"].record.Fingerprint)
+	require.ErrorIs(t, err, store.ErrNotFound, "a description attaches nothing")
+	suggestions := f.suggestions(t)
+	require.Len(t, suggestions, 1)
+	require.Equal(t, document.PhotoDescription{Caption: "A white panorama.", Tags: []string{"panorama", "harbor"}, VisibleText: "HELLO"}, suggestions[0].Value)
+}
+
+func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	f.mu.Lock()
+	f.reply = "A harbor at dusk."
+	f.mu.Unlock()
+	var logs bytes.Buffer
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: f.service.renditions, Gate: newTestOperationGate(), Owner: "synthetic-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: f.service.clock,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	require.NoError(t, err)
+	targets, err := f.service.photoDescriptionTargets(t.Context(), nil, "", 50, 4)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.NoError(t, f.service.admitPhotoDescription(t.Context(), targets[0]))
+	require.Eventually(t, func() bool {
+		for {
+			processed, err := worker.RunOne(t.Context())
+			require.NoError(t, err)
+			if !processed {
+				break
+			}
+		}
+		return logs.Len() > 0
+	}, 10*time.Second, 100*time.Millisecond)
+	_, describes := f.counts()
+	require.Equal(t, 3, describes, "unparseable replies stop after three provider attempts")
+
+	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), logs.String())
+	for _, want := range []string{"job=", "version=" + f.node.CurrentVersionID, "class=failed", "failed temporarily"} {
+		require.Contains(t, logs.String(), want)
+	}
+	require.Empty(t, f.suggestions(t))
+}
+
+func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	drain, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	originalGate := f.service.gate
+	f.service.gate = &cancelMediaAfterCommitGate{processingOperationGate: originalGate, cancel: cancel}
+	defer func() { f.service.gate = originalGate }()
+	require.ErrorIs(t, f.service.PhotoDescriptionBackfill(drain, nil, 1), context.Canceled)
+	f.runWorker(t, f.service)
+	require.Len(t, f.suggestions(t), 1)
+}
+
+func TestPhotoDescriptionEmptyScanPause(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	clock := f.service.clock
+	synctest.Test(t, func(t *testing.T) {
+		// Fresh photos are absent from a scan for restored suggestions.
+		for _, after := range []string{f.node.CurrentVersionID, ""} {
+			calls := 0
+			now := time.Now()
+			f.service.clock = func() time.Time {
+				calls++
+				if calls >= 3 {
+					return now.Add(2 * time.Second)
+				}
+				return now
+			}
+			started := time.Now()
+			source, err := f.service.photoDescriptionProfileTargets(t.Context(), "vision", true, after, 1, 1)
+			require.NoError(t, err)
+			require.Empty(t, source.targets)
+			if after == "" {
+				require.Equal(t, 200*time.Second, time.Since(started))
+			} else {
+				require.Zero(t, time.Since(started), "only an empty scan from the start pauses")
+			}
+		}
+	})
+	f.service.clock = clock
+	f.grant(t, f.service, "vision")
+	version, err := f.catalog.ContentVersionByID(t.Context(), f.node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, f.service.admitPhotoDescription(t.Context(), photoDescriptionTarget{profile: "vision", version: version}))
+	require.Equal(t, 1, f.waitingDescriptions(t))
+	now := clock()
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		f.service.clock = func() time.Time { return now.Add(time.Since(started)) }
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+		defer cancel()
+		claimed := make(chan error, 1)
+		go func() {
+			time.Sleep(2 * time.Minute)
+			_, ok, err := f.catalog.ClaimNextRenditionJob(ctx, "synthetic-worker", f.service.clock(), time.Hour)
+			if err == nil && !ok {
+				err = errors.New("no photo description job was ready to claim")
+			}
+			claimed <- err
+		}()
+		source, err := f.service.photoDescriptionProfileTargets(ctx, "vision", false, "", 1, 1)
+		require.NoError(t, err)
+		require.NoError(t, <-claimed)
+		require.Empty(t, source.targets)
+		require.GreaterOrEqual(t, time.Since(started), 2*time.Minute)
+		require.LessOrEqual(t, time.Since(started), 2*time.Minute+time.Second, "only the capacity poll can delay the empty scan")
+	})
+}
+
+func TestPhotoDescriptionRenewedConsentWithBlockedProbeSendsNothing(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	f.mu.Lock()
+	f.probeFails = true
+	f.mu.Unlock()
+	plan, err := f.service.Plan(ctx, f.selector("vision"))
+	require.NoError(t, err)
+	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.ErrorIs(t, err, ErrConsentSaved)
+	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
+	plan, err = f.service.Plan(ctx, f.selector("vision"))
+	require.NoError(t, err)
+	require.False(t, plan.ConsentRequired, "the grant stayed saved")
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	for range 3 {
+		targets, err := f.service.photoDescriptionTargets(ctx, logger, "", 50, 4)
+		require.NoError(t, err)
+		require.Empty(t, targets)
+	}
+	require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"), "the stalled provider is logged once, not on every pass: %s", logs.String())
+	require.Contains(t, logs.String(), "profile=vision")
+
+	require.Contains(t, logs.String(), "insufficient capacity", "the warning carries why the probe failed")
+	require.Zero(t, f.backfill(t, f.service), "the renewed grant has no passing probe")
+	plan, err = f.service.Plan(ctx, f.selector("vision"))
+	require.NoError(t, err)
+	probesBefore, _ := f.counts()
+	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
+	require.ErrorContains(t, err, "insufficient capacity", "a remembered failure keeps its cause")
+	probesAfter, _ := f.counts()
+	require.Equal(t, probesBefore, probesAfter, "a failed probe repeats no sooner than a minute later")
+
+	f.mu.Lock()
+	f.probeFails = false
+	f.mu.Unlock()
+	// A minute later the retry is due. Only the readiness check sees the later
+	// clock, because the queue compares job times with real time.
+	f.skew.Add(int64(61 * time.Second))
+	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	f.skew.Store(0)
+	require.NoError(t, err)
+	require.Len(t, targets, 1, "the provider recovers without a restart")
+	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]))
+	f.runWorker(t, f.service)
+	require.Len(t, f.suggestions(t), 1)
+}
+
+// addPhoto ingests a second displayed photo with a ready grid preview and returns its version ID.
+func (f *photoDescriptionFixture) addPhoto(t *testing.T, name string, height int) string {
+	t.Helper()
+	ctx := t.Context()
+	written, err := f.blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.JPEG(1024, height, color.White)))
+	require.NoError(t, err)
+	run, err := f.catalog.BeginIngest(ctx, "cli", "Second synthetic photo")
+	require.NoError(t, err)
+	node, err := f.catalog.IngestFileExact(ctx, run, f.catalog.RootID(), name, written.Hash, written.Size, "image/jpeg", name, "", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+	require.NoError(t, err)
+	return node.CurrentVersionID
+}
+
+func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlotAndRetriesAfterAHeal(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	f.addPhoto(t, "second.jpg", 700)
+	f.mu.Lock()
+	f.dropDescribe = true
+	f.mu.Unlock()
+
+	// One worker: the first photo fails into its retry backoff.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	first, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 1)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	require.NoError(t, f.service.admitPhotoDescription(ctx, first[0]))
+	f.runWorker(t, f.service)
+
+	next, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 1)
+	require.NoError(t, err, "a sleeping retry does not hold the only admission slot")
+	require.Len(t, next, 1)
+	require.NotEqual(t, first[0].version.ID, next[0].version.ID, "the other photo is admitted meanwhile")
+
+	// The endpoint heals. The call has no side effects, so the first photo is simply asked for again.
+	f.mu.Lock()
+	f.dropDescribe = false
+	f.mu.Unlock()
+	asset, err := f.catalog.PhotoAssetForNode(ctx, first[0].version.NodeID)
+	require.NoError(t, err)
+	// The retry waits out its backoff, so run the worker until the queue offers it.
+	require.Eventually(t, func() bool {
+		if f.drainWorker(t.Context(), f.service) != nil {
+			return false
+		}
+		prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+		return err == nil && len(prepared.Suggestions) == 1
+	}, 10*time.Second, 100*time.Millisecond, "the retry produces the suggestion once the endpoint answers")
+}
+
+func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	service := f.newServiceWith(t, map[string]string{"alpha": "model-a", "beta": "model-b"})
+	f.grant(t, service, "alpha")
+	f.grant(t, service, "beta")
+
+	ready, err := service.photoDescriptionProfiles(ctx, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"alpha", "beta"}, ready)
+	probes, _ := f.counts()
+	require.Equal(t, 2, probes)
+
+	f.mu.Lock()
+	f.failModel = "model-a"
+	f.mu.Unlock()
+	require.Equal(t, 1, f.backfill(t, service))
+	require.Empty(t, f.suggestions(t), "the first provider's authentication failure adds no suggestion")
+	fresh := f.addPhoto(t, "fresh.jpg", 700)
+	targets, err := service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	require.NoError(t, err)
+	require.NotEmpty(t, targets)
+	var versions []string
+	for _, target := range targets {
+		require.Equal(t, "beta", target.profile)
+		versions = append(versions, target.version.ID)
+		require.NoError(t, service.admitPhotoDescription(ctx, target))
+	}
+	require.Contains(t, versions, fresh, "the healthy second provider receives the next fresh photo")
+	f.runWorker(t, service)
+	freshVersion, err := f.catalog.ContentVersionByID(ctx, fresh)
+	require.NoError(t, err)
+	asset, err := f.catalog.PhotoAssetForNode(ctx, freshVersion.NodeID)
+	require.NoError(t, err)
+	prepared, err := f.catalog.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	require.Len(t, prepared.Suggestions, 1)
+	probes, _ = f.counts()
+	require.Equal(t, 3, probes, "the failed description invalidates the first provider's passing probe")
+}
+
+func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	f.grant(t, f.service, "vision")
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	f.mu.Lock()
+	// The first probe waits; any other probe fails.
+	f.onProbe = func(call int) {
+		if call == 1 {
+			<-release
+			return
+		}
+		f.mu.Lock()
+		f.probeFails = true
+		f.mu.Unlock()
+	}
+	f.mu.Unlock()
+	profile := f.service.profiles["vision"]
+	first := make(chan error, 1)
+	go func() { first <- f.service.requireVisionReadiness(t.Context(), profile) }()
+	require.Eventually(t, func() bool { probes, _ := f.counts(); return probes == 1 }, 5*time.Second, time.Millisecond)
+
+	second := make(chan error, 1)
+	go func() { second <- f.service.requireVisionReadiness(t.Context(), profile) }()
+	require.Never(t, func() bool { probes, _ := f.counts(); return probes > 1 }, 100*time.Millisecond, time.Millisecond,
+		"an overlapping request waits for the probe in flight")
+	unblock()
+	require.NoError(t, <-first)
+	require.NoError(t, <-second, "the success stands")
+	probes, _ := f.counts()
+	require.Equal(t, 1, probes)
+}
+
+func TestPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent(t *testing.T) {
+	t.Parallel()
+	hidden := newPhotoDescriptionFixture(t)
+	require.NoError(t, hidden.catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	_, err := hidden.catalog.SetPhotoAssetHidden(t.Context(), hidden.asset.ID, hidden.asset.Revision, true)
+	require.NoError(t, err)
+	plan, err := hidden.service.Plan(t.Context(), hidden.selector("vision"))
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.RenditionIneligibleReason)
+	_, err = hidden.service.Start(t.Context(), StartRequest{Selector: hidden.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.ErrorIs(t, err, ErrSourceIneligible)
+	require.NotErrorIs(t, err, ErrConsentSaved, "an ineligible photo is refused before consent is saved")
+	plan, err = hidden.service.Plan(t.Context(), hidden.selector("vision"))
+	require.NoError(t, err)
+	require.True(t, plan.ConsentRequired)
+}
+
+func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	f.grant(t, f.service, "vision")
+	targets, err := f.service.photoDescriptionTargets(ctx, nil, "", 50, 4)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.NoError(t, f.service.admitPhotoDescription(ctx, targets[0]), "an automatic request is waiting")
+
+	plan, err := f.service.Plan(ctx, f.selector("vision"))
+	require.NoError(t, err)
+	_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	f.runWorker(t, f.service)
+	_, describes := f.counts()
+	require.Equal(t, 1, describes, "one provider call serves both requests")
+	require.Len(t, f.suggestions(t), 1)
+	require.Zero(t, f.waitingDescriptions(t), "no request is left waiting")
+}
+
+func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	require.NoError(t, f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	token, _, err := f.catalog.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := store.WithPhotoHiddenToken(ctx, token)
+	f.grant(t, f.service, "vision")
+	f.mu.Lock()
+	f.onDescribe = func() {
+		_, hideErr := f.catalog.SetPhotoAssetHidden(unlocked, f.asset.ID, f.asset.Revision, true)
+		assert.NoError(t, hideErr)
+	}
+	f.mu.Unlock()
+	f.backfill(t, f.service)
+
+	f.mu.Lock()
+	f.onDescribe = nil
+	f.mu.Unlock()
+	hidden, err := f.catalog.PhotoAssetByID(unlocked, f.asset.ID)
+	require.NoError(t, err)
+	_, err = f.catalog.SetPhotoAssetHidden(unlocked, f.asset.ID, hidden.Revision, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, f.backfill(t, f.service), "the photo is described again once it is visible")
+	require.Len(t, f.suggestions(t), 1)
+}
+
+func TestPhotoDescriptionLimitUsesFinalUpload(t *testing.T) {
+	t.Parallel()
+	for _, automatic := range []bool{false, true} {
+		for _, oversized := range []bool{false, true} {
+			t.Run(fmt.Sprintf("automatic=%t/oversized=%t", automatic, oversized), func(t *testing.T) {
+				f := newPhotoDescriptionFixture(t)
+				ctx := t.Context()
+				img := image.NewRGBA(image.Rect(0, 0, 511, 353))
+				rng := rand.New(rand.NewPCG(5, 2)) //nolint:gosec // Repeatable synthetic pixels exercise JPEG size changes.
+				for y := range 353 {
+					for x := range 511 {
+						pixel := rng.Uint32()
+						img.SetRGBA(x, y, color.RGBA{R: byte(pixel), G: byte(pixel >> 8), B: byte(pixel >> 16), A: 255})
+					}
+				}
+				var source bytes.Buffer
+				require.NoError(t, png.Encode(&source, img))
+				written, err := f.blobs.WriteDetailedContext(ctx, &source)
+				require.NoError(t, err)
+				f.node, err = f.catalog.CreateFile(ctx, f.catalog.RootID(), "noise.png", written.Hash, written.Size, "image/png", processingBlobPhysical(t, written))
+				require.NoError(t, err)
+				_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, f.node.CurrentVersionID, f.recipe)
+				require.NoError(t, err)
+				version, err := f.catalog.ContentVersionByID(ctx, f.node.CurrentVersionID)
+				require.NoError(t, err)
+				data, _, err := photoDescriptionInput(ctx, f.catalog, f.blobs, version, f.service.profiles["vision"])
+				require.NoError(t, err)
+				preview, _, err := photoDescriptionPreview(ctx, f.catalog, version.ID)
+				require.NoError(t, err)
+				require.Greater(t, preview.Generation.Preview.Output.Size, int64(len(data)), "a normally generated preview shrinks on upload")
+				profile := f.service.profiles["vision"]
+				profile.portable.Rendition.MaxDocumentBytes = int64(len(data))
+				if oversized {
+					profile.portable.Rendition.MaxDocumentBytes--
+				}
+				f.service, err = NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing",
+					Profiles: map[string]ProfileConfig{"vision": {Profile: profile.portable, RenditionProvider: profile.provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: f.server.URL}}}})
+				require.NoError(t, err)
+				plan, err := f.service.Plan(ctx, f.selector("vision"))
+				require.NoError(t, err)
+				if oversized {
+					require.Equal(t, "source_bytes_exceeded", plan.RenditionIneligibleReason)
+				} else {
+					require.Empty(t, plan.RenditionIneligibleReason)
+				}
+				if automatic {
+					f.grant(t, f.service, "vision")
+					err = f.service.admitPhotoDescription(ctx, photoDescriptionTarget{profile: "vision", version: version})
+				} else {
+					_, err = f.service.Start(ctx, StartRequest{Selector: f.selector("vision"), PlanFingerprint: plan.Fingerprint, Consent: true})
+				}
+				if oversized {
+					require.ErrorIs(t, err, ErrSourceIneligible)
+					if !automatic {
+						require.NotErrorIs(t, err, ErrConsentSaved, "an ineligible photo is refused before consent is saved")
+						plan, err = f.service.Plan(ctx, f.selector("vision"))
+						require.NoError(t, err)
+						require.True(t, plan.ConsentRequired)
+					}
+					_, describes := f.counts()
+					require.Zero(t, describes)
+				} else {
+					require.NoError(t, err)
+					if automatic {
+						waiting, err := f.catalog.UnclaimedPhotoDescriptionWaiters(ctx, f.service.profiles["vision"].record.Fingerprint, time.Now())
+						require.NoError(t, err)
+						require.Equal(t, 1, waiting)
+					} else {
+						_, describes := f.counts()
+						require.Equal(t, 1, describes)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPhotoDescriptionUploadsStrippedPreviewBytes(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	ctx := t.Context()
+	exif := append([]byte("Exif\x00\x00"), syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 1)}, nil)...)
+	for _, scenario := range []string{"exif", "after_scan", "trailing", "wide", "tall"} {
+		t.Run(scenario, func(t *testing.T) {
+			raw := mediatest.JPEG(8, 8, color.White)
+			segment := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xe1, exif)[2:]
+			switch scenario {
+			case "exif":
+				raw = syntheticJPEGSegment(t, raw, 0xe1, exif)
+			case "after_scan":
+				raw = append(raw[:len(raw)-2:len(raw)-2], append(segment, 0xff, 0xd9)...)
+			case "trailing":
+				raw = append(raw, segment...)
+			case "wide":
+				// Publishing refuses honest oversize dimensions, so the bytes outgrow the recorded 8x8.
+				raw = mediatest.JPEG(513, 8, color.White)
+			case "tall":
+				raw = mediatest.JPEG(8, 513, color.White)
+			}
+			// A restored preview is whatever the backup held, not what the producer wrote.
+			node, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), scenario+".jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+			require.NoError(t, err)
+			written, err := f.blobs.WriteDetailedContext(ctx, bytes.NewReader(raw))
+			require.NoError(t, err)
+			canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+				ContractVersion: document.VisualPreviewContractV1, SourceSHA256: f.written.Hash,
+				Recipe: f.recipe, State: document.VisualPreviewReady,
+				Output: &document.VisualPreviewOutputV1{BlobSHA256: written.Hash, Size: written.Size, MediaType: "image/jpeg", Width: 8, Height: 8},
+			})
+			require.NoError(t, err)
+			_, err = f.catalog.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, canonical, new(processingBlobPhysical(t, written)))
+			require.NoError(t, err)
+			version, err := f.catalog.ContentVersionByID(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			outbound, capability, err := photoDescriptionInput(ctx, f.catalog, f.blobs, version, f.service.profiles["vision"])
+			if scenario == "wide" || scenario == "tall" {
+				require.ErrorIs(t, err, ErrSourceIneligible)
+				return
+			}
+			require.NoError(t, err)
+			sum := sha256.Sum256(outbound)
+			require.Equal(t, hex.EncodeToString(sum[:]), capability.SourceSHA256)
+			require.NotContains(t, string(outbound), "Exif")
+			require.NotContains(t, string(outbound), "\xff\xe1")
+			_, err = jpeg.Decode(bytes.NewReader(outbound))
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestMergePhotoDescriptionTargetsStopsAtTheSmallestOpenPage(t *testing.T) {
+	t.Parallel()
+	target := func(profile, id string) photoDescriptionTarget {
+		return photoDescriptionTarget{profile: profile, version: store.ContentVersion{ID: id}}
+	}
+	ids := func(targets []photoDescriptionTarget) []string {
+		out := []string{}
+		for _, target := range targets {
+			out = append(out, target.version.ID)
+		}
+		return out
+	}
+	// A has room for one photo and more behind it; B's restored photo sits far ahead.
+	merged := mergePhotoDescriptionTargets([]photoDescriptionSource{
+		{targets: []photoDescriptionTarget{target("a", "v01")}, more: true},
+		{targets: []photoDescriptionTarget{target("b", "v50")}},
+	}, 50)
+	require.Equal(t, []string{"v01"}, ids(merged), "the next page resumes after v01 and still reaches A's v02")
+
+	// Pages that ended early cover everything, so every photo is listed once, first profile first.
+	merged = mergePhotoDescriptionTargets([]photoDescriptionSource{
+		{targets: []photoDescriptionTarget{target("a", "v02"), target("a", "v03")}},
+		{targets: []photoDescriptionTarget{target("b", "v03"), target("b", "v50")}},
+	}, 50)
+	require.Equal(t, []string{"v02", "v03", "v50"}, ids(merged))
+	require.Equal(t, "a", merged[1].profile)
+	require.Len(t, mergePhotoDescriptionTargets([]photoDescriptionSource{{targets: merged}}, 2), 2, "the page holds at most limit photos")
+}

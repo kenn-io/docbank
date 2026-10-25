@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -263,7 +264,7 @@ type photoReceipt struct {
 
 func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) error {
 	marshal := marshalPhotoState
-	if receipt.Operation == "face_decision" || receipt.Operation == "authored" || receipt.Operation == "authored_undo" || receipt.Operation == "authored_sidecar" {
+	if receipt.Operation == "xmp_sync" || receipt.Operation == "face_decision" || receipt.Operation == "authored" || receipt.Operation == "authored_undo" || receipt.Operation == "authored_sidecar" {
 		marshal = func(v any) (string, error) {
 			b, err := json.Marshal(v, json.Deterministic(true))
 			return string(b), err
@@ -279,6 +280,14 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 	}
 	if receipt.Operation == "face_decision" && len(beforeJSON)+len(afterJSON) > maxBatchTagReceiptJSONBytes {
 		return ErrInvalidPhotoFace
+	}
+	if receipt.Operation == "xmp_sync" {
+		if len(beforeJSON)+len(afterJSON) > photoXMPReceiptLimit(receipt.After) {
+			return ErrPhotoEditReceiptLimit
+		}
+		if _, err := decodePhotoXMPReceipt([]byte(afterJSON)); err != nil {
+			return err
+		}
 	}
 	receiptID := receipt.ReceiptID
 	if receiptID == "" {
@@ -421,12 +430,21 @@ func (s *Store) photoAssetReadQuery(ctx context.Context, q metadataQuerier, asse
 	return asset, nil
 }
 
-func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
+// photoMutationDriftTx accepts a revision that only sidecar-only steps have passed, for the
+// decisions that leave membership alone. Attach, detach, and promote need the exact one.
+func photoMutationDriftTx(ctx context.Context, tx *sql.Tx, assetID string, seen, current int64, operation string) error {
+	if !slices.Contains([]string{"trash", "hide", "unhide", "display", "exclude"}, operation) {
+		return ErrStaleRevision
+	}
+	return photoAssetSidecarOnlySinceTx(ctx, tx, assetID, seen, current)
+}
+
+func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, operation string) (PhotoAsset, error) {
 	asset, err := s.photoAssetReadQuery(ctx, tx, assetID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
-	if revision < 1 || asset.Revision != revision {
+	if revision < 1 || asset.Revision < revision || asset.Revision != revision && photoMutationDriftTx(ctx, tx, assetID, revision, asset.Revision, operation) != nil {
 		return PhotoAsset{}, fmt.Errorf("asset %s at revision %d, expected %d: %w", assetID, asset.Revision, revision, ErrStaleRevision)
 	}
 	return asset, nil
@@ -564,7 +582,7 @@ type photoMutation func(tx *sql.Tx, asset *PhotoAsset) (bool, error)
 // check the revision, run the edit, recompute display, advance the revision
 // once, write the receipt, and validate the asset's graph.
 func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, operation string, edit photoMutation) (PhotoAsset, error) {
-	asset, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
+	asset, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision, operation)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -777,6 +795,11 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 		if !ok {
 			return false, ErrNotFound
 		}
+		if file.SidecarOfID != nil {
+			if err := recordPhotoXMPDetachedTx(ctx, tx, *file.SidecarOfID, true); err != nil {
+				return false, err
+			}
+		}
 		if photoSidecarTargetRole(file.Role) {
 			dependents := 0
 			for _, member := range asset.Files {
@@ -786,6 +809,11 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 			}
 			if dependents > 0 && !options.ClearDependentSidecars {
 				return false, fmt.Errorf("%w: photo source has dependent sidecars", ErrInvalidPhotoAsset)
+			}
+			if dependents > 0 {
+				if err := recordPhotoXMPDetachedTx(ctx, tx, fileID, true); err != nil {
+					return false, err
+				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE asset_id=? AND sidecar_of_file_id=?`, asset.ID, fileID); err != nil {
 				return false, err

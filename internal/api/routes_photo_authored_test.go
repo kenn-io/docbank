@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,9 +13,77 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func photoXMPResolveFixture(t *testing.T, caption string) (*httptest.Server, string, string, string) {
+	t.Helper()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	packet := `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="2"/></rdf:RDF></x:xmpmeta>`
+	if caption != "" {
+		packet = strings.Replace(packet, `/>`, ` xmlns:dc="http://purl.org/dc/elements/1.1/" dc:description="Outside"/>`, 1)
+	}
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
+	require.NoError(t, err)
+	photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{}})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, hash, processing.SourceMetadataExtractorFingerprint, canonical)
+	require.NoError(t, err)
+	hash, size, err = s.Blobs.Write(strings.NewReader(packet))
+	require.NoError(t, err)
+	sidecar, err := s.CreateFile(ctx, s.RootID(), "photo.jpg.xmp", hash, size, "application/rdf+xml")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	file := asset.Files[0]
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, store.PhotoRoleSidecar, &file.ID)
+	require.NoError(t, err)
+	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rating: new(5)}})
+	require.NoError(t, err)
+
+	require.NoError(t, processing.SyncPhotoXMPBackground(ctx, &ingest.Ingester{Store: s.Store, Blobs: s.Blobs}, file.ID))
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/prepare", nil, api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var preparation api.PhotoAuthoredPreparation
+	require.NoError(t, json.Unmarshal([]byte(body), &preparation))
+	return ts, "/api/v1/photos/authored/" + file.ID + "/xmp", preparation.Targets[0].XMP.ConflictID, body
+}
+
+func TestPhotoXMPResolveRouteValidation(t *testing.T) {
+	t.Parallel()
+	ts, path, conflictID, body := photoXMPResolveFixture(t, "")
+	var wire struct {
+		Targets []struct {
+			XMP struct {
+				Rows []map[string]any `json:"rows"`
+			} `json:"xmp"`
+		} `json:"targets"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &wire))
+	require.Equal(t, []map[string]any{{"field": "Rating", "catalog": "5", "sidecar": "2"}}, wire.Targets[0].XMP.Rows)
+	var response *http.Response
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoXMPResolveRequest{ConflictID: conflictID, Choice: "other"})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, "body.choice")
+	response, _ = do(t, ts, http.MethodPost, path, nil, api.PhotoXMPResolveRequest{ConflictID: "10000000-0000-4000-8000-000000000001", Choice: "catalog"})
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode)
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoXMPResolveRequest{ConflictID: conflictID, Choice: "catalog"})
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	ts, path, conflictID, _ = photoXMPResolveFixture(t, "Outside")
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoXMPResolveRequest{ConflictID: conflictID, Choice: "catalog"})
+	require.Equal(t, http.StatusOK, response.StatusCode, "Any import must return its authored receipt to refresh sibling views")
+	var imported store.PhotoAuthoredReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &imported))
+	require.NotEmpty(t, imported.ReceiptID)
+	require.Len(t, imported.After, 1)
+}
 
 func TestPhotoAuthoredRoutes(t *testing.T) {
 	t.Parallel()

@@ -56,12 +56,35 @@ func TestFromStoreErrorMappings(t *testing.T) {
 		{store.ErrPersonMergeTooLarge, http.StatusUnprocessableEntity, "person_merge_too_large"},
 		{store.ErrPersonRetired, http.StatusConflict, "person_retired"},
 		{store.ErrPhotoEditReceiptLimit, http.StatusUnprocessableEntity, "photo_edit_receipt_limit"},
+		{store.ErrInvalidPhotoSuggestionResponse, http.StatusUnprocessableEntity, "invalid_photo_suggestion_response"},
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			mapped := &Error{}
 			require.ErrorAs(t, FromStoreError(test.err), &mapped)
 			assert.Equal(t, test.status, mapped.Status)
 			assert.Equal(t, test.code, mapped.Code)
+		})
+	}
+}
+
+func TestRuntimeUnavailableMapsToAGenericReadinessError(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, detailHas string
+		err             error
+	}{
+		{"without a cause", "not ready", processing.ErrRenditionRuntimeUnavailable},
+		{"with the probe failure", "HTTP 503", &processing.RuntimeUnavailableError{Cause: errors.New("provider returned HTTP 503")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mapped := &Error{}
+			require.ErrorAs(t, fromProcessingError(test.err), &mapped)
+			assert.Equal(t, http.StatusServiceUnavailable, mapped.Status)
+			assert.Equal(t, "rendition_runtime_unavailable", mapped.Code)
+			assert.Contains(t, mapped.Detail, test.detailHas)
+			// Original-file profiles reach this error as well as photo descriptions.
+			assert.NotContains(t, mapped.Detail, "photo")
 		})
 	}
 }

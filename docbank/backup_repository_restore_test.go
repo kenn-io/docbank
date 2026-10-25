@@ -16,6 +16,7 @@ import (
 )
 
 func TestRepositoryRestoreLargeExtraAfterSourceLoss(t *testing.T) {
+	t.Parallel()
 	r := require.New(t)
 	size := int64(64<<20 + 1)
 	if value := os.Getenv("DOCBANK_LARGE_OBJECT_TEST_BYTES"); value != "" {
@@ -83,6 +84,7 @@ func TestRepositoryRestoreLargeExtraAfterSourceLoss(t *testing.T) {
 }
 
 func TestRepositoryRestoreAfterSourceLoss(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		driver sqlite.Driver
@@ -142,6 +144,7 @@ func TestRepositoryRestoreAfterSourceLoss(t *testing.T) {
 }
 
 func TestRepositoryRestoreEnforcesTargetBoundaries(t *testing.T) {
+	t.Parallel()
 	r := require.New(t)
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "source")})
 	r.NoError(err)

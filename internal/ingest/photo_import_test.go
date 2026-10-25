@@ -55,16 +55,28 @@ func TestBrowserPhotoResumeKeepsOriginal(t *testing.T) {
 }
 
 func TestPhotoImportGrouping(t *testing.T) {
-	root := t.TempDir()
-	grouped := GroupPhotoCandidates([]PhotoImportCandidate{
-		{Path: filepath.Join(root, "IMG_0001.ARW"), Kind: store.PhotoSourceRAW},
-		{Path: filepath.Join(root, "IMG_0001.JPG"), Kind: store.PhotoSourceImage},
-		{Path: filepath.Join(root, "IMG_0001.XMP"), Kind: store.PhotoSourceSidecar},
-		{Path: filepath.Join(root, "IMG_0001.MP4"), Kind: store.PhotoSourceVideo},
+	t.Parallel()
+	t.Run("a basename groups its RAW, JPEG, sidecar, and video", func(t *testing.T) {
+		root := t.TempDir()
+		grouped := GroupPhotoCandidates([]PhotoImportCandidate{
+			{Path: filepath.Join(root, "IMG_0001.ARW"), Kind: store.PhotoSourceRAW},
+			{Path: filepath.Join(root, "IMG_0001.JPG"), Kind: store.PhotoSourceImage},
+			{Path: filepath.Join(root, "IMG_0001.XMP"), Kind: store.PhotoSourceSidecar},
+			{Path: filepath.Join(root, "IMG_0001.MP4"), Kind: store.PhotoSourceVideo},
+		})
+		require.Len(t, grouped, 2)
+		assert.Len(t, grouped[0].Members, 3)
+		assert.Len(t, grouped[1].Members, 1)
 	})
-	require.Len(t, grouped, 2)
-	assert.Len(t, grouped[0].Members, 3)
-	assert.Len(t, grouped[1].Members, 1)
+	t.Run("composed and decomposed names group together", func(t *testing.T) {
+		root := t.TempDir()
+		groups := GroupPhotoCandidates([]PhotoImportCandidate{
+			{Path: filepath.Join(root, "café", "café.ARW"), Kind: store.PhotoSourceRAW},
+			{Path: filepath.Join(root, "cafe\u0301", "cafe\u0301.xmp"), Kind: store.PhotoSourceSidecar},
+		})
+		require.Len(t, groups, 1)
+		require.Len(t, groups[0].Members, 2)
+	})
 }
 
 func TestPhotoImportAmbiguity(t *testing.T) {

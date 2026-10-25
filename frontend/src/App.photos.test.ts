@@ -1,8 +1,11 @@
 import { File as NodeFile } from "node:buffer";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
   photoMetadataResponse,
+  photoPreparation,
+  photoTimelineCounts,
+  stubPhotoTimeline,
   preparedPhoto,
   photo,
   mapPhoto,
@@ -11,7 +14,9 @@ import {
   savedSmartSet,
   storage,
 } from "./photo-test-fixtures.js";
+import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
+import { sessionResponse } from "./api-transport.js";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
@@ -19,6 +24,7 @@ import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import * as snapshots from "./snapshots.js";
 
 const savedImportCheckpoints = vi.hoisted(
   () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
@@ -38,6 +44,10 @@ vi.mock("./photoImportStorage.js", async (importOriginal) => ({
     },
   }),
 }));
+
+beforeEach(() => {
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue({ stop() {} });
+});
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => {
@@ -122,7 +132,7 @@ it("hides top-bar Photos search when a denied access check conceals Library", as
   expect(screen.getByRole("searchbox", { name: "Search photos" })).toBeTruthy();
   denied = true;
   poll();
-  await screen.findByRole("alert");
+  await screen.findByText("Access denied");
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   expect(screen.queryByRole("searchbox", { name: "Search photos" })).toBeNull();
 });
@@ -257,6 +267,7 @@ it.each(["workspace switch", "Clear filters"])(
       await screen.findByRole("button", { name: "Canon, 1 photos, selected" });
     }
     const input = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
+    await waitFor(() => expect(input.disabled).toBe(false));
     await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Plain words" }));
     await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
     await fireEvent.input(input, { target: { value: "rating:5" } });
@@ -812,6 +823,51 @@ it.each(["server", "stale first page"])(
     expect(screen.queryByText("This album is empty")).toBeNull();
   },
 );
+
+it("keeps the album choices selectable while a live pass rereads the albums", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  stubPhotoTimeline();
+  storage();
+  let holdAlbums = false;
+  let finishAlbums: (() => void) | undefined;
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/albums")) {
+        if (holdAlbums)
+          await new Promise<void>((resolve) => {
+            finishAlbums = resolve;
+          });
+        return albumResponse([photoAlbum()]);
+      }
+      if (url.endsWith("/photos/assets/query"))
+        return albumResponse({ items: [photo(1)], total: 1 });
+      if (url.includes("/nodes/1"))
+        return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+      return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
+  await screen.findByRole("option", { name: "Trip" });
+  holdAlbums = true;
+  const pass = photoEventPass()({});
+  await waitFor(() => expect(finishAlbums).toBeTypeOf("function"));
+  expect(screen.getByRole("option", { name: "Trip" })).toBeTruthy();
+  finishAlbums!();
+  await act(() => pass);
+  expect(screen.getByRole("option", { name: "Trip" })).toBeTruthy();
+});
 
 it("reloads Library album counts after adding photos to an album", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
@@ -2208,7 +2264,7 @@ it("shows Album not found for an unknown album Map", async () => {
   expect(location.pathname).toBe("/photos/albums");
 });
 
-it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"])(
+it.each(["album", "direct album", "Hidden", "existing gps_bounds"])(
   "keeps Map scoped when opened from %s",
   async (source) => {
     const album = photoAlbum();
@@ -2244,11 +2300,9 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
     document.head.append(meta);
     const queries: { projection?: string; hidden: boolean; query: Query }[] = [];
     let library: Photos | undefined;
-    let albumPhotos: Photos | undefined;
     const resume = Photos.prototype.resume;
     vi.spyOn(Photos.prototype, "resume").mockImplementation(function (this: Photos, ...args) {
       if (!this.projection && !this.hidden && !this.query.filters?.set_ids) library = this;
-      if (!this.projection && this.query.filters?.set_ids) albumPhotos = this;
       return resume.apply(this, args);
     });
     stubPhotoFetch(
@@ -2275,8 +2329,8 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
     render(App);
     if (source !== "direct album") {
       await screen.findByRole("button", { name: "Open Photo 1.jpg" });
-      library!.baseQuery = {
-        ...library!.baseQuery,
+      library!.query = {
+        ...library!.query,
         text: "beach",
         sort: { field: "relevance", direction: "desc" },
         filters: {
@@ -2284,7 +2338,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
           ...(source === "existing gps_bounds" ? { gps_bounds: gpsBounds } : {}),
         },
       };
-      await library!.selectDate("2024");
       if (source !== "existing gps_bounds") {
         await fireEvent.click(
           screen.getByRole("button", { name: source.startsWith("album") ? /^Trip/ : "Hidden" }),
@@ -2292,10 +2345,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
         await screen.findByRole("heading", {
           name: source.startsWith("album") ? "Trip" : "Hidden",
         });
-        if (source === "album year") {
-          await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-          await albumPhotos!.selectDate("2023");
-        }
       }
       if (source === "Hidden") {
         await waitFor(() =>
@@ -2334,8 +2383,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
         text: "beach",
         filters: {
           cameras: ["Library camera"],
-          capture_after: "2024-01-01",
-          capture_before: "2025-01-01",
         },
       });
       expect(request.query.filters.set_ids).toBeUndefined();
@@ -2343,12 +2390,6 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
       expect(request.query.text).toBe("");
       expect(request.query.filters.set_ids).toEqual([album.id]);
       expect(request.query.filters.cameras).toBeUndefined();
-      expect(request.query.filters.capture_after).toBe(
-        source === "album year" ? "2023-01-01" : undefined,
-      );
-      expect(request.query.filters.capture_before).toBe(
-        source === "album year" ? "2024-01-01" : undefined,
-      );
     }
     await waitFor(() => expect(map.props?.items).toHaveLength(1));
     const reads = queries.length;
@@ -2363,12 +2404,14 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
 );
 
 it.each(["Library", "album"])(
-  "closes the %s viewer from its active sidebar entry without reloading",
+  "closes the %s viewer from its active sidebar entry",
   async (kind) => {
+    const jump = vi.spyOn(Photos.prototype, "jumpTo").mockImplementation(() => {});
+    vi.spyOn(Photos.prototype, "canJump", "get").mockReturnValue(true);
     const album = photoAlbum({
       id: "22222222-2222-4222-8222-0000000000aa",
-      included_count: 1,
-      member_count: 1,
+      included_count: 3,
+      member_count: 3,
     });
     const path = kind === "album" ? `/photos/albums/${album.id}` : "/photos";
     history.replaceState(null, "", `${path}#web_session=synthetic&web_upload_secret=proof`);
@@ -2382,13 +2425,25 @@ it.each(["Library", "album"])(
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
     Element.prototype.scrollIntoView = vi.fn();
+    vi.spyOn(snapshots, "fetchPhotoTimeline").mockResolvedValue(
+      photoTimelineCounts([
+        ["2025-06-01", 1],
+        ["2024-03-01", 1],
+        ["2024-01-01", 1],
+      ]),
+    );
     const queries: { filters?: { set_ids?: string[] } }[] = [];
     stubPhotoFetch(
       vi.fn(async (url: string, init: RequestInit) => {
         if (url.endsWith("/photos/albums")) return new Response(JSON.stringify([album]));
         if (url.endsWith("/photos/assets/query")) {
           queries.push(JSON.parse(init.body as string).query);
-          return new Response(JSON.stringify({ items: [photo(1)], total: 1 }));
+          return new Response(
+            JSON.stringify({
+              items: [photo(1, "2025-06-01"), photo(2, "2024-03-01"), photo(3, "2024-01-01")],
+              total: 3,
+            }),
+          );
         }
         if (url.includes("/nodes/1"))
           return new Response(
@@ -2416,6 +2471,9 @@ it.each(["Library", "album"])(
     await waitFor(() => expect(location.hash).not.toContain("photo="));
     expect(queries).toHaveLength(reads);
     expect(location.pathname).toBe(path);
+    expect(screen.getByTestId("photo-scroll").scrollTop).toBe(0);
+    await fireEvent.click(await screen.findByRole("button", { name: "2024, 2 photos" }));
+    expect(jump).toHaveBeenCalled();
     await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 1.jpg" }), {
       key: "Enter",
     });
@@ -2455,6 +2513,7 @@ it.each([undefined, "first"])(
     storage();
     let changed = false;
     let albumReads = 0;
+    const listFilters: unknown[] = [];
     stubPhotoFetch(
       vi.fn(async (url: string, init: RequestInit) => {
         if (url.endsWith("/photos/hidden"))
@@ -2464,7 +2523,8 @@ it.each([undefined, "first"])(
           return Response.json([{ ...album, included_count: changed ? 0 : 1 }]);
         }
         if (url.endsWith("/photos/assets/query")) {
-          expect(JSON.parse(init.body as string).query.filters.set_ids).toEqual([album.id]);
+          const { filters } = JSON.parse(init.body as string).query;
+          listFilters.push(filters);
           return Response.json({ items: changed ? [] : [photo(1)], total: changed ? 0 : 1 });
         }
         return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
@@ -2475,6 +2535,7 @@ it.each([undefined, "first"])(
       await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }),
     );
     expect(screen.getByRole("main", { name: "Photo album" })).toBeTruthy();
+    expect(listFilters[0]).toMatchObject({ set_ids: [album.id] });
     const reads = albumReads;
     changed = true;
     await waitFor(
@@ -2788,6 +2849,179 @@ it.each(["search", "tag", "snapshot"] as const)(
   },
 );
 
+it("shows a photo imported by a live event when the user returns to Documents", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  const imported = {
+    id: 7,
+    parent_id: 1,
+    name: "imported.jpg",
+    kind: "file",
+    current_version_id: "00000000-0000-4000-8000-000000000007",
+    blob_hash: "a".repeat(64),
+    size: 1007,
+    mime_type: "image/jpeg",
+    revision: 1,
+    created_at: "2026-10-14T12:00:00Z",
+    modified_at: "2026-10-14T12:00:00Z",
+    path: "/imported.jpg",
+  };
+  let arrived = false;
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    if (url === "/api/v1/path?path=%2F") return Response.json(root);
+    if (url.includes("/nodes/1/children"))
+      return Response.json({
+        directory: root,
+        items: arrived ? [imported] : [],
+        total: arrived ? 1 : 0,
+      });
+    return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Photos" }));
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  arrived = true;
+  await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  expect((await screen.findAllByText("imported.jpg")).length).toBeGreaterThan(0);
+});
+
+it("rereads sibling photo views, album covers, and a frozen Documents selection after a receiptless background import", async () => {
+  const query = parseQuery("{}");
+  const fingerprint = await queryFingerprint(query);
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const prepare = vi.spyOn(PhotoAuthoredEditor.prototype, "prepare");
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  const node = {
+    id: 7,
+    parent_id: 1,
+    name: "report.pdf",
+    kind: "file",
+    current_version_id: "00000000-0000-4000-8000-000000000007",
+    blob_hash: "a".repeat(64),
+    size: 1007,
+    mime_type: "application/pdf",
+    revision: 3,
+    created_at: "2026-10-14T12:00:00Z",
+    modified_at: "2026-10-14T12:00:00Z",
+    path: "/report.pdf",
+  };
+  const album = photoAlbum({ member_count: 1, included_count: 1 });
+  const reads = { tags: 0, audit: 0, albums: 0, library: 0, album: 0 };
+  stubPhotoFetch(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/authored/prepare"))
+      return Response.json(
+        photoPreparation([preparedPhoto(1, { file_id: "file-1", xmp: { state: "synced" } })]),
+      );
+    if (url.endsWith("/photos/albums")) {
+      reads.albums++;
+      return albumResponse([album]);
+    }
+    if (url.endsWith("/photos/assets/query")) {
+      reads[JSON.parse(String(init.body ?? "{}")).query?.filters?.set_ids ? "album" : "library"]++;
+      return albumResponse({ items: [photo(1)], total: 1, facets: [] });
+    }
+    if (url === "/api/v1/path?path=%2F") return albumResponse(root);
+    if (url.includes("/nodes/1/children"))
+      return albumResponse({ directory: root, items: [], total: 0 });
+    if (url.startsWith("/api/v1/tags?")) return albumResponse({ items: [], total: 0 });
+    if (url.endsWith("/queries/parse"))
+      return albumResponse({ query, query_fingerprint: fingerprint, dependencies: [] });
+    if (url.endsWith("/workspace/queries"))
+      return albumResponse({
+        query,
+        dependencies: [],
+        query_fingerprint: fingerprint,
+        member_hash: "a".repeat(64),
+        snapshot_fingerprint: `sha256:${"b".repeat(64)}`,
+        generation: { kind: "native" },
+        coverage: { configuration: "unconfigured" },
+        observed_at: "2026-10-14T12:00:00Z",
+        page_size: 100,
+        total: 1,
+        total_bytes: node.size,
+        rows: [
+          {
+            node_id: node.id,
+            content_version_id: node.current_version_id,
+            blob_hash: node.blob_hash,
+            size: node.size,
+            revision: node.revision,
+            name: node.name,
+            path: node.path,
+            mime_type: node.mime_type,
+            media_family: "document",
+            modified_at: node.modified_at,
+            sort_key: node.name,
+            tags: [],
+            collection_ids: [],
+          },
+        ],
+        facets: JSON.parse(String(init.body)).facets.map((dimension: string) => ({
+          dimension,
+          available: false,
+          reason: "not_requested",
+          values: [],
+        })),
+        snapshot: true,
+        snapshot_id: "a".repeat(32),
+        created_at: "2026-10-14T12:00:00Z",
+        expires_at: "2026-10-14T12:30:00Z",
+      });
+    if (url === "/api/v1/nodes/7") return albumResponse(node);
+    if (url.startsWith("/api/v1/nodes/7/tags")) {
+      reads.tags++;
+      return albumResponse({ node, items: [], total: 0 });
+    }
+    if (url.startsWith("/api/v1/audit/status?node_id=7")) {
+      reads.audit++;
+      return albumResponse({ enabled: false, scopes: [] });
+    }
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  await fireEvent.click(await screen.findByRole("cell", { name: "/report.pdf" }));
+  await waitFor(() => expect(reads.audit).toBeGreaterThan(0));
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(await screen.findByRole("button", { name: /^Trip/ }));
+  await waitFor(() => expect(reads.album).toBeGreaterThan(0));
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await waitFor(() => expect(prepare).toHaveBeenCalled());
+  const before = { ...reads };
+  // The album's editor reports an import that carries no receipt; its siblings and covers must follow.
+  await (prepare.mock.contexts.at(-1) as PhotoAuthoredEditor).onXMPChanged!();
+  await waitFor(() => expect(reads.library).toBeGreaterThan(before.library));
+  expect(reads.albums).toBeGreaterThan(before.albums);
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  await waitFor(() => {
+    expect(reads.tags).toBeGreaterThan(before.tags);
+    expect(reads.audit).toBeGreaterThan(before.audit);
+  });
+  expect(screen.getByRole("region", { name: "Frozen query results" })).toBeTruthy();
+});
+
 it.each([false, true])("opens a smart set through Albums when search fails=%s", async (failed) => {
   history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
@@ -2854,6 +3088,11 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
   });
   render(App);
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).disabled,
+    ).toBe(false),
+  );
   const edit = vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockResolvedValue(undefined);
   await fireEvent.click(screen.getByRole("button", { name: "Select Photo 1.jpg" }));
   await fireEvent.keyDown(window, { key: "&", code: "Digit6" });
@@ -3287,7 +3526,9 @@ it("discards shared photo Undo when signing into a replacement web session", asy
   expect(screen.queryByRole("button", { name: "Undo last photo edit" })).toBeNull();
 });
 
-it("loads keywords beyond the first catalog page", async () => {
+// Opens Metadata over a vault with more keywords than one catalog page, loads the second page,
+// and opens the keyword list. `hold` makes the next first-page read wait until `release` is called.
+async function openKeywordsPastFirstPage() {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -3299,6 +3540,9 @@ it("loads keywords beyond the first catalog page", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   Element.prototype.scrollIntoView = vi.fn();
+  stubPhotoTimeline();
+  storage();
+  const prepare = vi.spyOn(PhotoAuthoredEditor.prototype, "prepare");
   const catalog = Array.from({ length: 1000 }, (_, index) => ({
     id: `tag-${index}`,
     name: `Keyword ${index}`,
@@ -3306,11 +3550,19 @@ it("loads keywords beyond the first catalog page", async () => {
     assignment_count: 0,
   }));
   const last = { id: "last", name: "Beyond the first page", revision: 1, assignment_count: 0 };
-  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
-    if (url === "/api/v1/tags?limit=1000&offset=0")
+  const hold = { active: false, release: undefined as (() => void) | undefined };
+  const fetcher = vi.fn(async (url: string) => {
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      if (hold.active)
+        await new Promise<void>((resolve) => {
+          hold.release = resolve;
+        });
       return Response.json({ items: catalog, total: 1001 });
+    }
     if (url === "/api/v1/tags?limit=1000&offset=1000")
       return Response.json({ items: [last], total: 1001 });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
     if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
     if (url.includes("/nodes/1"))
       return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
@@ -3330,12 +3582,37 @@ it("loads keywords beyond the first catalog page", async () => {
   expect(fetcher.mock.calls.some(([url]) => url === "/api/v1/tags?limit=1000&offset=1000")).toBe(
     true,
   );
-  await fireEvent.click(
-    within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" }),
-  );
+  const picker = within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" });
+  await fireEvent.click(picker);
   expect(
     await within(inspector).findByRole("option", { name: /Beyond the first page/ }),
   ).toBeTruthy();
+  return { inspector, picker, last, hold, prepare };
+}
+
+it("loads keywords beyond the first catalog page", async () => {
+  const { last, prepare } = await openKeywordsPastFirstPage();
+  const editor = prepare.mock.contexts.at(-1) as PhotoAuthoredEditor;
+  await editor.onXMPChanged!(undefined, [{ ...last, revision: 2, assignment_count: 1 }]);
+  await waitFor(() =>
+    expect(editor.tags.find((tag) => tag.id === "last")).toMatchObject({
+      revision: 2,
+      assignment_count: 1,
+    }),
+  );
+});
+
+it("keeps the open keyword list and every loaded page through a live pass", async () => {
+  const { inspector, picker, hold } = await openKeywordsPastFirstPage();
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  hold.active = true;
+  const pass = photoEventPass()({});
+  await waitFor(() => expect(hold.release).toBeTypeOf("function"));
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  hold.release!();
+  await act(() => pass);
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  expect(within(inspector).getByRole("option", { name: /Beyond the first page/ })).toBeTruthy();
 });
 
 it("guards a Hidden draft while a status failure conceals its workspace", async () => {
@@ -4006,4 +4283,200 @@ it("closes Hidden setup and reports an expired session after a 401 save", async 
   await waitFor(() => expect(photos.hiding).toBe(false));
   expect(screen.queryByRole("dialog", { name: "Set a Hidden passcode" })).toBeNull();
   expect(hidden.size).toBe(0);
+});
+
+function photoEventPass() {
+  const pass = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.at(-1)?.[1];
+  if (!pass) throw new Error("The event watcher has not started");
+  return pass;
+}
+const livePhotoStubs = () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  stubPhotoTimeline();
+  storage();
+};
+
+it("routes a live pass to the open viewer after initial paging fails", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+  );
+  livePhotoStubs();
+  const changed = vi.spyOn(Photos.prototype, "changed");
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) {
+      if (JSON.parse(String(init.body)).query.filters?.asset_ids)
+        return Response.json({ items: [photo(1)], total: 1 });
+      return Response.json({ detail: "Paging down" }, { status: 503 });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer" });
+  await within(viewer).findByText("Photo 1.jpg");
+  await screen.findByText("Paging down");
+  changed.mockClear();
+  await act(() => photoEventPass()({}));
+  expect(changed).toHaveBeenCalledWith({ listRefreshed: true });
+});
+
+it("keeps one event stream while moving between Photos views", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const stop = vi.fn();
+  vi.mocked(photoEvents.watchPhotoEvents).mockReturnValue({ stop });
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const started = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.length;
+  for (const path of ["/photos/albums", "/photos"]) {
+    history.pushState(null, "", path);
+    await fireEvent(window, new PopStateEvent("popstate"));
+  }
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  expect(vi.mocked(photoEvents.watchPhotoEvents).mock.calls.length).toBe(started);
+  expect(stop).not.toHaveBeenCalled();
+});
+
+const photoFetchUrls =
+  (lists: { count: number }, albums?: { count: number }) =>
+  async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) {
+      if (albums) albums.count++;
+      return Response.json([]);
+    }
+    if (
+      url.endsWith("/photos/assets/query") &&
+      !JSON.parse(String(init.body)).query.filters?.asset_ids
+    ) {
+      lists.count++;
+      return Response.json({ items: [photo(1), photo(2)], total: 2 });
+    }
+    return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+  };
+
+it.each(["a first page still loading", "a write in flight"] as const)(
+  "defers a live pass behind %s without aborting it, then runs the pass",
+  async (guard) => {
+    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+    livePhotoStubs();
+    const lists = { count: 0 };
+    const ordinary = photoFetchUrls(lists);
+    let release!: (response: Response) => void;
+    let firstPage: AbortSignal | undefined;
+    let tags = 0;
+    stubPhotoFetch(async (url, init) => {
+      if (url.includes("/tags")) tags++;
+      if (url.endsWith("/photos/synthetic-write"))
+        return new Promise<Response>((resolve) => (release = resolve));
+      const isList =
+        url.endsWith("/photos/assets/query") &&
+        !JSON.parse(String(init.body)).query.filters?.asset_ids;
+      if (guard === "a first page still loading" && isList && lists.count === 0) {
+        lists.count++;
+        firstPage = init.signal ?? undefined;
+        return new Promise<Response>((resolve) => (release = resolve));
+      }
+      return ordinary(url, init);
+    });
+    render(App);
+    let settled: Promise<unknown> | undefined;
+    if (guard === "a first page still loading") {
+      await waitFor(() => expect(release).toBeDefined());
+      expect(await photoEventPass()({})).toBe(false);
+      expect(firstPage?.aborted).toBe(false);
+      expect(lists.count).toBe(1);
+      release(Response.json({ items: [photo(1)], total: 1 }));
+    }
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    if (guard === "a write in flight") {
+      await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+      settled = sessionResponse("/api/v1/photos/synthetic-write", {
+        session: "synthetic",
+        method: "POST",
+      });
+      expect(await photoEventPass()({})).toBe(false);
+    }
+    const before = lists.count;
+    const definitions = tags;
+    if (guard === "a write in flight") {
+      expect(lists.count).toBe(before);
+      release(Response.json({}));
+      await settled;
+    }
+    await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+    expect(lists.count).toBeGreaterThan(before);
+    expect(tags).toBeGreaterThan(definitions);
+  },
+);
+
+it("rereads the albums on a live pass", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const albums = { count: 0 };
+  stubPhotoFetch(photoFetchUrls({ count: 0 }, albums));
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const before = albums.count;
+  await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+  expect(albums.count).toBeGreaterThan(before);
+});
+
+it("tells the list refresh whether a live pass may resume its staged pages", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  stubPhotoFetch(photoFetchUrls({ count: 0 }));
+  const seen: boolean[] = [];
+  const refresh = Photos.prototype.refresh;
+  vi.spyOn(Photos.prototype, "refresh").mockImplementation(function (this: Photos, ...args) {
+    if (args[1]) seen.push(this.resumeStaged);
+    return refresh.apply(this, args);
+  });
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  await waitFor(async () => expect(await photoEventPass()({ resume: true })).not.toBe(false));
+  await photoEventPass()({ resume: undefined });
+  expect(seen).toEqual([true, false]);
+});
+
+it("clears the live update alert once the event stream opens again", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [photo(1)], total: 1 });
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const [, , failed, opened] = vi.mocked(photoEvents.watchPhotoEvents).mock.calls.at(-1)!;
+  // One dropped connection retries on its own, so only a second failure in a row shows.
+  await act(() => failed(new Error("Failed to fetch")));
+  expect(screen.queryByText("Failed to fetch")).toBeNull();
+  await act(() => failed(new Error("Failed to fetch")));
+  await screen.findByText("Failed to fetch");
+  await act(() => opened!());
+  expect(screen.queryByText("Failed to fetch")).toBeNull();
+  await act(() => failed(new Error("Failed to fetch")));
+  expect(screen.queryByText("Failed to fetch")).toBeNull();
 });

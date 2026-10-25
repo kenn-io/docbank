@@ -24,7 +24,6 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     ...process.env,
     DOCBANK_HOME: vault,
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
-    DOCBANK_TELEMETRY_ENABLED: "0",
     DOCBANK_MAP_TILE_TEST_CA: path.join(workspace, "tls", "ca.pem"),
     GOCACHE: process.env.GOCACHE,
   };
@@ -355,31 +354,6 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     });
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Library", exact: true }).click();
-    await page.getByRole("button", { name: "Timeline", exact: true }).click();
-    await page
-      .getByRole("navigation", { name: "Timeline years" })
-      .getByRole("button", { name: "2022 10", exact: true })
-      .click();
-    await expect(page.getByText(/photos in 2022/)).toBeVisible();
-    await page.getByRole("button", { name: "Map", exact: true }).first().click();
-    await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
-    await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
-    await expect
-      .poll(() =>
-        page
-          .locator(".leaflet-tile-loaded")
-          .evaluateAll(
-            (tiles) =>
-              tiles.length > 0 && tiles.every((tile) => getComputedStyle(tile).opacity === "1"),
-          ),
-      )
-      .toBe(true);
-    await page.screenshot({
-      path: path.join(output!, "photo-map-date-1440-dark.png"),
-      animations: "disabled",
-    });
-    await page.getByRole("button", { name: "Library", exact: true }).click();
-    await page.getByRole("button", { name: "Clear date", exact: true }).click();
     await expect(page.getByText("15 photos", { exact: true })).toBeVisible();
     await page
       .getByRole("navigation", { name: "Docbank navigation" })

@@ -4,6 +4,7 @@ import { Photos } from "./photos.svelte.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import type { PhotoPreviewSlot } from "./generated/docbank.js";
 import { photo } from "./photo-test-fixtures.js";
+import { APIError } from "./api-transport.js";
 
 const displays: PhotoPreviewLoader[] = [];
 beforeEach(() => {
@@ -54,6 +55,42 @@ it.each(["fit", "large"] as const)(
     expect(display.quality).toBe(size);
     expect(display.url).not.toBe(fitted);
     expect(get).toHaveBeenLastCalledWith("photo-1", `${size}-1`, expect.anything(), true);
+  },
+);
+
+it.each([
+  { change: "a newly published preview", version: "version-1", keeps: true },
+  { change: "a new content version", version: "version-2", keeps: false },
+])(
+  "$change replaces the image only once its successor loads: keeps=$keeps",
+  async ({ version, keeps }) => {
+    const photos = new Photos("session", vi.fn());
+    const preview = vi.spyOn(photos, "preview").mockImplementation(async (_row, size) => ({
+      state: "ready",
+      generation_id: `${size}-1`,
+    }));
+    const { display } = loader(photos);
+    await vi.waitFor(() => expect(display.quality).toBe("fit"));
+    const shown = display.url;
+    const revoke = vi.mocked(URL.revokeObjectURL);
+    // Hidden previews are not in the byte cache, so a failed reread leaves nothing to fall back on.
+    preview.mockRejectedValue(
+      new APIError("Preview unavailable", 503, "photo_preview_unavailable"),
+    );
+    const row = photo(1);
+    row.content_version_id = version;
+    row.previews.fit = { state: "ready", generation_id: "fit-2" };
+    display.retire();
+    const successor = new PhotoPreviewLoader(
+      photos,
+      { get: vi.fn() } as unknown as PhotoPreviewCache,
+      row,
+      display,
+    );
+    displays.push(successor);
+    await vi.waitFor(() => expect(successor.failure?.message).toBe("Preview unavailable"));
+    expect(successor.url).toBe(keeps ? shown : "");
+    expect(revoke.mock.calls.some(([url]) => url === shown)).toBe(!keeps);
   },
 );
 

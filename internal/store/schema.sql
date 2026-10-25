@@ -1096,6 +1096,10 @@ CREATE INDEX IF NOT EXISTS visual_preview_generations_output
     ON visual_preview_generations(output_blob_hash, generation_id)
     WHERE output_blob_hash IS NOT NULL;
 
+-- Photo description backfill walks the ready previews of one recipe in version order.
+CREATE INDEX IF NOT EXISTS visual_preview_generations_ready
+    ON visual_preview_generations(recipe_fingerprint, content_version_id) WHERE state='ready';
+
 CREATE TABLE IF NOT EXISTS visual_preview_heads (
     content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
     generation_id      TEXT NOT NULL UNIQUE,
@@ -1786,8 +1790,17 @@ CREATE TABLE IF NOT EXISTS rendition_job_waiters (
 
 CREATE INDEX IF NOT EXISTS rendition_job_waiters_job
     ON rendition_job_waiters(job_id, state, waiter_id);
+
 CREATE INDEX IF NOT EXISTS rendition_job_waiters_content_version
     ON rendition_job_waiters(content_version_id, job_id);
+
+-- Photo description waiters that an explicit start asked for. A description job
+-- is shared by automatic and explicit requests, and an explicit one may replace
+-- another profile's dismissed suggestion. This records in-flight intent only, so
+-- it is not backed up. Description jobs and waiters rebuild after restore.
+CREATE TABLE IF NOT EXISTS photo_description_explicit_waiters (
+    waiter_id TEXT PRIMARY KEY REFERENCES rendition_job_waiters(waiter_id) ON DELETE CASCADE
+);
 
 -- Root producers outside the immutable rendition catalog retain one exact
 -- build or lexical generation. Lease expiry uses canonical fixed-width UTC
@@ -2394,15 +2407,6 @@ CREATE TRIGGER IF NOT EXISTS photo_authored_fts_delete AFTER DELETE ON photo_fil
     DELETE FROM photo_authored_fts WHERE rowid=old.node_id;
 END;
 
-CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
-    sidecar_file_id      TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
-    asset_id             TEXT NOT NULL REFERENCES photo_assets(asset_id) ON DELETE CASCADE,
-    asset_revision       INTEGER NOT NULL,
-    member_revisions     TEXT NOT NULL,
-    version_id           TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
-    extractor_fingerprint TEXT NOT NULL
-);
-
 -- A NULL burst gap is the 2-second default, including restored settings that predate it.
 CREATE TABLE IF NOT EXISTS photo_library_settings (
     singleton    INTEGER PRIMARY KEY,
@@ -2450,9 +2454,189 @@ CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
     ON photo_change_receipts(asset_id, receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_set ON photo_change_receipts(set_id,receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_operation ON photo_change_receipts(operation);
+CREATE INDEX IF NOT EXISTS photo_change_receipts_xmp_file
+    ON photo_change_receipts(CAST(json_extract(after_json,'$.file_id') AS TEXT)) WHERE operation='xmp_sync';
+CREATE INDEX IF NOT EXISTS photo_change_receipts_xmp_sidecar
+    ON photo_change_receipts(CAST(json_extract(after_json,'$.sync.sidecar.file_id') AS TEXT)) WHERE operation='xmp_sync';
 CREATE INDEX IF NOT EXISTS photo_change_receipts_face_version
     ON photo_change_receipts(json_extract(before_json,'$.content_version_id'),receipt_id)
     WHERE operation='face_decision';
+
+-- Assets with an original whose XMP sync token may differ from its receipt or
+-- whose receipt retains a conflict. Discovery and filters use these candidates.
+-- Derived like photo_timeline: absent from export and refilled by the triggers
+-- below, which queue an asset whenever any token or eligibility input changes.
+-- This flattenable view owns eligibility, extraction, and token comparisons for
+-- queue maintenance, discovery, status, filters, and publication fences.
+CREATE VIEW IF NOT EXISTS photo_xmp_inputs AS
+SELECT inputs.*, token<>COALESCE(saved_token,'') AS pending FROM (
+ SELECT facts.*, token_base || occupied || '|' || audit_active AS token FROM (
+ SELECT f.file_id,f.node_id,f.asset_id,xr.receipt_id,
+ COALESCE(json_extract(xr.after_json,'$.conflicts'),0) AS conflicts,
+ json_extract(xr.after_json,'$.token') AS saved_token,
+ (f.role IN ('raw','image') AND n.trashed_at IS NULL AND (xr.receipt_id IS NOT NULL OR f.confirmed_fields<>0 OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=f.node_id) OR EXISTS(SELECT 1 FROM photo_files sf WHERE sf.sidecar_of_file_id=f.file_id))) AS eligible,
+ h.generation_id IS NOT NULL AS extracted,
+ COALESCE(t.orientation,1) AS orientation,
+ (SELECT count(*) FROM photo_files WHERE asset_id=f.asset_id) AS members,
+ EXISTS(SELECT 1 FROM nodes o WHERE o.parent_id=n.parent_id AND o.name=n.name || '.xmp' AND o.trashed_at IS NULL) AS occupied,
+ EXISTS(SELECT 1 FROM audit_authority) AS audit_active,
+ EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=f.node_id) AS audited,
+ f.revision || '|' || f.role || '|' || a.asset_id || '|' || a.revision || '|' || n.revision || '|' || n.current_version_id || '|' ||
+ (h.generation_id IS NOT NULL) || ':' ||
+ COALESCE(t.orientation,1) || '|' || (SELECT group_concat(member_revision, ',') FROM
+ (SELECT n.id || ':' || n.revision || ':' || f.revision || ':' || COALESCE(f.sidecar_of_file_id,'') ||
+ CASE WHEN EXISTS (SELECT 1 FROM audit_memberships m WHERE m.node_id=n.id) THEN ':audited' ELSE '' END AS member_revision
+ FROM photo_files f JOIN nodes n ON n.id=f.node_id
+ WHERE f.asset_id=a.asset_id ORDER BY n.id)) || '|' AS token_base
+ FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id
+ LEFT JOIN content_versions xv ON xv.version_id=n.current_version_id
+ LEFT JOIN source_metadata_heads h ON h.source_sha256=xv.blob_hash
+ LEFT JOIN photo_technical_metadata t ON t.generation_id=h.generation_id
+ LEFT JOIN photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_file ON xr.operation='xmp_sync' AND CAST(json_extract(xr.after_json,'$.file_id') AS TEXT)=f.file_id
+) facts
+) inputs;
+
+CREATE TABLE IF NOT EXISTS photo_xmp_unsettled (asset_id TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS photo_xmp_unsettled_pending (asset_id TEXT PRIMARY KEY) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_refresh AFTER INSERT ON photo_xmp_unsettled_pending BEGIN
+ DELETE FROM photo_xmp_unsettled WHERE asset_id=NEW.asset_id;
+ INSERT INTO photo_xmp_unsettled(asset_id) SELECT NEW.asset_id WHERE EXISTS (
+ SELECT 1 FROM photo_xmp_inputs WHERE asset_id=NEW.asset_id AND eligible AND (pending OR conflicts<>0));
+ DELETE FROM photo_xmp_unsettled_pending WHERE asset_id=NEW.asset_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_file_insert AFTER INSERT ON photo_files BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT NEW.asset_id WHERE NEW.asset_id IS NOT NULL
+    UNION SELECT asset_id FROM photo_files WHERE file_id = NEW.sidecar_of_file_id AND asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_file_update AFTER UPDATE ON photo_files BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT asset_id FROM photo_files WHERE file_id IN (NEW.file_id, NEW.sidecar_of_file_id, OLD.sidecar_of_file_id) AND asset_id IS NOT NULL
+    UNION SELECT OLD.asset_id WHERE OLD.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_file_delete AFTER DELETE ON photo_files BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT OLD.asset_id WHERE OLD.asset_id IS NOT NULL
+    UNION SELECT asset_id FROM photo_files WHERE file_id = OLD.sidecar_of_file_id AND asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_asset_insert AFTER INSERT ON photo_assets BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id) VALUES(NEW.asset_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_asset_update AFTER UPDATE OF revision ON photo_assets BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id) VALUES(NEW.asset_id);
+END;
+
+-- A node is a member, or a sidecar whose name pairs with a sibling original.
+-- Trashing an original removes its asset's work; later sidecar updates only
+-- matter while another original in that asset or a paired sibling stays live.
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_node_update
+AFTER UPDATE OF revision, current_version_id, trashed_at, name, parent_id ON nodes
+WHEN EXISTS (SELECT 1 FROM photo_files p WHERE p.node_id=NEW.id AND (NEW.trashed_at IS NULL OR p.role IN ('raw','image')
+ OR EXISTS (SELECT 1 FROM photo_files f JOIN nodes n ON n.id=f.node_id WHERE f.asset_id=p.asset_id AND f.role IN ('raw','image') AND n.trashed_at IS NULL)))
+ OR substr(OLD.name,-4)='.xmp' AND EXISTS (SELECT 1 FROM nodes o JOIN photo_files f ON f.node_id=o.id
+ WHERE o.parent_id=OLD.parent_id AND o.name=substr(OLD.name,1,length(OLD.name)-4) AND o.trashed_at IS NULL)
+ OR substr(NEW.name,-4)='.xmp' AND EXISTS (SELECT 1 FROM nodes o JOIN photo_files f ON f.node_id=o.id
+ WHERE o.parent_id=NEW.parent_id AND o.name=substr(NEW.name,1,length(NEW.name)-4) AND o.trashed_at IS NULL) BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT asset_id FROM photo_files WHERE node_id = NEW.id AND asset_id IS NOT NULL
+    UNION SELECT f.asset_id FROM nodes o JOIN photo_files f ON f.node_id = o.id
+    WHERE substr(NEW.name, -4) = '.xmp' AND o.parent_id = NEW.parent_id AND o.name = substr(NEW.name, 1, length(NEW.name) - 4) AND f.asset_id IS NOT NULL
+    UNION SELECT f.asset_id FROM nodes o JOIN photo_files f ON f.node_id = o.id
+    WHERE substr(OLD.name, -4) = '.xmp' AND o.parent_id = OLD.parent_id AND o.name = substr(OLD.name, 1, length(OLD.name) - 4) AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_node_insert AFTER INSERT ON nodes
+WHEN substr(NEW.name, -4) = '.xmp' BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT f.asset_id FROM nodes o JOIN photo_files f ON f.node_id = o.id
+    WHERE o.parent_id = NEW.parent_id AND o.name = substr(NEW.name, 1, length(NEW.name) - 4) AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_node_delete AFTER DELETE ON nodes
+WHEN substr(OLD.name, -4) = '.xmp' BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT f.asset_id FROM nodes o JOIN photo_files f ON f.node_id = o.id
+    WHERE o.parent_id = OLD.parent_id AND o.name = substr(OLD.name, 1, length(OLD.name) - 4) AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_membership_insert AFTER INSERT ON audit_memberships BEGIN
+    INSERT OR IGNORE INTO photo_xmp_unsettled(asset_id)
+    SELECT asset_id FROM photo_xmp_inputs WHERE eligible AND asset_id IN (SELECT asset_id FROM photo_files WHERE node_id = NEW.node_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_membership_delete AFTER DELETE ON audit_memberships BEGIN
+    INSERT OR IGNORE INTO photo_xmp_unsettled(asset_id)
+    SELECT asset_id FROM photo_xmp_inputs WHERE eligible AND asset_id IN (SELECT asset_id FROM photo_files WHERE node_id = OLD.node_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_authority_insert AFTER INSERT ON audit_authority BEGIN
+    INSERT OR IGNORE INTO photo_xmp_unsettled(asset_id)
+    SELECT asset_id FROM photo_xmp_inputs WHERE eligible;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_authority_delete AFTER DELETE ON audit_authority BEGIN
+    INSERT OR IGNORE INTO photo_xmp_unsettled(asset_id)
+    SELECT asset_id FROM photo_xmp_inputs WHERE eligible;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_technical_insert AFTER INSERT ON photo_technical_metadata BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT DISTINCT f.asset_id FROM source_metadata_heads h
+    JOIN content_versions v ON v.blob_hash = h.source_sha256
+    JOIN photo_files f ON f.node_id = v.node_id
+    WHERE h.generation_id = NEW.generation_id AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_technical_delete AFTER DELETE ON photo_technical_metadata BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT DISTINCT f.asset_id FROM source_metadata_heads h
+    JOIN content_versions v ON v.blob_hash = h.source_sha256
+    JOIN photo_files f ON f.node_id = v.node_id
+    WHERE h.generation_id = OLD.generation_id AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_head_insert AFTER INSERT ON source_metadata_heads BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT DISTINCT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    WHERE v.blob_hash = NEW.source_sha256 AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_head_update AFTER UPDATE ON source_metadata_heads BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT DISTINCT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    WHERE v.blob_hash IN (NEW.source_sha256, OLD.source_sha256) AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_head_delete AFTER DELETE ON source_metadata_heads BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT DISTINCT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    WHERE v.blob_hash = OLD.source_sha256 AND f.asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_receipt_insert AFTER INSERT ON photo_change_receipts
+WHEN NEW.operation = 'xmp_sync' BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT asset_id FROM photo_files WHERE file_id = CAST(json_extract(NEW.after_json, '$.file_id') AS TEXT) AND asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_receipt_update AFTER UPDATE ON photo_change_receipts
+WHEN OLD.operation = 'xmp_sync' OR NEW.operation = 'xmp_sync' BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT asset_id FROM photo_files WHERE file_id IN (CAST(json_extract(NEW.after_json, '$.file_id') AS TEXT),
+        CAST(json_extract(OLD.after_json, '$.file_id') AS TEXT)) AND asset_id IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_xmp_unsettled_receipt_delete AFTER DELETE ON photo_change_receipts
+WHEN OLD.operation = 'xmp_sync' BEGIN
+    INSERT OR REPLACE INTO photo_xmp_unsettled_pending(asset_id)
+    SELECT asset_id FROM photo_files WHERE file_id = CAST(json_extract(OLD.after_json, '$.file_id') AS TEXT) AND asset_id IS NOT NULL;
+END;
 
 CREATE TABLE IF NOT EXISTS persons (
     key_face_id TEXT REFERENCES photo_faces(face_id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
@@ -2815,3 +2999,57 @@ CREATE INDEX IF NOT EXISTS photo_checkout_entries_version ON photo_checkout_entr
 CREATE INDEX IF NOT EXISTS photo_change_receipts_checkout_commit ON photo_change_receipts(
     json_extract(after_json,'$.operation_id'), json_extract(after_json,'$.file_id')
 ) WHERE operation='checkout_commit';
+
+-- Machine-written photo descriptions awaiting an owner decision, one row per
+-- source version and producer. Accepting a field moves it to the authored
+-- fields and clears it here. The resolved columns remember what the owner has
+-- already decided, so a description regenerated after restore (awaiting=1)
+-- offers only what is still open.
+CREATE TABLE IF NOT EXISTS photo_suggestions (
+    id                   INTEGER PRIMARY KEY,
+    suggestion_id        TEXT NOT NULL UNIQUE,
+    content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    producer_fingerprint TEXT NOT NULL,
+    caption              TEXT NOT NULL DEFAULT '',
+    tags_json            TEXT NOT NULL DEFAULT '[]',
+    visible_text         TEXT NOT NULL DEFAULT '',
+    dismissed            INTEGER NOT NULL DEFAULT 0 CHECK (dismissed IN (0,1)),
+    caption_resolved     INTEGER NOT NULL DEFAULT 0 CHECK (caption_resolved IN (0,1)),
+    resolved_tags_json   TEXT NOT NULL DEFAULT '[]',
+    awaiting             INTEGER NOT NULL DEFAULT 0 CHECK (awaiting IN (0,1)),
+    created_at           TEXT NOT NULL,
+    UNIQUE (content_version_id, producer_fingerprint)
+);
+
+-- Pending text only. Tags join with a private-use token (char(57344)) so a
+-- phrase cannot span two tags.
+CREATE VIRTUAL TABLE IF NOT EXISTS photo_suggestion_fts USING fts5(caption, tags, visible_text, tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_insert AFTER INSERT ON photo_suggestions
+WHEN new.caption<>'' OR new.tags_json<>'[]' OR new.visible_text<>'' BEGIN
+    INSERT INTO photo_suggestion_fts(rowid,caption,tags,visible_text)
+    VALUES(new.id,new.caption,(SELECT group_concat(value,' '||char(57344)||' ') FROM json_each(new.tags_json)),new.visible_text);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_update AFTER UPDATE OF caption,tags_json,visible_text ON photo_suggestions BEGIN
+    DELETE FROM photo_suggestion_fts WHERE rowid=old.id;
+    INSERT INTO photo_suggestion_fts(rowid,caption,tags,visible_text)
+    SELECT new.id,new.caption,(SELECT group_concat(value,' '||char(57344)||' ') FROM json_each(new.tags_json)),new.visible_text
+    WHERE new.caption<>'' OR new.tags_json<>'[]' OR new.visible_text<>'';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_delete AFTER DELETE ON photo_suggestions BEGIN
+    DELETE FROM photo_suggestion_fts WHERE rowid=old.id;
+END;
+
+-- Tag names, so a photo matches text search by any tag assigned to it. Rows
+-- key on the tag ID because SQLite does not guarantee the implicit rowid of tags
+-- stays stable across VACUUM.
+CREATE VIRTUAL TABLE IF NOT EXISTS tag_fts USING fts5(name, tag_id UNINDEXED, tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS tag_fts_insert AFTER INSERT ON tags BEGIN
+    INSERT INTO tag_fts(name,tag_id) VALUES(new.name,new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS tag_fts_update AFTER UPDATE OF name ON tags BEGIN
+    DELETE FROM tag_fts WHERE tag_id=old.id;
+    INSERT INTO tag_fts(name,tag_id) VALUES(new.name,new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS tag_fts_delete AFTER DELETE ON tags BEGIN
+    DELETE FROM tag_fts WHERE tag_id=old.id;
+END;

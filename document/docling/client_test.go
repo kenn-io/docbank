@@ -75,7 +75,7 @@ func TestClientRendersDoclingPagesAndRequestsBothFormats(t *testing.T) {
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/convert/file/async":
 			assert.Equal(t, "synthetic-secret", request.Header.Get("X-Api-Key"))
-			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"})
+			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"}, nil)
 			writeJSON(t, response, doclingTask("task-1", "pending"))
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/status/poll/task-1":
 			if polls.Add(1) == 1 {
@@ -117,7 +117,7 @@ func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case convertPath:
-			assertDoclingSubmission(t, request, redactedMetadata, fixture.source, []string{"md", "json"})
+			assertDoclingSubmission(t, request, redactedMetadata, fixture.source, []string{"md", "json"}, nil)
 			writeJSON(t, response, doclingTask("redacted", "success"))
 		case resultPath + "redacted":
 			writeJSON(t, response, doclingResultResponse("provider-generated.pdf", "# report\n", []any{
@@ -178,7 +178,7 @@ func TestClientOmitsUnauthorizedProviderMarkdown(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case convertPath:
-					assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"json"})
+					assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"json"}, nil)
 					writeJSON(t, response, doclingTask("json-only", "success"))
 				case resultPath + "json-only":
 					writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# not authorized\n", []any{
@@ -248,7 +248,7 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			raw, err := json.Marshal(testCase.raw)
 			require.NoError(t, err)
-			evidence, _, usable := mapEvidence(raw, "pdf")
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
 			assert.Equal(t, testCase.want, usable)
 			if usable {
 				require.Len(t, evidence.Units, 2)
@@ -266,7 +266,7 @@ func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
 		"tables": []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "cell text"}}}}},
 	})
 	require.NoError(t, err)
-	evidence, _, usable := mapEvidence(raw, "pdf")
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
 	require.True(t, usable)
 	assert.Equal(t, document.EvidencePartial, evidence.Completeness)
 	assert.Equal(t, []document.SourceEvidenceOmissionV1{{
@@ -1008,7 +1008,7 @@ func TestMapEvidenceOnlyClaimsEstablishedNaturalProvenance(t *testing.T) {
 		{family: "ebook"}, {family: "structured"}, {family: "source"}, {family: "text"}, {family: "mail"},
 	} {
 		t.Run(testCase.family, func(t *testing.T) {
-			evidence, _, usable := mapEvidence(raw, testCase.family)
+			evidence, _, usable := mapEvidence(raw, testCase.family, 1, false)
 			assert.Equal(t, testCase.usable, usable)
 			if usable {
 				assert.Equal(t, testCase.kind, evidence.UnitKind)
@@ -1185,11 +1185,71 @@ func TestClientClonesHTTPClientAndRefusesRedirects(t *testing.T) {
 }
 
 func TestClientAcceptanceSyntheticUpload(t *testing.T) {
+	fixture := newFixture(t, "text", "text/plain", "synthetic-acceptance.txt", []byte("Synthetic Docling acceptance document.\n"))
+	client := acceptanceClient(t, fixture)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, fixture.authorization.SourceSHA256, result.Receipt.SourceSHA256)
+	assert.NotEmpty(t, result.Evidence.Units)
+}
+
+// TestClientAcceptancePageRange checks the Docling Serve behavior page ranges
+// rely on: repeated page_range form fields select pages, results keep original
+// page numbers, and a range past the last page is not silently truncated.
+func TestClientAcceptancePageRange(t *testing.T) {
+	var source bytes.Buffer
+	offsets := []int{}
+	object := func(body string) {
+		offsets = append(offsets, source.Len())
+		fmt.Fprintf(&source, "%d 0 obj\n%s\nendobj\n", len(offsets), body)
+	}
+	source.WriteString("%PDF-1.4\n")
+	object("<< /Type /Catalog /Pages 2 0 R >>")
+	object("<< /Type /Pages /Kids [4 0 R 6 0 R 8 0 R] /Count 3 >>")
+	object("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+	for page := 1; page <= 3; page++ {
+		object(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>", len(offsets)+2))
+		content := fmt.Sprintf("BT /F1 24 Tf 72 720 Td (Synthetic range page %d) Tj ET", page)
+		object(fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
+	}
+	xref := source.Len()
+	fmt.Fprintf(&source, "xref\n0 %d\n0000000000 65535 f \n", len(offsets)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&source, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&source, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets)+1, xref)
+
+	fixture := newFixture(t, "pdf", "application/pdf", "synthetic-range.pdf", source.Bytes())
+	fixture.authorization.MaxArtifactBytes = 1 << 20
+	fixture.authorization.MaxProviderMarkdownBytes = 1 << 20
+	fixture.authorization.MaxTotalResultBytes = 4 << 20
+	client := acceptanceClient(t, fixture)
+
+	result, err := client.RenderPageRange(t.Context(), fixture.upload(), fixture.authorization, PageRange{First: 2, Last: 3})
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
+	require.Len(t, result.Evidence.Units, 2)
+	for index, page := range []int64{2, 3} {
+		unit := result.Evidence.Units[index]
+		assert.Equal(t, page, unit.Locator.Start)
+		assert.Equal(t, page, unit.Locator.End)
+		assert.Contains(t, unit.Text, fmt.Sprintf("Synthetic range page %d", page))
+	}
+	assert.NotContains(t, string(result.ProviderMarkdown), "Synthetic range page 1")
+
+	_, err = client.RenderPageRange(t.Context(), fixture.upload(), fixture.authorization, PageRange{First: 2, Last: 4})
+	require.Error(t, err)
+	assert.False(t, document.IsRenditionProviderErrorRetryable(err))
+}
+
+// acceptanceClient connects to the operator-controlled Docling Serve endpoint
+// named by DOCLING_ACCEPTANCE_URL, skipping the test when it is unset.
+func acceptanceClient(t *testing.T, fixture fixture) *Client {
+	t.Helper()
 	origin := os.Getenv("DOCLING_ACCEPTANCE_URL")
 	if origin == "" {
 		t.Skip("set DOCLING_ACCEPTANCE_URL to run against an operator-controlled Docling Serve endpoint")
 	}
-	fixture := newFixture(t, "text", "text/plain", "synthetic-acceptance.txt", []byte("Synthetic Docling acceptance document.\n"))
 	var secrets SecretResolver
 	if apiKey := os.Getenv("DOCLING_ACCEPTANCE_API_KEY"); apiKey != "" {
 		secrets = testSecrets{"docling-api": apiKey}
@@ -1204,10 +1264,7 @@ func TestClientAcceptanceSyntheticUpload(t *testing.T) {
 		MaxPollAttempts: 300, MaxResponseBytes: 64 << 20, MaxDocumentBytes: 1 << 20,
 	}, secrets, http.DefaultClient)
 	require.NoError(t, err)
-	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
-	assert.Equal(t, fixture.authorization.SourceSHA256, result.Receipt.SourceSHA256)
-	assert.NotEmpty(t, result.Evidence.Units)
+	return client
 }
 
 type fixture struct {
@@ -1275,7 +1332,8 @@ func newClientWithBounds(t *testing.T, origin string, descriptor document.Rendit
 }
 
 func assertDoclingSubmission(
-	t *testing.T, request *http.Request, metadata document.AuthorizedUploadMetadata, source []byte, wantFormats []string,
+	t *testing.T, request *http.Request, metadata document.AuthorizedUploadMetadata, source []byte,
+	wantFormats, wantRange []string,
 ) {
 	t.Helper()
 	mediaType, params, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
@@ -1289,7 +1347,7 @@ func assertDoclingSubmission(
 	gotSource, err := io.ReadAll(file)
 	require.NoError(t, err)
 	assert.Equal(t, source, gotSource)
-	formats := make([]string, 0, 2)
+	fields := map[string][]string{}
 	for {
 		part, partErr := reader.NextPart()
 		if errors.Is(partErr, io.EOF) {
@@ -1298,16 +1356,13 @@ func assertDoclingSubmission(
 		require.NoError(t, partErr)
 		value, readErr := io.ReadAll(part)
 		require.NoError(t, readErr)
-		switch part.FormName() {
-		case "to_formats":
-			formats = append(formats, string(value))
-		case "target_type":
-			assert.Equal(t, "inbody", string(value))
-		default:
-			t.Errorf("unexpected form field %q", part.FormName())
-		}
+		fields[part.FormName()] = append(fields[part.FormName()], string(value))
 	}
-	assert.Equal(t, wantFormats, formats)
+	want := map[string][]string{"to_formats": wantFormats, "target_type": {"inbody"}}
+	if wantRange != nil {
+		want["page_range"] = wantRange
+	}
+	assert.Equal(t, want, fields)
 }
 
 type resultOption func(map[string]any)
@@ -1328,6 +1383,17 @@ func doclingResultResponse(filename, markdown string, texts []any, options ...re
 	return doclingResultResponseWithInnerFilename(filename, filename, markdown, texts, options...)
 }
 
+func doclingDocumentContent(filename string, texts []any, pages map[string]any) map[string]any {
+	content := map[string]any{
+		"schema_name": "DoclingDocument", "version": "1.7.0",
+		"origin": map[string]any{"filename": filename}, "texts": texts,
+	}
+	if pages != nil {
+		content["pages"] = pages
+	}
+	return content
+}
+
 func doclingResultResponseWithInnerFilename(
 	filename, innerFilename, markdown string, texts []any, options ...resultOption,
 ) map[string]any {
@@ -1335,10 +1401,7 @@ func doclingResultResponseWithInnerFilename(
 		"status": "success", "processing_time": 0.01, "errors": []string{},
 		"document": map[string]any{
 			"filename": filename, "md_content": markdown,
-			"json_content": map[string]any{
-				"schema_name": "DoclingDocument", "version": "1.7.0",
-				"origin": map[string]any{"filename": innerFilename}, "pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}}, "texts": texts,
-			},
+			"json_content": doclingDocumentContent(innerFilename, texts, map[string]any{"1": map[string]any{}, "2": map[string]any{}}),
 			"html_content": "", "text_content": "",
 		},
 	}

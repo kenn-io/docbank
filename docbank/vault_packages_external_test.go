@@ -14,6 +14,7 @@ import (
 )
 
 func TestEmbeddedPackageImportAndReadAPI(t *testing.T) {
+	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })

@@ -33,11 +33,46 @@ export interface SessionOptions extends RequestInit {
   session?: string;
 }
 
+// Reads that use POST for their request body, so scrolling or typing a search never defers a pass.
+// A missed entry only delays one refresh pass.
+const readOnlyPosts =
+  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse)$/;
+
+let mutations = 0;
+
+/** Counts requests that may write, from the call until the caller holds the answer. */
+export const mutationsInFlight = () => mutations;
+
+function counted<T>(url: string, method: string | undefined, run: () => Promise<T>) {
+  if (!mutates(url, method)) return run();
+  mutations++;
+  const request = run();
+  const release = () => void mutations--;
+  request.then(release, release);
+  return request;
+}
+
+/** Keeps a write counted while its caller applies the answer, so no pass reads in between. */
+export function holdMutations<T>(apply: () => Promise<T>) {
+  mutations++;
+  return apply().finally(() => void mutations--);
+}
+
+const mutates = (url: string, method = "GET") =>
+  !["GET", "HEAD"].includes(method.toUpperCase()) &&
+  !readOnlyPosts.test(url.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]*/i, "").split(/[?#]/, 1)[0]!);
+
 // Orval's transport hook adds the scoped credential and preserves problem details.
-export async function sessionResponse<_T>(
+export const sessionResponse = <_T>(
+  url: string,
+  options: SessionOptions,
+  allowNotModified = false,
+): Promise<Response> => counted(url, options.method, () => send(url, options, allowNotModified));
+
+async function send(
   url: string,
   { session = "", ...init }: SessionOptions,
-  allowNotModified = false,
+  allowNotModified: boolean,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   if (init.body instanceof Blob && init.body.type.startsWith("multipart/form-data;")) {
@@ -82,10 +117,12 @@ export async function sessionPhotoPreview<_T>(
   return sessionResponse<Response>(url, options, true);
 }
 
-export async function sessionJSON<T>(url: string, options: SessionOptions): Promise<T> {
-  const response = await sessionResponse<Response>(url, options);
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+export function sessionJSON<T>(url: string, options: SessionOptions): Promise<T> {
+  return counted(url, options.method, async () => {
+    const response = await send(url, options, false);
+    if (response.status === 204) return undefined as T;
+    return (await response.json()) as T;
+  });
 }
 
 export async function sessionEmpty<_T>(url: string, options: SessionOptions): Promise<void> {

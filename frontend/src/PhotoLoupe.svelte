@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -8,7 +8,7 @@
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import type { Photos, PhotoRow } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { previewSlotsKey, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import { APIError } from "./api-transport.js";
   import { previewEligibility } from "./download.js";
@@ -26,6 +26,7 @@
     actionDisabled = false,
     onedit,
     onundo,
+    onresponse,
     photo,
     error,
     note = "",
@@ -46,6 +47,10 @@
     actionDisabled?: boolean;
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
     onundo?: () => void;
+    onresponse?: (
+      receipt?: import("./generated/docbank.js").PhotoAuthoredReceipt,
+      tags?: import("./generated/docbank.js").Tag[],
+    ) => Promise<void>;
     photo?: PhotoBrowseRow;
     error: string;
     note?: string;
@@ -67,11 +72,17 @@
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
+  // A newly published preview starts a new load but keeps the image and its zoom. The loader's own
+  // slot updates change the row in place, so they leave the key alone.
+  const loaderKey = $derived.by(() => {
+    const row = photo;
+    return untrack(() => (row ? `${identity}:${previewSlotsKey(row.previews)}` : ""));
+  });
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);
   const next = $derived(
-    index >= 0 && (index < items.length - 1 || (canLoadMore && !photos.error && !photos.loading)),
+    index >= 0 && (index < items.length - 1 || (canLoadMore && !photos.error && !photos.blocking)),
   );
   const originalAllowed = $derived.by(() => {
     try {
@@ -83,17 +94,21 @@
   const facts = $derived(photoFacts(photo));
 
   $effect(() => {
-    void identity;
+    void loaderKey;
     void reloadRevision;
     const selected = untrack(() => photo);
     busy = false;
-    const active = new PhotoPreviewLoader(photos, cache, selected);
+    const active = new PhotoPreviewLoader(
+      photos,
+      cache,
+      selected,
+      untrack(() => loader),
+    );
     loader = active;
-    void tick().then(() => {
-      if (!active.active.signal.aborted && image?.isZoomed()) active.zoom();
-    });
-    return () => active.dispose();
+    active.restoreZoom(() => image?.isZoomed());
+    return () => active.retire();
   });
+  onDestroy(() => loader.dispose());
   $effect(() =>
     prefetchPreviews(
       photos,
@@ -215,7 +230,7 @@
   {#if (items.length || canLoadMore) && photos.error}<div class="loupe-error" role="alert">
       <span>{photos.error}</span><Button
         size="sm"
-        disabled={photos.loading}
+        disabled={photos.blocking}
         onclick={() => {
           dialog?.focus({ preventScroll: true });
           onretry();
@@ -274,7 +289,12 @@
         >{/if}
     </div>
     {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">
-        {#if editor && onedit}<PhotoInspector {editor} {actionDisabled} {onedit} />{/if}
+        {#if editor && onedit}<PhotoInspector
+            {editor}
+            {actionDisabled}
+            {onedit}
+            {onresponse}
+          />{/if}
         <h2>Photo details</h2>
         <dl>
           {#each facts as [label, value]}<dt>{label}</dt>

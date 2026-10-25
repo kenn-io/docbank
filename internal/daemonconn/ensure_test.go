@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/packagetest"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -142,9 +143,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	info := kitdaemon.PingInfo{Version: version.Version}
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
-
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
-	assert.False(t, discoverOptions(true).Accept(rec, info), "mismatched protocol revision must be replaced")
+	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
 
 	delete(rec.Metadata, metaProtocolVersion)
@@ -174,7 +174,52 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 	}
 }
 
-func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
+func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		locked  bool
+		missing bool
+	}{
+		{name: "locked vault", locked: true},
+		{name: "unlocked existing vault"},
+		{name: "missing vault", missing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if test.locked {
+				lock, err := (home.Layout{Root: root}).TryLockExclusive()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, lock.Release()) })
+			}
+			if test.missing {
+				root = filepath.Join(root, "missing", "vault")
+			}
+			started := false
+			_, err := ensureDaemon(t.Context(), root,
+				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+					started = true
+					if test.missing {
+						_, err := os.Stat(filepath.Dir(root))
+						require.ErrorIs(t, err, os.ErrNotExist, "the probe must leave missing paths absent")
+					} else {
+						lock, err := (home.Layout{Root: root}).TryLockExclusive()
+						require.NoError(t, err, "the probe must release ownership before starting")
+						require.NoError(t, lock.Release())
+					}
+					return NewRecord("127.0.0.1:2", "key", "token", ""), nil
+				})
+			if test.locked {
+				require.ErrorIs(t, err, home.ErrVaultLocked)
+				require.ErrorContains(t, err, "if you're in a sandbox, check for a daemon outside it")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, !test.locked, started)
+		})
+	}
+}
+
+func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"
@@ -219,8 +264,10 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	rec.Metadata[metaProtocolVersion] = "89"
-	_, err := RuntimeStore(root).Write(rec)
+	protocolVersion, err := strconv.Atoi(daemonProtocolVersion)
+	require.NoError(t, err)
+	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocolVersion - 1)
+	_, err = RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
@@ -229,7 +276,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
 	require.NoError(t, err)
-	require.True(t, started.Load(), "protocol 89 rejects the outcome events and the cli surface")
+	require.True(t, started.Load(), "a daemon on an older protocol version is replaced")
 	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	outline, err := client.GetTextOutline(t.Context(), request)

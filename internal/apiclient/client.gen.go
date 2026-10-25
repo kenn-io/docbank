@@ -9995,6 +9995,59 @@ func (c *Client) DecidePhotoStack(ctx context.Context, options *DecidePhotoStack
 	return responseParser(ctx, resp)
 }
 
+// ResolvePhotoXMP Choose the catalog or sidecar copy of conflicting photo metadata
+func (c *Client) ResolvePhotoXMP(ctx context.Context, options *ResolvePhotoXMPRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePhotoXMPResult, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/{file_id}/xmp",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePhotoXMPResult, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePhotoXMPResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePhotoXMPResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &ResolvePhotoXMPResult{Status200: target}, nil
+
+		case 204:
+
+			target := new(struct{})
+
+			return &ResolvePhotoXMPResult{Status204: target}, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePhotoXMPErrorResponse](resp, "ResolvePhotoXMPErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/{file_id}/xmp")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UndoPhotoAuthored Undo photo fields and keywords if their revisions still match
 func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoAuthoredResponse, error) {
 	var err error
@@ -11159,6 +11212,53 @@ func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacks
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/stacks/group")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RespondPhotoSuggestion Accept selected fields or dismiss a photo proposal
+func (c *Client) RespondPhotoSuggestion(ctx context.Context, options *RespondPhotoSuggestionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RespondPhotoSuggestionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/suggestions/{suggestion_id}/response",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RespondPhotoSuggestionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RespondPhotoSuggestionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RespondPhotoSuggestionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RespondPhotoSuggestionErrorResponse](resp, "RespondPhotoSuggestionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/suggestions/{suggestion_id}/response")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -15258,6 +15358,12 @@ type ReadPhotoPreviewResult struct {
 	Status200 *ReadPhotoPreviewResponse
 
 	Status304 *struct{}
+}
+
+// ResolvePhotoXMPResult contains the decoded body for the returned success status.
+type ResolvePhotoXMPResult struct {
+	Status200 *ResolvePhotoXMPResponse
+	Status204 *struct{}
 }
 
 // UploadPushFileResult contains the decoded body for the returned success status.
@@ -21830,6 +21936,41 @@ func (o *DecidePhotoStackRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// ResolvePhotoXMPRequestOptions is the options needed to make a request to ResolvePhotoXMP.
+type ResolvePhotoXMPRequestOptions struct {
+	PathParams *ResolvePhotoXMPPath
+	Body       *ResolvePhotoXMPBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePhotoXMPRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePhotoXMPRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UndoPhotoAuthoredRequestOptions is the options needed to make a request to UndoPhotoAuthored.
 type UndoPhotoAuthoredRequestOptions struct {
 	PathParams *UndoPhotoAuthoredPath
@@ -22506,6 +22647,41 @@ func (o *GroupPhotoStacksRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GroupPhotoStacksRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RespondPhotoSuggestionRequestOptions is the options needed to make a request to RespondPhotoSuggestion.
+type RespondPhotoSuggestionRequestOptions struct {
+	PathParams *RespondPhotoSuggestionPath
+	Body       *RespondPhotoSuggestionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RespondPhotoSuggestionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RespondPhotoSuggestionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RespondPhotoSuggestionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RespondPhotoSuggestionRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -25866,6 +26042,10 @@ type UnhidePhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
 
+type ResolvePhotoXMPPath struct {
+	FileID uuid.UUID `json:"file_id"`
+}
+
 type UndoPhotoAuthoredPath struct {
 	ReceiptID uuid.UUID `json:"receipt_id"`
 }
@@ -25900,6 +26080,10 @@ type GetPhotoAssetByNodePath struct {
 
 type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
+}
+
+type RespondPhotoSuggestionPath struct {
+	SuggestionID uuid.UUID `json:"suggestion_id"`
 }
 
 type DecidePhotoFacePath struct {
@@ -26257,6 +26441,8 @@ type PreparePhotoAuthoredBody = PhotoAuthoredPrepareRequest
 
 type DecidePhotoStackBody = PhotoStackDecisionRequest
 
+type ResolvePhotoXMPBody = PhotoXMPResolveRequest
+
 type CreatePhotoCheckoutBody = PhotoCheckoutCreateRequest
 
 type EstimatePhotoCheckoutBody = PhotoCheckoutSelection
@@ -26286,6 +26472,8 @@ type MovePhotoRejectsBody = MovePhotoRejectsRequest
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
 type GroupPhotoStacksBody = GroupPhotoStacksRequest
+
+type RespondPhotoSuggestionBody = PhotoSuggestionResponse
 
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
 
@@ -27663,6 +27851,10 @@ type DecidePhotoStackResponse = store.PhotoAuthoredReceipt
 
 type DecidePhotoStackErrorResponse = Error
 
+type ResolvePhotoXMPResponse = store.PhotoAuthoredReceipt
+
+type ResolvePhotoXMPErrorResponse = Error
+
 type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
@@ -27762,6 +27954,10 @@ type SetPhotoSettingsErrorResponse = Error
 type GroupPhotoStacksResponseJSON = api.GroupPhotoStacksResponse
 
 type GroupPhotoStacksErrorResponse = Error
+
+type RespondPhotoSuggestionResponse = store.PhotoSuggestion
+
+type RespondPhotoSuggestionErrorResponse = Error
 
 type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
 
@@ -29113,6 +29309,8 @@ type PhotoCheckpointIdentity struct {
 	SourceID string `json:"sourceID"`
 }
 
+type PhotoDescription = document.PhotoDescription
+
 type PhotoExportSelection = bundle.PhotoExportSelection
 
 type PhotoFace = store.PhotoFace
@@ -29192,9 +29390,19 @@ type PhotoStack = api.PhotoStack
 
 type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
 
+type PhotoSuggestion = store.PhotoSuggestion
+
+type PhotoSuggestionResponse = store.PhotoSuggestionResponse
+
 type PhotoTimeline = api.PhotoTimeline
 
 type PhotoTimelineRequest = api.PhotoTimelineRequest
+
+type PhotoXMPResolveRequest = api.PhotoXMPResolveRequest
+
+type PhotoXMPRow = store.PhotoXMPRow
+
+type PhotoXMPState = store.PhotoXMPState
 
 type Plan = bundle.Plan
 

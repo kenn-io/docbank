@@ -17,6 +17,7 @@ import (
 )
 
 func TestResetVaultRejectsWindowsDirectoryReparsePoint(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	realRoot := filepath.Join(base, "real-vault")
 	vault, err := New(t.Context(), Config{Root: realRoot, SQLite: modernc.Driver{}})
@@ -47,6 +48,7 @@ func TestResetVaultRejectsWindowsDirectoryReparsePoint(t *testing.T) {
 }
 
 func TestResetVaultRejectsWindowsDirectoryReparsePointAfterOwnerRelease(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	root := filepath.Join(base, "vault")
 	parked := filepath.Join(base, "vault.parked")
@@ -93,6 +95,7 @@ func createWindowsJunction(alias, target string) error {
 }
 
 func TestRenameVaultNoReplaceSupportsWindowsExtendedLengthPaths(t *testing.T) {
+	t.Parallel()
 	parent := t.TempDir()
 	for len(parent) < 280 {
 		parent = filepath.Join(parent, strings.Repeat("segment", 8))
@@ -110,6 +113,7 @@ func TestRenameVaultNoReplaceSupportsWindowsExtendedLengthPaths(t *testing.T) {
 }
 
 func TestRenameVaultNoReplacePassesExtendedPaths(t *testing.T) {
+	t.Parallel()
 	for name, paths := range map[string][4]string{
 		"dos": {
 			`C:\vault`,

@@ -5512,43 +5512,6 @@ export interface PhotoAuthoredEditRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
-export interface PhotoPreparedTarget {
-  asset_id: string;
-  /** @minimum 1 */
-  asset_revision: number;
-  current_content_version_id?: string;
-  display_file_id: string;
-  file_id: string;
-  file_name: string;
-  node_id: number;
-  /** @minimum 1 */
-  node_revision: number;
-  /** @minimum 1 */
-  revision: number;
-  tags: string[];
-  values: PhotoAuthored;
-}
-
-export interface PhotoAuthoredPreparation {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  assets: PhotoAsset[];
-  targets: PhotoPreparedTarget[];
-}
-
-export interface PhotoAuthoredPrepareRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @maxItems 1000 */
-  asset_ids?: string[];
-  coverage?: WorkspaceQueryCoverage;
-  hidden?: boolean;
-  query?: SavedQueryV1Schema;
-  skip_unavailable?: boolean;
-  /** Prepare up to 2,000 live files for a complete stack decision. */
-  stack?: boolean;
-}
-
 export interface PhotoKeywordNode {
   after_revision: number;
   node_id: number;
@@ -5582,6 +5545,7 @@ export interface PhotoRepresentativeChange {
 export interface PhotoSidecarProvenance {
   file_id: string;
   node_id: number;
+  /** The version that supplied the first imported value. */
   version_id: string;
 }
 
@@ -5597,6 +5561,92 @@ export interface PhotoAuthoredReceipt {
   representatives?: PhotoRepresentativeChange[];
   sidecar?: PhotoSidecarProvenance;
   undo_of?: string;
+}
+
+export interface PhotoDescription {
+  caption: string;
+  tags: string[];
+  visible_text: string;
+}
+
+export interface PhotoSuggestion {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  asset_id: string;
+  asset_revision: number;
+  authored_receipt?: PhotoAuthoredReceipt;
+  content_version_id: string;
+  node_revision: number;
+  source_revision: number;
+  suggestion_id: string;
+  target: string;
+  value: PhotoDescription;
+}
+
+export interface PhotoXMPRow {
+  catalog: string;
+  field: string;
+  sidecar: string;
+}
+
+export type PhotoXMPStateState = typeof PhotoXMPStateState[keyof typeof PhotoXMPStateState];
+
+
+export const PhotoXMPStateState = {
+  none: 'none',
+  synced: 'synced',
+  pending: 'pending',
+  conflict: 'conflict',
+  unavailable: 'unavailable',
+  invalid: 'invalid',
+} as const;
+
+export interface PhotoXMPState {
+  conflict_id?: string;
+  /** The sidecar import that Undo can still reverse. */
+  import_receipt_id?: string;
+  reason?: string;
+  rows?: PhotoXMPRow[];
+  state: PhotoXMPStateState;
+}
+
+export interface PhotoPreparedTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  current_content_version_id?: string;
+  display_file_id: string;
+  file_id: string;
+  file_name: string;
+  node_id: number;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+  tags: string[];
+  values: PhotoAuthored;
+  xmp?: PhotoXMPState;
+}
+
+export interface PhotoAuthoredPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assets: PhotoAsset[];
+  suggestions?: PhotoSuggestion[];
+  targets: PhotoPreparedTarget[];
+}
+
+export interface PhotoAuthoredPrepareRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query?: SavedQueryV1Schema;
+  skip_unavailable?: boolean;
+  /** Prepare up to 2,000 live files for a complete stack decision. */
+  stack?: boolean;
 }
 
 export interface WorkspaceFacetValue {
@@ -5783,6 +5833,7 @@ export interface PhotoBrowseRow {
   lens_make: string | null;
   /** @nullable */
   lens_model: string | null;
+  matched_ai_suggestion?: boolean;
   media_type: string;
   name: string;
   /** @minimum 1 */
@@ -6326,6 +6377,27 @@ export interface PhotoStackDecisionRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
+export type PhotoSuggestionResponseResponse = typeof PhotoSuggestionResponseResponse[keyof typeof PhotoSuggestionResponseResponse];
+
+
+export const PhotoSuggestionResponseResponse = {
+  accepted: 'accepted',
+  dismissed: 'dismissed',
+} as const;
+
+export interface PhotoSuggestionResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  asset_id: string;
+  asset_revision: number;
+  caption: boolean;
+  node_revision: number;
+  response: PhotoSuggestionResponseResponse;
+  source_revision: number;
+  /** @maxItems 64 */
+  tags: string[];
+}
+
 export type PhotoTimelineFacetsItemDimension = typeof PhotoTimelineFacetsItemDimension[keyof typeof PhotoTimelineFacetsItemDimension];
 
 
@@ -6384,6 +6456,21 @@ export interface PhotoTimelineRequest {
   readonly $schema?: string;
   coverage?: WorkspaceQueryCoverage;
   query: SavedQueryV1Schema;
+}
+
+export type PhotoXMPResolveRequestChoice = typeof PhotoXMPResolveRequestChoice[keyof typeof PhotoXMPResolveRequestChoice];
+
+
+export const PhotoXMPResolveRequestChoice = {
+  catalog: 'catalog',
+  sidecar: 'sidecar',
+} as const;
+
+export interface PhotoXMPResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  choice: PhotoXMPResolveRequestChoice;
+  conflict_id: string;
 }
 
 export interface RolePolicy {
@@ -6658,6 +6745,11 @@ export interface ProcessingConsentRevocationRequest {
 export interface ProcessingEstimate {
   /** @minimum 0 */
   provider_calls: number;
+  /**
+     * Work beyond the selected source that consent starts.
+     * @maxLength 256
+     */
+  scope?: string;
   /** @minimum 0 */
   source_bytes: number;
   /** @minimum 0 */
@@ -17069,6 +17161,45 @@ return sessionJSON<PhotoAuthoredReceipt>(getDecidePhotoStackUrl(),
 
 
 
+export const getResolvePhotoXMPUrl = (fileId: string,) => {
+
+
+
+
+  return `/api/v1/photos/authored/${encodeURIComponent(String(fileId))}/xmp`
+}
+
+/**
+ * @summary Choose the catalog or sidecar copy of conflicting photo metadata
+ */
+export const resolvePhotoXMP = async (fileId: string,
+    photoXMPResolveRequest: NonReadonly<PhotoXMPResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt | void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredReceipt | void>(getResolvePhotoXMPUrl(fileId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoXMPResolveRequest)
+  }
+);}
+
+
+
 export const getUndoPhotoAuthoredUrl = (receiptId: string,) => {
 
 
@@ -17896,6 +18027,45 @@ return sessionJSON<GroupPhotoStacksResponse>(getGroupPhotoStacksUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(groupPhotoStacksRequest)
+  }
+);}
+
+
+
+export const getRespondPhotoSuggestionUrl = (suggestionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/suggestions/${encodeURIComponent(String(suggestionId))}/response`
+}
+
+/**
+ * @summary Accept selected fields or dismiss a photo proposal
+ */
+export const respondPhotoSuggestion = async (suggestionId: string,
+    photoSuggestionResponse: NonReadonly<PhotoSuggestionResponse>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSuggestion> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoSuggestion>(getRespondPhotoSuggestionUrl(suggestionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoSuggestionResponse)
   }
 );}
 

@@ -1,9 +1,16 @@
 import { getReadPhotoPreviewUrl, readPhotoPreview } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
+import type { PhotoPreviewSlots } from "./generated/docbank.js";
 
 const cachePrefix = "docbank-photo-previews-";
 const maxFetches = 6;
+
+/** Names the published previews of a photo; a row whose key changed needs its previews loaded again. */
+export const previewSlotsKey = (previews: PhotoPreviewSlots) =>
+  Object.values(previews)
+    .map((slot) => `${slot.state}${slot.generation_id}`)
+    .join(":");
 
 export function previewObjectURL(
   cache: PhotoPreviewCache,

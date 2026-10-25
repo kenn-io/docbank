@@ -12710,6 +12710,10 @@ components:
           items:
             $ref: "#/components/schemas/PhotoAsset"
           type: array
+        suggestions:
+          items:
+            $ref: "#/components/schemas/PhotoSuggestion"
+          type: array
         targets:
           items:
             $ref: "#/components/schemas/PhotoPreparedTarget"
@@ -13056,6 +13060,8 @@ components:
           type:
             - string
             - "null"
+        matched_ai_suggestion:
+          type: boolean
         media_type:
           type: string
         name:
@@ -13534,6 +13540,26 @@ components:
         - sourceID
         - revision
       type: object
+    PhotoDescription:
+      additionalProperties: false
+      properties:
+        caption:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        visible_text:
+          type: string
+      required:
+        - caption
+        - tags
+        - visible_text
+      type: object
+      x-go-type: document.PhotoDescription
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PhotoExportSelection:
       additionalProperties: false
       properties:
@@ -14155,6 +14181,8 @@ components:
           type: array
         values:
           $ref: "#/components/schemas/PhotoAuthored"
+        xmp:
+          $ref: "#/components/schemas/PhotoXMPState"
       required:
         - display_file_id
         - file_name
@@ -14551,6 +14579,7 @@ components:
           format: int64
           type: integer
         version_id:
+          description: The version that supplied the first imported value.
           type: string
       required:
         - node_id
@@ -14640,6 +14669,97 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoSuggestion:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSuggestion.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_id:
+          type: string
+        asset_revision:
+          format: int64
+          type: integer
+        authored_receipt:
+          $ref: "#/components/schemas/PhotoAuthoredReceipt"
+        content_version_id:
+          type: string
+        node_revision:
+          format: int64
+          type: integer
+        source_revision:
+          format: int64
+          type: integer
+        suggestion_id:
+          type: string
+        target:
+          type: string
+        value:
+          $ref: "#/components/schemas/PhotoDescription"
+      required:
+        - asset_id
+        - asset_revision
+        - source_revision
+        - node_revision
+        - suggestion_id
+        - content_version_id
+        - target
+        - value
+      type: object
+      x-go-type: store.PhotoSuggestion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoSuggestionResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSuggestionResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_id:
+          type: string
+        asset_revision:
+          format: int64
+          type: integer
+        caption:
+          type: boolean
+        node_revision:
+          format: int64
+          type: integer
+        response:
+          enum:
+            - accepted
+            - dismissed
+          type: string
+        source_revision:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+      required:
+        - asset_id
+        - asset_revision
+        - source_revision
+        - node_revision
+        - response
+        - caption
+        - tags
+      type: object
+      x-go-type: store.PhotoSuggestionResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoTimeline:
       additionalProperties: false
       properties:
@@ -14736,6 +14856,80 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoXMPResolveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoXMPResolveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        choice:
+          enum:
+            - catalog
+            - sidecar
+          type: string
+        conflict_id:
+          format: uuid
+          type: string
+      required:
+        - conflict_id
+        - choice
+      type: object
+      x-go-type: api.PhotoXMPResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoXMPRow:
+      additionalProperties: false
+      properties:
+        catalog:
+          type: string
+        field:
+          type: string
+        sidecar:
+          type: string
+      required:
+        - field
+        - catalog
+        - sidecar
+      type: object
+      x-go-type: store.PhotoXMPRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoXMPState:
+      additionalProperties: false
+      properties:
+        conflict_id:
+          type: string
+        import_receipt_id:
+          description: The sidecar import that Undo can still reverse.
+          type: string
+        reason:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/PhotoXMPRow"
+          type: array
+        state:
+          enum:
+            - none
+            - synced
+            - pending
+            - conflict
+            - unavailable
+            - invalid
+          type: string
+      required:
+        - state
+      type: object
+      x-go-type: store.PhotoXMPState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     Plan:
       additionalProperties: false
       properties:
@@ -15327,6 +15521,10 @@ components:
           format: int64
           minimum: 0
           type: integer
+        scope:
+          description: Work beyond the selected source that consent starts.
+          maxLength: 256
+          type: string
         source_bytes:
           format: int64
           minimum: 0
@@ -27319,6 +27517,38 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Decide one observed stack atomically
+  /api/v1/photos/authored/{file_id}/xmp:
+    post:
+      operationId: resolvePhotoXMP
+      parameters:
+        - in: path
+          name: file_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoXMPResolveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAuthoredReceipt"
+          description: OK
+        "204":
+          description: Resolution imported no catalog values
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Choose the catalog or sidecar copy of conflicting photo metadata
   /api/v1/photos/authored/{receipt_id}/undo:
     post:
       operationId: undoPhotoAuthored
@@ -27546,6 +27776,25 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Inspect checkout edits
+  /api/v1/photos/events:
+    get:
+      operationId: photoEvents
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: SSE change frames contain the JSON {} and name no photo. Every frame reaches every stream, locked or not; each client refetches through the read path that hides photos from locked viewers. Clients must refetch on connection and reconnect to recover missed changes.
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: The daemon's concurrent photo event stream limit is reached.
+      summary: Observe photo changes as server-sent events
+      tags:
+        - Photo events
   /api/v1/photos/face-decisions/{receipt_id}/undo:
     post:
       operationId: undoPhotoFaceDecision
@@ -27970,6 +28219,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Group explicit photos into bursts
+  /api/v1/photos/suggestions/{suggestion_id}/response:
+    post:
+      operationId: respondPhotoSuggestion
+      parameters:
+        - in: path
+          name: suggestion_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoSuggestionResponse"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoSuggestion"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Accept selected fields or dismiss a photo proposal
   /api/v1/photos/versions/{content_version_id}/face-decisions:
     post:
       operationId: decidePhotoFace

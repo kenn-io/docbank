@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-16
+last_edited: 2026-10-24
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -31,8 +31,9 @@ docbank processing plan /inbox/notes.txt --profile <configured-profile>
 
 The plan names the stable node and content-version IDs, profile fingerprint,
 every provider flow and trust boundary, input classes disclosed to each flow,
-retained derivative classes, estimated source bytes and provider calls, whether
-consent is currently required, and the backup consequence. Each flow also names
+retained derivative classes, estimated source bytes and provider calls, any
+work beyond the selected source that consent starts, whether consent is
+currently required, and the backup consequence. Each flow also names
 the immediate and ultimate processor, endpoint, deployment, model and revision,
 vector space where applicable, provider-visible metadata, and retained artifact
 roles. These runtime disclosures are part of the plan fingerprint. Re-run the
@@ -117,6 +118,14 @@ work limits, request cancellation and worker failures exit 1. Native text
 inspection does not add OCR; the [font and coverage limitations](../architecture/page-images.md#remaining-refusals)
 still apply.
 
+## Describe photos
+
+Configure a [vision profile](../configuration.md#photo-descriptions), review `processing plan` for a photo, and grant consent with `processing build`. Eligible photos then queue automatically, a few at a time. The provider receives the cached grid JPEG, at most 512 pixels on its longest edge and re-encoded without metadata; filenames and original bytes stay in the vault. Hidden, excluded, trashed, and superseded photos are skipped before the call and again at publication, and a hidden photo retries once it is eligible again.
+
+The first request to a provider checks it with a synthetic image, and a failed check retries no sooner than a minute later. If it fails when you grant consent, the error says consent was saved. Caption, tags, and visible text arrive as one [suggestion](photos.md#suggested-metadata). An invalid caption or an oversized tag is dropped alone; a non-JSON reply publishes nothing. A dropped connection, timeout, or daemon restart during a description call retries it with backoff, since a description has no side effects.
+
+Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
+
 ## Review and render a native PDF
 
 Save the preparation, supply explicit masks, then inspect the review before rendering:
@@ -185,12 +194,55 @@ inspect the named archive before retrying.
 The daemon verifies the fresh PDF before creating the ZIP. The CLI verifies the
 transferred archive, its inventory, file hashes, receipt and reviewed text
 before publishing one file. Client checks do not independently verify the
-source pixels. No job, attachment or restart-recoverable output is retained.
+source pixels. The daemon retains no job, attachment or output for later download.
 A killed daemon may leave private files in its spool; see the
 [staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
 and `/api/v1/redaction/render` routes. Browser sessions and MCP tools do not
 expose these operations.
+
+### Check and retain a saved archive
+
+Use the saved preparation, masks and review to check a ZIP after copying or
+recovering it:
+
+```sh
+docbank redaction verify preparation.json masks.json review.json redacted.zip
+docbank redaction verify preparation.json masks.json review.json redacted.zip --json
+```
+
+This command runs offline, without a daemon, source PDF or page/PDF runtime.
+It checks the ZIP inventory, entry checksums, receipt bindings and sanitized
+text against the review. It prints the complete archive's SHA-256 and byte
+count, plus the receipt. JSON output is `{ "receipt": ..., "size": ..., "sha256": ... }`.
+The archive must be a regular file of at most 544 MiB. Keep it unchanged while
+the check runs. The verifier uses the current preparation and recipe contracts;
+it does not promise compatibility with every future format.
+
+The PDF's contents are **not compared with the review**. Someone who replaces
+both the PDF and its hash in the receipt can pass these checks. Compare the
+reported whole-archive SHA-256 with the value saved from `redaction render`, or
+with a trusted vault version's `blob_hash`. The archive's own receipt is not
+that independent record. Success also does not authenticate who produced it.
+
+To retain the ZIP in a vault, use ordinary file storage:
+
+```sh
+docbank mkdir /produced
+docbank add redacted.zip --dest /produced
+docbank get /produced/redacted.zip recovered.zip
+docbank redaction verify preparation.json masks.json review.json recovered.zip
+```
+
+Packing, garbage collection and backup treat the ZIP as an ordinary file.
+Keep the preparation, masks and review separately: they contain unredacted
+evidence and are not included in the ZIP. Backing up the ZIP alone does not
+recover those inputs. Deleting the source PDF does not prevent offline checks.
+
+Malformed local JSON inputs exit 2; changed review bindings exit 4; archive
+integrity failures exit 6. Opening the archive, reading it, cancellation and
+output failures exit 1. No success result is printed on validation failure.
+Check the exit status even when output was partially written.
 
 ## Convert documents with Docling
 

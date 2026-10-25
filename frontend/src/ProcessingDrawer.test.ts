@@ -839,6 +839,100 @@ describe("document processing drawer", () => {
     expect(screen.getAllByText(/^embedding$/i).length).toBeGreaterThan(1);
   });
 
+  it("shows the scope of a photo description plan", async () => {
+    const versionID = "11111111-1111-4111-8111-111111111111";
+    const fingerprint = "a".repeat(64);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/v1/processing/profiles")
+        return Response.json([
+          { name: "vision", fingerprint, rendition: true, embedding_bindings: [] },
+        ]);
+      if (path === "/api/v1/processing/plans")
+        return Response.json({
+          fingerprint,
+          vault_uid: versionID,
+          selector: { node_id: 42, content_version_id: versionID, profile: "vision" },
+          profile_fingerprint: fingerprint,
+          flow: [
+            {
+              capability: "rendition",
+              provider_id: "compatible-vision.describe-v1",
+              trust_boundary: "hosted_provider",
+              input_classes: ["derived_upload"],
+              runtime_disclosure: {
+                immediate_processor: "compatible-vision.describe-v1",
+                ultimate_processor: "compatible-vision.describe-v1",
+                endpoint: "https://vision.example.com",
+                deployment: "d".repeat(64),
+                model: "synthetic",
+                model_revision: "v1",
+                metadata_classes: [
+                  "derived_jpeg",
+                  "byte_length",
+                  "content_hash",
+                  "detected_media_type",
+                ],
+                retained_artifact_roles: [],
+              },
+            },
+          ],
+          disclosed_classes: ["derived_upload"],
+          retained_classes: [],
+          estimate: {
+            source_bytes: 2048,
+            provider_calls: 1,
+            vector_spaces: 0,
+            scope: "Granting consent automatically queues eligible photos throughout this vault.",
+          },
+          consent_required: true,
+          consent_state: "required",
+          backup_consequence:
+            "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups.",
+        });
+      if (path.startsWith("/api/v1/coverage?"))
+        return Response.json({
+          vault_uid: versionID,
+          profile_fingerprint: fingerprint,
+          state: "complete",
+          renditions: {
+            name: "rendition",
+            required: false,
+            state: "not_required",
+            complete: 0,
+            unavailable: 0,
+            stale: 0,
+            ineligible: 0,
+            rebuilding: 0,
+            previous_generation_serving: 0,
+            total: 1,
+          },
+          embeddings: [],
+        });
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(ProcessingDrawer, {
+      session: "short-lived",
+      node: {
+        id: 42,
+        name: "harbor.jpg",
+        kind: "file",
+        current_version_id: versionID,
+        size: 2048,
+        revision: 1,
+        created_at: "",
+        modified_at: "",
+      },
+      path: "/Photos/harbor.jpg",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+      onrendition: vi.fn(),
+    });
+
+    expect(await screen.findByText(/queues eligible photos throughout this vault/)).toBeTruthy();
+  });
+
   it("surfaces consent expiry without claiming work started", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);

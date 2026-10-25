@@ -286,7 +286,7 @@ func TestReleasedStorageSchemasRequireAdapters(t *testing.T) { //nolint:parallel
 	releasedStorageSchemaVersions = append(append([]int(nil), original...), 27)
 	require.ErrorContains(t, validateReleasedStorageSchemas(), "released storage schema version 27 adapter is missing")
 
-	releasedStorageSchemaVersions = []int{1, 2, 3, 29}
+	releasedStorageSchemaVersions = slices.DeleteFunc(slices.Clone(original), func(version int) bool { return version == 28 })
 	require.ErrorContains(t, validateReleasedStorageSchemas(), "storage schema version 28 has an adapter but no release")
 }
 
@@ -581,6 +581,53 @@ func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]an
 		records = append(records, record)
 	}
 	return records
+}
+
+// A released photo with a sidecar is queued for XMP sync without a new mutation.
+func TestUpgradeReleasedSchemasQueueSidecarPhotos(t *testing.T) {
+	t.Parallel()
+	for _, version := range []int{29, 41} {
+		for _, driver := range v090UpgradeDrivers() {
+			t.Run(fmt.Sprintf("v%d/%s", version, driver.name), func(t *testing.T) {
+				ctx := t.Context()
+				path := filepath.Join(t.TempDir(), "docbank.db")
+				db, legacy := newReleasedFixtureStore(t, path, driver.driver, releasedSchemaFixtures[version], version)
+				raw := createReleasedFixtureFile(t, legacy, "capture.ARW", fakeHash("a1"), 4, "application/octet-stream")
+				jpeg := createReleasedFixtureFile(t, legacy, "capture.JPG", fakeHash("b2"), 4, "image/jpeg")
+				sidecar := createReleasedFixtureFile(t, legacy, "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml")
+				seedReleasedPhotoAsset(t, db, jpeg.ID)
+				const assetID = "40000000-0000-4000-8000-000000000001"
+				rawID, sidecarID := uuid.New().String(), uuid.New().String()
+				_, err := db.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at)
+				VALUES(?,?,?,'raw',NULL,?), (?,?,?,'sidecar',?,?)`, rawID, assetID, raw.ID, raw.CreatedAt, sidecarID, assetID, sidecar.ID, rawID, sidecar.CreatedAt)
+				require.NoError(t, err)
+				_, err = db.Exec(`UPDATE photo_assets SET revision=2,display_file_id=? WHERE asset_id=?`, rawID, assetID)
+				require.NoError(t, err)
+				seedReleasedXMPOrientation(t, db, raw)
+				require.NoError(t, db.Close())
+				s, err := Open(path, driver.driver)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, s.Close()) })
+				targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
+				require.NoError(t, err)
+				require.Contains(t, targets, PhotoSidecarTarget{FileID: rawID, NodeID: raw.ID, AssetID: assetID}, "released photos must be queued without a new mutation")
+			})
+		}
+	}
+}
+
+// seedReleasedXMPOrientation writes evidence without today's technical projection,
+// whose columns differ from the released layout.
+func seedReleasedXMPOrientation(t *testing.T, db *sql.DB, raw Node) {
+	t.Helper()
+	canonical := photoCanonical(t, photoMetadataField("image.exif.orientation", "image.exif", "Orientation", photoInteger(1)))
+	metadata, checksum, err := document.DecodeSourceMetadataV1(canonical)
+	require.NoError(t, err)
+	generationID := sourceMetadataGenerationID(raw.BlobHash, metadata.ContractVersion, fakeHash("ee"), checksum)
+	_, err = db.Exec(`INSERT INTO source_metadata_generations(generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at) VALUES(?,?,?,?,?,?,?)`, generationID, raw.BlobHash, metadata.ContractVersion, fakeHash("ee"), canonical, checksum, raw.CreatedAt)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) VALUES(?,?,?)`, raw.BlobHash, generationID, raw.CreatedAt)
+	require.NoError(t, err)
 }
 
 func seedReleasedPhotoAsset(t *testing.T, db *sql.DB, nodeID int64) {

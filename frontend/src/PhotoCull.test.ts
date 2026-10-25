@@ -5,7 +5,8 @@ import PhotoCullView from "./PhotoCull.svelte";
 import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
-import { photo, preparedPhoto, photoPreparation } from "./photo-test-fixtures.js";
+import { photo, photoPreparation, preparedPhoto } from "./photo-test-fixtures.js";
+import type { PhotoBrowseRow } from "./generated/docbank.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
@@ -269,7 +270,10 @@ async function reviewPhoto(
   row = photo(1),
   autoAdvance = false,
   store?: ReturnType<typeof photoCullStorage>,
-  options: { lookupError?: Error } = {},
+  options: {
+    lookupError?: Error;
+    onmetadatachanged?: () => void;
+  } = {},
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -314,6 +318,7 @@ async function reviewPhoto(
       get: vi.fn(async () => new Blob(["synthetic-photo"])),
     } as unknown as PhotoPreviewCache,
     onclose,
+    onmetadatachanged: options.onmetadatachanged,
   });
   if (options.lookupError) await screen.findByText(options.lookupError.message);
   else await screen.findByText(row.name);
@@ -467,6 +472,49 @@ it("allows another decision after reconciling its own flag and rating with auto-
   expect(edit).toHaveBeenCalledTimes(3);
   expect(cull.currentID).toBe("photo-1");
   expect(photos.cullEditor!.conflict).toBe(false);
+});
+
+it("shows a background import's rating, rotation, and flag and tells the app", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
+  const target = preparedPhoto(1);
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async () =>
+    photoPreparation([{ ...target, values: { ...target.values } }]),
+  );
+  const row = photo(1);
+  row.previews.grid = { state: "ready", generation_id: "grid-1" };
+  const onmetadatachanged = vi.fn();
+  const { cull, photos, container } = await reviewPhoto(row, false, undefined, {
+    onmetadatachanged,
+  });
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  expect(screen.getByText("Unflagged · 0 stars")).toBeTruthy();
+  const flagsChanged = vi.spyOn(cull, "flagsChanged");
+  // The sync worker imports a sidecar edit made outside Docbank.
+  target.values = { ...target.values, rating: 4, flag: "pick", rotation: 90 };
+  target.revision++;
+  target.node_revision++;
+  target.xmp = { state: "synced", import_receipt_id: "xmp-import" };
+  vi.mocked(photos.lookupMany).mockResolvedValue([
+    { ...row, rating: 4, flag: "pick", rotation: 90 },
+  ]);
+  const tags = [
+    { id: "later-page", name: "Travel", revision: 2, assignment_count: 1 },
+  ] as api.Tag[];
+  await photos.cullEditor!.onXMPChanged!(undefined, tags);
+  await screen.findByText("pick · 4 stars");
+  await waitFor(() =>
+    expect(container.querySelector(".photo-stage img")?.getAttribute("style")).toContain(
+      "rotate(90deg)",
+    ),
+  );
+  expect(flagsChanged).toHaveBeenCalled();
+  expect(refresh).toHaveBeenCalled();
+  expect(onmetadatachanged).toHaveBeenCalledWith(undefined, tags);
 });
 
 it("shows prepared rotation after a no-op decision without replacing Undo", async () => {
@@ -1188,4 +1236,476 @@ it("Return visits interleaved stacks and singletons once", async () => {
     targets: [{ asset_id: "photo-4" }],
     patch: { flag: "pick" },
   });
+});
+
+async function reviewThree() {
+  const rows = [photo(1), photo(2), photo(3)];
+  const review = await reviewPhoto(rows[0]);
+  const { cull, photos } = review;
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  return { ...review, rows };
+}
+
+it("swaps a changed photo in place and marks one that left the view unavailable", async () => {
+  const { cull, photos, rows } = await reviewThree();
+  vi.mocked(photos.lookupMany).mockResolvedValueOnce([{ ...rows[0], name: "Renamed.jpg" }]);
+  await act(() => photos.changed({}));
+  await screen.findByText("Renamed.jpg");
+  expect(screen.queryByText("Loading photo…")).toBeNull();
+  vi.mocked(photos.lookupMany).mockResolvedValueOnce([]);
+  await act(() => photos.changed({}));
+  await screen.findByText("This photo is no longer in this view.");
+  expect(screen.queryByText("Renamed.jpg")).toBeNull();
+  expect(cull.run!.checkpoint.unavailable).toEqual(["photo-1"]);
+  // Another tab restores the photo.
+  vi.mocked(photos.lookupMany).mockResolvedValueOnce([{ ...rows[0], name: "Restored.jpg" }]);
+  await act(() => photos.changed({}));
+  await screen.findByText("Restored.jpg");
+  expect(screen.queryByText("This photo is no longer in this view.")).toBeNull();
+});
+
+it.each([
+  [
+    "live metadata completion rebuilds the active Cull groups",
+    async () => {
+      const { cull, photos } = await reviewThree();
+      await act(() => {
+        cull.run = { ...cull.run!, groups: [], burstGapSeconds: 2, groupingIncomplete: true };
+      });
+      await screen.findByText(/Some camera details are missing or outdated/);
+      vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+        groups: [["photo-1", "photo-2"]],
+        unavailable_ids: [],
+        burst_gap_seconds: 2,
+      });
+      await act(() => photos.changed({}));
+      expect(screen.queryByText(/Some camera details are missing or outdated/)).toBeNull();
+      expect(screen.getByRole("button", { name: "Keep all" })).toBeTruthy();
+    },
+  ],
+  [
+    "keeps Cull usable while a live regroup is pending",
+    async () => {
+      const { cull, photos, container } = await reviewThree();
+      await act(() => {
+        cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+      });
+      await readyButton("Keep all");
+      let finish!: (value: Awaited<ReturnType<typeof api.groupPhotoStacks>>) => void;
+      vi.mocked(api.groupPhotoStacks).mockImplementationOnce(
+        () => new Promise((resolve) => (finish = resolve)),
+      );
+      const changing = photos.changed({});
+      await waitFor(() => expect(finish).toBeDefined());
+      expect(cull.stackLoading).toBe(false);
+      expect(screen.queryByText("Grouping bursts...")).toBeNull();
+      await readyButton("Next");
+      await readyButton("Exit cull");
+      await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "ArrowRight" });
+      await waitFor(() => expect(cull.currentID).toBe("photo-2"));
+      await act(async () => {
+        finish({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+      });
+      await changing;
+      expect(cull.currentID).toBe("photo-2");
+      expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
+    },
+  ],
+  [
+    "keeps the previous groups when a live regroup fails and tries again on the retry",
+    async () => {
+      const { cull, photos } = await reviewThree();
+      await act(() => {
+        cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+      });
+      await readyButton("Keep all");
+      const group = vi.mocked(api.groupPhotoStacks);
+      group.mockRejectedValueOnce(new APIError("Groups down", 503, "unavailable"));
+      await expect(act(() => photos.changed({}))).rejects.toThrow("Groups down");
+      expect(cull.stackError).toBe("");
+      expect(cull.stackLoading).toBe(false);
+      expect(screen.queryByText("Groups down")).toBeNull();
+      expect(screen.getByRole("button", { name: "Keep all" })).toBeTruthy();
+      group.mockResolvedValueOnce({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+      await act(() => photos.changed({}));
+      expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
+    },
+  ],
+  [
+    "restores Cull decisions after a live refresh recovers a grouping failure",
+    async () => {
+      const { cull, photos } = await reviewThree();
+      await act(() => {
+        cull.run = { ...cull.run!, groups: [["photo-1", "photo-2"]], burstGapSeconds: 2 };
+      });
+      await readyButton("Keep all");
+      const group = vi.mocked(api.groupPhotoStacks);
+      group.mockRejectedValueOnce(
+        new APIError("Groups temporarily unavailable", 503, "unavailable"),
+      );
+      await act(() => cull.regroup());
+      expect(screen.getByRole("button", { name: "Keep all" }).matches(":disabled")).toBe(true);
+      group.mockResolvedValueOnce({
+        groups: [["photo-1", "photo-2"]],
+        unavailable_ids: [],
+        burst_gap_seconds: 2,
+      });
+      await act(() => photos.changed({}));
+      expect(cull.stackError).toBe("");
+      expect(screen.getByRole("button", { name: "Keep all" }).matches(":disabled")).toBe(false);
+    },
+  ],
+])("%s", (_name, run) => run());
+
+async function reviewTwoStacks() {
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  const review = await reviewPhoto(rows[0]);
+  const { cull, photos } = review;
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      groups: [
+        ["photo-1", "photo-2"],
+        ["photo-3", "photo-4"],
+      ],
+      burstGapSeconds: 2,
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select Photo 2.jpg" }));
+  await readyButton("Keep selected");
+  return review;
+}
+
+it.each([
+  {
+    change: "leaves a stack alone",
+    outcome: "keeps",
+    groups: [["photo-1", "photo-2"]],
+    kept: true,
+  },
+  {
+    change: "changes a stack",
+    outcome: "clears",
+    groups: [["photo-1", "photo-2", "photo-3"]],
+    kept: false,
+  },
+])("a live regroup that $change $outcome its checked frames", async ({ groups, kept }) => {
+  const { photos } = await reviewTwoStacks();
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups,
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await act(() => photos.changed({}));
+  const checkbox = screen.getByRole("checkbox", {
+    name: "Select Photo 2.jpg",
+  }) as HTMLInputElement;
+  expect(checkbox.checked).toBe(kept);
+  expect(
+    (screen.getByRole("button", { name: "Keep selected" }) as HTMLButtonElement).disabled,
+  ).toBe(!kept);
+});
+
+it.each([
+  ["a live change", 2, false],
+  ["a live change while the read fails", 3, true],
+])("rereads the unflagged remainder of a completed pass after %s", async (_kind, reads, fails) => {
+  const flags = vi
+    .spyOn(api, "lookupPhotoFlags")
+    .mockImplementation(async () => ({ items: [photo(1)] }));
+  const { cull, photos } = await reviewPhoto();
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByRole("heading", { name: "Pass complete" });
+  await waitFor(() => expect(cull.busy).toBe(false));
+  expect(flags).toHaveBeenCalledOnce();
+  if (fails) {
+    // The failed read fails the pass, so the watcher runs it again.
+    flags.mockRejectedValueOnce(new APIError("Flags down", 503, "unavailable"));
+    await expect(act(() => photos.changed({}))).rejects.toThrow("Flags down");
+    await act(() => photos.changed({}));
+    await readyButton("Review unflagged remainder");
+  } else await act(() => photos.changed({}));
+  await waitFor(() => expect(cull.busy).toBe(false));
+  expect(flags).toHaveBeenCalledTimes(reads);
+});
+
+// An older read must not replace what a newer one showed, whichever answers last.
+async function reviewWithPendingReads() {
+  const rows = [photo(1), photo(2), photo(3)];
+  const review = await reviewPhoto(rows[0]);
+  const { cull, photos } = review;
+  let foreground!: (row: PhotoBrowseRow) => void;
+  let rail!: (rows: PhotoBrowseRow[]) => void;
+  vi.mocked(photos.lookup).mockImplementationOnce(
+    () => new Promise((resolve) => (foreground = resolve)),
+  );
+  vi.mocked(photos.lookupMany).mockImplementationOnce(
+    () => new Promise((resolve) => (rail = resolve)),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  await waitFor(() => expect(foreground).toBeDefined());
+  await waitFor(() => expect(rail).toBeDefined());
+  return { ...review, rows, foreground, rail };
+}
+
+async function expectLiveRowOverOlderPendingRead(
+  index: 0 | 1,
+  query: (name: string) => HTMLElement | null,
+  older: (rows: PhotoBrowseRow[]) => unknown,
+) {
+  const { photos, rows, foreground, rail } = await reviewWithPendingReads();
+  vi.mocked(photos.lookupMany).mockResolvedValueOnce([{ ...rows[index]!, name: "Newer.jpg" }]);
+  await act(() => photos.changed({}));
+  await waitFor(() => expect(query("Newer.jpg")).toBeTruthy());
+  (index === 0 ? foreground : rail)(older(rows) as never);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(query("Older.jpg")).toBeNull();
+  expect(query("Newer.jpg")).toBeTruthy();
+}
+
+async function expectLiveRowOverOlderImportLookup() {
+  const row = photo(1);
+  const { photos } = await reviewPhoto(row);
+  vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  let finish!: (rows: PhotoBrowseRow[]) => void;
+  vi.mocked(photos.lookupMany).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  const importing = photos.cullEditor!.onXMPChanged!(undefined, []);
+  await waitFor(() => expect(finish).toBeDefined());
+  vi.mocked(photos.lookupMany).mockResolvedValueOnce([
+    { ...row, rating: 5, flag: "reject", rotation: 90 },
+  ]);
+  await act(() => photos.changed({}));
+  await screen.findByText("reject · 5 stars");
+  await act(async () => {
+    finish([{ ...row, rating: 2, flag: "pick", rotation: 90 }]);
+    await importing;
+  });
+  expect(screen.getByText("reject · 5 stars")).toBeTruthy();
+  expect(screen.queryByText("pick · 2 stars")).toBeNull();
+}
+
+async function expectLiveRowOverOlderConflictLookup(outcome: "updated" | "removed") {
+  vi.spyOn(api, "editPhotoAuthored").mockRejectedValue(
+    new APIError("Photo changed", 409, "photo_display_changed"),
+  );
+  const { photos, container } = await reviewPhoto();
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "5" });
+  await readyButton("Reload photo");
+  let finish!: (row: PhotoBrowseRow) => void;
+  vi.mocked(photos.lookup).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Reload photo" }));
+  await waitFor(() => expect(finish).toBeDefined());
+  vi.mocked(photos.lookupMany).mockResolvedValue(
+    outcome === "updated" ? [{ ...photo(1), name: "Latest.jpg" }] : [],
+  );
+  await act(() => photos.changed({}));
+  await screen.findByText(
+    outcome === "updated" ? "Latest.jpg" : "This photo is no longer in this view.",
+  );
+  await act(() => finish(photo(1)));
+  expect(screen.queryByText("Photo 1.jpg")).toBeNull();
+  expect(
+    screen.getByText(
+      outcome === "updated" ? "Latest.jpg" : "This photo is no longer in this view.",
+    ),
+  ).toBeTruthy();
+  photos.dispose();
+}
+
+const byText = (name: string) => screen.queryByText(name);
+const byLabel = (name: string) => screen.queryByLabelText(new RegExp(name.replace(".", "\\.")));
+it.each([
+  [
+    "foreground lookup",
+    () =>
+      expectLiveRowOverOlderPendingRead(0, byText, (rows) => ({ ...rows[0]!, name: "Older.jpg" })),
+  ],
+  [
+    "rail lookup",
+    () =>
+      expectLiveRowOverOlderPendingRead(1, byLabel, (rows) => [
+        { ...rows[1]!, name: "Older.jpg" },
+        rows[2]!,
+      ]),
+  ],
+  ["sidecar import lookup", expectLiveRowOverOlderImportLookup],
+  [
+    "conflict-recovery lookup after the photo is updated",
+    () => expectLiveRowOverOlderConflictLookup("updated"),
+  ],
+  [
+    "conflict-recovery lookup after the photo is removed",
+    () => expectLiveRowOverOlderConflictLookup("removed"),
+  ],
+])("keeps a live row when an older %s answers after it", (_read, run) => run());
+
+it("shows a cached neighbor's live row after navigation during its read", async () => {
+  const { photos, rows } = await reviewThree();
+  await screen.findByLabelText(/Photo 2.jpg/);
+  let finish!: (rows: PhotoBrowseRow[]) => void;
+  vi.mocked(photos.lookupMany).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  const reading = photos.changed({});
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByText("Photo 2.jpg");
+  await act(async () => {
+    finish([rows[0]!, { ...rows[1]!, name: "Updated neighbor.jpg" }]);
+    await reading;
+  });
+  await screen.findByText("Updated neighbor.jpg");
+  expect(screen.queryByText("Photo 2.jpg")).toBeNull();
+  photos.dispose();
+});
+
+it("commits the next pass when a live event arrives during its flag lookup", async () => {
+  const flags = vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({ items: [photo(1)] });
+  const { cull, photos } = await reviewPhoto();
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByRole("heading", { name: "Pass complete" });
+  await readyButton("Review unflagged remainder");
+  let finish!: (value: Awaited<ReturnType<typeof api.lookupPhotoFlags>>) => void;
+  let signal!: AbortSignal;
+  flags.mockImplementationOnce((_request, options) => {
+    signal = options!.signal!;
+    return new Promise((resolve) => (finish = resolve));
+  });
+  await fireEvent.click(await readyButton("Review unflagged remainder"));
+  await waitFor(() => expect(finish).toBeDefined());
+  const changing = photos.changed({});
+  await act(async () => {
+    finish({ items: [photo(1)] });
+  });
+  await changing;
+  await screen.findByText("Photo 1.jpg");
+  expect(signal.aborted).toBe(false);
+  expect(cull.run!.checkpoint.scope).toBe("unflagged");
+  expect(cull.run!.checkpoint.position).toBe(0);
+  photos.dispose();
+});
+
+it.each([1, 7])("keeps all with fresh revisions after stack member %i changes", async (changed) => {
+  const rows = Array.from({ length: 7 }, (_, index) => photo(index + 1));
+  const stack = rows.map((row) => row.asset_id);
+  const targets = rows.map((_, index) => preparedPhoto(index + 1));
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+    photoPreparation(targets.filter((target) => scope.asset_ids?.includes(target.asset_id))),
+  );
+  const decide = vi.spyOn(api, "decidePhotoStack").mockImplementation(async () => ({
+    receipt_id: "kept-all",
+    before: targets.map(({ file_id, node_id, revision, values }) => ({
+      file_id,
+      node_id,
+      revision,
+      values,
+    })),
+    after: targets.map(({ file_id, node_id, revision, values }) => ({
+      file_id,
+      node_id,
+      revision: revision + 1,
+      values: { ...values, flag: "pick", confirmed_fields: (values.confirmed_fields ?? 0) | 2 },
+    })),
+  }));
+  const { cull, photos } = await reviewPhoto(rows[0]);
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: stack,
+      groups: [stack],
+      burstGapSeconds: 2,
+      checkpoint: { ...cull.run!.checkpoint, pass: stack },
+    };
+  });
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [stack],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  await readyButton("Keep all");
+  expect(screen.queryByRole("button", { name: "Show Photo 7.jpg" })).toBeNull();
+  rows[changed - 1] = { ...rows[changed - 1]!, revision: 2, rating: 4 };
+  targets[changed - 1] = preparedPhoto(changed, {
+    asset_revision: 2,
+    revision: 2,
+    values: { ...preparedPhoto(changed).values, rating: 4 },
+  });
+  await act(() => photos.changed({}));
+  await fireEvent.click(await readyButton("Keep all"));
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  expect(decide.mock.calls[0]![0]).toMatchObject({
+    decision: "all",
+    asset_ids: stack,
+    targets: expect.arrayContaining([
+      expect.objectContaining({ asset_id: `photo-${changed}`, asset_revision: 2, revision: 2 }),
+    ]),
+  });
+  await screen.findByRole("button", { name: /^Undo$/ });
+  photos.dispose();
+});
+
+it("leaves saved progress alone when a live lookup finishes after Exit", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const store = photoCullStorage("synthetic-vault");
+  const { cull, photos, onclose, unmount } = await reviewPhoto(photo(1), false, store);
+  await store.replace(cull.run!);
+  let finish!: (rows: PhotoBrowseRow[]) => void;
+  let signal!: AbortSignal;
+  vi.mocked(photos.lookupMany).mockImplementationOnce((_ids, active) => {
+    signal = active!;
+    return new Promise((resolve) => (finish = resolve));
+  });
+  const reading = photos.changed({});
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.click(await readyButton("Exit cull"));
+  expect(onclose).toHaveBeenCalledOnce();
+  await cull.flush();
+  unmount();
+  const progress = vi.spyOn(store, "checkpoint");
+  await act(async () => {
+    finish([]);
+    await reading;
+    await cull.flush();
+  });
+  expect(progress).not.toHaveBeenCalled();
+  expect(cull.run!.checkpoint.unavailable).toEqual([]);
+  expect(signal.aborted).toBe(true);
+  photos.dispose();
 });

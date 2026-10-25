@@ -26,7 +26,6 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
     ...process.env,
     DOCBANK_HOME: vault,
     DOCBANK_LOCK_DIR: path.join(workspace, "locks"),
-    DOCBANK_TELEMETRY_ENABLED: "0",
   };
   const run = async (...args: string[]) =>
     (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();

@@ -54,6 +54,7 @@ var (
 	ErrProfileNotConfigured      = errors.New("processing profile is not configured")
 	ErrPlanChanged               = errors.New("processing plan changed after preview")
 	ErrConsentRequired           = errors.New("processing consent is required")
+	ErrConsentSaved              = errors.New("processing consent was saved")
 	ErrRenditionFailed           = store.ErrRenditionJobTerminal
 	ErrRenditionOperatorRequired = store.ErrRenditionJobOperatorRequired
 	ErrPurgePlanChanged          = errors.New("derivative purge plan changed after preview")
@@ -144,12 +145,19 @@ type Service struct {
 	mediaOriginProbes   map[string]MediaOriginProbe
 	mediaOriginMu       sync.Mutex
 	mediaOriginEvidence map[string]mediaOriginObservation
+	visionProbes        map[string]MediaOriginProbe
+	visionLocks         map[string]chan struct{}
+	visionNotReady      sync.Map
+	visionProbeTimeout  time.Duration
 	mediaTokenKey       [32]byte
 }
 
 type mediaOriginObservation struct {
 	Evidence MediaOriginEvidence
 	ProbedAt time.Time
+	GrantID  string
+	// Cause is why the probe failed, kept for callers that retry within the back-off.
+	Cause error
 }
 
 func (service *Service) mediaMutation(ctx context.Context, fn func() error) error {
@@ -200,6 +208,9 @@ type Estimate struct {
 	SourceBytes   int64
 	ProviderCalls int
 	VectorSpaces  int
+	// Scope names work beyond the selected source that consent starts. Omitted
+	// when empty, so other plan fingerprints are unchanged.
+	Scope string `json:",omitzero"`
 }
 
 // ProfileSummary describes one locally executable processing profile without
@@ -404,6 +415,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 		mediaMaxBytes: config.MediaMaxBytes,
 		mediaOrigins:  mediaOrigins, mediaOriginProbes: mediaOriginProbes,
 		mediaOriginEvidence: make(map[string]mediaOriginObservation, len(mediaOriginProbes)),
+		visionProbes:        make(map[string]MediaOriginProbe),
+		visionLocks:         make(map[string]chan struct{}),
+		visionProbeTimeout:  visionProbeTimeout,
 		mediaTokenKey:       config.MediaTokenKey}
 	for id, probe := range service.mediaOriginProbes {
 		if _, ok := service.mediaOrigins[id]; !ok {
@@ -498,8 +512,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 				return nil, fmt.Errorf("processing profile %q rendition disclosure: %w", name, err)
 			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
-				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock,
-				mediaMaxBytes: service.mediaMaxBytes}
+				catalog: config.Catalog, blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock,
+				mediaMaxBytes: service.mediaMaxBytes, visionReadiness: service.requireVisionFingerprint,
+				visionProviderFailed: service.invalidateVisionReadiness}
 			if existing, exists := registeredRenditions[descriptor.Fingerprint]; !exists {
 				if err := service.renditions.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q: %w", name, err)
@@ -580,6 +595,11 @@ func NewService(config ServiceConfig) (*Service, error) {
 			}
 		}
 		service.profiles[name] = configured
+		if profileRenditionInput(configured) == document.RenditionInputDerivedUpload {
+			id := visionReadinessKey(configured.record.Fingerprint)
+			service.visionProbes[id] = service.visionProbe(configured)
+			service.visionLocks[id] = make(chan struct{}, 1)
+		}
 	}
 	descriptors := make([]document.RenditionDescriptor, 0, len(registeredRenditions))
 	for _, provider := range registeredRenditions {
@@ -665,12 +685,12 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	plan, err := service.planForSource(selector, node, version, profile)
+	plan, err := service.planForSource(ctx, selector, node, version, profile)
 	if err != nil {
 		return Plan{}, err
 	}
 	if profile.portable.Rendition != nil {
-		capability, err := inspectRenditionSource(ctx, service.blobs, node, version, profile)
+		capability, err := service.inspectPlannedRendition(ctx, node, version, profile)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -703,7 +723,7 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	return plan, nil
 }
 
-func (service *Service) planForSource(selector Selector, node store.Node,
+func (service *Service) planForSource(ctx context.Context, selector Selector, node store.Node,
 	version store.ContentVersion, profile configuredProfile,
 ) (Plan, error) {
 	plan := Plan{VaultUID: service.catalog.VaultID(), Selector: selector,
@@ -714,7 +734,7 @@ func (service *Service) planForSource(selector Selector, node store.Node,
 		hop := FlowHop{Capability: "rendition",
 			ProviderID:        profile.portable.Rendition.Descriptor.ID,
 			TrustBoundary:     profile.portable.Rendition.TrustBoundary,
-			InputClasses:      []string{string(document.RenditionInputOriginalFile)},
+			InputClasses:      []string{string(profileRenditionInput(profile))},
 			RuntimeDisclosure: profile.renderDisclosure,
 			DiscloseFilename:  profile.portable.Rendition.DiscloseFilename}
 		if hop.DiscloseFilename {
@@ -722,8 +742,21 @@ func (service *Service) planForSource(selector Selector, node store.Node,
 			hop.InputClasses = append(hop.InputClasses, "filename")
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "filename")
 		}
+		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+			plan.Estimate.Scope = "Granting consent automatically queues eligible photos throughout this vault."
+			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
+			// Only the grid preview leaves the vault, not the original file.
+			view, reason, err := photoDescriptionPreview(ctx, service.catalog, version.ID)
+			if err != nil {
+				return Plan{}, err
+			}
+			plan.Estimate.SourceBytes = 0
+			if reason == "" {
+				plan.Estimate.SourceBytes = view.Generation.Preview.Output.Size
+			}
+		}
 		plan.Flow = append(plan.Flow, hop)
-		plan.DisclosedClasses = append(plan.DisclosedClasses, string(document.RenditionInputOriginalFile))
+		plan.DisclosedClasses = append(plan.DisclosedClasses, string(profileRenditionInput(profile)))
 		plan.Estimate.ProviderCalls++
 	}
 	if profile.portable.Rendition != nil {
@@ -793,16 +826,34 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		return Job{}, err
 	}
 	// Preview validation and execution must use the same source snapshot.
-	plan, err := service.planForSource(request.Selector, node, version, profile)
+	plan, err := service.planForSource(ctx, request.Selector, node, version, profile)
 	if err != nil {
 		return Job{}, err
 	}
 	if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
 		return Job{}, ErrPlanChanged
 	}
+	photo := profileRenditionInput(profile) == document.RenditionInputDerivedUpload
+	if photo {
+		capability, err := service.planPhotoDescription(ctx, version, profile)
+		if err != nil {
+			return Job{}, err
+		}
+		if !capability.Eligible {
+			return Job{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
+		}
+	}
 	if request.Consent {
 		if err := service.grantProfileConsent(ctx, profile, nil); err != nil {
 			return Job{}, err
+		}
+	}
+	if photo {
+		if err := service.requireVisionReadiness(ctx, profile); err != nil {
+			if request.Consent {
+				err = fmt.Errorf("%w: %w", ErrConsentSaved, err)
+			}
+			return Job{}, processingConsentBoundaryError(err)
 		}
 	}
 	principal, scope := service.principal, service.scope
@@ -820,7 +871,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	var renditionProgress func(renditionRun)
 	if onEnqueued != nil {
 		renditionProgress = func(run renditionRun) {
-			notify(Job{ID: run.waiterID, RenditionJobID: run.jobID, AttachmentID: run.attachmentID,
+			notify(Job{ID: run.waiterID, RenditionJobID: run.jobID, AttachmentID: resultAttachmentID(photo, run),
 				EmbeddingJobIDs: []string{}, ProfileFingerprint: profile.record.Fingerprint,
 				ContentVersionID: version.ID})
 		}
@@ -843,7 +894,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 			}
 			return announced, processingConsentBoundaryError(err)
 		}
-		processingJobID, renditionJobID, attachmentID = renditionRun.waiterID, renditionRun.jobID, renditionRun.attachmentID
+		processingJobID, renditionJobID, attachmentID = renditionRun.waiterID, renditionRun.jobID, resultAttachmentID(photo, renditionRun)
 		consentSetGrantID = renditionRun.authorizationGrantID
 	}
 	var embeddingProgress func([]string)
@@ -876,6 +927,14 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	return completed, nil
 }
 
+// resultAttachmentID is empty for a photo description, which attaches nothing.
+func resultAttachmentID(photo bool, run renditionRun) string {
+	if photo {
+		return ""
+	}
+	return run.attachmentID
+}
+
 func processingConsentBoundaryError(err error) error {
 	if errors.Is(err, store.ErrProcessingConsentRequired) ||
 		errors.Is(err, store.ErrProcessingConsentExpired) ||
@@ -890,7 +949,7 @@ func (service *Service) GrantConsent(ctx context.Context, request ConsentGrantRe
 	if err != nil {
 		return ConsentGrant{}, err
 	}
-	plan, err := service.planForSource(request.Selector, node, version, profile)
+	plan, err := service.planForSource(ctx, request.Selector, node, version, profile)
 	if err != nil {
 		return ConsentGrant{}, err
 	}
@@ -1038,7 +1097,7 @@ func (service *Service) renditionConsentRequest(profile configuredProfile) store
 	return store.ProviderOperationAuthorizationRequest{
 		Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint,
 		DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
-		InputClasses:            []string{string(document.RenditionInputOriginalFile)},
+		InputClasses:            []string{string(profileRenditionInput(profile))},
 		RetainedArtifactClasses: retainedRenditionClasses(profile.portable),
 	}
 }
@@ -1103,6 +1162,9 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	}
 	inputBinding, err := service.resolveMediaInputBinding(
 		ctx, profileName, version.BlobHash, source, "")
+	if err == nil && profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		inputBinding, err = service.photoDescriptionBinding(ctx, version)
+	}
 	if err != nil {
 		return renditionRun{}, err
 	}
@@ -1110,8 +1172,9 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint:      profile.record.Fingerprint,
 			DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
-			InputClasses:            []string{string(document.RenditionInputOriginalFile)},
-			RetainedArtifactClasses: retainedRenditionClasses(profile.portable)}, inputBinding)
+			InputClasses:            []string{string(profileRenditionInput(profile))},
+			RetainedArtifactClasses: retainedRenditionClasses(profile.portable)}, inputBinding,
+		profileRenditionInput(profile) == document.RenditionInputDerivedUpload)
 	if err != nil {
 		return renditionRun{}, err
 	}
@@ -1125,6 +1188,10 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 func (service *Service) runRenditionJob(ctx context.Context, jobID, waiterID string) (renditionRun, error) {
 	if current, statusErr := service.catalog.RenditionJobByID(ctx, jobID); statusErr == nil &&
 		current.State == store.RenditionJobCompleted {
+		return service.renditionResult(ctx, waiterID)
+	}
+	// A settled photo publishes its waiter at admission, whatever its job does.
+	if waiter, err := service.catalog.RenditionJobWaiterByID(ctx, waiterID); err == nil && waiter.State == "published" {
 		return service.renditionResult(ctx, waiterID)
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
@@ -1384,7 +1451,8 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
 		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
-	if profile.portable.Rendition != nil {
+	// A description profile attaches no rendition, so there is none to cover.
+	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
 		report.Renditions = toClass(snapshot.Renditions)
 		report.Renditions.Name, report.Renditions.Required = "rendition", true
 		if report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total {
@@ -1898,6 +1966,9 @@ type preparedRendition struct {
 func (service *Service) prepareExecutableRendition(ctx context.Context, node store.Node, version store.ContentVersion,
 	profile configuredProfile, inputBinding string,
 ) (preparedRendition, error) {
+	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		return service.prepareExecutablePhotoDescription(ctx, version, profile, inputBinding)
+	}
 	prepared, err := service.prepareRendition(ctx, node, version, profile, false)
 	if err != nil {
 		return preparedRendition{}, err
@@ -1938,10 +2009,45 @@ func (service *Service) prepareExecutableRendition(ctx context.Context, node sto
 	return prepared, nil
 }
 
+// prepareExecutablePhotoDescription prepares a photo description once: the
+// preview is read, verified and re-encoded a single time, and that one
+// execution gives both the identity and the preflight check. The worker
+// prepares its own execution later under its own authority checks.
+func (service *Service) prepareExecutablePhotoDescription(ctx context.Context, version store.ContentVersion,
+	profile configuredProfile, inputBinding string,
+) (preparedRendition, error) {
+	if err := service.requireVisionReadiness(ctx, profile); err != nil {
+		return preparedRendition{}, fmt.Errorf("preparing rendition execution: %w", err)
+	}
+	execution, err := preparePhotoDescription(ctx, service.catalog, service.blobs, version, profile,
+		service.spoolDirectory, service.clock, true)
+	if err != nil {
+		return preparedRendition{}, fmt.Errorf("preparing rendition execution: %w", err)
+	}
+	defer func() { _ = execution.Upload.Close() }()
+	execution.Provider = profile.provider
+	metadata := execution.metadata
+	metadata.InputBinding = inputBinding
+	identity, err := document.NewRenditionExecutionIdentityV1(metadata, execution.Authorization,
+		execution.EvidencePolicy, execution.RenditionPolicy)
+	if err != nil {
+		return preparedRendition{}, err
+	}
+	work := store.RenditionJobWork{VaultID: service.catalog.VaultID(),
+		Job:     store.RenditionJob{SourceSHA256: version.BlobHash},
+		Waiter:  store.RenditionJobWaiter{ContentVersionID: version.ID},
+		Profile: profile.record, ExecutionIdentity: identity}
+	if err := validateRenditionExecution(work, execution.RenditionExecution); err != nil {
+		return preparedRendition{}, fmt.Errorf("validating rendition execution: %w", err)
+	}
+	policy, err := capturedPolicy(profile.portable)
+	return preparedRendition{identity: identity, capturedPolicy: policy}, err
+}
+
 func (service *Service) prepareRendition(ctx context.Context, node store.Node, version store.ContentVersion,
 	profile configuredProfile, withUpload bool,
 ) (preparedRendition, error) {
-	execution, err := prepareProviderExecution(ctx, service.blobs, service.spoolDirectory,
+	execution, err := prepareProviderExecution(ctx, service.catalog, service.blobs, service.spoolDirectory,
 		node, version, profile, service.clock, withUpload)
 	if err != nil {
 		return preparedRendition{}, err
@@ -1959,11 +2065,14 @@ func (service *Service) prepareRendition(ctx context.Context, node store.Node, v
 }
 
 type providerRenditionRuntime struct {
-	mediaMaxBytes  int64
-	provider       document.RenditionProvider
-	blobs          *blob.Store
-	spoolDirectory string
-	clock          func() time.Time
+	catalog              *store.Store
+	mediaMaxBytes        int64
+	provider             document.RenditionProvider
+	blobs                *blob.Store
+	spoolDirectory       string
+	clock                func() time.Time
+	visionReadiness      func(ctx context.Context, fingerprint string) error
+	visionProviderFailed func(fingerprint string)
 }
 
 type boundAuthorizedUpload struct {
@@ -1997,11 +2106,20 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 		return RenditionExecution{}, err
 	}
 	version := runtimeVersion(work)
+	if work.ExecutionIdentity.Authorization.InputKind == document.RenditionInputDerivedUpload {
+		if err := runtime.visionReadiness(ctx, work.Profile.Fingerprint); err != nil {
+			return RenditionExecution{}, err
+		}
+		var err error
+		if version, err = runtime.catalog.ContentVersionByID(ctx, work.Waiter.ContentVersionID); err != nil {
+			return RenditionExecution{}, err
+		}
+	}
 	node := store.Node{ID: version.NodeID, Name: work.ExecutionIdentity.Upload.Filename,
 		CurrentVersionID: version.ID, BlobHash: version.BlobHash, Size: version.Size, MimeType: version.MimeType}
 	profile := configuredProfile{portable: portable, provider: runtime.provider, record: work.Profile,
 		mediaMaxBytes: runtime.mediaMaxBytes}
-	prepared, err := prepareProviderExecution(ctx, runtime.blobs, runtime.spoolDirectory, node, version,
+	prepared, err := prepareProviderExecution(ctx, runtime.catalog, runtime.blobs, runtime.spoolDirectory, node, version,
 		profile, runtime.clock, true)
 	if err != nil {
 		return RenditionExecution{}, err
@@ -2011,9 +2129,13 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 		metadata.InputBinding = work.ExecutionIdentity.Upload.InputBinding
 		prepared.Upload = &boundAuthorizedUpload{AuthorizedUpload: prepared.Upload, metadata: metadata}
 	}
-	return RenditionExecution{Provider: runtime.provider, Upload: prepared.Upload,
+	execution := RenditionExecution{Provider: runtime.provider, Upload: prepared.Upload,
 		Authorization: prepared.Authorization, EvidencePolicy: prepared.EvidencePolicy,
-		RenditionPolicy: prepared.RenditionPolicy}, nil
+		RenditionPolicy: prepared.RenditionPolicy}
+	if work.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
+		execution.providerFailed = func() { runtime.visionProviderFailed(work.Profile.Fingerprint) }
+	}
+	return execution, nil
 }
 
 func (runtime *providerRenditionRuntime) ResumeProvider(_ context.Context, _ store.RenditionJobWork,
@@ -2031,12 +2153,15 @@ type providerExecution struct {
 	metadata document.AuthorizedUploadMetadata
 }
 
-func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool string,
+func prepareProviderExecution(ctx context.Context, catalog *store.Store, blobs *blob.Store, spool string,
 	node store.Node, version store.ContentVersion, profile configuredProfile, clock func() time.Time,
 	withUpload bool,
 ) (providerExecution, error) {
 	if profile.portable.Rendition == nil {
 		return providerExecution{}, errors.New("processing profile has no rendition binding")
+	}
+	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		return preparePhotoDescription(ctx, catalog, blobs, version, profile, spool, clock, withUpload)
 	}
 	capability, err := inspectRenditionSource(ctx, blobs, node, version, profile)
 	if err != nil {
@@ -2049,12 +2174,10 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		return providerExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 	}
 	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
-	emptyDigest := sha256.Sum256(nil)
 	metadata := document.AuthorizedUploadMetadata{Filename: filename,
 		MediaFamily: capability.MediaFamily, MediaType: capability.MediaType,
 		ByteLength: version.Size, SHA256: version.BlobHash,
 		CapabilityRecordChecksum: capability.Checksum,
-		ProviderMetadataChecksum: hex.EncodeToString(emptyDigest[:]),
 		InputKind:                document.RenditionInputOriginalFile}
 	maximum := int(min(profile.portable.Rendition.MaxResponseBytes, int64(math.MaxInt)))
 	markdownMaximum, artifactMaximum := 0, 0
@@ -2067,25 +2190,15 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 			artifactMaximum = min(maximum, document.MaxRenditionArtifactBytes)
 		}
 	}
-	authorization := document.RenditionAuthorization{ProviderID: profile.provider.Descriptor().ID,
-		DescriptorFingerprint:       profile.provider.Descriptor().Fingerprint,
-		PolicyFingerprint:           profile.provider.Descriptor().PolicyFingerprint,
-		RenditionRequestFingerprint: profile.record.RenditionRequestFingerprint,
-		SourceSHA256:                version.BlobHash, SourceBytes: version.Size,
-		CapabilityRecordChecksum: capability.Checksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
-		MediaFamily: capability.MediaFamily, MediaType: capability.MediaType,
-		InputKind:                document.RenditionInputOriginalFile,
+	result, err := newProviderExecution(profile, version, metadata, document.RenditionAuthorization{
 		DiscloseFilename:         profile.portable.Rendition.DiscloseFilename,
 		AllowedArtifactRoles:     artifactRoles,
 		MaxProviderMarkdownBytes: markdownMaximum, MaxArtifactBytes: artifactMaximum,
 		MaxArtifacts:        len(artifactRoles),
-		MaxTotalResultBytes: maximum}
-	evidence, rendition, err := document.RenditionExecutionPoliciesForProfileV1(profile.portable)
+		MaxTotalResultBytes: maximum})
 	if err != nil {
 		return providerExecution{}, err
 	}
-	result := providerExecution{Provider: profile.provider,
-		Authorization: authorization, EvidencePolicy: evidence, RenditionPolicy: rendition, metadata: metadata}
 	if withUpload {
 		source, size, err := blobs.OpenStreamContext(ctx, version.BlobHash)
 		if err != nil {
@@ -2101,13 +2214,40 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		}
 		result.metadata = result.Upload.Metadata()
 	}
-	// Start the interval after inspection and spooling. A 4 GiB source on slow
-	// storage can take longer than the interval to prepare, and an interval that
-	// expired during preparation would fail every retry the same way.
-	authorizedAt := clock().UTC()
-	result.Authorization.AuthorizedAt = authorizedAt.Format(timestampForm)
-	result.Authorization.ExpiresAt = authorizedAt.Add(10 * time.Minute).Format(timestampForm)
+	result.openAuthorization(clock)
 	return result, nil
+}
+
+// openAuthorization starts the interval after inspection and spooling. A 4 GiB
+// source on slow storage can take longer than the interval to prepare, and an
+// interval that expired during preparation would fail every retry the same way.
+func (execution *providerExecution) openAuthorization(clock func() time.Time) {
+	authorizedAt := clock().UTC()
+	execution.Authorization.AuthorizedAt = authorizedAt.Format(timestampForm)
+	execution.Authorization.ExpiresAt = authorizedAt.Add(10 * time.Minute).Format(timestampForm)
+}
+
+// newProviderExecution holds what every input kind's execution shares: the
+// profile's policies and the authorization identity of the version and its
+// upload. limits carries the artifact bounds and anything else particular to
+// the input; the caller opens the authorization interval once its upload is ready.
+func newProviderExecution(profile configuredProfile, version store.ContentVersion,
+	metadata document.AuthorizedUploadMetadata, limits document.RenditionAuthorization,
+) (providerExecution, error) {
+	evidence, rendition, err := document.RenditionExecutionPoliciesForProfileV1(profile.portable)
+	if err != nil {
+		return providerExecution{}, err
+	}
+	emptyDigest := sha256.Sum256(nil)
+	metadata.ProviderMetadataChecksum = hex.EncodeToString(emptyDigest[:])
+	descriptor := profile.provider.Descriptor()
+	limits.ProviderID, limits.DescriptorFingerprint, limits.PolicyFingerprint = descriptor.ID, descriptor.Fingerprint, descriptor.PolicyFingerprint
+	limits.RenditionRequestFingerprint = profile.record.RenditionRequestFingerprint
+	limits.SourceSHA256, limits.SourceBytes = version.BlobHash, version.Size
+	limits.CapabilityRecordChecksum, limits.ProviderMetadataChecksum = metadata.CapabilityRecordChecksum, metadata.ProviderMetadataChecksum
+	limits.MediaFamily, limits.MediaType, limits.InputKind = metadata.MediaFamily, metadata.MediaType, metadata.InputKind
+	return providerExecution{Provider: profile.provider, Authorization: limits,
+		EvidencePolicy: evidence, RenditionPolicy: rendition, metadata: metadata}, nil
 }
 
 func runtimeVersion(work store.RenditionJobWork) store.ContentVersion {
@@ -2372,6 +2512,10 @@ func renditionRuntimeDisclosure(supplied RuntimeDisclosure, binding document.Ren
 	}
 	if value.Deployment == "" {
 		value.Deployment = binding.DeploymentFingerprint
+	}
+	if binding.AdapterContract == document.VisionAdapterContract {
+		// A description sends a derived preview and retains no artifact.
+		metadata, roles = []string{"derived_jpeg", "byte_length", "content_hash", "detected_media_type"}, nil
 	}
 	value.MetadataClasses = metadata
 	value.RetainedArtifactRoles = roles

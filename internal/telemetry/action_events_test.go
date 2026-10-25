@@ -30,7 +30,7 @@ func TestCoreActionsValidateAndForwardEveryReport(t *testing.T) {
 	}))
 	defer collector.Close()
 	dir := t.TempDir()
-	reporter := New(Options{Dir: dir, Version: "v1.0.0", endpoint: collector.URL, Logger: discardLogger()})
+	reporter := New(Options{Dir: dir, Version: "v1.0.0", apiKey: testAPIKey, endpoint: collector.URL, Logger: discardLogger()})
 	handler := CaptureHandler(reporter, dir)
 	for _, event := range []string{"document_added", "document_opened", "search_run", "search_empty", "error_shown"} {
 		for _, surface := range []string{"web", "tui", "cli"} {

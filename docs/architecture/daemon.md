@@ -100,6 +100,10 @@ stale state:
   process's create-time. Discovery compares it against the live process at
   that PID and treats a mismatch as a stale record. It never signals or
   trusts a process it didn't start.
+  A sandbox can share `$DOCBANK_HOME` while seeing different PIDs, so a starter
+  that finds no daemon checks the vault lock first and refuses while another
+  process holds it. A dead daemon holds no lock, so its leftover record never
+  blocks a start.
 - **Exact version match.** Pre-1.0, there is no compatibility matrix:
   local daemon discovery requires an exact version match with the CLI. `docbank
   daemon status` and `docbank daemon stop` report any live daemon
@@ -171,6 +175,7 @@ A background-spawned daemon (started via auto-start, `daemon start`, or
 minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
 `docbank daemon run` never idles out. It runs until signaled or stopped.
+An open photo event stream counts as an in-flight request, so a visible Photos tab keeps a background daemon from reaching its idle timeout.
 
 ## Background tasks
 
@@ -190,7 +195,7 @@ The daemon's content jobs include:
 - `extract:source-metadata` reads retained originals that the current extractor
   has not processed. It publishes typed metadata and keeps watching for new
   content.
-- `extract:photo-sidecars` initializes undecided photo files from linked XMP sidecars.
+- `extract:photo-sidecars` syncs Pending photo files with their linked XMP sidecars, including hidden photos.
 - `derive:photo-quality` evaluates the selected display file's quality signals.
 - `maintenance:auxiliary-checksums` computes MD5 for retained blobs that
   predate auxiliary checksums, then completes. New writes record MD5 at ingest.

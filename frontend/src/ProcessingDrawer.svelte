@@ -543,6 +543,7 @@
             ? ""
             : "s"}
         </p>
+        {#if plan.estimate.scope}<p><strong>Scope:</strong> {plan.estimate.scope}</p>{/if}
         <p><strong>Backup consequence:</strong> {plan.backup_consequence}</p>
       </section>
 

@@ -89,6 +89,7 @@
   import TargetIcon from "@lucide/svelte/icons/target";
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos, type PhotoReturn } from "./photos.svelte.js";
+  import { settleReads, watchPhotoEvents, type PhotoChange } from "./photoEvents.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import {
     concealPhotoWorkspace,
@@ -120,7 +121,7 @@
   import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
-  import { APIError, isCurrentSessionError } from "./api-transport.js";
+  import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import {
     changeNodeTag,
     documentSearch,
@@ -157,7 +158,7 @@
   import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
   import { type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
   import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
-  import { listSavedQueries } from "./savedQueries.js";
+  import { listSavedQueries, refreshDefinitionViews } from "./savedQueries.js";
   import type { RenditionObservation } from "./renditionText.js";
   import {
     clearSelection,
@@ -534,6 +535,7 @@
   );
   let photoAccessError = $state("");
   let photoChangeID: string | undefined;
+  let photoEventError = $state("");
   let revalidatedChangeID: string | undefined | null = null;
   let photoAccessChecked = false;
   let photoConcealed = false;
@@ -706,7 +708,6 @@
       },
       { projection: "map", undoState: photoUndo, hiddenAccess },
     );
-    photos.date = untrack(() => (id ? albumPhotos?.date : state.photos.date));
     mapPhotos = photos;
     return () => photos.dispose();
   });
@@ -773,6 +774,75 @@
       if (!hidden) void invalidateLibrary(false);
     };
   });
+  // Any commit to data Photos reads refreshes every open view: lists reload their loaded prefix, and
+  // single-photo viewers read their own photos again. Starting while a list is still
+  // loading would abort that read, so the pass waits for it.
+  async function photoChanged(change: PhotoChange) {
+    // A concealed Library reloads when access is checked again, so the change waits for that.
+    if (!photoValidated && !hiddenMode) return false;
+    // Edits never wait for a pass; the pass waits for them.
+    if (mutationsInFlight()) return false;
+    const lists = [
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ].filter((photos): photos is Photos => !!photos);
+    if (lists.some((photos) => photos.loading)) return false;
+    // Documents show the same files, so they reload when the user returns to them.
+    pendingPhotoDocuments = true;
+    for (const photos of lists)
+      if (photos.started || photos.loading) photos.resumeStaged = !!change.resume;
+    let listRefreshed = false;
+    try {
+      await settleReads([
+        photosChanged(undefined, undefined, true),
+        hiddenWorkspace?.refresh(true),
+        refreshDefinitions(),
+      ]);
+      listRefreshed = true;
+    } finally {
+      // A viewer's unavailable result must land after any older list rows.
+      await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));
+    }
+  }
+  async function refreshDefinitions() {
+    const shown = albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
+    await settleReads([
+      // Choices already on screen stay enabled, so an open keyword list survives the pass.
+      loadTagCatalog(false, tagCatalog.length > 0).then(() => {
+        if (tagCatalogError) throw new Error(tagCatalogError);
+      }),
+      shown?.authored.refreshAssignedTags(),
+      hiddenWorkspace?.activePhotos()?.authored.refreshAssignedTags(),
+      refreshDefinitionViews(webSession),
+    ]);
+  }
+  $effect(() => {
+    const session = webSession;
+    // Concealment and access checks do not reopen the stream; that would drop changes and
+    // force another full refresh after every navigation.
+    if (!session || !photoMode) return;
+    // A dropped stream reconnects on its own, so only a second drop in a row is shown.
+    let drops = 0;
+    const watcher = watchPhotoEvents(
+      session,
+      photoChanged,
+      (cause) => {
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else if (drops++) photoEventError = cause instanceof Error ? cause.message : String(cause);
+      },
+      () => {
+        drops = 0;
+        photoEventError = "";
+      },
+    );
+    return () => {
+      watcher.stop();
+      photoEventError = "";
+    };
+  });
+
   function clearPhotoNotice() {
     if (photoAlbums) {
       photoAlbums.notice = "";
@@ -2255,17 +2325,29 @@
     }
   }
 
-  async function loadTagCatalog(append = false): Promise<void> {
+  // A background refresh rereads every page the user has loaded, so none of their options vanish.
+  async function listLoadedTagPages(session: string, listed: number) {
+    const pages: Awaited<ReturnType<typeof generated.listTags>>[] = [];
+    for (let offset = 0; offset === 0 || offset < listed; offset += 1000)
+      pages.push(await generated.listTags({ limit: 1000, offset }, { session }));
+    return { items: pages.flatMap((page) => page.items), total: pages.at(-1)!.total };
+  }
+  async function loadTagCatalog(append = false, quiet = false): Promise<void> {
     const request = ++tagCatalogGeneration;
     const session = webSession;
     const selectedTagID = tagFilterID;
-    tagCatalogLoading = true;
-    tagCatalogError = "";
+    if (!quiet) {
+      tagCatalogLoading = true;
+      tagCatalogError = "";
+    }
     try {
-      const page = await generated.listTags(
-        { limit: 1000, offset: append ? tagCatalogListed : 0 },
-        { session },
-      );
+      const page =
+        quiet && !append
+          ? await listLoadedTagPages(session, tagCatalogListed)
+          : await generated.listTags(
+              { limit: 1000, offset: append ? tagCatalogListed : 0 },
+              { session },
+            );
       if (request !== tagCatalogGeneration || session !== webSession) return;
       let items = append
         ? [...new Map([...tagCatalog, ...page.items].map((tag) => [tag.id, tag])).values()]
@@ -2291,6 +2373,7 @@
         }
       }
       if (request !== tagCatalogGeneration || session !== webSession) return;
+      tagCatalogError = "";
       const current = new Map(tagCatalog.map((tag) => [tag.id, tag]));
       tagCatalog = sortTags(
         (append || selectedTagID === tagFilterID ? items : page.items).map((tag) =>
@@ -2416,15 +2499,20 @@
     else void loadRoot();
   }
 
+  // Without a receipt, a background import or status change touched values this
+  // session cannot name, so every started view reloads.
   function handlePhotoMetadataChanged(
-    receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
-    tags: Tag[],
+    receipt?: import("./generated/docbank.js").PhotoAuthoredReceipt,
+    tags: Tag[] = [],
   ): void {
-    const refreshed = new Map(tags.map((tag) => [tag.id, tag]));
-    for (const tag of tagCatalog)
-      if ((refreshed.get(tag.id)?.revision ?? 0) < tag.revision) refreshed.set(tag.id, tag);
-    tagCatalog = sortTags([...refreshed.values()]);
+    if (receipt || tags.length) {
+      const refreshed = new Map(tags.map((tag) => [tag.id, tag]));
+      for (const tag of tagCatalog)
+        if ((refreshed.get(tag.id)?.revision ?? 0) < tag.revision) refreshed.set(tag.id, tag);
+      tagCatalog = sortTags([...refreshed.values()]);
+    } else void loadTagCatalog();
     if (
+      !receipt ||
       receipt.after.some((after) =>
         receipt.before.some(
           (before) =>
@@ -2443,29 +2531,36 @@
         !(photos.started || photos.loading)
       )
         continue;
-      const rotations = photos.metadataChanged(receipt);
-      const preparedChanged = photos.authored.targets.some((target) =>
-        receipt.after.some((file) => file.file_id === target.file_id),
-      );
+      const rotations = receipt ? photos.metadataChanged(receipt) : new Map<string, number>();
+      const preparedChanged = receipt
+        ? photos.authored.targets.some((target) =>
+            receipt.after.some((file) => file.file_id === target.file_id),
+          )
+        : photos.authored.targets.length > 0;
       const refresh =
-        photos.loading || photos.reloadsAfter(rotations) ? photos.refresh() : Promise.resolve();
+        !receipt || photos.loading || photos.reloadsAfter(rotations)
+          ? photos.refresh()
+          : Promise.resolve();
       if (preparedChanged) void refresh.then(() => photos.authored.reload());
     }
-    for (const file of receipt.after) pendingPhotoNodes.add(file.node_id);
+    if (receipt) for (const file of receipt.after) pendingPhotoNodes.add(file.node_id);
+    else pendingPhotoDocuments = true;
     if (!photoMode) refreshPhotoDocuments();
   }
 
   const pendingPhotoNodes = new Set<number>();
+  let pendingPhotoDocuments = false;
   $effect(() => {
     if (!photoMode) untrack(refreshPhotoDocuments);
   });
   function refreshPhotoDocuments(): void {
-    if (!pendingPhotoNodes.size) return;
-    const affected = new Set(pendingPhotoNodes);
+    if (!pendingPhotoNodes.size && !pendingPhotoDocuments) return;
+    const affected = pendingPhotoDocuments ? undefined : new Set(pendingPhotoNodes);
     pendingPhotoNodes.clear();
+    pendingPhotoDocuments = false;
     const source = selectedSource;
     if (!snapshotActive) refreshDocumentsView();
-    if (source && affected.has(source.nodeID)) {
+    if (source && (!affected || affected.has(source.nodeID))) {
       void loadSelectedTags(source.nodeID, source.key);
       void loadAuditStatus(source.nodeID, source.key);
     }
@@ -2725,7 +2820,11 @@
     void loadTagCatalog();
   }
 
-  async function photosChanged(source?: Photos, affectedAlbumID?: string): Promise<void> {
+  async function photosChanged(
+    source?: Photos,
+    affectedAlbumID?: string,
+    live = false,
+  ): Promise<void> {
     const visible = albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
     const loaded = [photoState?.photos, albumPhotos, mapPhotos].filter(
       (photos): photos is Photos => !!(photos?.started || photos?.loading),
@@ -2735,10 +2834,12 @@
         photos !== source &&
         (!affectedAlbumID || photos.query.filters?.set_ids?.includes(affectedAlbumID)),
     );
-    await Promise.all([
-      affectedAlbumID ? undefined : photoAlbums?.load(),
+    await settleReads([
+      affectedAlbumID ? undefined : photoAlbums?.load(live, live && photoAlbums.initialized),
       ...stale.map((photos) =>
-        libraryWorkspace && photos === visible ? libraryWorkspace.refresh() : photos.refresh(),
+        libraryWorkspace && photos === visible
+          ? libraryWorkspace.refresh(live)
+          : photos.refresh(undefined, live),
       ),
       // A membership change moves Albums counts even where the photo list itself stays current.
       ...(affectedAlbumID
@@ -3403,6 +3504,7 @@
           >
         </div>{/if}
       {#if photoMode}
+        {#if photoEventError}<p role="alert">{photoEventError}</p>{/if}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
             access={hiddenAccess}
             undoState={photoUndo}
