@@ -68,7 +68,8 @@
     } finally {
       if (!controller.signal.aborted) {
         loading = false;
-        moving = false;
+        // Only the move that set this clears it; a live reread finishing mid-move must not.
+        if (!live) moving = false;
       }
     }
   }

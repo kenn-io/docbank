@@ -195,6 +195,27 @@ it("serializes Next activations until the destination lookup finishes", async ()
   photos.dispose();
 });
 
+it("keeps Next disabled through a live pass while a move is pending", async () => {
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  const { photos, dialog } = compare(rows);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  let finish!: (result: Awaited<ReturnType<Photos["moveGroup"]>>) => void;
+  const move = vi
+    .spyOn(photos, "moveGroup")
+    .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+  const next = within(dialog).getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  await fireEvent.click(next);
+  await waitFor(() => expect(next.disabled).toBe(true));
+  await photos.changed({});
+  expect(next.disabled).toBe(true);
+  await fireEvent.click(next);
+  expect(move).toHaveBeenCalledOnce();
+  finish({ status: "moved", ids: [rows[1]!.asset_id, rows[2]!.asset_id] });
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  await waitFor(() => expect(next.disabled).toBe(false));
+  photos.dispose();
+});
+
 it("preserves the closeup when the destination lookup fails", async () => {
   const { photos, dialog } = compare([photo(1), photo(2), photo(3), photo(4)]);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
