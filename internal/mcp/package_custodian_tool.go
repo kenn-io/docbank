@@ -81,13 +81,30 @@ func findPeople(ctx context.Context, lease *daemonLease, raw []byte) (personPage
 	if input.Limit == 0 {
 		input.Limit = 100
 	}
-	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PersonPage, error) {
-		return c.People(ctx, input.Query, input.Cursor, input.Limit)
-	})
-	if err != nil {
-		return personPageOutput{}, err
+	// Names may contain characters that escape to six or more bytes in each
+	// envelope copy, so a full page can exceed the response limit. Ask the
+	// daemon for a smaller page to keep its cursor exact.
+	const envelopeBudget = maxToolResponseBytes - 8<<10
+	for {
+		page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PersonPage, error) {
+			return c.People(ctx, input.Query, input.Cursor, input.Limit)
+		})
+		if err != nil {
+			return personPageOutput{}, err
+		}
+		output := personPageOutput{PersonPage: page, privateCache: newPrivateCache()}
+		envelope, err := toolEnvelopeBytes(output)
+		if err != nil {
+			return personPageOutput{}, err
+		}
+		if envelope <= envelopeBudget {
+			return output, nil
+		}
+		if len(page.Items) <= 1 {
+			return personPageOutput{}, errToolResultTooLarge
+		}
+		input.Limit = max(1, min(len(page.Items)-1, len(page.Items)*envelopeBudget/envelope))
 	}
-	return personPageOutput{PersonPage: page, privateCache: newPrivateCache()}, nil
 }
 
 type resolvePackageCustodianInput struct {

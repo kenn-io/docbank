@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -32,7 +33,8 @@ func TestPeopleMCPToolsAreReads(t *testing.T) {
 	}
 }
 
-func TestPeopleMCPReads(t *testing.T) {
+// peopleMCPServer serves MCP person tools from a real daemon over a fresh vault.
+func peopleMCPServer(t *testing.T) (*store.Store, func(string, map[string]any) map[string]any) {
 	vault := t.TempDir()
 	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
@@ -61,6 +63,11 @@ func TestPeopleMCPReads(t *testing.T) {
 		require.NotEqual(t, true, result["isError"], "%s returned an error: %v", name, result)
 		return objectField(t, result, "structuredContent")
 	}
+	return catalog, call
+}
+
+func TestPeopleMCPReads(t *testing.T) {
+	catalog, call := peopleMCPServer(t)
 	survivor, err := catalog.CreatePerson(t.Context(), "Survivor", "operator")
 	require.NoError(t, err)
 	absorbed, err := catalog.CreatePerson(t.Context(), "Absorbed", "operator")
@@ -211,4 +218,41 @@ func TestGetPersonMCPFitsUnpageableIdentitiesUnderEnvelopeBudget(t *testing.T) {
 	require.Len(t, page.ExternalIdentities, 64)
 	require.False(t, page.AssertionsTruncated)
 	require.Len(t, page.Assertions, 1)
+}
+
+func TestFindPeoplePagesWithinResponseLimit(t *testing.T) {
+	catalog, call := peopleMCPServer(t)
+	// Each control character escapes to six bytes in the structured copy and
+	// seven in its text copy, so 250 of these names exceed the response limit.
+	name := strings.Repeat("\x01", document.MaxPersonDisplayNameBytes-1) + "A"
+	want := map[string]bool{}
+	for range 250 {
+		person, err := catalog.CreatePerson(t.Context(), name, "operator")
+		require.NoError(t, err)
+		want[person.PersonID] = true
+	}
+	seen := map[string]bool{}
+	arguments := map[string]any{"limit": 250}
+	for pages := 0; ; pages++ {
+		require.Less(t, pages, 10)
+		page := call("find_people", arguments)
+		items, ok := page["items"].([]any)
+		require.True(t, ok)
+		require.NotEmpty(t, items)
+		for _, item := range items {
+			person, ok := item.(map[string]any)
+			require.True(t, ok)
+			id, ok := person["person_id"].(string)
+			require.True(t, ok)
+			require.False(t, seen[id], "person %s repeated", id)
+			seen[id] = true
+		}
+		cursor, _ := page["next_cursor"].(string)
+		if cursor == "" {
+			require.Greater(t, pages, 0, "a full page should not fit in one response")
+			break
+		}
+		arguments = map[string]any{"limit": 250, "cursor": cursor}
+	}
+	assert.Equal(t, want, seen)
 }
