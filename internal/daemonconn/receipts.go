@@ -210,8 +210,9 @@ func ProblemCode(err error) (string, bool) {
 }
 
 // ProblemFacts is the safe, stable subset of a decoded daemon problem.
-// MappedError is one package sentinel from the client's problem-code map;
-// detailed server text and the original error are never returned.
+// MappedError is the client's problem-code map entry: a package sentinel,
+// possibly wrapped with fixed client-side guidance. Detailed server text and
+// the original error are never returned.
 type ProblemFacts struct {
 	Code               string
 	MappedError        error
@@ -379,7 +380,7 @@ func (c *Connection) Close() error {
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{
 	"rendition_failed":                store.ErrRenditionJobTerminal,
-	"pdf_password_required":           store.ErrRenditionJobTerminal,
+	"pdf_password_required":           fmt.Errorf("%w; no configured PDF password opens this PDF; add its password to media.pdf_passwords_file and build again", store.ErrRenditionJobTerminal),
 	"rendition_operator_required":     store.ErrRenditionJobOperatorRequired,
 	"search_query_required":           store.ErrSearchQueryRequired,
 	"not_found":                       store.ErrNotFound,

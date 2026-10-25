@@ -3,6 +3,7 @@ package mistral
 import (
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -210,6 +211,7 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 		{name: "old fixture contract", mutate: func(manifest *CapabilityManifest) { manifest.ProbeFixtureContract-- }, want: "fixture contract must be"},
 		{name: "future observation", mutate: func(manifest *CapabilityManifest) { manifest.ObservedOn = "2999-01-01" }, want: "invalid observation date"},
 		{name: "target mismatch", mutate: func(manifest *CapabilityManifest) { manifest.Endpoint = "https://example.invalid/v1/ocr" }, want: "not pinned"},
+		{name: "retired model", mutate: func(manifest *CapabilityManifest) { manifest.RequestedModel = "mistral-ocr-4-0" }, want: fmt.Sprintf("recorded for model %q, but this release pins %q; rerun docbank processing probe --profile <processing-profile> --seeds <dir> --overwrite", "mistral-ocr-4-0", DefaultModel)},
 		{name: "unit limit", mutate: func(manifest *CapabilityManifest) { manifest.MaxUnits = 1 }, want: "invalid unit limit"},
 		{name: "partial matrix", mutate: func(manifest *CapabilityManifest) { manifest.Results = manifest.Results[:len(manifest.Results)-1] }, want: "results"},
 		{name: "reordered matrix", mutate: func(manifest *CapabilityManifest) {

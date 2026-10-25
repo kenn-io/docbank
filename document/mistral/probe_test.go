@@ -3,23 +3,21 @@ package mistral
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/mistral/internal/testfixture"
 )
 
 func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 10)
 	fixtureConfig := generatedProbeFixtureConfig(t)
-	transport := &probeTransport{t: t}
+	transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true}
 	client, err := NewClient(policy, ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport}})
 	require.NoError(t, err)
 
@@ -29,7 +27,7 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, manifest.ValidateComplete())
-	assert.Equal(t, len(candidateFormats)+1, transport.calls)
+	assert.Equal(t, len(candidateFormats)+1, transport.Calls)
 	require.Len(t, manifest.Results, len(candidateFormats))
 	pdf := findManifestResult(t, manifest, "pdf")
 	assert.Equal(t, ProbeStatusPassed, pdf.Status)
@@ -82,7 +80,7 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 
 func TestDOCXRouteLeavesNativeProbeUnchanged(t *testing.T) {
 	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicy(t, testMultipagePDF(1), nil), 1<<20, 10)
-	transport := &probeTransport{t: t}
+	transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true}
 	client, err := NewClient(policy, ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport}})
 	require.NoError(t, err)
 	manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{
@@ -114,7 +112,7 @@ func TestRunCapabilityProbeRecordsUnverifiedProviderBoundWithoutAuthority(t *tes
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			policy := testPolicy(t, 1<<20, 10)
-			transport := &probeTransport{t: t, boundMode: test.boundMode}
+			transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true, BoundMode: test.boundMode}
 			client, err := NewClient(policy, ClientConfig{
 				APIKey: "synthetic-key", MaxRetryDelay: time.Millisecond,
 				HTTPClient: &http.Client{Transport: transport},
@@ -163,7 +161,7 @@ func TestRunCapabilityProbeClassifiesSanitizedFailures(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			policy := testPolicy(t, 1<<20, 10)
-			transport := &probeTransport{t: t, failureMode: test.mode}
+			transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true, FailureMode: test.mode}
 			client, err := NewClient(policy, ClientConfig{
 				APIKey: "synthetic-key", MaxRetryDelay: time.Millisecond,
 				HTTPClient: &http.Client{Transport: transport},
@@ -182,7 +180,7 @@ func TestRunCapabilityProbeClassifiesSanitizedFailures(t *testing.T) {
 
 func TestRunCapabilityProbePropagatesCancellation(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 10)
-	transport := &probeTransport{t: t}
+	transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true}
 	client, err := NewClient(policy, ClientConfig{
 		APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport},
 	})
@@ -191,97 +189,11 @@ func TestRunCapabilityProbePropagatesCancellation(t *testing.T) {
 	cancel()
 	_, err = RunCapabilityProbe(ctx, client, ProbeConfig{Fixtures: generatedProbeFixtureConfig(t)})
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Zero(t, transport.calls)
-}
-
-type probeTransport struct {
-	t           *testing.T
-	boundMode   string
-	failureMode string
-	calls       int
-}
-
-func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	transport.t.Helper()
-	call := transport.calls
-	transport.calls++
-	require.Equal(transport.t, "Bearer synthetic-key", request.Header.Get("Authorization"), "call %d", call)
-	body, err := io.ReadAll(request.Body)
-	require.NoError(transport.t, err)
-	assert.NotContains(transport.t, string(body), "image_limit")
-	var input struct {
-		Pages         string `json:"pages"`
-		ExtractHeader bool   `json:"extract_header"`
-		ExtractFooter bool   `json:"extract_footer"`
-		Document      struct {
-			URL string `json:"document_url"`
-		} `json:"document"`
-	}
-	require.NoError(transport.t, json.Unmarshal(body, &input))
-	assert.True(transport.t, input.ExtractHeader)
-	assert.True(transport.t, input.ExtractFooter)
-
-	mediaType := strings.TrimPrefix(strings.SplitN(input.Document.URL, ";base64,", 2)[0], "data:")
-	candidate, found := candidateByMediaType(mediaType)
-	require.True(transport.t, found)
-	if candidate.ID == "pdf" && input.Pages == "0-0" && transport.boundMode == "request_failed" {
-		return probeHTTPResponse(request, http.StatusServiceUnavailable, `{}`), nil
-	}
-	if candidate.ID == "pdf" {
-		switch transport.failureMode {
-		case "invalid_model":
-			return probeHTTPResponse(request, http.StatusBadRequest, invalidModelBody), nil
-		case "provider_4xx":
-			return probeHTTPResponse(request, http.StatusBadRequest, `{}`), nil
-		case "transient_exhausted":
-			return probeHTTPResponse(request, http.StatusServiceUnavailable, `{}`), nil
-		}
-	}
-
-	units := 1
-	if candidate.ID == "pdf" {
-		switch input.Pages {
-		case "0-9":
-			units = 2
-			assert.Equal(transport.t, "0-9", input.Pages)
-		case "0-0":
-			assert.Equal(transport.t, "0-0", input.Pages)
-			if transport.boundMode == "units_mismatch" {
-				units = 2
-			}
-		}
-	} else {
-		assert.Empty(transport.t, input.Pages)
-	}
-	sentinel, err := ProbeFixtureSentinel(candidate.ID)
-	require.NoError(transport.t, err)
-	pages := make([]map[string]any, units)
-	for index := range pages {
-		markdown := ""
-		if index == 0 {
-			switch transport.failureMode {
-			case "empty_output":
-			case "sentinel_missing":
-				markdown = "synthetic text without the sentinel"
-			default:
-				markdown = sentinel
-			}
-		}
-		pages[index] = map[string]any{"index": index, "markdown": markdown}
-	}
-	encoded, err := json.Marshal(map[string]any{
-		"model": defaultModel, "pages": pages,
-		"usage_info": map[string]int{"pages_processed": units},
-	})
-	require.NoError(transport.t, err)
-	return probeHTTPResponse(request, http.StatusOK, string(encoded)), nil
+	assert.Zero(t, transport.Calls)
 }
 
 func probeHTTPResponse(request *http.Request, status int, body string) *http.Response {
-	return &http.Response{
-		StatusCode: status, Header: http.Header{"Content-Type": []string{mediaTypeJSON}},
-		Body: io.NopCloser(strings.NewReader(body)), Request: request,
-	}
+	return testfixture.ProbeHTTPResponse(request, status, body)
 }
 
 func generatedProbeFixtureConfig(t *testing.T) ProbeFixtureConfig {
