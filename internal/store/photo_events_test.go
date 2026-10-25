@@ -522,3 +522,21 @@ func TestPhotoEventsDirectoryVisibility(t *testing.T) {
 		})
 	}
 }
+
+// A conflict settles through its receipt alone, yet moves the photo between xmp:pending and xmp:conflict results.
+func TestPhotoEventsXMPConflictReceiptOnly(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s, asset, raw := xmpSidecarPhoto(t)
+	_, err := editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: raw.Revision, Patch: PhotoAuthoredPatch{Rating: new(5)}}})
+	require.NoError(t, err)
+	work, run, err := s.ClassifyPhotoXMP(ctx, raw.ID)
+	require.NoError(t, err)
+	require.True(t, run)
+	plan, _ := planXMP(work, PhotoXMPPacket{Rating: 4, Present: PhotoConfirmedRating, Keywords: []string{}}, "")
+	require.Equal(t, PhotoConfirmedRating, plan.Conflicts)
+	events := watchPhotoChanges(t, s)
+	_, err = s.PublishPhotoXMP(ctx, plan, "", 0, BlobPhysical{})
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
+}

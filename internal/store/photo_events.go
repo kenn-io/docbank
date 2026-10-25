@@ -149,7 +149,8 @@ func (s *Store) publishPhotoEvents(events []PhotoEvent) {
 // photo_set_members; tags and photo_sets capture only definition columns, so the
 // revision bumps those changes also make stay quiet. Person aliases and external
 // identities update persons in the same transaction, which supplies their notification.
-// photo_change_receipts records history alongside captured authority changes.
+// photo_change_receipts records history alongside captured authority changes. XMP conflicts
+// and refusals add only a receipt, so photo_xmp_unsettled, which feeds xmp: searches, is captured.
 var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{"photo_assets", `SELECT $row.asset_id AS id`, ""},
 	{"photo_files", `SELECT $row.asset_id AS id`, ""},
@@ -174,6 +175,7 @@ var photoCaptureDependencies = []struct{ table, ids, update string }{
 	{"rendition_jobs", `SELECT f.asset_id AS id FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE w.job_id=$row.job_id`, "OLD.state IS NOT NEW.state OR OLD.phase IS NOT NEW.phase OR OLD.failure_code IS NOT NEW.failure_code"},
 	{"text_searchable_versions", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.version_id`, ""},
 	{"extracted_text", `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.blob_hash=$row.blob_hash`, ""},
+	{"photo_xmp_unsettled", `SELECT $row.asset_id AS id`, "-"},
 	{"photo_sets", `SELECT '' AS id`, "OLD.name IS NOT NEW.name OR OLD.starred IS NOT NEW.starred OR OLD.cover_asset_id IS NOT NEW.cover_asset_id OR OLD.deleted_at IS NOT NEW.deleted_at"},
 	{"photo_set_members", `SELECT $row.asset_id AS id`, ""},
 	{"photo_library_settings", `SELECT '' AS id`, ""},
