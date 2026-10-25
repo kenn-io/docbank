@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { untrack } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -94,9 +94,7 @@
     busy = false;
     const active = new PhotoPreviewLoader(photos, cache, selected);
     loader = active;
-    void tick().then(() => {
-      if (!active.active.signal.aborted && image?.isZoomed()) active.zoom();
-    });
+    active.restoreZoom(() => image?.isZoomed());
     return () => active.dispose();
   });
   $effect(() =>

@@ -1,4 +1,4 @@
-import { untrack } from "svelte";
+import { tick, untrack } from "svelte";
 import { APIError } from "./api-transport.js";
 import type { PhotoRow } from "./photos.svelte.js";
 import type { PhotoBrowseRow } from "./generated/docbank.js";
@@ -133,6 +133,12 @@ export class PhotoPreviewLoader {
       });
       if (!active.signal.aborted && size === "large") this.largeStarted = false;
     }
+  }
+  /** After the next render, loads the large preview when the viewer is at 1:1, so a replaced loader keeps it. */
+  restoreZoom(isZoomed: () => boolean | undefined) {
+    void tick().then(() => {
+      if (!this.active.signal.aborted && isZoomed()) this.zoom();
+    });
   }
   zoom() {
     if (!this.photo || this.largeStarted || this.quality === "original") return;

@@ -59,9 +59,7 @@
       untrack(() => current),
     );
     loader = active;
-    void tick().then(() => {
-      if (!active.active.signal.aborted && image?.isZoomed()) active.zoom();
-    });
+    active.restoreZoom(() => image?.isZoomed());
     return () => active.dispose();
   });
   async function retry() {
