@@ -71,7 +71,12 @@ export class PhotoAuthoredEditor {
     return this.stackFiles;
   }
   private setStack(targets: PreparedFile[]) {
-    this.stackIDs = this.hold(targets.map((target) => this.stackTarget(target)));
+    // A draft keeps the revisions it started from, so Apply still reports an outside change.
+    const keep = (target: PreparedFile) =>
+      this.dirty && this.editIDs.has(target.file_id)
+        ? (this.held[target.file_id] ?? target)
+        : target;
+    this.stackIDs = this.hold(targets.map((target) => this.stackTarget(keep(target))));
     this.prune();
   }
   private stackTarget(target: PreparedFile) {

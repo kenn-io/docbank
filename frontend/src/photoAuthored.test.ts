@@ -886,6 +886,36 @@ it("rereads a stack still preparing when a live change arrives", async () => {
   editor.dispose();
 });
 
+it("keeps a draft's original revisions when a stack read lands after the draft starts", async () => {
+  const editor = editorWithTargets();
+  const stack = (revision: number) =>
+    structuredClone(targets).map((target) => ({ ...target, revision }));
+  let finish!: () => void;
+  const edits: { targets: { revision: number }[] }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init: RequestInit) => {
+      if (url.endsWith("/prepare"))
+        return new Promise<Response>((resolve) => {
+          finish = () => resolve(response({ assets: [asset], targets: stack(2) }));
+        });
+      edits.push(JSON.parse(String(init.body)));
+      return Promise.resolve(response({ detail: "Photo metadata changed." }, 409));
+    }),
+  );
+  const preparing = editor.prepareStack(["asset"], false);
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  // Another tab edits the caption, then a live regroup rereads the stack under this tab's draft.
+  editor.stage({ caption: "Draft" });
+  finish();
+  await preparing;
+  await editor.edit({ asset_ids: ["asset"] }, {}, false, vi.fn());
+  expect(edits[0]!.targets.map((target) => target.revision)).toEqual([1, 1]);
+  expect(editor.conflict).toBe(true);
+  expect(editor.patch).toEqual({ caption: "Draft" });
+  editor.dispose();
+});
+
 it("lets a waiting live change finish when the editor is disposed during a stack read", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
   vi.stubGlobal(
