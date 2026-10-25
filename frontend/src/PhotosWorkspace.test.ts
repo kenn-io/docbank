@@ -3137,6 +3137,29 @@ it("reads the open photo again on a live change and conceals its cached image on
   photos.dispose();
 });
 
+it("keeps View original through an unrelated refresh of the same row", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.viewerReturn = {
+    contextID: photos.contextID,
+    assetID: "photo-1",
+    control: "open",
+    scrollTop: 0,
+  };
+  const row = photo(1);
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue({ ...row });
+  viewerWithCachedImage(photos, lookup);
+  vi.spyOn(photos, "original").mockResolvedValue("blob:original");
+  await screen.findByText("Fit preview");
+  await fireEvent.click(screen.getByRole("button", { name: "View original" }));
+  await screen.findByText("Original");
+  await act(() => photos.changed({}));
+  expect(lookup).toHaveBeenCalled();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.getByText("Original")).toBeTruthy();
+  expect(screen.queryByText("Fit preview")).toBeNull();
+  photos.dispose();
+});
+
 it.each([undefined, "map"] as const)(
   "reuses a refreshed full row only outside projections, projection=%s",
   async (projection) => {

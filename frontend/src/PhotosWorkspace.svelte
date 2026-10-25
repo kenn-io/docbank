@@ -521,6 +521,8 @@
     };
   });
   function acceptDetail(id: string, photo: PhotoBrowseRow) {
+    // Compare with what the viewer shows now: a photo opened from the grid has no detail row yet.
+    const shownNow = direct ?? current;
     // A detail read has no stack; the listed row keeps its own.
     if (!photos.projection)
       photos.items = photos.items.map((item) =>
@@ -529,7 +531,7 @@
           : item,
       );
     const previewChanged =
-      !direct || previewSlotsKey(direct.previews) !== previewSlotsKey(photo.previews);
+      !shownNow || previewSlotsKey(shownNow.previews) !== previewSlotsKey(photo.previews);
     if (previewChanged) reloadRevision++;
     direct = photo;
     detailError = "";
