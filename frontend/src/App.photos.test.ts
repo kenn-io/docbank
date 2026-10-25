@@ -16,6 +16,7 @@ import {
   savedSmartSet,
   storage,
 } from "./photo-test-fixtures.js";
+import * as api from "./generated/docbank.js";
 import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
 import { sessionResponse } from "./api-transport.js";
