@@ -13,6 +13,7 @@ import (
 // subscribeWarm subscribes and runs one empty write outside the timer, so the
 // measurement covers steady-state trigger cost rather than the one-time install.
 func subscribeWarm(b *testing.B, s *Store) func() {
+	b.Helper()
 	_, stop := s.SubscribePhotoEvents()
 	require.NoError(b, s.withStorageTx(b.Context(), func(*sql.Tx) error { return nil }))
 	return stop

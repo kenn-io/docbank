@@ -174,25 +174,21 @@ func photoWatchedTables(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	return watched, nil
 }
 
-func photoNames(ctx context.Context, tx *sql.Tx, query string) (names []string, err error) {
+func photoNames(ctx context.Context, tx *sql.Tx, query string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
+	var names []string
 	for rows.Next() {
 		var name string
-		if err = rows.Scan(&name); err != nil {
-			break
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
 		}
 		names = append(names, name)
 	}
-	if err == nil {
-		err = rows.Err()
-	}
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
-	return names, err
+	return names, rows.Err()
 }
 
 // dropPhotoCapture removes the triggers from the writer connection once the last subscriber has left,
