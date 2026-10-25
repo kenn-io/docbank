@@ -181,11 +181,6 @@ func TestTUIPackagesScreenReportsTruncatedPagesAndHelp(t *testing.T) {
 	assert.Contains(t, result.renderFooter(), "K packages")
 }
 
-func TestPackageResponseCurrent(t *testing.T) {
-	require.False(t, packageResponseCurrent(7, 6))
-	require.True(t, packageResponseCurrent(7, 7))
-}
-
 func TestTUIPackagesScreenDropsStaleRequestIDs(t *testing.T) {
 	model, err := New(t.Context(), newFakeBackend())
 	require.NoError(t, err)

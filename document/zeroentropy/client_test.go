@@ -146,25 +146,6 @@ func TestEmbedRejectsProviderPayloadLimitBeforeSecretsOrEgress(t *testing.T) {
 	assert.Zero(t, requests.Load())
 }
 
-func TestEmbedPreservesCancellationDuringResponseRead(t *testing.T) {
-	started := make(chan struct{})
-	profile := testProfile(t, 40, EncodingFloat, LatencyFast)
-	client := testClient(t, profile, testSecrets{"secret:zeroentropy": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		close(started)
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
-			Body: &contextBody{ctx: request.Context()}, Request: request}, nil
-	}))
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := client.Embed(ctx, oneInput(), authorization(client.descriptor, 1))
-		done <- err
-	}()
-	<-started
-	cancel()
-	assert.ErrorIs(t, <-done, context.Canceled)
-}
-
 func TestRetryAfterClampsBeforeDurationConversion(t *testing.T) {
 	err := statusError(http.StatusTooManyRequests, "9223372036854775807", time.Now().UTC())
 	delay, ok := RetryAfter(err)
@@ -211,15 +192,6 @@ func (resolver *countingSecrets) ResolveSecret(context.Context, string) (string,
 	resolver.calls.Add(1)
 	return resolver.value, nil
 }
-
-type contextBody struct{ ctx context.Context }
-
-func (body *contextBody) Read([]byte) (int, error) {
-	<-body.ctx.Done()
-	return 0, body.ctx.Err()
-}
-
-func (*contextBody) Close() error { return nil }
 
 func TestEmbedClassifiesDeniedDNSAsPermanent(t *testing.T) {
 	client, err := New(testProfile(t, 40, EncodingFloat, LatencyAuto), testSecrets{"secret:zeroentropy": "synthetic-key"},

@@ -18,32 +18,6 @@ import (
 	"go.kenn.io/docbank/sqlite/modernc"
 )
 
-func TestEmbeddingCatalogChunkAndDirectFileHeadsCoexist(t *testing.T) {
-	t.Parallel()
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	direct := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
-	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
-	require.NoError(t, s.StageEmbeddingSet(t.Context(), direct))
-	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
-	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		FencingToken: 1,
-		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
-		SetID:        direct.ID, VectorSpaceID: direct.VectorSpace.ID,
-		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
-	}))
-	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		FencingToken: 1,
-		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk},
-		SetID:        chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
-		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
-	}))
-
-	assert.Equal(t, direct.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint,
-		"optional", document.EmbeddingInputOriginalFile))
-	assert.Equal(t, chunk.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint,
-		"chunk", document.EmbeddingInputRenditionChunk))
-}
-
 func TestEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)

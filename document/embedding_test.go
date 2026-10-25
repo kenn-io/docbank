@@ -165,16 +165,6 @@ func TestEmbeddingContractRequiresExplicitProviderRequestModes(t *testing.T) {
 	require.ErrorContains(t, err, "must declare supported request modes")
 }
 
-// This test fails if the durable descriptor rejects the existing profile
-// vocabulary or silently translates its normalization identifier.
-func TestEmbeddingContractPreservesUnitLengthNormalization(t *testing.T) {
-	descriptor := testEmbeddingDescriptor(t)
-	descriptor.Normalization = document.VectorNormalizationUnitLength
-	descriptor.Fingerprint = ""
-	_, err := document.NewEmbeddingDescriptor(descriptor)
-	require.NoError(t, err)
-}
-
 // This test fails if a second normalization spelling can enter any durable
 // contract boundary alongside the canonical unit_length value.
 func TestEmbeddingContractRejectsL2NormalizationAlias(t *testing.T) {

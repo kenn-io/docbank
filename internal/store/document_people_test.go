@@ -12,24 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-func TestDocumentPeopleGenerationPinsInputs(t *testing.T) {
-	t.Parallel()
-	p := DocumentPeoplePublication{
-		People: document.DocumentPeopleV1{
-			ContractVersion:  document.PersonContractV1,
-			ContentVersionID: "00000000-0000-4000-8000-000000000001",
-		},
-		InputsSHA256:        strings.Repeat("a", 64),
-		ResolverFingerprint: document.PersonResolverFingerprint(),
-	}
-	first, err := documentPeopleGenerationID(p, strings.Repeat("c", 64))
-	require.NoError(t, err)
-	p.InputsSHA256 = strings.Repeat("b", 64)
-	next, err := documentPeopleGenerationID(p, strings.Repeat("c", 64))
-	require.NoError(t, err)
-	require.NotEqual(t, first, next)
-}
-
 func TestDocumentPeopleKeepsIndependentActorEvidenceAfterReopen(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "people.db")

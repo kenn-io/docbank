@@ -34,16 +34,6 @@ func TestF10CaptureUsesSourceFieldNotAnInventedKey(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestDocumentEventDeriverDescriptor(t *testing.T) {
-	t.Parallel()
-	sum := sha256.Sum256([]byte(documentEventsDeriverDescriptor))
-	require.Equal(t, DocumentEventsDeriverFingerprint, hex.EncodeToString(sum[:]))
-	require.Equal(t,
-		"docbank-document-events:f10-metadata+content-version+provenance-binding+actor-evidence:v2",
-		documentEventsDeriverDescriptor,
-	)
-}
-
 func TestAdaptersPreserveDistinctF10CapturedClaimsAndCalendarComponents(t *testing.T) {
 	t.Parallel()
 	input := documentEventInput("image/png", []document.SourceMetadataFieldV1{

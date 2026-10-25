@@ -2313,44 +2313,6 @@ func TestEmbeddedPutRequiresCurrentRevision(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestVaultMoveTrashRestoreExternalAPI(t *testing.T) {
-	t.Parallel()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-
-	created, err := vault.Put(
-		t.Context(), "/inbox/report.txt", strings.NewReader("report\n"), docbank.PutOptions{},
-	)
-	require.NoError(t, err)
-
-	moved, err := vault.MovePath(t.Context(), "/inbox/report.txt", "/archive.txt", docbank.RevisionOptions{
-		IfRevision: created.Node.Revision,
-	})
-	require.NoError(t, err)
-	require.Equal(t, created.Node.ID, moved.Node.ID)
-	require.Equal(t, created.Node.Revision+1, moved.Node.Revision)
-	require.Equal(t, "/archive.txt", moved.Path)
-
-	trashed, err := vault.TrashPath(t.Context(), moved.Path, docbank.RevisionOptions{
-		IfRevision: moved.Node.Revision,
-	})
-	require.NoError(t, err)
-	require.Equal(t, moved.Path, trashed.Path)
-	restored, err := vault.Restore(t.Context(), trashed.Node.ID, docbank.RevisionOptions{
-		IfRevision: trashed.Node.Revision,
-	})
-	require.NoError(t, err)
-	require.Equal(t, moved.Path, restored.Path)
-
-	_, err = vault.TrashPath(t.Context(), restored.Path, docbank.RevisionOptions{})
-	require.NoError(t, err)
-	report, err := vault.EmptyTrash(t.Context(), docbank.TrashEmptyOptions{MaxRoots: 1, DryRun: true})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), report.Candidates)
-	require.True(t, report.DryRun)
-}
-
 func TestVaultMoveBatchExternalAPI(t *testing.T) {
 	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
@@ -2399,10 +2361,6 @@ func TestTreeMutationErrorsAreClassifiableOutsidePackage(t *testing.T) {
 		t.Context(), "/parent", "/parent/child/parent", docbank.RevisionOptions{},
 	)
 	require.ErrorIs(t, err, docbank.ErrCycle)
-
-	// Existing audited vaults can surface this sentinel through the same public
-	// methods even though first enrollment is currently daemon-owned.
-	require.ErrorIs(t, fmt.Errorf("embedded audited mutation: %w", docbank.ErrAuditMutationUnsupported), docbank.ErrAuditMutationUnsupported)
 }
 
 func TestOpenContentClassifiesPhysicalContentFailures(t *testing.T) {

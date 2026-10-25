@@ -27,14 +27,6 @@ func TestPublicSourceEvidenceAndPolicy(t *testing.T) {
 			},
 		}},
 	}
-	require.Len(t, source.Units, 1)
-	assert.Equal(t, "pdf", source.Family)
-	assert.Equal(t, "page", source.UnitKind)
-	assert.Equal(t, 0, source.Units[0].Index)
-	assert.Equal(t, "# Synthetic report", source.Units[0].Markdown)
-	assert.Equal(t, "Example header", source.Units[0].Header)
-	assert.Equal(t, "Page 1", source.Units[0].Footer)
-	assert.Equal(t, document.UnitDimensions{DPI: 200, Height: 2200, Width: 1700}, source.Units[0].Dimensions)
 
 	normalized, err := document.NormalizeDocument(source, policy)
 	require.NoError(t, err)

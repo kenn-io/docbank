@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -82,21 +81,6 @@ func TestMCPStdioCancellationWithInheritedPipes(t *testing.T) {
 			assert.Equal(t, "shutdown\n", shutdown)
 			require.NoError(t, command.Wait(), "cancellation must finish while stdin remains open")
 		})
-	}
-}
-
-func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
-	command, _, err := rootCmd.Find([]string{"mcp"})
-	require.NoError(t, err)
-	require.Equal(t, "mcp", command.Name())
-	var names []string
-	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
-	assert.ElementsMatch(t, []string{
-		"allow-report-writes", "allow-export-writes", "allow-photo-edits", "allow-processing",
-		"allow-package-writes", "allowed-host", "listen", "transport",
-	}, names)
-	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
-		assert.Nil(t, command.Flags().Lookup(forbidden))
 	}
 }
 

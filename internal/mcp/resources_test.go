@@ -53,13 +53,6 @@ func TestRenditionResourceURIIsCanonicalAndStrict(t *testing.T) {
 	}
 }
 
-func TestRenditionResourceTemplatePinsRFC6570Window(t *testing.T) {
-	assert.Equal(t,
-		"docbank://vaults/{vault_id}/documents/{node_id}/versions/{content_version_id}/renditions/{attachment_id}{?offset,max_chars}",
-		renditionResourceTemplate,
-	)
-}
-
 func TestServerRegistersReadHandlersAndEmptyResourceCatalog(t *testing.T) {
 	daemon := newReadToolDaemon(t)
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {

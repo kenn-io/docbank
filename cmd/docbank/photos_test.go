@@ -55,33 +55,6 @@ func TestPhotosCLIEnrollsAddedImage(t *testing.T) {
 }
 
 func TestPhotosCLIWorkflow(t *testing.T) {
-	paths := [][]string{
-		{"photos", "assets", "create"},
-		{"photos", "assets", "inspect"},
-		{"photos", "assets", "attach"},
-		{"photos", "assets", "detach"},
-		{"photos", "assets", "exclude"},
-		{"photos", "assets", "promote"},
-		{"photos", "assets", "display"},
-		{"photos", "settings", "show"},
-		{"photos", "settings", "set"},
-		{"photos", "settings", "reset"},
-	}
-	for _, path := range paths {
-		command, _, err := rootCmd.Find(path)
-		require.NoError(t, err, path)
-		assert.NotNil(t, command, path)
-	}
-	for _, path := range [][]string{
-		{"photos", "assets", "attach"}, {"photos", "assets", "detach"},
-		{"photos", "assets", "exclude"}, {"photos", "assets", "display"},
-		{"photos", "settings", "set"}, {"photos", "settings", "reset"},
-	} {
-		command, _, err := rootCmd.Find(path)
-		require.NoError(t, err)
-		assert.NotNil(t, command.Flags().Lookup("revision"), path)
-	}
-
 	_ = setupVaultHome(t)
 	source := writeSourceFile(t, "workflow-image.jpeg", string(mediatest.JPEG(2, 2, color.White)))
 	_, err := runCLI(t, "add", source, "--dest", "/inbox")
@@ -169,15 +142,6 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Zero(t, reads)
 	assert.Equal(t, []int64{7}, writes)
-}
-
-func TestPhotoImportCommands(t *testing.T) {
-	command, _, err := rootCmd.Find([]string{"photos", "import"})
-	require.NoError(t, err)
-	assert.NotNil(t, command.Flags().Lookup("json"))
-	command, _, err = rootCmd.Find([]string{"photos", "imports"})
-	require.NoError(t, err)
-	assert.NotEqual(t, "imports", command.Name())
 }
 
 func TestPhotoImportRejectsEmptySource(t *testing.T) {

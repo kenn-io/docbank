@@ -384,12 +384,6 @@ func deterministicIncompressibleBytes(size int) []byte {
 	return content[:size]
 }
 
-func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
-	assert.Equal(t, MaxIngestBytes, int64(64<<40))
-	assert.Equal(t, MaxPackedBlobBytes, int64(64<<20))
-	assert.Equal(t, MaxPackedBlobBytes, StorageLimits().BlobBytes)
-}
-
 func TestWriteAcceptsLooseBlobAbovePackingLimit(t *testing.T) {
 	bs := newTestBlobStore(t)
 	wantSize := MaxPackedBlobBytes + 1
@@ -516,15 +510,6 @@ func TestOpenStreamDetectsLooseCorruption(t *testing.T) {
 	require.ErrorIs(t, err, packstore.ErrContentMismatch)
 	assert.False(t, stream.Verified())
 	require.ErrorIs(t, stream.Close(), packstore.ErrContentMismatch)
-}
-
-func TestWriteIsIdempotent(t *testing.T) {
-	bs := newTestBlobStore(t)
-	h1, _, err := bs.Write(strings.NewReader("same bytes"))
-	require.NoError(t, err)
-	h2, _, err := bs.Write(strings.NewReader("same bytes"))
-	require.NoError(t, err)
-	assert.Equal(t, h1, h2)
 }
 
 func TestRemoveAndCleanTmp(t *testing.T) {

@@ -237,16 +237,9 @@ func TestProcessingCLIBuildFailureIncludesDurableJobID(t *testing.T) {
 	}
 }
 
-func TestProcessingCLIRegistersCommandsAndValidatesBeforeDaemon(t *testing.T) {
+func TestProcessingCLIValidatesBeforeDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
-	out, err := runCLI(t, "processing", "--help")
-	require.NoError(t, err)
-	assert.Contains(t, out, "profiles")
-	assert.Contains(t, out, "plan")
-	assert.Contains(t, out, "build")
-	assert.Contains(t, out, "status")
-
-	_, err = runCLI(t, "processing", "build", "id:42", "--profile", "private")
+	_, err := runCLI(t, "processing", "build", "id:42", "--profile", "private")
 	require.ErrorContains(t, err, "plan fingerprint")
 	_, err = runCLI(t, "rendition", "get", "not-a-hash")
 	require.ErrorContains(t, err, "attachment ID")

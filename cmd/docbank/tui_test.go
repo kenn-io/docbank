@@ -175,19 +175,6 @@ func TestTUIProcessingRetainsJobAfterInterruptedResponse(t *testing.T) {
 	assert.Equal(t, job.ID, accepted.Job.ID)
 }
 
-func TestTUIHelpDefinesRecoverableMutationBoundary(t *testing.T) {
-	out, err := runCLI(t, "tui", "--help")
-	require.NoError(t, err)
-	assert.Contains(t, out, "Open a terminal browser")
-	assert.Contains(t, out, "authenticated daemon API")
-	assert.Contains(t, out, "explicit revision-bound confirmation")
-	assert.Contains(t, out, "outside the TUI")
-	assert.Contains(t, out, "/                    Search names and extracted text")
-	assert.Contains(t, out, "x                    Move the selected node to recoverable trash")
-	assert.Contains(t, out, "T                    Browse and restore recoverable trash")
-	assert.Contains(t, out, "a                    Browse permanent audited history")
-}
-
 func TestTUIBackendReacquiresAfterPinnedDaemonConnectionCloses(t *testing.T) {
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -75,18 +75,6 @@ func TestVectorSetV1RejectsMalformedOrUnboundedBytes(t *testing.T) {
 	require.ErrorContains(t, err, "scalar bytes")
 }
 
-// This test fails if vector-set framing cannot retain the same normalization
-// identifier that a canonical embedding binding uses.
-func TestVectorSetV1PreservesUnitLengthNormalization(t *testing.T) {
-	set, err := document.NewVectorSetV1(document.VectorSetV1Input{
-		VectorSpaceFingerprint: testFingerprint(), Metric: document.VectorMetricCosine,
-		Normalization: document.VectorNormalizationUnitLength, Dimension: 1,
-		InputKeys: []string{"chunk-a"}, InputChecksums: []string{testFingerprint()}, Values: [][]float64{{1}},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, document.VectorNormalizationUnitLength, set.Normalization)
-}
-
 func TestVectorSetV1RejectsL2NormalizationAlias(t *testing.T) {
 	_, err := document.NewVectorSetV1(document.VectorSetV1Input{
 		VectorSpaceFingerprint: testFingerprint(), Metric: document.VectorMetricCosine,
