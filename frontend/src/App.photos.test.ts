@@ -2849,6 +2849,47 @@ it.each(["search", "tag", "snapshot"] as const)(
   },
 );
 
+it("shows a photo imported by a live event when the user returns to Documents", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  const imported = {
+    id: 7,
+    parent_id: 1,
+    name: "imported.jpg",
+    kind: "file",
+    current_version_id: "00000000-0000-4000-8000-000000000007",
+    blob_hash: "a".repeat(64),
+    size: 1007,
+    mime_type: "image/jpeg",
+    revision: 1,
+    created_at: "2026-10-14T12:00:00Z",
+    modified_at: "2026-10-14T12:00:00Z",
+    path: "/imported.jpg",
+  };
+  let arrived = false;
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    if (url === "/api/v1/path?path=%2F") return Response.json(root);
+    if (url.includes("/nodes/1/children"))
+      return Response.json({
+        directory: root,
+        items: arrived ? [imported] : [],
+        total: arrived ? 1 : 0,
+      });
+    return Response.json({ items: [], total: 0, nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Photos" }));
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  arrived = true;
+  await waitFor(async () => expect(await photoEventPass()({})).not.toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  expect((await screen.findAllByText("imported.jpg")).length).toBeGreaterThan(0);
+});
+
 it("rereads sibling photo views, album covers, and a frozen Documents selection after a receiptless background import", async () => {
   const query = parseQuery("{}");
   const fingerprint = await queryFingerprint(query);

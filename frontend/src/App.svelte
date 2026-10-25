@@ -789,6 +789,8 @@
       hiddenWorkspace?.activePhotos(),
     ].filter((photos): photos is Photos => !!photos);
     if (lists.some((photos) => photos.loading)) return false;
+    // Documents show the same files, so they reload when the user returns to them.
+    pendingPhotoDocuments = true;
     for (const photos of lists)
       if (photos.started || photos.loading) photos.resumeStaged = !!change.resume;
     let listRefreshed = false;
