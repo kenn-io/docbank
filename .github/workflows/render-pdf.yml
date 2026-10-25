@@ -49,10 +49,9 @@ jobs:
       - name: Download package archives on a cache miss
         if: steps.apt_cache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "$RUNNER_TEMP/pdf-apt-staging/partial" "$RUNNER_TEMP/pdf-apt-archives"
+          mkdir -p "$RUNNER_TEMP/pdf-apt-archives/partial"
           sudo apt-get update
-          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-staging" install --download-only --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
-          cp "$RUNNER_TEMP"/pdf-apt-staging/*.deb "$RUNNER_TEMP/pdf-apt-archives/"
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --download-only --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
 
       - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
         run: sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
