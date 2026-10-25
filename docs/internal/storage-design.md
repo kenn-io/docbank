@@ -475,12 +475,25 @@ While a live photo stream is open, every storage write passes through the captur
 the writer connection arms with temp triggers, which the last subscriber removes.
 Photo imports pay it, and so do writes that touch no photo. Run
 `BenchmarkPhotoImportMetadata` (its `subscriber=true` cases) and
-`BenchmarkNonPhotoIngest` with `-benchtime=1x`, with and without CGo, for current
+`BenchmarkNonPhotoIngest` with `-benchtime=3x`, with and without CGo, for current
 figures.
 
-The first write after a subscriber arrives also installs the triggers, which
-the per-file figures amortize across a batch. With no subscriber the first
-write drops them and imports run at the unsubscribed speed.
+The first write after a subscriber arrives also installs the triggers. Each
+benchmark iteration opens a fresh store, so every figure spreads one install over
+its batch (32 photos, or 1,000 documents). With no subscriber the first write
+drops the triggers and imports run at the unsubscribed speed.
+
+Figures at `-benchtime=3x` on an AMD EPYC 7763, in milliseconds per file. An
+import batch is 32 files, and the existing count is the photos already in the
+catalog.
+
+| Case | CGo, no subscriber | CGo, one subscriber | Pure Go, no subscriber | Pure Go, one subscriber |
+| --- | --- | --- | --- | --- |
+| Import new photos, 100 existing | 1.48 | 1.98 | 6.94 | 9.33 |
+| Import edited photos, 100 existing | 1.30 | 2.02 | 4.89 | 6.86 |
+| Import new photos, 10,000 existing | 1.53 | 2.26 | 7.67 | 9.55 |
+| Import edited photos, 10,000 existing | 1.51 | 1.68 | 5.26 | 7.19 |
+| Ingest 1,000 documents | 0.50 | 0.57 | 3.45 | 4.50 |
 
 Live refresh rereads the complete loaded prefix because a change can insert,
 remove, or reorder photos anywhere in it. Library uses 250-photo pages, so a

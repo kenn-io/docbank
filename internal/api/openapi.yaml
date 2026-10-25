@@ -27782,7 +27782,7 @@ paths:
             text/event-stream:
               schema:
                 type: string
-          description: SSE change frames contain JSON {} or {"asset_id":"..."}. Clients must refetch on connection and reconnect to recover missed changes. IDs are filtered by Hidden access.
+          description: SSE change frames contain JSON {} or {"asset_id":"..."}. Clients must refetch on connection and reconnect to recover missed changes. A frame naming a photo reaches a viewer without a Hidden unlock only for a visible photo; {} frames, including tag changes, reach every viewer.
         "429":
           content:
             application/problem+json:

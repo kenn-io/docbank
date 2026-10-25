@@ -22,7 +22,7 @@ func registerPhotoEvents(shutdown context.Context, mux *http.ServeMux, api huma.
 		Summary: "Observe photo changes as server-sent events",
 		Tags:    []string{"Photo events"},
 		Responses: map[string]*huma.Response{
-			"200": {Description: "SSE change frames contain JSON {} or {\"asset_id\":\"...\"}. Clients must refetch on connection and reconnect to recover missed changes. IDs are filtered by Hidden access.", Content: map[string]*huma.MediaType{"text/event-stream": {Schema: &huma.Schema{Type: openAPIStringType}}}},
+			"200": {Description: "SSE change frames contain JSON {} or {\"asset_id\":\"...\"}. Clients must refetch on connection and reconnect to recover missed changes. A frame naming a photo reaches a viewer without a Hidden unlock only for a visible photo; {} frames, including tag changes, reach every viewer.", Content: map[string]*huma.MediaType{"text/event-stream": {Schema: &huma.Schema{Type: openAPIStringType}}}},
 			"429": {Description: "The daemon's concurrent photo event stream limit is reached.", Content: map[string]*huma.MediaType{new(Error).ContentType("application/json"): {Schema: api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[Error](), true, "")}}},
 		},
 	})
