@@ -19,7 +19,7 @@ import (
 
 func newPushCmd() *cobra.Command {
 	var target, name, dest, keyFile string
-	var watch bool
+	var watch, captureOnChange bool
 	var excludes []string
 	var settle, age, interval time.Duration
 	cmd := &cobra.Command{
@@ -39,6 +39,9 @@ are reported and skipped, and then the exit code is nonzero.`,
 		GroupID: groupSources,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if captureOnChange && !watch {
+				return errors.New("--capture-on-change requires --watch")
+			}
 			key, err := readPushKey(keyFile)
 			if err != nil {
 				return err
@@ -51,6 +54,7 @@ are reported and skipped, and then the exit code is nonzero.`,
 				Folder: config.WatchConfig{
 					Name: name, Source: args[0], Destination: dest, SettleTime: config.Duration(settle),
 					MinimumAge: config.Duration(age), ScanInterval: config.Duration(interval), Exclude: excludes,
+					CaptureOnChange: captureOnChange,
 				},
 				Watch: watch,
 			})
@@ -61,6 +65,7 @@ are reported and skipped, and then the exit code is nonzero.`,
 	cmd.Flags().StringVar(&dest, "dest", "", "absolute virtual destination")
 	cmd.Flags().StringVar(&keyFile, "api-key-file", "", "read API key from a file instead of DOCBANK_API_KEY")
 	cmd.Flags().BoolVar(&watch, "watch", false, "keep scanning with watched-inbox stability rules")
+	cmd.Flags().BoolVar(&captureOnChange, "capture-on-change", false, "read observable changes promptly in watch mode")
 	cmd.Flags().StringArrayVar(&excludes, "exclude", nil, "literal basename or source-relative path to exclude (repeatable)")
 	cmd.Flags().DurationVar(&settle, "settle-time", 30*time.Second, "unchanged window before uploading in watch mode")
 	cmd.Flags().DurationVar(&age, "minimum-age", 0, "minimum time since source modification")

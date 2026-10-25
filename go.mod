@@ -16,6 +16,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/danielgtaylor/huma/v2 v2.38.0
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.75.15
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/gofrs/flock v0.13.1

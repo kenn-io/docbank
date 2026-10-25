@@ -267,29 +267,31 @@ func watchMountForRoot(root *os.Root) (watchMount, error) {
 	return watchMountForFile(f)
 }
 
-// Watcher polls one configured local inbox. Its observations are deliberately
-// in memory: after every daemon restart a file must prove stability for a full
-// settle window again before Docbank opens it.
+// Watcher scans one configured local inbox. Settled observations are in memory,
+// so a restart begins a new settle window. Prompt mode skips that delay.
 type Watcher struct {
-	process       func(context.Context, string, *watchObservation, localFileOpener) error
-	reject        func(context.Context, string, error) error
-	excluded      func(context.Context, string) error
-	sourceChanged func(context.Context, string, error) error
-	beforeFile    func(context.Context, string) error
-	rejected      map[string]struct{}
-	immediate     bool
-	ing           *Ingester
-	vaultRoot     string
-	vaultDirs     []fs.FileInfo
-	config        config.WatchConfig
-	excludes      exclusions
-	mutate        func(func() error) error
-	logger        *slog.Logger
-	now           func() time.Time
-	beforeDescend func(string)
-	beforeObserve func(string)
-	sourceMount   watchMount
-	observations  map[string]watchObservation
+	process          func(context.Context, string, *watchObservation, localFileOpener) error
+	reject           func(context.Context, string, error) error
+	excluded         func(context.Context, string) error
+	sourceChanged    func(context.Context, string, error) error
+	beforeFile       func(context.Context, string) error
+	rejected         map[string]struct{}
+	immediate        bool
+	ing              *Ingester
+	vaultRoot        string
+	vaultDirs        []fs.FileInfo
+	config           config.WatchConfig
+	excludes         exclusions
+	mutate           func(func() error) error
+	logger           *slog.Logger
+	now              func() time.Time
+	beforeDescend    func(string)
+	beforeObserve    func(string)
+	sourceMount      watchMount
+	observations     map[string]watchObservation
+	newNotifications func(string, exclusions) (watchNotificationSource, error)
+	notifications    watchNotificationSource
+	notificationErr  error
 }
 
 // NewWatcher validates the non-filesystem portion of one watched inbox.
@@ -326,19 +328,107 @@ func (w *Watcher) Run(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	if err := w.scan(ctx, root); err != nil {
+	return w.run(ctx, root, nil)
+}
+
+// run serializes startup, periodic reconciliation, and event-hint scans. The
+// collector only records bounded hints; it never starts ingestion work.
+func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) error {
+	var source watchNotificationSource
+	degraded := false
+	retryEnrollment := w.config.CaptureOnChange
+	reportFailure := func(err error) {
+		if !degraded {
+			jobs.ReportError(ctx, err)
+			w.logger.Warn("watch notifications unavailable; polling continues", "watch", w.config.Name, "error", err)
+		}
+		degraded = true
+	}
+	disable := func(err error) {
+		if source != nil {
+			_ = source.Close()
+			source = nil
+			w.notifications = nil
+		}
+		retryEnrollment = errors.Is(err, fs.ErrNotExist)
+		reportFailure(fmt.Errorf("watch %q notifications: %w", w.config.Name, err))
+	}
+	enroll := func() {
+		if !retryEnrollment {
+			return
+		}
+		factory := w.newNotifications
+		if factory == nil {
+			factory = func(root string, excludes exclusions) (watchNotificationSource, error) {
+				return newWatchNotifications(root, excludes)
+			}
+		}
+		candidate, err := factory(root.path, w.excludes)
+		if err != nil {
+			disable(err)
+			return
+		}
+		source, w.notifications = candidate, candidate
+	}
+	scan := func(hints watchScanHints) error {
+		if beforeScan != nil {
+			beforeScan()
+		}
+		err := w.scanWithHints(ctx, root, hints)
+		if w.notificationErr != nil {
+			failure := w.notificationErr
+			w.notificationErr = nil
+			disable(failure)
+		} else if err == nil && source != nil && degraded {
+			jobs.ReportError(ctx, nil)
+			w.logger.Info("watch notifications restored", "watch", w.config.Name)
+			degraded = false
+		}
+		return err
+	}
+	enroll()
+	if err := scan(watchScanHints{Reconcile: true}); err != nil {
+		if source != nil {
+			_ = source.Close()
+			w.notifications = nil
+		}
 		return err
 	}
 	ticker := time.NewTicker(w.config.ScanInterval.Std())
 	defer ticker.Stop()
+	defer func() {
+		if source != nil {
+			_ = source.Close()
+			w.notifications = nil
+		}
+	}()
 	for {
+		var wake <-chan struct{}
+		var failures <-chan error
+		if source != nil {
+			wake, failures = source.Wake(), source.Errors()
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := w.scan(ctx, root); err != nil {
+			if source == nil {
+				enroll()
+			}
+			hints := watchScanHints{Reconcile: true}
+			if source != nil {
+				hints.Dirty = source.Drain().Dirty
+			}
+			if err := scan(hints); err != nil {
 				return err
 			}
+		case <-wake:
+			hints := source.Drain()
+			if err := scan(hints); err != nil {
+				return err
+			}
+		case err := <-failures:
+			disable(err)
 		}
 	}
 }
@@ -830,12 +920,22 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
+	return w.scanWithHints(ctx, root, watchScanHints{Reconcile: true})
+}
+
+func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if w.notifications != nil {
+		w.notifications.BeginScan()
+	}
 	seen := make(map[string]struct{}, len(w.observations))
-	if err := w.scanDirectory(ctx, root, root.root, "", seen); err != nil {
+	if err := w.scanDirectory(ctx, root, root.root, "", seen, hints); err != nil {
 		return fmt.Errorf("scanning watch %q: %w", w.config.Name, err)
+	}
+	if w.notifications != nil && w.notificationErr == nil {
+		w.notificationErr = w.notifications.EndScan()
 	}
 	for rel := range w.observations {
 		if _, exists := seen[rel]; !exists {
@@ -880,7 +980,7 @@ func (w *Watcher) rejectEntry(ctx context.Context, rel string, err error, seen m
 
 func (w *Watcher) scanDirectory(
 	ctx context.Context, root *watchRoot, dir *os.Root, relDir string,
-	seen map[string]struct{},
+	seen map[string]struct{}, hints watchScanHints,
 ) error {
 	if err := root.verify(); err != nil {
 		return err
@@ -893,6 +993,9 @@ func (w *Watcher) scanDirectory(
 	closeErr := f.Close()
 	if readErr != nil || closeErr != nil {
 		return &unreadableDirectoryError{err: errors.Join(readErr, closeErr)}
+	}
+	if w.notifications != nil && w.notificationErr == nil {
+		w.notificationErr = w.notifications.AddDirectory(relDir, len(entries))
 	}
 	slices.SortFunc(entries, func(left, right os.DirEntry) int {
 		return strings.Compare(left.Name(), right.Name())
@@ -973,7 +1076,7 @@ func (w *Watcher) scanDirectory(
 				}
 				continue
 			}
-			scanErr := w.scanDirectory(ctx, root, child, rel, seen)
+			scanErr := w.scanDirectory(ctx, root, child, rel, seen, hints)
 			_ = child.Close()
 			if scanErr != nil {
 				if errors.Is(scanErr, ErrSourceChanged) && !w.immediate {
@@ -1059,13 +1162,17 @@ func (w *Watcher) scanDirectory(
 		observedAt := w.now()
 		seen[rel] = struct{}{}
 		observation, exists := w.observations[rel]
-		if !exists || !observation.fingerprint.matches(fingerprint) {
+		fingerprintChanged := !exists || !observation.fingerprint.matches(fingerprint)
+		if fingerprintChanged {
 			observation = watchObservation{
 				fingerprint: fingerprint, stableSince: observedAt, digest: observation.digest,
 			}
 			w.observations[rel] = observation
 		}
-		if observation.digest != "" {
+		if hints.matches(rel) && exists {
+			observation.processed = false
+		}
+		if observation.digest != "" && (hints.Reconcile || hints.matches(rel) || fingerprintChanged) {
 			var digest string
 			digest, err = source.digest(ctx, fingerprint)
 			if err == nil && digest != observation.digest {
@@ -1079,7 +1186,7 @@ func (w *Watcher) scanDirectory(
 		if err == nil {
 			minimumAge := w.config.MinimumAge.Std()
 			if observation.processed ||
-				(!w.immediate && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
+				(!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
 				(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 				continue
 			}

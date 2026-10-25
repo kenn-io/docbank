@@ -1083,3 +1083,27 @@ func TestPushWatchSurvivesAnOutageAtStartup(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
 }
+
+func TestPushWatchCaptureOnChangeReachesFolderScanner(t *testing.T) {
+	f := newFixture(t)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("first"), 0600))
+	opts := options(dir)
+	opts.Watch = true
+	opts.Folder.CaptureOnChange = true
+	opts.Folder.SettleTime = config.Duration(time.Hour)
+	opts.Folder.ScanInterval = config.Duration(time.Hour)
+	events := make(chan string, 2)
+	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+	defer func() { cancel(); <-done }()
+	select {
+	case outcome := <-events:
+		require.Equal(t, "added", outcome)
+	case <-time.After(10 * time.Second):
+		t.Fatal("prompt push waited for the hour-long settle window")
+	}
+	require.EqualValues(t, 1, f.uploads.Load())
+}

@@ -176,13 +176,14 @@ type StoreBindingConfig struct {
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
 type WatchConfig struct {
-	Name         string   `toml:"name"`
-	Source       string   `toml:"source"`
-	Destination  string   `toml:"destination"`
-	SettleTime   Duration `toml:"settle_time"`
-	MinimumAge   Duration `toml:"minimum_age"`
-	ScanInterval Duration `toml:"scan_interval"`
-	Exclude      []string `toml:"exclude"`
+	CaptureOnChange bool     `toml:"capture_on_change"`
+	Name            string   `toml:"name"`
+	Source          string   `toml:"source"`
+	Destination     string   `toml:"destination"`
+	SettleTime      Duration `toml:"settle_time"`
+	MinimumAge      Duration `toml:"minimum_age"`
+	ScanInterval    Duration `toml:"scan_interval"`
+	Exclude         []string `toml:"exclude"`
 }
 
 // RenditionProfileConfig names a deployment binding for one pinned rendition

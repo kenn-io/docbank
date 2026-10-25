@@ -1,7 +1,7 @@
 ---
 title: Push a folder to another daemon
 description: Archive a local folder through a keyed daemon, resume by content hash, and continue an existing watch.
-last_edited: 2026-10-15
+last_edited: 2026-10-25
 ---
 
 # Push a folder to another daemon
@@ -76,8 +76,10 @@ Use a new name when you want an independent push source.
 When it starts, the client reads the last hash the daemon accepted for every
 identity of the push name, a page at a time. This also checks the key and the
 push name before any file is read, so those mistakes fail immediately, even
-with `--watch`. The client still hashes every local file on every run; it does
-not trust modification times, which some tools preserve across edits. Equal
+with `--watch`. A one-shot run hashes every local file. A periodic watch scan rechecks accepted
+file hashes; notification scans limit content rechecks to dirty or
+metadata-changed files. Push does not trust modification times, which some
+tools preserve across edits. Equal
 bytes require no upload. Changed bytes append a version
 to the same node, even if you moved or renamed the archived node. An unchanged
 source leaves a later archive edit or revert intact. The daemon retains each
@@ -104,7 +106,8 @@ something is one collection.
 A one-shot push processes up to 32 files at a time. Outcomes print as uploads
 finish, so their order can differ from the source directory's order. Source
 names that normalize to the same destination are processed in traversal order.
-Watch mode processes files one at a time after they settle.
+Watch mode processes files one at a time, after settling by default or
+promptly when `--capture-on-change` is selected.
 
 The client prints each acknowledged outcome and a final count. If the daemon
 rejects one file, for example because an unrelated entry occupies its
@@ -168,17 +171,37 @@ Watch mode uses the same stability and exclusion rules as a
 [daemon-owned watched inbox](importing.md#continuously-ingest-a-local-inbox).
 The defaults are a 30-second settle window, a 5-second scan interval, and no
 minimum age. Set `--minimum-age 168h` for files that may pause for a long time
-between writes. Every restart requires a fresh full settle window. One-shot
-push reads immediately, while still respecting `--minimum-age` and exclusions.
+between writes. In settled mode, every restart requires a fresh full settle
+window. One-shot push reads immediately, while still respecting
+`--minimum-age` and exclusions.
 
-After processing a file, push rechecks its content hash on each scan. An
+Add `--capture-on-change` with `--watch` for prompt archival of readable
+working files. The initial file and notification-observed changes bypass only
+the settle window; minimum age, exclusions, stable reads, and retry behavior
+still apply. For example, add `--capture-on-change --scan-interval 1h` to the
+command above. The flag is rejected without `--watch`, before a credential or
+daemon connection is resolved.
+
+In settled mode, each periodic scan rechecks accepted file hashes. An
 equal-length edit with a restored modification time starts a new settle window
-and is then uploaded. Push continues checking the hash while the file settles,
-including after a metadata change or a retryable upload failure. Each further
-change restarts the full settle window.
-A matching hash leaves the file quiet; the recheck sends
-no daemon request. These checks reread local files; increase `--scan-interval`
-to reduce disk activity for large folders.
+and is then uploaded. In prompt mode, a notification hint can read that changed
+file sooner, while periodic scans keep the full digest check. A matching hash
+sends no daemon request and leaves an independent Docbank edit intact.
+Periodic checks reread local files; increase `--scan-interval` to reduce disk
+activity for large folders.
+
+Prompt capture is best effort. Notifications can merge saves, and slow uploads
+can miss bytes overwritten before the client reads them. Readable intermediate
+content and temporary files can be uploaded unless excluded; the client cannot
+recognize an application's logical save boundary. Each event scan still walks
+the confined source tree, but only dirty or metadata-changed accepted files
+need a content digest. Pending hints hold at most 1,024 paths; overflow
+requests a full scan. Native subscriptions use a 32,768-entry-unit budget:
+each admitted directory costs one plus its immediate entry count. A backend
+or budget failure closes subscriptions, reports degraded polling, and keeps
+periodic scans running. A directory that vanishes during enrollment is retried
+at the next periodic tick. Polling uses existing digest checks, so a later
+same-size, restored-mtime edit remains detectable while the client runs.
 
 Repeat `--exclude` for literal rules. A basename matches anywhere; a relative
 path excludes that entry and its descendants from the source root. These rules
@@ -197,13 +220,14 @@ Press Ctrl+C to stop a watch; push prints the final count and exits
 successfully unless some files failed. A file the daemon rejects is reported
 and retried when it changes or when push restarts. If the daemon is
 unreachable, answers with a server error, or loses the connection partway
-through an upload receipt, the file waits for a fresh settle
-window and is tried again, so a restarted tunnel or daemon resumes without
+through an upload receipt, the file is tried again on a later scan (after a
+fresh settle window in settled mode), so a restarted tunnel or daemon resumes without
 restarting push. A key check cut off by a network error or a server error is
 retried the same way. A wrong answer to the key check, a refused key, or a push
 name still used by a configured daemon watch stops watch mode with an error;
 restart the same command after correcting the problem. A file edited while it
-is uploading is not a failure: push waits for it to settle and uploads the new
+is uploading is not a failure: settled mode waits for a new settle window;
+prompt mode retries on a later observation. Both upload the new readable
 bytes. If the daemon rejects an upload's hash or size, push rehashes the source to
 detect edits even when file size and modification time stay unchanged.
 A settle window cannot prove a producer has closed a file, so prefer a

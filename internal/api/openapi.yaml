@@ -20543,6 +20543,8 @@ components:
     WatchedInbox:
       additionalProperties: false
       properties:
+        capture_on_change:
+          type: boolean
         destination:
           type: string
         exclude:
@@ -20562,6 +20564,7 @@ components:
         source:
           type: string
       required:
+        - capture_on_change
         - name
         - source
         - destination

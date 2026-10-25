@@ -15,13 +15,15 @@ func TestWriteWatchedInboxesEscapesMachineAndVirtualPaths(t *testing.T) {
 	err := writeWatchedInboxes(&out, []api.WatchedInbox{{
 		Name: "sessions", Source: "/local/agent\nsessions",
 		Destination: "/archives/\x1b[31msessions", SettleTime: "1h0m0s",
-		MinimumAge: "168h0m0s", ScanInterval: "1m0s", Exclude: []string{"cache/"},
+		MinimumAge: "168h0m0s", ScanInterval: "1m0s", Exclude: []string{"cache/"}, CaptureOnChange: true,
 		Job: &api.Job{Status: "running"},
 	}})
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), `"/local/agent\nsessions"`)
 	assert.Contains(t, out.String(), `"/archives/\x1b[31msessions"`)
 	assert.NotContains(t, out.String(), "\x1b")
+	assert.Contains(t, out.String(), "CAPTURE")
+	assert.Contains(t, out.String(), "prompt")
 }
 
 func TestWriteWatchedInboxesExplainsEmptyConfig(t *testing.T) {

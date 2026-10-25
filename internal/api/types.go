@@ -1285,14 +1285,15 @@ type JobList struct {
 // state for one local watched source. Source is intentionally machine-local;
 // Destination is a path in the Docbank virtual tree.
 type WatchedInbox struct {
-	Name         string   `json:"name"`
-	Source       string   `json:"source"`
-	Destination  string   `json:"destination"`
-	SettleTime   string   `json:"settle_time"`
-	MinimumAge   string   `json:"minimum_age"`
-	ScanInterval string   `json:"scan_interval"`
-	Exclude      []string `json:"exclude"`
-	Job          *Job     `json:"job,omitempty"`
+	CaptureOnChange bool     `json:"capture_on_change"`
+	Name            string   `json:"name"`
+	Source          string   `json:"source"`
+	Destination     string   `json:"destination"`
+	SettleTime      string   `json:"settle_time"`
+	MinimumAge      string   `json:"minimum_age"`
+	ScanInterval    string   `json:"scan_interval"`
+	Exclude         []string `json:"exclude"`
+	Job             *Job     `json:"job,omitempty"`
 }
 
 // WatchedInboxList is returned as an object so the contract can gain

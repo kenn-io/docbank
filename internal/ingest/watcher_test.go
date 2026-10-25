@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -29,6 +30,24 @@ func openWatcherRoot(t *testing.T, watcher *Watcher) *watchRoot {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, root.Close()) })
 	return root
+}
+
+func renameWatcherRoot(t *testing.T, root *watchRoot, moved string) {
+	t.Helper()
+	// Windows prevents renaming an open os.Root. Reopen the moved directory
+	// while retaining the original pinned path and identity for verification.
+	if runtime.GOOS == "windows" {
+		require.NoError(t, root.Close())
+	}
+	require.NoError(t, os.Rename(root.path, moved))
+	if runtime.GOOS == "windows" {
+		reopened, err := os.OpenRoot(moved)
+		require.NoError(t, err)
+		root.root = reopened
+	}
+	info, err := root.root.Stat(".")
+	require.NoError(t, err)
+	require.True(t, os.SameFile(root.identity, info))
 }
 
 func scanWatcherAt(ctx context.Context, watcher *Watcher, root *watchRoot, at time.Time) error {
@@ -797,4 +816,147 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestWatchCaptureOnChangeAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		prompt     bool
+		minimumAge time.Duration
+		retry      bool
+	}{
+		{name: "prompt", prompt: true},
+		{name: "settled"},
+		{name: "prompt minimum age", prompt: true, minimumAge: time.Hour},
+		{name: "prompt transient retry", prompt: true, retry: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ing := newTestIngester(t)
+			source := writeTree(t, map[string]string{"notes.txt": "first"})
+			pathname := filepath.Join(source, "notes.txt")
+			attempts := 0
+			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+				Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: tc.prompt,
+				SettleTime: config.Duration(10 * time.Second), MinimumAge: config.Duration(tc.minimumAge), ScanInterval: config.Duration(time.Hour),
+			}, func(fn func() error) error {
+				attempts++
+				if tc.retry && attempts == 1 {
+					return ErrRetryLater
+				}
+				return fn()
+			}, slog.New(slog.DiscardHandler))
+			require.NoError(t, err)
+			root := openWatcherRoot(t, watcher)
+			now := time.Now().Add(2 * time.Hour)
+			if tc.minimumAge > 0 {
+				now = time.Now()
+			}
+			require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now))
+			_, err = ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+			if !tc.prompt || tc.minimumAge > 0 || tc.retry {
+				require.ErrorIs(t, err, store.ErrNotFound)
+			} else {
+				require.NoError(t, err)
+			}
+			if tc.retry {
+				now = now.Add(time.Second)
+				require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now))
+			}
+			if tc.minimumAge > 0 {
+				now = time.Now().Add(3 * time.Hour)
+				require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now))
+			} else if !tc.prompt {
+				now = now.Add(10 * time.Second)
+				require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now))
+			}
+			first, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+			require.NoError(t, err)
+			rewriteSourceWithRestoredMtime(t, pathname, []byte("other"))
+			if tc.minimumAge > 0 {
+				require.NoError(t, os.Chtimes(pathname, now, now))
+			}
+			now = now.Add(time.Second)
+			require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now))
+			_, count, err := ing.Store.ContentVersions(t.Context(), first.ID, 10, 0)
+			require.NoError(t, err)
+			if tc.prompt && tc.minimumAge == 0 {
+				require.Equal(t, 2, count)
+			} else {
+				require.Equal(t, 1, count)
+			}
+			if count == 1 {
+				now = now.Add(10*time.Second + tc.minimumAge)
+				require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now))
+			}
+			second, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+			require.NoError(t, err)
+			require.Equal(t, first.ID, second.ID)
+			require.NotEqual(t, first.CurrentVersionID, second.CurrentVersionID)
+			require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now))
+			_, count, err = ing.Store.ContentVersions(t.Context(), first.ID, 10, 0)
+			require.NoError(t, err)
+			require.Equal(t, 2, count)
+		})
+	}
+}
+
+func TestPromptWatchDirtyHintsStayConfined(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"safe.txt": "safe", "blocked.txt": "blocked"})
+	outside := writeTree(t, map[string]string{"secret.txt": "outside"})
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(source, "link.txt")); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
+		SettleTime: config.Duration(time.Hour), ScanInterval: config.Duration(time.Hour),
+		Exclude: []string{"blocked.txt"},
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	require.NoError(t, watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true}))
+	require.NoError(t, watcher.scanWithHints(t.Context(), root, watchScanHints{
+		Dirty: map[string]struct{}{"blocked.txt": {}, "link.txt": {}},
+	}))
+	for _, ref := range []string{"blocked.txt", "link.txt", "secret.txt"} {
+		_, err := ing.Store.NodeByPath(t.Context(), "/archive/"+ref)
+		require.ErrorIs(t, err, store.ErrNotFound)
+	}
+	renameWatcherRoot(t, root, source+"-moved")
+	require.NoError(t, os.Symlink(outside, source))
+	require.ErrorIs(t, watcher.scanWithHints(t.Context(), root, watchScanHints{
+		Dirty: map[string]struct{}{"safe.txt": {}},
+	}), ErrSourceChanged)
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/secret.txt")
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPromptWatchDirtyUnchangedSourcePreservesManualHeadAcrossRestart(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"notes.txt": "source"})
+	cfg := config.WatchConfig{Name: "notes", Source: source, Destination: "/archive",
+		CaptureOnChange: true, SettleTime: config.Duration(time.Hour), ScanInterval: config.Duration(time.Hour)}
+	watcher, err := NewWatcher(ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	require.NoError(t, watcher.scan(t.Context(), root))
+	node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+	require.NoError(t, err)
+	hash, size, err := ing.Blobs.Write(strings.NewReader("manual"))
+	require.NoError(t, err)
+	manual, _, err := ing.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, watcher.scanWithHints(t.Context(), root, watchScanHints{
+		Dirty: map[string]struct{}{"notes.txt": {}},
+	}))
+	after, err := ing.Store.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, manual, after)
+	restarted, err := NewWatcher(ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	nextRoot := openWatcherRoot(t, restarted)
+	require.NoError(t, restarted.scan(t.Context(), nextRoot))
+	after, err = ing.Store.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, manual, after)
 }

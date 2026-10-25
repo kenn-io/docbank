@@ -29,6 +29,7 @@ func TestPushCommandValidatesBeforeContactingDaemon(t *testing.T) {
 		{"invalid name", []string{"folder", "--to", "http://127.0.0.1:1", "--name", "Laptop", "--dest", "/archive"}, "lowercase"},
 		{"relative destination", []string{"folder", "--to", "http://127.0.0.1:1", "--name", "laptop", "--dest", "archive"}, "absolute virtual path"},
 		{"invalid settle", []string{"folder", "--to", "http://127.0.0.1:1", "--name", "laptop", "--dest", "/archive", "--settle-time", "0s"}, "must be positive"},
+		{"capture requires watch", []string{"folder", "--to", "http://127.0.0.1:1", "--name", "laptop", "--dest", "/archive", "--capture-on-change"}, "--capture-on-change requires --watch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cmd := newPushCmd()
@@ -109,4 +110,14 @@ func keyChallenge(key string, next http.Handler) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof(key, nonce)})
 	})
+}
+
+func TestPushCaptureOnChangeRejectsBeforeCredentialLookup(t *testing.T) {
+	t.Setenv("DOCBANK_API_KEY", "")
+	cmd := newPushCmd()
+	cmd.SetArgs([]string{t.TempDir(), "--to", "http://127.0.0.1:1", "--name", "laptop", "--dest", "/archive", "--capture-on-change", "--api-key-file", filepath.Join(t.TempDir(), "missing.key")})
+	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	require.ErrorContains(t, cmd.Execute(), "--capture-on-change requires --watch")
 }

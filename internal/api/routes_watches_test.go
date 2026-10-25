@@ -47,10 +47,11 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 			},
 			{
 				Name: "archive", Source: source, Destination: "/records",
-				SettleTime:   config.Duration(2 * time.Minute),
-				MinimumAge:   config.Duration(7 * 24 * time.Hour),
-				ScanInterval: config.Duration(15 * time.Second),
-				Exclude:      []string{"cache/", ".DS_Store"},
+				CaptureOnChange: true,
+				SettleTime:      config.Duration(2 * time.Minute),
+				MinimumAge:      config.Duration(7 * 24 * time.Hour),
+				ScanInterval:    config.Duration(15 * time.Second),
+				Exclude:         []string{"cache/", ".DS_Store"},
 			},
 		}
 	})
@@ -60,6 +61,8 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	require.Len(t, got.Items, 2)
 	assert.Equal(t, "archive", got.Items[0].Name)
+	assert.True(t, got.Items[0].CaptureOnChange)
+	assert.Contains(t, body, `"capture_on_change":true`)
 	assert.Equal(t, source, got.Items[0].Source)
 	assert.Equal(t, "/records", got.Items[0].Destination)
 	assert.Equal(t, "2m0s", got.Items[0].SettleTime)
@@ -70,6 +73,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Equal(t, "watch:archive", got.Items[0].Job.Name)
 	assert.Equal(t, "running", got.Items[0].Job.Status)
 	assert.Equal(t, "zeta", got.Items[1].Name)
+	assert.False(t, got.Items[1].CaptureOnChange)
 	assert.Equal(t, "0s", got.Items[1].MinimumAge)
 	assert.Empty(t, got.Items[1].Exclude)
 	assert.Nil(t, got.Items[1].Job)
