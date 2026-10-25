@@ -29,9 +29,14 @@ func VerifySaved(ctx context.Context, reader io.ReaderAt, size int64,
 		return err
 	}
 	defer stop()
+	var engine Engine
 	defer func() {
+		// Capture verification's cause before teardown can trigger another refusal.
 		if cause := context.Cause(ctx); cause != nil {
 			result = errors.Join(result, cause)
+		}
+		if engine != nil {
+			result = errors.Join(result, engine.Close())
 		}
 	}()
 	setup, cancel := context.WithTimeout(ctx, time.Duration(recipe.PageTimeoutSeconds)*time.Second)
@@ -40,11 +45,10 @@ func VerifySaved(ctx context.Context, reader io.ReaderAt, size int64,
 	if err != nil {
 		return err
 	}
-	engine, err := NewPDFium(recipe)
+	engine, err = NewPDFium(recipe)
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, engine.Close()) }()
 	e, ok := engine.(*pdfiumEngine)
 	if !ok {
 		return errors.New("unexpected PDFium engine implementation")
