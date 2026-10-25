@@ -520,9 +520,10 @@ for changes that reorder the prefix.
 
 Capture a table when its writes can change a Photos list, viewer, or metadata
 read. A photo or file key alone doesn't make a table a dependency. Audit and
-export state, document-only metadata, work queues, and scheduling caches stay
-outside capture. Receipt and binding tables written with a captured authority
-row need no separate trigger.
+export state, document-only metadata, and scheduling caches stay outside
+capture. A work queue is captured only for the columns a Photos read shows, as
+`rendition_jobs` is for its state, phase, and failure code. Receipt and binding
+tables written with a captured authority row need no separate trigger.
 
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited
