@@ -3488,6 +3488,59 @@ it("loads keywords beyond the first catalog page", async () => {
   );
 });
 
+it("preserves a staged off-page keyword", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  Element.prototype.scrollIntoView = vi.fn();
+  const prepare = vi.spyOn(PhotoAuthoredEditor.prototype, "prepare");
+  const catalog = Array.from({ length: 1000 }, (_, index) => ({
+    id: `tag-${index}`,
+    name: `Keyword ${index}`,
+    revision: 1,
+    assignment_count: 0,
+  }));
+  const last = { id: "last", name: "Beyond the first page", revision: 1, assignment_count: 0 };
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url === "/api/v1/tags?limit=1000&offset=0")
+      return Response.json({ items: catalog, total: 1001 });
+    if (url === "/api/v1/tags?limit=1000&offset=1000")
+      return Response.json({ items: [last], total: 1001 });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    if (url.includes("/nodes/1"))
+      return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  stubPhotoFetch(fetcher);
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const inspector = await screen.findByRole("region", { name: "Photo metadata" });
+  const more = await within(inspector).findByRole("button", { name: "Load more keywords" });
+  await waitFor(() => expect((more as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(more);
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Load more keywords" })).toBeNull(),
+  );
+  expect(fetcher.mock.calls.some(([url]) => url === "/api/v1/tags?limit=1000&offset=1000")).toBe(
+    true,
+  );
+  await fireEvent.click(
+    within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" }),
+  );
+  expect(
+    await within(inspector).findByRole("option", { name: /Beyond the first page/ }),
+  ).toBeTruthy();
+  await fireEvent.click(within(inspector).getByRole("option", { name: /Beyond the first page/ }));
+  await fireEvent.click(within(inspector).getByRole("button", { name: "Add keyword" }));
+  const assigned = () =>
+    within(inspector).getByRole("list", { name: "Assigned keywords" }).textContent;
+  expect(assigned()).toContain("Beyond the first page");
+  await act(() => photoEventPass()(idFreeChange));
+  expect(assigned()).toContain("Beyond the first page");
+});
+
 it("guards a Hidden draft while a status failure conceals its workspace", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();

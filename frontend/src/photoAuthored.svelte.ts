@@ -132,8 +132,15 @@ export class PhotoAuthoredEditor {
   inspectedID = $state("");
   loadTags?: () => Promise<void>;
   loadMoreTags?: () => Promise<void>;
+  // Tags the targets carry or a staged keyword edit names keep their definitions through a new catalog.
+  private get keptTagIDs() {
+    return new Set([
+      ...this.targets.flatMap((target) => target.tags),
+      ...this.keywords.map((edit) => edit.tag_id),
+    ]);
+  }
   catalog(tags: api.Tag[]) {
-    const assigned = new Set(this.targets.flatMap((target) => target.tags)),
+    const assigned = this.keptTagIDs,
       supplied = new Set(tags.map((tag) => tag.id));
     this.tags = [
       ...tags,
