@@ -173,6 +173,45 @@ in `releasedSchemaFixtures`. Three checks enforce this:
   binary, so bumping the schema fails until the released version has a cutover
   adapter.
 
+### PostgreSQL schema lifecycle
+
+`internal/store/pgschema` provides the internal schema installation and
+validation foundation. A PostgreSQL-backed vault is not available yet: ordinary
+daemon and embedded operations still use SQLite. This package currently owns
+only the native vault identity and PostgreSQL schema version, not the document
+catalogs, search, transfer, or recovery paths.
+
+`Setup` takes a caller-owned `database/sql` pool authenticated as the configured
+schema owner. It creates a dedicated schema, canonical DDL and a UUIDv4 vault
+identity in one transaction, under a schema-specific PostgreSQL advisory lock.
+Repeated setup preserves that identity. Existing empty, unrelated, malformed,
+wrong-owner and unsupported-version schemas are refused rather than repaired.
+
+`Validate` only reads. Its runtime role must be separate from the owner, unable
+to assume the owner role, and lack schema `CREATE` and identity-table write
+privileges. The operator provisions roles and grants schema `USAGE` and identity
+`SELECT` explicitly. Neither function creates roles or changes grants. Callers
+own connection lifetimes and deadlines. Schema setup does not grant ownership
+of blob roots or permit multiple vault writers.
+
+PostgreSQL schema versions are independent of SQLite layout versions and JSONL
+format versions. The first supported PostgreSQL release establishes the upgrade
+floor. Fresh installs use canonical DDL; do not invent historical migrations for
+this unreleased foundation. Later supported layouts require numbered
+`NNNNNN_description.up.sql` transitions, with the target version in the filename.
+Keep one complete forward chain, and commit each transition and its version
+together under the setup lock. Runtime startup never migrates. Once a migration
+reaches main or a deployed database it is immutable; fix forward. Recovery uses
+a pre-upgrade backup and compatible binary, not down migrations. This discipline
+does not change SQLite's JSONL cutover policy.
+
+Run `make test-postgres` with Docker available. The runner creates and removes a
+fresh loopback-only cluster and tests real roles and transactions with the race
+detector. `DOCBANK_TEST_POSTGRES_IMAGE=postgres:18 make test-postgres` selects the
+other CI version; PostgreSQL 16 is the default. Neither command uses an existing
+vault or database. These checks qualify the schema foundation, not complete
+PostgreSQL document-store support.
+
 ### Change daemon lifecycle
 
 Exercise foreground, detached, auto-start, restart, mismatch replacement,

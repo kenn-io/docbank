@@ -41,6 +41,10 @@ clean:
 test:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
+.PHONY: test-postgres
+test-postgres:
+	bash scripts/test-postgres.sh
+
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
 
