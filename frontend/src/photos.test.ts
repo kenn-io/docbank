@@ -3297,3 +3297,25 @@ it.each([undefined, "map"] as const)(
     photos.dispose();
   },
 );
+
+it("retains the loaded prefix when the old tail moves to the front", async () => {
+  const rows = Array.from({ length: 500 }, (_, index) => photo(index + 1));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows;
+  photos.total = 500;
+  photos.started = true;
+  const moved = { ...rows[499]!, capture_time: "2026-10-24T12:00:00" };
+  const ordered = [moved, ...rows.slice(0, 499)];
+  stubPhotoFetch(async (_url, init) => {
+    const request = JSON.parse(String(init.body));
+    return Response.json(
+      request.cursor
+        ? { items: ordered.slice(250), total: 500 }
+        : { items: ordered.slice(0, 250), total: 500, next_cursor: "second-page" },
+    );
+  });
+  await photos.refresh(undefined, true);
+  expect(photos.items).toHaveLength(500);
+  expect(photos.items.some((row) => row.asset_id === "photo-400")).toBe(true);
+  photos.dispose();
+});

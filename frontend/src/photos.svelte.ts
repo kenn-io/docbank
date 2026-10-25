@@ -1276,7 +1276,8 @@ export class Photos {
     this.loading = true;
     if (!live || this.error !== this.refusedQueryError) this.error = "";
     const count = this.items.length;
-    const tail = this.items.at(-1)?.asset_id;
+    // A live refresh counts rows instead: a tail that moved to the front says nothing about the prefix.
+    const tail = live ? undefined : this.items.at(-1)?.asset_id;
     const staged = (this.staged =
       resume && this.staged
         ? this.staged
