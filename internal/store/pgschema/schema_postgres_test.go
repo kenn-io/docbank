@@ -16,37 +16,13 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-)
 
-// CI supplies a disposable cluster; local runs explicitly configure one.
-// Every test owns a separate database, so it can exercise real role grants and
-// failed DDL.
-func testDatabase(t *testing.T) (*sql.DB, string) {
-	t.Helper()
-	dsn := os.Getenv("DOCBANK_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set DOCBANK_TEST_POSTGRES_DSN to run PostgreSQL tests")
-	}
-	c, err := pgx.ParseConfig(dsn)
-	require.NoError(t, err)
-	admin := stdlib.OpenDB(*c)
-	t.Cleanup(func() { require.NoError(t, admin.Close()) })
-	name := fmt.Sprintf("db_%x", uuid.New())
-	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, err := admin.ExecContext(context.Background(), "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
-		require.NoError(t, err)
-	})
-	c.Database = name
-	db := stdlib.OpenDB(*c)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	return db, c.User
-}
+	"go.kenn.io/docbank/internal/pgtest"
+)
 
 func TestSetupPreservesIdentity(t *testing.T) {
 	t.Parallel()
-	db, owner := testDatabase(t)
+	db, owner := pgtest.NewDatabase(t)
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	id, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
@@ -68,7 +44,7 @@ func TestSetupPreservesIdentity(t *testing.T) {
 
 func TestRuntimeCannotChangeSchema(t *testing.T) {
 	t.Parallel()
-	admin, _ := testDatabase(t)
+	admin, _ := pgtest.NewDatabase(t)
 	idSuffix := uuid.New()
 	owner := fmt.Sprintf("Owner \"setup\" %x", idSuffix[:])
 	role := fmt.Sprintf("runtime_%x", idSuffix[:])
@@ -185,7 +161,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			db, owner := testDatabase(t)
+			db, owner := pgtest.NewDatabase(t)
 			cfg := Config{Schema: "documents", SchemaOwner: owner}
 			if tc.name != "empty schema" && tc.name != "unrelated schema" {
 				_, err := Setup(t.Context(), db, cfg)
@@ -209,7 +185,7 @@ func TestSetupPreservesUnsupportedVersion(t *testing.T) {
 	for _, version := range []int{0, 2} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			t.Parallel()
-			db, owner := testDatabase(t)
+			db, owner := pgtest.NewDatabase(t)
 			cfg := Config{Schema: "documents", SchemaOwner: owner}
 			original, err := Setup(t.Context(), db, cfg)
 			require.NoError(t, err)
@@ -228,7 +204,7 @@ func TestSetupPreservesUnsupportedVersion(t *testing.T) {
 
 func TestSetupRollsBackFailedCommit(t *testing.T) {
 	t.Parallel()
-	db, owner := testDatabase(t)
+	db, owner := pgtest.NewDatabase(t)
 	// A deferred trigger fails after setup has created and validated the identity.
 	// This exercises the commit boundary, not just an early syntax failure.
 	_, err := db.ExecContext(t.Context(), `
@@ -255,7 +231,7 @@ func TestSetupRollsBackFailedCommit(t *testing.T) {
 
 func TestConcurrentSetup(t *testing.T) {
 	t.Parallel()
-	db, owner := testDatabase(t)
+	db, owner := pgtest.NewDatabase(t)
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	const count = 6
 	ids := make([]uuid.UUID, count)
@@ -273,7 +249,7 @@ func TestConcurrentSetup(t *testing.T) {
 
 func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	t.Parallel()
-	db, owner := testDatabase(t)
+	db, owner := pgtest.NewDatabase(t)
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
