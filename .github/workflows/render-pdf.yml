@@ -55,7 +55,7 @@ jobs:
           cp "$RUNNER_TEMP"/pdf-apt-staging/*.deb "$RUNNER_TEMP/pdf-apt-archives/"
 
       - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
-        run: sudo apt-get install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
+        run: sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/pdf-apt-archives" install --no-download --no-install-recommends -y "$RUNNER_TEMP"/pdf-apt-archives/*.deb
 
       - name: Run mandatory page rendering proof
         env:
