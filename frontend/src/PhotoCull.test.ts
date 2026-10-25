@@ -529,6 +529,37 @@ it("shows a background import's rating, rotation, and flag and tells the app", a
   expect(onmetadatachanged).toHaveBeenCalledWith(undefined, tags);
 });
 
+it("keeps a live row's newer values when a slower background import lookup answers last", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async () =>
+    photoPreparation([preparedPhoto(1)]),
+  );
+  const row = photo(1);
+  row.previews.grid = { state: "ready", generation_id: "grid-1" };
+  const { photos } = await reviewPhoto(row);
+  vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  let finish!: (rows: PhotoBrowseRow[]) => void;
+  vi.mocked(photos.lookupMany).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  const importing = photos.cullEditor!.onXMPChanged!(undefined, []);
+  await waitFor(() => expect(finish).toBeDefined());
+  vi.mocked(photos.lookupMany).mockResolvedValueOnce([{ ...row, rating: 5, flag: "pick" }]);
+  await act(() => photos.changed(photoChange("photo-1")));
+  await screen.findByText("pick · 5 stars");
+  await act(async () => {
+    finish([{ ...row, rating: 2, flag: "reject" }]);
+    await importing;
+  });
+  expect(screen.getByText("pick · 5 stars")).toBeTruthy();
+  expect(screen.queryByText("reject · 2 stars")).toBeNull();
+});
+
 it("shows prepared rotation after a no-op decision without replacing Undo", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});

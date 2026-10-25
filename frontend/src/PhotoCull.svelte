@@ -303,6 +303,7 @@
   async function reloadHeldRows() {
     const held = [...(photo ? [photo] : []), ...neighbors];
     if (!held.length) return;
+    const owns = claim(held.map((row) => row.asset_id));
     try {
       const fresh = new Map(
         (
@@ -312,7 +313,8 @@
           )
         ).map((row) => [row.asset_id, row]),
       );
-      const latest = (row: PhotoBrowseRow) => fresh.get(row.asset_id) ?? row;
+      const latest = (row: PhotoBrowseRow) =>
+        (owns(row.asset_id) && fresh.get(row.asset_id)) || row;
       const flagged = held.some((row) => latest(row).flag !== row.flag);
       if (photo) photo = latest(photo);
       neighbors = neighbors.map(latest);
