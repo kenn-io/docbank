@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"reflect"
-	"slices"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -81,8 +80,7 @@ func registerPhotoEvents(shutdown context.Context, mux *http.ServeMux, api huma.
 				if !ok {
 					return
 				}
-				batch = coalescePhotoEvents(r.Context(), shutdown, events, batch)
-				if r.Context().Err() != nil || shutdown.Err() != nil || send(batch...) != nil {
+				if send(batch...) != nil {
 					return
 				}
 			case <-ticker.C:
@@ -92,24 +90,4 @@ func registerPhotoEvents(shutdown context.Context, mux *http.ServeMux, api huma.
 			}
 		}
 	})
-}
-
-func coalescePhotoEvents(ctx, shutdown context.Context, events <-chan []store.PhotoEvent, batch []store.PhotoEvent) []store.PhotoEvent {
-	timer := time.NewTimer(100 * time.Millisecond)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-shutdown.Done():
-			return nil
-		case <-timer.C:
-			return batch
-		case next, ok := <-events:
-			if !ok {
-				return nil
-			}
-			batch = store.CollapsePhotoEvents(slices.Concat(batch, next))
-		}
-	}
 }

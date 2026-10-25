@@ -1396,7 +1396,7 @@ normalization and validation and returns `422` for an invalid path.
 
 ## Live photo changes
 
-`GET /photos/events` returns authenticated `text/event-stream`. Each `change` frame carries `{ "asset_id": "..." }` for one changed photo, or `{}` when the client should refetch without knowing which photos changed. Captured IDs are batched for 100 ms and a batch names at most 64 photos; more become one `{}`. A stream opened without an active Hidden unlock omits Hidden photos, so a browser reconnects when its unlock changes. The stream sends no initial event, and missed changes are not replayed: a client refetches after every connection. The daemon sends a keepalive comment every 15 seconds and admits at most 128 concurrent streams across all clients; further requests return `429 photo_event_stream_limit`. Writers capture changes only while a stream is open.
+`GET /photos/events` returns authenticated `text/event-stream`. Each `change` frame carries `{ "asset_id": "..." }` for one changed photo, or `{}` when the client should refetch without knowing which photos changed. A committed change names at most 64 photos; more become one `{}`. A stream opened without an active Hidden unlock omits Hidden photos, so a browser reconnects when its unlock changes. The stream sends no initial event, and missed changes are not replayed: a client refetches after every connection. The daemon sends a keepalive comment every 15 seconds and admits at most 128 concurrent streams across all clients; further requests return `429 photo_event_stream_limit`. Writers capture changes only while a stream is open.
 
 ## Batch tag assignment
 
