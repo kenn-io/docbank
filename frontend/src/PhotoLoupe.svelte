@@ -8,7 +8,7 @@
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import type { Photos, PhotoRow } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { previewSlotsKey, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import { APIError } from "./api-transport.js";
   import { previewEligibility } from "./download.js";
@@ -71,7 +71,14 @@
   let busy = $state(false);
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
-  const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
+  // A newly published preview starts a new load. The loader's own slot updates change the row in
+  // place, so they leave the identity alone.
+  const identity = $derived.by(() => {
+    const row = photo;
+    return untrack(() =>
+      row ? [row.asset_id, row.content_version_id, previewSlotsKey(row.previews)].join(":") : "",
+    );
+  });
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);

@@ -42,7 +42,7 @@
     type PhotoReturn,
   } from "./photos.svelte.js";
   import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
-  import { previewSlotsKey, type PhotoPreviewCache } from "./photoPreviewCache.js";
+  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoSmartSet from "./PhotoSmartSet.svelte";
   import PhotoGrid from "./PhotoGrid.svelte";
@@ -497,10 +497,9 @@
     void (photos.projection && explicit ? photos.reload(id, signal) : photos.lookup(id, signal))
       .then((photo) => {
         if (!signal.aborted) {
-          const previewChanged = acceptDetail(id, photo);
+          acceptDetail(id, photo);
           if (explicit) {
-            if (!previewChanged && (!photos.projection || photo.content_version_id === version))
-              reloadRevision++;
+            if (!photos.projection || photo.content_version_id === version) reloadRevision++;
             reloadedRow = untrack(() => listedRow);
             consumedReload = request;
           }
@@ -521,8 +520,6 @@
     };
   });
   function acceptDetail(id: string, photo: PhotoBrowseRow) {
-    // Compare with what the viewer shows now: a photo opened from the grid has no detail row yet.
-    const shownNow = direct ?? current;
     // A detail read has no stack; the listed row keeps its own.
     if (!photos.projection)
       photos.items = photos.items.map((item) =>
@@ -530,12 +527,8 @@
           ? { ...photo, ...("stack" in item ? { stack: item.stack } : {}) }
           : item,
       );
-    const previewChanged =
-      !shownNow || previewSlotsKey(shownNow.previews) !== previewSlotsKey(photo.previews);
-    if (previewChanged) reloadRevision++;
     direct = photo;
     detailError = "";
-    return previewChanged;
   }
   function rejectDetail(id: string, cause: unknown) {
     if (cause instanceof APIError && cause.status === 404) {

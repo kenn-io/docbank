@@ -3160,6 +3160,42 @@ it("keeps View original through an unrelated refresh of the same row", async () 
   photos.dispose();
 });
 
+it("loads a preview published while a grid-opened photo is open", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  photos.viewerReturn = {
+    contextID: photos.contextID,
+    assetID: "photo-1",
+    control: "open",
+    scrollTop: 0,
+  };
+  const row = photo(1);
+  row.previews.fit = { state: "ready", generation_id: "fit-1" };
+  photos.items = [row];
+  const lookup = vi.fn<() => Promise<PhotoBrowseRow>>().mockResolvedValue(row);
+  const view = viewerWithCachedImage(photos, lookup);
+  vi.mocked(photos.preview).mockImplementation(async (shown) => shown.previews.fit);
+  const get = vi.fn(async () => new Blob(["synthetic-photo"]));
+  await view.rerender({
+    photos,
+    cache: { get } as unknown as PhotoPreviewCache,
+    photoID: "photo-1",
+  });
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith("photo-1", "fit-1", expect.any(AbortSignal), false),
+  );
+  // The list refresh lands before the viewer's own reread, as in App.
+  await act(() => {
+    photos.items = [
+      { ...row, previews: { ...row.previews, fit: { state: "ready", generation_id: "fit-2" } } },
+    ];
+    return photos.changed({ listRefreshed: true });
+  });
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith("photo-1", "fit-2", expect.any(AbortSignal), false),
+  );
+  photos.dispose();
+});
+
 it.each([undefined, "map"] as const)(
   "reuses a refreshed full row only outside projections, projection=%s",
   async (projection) => {
