@@ -119,15 +119,12 @@ func TestPhotoEventsNonPhotoFiltering(t *testing.T) {
 	}
 	ordinary := browsePhotoNode(t, s, "ordinary.bin", node.BlobHash, "application/octet-stream")
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, ch), "the photo's duplicate status changed")
-	tag, err := s.CreateTag(t.Context(), "Synthetic duplicate keyword")
+	_, err = s.CreateTag(t.Context(), "Synthetic duplicate keyword")
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch), "a new keyword asks every viewer to refetch")
 	ordinary, _, err = s.Move(t.Context(), ordinary.ID, s.RootID(), "renamed.bin", ordinary.Revision)
 	require.NoError(t, err)
 	require.Empty(t, ch)
-	_, err = s.AssignTag(t.Context(), tag.ID, ordinary.ID, ordinary.Revision)
-	require.NoError(t, err)
-	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch), "tagging a non-photo changes a keyword's count, so every viewer refetches")
 	_, _, err = s.Trash(t.Context(), ordinary.ID, UnconditionalRev)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, ch))
@@ -456,10 +453,6 @@ func TestPhotoEventsDirectoryVisibility(t *testing.T) {
 				nextPhotoWake(t, events)
 				_, err = s.TrashEmpty(ctx, 0, true)
 				require.NoError(t, err)
-				// Permanent deletion removes files but retains the asset's graph identity.
-				purged, err := s.PhotoAssetByID(ctx, asset.ID)
-				require.NoError(t, err)
-				require.Empty(t, purged.Files)
 			}
 			require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
 		})

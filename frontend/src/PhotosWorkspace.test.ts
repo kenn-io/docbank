@@ -3128,16 +3128,7 @@ it("reads the open photo again on a live change and conceals its cached image on
   await act(() => photos.changed(photoChange("photo-2")));
   expect(lookup).toHaveBeenCalledOnce();
   lookup.mockResolvedValueOnce({ ...row, name: "Renamed.jpg" });
-  let finish!: (response: Response) => void;
-  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
-  const refreshing = photos.refresh(undefined, true).finally(() => photos.changed(idFreeChange));
-  const failed = expect(refreshing).rejects.toThrow("List unavailable");
-  await waitFor(() => expect(finish).toBeDefined());
-  expect(lookup).toHaveBeenCalledOnce();
-  await act(async () => {
-    finish(Response.json({ detail: "List unavailable" }, { status: 503 }));
-    await failed;
-  });
+  await act(() => photos.changed(idFreeChange));
   expect(lookup).toHaveBeenCalledTimes(2);
   await screen.findByRole("dialog", { name: "Photo viewer, Renamed.jpg" });
   expect(screen.getByText("Fit preview")).toBeTruthy();

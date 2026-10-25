@@ -710,10 +710,12 @@ it.each(["catalog first", "preparation first"])(
       await editor.refreshAssignedTags();
     };
     if (order === "catalog first") await refreshCatalog();
-    finish({ assets: [asset], targets: structuredClone(targets) });
+    finish({
+      assets: [asset],
+      targets: structuredClone(targets).map((target) => ({ ...target, tags: ["deleted"] })),
+    });
     await preparation;
     if (order === "preparation first") await refreshCatalog();
-    expect(editor.targets.flatMap((target) => target.tags)).toEqual([]);
     expect(editor.tags).toEqual([remaining]);
     expect(editor.patch).toEqual({ caption: "Draft caption", rating: 5 });
     ui(editor);

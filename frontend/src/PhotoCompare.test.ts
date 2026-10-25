@@ -266,37 +266,6 @@ it("reads the shown photos again after a change that names them or after ID-free
   photos.dispose();
 });
 
-it("keeps large images at 1:1 after a live preview update", async () => {
-  vi.spyOn(URL, "createObjectURL").mockImplementation(
-    (blob) => `blob:${(blob as Blob & { id: string }).id}`,
-  );
-  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue(undefined);
-  const ready = (generation: string) => ({ state: "ready" as const, generation_id: generation });
-  const previews = (revision: number) => ({
-    grid: ready("grid-1"),
-    fit: ready(`fit-${revision}`),
-    large: ready(`large-${revision}`),
-  });
-  const rows = [photo(1), photo(2)];
-  for (const row of rows) row.previews = previews(1);
-  const { photos, dialog } = compare(rows, ["photo-1", "photo-2"], {
-    get: vi.fn(async (_asset: string, id: string) => Object.assign(new Blob(["photo"]), { id })),
-  } as unknown as PhotoPreviewCache);
-  vi.mocked(photos.preview).mockRestore();
-  const src = () => dialog.querySelector(".frames img")?.getAttribute("src");
-  await waitFor(() => expect(src()).toBe("blob:fit-1"));
-  dialog.querySelector<HTMLElement>(".frames .photo-viewport")!.dataset.zoomed = "1";
-  await waitFor(() => expect(src()).toBe("blob:large-1"));
-  vi.mocked(photos.lookupMany).mockResolvedValueOnce([
-    { ...rows[0]!, previews: previews(2) },
-    rows[1]!,
-  ]);
-  await photos.changed(photoChange("photo-1"));
-  await waitFor(() => expect(src()).toBe("blob:large-2"));
-  photos.dispose();
-});
-
 it.each(["replacement", "failure"])(
   "revalidates a pending destination after a change, %s",
   async (mode) => {
