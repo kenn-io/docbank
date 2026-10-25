@@ -4,7 +4,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -283,14 +282,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err != nil {
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
-	discardConn := false
-	defer func() {
-		if discardConn {
-			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-			return
-		}
-		retErr = errors.Join(retErr, conn.Close())
-	}()
+	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
 	// Own cancellation so a mutation cannot return while database/sql is
 	// still rolling back and closing a connection in another goroutine.
 	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
@@ -333,9 +325,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	}
 	var events []PhotoEvent
 	if capture {
-		var disarmed bool
-		events, disarmed = finishPhotoCapture(ctx, tx)
-		discardConn = !disarmed
+		events = finishPhotoCapture(ctx, tx)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)

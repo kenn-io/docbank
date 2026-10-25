@@ -184,8 +184,8 @@ const photoCaptureDuplicateVersionIDs = `SELECT f.asset_id AS id FROM content_ve
 const photoCaptureNodes = "nodes"
 const photoCaptureVersionIDs = `SELECT f.asset_id AS id FROM content_versions v JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id WHERE v.version_id=$row.content_version_id`
 
-// Capture triggers run only while a subscribed transaction holds this flag.
-const photoCaptureActive = `EXISTS(SELECT 1 FROM temp.photo_event_capture_active) AND NOT EXISTS(SELECT 1 FROM temp.photo_event_capture WHERE id='')`
+// Capture triggers stop recording once the transaction has already asked for a full refetch.
+const photoCaptureActive = `NOT EXISTS(SELECT 1 FROM temp.photo_event_capture WHERE id='')`
 
 type photoCaptureTrigger struct{ name, create string }
 
@@ -218,7 +218,7 @@ func (f *photoEventFeed) beginPhotoCapture(ctx context.Context, tx *sql.Tx) (boo
 	}
 	setupErr := f.installPhotoCapture(ctx, tx)
 	if setupErr == nil {
-		_, setupErr = tx.ExecContext(ctx, `DELETE FROM photo_event_capture; INSERT OR REPLACE INTO photo_event_capture_active VALUES(1)`)
+		_, setupErr = tx.ExecContext(ctx, `DELETE FROM photo_event_capture`)
 	}
 	if setupErr != nil {
 		if _, err := tx.ExecContext(ctx, `ROLLBACK TO photo_capture_setup`); err != nil {
@@ -231,15 +231,13 @@ func (f *photoEventFeed) beginPhotoCapture(ctx context.Context, tx *sql.Tx) (boo
 	return setupErr == nil, nil
 }
 
-// finishPhotoCapture disarms capture before commit. When disarming fails, the
-// caller must discard the connection so its armed triggers cannot run again.
-func finishPhotoCapture(ctx context.Context, tx *sql.Tx) (events []PhotoEvent, disarmed bool) {
+// finishPhotoCapture reads the changes captured in tx; a failed read falls back to a refetch.
+func finishPhotoCapture(ctx context.Context, tx *sql.Tx) []PhotoEvent {
 	events, err := capturedPhotoEvents(ctx, tx)
 	if err != nil {
-		events = []PhotoEvent{{}}
+		return []PhotoEvent{{}}
 	}
-	_, err = tx.ExecContext(context.WithoutCancel(ctx), `DELETE FROM photo_event_capture_active`)
-	return events, err == nil
+	return events
 }
 
 // installPhotoCapture installs the triggers on the writer connection once the first subscriber arrives.
@@ -251,8 +249,7 @@ func (f *photoEventFeed) installPhotoCapture(ctx context.Context, tx *sql.Tx) er
 	if installed {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE photo_event_capture (id TEXT PRIMARY KEY, hidden_only INTEGER NOT NULL);
-CREATE TEMP TABLE photo_event_capture_active (active INTEGER PRIMARY KEY)`); err != nil {
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE photo_event_capture (id TEXT PRIMARY KEY, hidden_only INTEGER NOT NULL)`); err != nil {
 		return err
 	}
 	f.installed.Store(true)
@@ -271,7 +268,7 @@ func (f *photoEventFeed) dropPhotoCapture(ctx context.Context, tx *sql.Tx) bool 
 	for _, trigger := range photoCaptureTriggers() {
 		fmt.Fprintf(&drop, "DROP TRIGGER IF EXISTS temp.%s;", trigger.name)
 	}
-	drop.WriteString("DROP TABLE IF EXISTS temp.photo_event_capture; DROP TABLE IF EXISTS temp.photo_event_capture_active")
+	drop.WriteString("DROP TABLE IF EXISTS temp.photo_event_capture")
 	_, err := tx.ExecContext(ctx, drop.String())
 	return err == nil
 }

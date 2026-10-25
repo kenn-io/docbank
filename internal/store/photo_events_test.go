@@ -1,14 +1,11 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"testing"
-	"testing/synctest"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -101,55 +98,6 @@ func TestPhotoEventsCaptureAcrossConnectionsAndUnreadCommits(t *testing.T) {
 			return err
 		}))
 		require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
-	})
-}
-
-// Cancels immediately after the transaction's final cancellation check succeeds.
-// Wait lets the registered rollback finish before capture tries to disarm.
-type cancelAfterPhotoWriteContext struct {
-	context.Context
-
-	cancel context.CancelFunc
-	armed  atomic.Bool
-}
-
-func (ctx *cancelAfterPhotoWriteContext) Err() error {
-	if ctx.armed.Swap(false) {
-		ctx.cancel()
-		synctest.Wait()
-		return nil
-	}
-	return ctx.Context.Err()
-}
-
-func TestPhotoEventsCaptureDisarmFailure(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		s := newTestStore(t)
-		node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
-		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		events := watchPhotoChanges(t, s)
-		parent, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		ctx := &cancelAfterPhotoWriteContext{Context: parent, cancel: cancel}
-		err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, `UPDATE photo_files SET caption='Cancelled write' WHERE node_id=?`, node.ID)
-			if err != nil {
-				return err
-			}
-			ctx.armed.Store(true)
-			return nil
-		})
-		require.ErrorIs(t, err, context.Canceled)
-		require.Empty(t, events)
-		// Dropping the writer connection is observable through the pool statistics.
-		require.Zero(t, s.writeDB.Stats().OpenConnections, "the armed connection was discarded")
-		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(t.Context(), `UPDATE photo_files SET caption='Replacement connection' WHERE node_id=?`, node.ID)
-			return err
-		}))
-		require.Equal(t, []PhotoEvent{{AssetID: asset.ID}}, nextPhotoWake(t, events))
 	})
 }
 
