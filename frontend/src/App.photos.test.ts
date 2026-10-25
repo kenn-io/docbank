@@ -3500,6 +3500,57 @@ it("loads keywords beyond the first catalog page", async () => {
   );
 });
 
+it("keeps an open keyword list open while a live pass rereads the catalog", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  stubPhotoTimeline();
+  storage();
+  const catalog = [{ id: "tag-1", name: "Harbor", revision: 1, assignment_count: 0 }];
+  let finishCatalog: (() => void) | undefined;
+  let held = false;
+  stubPhotoFetch(async (url) => {
+    if (url.startsWith("/api/v1/tags?")) {
+      if (held)
+        await new Promise<void>((resolve) => {
+          finishCatalog = resolve;
+        });
+      return Response.json({ items: catalog, total: 1 });
+    }
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    if (url.includes("/nodes/1"))
+      return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const inspector = await screen.findByRole("region", { name: "Photo metadata" });
+  const picker = await within(inspector).findByRole("combobox", {
+    name: "Keyword: Choose keyword",
+  });
+  await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(picker);
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  held = true;
+  const pass = photoEventPass()({});
+  await waitFor(() => expect(finishCatalog).toBeDefined());
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+  finishCatalog!();
+  await act(() => pass);
+  expect(picker.getAttribute("aria-expanded")).toBe("true");
+});
+
 it("guards a Hidden draft while a status failure conceals its workspace", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   storage();

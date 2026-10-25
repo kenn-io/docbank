@@ -807,7 +807,8 @@
   async function refreshDefinitions() {
     const shown = albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
     await settleReads([
-      loadTagCatalog().then(() => {
+      // Choices already on screen stay enabled, so an open keyword list survives the pass.
+      loadTagCatalog(false, tagCatalog.length > 0).then(() => {
         if (tagCatalogError) throw new Error(tagCatalogError);
       }),
       shown?.authored.refreshAssignedTags(),
@@ -2304,12 +2305,14 @@
     }
   }
 
-  async function loadTagCatalog(append = false): Promise<void> {
+  async function loadTagCatalog(append = false, quiet = false): Promise<void> {
     const request = ++tagCatalogGeneration;
     const session = webSession;
     const selectedTagID = tagFilterID;
-    tagCatalogLoading = true;
-    tagCatalogError = "";
+    if (!quiet) {
+      tagCatalogLoading = true;
+      tagCatalogError = "";
+    }
     try {
       const page = await generated.listTags(
         { limit: 1000, offset: append ? tagCatalogListed : 0 },
@@ -2340,6 +2343,7 @@
         }
       }
       if (request !== tagCatalogGeneration || session !== webSession) return;
+      tagCatalogError = "";
       const current = new Map(tagCatalog.map((tag) => [tag.id, tag]));
       tagCatalog = sortTags(
         (append || selectedTagID === tagFilterID ? items : page.items).map((tag) =>
