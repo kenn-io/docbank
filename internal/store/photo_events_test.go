@@ -172,6 +172,22 @@ func TestPhotoEventsOverflowCollapses(t *testing.T) {
 	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, ch))
 }
 
+func TestPhotoEventsFolderRenameOverflowCollapses(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	folder, err := s.Mkdir(ctx, s.RootID(), "Burst folder")
+	require.NoError(t, err)
+	for i := range PhotoEventIDLimit + 1 {
+		_, err := s.CreateFile(ctx, folder.ID, fmt.Sprintf("photo-%d.jpg", i), fakeHash(fmt.Sprintf("%02x", i)), 20, "image/jpeg")
+		require.NoError(t, err)
+	}
+	events := watchPhotoChanges(t, s)
+	_, _, err = s.Move(ctx, folder.ID, s.RootID(), "Renamed burst folder", UnconditionalRev)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{}}, nextPhotoWake(t, events))
+}
+
 func TestPhotoEventsHiddenTransition(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

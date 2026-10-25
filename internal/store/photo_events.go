@@ -190,7 +190,8 @@ const photoCaptureActive = `NOT EXISTS(SELECT 1 FROM temp.photo_event_capture WH
 type photoCaptureTrigger struct{ name, create string }
 
 var photoCaptureTriggers = sync.OnceValue(func() []photoCaptureTrigger {
-	// UPSERT keeps nested trigger conflict policies from changing capture deduplication.
+	// UPSERT keeps nested trigger conflict policies from changing capture deduplication. One more
+	// distinct photo than a batch names already means a full refetch, so a statement stops there.
 	triggers := []photoCaptureTrigger{{"photo_event_hidden", `CREATE TEMP TRIGGER photo_event_hidden AFTER UPDATE OF hidden_at ON main.photo_assets
 WHEN ` + photoCaptureActive + ` AND OLD.hidden_at IS NOT NEW.hidden_at BEGIN INSERT INTO photo_event_capture VALUES('',0) ON CONFLICT(id) DO NOTHING; END`}}
 	for i, dep := range photoCaptureDependencies {
@@ -204,8 +205,8 @@ WHEN ` + photoCaptureActive + ` AND OLD.hidden_at IS NOT NEW.hidden_at BEGIN INS
 			}
 			name := fmt.Sprintf("photo_event_%d_%s_%s", i, op.timing, op.action)
 			triggers = append(triggers, photoCaptureTrigger{name, fmt.Sprintf(`CREATE TEMP TRIGGER %s %s %s ON main.%s%s BEGIN
- INSERT INTO photo_event_capture SELECT DISTINCT affected.id,COALESCE((SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=affected.id),0) FROM (%s) affected WHERE affected.id IS NOT NULL ON CONFLICT(id) DO NOTHING;
-END`, name, op.timing, op.action, dep.table, when, strings.ReplaceAll(dep.ids, "$row", op.row))})
+ INSERT INTO photo_event_capture SELECT DISTINCT affected.id,COALESCE((SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=affected.id),0) FROM (%s) affected WHERE affected.id IS NOT NULL LIMIT %d ON CONFLICT(id) DO NOTHING;
+END`, name, op.timing, op.action, dep.table, when, strings.ReplaceAll(dep.ids, "$row", op.row), PhotoEventIDLimit+1)})
 		}
 	}
 	return triggers
