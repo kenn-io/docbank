@@ -3,6 +3,7 @@ import {
   APIError,
   isCurrentSessionError,
   mutationsInFlight,
+  sessionJSON,
   sessionResponse,
 } from "./api-transport.js";
 
@@ -47,6 +48,23 @@ it("counts writes from the call until their response headers, and ignores reads"
   await expect(
     sessionResponse("/api/v1/photos/authored/edit", { session: "tab", method: "PUT" }),
   ).rejects.toThrow("offline");
+  expect(mutationsInFlight()).toBe(0);
+});
+
+it("keeps a write counted until its answer body is read", async () => {
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(new ReadableStream<Uint8Array>({ start: (controller) => (body = controller) }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  const writing = sessionJSON("/api/v1/photos/authored/edit", { session: "tab", method: "POST" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // The headers are here, but the receipt is not, so a pass must still wait.
+  expect(mutationsInFlight()).toBe(1);
+  body.enqueue(new TextEncoder().encode("{}"));
+  body.close();
+  await writing;
   expect(mutationsInFlight()).toBe(0);
 });
 

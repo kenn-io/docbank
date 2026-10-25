@@ -40,18 +40,33 @@ const readOnlyPosts =
 
 let mutations = 0;
 
-/** Counts requests that may write, from the call until their response headers arrive. */
+/** Counts requests that may write, from the call until the caller holds the answer. */
 export const mutationsInFlight = () => mutations;
+
+function counted<T>(url: string, method: string | undefined, run: () => Promise<T>) {
+  if (!mutates(url, method)) return run();
+  mutations++;
+  const request = run();
+  const release = () => void mutations--;
+  request.then(release, release);
+  return request;
+}
 
 const mutates = (url: string, method = "GET") =>
   !["GET", "HEAD"].includes(method.toUpperCase()) &&
   !readOnlyPosts.test(url.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]*/i, "").split(/[?#]/, 1)[0]!);
 
 // Orval's transport hook adds the scoped credential and preserves problem details.
-export async function sessionResponse<_T>(
+export const sessionResponse = <_T>(
+  url: string,
+  options: SessionOptions,
+  allowNotModified = false,
+): Promise<Response> => counted(url, options.method, () => send(url, options, allowNotModified));
+
+async function send(
   url: string,
   { session = "", ...init }: SessionOptions,
-  allowNotModified = false,
+  allowNotModified: boolean,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   if (init.body instanceof Blob && init.body.type.startsWith("multipart/form-data;")) {
@@ -59,19 +74,12 @@ export async function sessionResponse<_T>(
   }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
-  const writing = mutates(url, init.method);
-  if (writing) mutations++;
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...init,
-      headers,
-      credentials: "same-origin",
-      redirect: "error",
-    });
-  } finally {
-    if (writing) mutations--;
-  }
+  const response = await fetch(url, {
+    ...init,
+    headers,
+    credentials: "same-origin",
+    redirect: "error",
+  });
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
     try {
@@ -103,10 +111,12 @@ export async function sessionPhotoPreview<_T>(
   return sessionResponse<Response>(url, options, true);
 }
 
-export async function sessionJSON<T>(url: string, options: SessionOptions): Promise<T> {
-  const response = await sessionResponse<Response>(url, options);
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+export function sessionJSON<T>(url: string, options: SessionOptions): Promise<T> {
+  return counted(url, options.method, async () => {
+    const response = await send(url, options, false);
+    if (response.status === 204) return undefined as T;
+    return (await response.json()) as T;
+  });
 }
 
 export async function sessionEmpty<_T>(url: string, options: SessionOptions): Promise<void> {
