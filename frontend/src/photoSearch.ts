@@ -1,3 +1,4 @@
+import { facetFilterFields, type FacetDimension } from "./facetFilters.js";
 import type { Query, QuerySort } from "./query.js";
 
 export function photoSearchSort(query: Pick<Query, "text" | "syntax">): QuerySort {
@@ -13,22 +14,12 @@ export function isFilterSet(value: unknown): boolean {
     : value !== undefined && value !== false && value !== "";
 }
 
-export function activeFilterCount(filters: Query["filters"]): number {
-  const fields = new Set([
-    "cameras",
-    "lenses",
-    "locations",
-    "set_ids",
-    "rating_min",
-    "rating_max",
-    "flags",
-    "labels",
-    "capture_after",
-    "capture_before",
-  ]);
-  return new Set(
-    Object.entries(filters ?? {})
-      .filter(([key, value]) => fields.has(key) && isFilterSet(value))
-      .map(([key]) => key.replace(/_(min|max|after|before)$/, "")),
-  ).size;
+// activeFilterCount counts the facet groups with an applied filter, so both ends of a range count once.
+export function activeFilterCount(
+  filters: Query["filters"],
+  dimensions: readonly FacetDimension[],
+): number {
+  return dimensions.filter((dimension) =>
+    facetFilterFields[dimension].some((field) => isFilterSet(filters?.[field])),
+  ).length;
 }
