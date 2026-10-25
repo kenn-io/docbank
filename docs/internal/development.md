@@ -270,16 +270,11 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
-Documentation browser checks run in Microsoft's public Playwright image, with
-the image version taken from the installed `@playwright/test` package.
-Render PDF caches LibreOffice and Poppler `.deb` installers by runner image,
-architecture, and workflow recipe. A cache miss downloads the packages and their
-missing dependencies; both hits and misses use APT to install the local archives
-with `--no-download`. Warm runs perform no package-index update or download.
-Automatic saves run only on `main` pushes; pull requests only restore. Explicit
-`workflow_dispatch` runs can also save their branch's cache: dispatch Render PDF
-twice on the same branch and runner image to qualify cold and warm installs
-before merge. Dispatch `ci.yml` on the branch to qualify its browser changes.
+Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
+Render PDF caches LibreOffice and Poppler installers by runner image, architecture, and workflow recipe.
+A cache miss downloads the packages and their missing dependencies.
+Only `main` pushes save automatically; pull requests only restore.
+Explicit manual runs can save: dispatch Render PDF twice on the same branch and runner image to qualify cold and warm installs before merge.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
 by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
