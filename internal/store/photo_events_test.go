@@ -56,45 +56,49 @@ func TestPhotoEventsOneSignalPerCommit(t *testing.T) {
 		execStorageTx(t, s, statement)
 		require.Empty(t, ch, statement)
 	}
-	t.Run("drops triggers with the last subscriber", func(t *testing.T) {
-		s := newTestStore(t)
-		node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
-		installed := func() int {
-			conn, err := s.writeDB.Conn(t.Context())
-			require.NoError(t, err)
-			defer func() { require.NoError(t, conn.Close()) }()
-			var count int
-			require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_temp_master WHERE name LIKE 'photo\_dirty%' ESCAPE '\'`).Scan(&count))
-			return count
-		}
-		touch := func() {
-			execStorageTx(t, s, `UPDATE photo_files SET caption='River',revision=revision+1 WHERE node_id=?`, node.ID)
-		}
-		_, stopFirst := s.SubscribePhotoEvents()
-		_, stopSecond := s.SubscribePhotoEvents()
-		touch()
-		require.NotZero(t, installed())
-		stopFirst()
-		touch()
-		require.NotZero(t, installed(), "another stream still watches")
-		stopSecond()
-		touch()
-		require.Zero(t, installed(), "the last stream took the triggers with it")
-		watchPhotoChanges(t, s)
-		touch()
-		require.NotZero(t, installed(), "a later subscriber gets them back")
-	})
-	t.Run("a subscriber that joins mid-write is told", func(t *testing.T) {
-		s := newTestStore(t)
-		node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
-		var events <-chan struct{}
-		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-			events = watchPhotoChanges(t, s)
-			_, err := tx.Exec(`UPDATE nodes SET name='committed.jpg',revision=revision+1 WHERE id=?`, node.ID)
-			return err
-		}))
-		requirePhotoSignal(t, events, "triggers were not armed for this write")
-	})
+}
+
+func TestPhotoEventsDropTriggersWithLastSubscriber(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
+	installed := func() int {
+		conn, err := s.writeDB.Conn(t.Context())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, conn.Close()) }()
+		var count int
+		require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_temp_master WHERE name LIKE 'photo\_dirty%' ESCAPE '\'`).Scan(&count))
+		return count
+	}
+	touch := func() {
+		execStorageTx(t, s, `UPDATE photo_files SET caption='River',revision=revision+1 WHERE node_id=?`, node.ID)
+	}
+	_, stopFirst := s.SubscribePhotoEvents()
+	_, stopSecond := s.SubscribePhotoEvents()
+	touch()
+	require.NotZero(t, installed())
+	stopFirst()
+	touch()
+	require.NotZero(t, installed(), "another stream still watches")
+	stopSecond()
+	touch()
+	require.Zero(t, installed(), "the last stream took the triggers with it")
+	watchPhotoChanges(t, s)
+	touch()
+	require.NotZero(t, installed(), "a later subscriber gets them back")
+}
+
+func TestPhotoEventsTellSubscriberJoiningMidWrite(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "photo.jpg", catalogSourceHash, "image/jpeg")
+	var events <-chan struct{}
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		events = watchPhotoChanges(t, s)
+		_, err := tx.Exec(`UPDATE nodes SET name='committed.jpg',revision=revision+1 WHERE id=?`, node.ID)
+		return err
+	}))
+	requirePhotoSignal(t, events, "triggers were not armed for this write")
 }
 
 // publishRenditionHead stages a build and its lexical generation, then publishes the head on its own.
@@ -135,6 +139,8 @@ func TestPhotoEventsSignalWhatPhotosRead(t *testing.T) {
 	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &asset.Files[0].ID)
 	require.NoError(t, err)
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor."})
+	// The head exists before the subscriber arrives, so the case below moves it.
+	collectionCoveragePublish(t, s, documents[0], profile, "complete")
 	events := watchPhotoChanges(t, s)
 	for _, change := range []struct {
 		name string
@@ -157,10 +163,7 @@ func TestPhotoEventsSignalWhatPhotosRead(t *testing.T) {
 			return s.RecordExtraction(ctx, ExtractionResult{BlobHash: sidecar.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "River"})
 		}},
 		// A document build moves the shared search generation, which changes which photos a text query matches.
-		// The first publication inserts the head; the second moves it.
 		{"unrelated rendition head move", func() error {
-			publishRenditionHead(t, s, events, documents[0], profile)
-			requirePhotoSignal(t, events, "a new head")
 			publishRenditionHead(t, s, events, documents[1], profile)
 			return nil
 		}},

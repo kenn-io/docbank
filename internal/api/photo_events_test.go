@@ -100,7 +100,7 @@ func TestPhotoEventsStreamLimitAndShutdown(t *testing.T) {
 	}
 }
 
-func TestPhotoEventsStreamKeepsDaemonActive(t *testing.T) {
+func TestPhotoEventsStreamOutlivesRequestTimeout(t *testing.T) {
 	t.Parallel()
 	tracker := api.NewActivityTracker()
 	_, s := newTestServer(t, func(d *api.Deps) { d.Tracker = tracker })
@@ -121,7 +121,7 @@ func TestPhotoEventsStreamKeepsDaemonActive(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code)
 		require.Equal(t, "text/event-stream", response.Header().Get("Content-Type"))
 		time.Sleep(6 * time.Minute)
-		require.Zero(t, tracker.IdleFor(), "an open Photos stream must keep the daemon active")
+		require.Zero(t, tracker.IdleFor(), "the request timeout must not cut an open Photos stream")
 		cancel()
 		<-done
 	})
