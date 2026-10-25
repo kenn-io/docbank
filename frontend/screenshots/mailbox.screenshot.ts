@@ -111,7 +111,8 @@ test.describe("mailbox import screenshot", () => {
 
   test("verified Takeout with distinct repeated occurrences", async ({ page }) => {
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Import mailbox", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Import mailbox", exact: true }).click();
     const eyebrow = await page.locator(".drawer-heading span").boundingBox();
     const title = await page.locator(".drawer-heading strong").boundingBox();
     if (!eyebrow || !title) throw new Error("missing mailbox heading geometry");
@@ -176,10 +177,8 @@ test.describe("mailbox import screenshot", () => {
       animations: "disabled",
     });
     await page.getByRole("tab", { name: "Attachments", exact: true }).click();
-    const attachments = page.getByRole("region", { name: "Outgoing attachments" });
-    await expect(
-      attachments.getByRole("button", { name: /Open attachment project.csv/ }),
-    ).toBeVisible();
+    const attachments = page.getByRole("region", { name: "Attachments" });
+    await expect(attachments.getByRole("button", { name: "project.csv" })).toBeVisible();
     await page
       .locator(`[data-source-version="${occurrences[0]!.target.version_id}"]`)
       .screenshot({ path: path.join(output, "web-email-attachments.png"), animations: "disabled" });

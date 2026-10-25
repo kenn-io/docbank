@@ -320,6 +320,7 @@ func NewWatcher(
 
 // Run scans immediately, then at the configured interval until cancellation.
 func (w *Watcher) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	root, err := w.openRoot(ctx)
 	if err != nil {
 		return err
@@ -829,6 +830,8 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

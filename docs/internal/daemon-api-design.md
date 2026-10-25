@@ -365,6 +365,10 @@ and restart resume all come from the storage operation lifecycle. Status and
 cancellation use the shared `/api/v1/jobs/{operation_id}` routes; there is no
 photo-specific read or cancel route.
 
+`GET /api/v1/jobs` reports `status` for the worker's lifecycle and `busy` for
+task activity. A running worker can be waiting for work. Workers report activity
+at task boundaries; durable storage operations are busy only while running.
+
 Lane controls persist in `lane-controls.json` beside `docbank.db`, outside the
 SQLite schema and metadata JSONL. A missing file or lane means unpaused with
 concurrency 1 and revision 1. A malformed file fails control reads and writes;

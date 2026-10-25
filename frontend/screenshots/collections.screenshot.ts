@@ -84,7 +84,7 @@ test("import collections, label conflicts and stable document navigation", async
     await page.getByRole("button", { name: "Import collections", exact: true }).click();
     const drawer = page.getByRole("dialog", { name: "Import collections" });
     await drawer
-      .getByRole("button", { name: "Browse collection Discovery batch", exact: true })
+      .getByRole("button", { name: "Browse import Discovery batch", exact: true })
       .click();
     await expect(
       drawer.getByRole("button", {
@@ -92,15 +92,13 @@ test("import collections, label conflicts and stable document navigation", async
         exact: true,
       }),
     ).toBeVisible();
-    await expect(
-      drawer.getByRole("button", { name: "Inspect collection quality", exact: true }),
-    ).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Quality", exact: true })).toBeVisible();
     await drawer
-      .getByRole("textbox", { name: "Collection label", exact: true })
+      .getByRole("textbox", { name: "Import label", exact: true })
       .fill("Proposal review");
     await drawer.getByRole("button", { name: "Save label", exact: true }).click();
     await expect(
-      drawer.getByRole("button", { name: "Browse collection Proposal review", exact: true }),
+      drawer.getByRole("button", { name: "Browse import Proposal review", exact: true }),
     ).toBeVisible();
     expect(new URL(page.url()).hash).not.toContain("web_session");
     await page.screenshot({
@@ -119,13 +117,13 @@ test("import collections, label conflicts and stable document navigation", async
       body: JSON.stringify({ label: "Externally labeled" }),
     });
     await drawer
-      .getByRole("textbox", { name: "Collection label", exact: true })
+      .getByRole("textbox", { name: "Import label", exact: true })
       .fill("Keep this draft");
     await drawer.getByRole("button", { name: "Save label", exact: true }).click();
     await expect(drawer.getByRole("alert")).toBeVisible();
-    await expect(
-      drawer.getByRole("textbox", { name: "Collection label", exact: true }),
-    ).toHaveValue("Keep this draft");
+    await expect(drawer.getByRole("textbox", { name: "Import label", exact: true })).toHaveValue(
+      "Keep this draft",
+    );
     await page.screenshot({
       path: path.join(screenshots, "web-collection-label-conflict.png"),
       animations: "disabled",
@@ -134,7 +132,7 @@ test("import collections, label conflicts and stable document navigation", async
     await expect(drawer.getByRole("button", { name: "Clear label", exact: true })).toBeEnabled();
     await drawer.getByRole("button", { name: "Clear label", exact: true }).click();
     await expect.poll(async () => (await (await api(labelRoute)).json()).label).toBeNull();
-    await drawer.getByRole("button", { name: "Inspect collection quality", exact: true }).click();
+    await drawer.getByRole("button", { name: "Quality", exact: true }).click();
     const quality = drawer.getByRole("region", { name: "Collection quality" });
     await expect(quality.getByText("Processing is not configured.")).toBeVisible();
     await expect(quality.getByText(/Zero-byte documents: 0/)).toBeVisible();
@@ -147,15 +145,13 @@ test("import collections, label conflicts and stable document navigation", async
     await quality
       .getByRole("button", { name: "New query for selected extension", exact: true })
       .click();
-    const editor = page.getByRole("region", { name: "Query editor" });
+    const editor = page.getByRole("dialog", { name: "Advanced search" });
     await expect(editor).toBeVisible();
     await expect(
       editor.getByRole("textbox", { name: "Query expression", exact: true }),
     ).toHaveValue('(extension:"txt")');
-    await expect(editor.getByRole("button", { name: "Run query", exact: true })).toBeEnabled();
-    await expect(
-      editor.getByText("Query validated. Run creates a new frozen snapshot.", { exact: true }),
-    ).toBeVisible();
+    await expect(editor.getByRole("button", { name: "Search", exact: true })).toBeEnabled();
+    await expect(editor.getByRole("status", { name: "Query valid" })).toBeVisible();
     await page.screenshot({
       path: path.join(screenshots, "web-collection-quality-suggestion.png"),
       animations: "disabled",
@@ -163,7 +159,7 @@ test("import collections, label conflicts and stable document navigation", async
     await page.getByRole("button", { name: "Import collections", exact: true }).click();
     await drawer
       .getByRole("button", {
-        name: `Browse collection Unlabeled import ${collectionID.slice(0, 8)}`,
+        name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,
         exact: true,
       })
       .click();
@@ -187,7 +183,7 @@ test("import collections, label conflicts and stable document navigation", async
     await page.getByRole("button", { name: "Import collections", exact: true }).click();
     await drawer
       .getByRole("button", {
-        name: `Browse collection Unlabeled import ${collectionID.slice(0, 8)}`,
+        name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,
         exact: true,
       })
       .click();

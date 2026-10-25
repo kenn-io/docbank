@@ -104,7 +104,8 @@ test.describe("load-file import screenshot", () => {
   });
   test("reviewed ZIP imports with supplied text", async ({ page }) => {
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Import load files", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Import load files", exact: true }).click();
     await page.getByLabel("Choose load-file ZIP", { exact: true }).setInputFiles(zipPath);
     await page.getByRole("button", { name: "Upload and preview", exact: true }).click();
     await expect(page.getByText("Package preview", { exact: true })).toBeVisible();

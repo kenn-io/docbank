@@ -64,9 +64,43 @@ describe("backup snapshots drawer", () => {
     ).toBeTruthy();
     expect(screen.getByText("Incremental")).toBeTruthy();
     expect(screen.getByText("Full")).toBeTruthy();
-    expect(screen.getByText(/Snapshot presence is not recovery proof/)).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Close backup snapshots" }));
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("gives the setup command when no repository is configured", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: "backup_repository",
+          detail: "no backup repository configured; pass repo or set [backup] repo in config.toml",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    render(BackupDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText(/No backup repository/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy backup init command" }).title).toBe(
+      "docbank backup init",
+    );
+    expect(screen.queryByRole("button", { name: "Refresh backup snapshots" })).toBeNull();
+  });
+
+  it("gives the create command for an empty repository", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ repository: { id: "demo", path: "/demo/backups" }, items: [] }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    render(BackupDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText(/No snapshots yet/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy backup create command" }).title).toBe(
+      "docbank backup create",
+    );
   });
 });

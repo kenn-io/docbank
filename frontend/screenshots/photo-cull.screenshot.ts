@@ -37,7 +37,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     await expect(cull.locator(".photo-stage img")).toBeVisible();
     const firstName = await cull.locator("header strong").innerText();
-    await expect(cull.getByRole("button", { name: "Scope: unflagged", exact: true })).toBeEnabled();
+    await expect(cull.getByRole("button", { name: "Unflagged photos", exact: true })).toBeEnabled();
     await page.keyboard.press("s");
     const scopeConfirmation = page.getByRole("dialog", {
       name: "Change scope and reset this pass's progress?",
@@ -49,7 +49,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await captureThemes(page, output!, "web-photo-cull-confirmation");
     await scopeConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(scopeConfirmation).toHaveCount(0);
-    await expect(cull.getByRole("button", { name: "Scope: unflagged", exact: true })).toBeVisible();
+    await expect(cull.getByRole("button", { name: "Unflagged photos", exact: true })).toBeVisible();
     await expect(cull.locator("header strong")).toHaveText(firstName);
     await page.evaluate(() => {
       const writes: { store: string; bytes: number }[] = [];
@@ -183,16 +183,14 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       const otherCull = other.getByRole("dialog", { name: "Cull photos" });
       await expect(otherCull.locator(".photo-stage img")).toBeVisible();
       await expect(
-        otherCull.getByRole("button", { name: "Scope: unflagged", exact: true }),
+        otherCull.getByRole("button", { name: "Unflagged photos", exact: true }),
       ).toBeEnabled();
       await other.keyboard.press("s");
       await other
         .getByRole("dialog", { name: "Change scope and reset this pass's progress?" })
         .getByRole("button", { name: "Reset pass", exact: true })
         .click();
-      await expect(
-        otherCull.getByRole("button", { name: "Scope: picks", exact: true }),
-      ).toBeVisible();
+      await expect(otherCull.getByRole("button", { name: "Picks", exact: true })).toBeVisible();
       await expect(
         otherCull.getByRole("button", { name: "Review unflagged remainder", exact: true }),
       ).toBeVisible();

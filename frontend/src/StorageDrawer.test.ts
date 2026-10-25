@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import StorageDrawer from "./StorageDrawer.svelte";
 
 afterEach(() => {
@@ -8,7 +8,7 @@ afterEach(() => {
 });
 
 describe("storage status drawer", () => {
-  it("separates dead packed payload from live physical authority", async () => {
+  it("shows disk use, one row per location, and the storage internals without a disclosure", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -68,17 +68,40 @@ describe("storage status drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    expect(await screen.findByText(/live packed content/i)).toBeTruthy();
+    expect(await screen.findByText("Total on disk")).toBeTruthy();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage?refresh=true");
-    expect(screen.getByText(/pending repack/i)).toBeTruthy();
-    expect(screen.getByText(/3 loose files/)).toBeTruthy();
-    expect(screen.getByText(/12 live packed objects/)).toBeTruthy();
+    const tiles = within(screen.getByRole("group", { name: "Disk use summary" }));
+    expect(tiles.getByText("Total on disk").nextElementSibling?.textContent).toBe("12.0 KiB");
+    expect(tiles.getByText("Files stored").nextElementSibling?.textContent).toBe("12");
+    expect(tiles.getByText("Reclaimable").nextElementSibling?.textContent).toBe(
+      "2.00 KiB (20% of packs)",
+    );
     expect(screen.queryByText(/authorized objects/i)).toBeNull();
-    expect(screen.getByText("20% of packs")).toBeTruthy();
-    expect(screen.getByText("cold archive")).toBeTruthy();
-    expect(screen.getByText("unavailable")).toBeTruthy();
-    expect(screen.getByText(/2 objects currently have no readable alternative/)).toBeTruthy();
-    expect(screen.getByText(/Dead packed bytes are not reclaimed space/)).toBeTruthy();
+    expect(document.querySelector("details")).toBeNull();
+
+    const locations = within(screen.getByRole("region", { name: "Storage locations" }));
+    const [header, primary, cold] = locations.getAllByRole("row");
+    expect(
+      within(header!)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Name", "Kind", "Size", "Objects", "Only copy", "Status"]);
+    expect(
+      within(primary!)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent?.trim()),
+    ).toEqual(["filesystem", "10.0 KiB", "12", "4", "online"]);
+    expect(within(primary!).getByRole("rowheader").textContent).toBe("primary");
+    expect(locations.queryByText(/Primary ·/)).toBeNull();
+    expect(within(cold!).getByRole("rowheader").textContent).toBe("cold archive");
+    expect(locations.getByText("unavailable")).toBeTruthy();
+    expect(locations.getByText(/2 objects currently have no readable alternative/)).toBeTruthy();
+
+    const internals = within(screen.getByLabelText("Storage breakdown"));
+    expect(internals.getByText("Loose files").nextElementSibling?.textContent).toBe("3 · 2.00 KiB");
+    expect(internals.getByText("Waiting to compact").nextElementSibling?.textContent).toBe(
+      "2.00 KiB",
+    );
 
     await fireEvent.click(screen.getByRole("button", { name: "Close storage status" }));
     expect(close).toHaveBeenCalledOnce();

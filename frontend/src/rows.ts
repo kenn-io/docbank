@@ -1,7 +1,8 @@
 import type { Node } from "./generated/docbank.js";
+import { fileTypeLabel } from "./FileTypeIcon.svelte";
 
 export type SortDirection = "asc" | "desc";
-export type SortField = "relevance" | "name" | "size" | "modified";
+export type SortField = "relevance" | "name" | "type" | "size" | "modified";
 export type SortableRow = { node: Node; path: string };
 export type SearchView = {
   sortField: SortField;
@@ -25,6 +26,13 @@ export function orderRows<Row extends SortableRow>(
     if (field === "size") result = left.node.size - right.node.size;
     else if (field === "modified") {
       result = left.node.modified_at.localeCompare(right.node.modified_at);
+    } else if (field === "type") {
+      result = fileTypeLabel(left.node.kind, left.node.mime_type).localeCompare(
+        fileTypeLabel(right.node.kind, right.node.mime_type),
+      );
+      // Names stay A to Z inside a type, whichever way the types run.
+      if (result === 0)
+        return left.node.name.localeCompare(right.node.name) || left.node.id - right.node.id;
     } else {
       const leftName = searchResults ? left.path : left.node.name;
       const rightName = searchResults ? right.path : right.node.name;

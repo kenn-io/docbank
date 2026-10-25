@@ -32,11 +32,15 @@ func TestSupervisorTracksDeterministicTerminalStates(t *testing.T) {
 		assert.Equal(t, []string{"a-complete", "m-failed", "z-running"},
 			[]string{jobs[0].Name, jobs[1].Name, jobs[2].Name})
 		assert.Equal(t, "broken", jobs[1].Error)
+		assert.False(t, jobs[0].Busy)
+		assert.False(t, jobs[1].Busy)
+		assert.True(t, jobs[2].Busy)
 		assert.Nil(t, jobs[2].FinishedAt)
 
 		require.NoError(t, s.Shutdown(t.Context()))
 		jobs = s.Snapshot()
 		assert.Equal(t, StatusCancelled, jobs[2].Status)
+		assert.False(t, jobs[2].Busy)
 		assert.NotNil(t, jobs[2].FinishedAt)
 	})
 }

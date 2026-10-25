@@ -1,6 +1,7 @@
 <script lang="ts">
+  import IconAction from "./IconAction.svelte";
   import { onDestroy, tick, untrack } from "svelte";
-  import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
+  import { Button, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -16,16 +17,18 @@
   import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import type { PhotoAuthoredPatch, PhotoKeywordEdit } from "./generated/docbank.js";
   import PhotoCell from "./PhotoCell.svelte";
-  import { photoFacts } from "./photoFacts.js";
+  import PhotoDetails from "./PhotoDetails.svelte";
   import { PhotoPreviewLoader, prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
+  import PanelResizer from "./PanelResizer.svelte";
 
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   import { drawnPhotoFace } from "./photoRotation.js";
   import { fittedPhotoView, type PhotoView } from "./photoView.js";
 
   let {
-    metadataOpen = $bindable(false),
+    metadataOpen = $bindable(true),
+    detailsWidth = $bindable(),
     editor,
     actionDisabled = false,
     onedit,
@@ -49,6 +52,7 @@
     reloadRevision = 0,
   }: {
     metadataOpen?: boolean;
+    detailsWidth?: number;
     editor?: PhotoAuthoredEditor;
     actionDisabled?: boolean;
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
@@ -126,7 +130,6 @@
       return false;
     }
   });
-  const facts = $derived(photoFacts(photo));
 
   $effect(() => {
     void loaderKey;
@@ -241,17 +244,17 @@
   {@attach trapFocus}
 >
   <header class="loupe-toolbar">
-    <IconButton ariaLabel="Close photo viewer" onclick={onclose}><X size={18} /></IconButton>
+    <IconAction ariaLabel="Close photo viewer" onclick={onclose}><X size={18} /></IconAction>
     <div class="caption">
       <strong>{photo?.name ?? "Photo"}</strong>{#if index >= 0}<span
           >{index + 1} of {photos.total.toLocaleString()}</span
         >{/if}
     </div>
     <div class="mobile-navigation">
-      <IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}
-        ><ChevronLeft size={18} /></IconButton
-      ><IconButton ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}
-        ><ChevronRight size={18} /></IconButton
+      <IconAction ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}
+        ><ChevronLeft size={18} /></IconAction
+      ><IconAction ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}
+        ><ChevronRight size={18} /></IconAction
       >
     </div>
     <Button
@@ -278,13 +281,13 @@
             if (saved) addingFace = false;
           })}>Retry face</Button
       >{/if}
-    <IconButton ariaLabel="Reset zoom" onclick={() => image?.reset()}
-      ><RotateCcw size={18} /></IconButton
+    <IconAction ariaLabel="Reset zoom" onclick={() => image?.reset()}
+      ><RotateCcw size={18} /></IconAction
     >
-    <IconButton
+    <IconAction
       ariaLabel="Metadata"
       ariaPressed={metadataOpen}
-      onclick={() => (metadataOpen = !metadataOpen)}><Info size={18} /></IconButton
+      onclick={() => (metadataOpen = !metadataOpen)}><Info size={18} /></IconAction
     >
   </header>
   {#if addingFace}<span>Arrow keys to position. Enter to save. Escape to cancel.</span>{/if}
@@ -326,8 +329,8 @@
   <div class="loupe-body">
     <div class="stage">
       <div class="edge previous">
-        <IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}
-          ><ChevronLeft size={24} /></IconButton
+        <IconAction ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}
+          ><ChevronLeft size={24} /></IconAction
         >
       </div>
       {#key identity}<PhotoLoupeImage
@@ -364,8 +367,8 @@
           onmove={move}
         />{/key}
       <div class="edge next">
-        <IconButton ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}
-          ><ChevronRight size={24} /></IconButton
+        <IconAction ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}
+          ><ChevronRight size={24} /></IconAction
         >
       </div>
       {#if loader.quality}<span class="quality" aria-live="polite"
@@ -374,9 +377,28 @@
             : `${loader.quality[0]!.toUpperCase()}${loader.quality.slice(1)} preview`}</span
         >{/if}
     </div>
-    {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">
+    {#if metadataOpen}<PanelResizer
+        name="photos"
+        label="Resize photo details"
+        bind:width={detailsWidth}
+        min={240}
+        max={560}
+      />
+      <aside
+        class="photo-info"
+        aria-label="Photo details"
+        style:--details-width={detailsWidth === undefined
+          ? undefined
+          : `min(${detailsWidth}px, 50vw)`}
+      >
+        {#if photo}<PhotoDetails
+            {photo}
+            session={photos.session}
+            onauthfailure={photos.onauthfailure}
+          />{/if}
         {#if editor && onedit}<PhotoInspector
             {cache}
+            onauthfailure={photos.onauthfailure}
             {editor}
             {actionDisabled}
             {onedit}
@@ -385,11 +407,6 @@
             session={photos.session}
             {onperson}
           />{/if}
-        <h2>Photo details</h2>
-        <dl>
-          {#each facts as [label, value]}<dt>{label}</dt>
-            <dd>{value}</dd>{/each}
-        </dl>
       </aside>{/if}
   </div>
   {#if rail.length}<nav class="filmstrip" aria-label="Photos in current result">
@@ -478,27 +495,13 @@
     border-radius: var(--radius-sm);
   }
   .photo-info {
-    width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    width: var(--details-width, 320px);
     flex-shrink: 0;
-    padding: var(--space-5);
+    padding: var(--space-6);
     overflow-y: auto;
-    border-left: 1px solid var(--border-default);
-  }
-  h2 {
-    margin-top: 0;
-    font-size: var(--font-size-sm);
-  }
-  dl {
-    margin: 0;
-    font-size: var(--font-size-sm);
-  }
-  dt {
-    color: var(--text-muted);
-    margin-top: 16px;
-  }
-  dd {
-    margin: 4px 0 0;
-    overflow-wrap: anywhere;
   }
   .filmstrip {
     display: flex;
@@ -547,10 +550,12 @@
     .stage {
       min-height: 180px;
     }
+    .loupe-body > :global(.panel-resizer) {
+      display: none;
+    }
     .photo-info {
       width: auto;
       max-height: 35%;
-      border-left: 0;
       border-top: 1px solid var(--border-default);
       padding: 12px;
     }

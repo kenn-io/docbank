@@ -659,3 +659,28 @@ it("dismisses a photo action error", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(onactionerror).toHaveBeenCalledWith("");
 });
+
+it("shows the same heading in the locked gate and the unlocked toolbar, with no boundary strip", async () => {
+  prepare();
+  storage();
+  let unlocked = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/hidden")) return Response.json(state(unlocked));
+      if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+      return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
+    }),
+  );
+  const view = render(HiddenPhotos, props());
+  await screen.findByRole("button", { name: "Unlock" });
+  expect(screen.getByRole("heading", { level: 1, name: "Hidden" })).toBeTruthy();
+  expect(screen.queryByText(/stay out of Photos/)).toBeNull();
+  unlocked = true;
+  view.unmount();
+  render(HiddenPhotos, props());
+  await screen.findByRole("main", { name: "Photo library" });
+  expect(screen.getAllByRole("heading", { level: 1, name: "Hidden" })).toHaveLength(1);
+  expect(screen.getByText(/^Locks in /)).toBeTruthy();
+  expect(screen.queryByText(/stay out of Photos/)).toBeNull();
+});

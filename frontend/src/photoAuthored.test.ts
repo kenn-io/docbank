@@ -509,44 +509,27 @@ it("hides metadata fields while concealed", () => {
   editor.dispose();
 });
 
-it.each(["write", "draft", "loading"])(
+it.each(["write", "draft"])(
   "refuses edits and target changes while a %s is pending",
   async (kind) => {
     const editor = new PhotoAuthoredEditor("scoped", vi.fn());
-    let finish!: (response: Response) => void;
-    let preparing: ReturnType<typeof editor.prepare> | undefined;
     if (kind === "write") {
       editor.busy = true;
       await editor.edit({}, { rating: 5 }, false, vi.fn());
       expect(editor.notice).toBe(
         "An edit is in progress. Try the shortcut again when it finishes.",
       );
-    } else if (kind === "loading") {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))),
-      );
-      preparing = editor.prepare({ asset_ids: ["asset"] });
     } else {
       editor.targets = targets;
       editor.stage({ caption: "Draft" });
     }
     expect(editor.canChangeTarget()).toBe(false);
     expect(editor.notice).toContain(
-      kind === "write"
-        ? "Wait for it to finish"
-        : kind === "loading"
-          ? "Metadata is loading. Try again when it finishes."
-          : "Apply or clear your metadata edits",
+      kind === "write" ? "Wait for it to finish" : "Apply or clear your metadata edits",
     );
     expect(editor.noticeTone).toBe("warning");
     editor.busy = false;
     if (kind === "draft") editor.clearDraft();
-    if (preparing) {
-      finish(response({ assets: [asset], targets }));
-      await preparing;
-      expect(editor.notice, "the loading warning clears once preparation settles").toBe("");
-    }
     expect(editor.canChangeTarget()).toBe(true);
     editor.dispose();
   },
@@ -2253,4 +2236,54 @@ it("reads assigned tags with a fresh signal after a failed edit keeps its draft"
     1,
   );
   editor.dispose();
+});
+
+it("creates and assigns a keyword from the shared picker", async () => {
+  setupPhotoUI();
+  const editor = editorWithTargets();
+  const onedit = vi.fn();
+  const tag = {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "Review",
+    revision: 1,
+    assignment_count: 0,
+  };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(tag));
+  render(PhotoInspector, { editor, session: "session", onedit });
+  const input = screen.getByRole("combobox", { name: "Keyword" });
+  await fireEvent.input(input, { target: { value: "Review" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  await vi.waitFor(() =>
+    expect(onedit).toHaveBeenCalledWith({}, [{ tag_id: tag.id, assign: true }]),
+  );
+  expect(editor.tags).toContainEqual(tag);
+});
+
+it("doesn't assign a newly created keyword to a replacement photo selection", async () => {
+  setupPhotoUI();
+  const editor = editorWithTargets();
+  const onedit = vi.fn();
+  let reply!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        reply = resolve;
+      }),
+  );
+  render(PhotoInspector, { editor, session: "session", onedit });
+  const input = screen.getByRole("combobox", { name: "Keyword" });
+  await fireEvent.input(input, { target: { value: "Review" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  editor.targets = [preparedPhoto(3, { asset_id: "other", file_id: "other-file" })];
+  await tick();
+  reply(
+    Response.json({
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Review",
+      revision: 1,
+      assignment_count: 0,
+    }),
+  );
+  await vi.waitFor(() => expect(input.hasAttribute("disabled")).toBe(false));
+  expect(onedit).not.toHaveBeenCalled();
 });

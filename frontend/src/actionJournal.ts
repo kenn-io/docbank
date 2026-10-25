@@ -113,6 +113,16 @@ export class ActionJournal implements ActionJournalAccess {
     }
   }
 
+  /** Loads the retained action without recovering interrupted sends. */
+  static async peek(vaultID: string): Promise<PersistedAction | null> {
+    const journal = await this.#connect(vaultID);
+    try {
+      return await journal.load();
+    } finally {
+      journal.#database.close();
+    }
+  }
+
   static async abandon(vaultID: string): Promise<void> {
     const journal = await this.#connect(vaultID);
     try {

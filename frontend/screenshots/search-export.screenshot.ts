@@ -79,7 +79,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await expect(drawer).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
     await drawer.getByRole("combobox", { name: "Coverage policy" }).selectOption("available_only");
-    await drawer.getByRole("button", { name: "Create export" }).click();
+    await drawer.getByRole("button", { name: "Create report" }).click();
     await expect(drawer.getByText("Counts ready", { exact: true }).first()).toBeVisible();
     await expect(drawer.getByText(/2 scoped · 2 searchable · 0 missing text/)).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toBeVisible();
@@ -90,7 +90,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await drawer.getByRole("radio", { name: "Selected collections" }).check();
     await expect(drawer.getByRole("checkbox").first()).toBeVisible();
     await drawer.getByRole("checkbox").first().check();
-    await drawer.getByRole("button", { name: "Create export" }).click();
+    await drawer.getByRole("button", { name: "Create report" }).click();
     await expect(drawer.getByRole("button", { name: "Use as draft" })).toHaveCount(2);
     await expect(drawer.getByText(/1 scoped · 1 searchable · 0 missing text/)).toBeVisible();
     await expect(drawer.getByText("1 collection").first()).toBeVisible();
@@ -100,7 +100,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
       animations: "disabled",
     });
 
-    await drawer.getByRole("button", { name: "Close search exports" }).click();
+    await drawer.getByRole("button", { name: "Close search term report" }).click();
     await page.getByRole("checkbox", { name: "Select synthetic-review.txt", exact: true }).check();
     await page.getByRole("button", { name: "Report selected documents", exact: true }).click();
     await expect(drawer.getByText("Selected documents (1)", { exact: true })).toBeVisible();
@@ -122,7 +122,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
       (response) =>
         response.url().endsWith("/api/v1/search-exports") && response.request().method() === "POST",
     );
-    await drawer.getByRole("button", { name: "Create export" }).click();
+    await drawer.getByRole("button", { name: "Create report" }).click();
     const response = await created;
     expect(response.status()).toBe(200);
     const submitted = response.request().postDataJSON();
@@ -161,7 +161,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
       (response) =>
         response.url().endsWith("/api/v1/search-exports") && response.request().method() === "POST",
     );
-    await drawer.getByRole("button", { name: "Create export" }).click();
+    await drawer.getByRole("button", { name: "Create report" }).click();
     expect((await rejected).status()).toBe(409);
     await expect(drawer.getByRole("alert")).toHaveText(
       "Selected documents changed. Refresh the workspace and reselect the intended current versions.",

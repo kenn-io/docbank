@@ -37,7 +37,7 @@ function page(overrides: Partial<SnapshotPage> = {}): SnapshotPage {
   };
 }
 
-it("reports the exact frozen range, count, bytes, and observation time", () => {
+it("reports the range and total without bytes or timestamps", () => {
   render(ResultsPager, {
     page: page({ rows: Array(50).fill({}) }),
     offset: 50,
@@ -45,10 +45,23 @@ it("reports the exact frozen range, count, bytes, and observation time", () => {
     onpage: vi.fn(),
     onrunagain: vi.fn(),
   });
-  const status = screen.getByRole("status");
-  expect(status.textContent).toContain("51–100 of 123");
-  expect(status.textContent).toContain("12,345 bytes");
-  expect(status.textContent).toContain("2026-09-11T12:34:00Z");
+  expect(screen.getByRole("status").textContent).toBe("51–100 of 123");
+});
+
+it("leaves out the pager when every result fits on one page", () => {
+  render(ResultsPager, {
+    page: page({
+      total: 17,
+      rows: Array(17).fill({}),
+      previous_cursor: undefined,
+      next_cursor: undefined,
+    }),
+    offset: 0,
+    status: "ready",
+    onpage: vi.fn(),
+    onrunagain: vi.fn(),
+  });
+  expect(screen.queryByRole("navigation")).toBeNull();
 });
 
 it("moves only through supplied cursors and offers an explicit rerun after expiry", async () => {

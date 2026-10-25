@@ -136,6 +136,8 @@ it("inspects and downloads a frozen snapshot version under separately labeled li
       });
     if (url === "/api/v1/workspace/queries") return json(page);
     if (url === "/api/v1/nodes/7") return json(liveNode);
+    if (url.startsWith("/api/v1/nodes/7/versions?"))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
     if (url === "/api/v1/nodes/7/tags?limit=1000&offset=0")
       return json({
         items: [
@@ -197,15 +199,17 @@ it("inspects and downloads a frozen snapshot version under separately labeled li
   });
 
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
   expect(await screen.findByText("Pinned historical evidence")).toBeTruthy();
-  expect(screen.getByText("Original snapshot facts")).toBeTruthy();
-  expect(screen.getByText("Current live observations")).toBeTruthy();
+  const download = screen.getByRole("button", { name: "Download" });
+  expect(download.closest("header")?.querySelector("h2")?.textContent).toBe("historical.txt");
+  expect(screen.getByRole("region", { name: "Saved tags" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Current details" })).toBeTruthy();
   expect(screen.getByText("September import")).toBeTruthy();
   expect(screen.getAllByText("live now").length).toBeGreaterThan(0);
-  expect(screen.getByText("Revision 9")).toBeTruthy();
+  expect(screen.getByText("/live/renamed-current.txt")).toBeTruthy();
   expect(preparedBodies[0]).toEqual({
     node_id: 7,
     revision: 9,
@@ -214,4 +218,10 @@ it("inspects and downloads a frozen snapshot version under separately labeled li
     size: bytes.length,
     purpose: "preview",
   });
+  await fireEvent.click(screen.getByRole("button", { name: "All versions" }));
+  expect(
+    await screen.findByRole("dialog", {
+      name: "Version history for /live/renamed-current.txt",
+    }),
+  ).toBeTruthy();
 });

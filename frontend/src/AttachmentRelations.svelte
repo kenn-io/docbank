@@ -1,50 +1,47 @@
 <script lang="ts">
-  import { Button, Spinner } from "@kenn-io/kit-ui";
+  import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import {
     appendRelationPage,
-    assertPublicationAgreement,
     attachmentIdentity,
-    readPublication,
     readRelationPage,
     relationDisplayLimit,
     relationKey,
     type AttachmentIdentity,
-    type AttachmentRelation,
-    type PublicationReceipt,
     type RelationDirection,
     type RelationPage,
   } from "./attachments.js";
+  import * as api from "./generated/docbank.js";
   import type { SelectedSource } from "./selectedSource.js";
 
   let {
     session,
     source,
     direction,
+    total = $bindable(),
+    busy = $bindable(false),
     onopen,
     onauthfailure,
   }: {
     session: string;
     source: SelectedSource;
     direction: RelationDirection;
+    total?: number;
+    busy?: boolean;
     onopen: (target: AttachmentIdentity) => void;
     onauthfailure: (cause: unknown) => void;
   } = $props();
   let page = $state<RelationPage>();
   let loading = $state(false);
   let error = $state("");
-  let receipt = $state<PublicationReceipt>();
-  let receiptLoading = $state("");
-  let receiptError = $state("");
+  let names = $state<Record<number, string>>({});
   let controller: AbortController | undefined;
-  let receiptController: AbortController | undefined;
   let epoch = 0;
   const outgoing = $derived(direction === "outgoing");
-  const operations = $derived([
-    ...new Map(
-      (page?.items ?? []).map((item) => [item.relation.operation_id, item.relation]),
-    ).values(),
-  ]);
+  $effect(() => {
+    total = page?.total;
+    busy = loading;
+  });
 
   function message(cause: unknown): string {
     if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
@@ -59,13 +56,14 @@
     controller = pending;
     page = undefined;
     error = "";
-    receipt = undefined;
-    receiptError = "";
-    receiptLoading = "";
+    names = {};
     loading = true;
     void readRelationPage(session, selected, direction, pending.signal)
       .then((next) => {
-        if (request === epoch) page = next;
+        if (request === epoch) {
+          page = next;
+          void loadNames(next, pending.signal);
+        }
       })
       .catch((cause: unknown) => {
         if (request === epoch && !pending.signal.aborted) error = message(cause);
@@ -76,7 +74,6 @@
     return () => {
       ++epoch;
       pending.abort();
-      receiptController?.abort();
     };
   });
   async function loadMore(): Promise<void> {
@@ -95,131 +92,67 @@
         before.next,
       );
       if (request !== epoch) return;
-      if (receipt)
-        assertPublicationAgreement(
-          receipt,
-          next.items.map((item) => item.relation),
-        );
       page = appendRelationPage(before, next);
+      void loadNames(next, signal);
     } catch (cause) {
       if (request === epoch && !signal.aborted) error = message(cause);
     } finally {
       if (request === epoch) loading = false;
     }
   }
-  async function checkInventory(sample: AttachmentRelation): Promise<void> {
-    receiptController?.abort();
-    const pending = new AbortController();
-    receiptController = pending;
-    const request = epoch;
-    receipt = undefined;
-    receiptError = "";
-    receiptLoading = sample.operation_id;
-    try {
-      const next = await readPublication(session, sample, pending.signal);
-      if (request !== epoch || pending.signal.aborted) return;
-      assertPublicationAgreement(
-        next,
-        (page?.items ?? []).map((item) => item.relation),
-      );
-      receipt = next;
-    } catch (cause) {
-      if (request === epoch && !pending.signal.aborted) receiptError = message(cause);
-    } finally {
-      if (request === epoch && !pending.signal.aborted) receiptLoading = "";
-    }
+  async function loadNames(next: RelationPage, signal: AbortSignal): Promise<void> {
+    if (outgoing) return;
+    const ids = [...new Set(next.items.map((item) => item.relation.parent.node_id))];
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const node = await api.getNode(id, { session, signal });
+          if (!signal.aborted) names[id] = node.name;
+        } catch {
+          /* The row keeps its fallback name. */
+        }
+      }),
+    );
   }
 </script>
 
-<section aria-label={outgoing ? "Outgoing attachments" : "Incoming parents"}>
-  <strong>{outgoing ? "Attachments" : "Parents"}</strong>
-  {#if loading}<p role="status">
-      <Spinner size={14} /> Loading {outgoing ? "attachments" : "parents"}…
-    </p>{/if}
-  {#if error}<p class="problem" role="status">
-      {outgoing ? "Attachment" : "Parent"} relations unavailable: {error}
-    </p>{/if}
-  {#if page}
-    <p>
-      {page.items.length} of {page.total} observed occurrences. These are live pages, not a frozen family
-      inventory.
-    </p>
-    {#if page.items.length === 0}<p>
-        No published {outgoing ? "attachment" : "parent"} occurrences found. This does not establish a
-        complete attachment inventory.
+{#if error || page?.items.length}
+  <section aria-label={outgoing ? "Attachments" : "Attached to"}>
+    <strong>{outgoing ? "Attachments" : "Attached to"}</strong>
+    {#if error}<p class="problem" role="status">
+        {outgoing ? "Attachment" : "Parent"} relations unavailable: {error}
       </p>{/if}
-    {#each operations as sample (sample.operation_id)}
-      <div class="publication">
-        <div class="publication-heading">
-          <span>Publication {sample.operation_id}</span>
-          <Button
-            size="sm"
-            surface="soft"
-            disabled={Boolean(receiptLoading)}
-            onclick={() => void checkInventory(sample)}
-            ariaLabel={`Check inventory for ${sample.operation_id}`}>Check inventory</Button
-          >
-        </div>
-        {#if receipt?.operation_id === sample.operation_id}<p>
-            Publication inventory: {receipt.inventory_state}
+    {#if page}
+      <ul>
+        {#each page.items as item (relationKey(item.relation))}
+          {@const relation = item.relation}
+          {@const target = outgoing ? relation.child : relation.parent}
+          {@const name = outgoing
+            ? relation.filename || "Unnamed attachment"
+            : (names[relation.parent.node_id] ?? "Document")}
+          <li>
+            {#if target}<button type="button" onclick={() => onopen(target)}>{name}</button
+              >{:else}<span class="unavailable">{name}</span><span>{relation.outcome}</span>{/if}
+          </li>
+        {/each}
+      </ul>
+      {#if page.next}
+        {#if page.items.length >= relationDisplayLimit}<p role="status">
+            Showing the first {relationDisplayLimit}.
           </p>
-        {:else}<p>
-            Publication inventory: {receiptLoading === sample.operation_id
-              ? "checking"
-              : "not checked"}
-          </p>{/if}
-        <ul>
-          {#each page.items.filter((item) => item.relation.operation_id === sample.operation_id) as item (relationKey(item.relation))}
-            {@const relation = item.relation}
-            {@const target = outgoing ? relation.child : relation.parent}
-            <li>
-              <strong>{relation.filename || "Unnamed attachment"}</strong>
-              <span>Occurrence {relation.order} · MIME part {relation.part_path}</span>
-              <span
-                >MIME: {relation.outcome} · Processing: {item.state}{item.reason
-                  ? ` (${item.reason})`
-                  : ""}</span
-              >
-              <span class="identity">Parent version {relation.parent.version_id}</span>
-              {#if relation.child}<span class="identity"
-                  >Child version {relation.child.version_id}</span
-                >{/if}
-              {#if target}<Button
-                  size="sm"
-                  surface="soft"
-                  onclick={() => onopen(target)}
-                  ariaLabel={`Open ${outgoing ? "attachment" : "parent of"} ${relation.filename || "unnamed attachment"}, part ${relation.part_path}`}
-                >
-                  Open {outgoing ? "attachment" : "parent"}
-                </Button>{:else}<span>No child document was published for this occurrence.</span
-                >{/if}
-            </li>
-          {/each}
-        </ul>
-      </div>
-    {/each}
-    {#if receiptError}<p class="problem" role="status">
-        Publication inventory unavailable: {receiptError}
-      </p>{/if}
-    {#if page.next}
-      {#if page.items.length >= relationDisplayLimit}<p role="status">
-          Display limit reached. Additional occurrences are not shown; this view is incomplete.
-        </p>
-      {:else}<Button size="sm" surface="soft" disabled={loading} onclick={() => void loadMore()}
-          >Load more {outgoing ? "attachments" : "parents"}</Button
-        >{/if}
+        {:else}<Button size="sm" surface="soft" disabled={loading} onclick={() => void loadMore()}
+            >Show more</Button
+          >{/if}
+      {/if}
     {/if}
-  {/if}
-</section>
+  </section>
+{/if}
 
 <style>
-  section,
-  .publication {
+  section {
     display: grid;
     gap: var(--space-2);
     min-width: 0;
-  }
-  section {
     padding-block: var(--space-2);
   }
   p,
@@ -229,30 +162,39 @@
     font-size: var(--font-size-xs);
     overflow-wrap: anywhere;
   }
-  .publication-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
   ul {
     display: grid;
-    gap: var(--space-2);
     padding: 0;
     margin: 0;
     list-style: none;
   }
   li {
-    display: grid;
-    justify-items: start;
-    gap: var(--space-1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 0;
     padding: var(--space-2);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    font-size: var(--font-size-xs);
+    border-top: 1px solid var(--border-default);
+    font-size: var(--font-size-sm);
   }
-  .identity {
-    font-family: var(--font-mono);
+  button {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-primary);
+    font: inherit;
+    text-align: left;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+  button:hover {
+    text-decoration: underline;
+  }
+  .unavailable {
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
   }
   .problem {
     color: var(--text-primary);

@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { tick } from "svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
 
@@ -20,11 +19,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-it("opens full URL intent in the editor and keeps edits through save and reopening without executing", async () => {
+
+function start(withQuery = true) {
   history.replaceState(
     null,
     "",
-    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+    `/#web_session=synthetic&web_upload_secret=proof${withQuery ? `&query=${encodeURIComponent(JSON.stringify(query))}` : ""}`,
   );
   vi.stubGlobal(
     "ResizeObserver",
@@ -56,9 +56,14 @@ it("opens full URL intent in the editor and keeps edits through save and reopeni
     return new Response(JSON.stringify(value));
   });
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
-  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe(query.text);
-  await fireEvent.input(screen.getByLabelText("Query expression"), {
+  return fetch;
+}
+
+it("opens URL intent and passes the entire edited query to Save without executing", async () => {
+  const fetch = start();
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe(query.text);
+  await fireEvent.input(screen.getByLabelText("Query syntax"), {
     target: { value: "NOT tag:missing" },
   });
   await waitFor(() =>
@@ -67,49 +72,113 @@ it("opens full URL intent in the editor and keeps edits through save and reopeni
       text: "NOT tag:missing",
     }),
   );
-  await fireEvent.click(screen.getByRole("button", { name: "Save query draft" }));
-  await screen.findByRole("dialog", { name: "Saved queries and highlights" });
+  await fireEvent.click(screen.getByRole("button", { name: "Save…" }));
+  await screen.findByRole("dialog", { name: "Saved searches" });
+  expect(screen.queryByRole("dialog", { name: "Advanced search" })).toBeNull();
+  await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value),
   ).toEqual({ ...query, text: "NOT tag:missing" });
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe(
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe(
     "NOT tag:missing",
   );
   expect(fetch.mock.calls.some(([url]) => String(url).startsWith("/api/v1/search"))).toBe(false);
-  await fireEvent.input(screen.getByLabelText("Structured facets JSON"), {
+});
+
+it("retains unfinished edits on Escape, then discards them with Cancel", async () => {
+  start();
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":' },
   });
-  await fireEvent.input(screen.getByLabelText("Query expression"), {
+  await fireEvent.input(screen.getByLabelText("Query syntax"), {
     target: { value: "unfinished draft" },
   });
-  await fireEvent.click(screen.getByRole("combobox", { name: "Query mode: lexical" }));
-  await fireEvent.click(screen.getByRole("option", { name: "hybrid" }));
-  (screen.getByRole("button", { name: "Close query editor" }) as HTMLButtonElement).click();
-  await tick();
-  expect(screen.queryByRole("region", { name: "Query editor" })).not.toBeNull();
-  expect((screen.getByLabelText("Structured facets JSON") as HTMLTextAreaElement).value).toBe(
-    '{"size_min":',
-  );
-  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe(
+  await fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
+  await fireEvent.focusIn(screen.getByRole("button", { name: "Advanced" }));
+  expect((await screen.findByRole("tooltip")).textContent).toBe("Unapplied changes");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
+  expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe(
     "unfinished draft",
   );
-  expect(screen.getByRole("combobox", { name: "Query mode: hybrid" })).toBeTruthy();
-  await fireEvent.input(screen.getByLabelText("Structured facets JSON"), {
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(location.hash).toBe("");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe("{}");
+});
+
+it("closes unchanged drafts without an indicator or query URL", async () => {
+  start(false);
+  await screen.findByRole("button", { name: "Advanced" });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.getByRole("button", { name: "Advanced" }).getAttribute("title")).toBeNull();
+  expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
+});
+
+it("clears the indicator when reopened edits are restored to their original value", async () => {
+  start(false);
+  await screen.findByRole("button", { name: "Advanced" });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":2}' },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
-  expect(screen.queryByRole("region", { name: "Query editor" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe(
-    "unfinished draft",
-  );
-  await fireEvent.input(screen.getByLabelText("Structured facets JSON"), {
-    target: { value: '{"size_min":' },
+  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), { target: { value: "{}" } });
+  await fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.getByRole("button", { name: "Advanced" }).getAttribute("title")).toBeNull();
+  expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
+});
+
+it("toggles Advanced and restores edited drafts after an outside click", async () => {
+  start(false);
+  await screen.findByRole("button", { name: "Advanced" });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":2}' },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Discard query draft" }));
-  expect(location.hash).toBe("");
-  expect(screen.queryByRole("region", { name: "Query editor" })).toBeNull();
+  const overlay = screen.getByRole("dialog", { name: "Filters and sort" }).parentElement!;
+  await fireEvent.pointerDown(overlay, { pointerId: 1 });
+  await fireEvent.pointerUp(overlay, { pointerId: 1 });
+  await fireEvent.click(overlay);
+  expect(screen.queryByRole("dialog", { name: "Filters and sort" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe(
+    '{"size_min":2}',
+  );
+});
+
+it("runs unsent top-bar text with the selected filters", async () => {
+  const fetch = start(false);
+  const search = await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "annual report" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":10}' },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.some(
+        ([url, init]) =>
+          String(url) === "/api/v1/workspace/queries" &&
+          JSON.parse(String(init?.body)).query.text === "annual report",
+      ),
+    ).toBe(true),
+  );
+  const body = JSON.parse(
+    String(
+      fetch.mock.calls.find(([url]) => String(url) === "/api/v1/workspace/queries")?.[1]?.body,
+    ),
+  );
+  expect(body.query.filters).toEqual({ size_min: 10 });
 });

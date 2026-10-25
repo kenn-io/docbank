@@ -8,7 +8,7 @@ import { readActionVaultID } from "./actionRunner.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
 import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
 import type { SnapshotReceiptOverlays } from "./snapshotOverlays.js";
-import type { SnapshotActionChoice } from "./SnapshotActions.svelte";
+import type { SnapshotActionChoice, SnapshotActionScope } from "./SnapshotActions.svelte";
 import type { Query } from "./query.js";
 
 export class SnapshotWorkspace {
@@ -19,6 +19,10 @@ export class SnapshotWorkspace {
   selection = $state<Set<number>>(new Set());
   overlays = $state<SnapshotReceiptOverlays>({});
   actionsOpen = $state(false);
+  actionsScope = $state<SnapshotActionScope>("query");
+  /** An unfinished whole-result run kept in this browser, or "unreadable" when its record is damaged. */
+  retained = $state<PersistedAction | "unreadable" | null>(null);
+  private retainedGeneration = 0;
   actionBusy = $state(false);
   private actionController: AbortController | undefined;
   private actionGeneration = 0;
@@ -57,7 +61,45 @@ export class SnapshotWorkspace {
     if (epoch !== this.epoch || session !== this.getSession()) return;
     const { error, status, page } = this.state;
     if (error) return { type: "failed", cause: error };
-    if (status === "ready") return { type: "text", empty: page?.rows.length === 0 };
+    if (status === "ready") {
+      void this.refreshRetained();
+      return { type: "text", empty: page?.rows.length === 0 };
+    }
+  }
+
+  openActions(scope: SnapshotActionScope): void {
+    this.actionError = "";
+    this.actionsScope = scope;
+    this.actionsOpen = true;
+  }
+
+  /** Reads, without changing it, whether this browser keeps an unfinished run for the vault. */
+  async refreshRetained(): Promise<void> {
+    const generation = ++this.retainedGeneration;
+    if (typeof indexedDB === "undefined") {
+      this.retained = null;
+      return;
+    }
+    const session = this.getSession();
+    let vaultID: string;
+    try {
+      vaultID = await readActionVaultID(session);
+    } catch {
+      return;
+    }
+    let next: PersistedAction | "unreadable" | null;
+    try {
+      next = await ActionJournal.peek(vaultID);
+    } catch {
+      next = "unreadable";
+    }
+    if (generation !== this.retainedGeneration || session !== this.getSession()) return;
+    this.retained = next && next !== "unreadable" && next.state === "complete" ? null : next;
+  }
+
+  dismissRecovery(): void {
+    this.closeRecovery();
+    void this.refreshRetained();
   }
 
   private invalidateActions(): void {
@@ -208,6 +250,8 @@ export class SnapshotWorkspace {
       const vaultID = await readActionVaultID(operation.session);
       if (!operation.current()) return;
       const journal = await ActionJournal.open(vaultID);
+      // A finished run stays retained for its receipts until the next run replaces it.
+      if ((await journal.load())?.state === "complete") await journal.abandon();
       const prepared = await prepareAction(vaultID, targets, choice.tagID, choice.assign);
       if (!operation.current()) return;
       await journal.prepare(prepared, operation.signal);
@@ -289,6 +333,7 @@ export class SnapshotWorkspace {
       await ActionJournal.abandon(vaultID);
       if (!operation.current()) return;
       this.actionsOpen = false;
+      this.retained = null;
     } catch (cause) {
       if (!operation.current()) return;
       if (cause instanceof APIError && cause.status === 401) this.onfailure(cause);

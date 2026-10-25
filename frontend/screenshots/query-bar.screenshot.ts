@@ -38,12 +38,12 @@ test("complete query validation uses the real compiler without executing", async
     await page.getByRole("button", { name: "Import collections", exact: true }).click();
     const collections = page.getByRole("dialog", { name: "Import collections" });
     await collections
-      .getByRole("button", { name: /Browse collection/ })
+      .getByRole("button", { name: /Browse import/ })
       .first()
       .click();
     await collections.getByRole("button", { name: "New query for this collection" }).click();
-    const editor = page.getByRole("region", { name: "Query editor" });
-    await expect(editor.getByText(/Query validated/)).toBeVisible();
+    const editor = page.getByRole("dialog", { name: "Advanced search" });
+    await expect(editor.getByRole("status", { name: "Query valid" })).toBeVisible();
     const initial = JSON.parse(
       new URLSearchParams(new URL(page.url()).hash.slice(1)).get("query")!,
     );
@@ -52,10 +52,9 @@ test("complete query validation uses the real compiler without executing", async
     page.on("request", (request) => {
       if (new URL(request.url()).pathname === "/api/v1/search") searches.push(request.url());
     });
-    await editor.getByRole("combobox", { name: "Query syntax: Simple" }).click();
-    await page.getByRole("option", { name: "Advanced", exact: true }).click();
+    await editor.getByRole("radio", { name: "Query syntax", exact: true }).click();
     await editor.getByLabel("Query expression", { exact: true }).fill("name:manual OR archive");
-    await expect(editor.getByText(/Query validated/)).toBeVisible();
+    await expect(editor.getByRole("status", { name: "Query valid" })).toBeVisible();
     await mkdir(screenshots!, { recursive: true, mode: 0o700 });
     await page.screenshot({ path: path.join(screenshots!, "web-query-bar.png"), fullPage: true });
     await editor.getByLabel("Query expression", { exact: true }).fill("NOT tag:missing-tag");
@@ -63,7 +62,7 @@ test("complete query validation uses the real compiler without executing", async
     await editor.getByRole("button", { name: "Focus query error" }).click();
     await expect(editor.getByLabel("Query expression", { exact: true })).toBeFocused();
     await page.screenshot({ path: path.join(screenshots!, "web-query-error.png"), fullPage: true });
-    await editor.getByRole("button", { name: "Save query draft" }).click();
+    await editor.getByRole("button", { name: "Save…" }).click();
     const saved = page.getByRole("dialog", { name: "Saved queries and highlights" });
     await saved.getByLabel("Definition name", { exact: true }).fill("Synthetic review");
     await saved.getByRole("button", { name: "Save as new", exact: true }).click();

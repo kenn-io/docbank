@@ -34,11 +34,11 @@
 
   const shortcuts = [
     { combo: "/", action: "Focus search" },
-    { combo: "j", action: "Next loaded row" },
-    { combo: "k", action: "Previous loaded row" },
-    { combo: "space", action: "Toggle inspected file selection" },
-    { combo: "enter", action: "Open inspected row" },
-    { combo: "escape", action: "Clear page selection" },
+    { combo: "j", action: "Next row" },
+    { combo: "k", action: "Previous row" },
+    { combo: "space", action: "Select current row" },
+    { combo: "enter", action: "Open current row" },
+    { combo: "escape", action: "Clear selection" },
     { combo: "?", action: "Show keyboard shortcuts" },
   ];
 
@@ -75,10 +75,7 @@
   <div class="shortcut-help">
     {#if context === "documents"}
       <section aria-labelledby="browsing-shortcuts-heading">
-        <div class="section-heading">
-          <span>Browsing</span>
-          <strong id="browsing-shortcuts-heading">Loaded-page shortcuts</strong>
-        </div>
+        <h3 id="browsing-shortcuts-heading">Navigation</h3>
         <dl class="shortcut-list">
           {#each shortcuts as shortcut (shortcut.combo)}
             <div>
@@ -87,15 +84,11 @@
             </div>
           {/each}
         </dl>
-        <p class="boundary">
-          Row navigation stops at the first and last item currently loaded. It does not wrap or
-          fetch another page.
-        </p>
       </section>
     {/if}
     {#if context === "photos" && photoShortcuts.length}
       <section aria-labelledby="photo-shortcuts-heading">
-        <strong id="photo-shortcuts-heading">Photos</strong>
+        <h3 id="photo-shortcuts-heading">Photos</h3>
         <dl class="shortcut-list">
           {#each photoShortcuts as shortcut (shortcut.combo)}
             <div>
@@ -108,17 +101,10 @@
     {/if}
     {#if context === "documents"}
       <section aria-labelledby="tag-shortcuts-heading">
-        <div class="section-heading">
-          <span>Tag hotkeys</span>
-          <strong id="tag-shortcuts-heading">Assign digits to vault tags</strong>
-        </div>
-        <p class="boundary">
-          Bindings stay in this browser for the current daemon run. Set them again after restarting
-          the daemon or clearing browser data.
-        </p>
+        <h3 id="tag-shortcuts-heading">Tag hotkeys</h3>
         {#if !vaultReady}
           <p class="unavailable" role="status">
-            Tag shortcuts are unavailable until this browser session confirms the vault identity.
+            Tag hotkeys are available once the vault finishes loading.
           </p>
         {/if}
         <div class="tag-bindings">
@@ -136,10 +122,7 @@
           {/each}
         </div>
         {#if catalogTotal > catalog.length}
-          <p class="boundary">
-            Showing the first {catalog.length} of {catalogTotal} tag definitions. Saved IDs outside this
-            loaded catalog are retained as unavailable.
-          </p>
+          <p class="boundary">First {catalog.length} of {catalogTotal} tags.</p>
         {/if}
       </section>
     {/if}
@@ -160,20 +143,11 @@
     gap: var(--space-3);
   }
 
-  .section-heading {
-    display: grid;
-    gap: var(--space-1);
-  }
-
-  .section-heading span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold, 600);
-  }
-
-  .section-heading strong {
+  h3 {
+    margin: 0;
     color: var(--text-primary);
     font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold, 600);
   }
 
   .shortcut-list {
@@ -227,7 +201,6 @@
   .unavailable {
     margin: 0;
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
     line-height: 1.5;
   }
 

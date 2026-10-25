@@ -14,6 +14,7 @@ afterEach(() => {
   history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
 
 it("offers the API key and clears it after rejected sign-in", async () => {
@@ -182,7 +183,7 @@ it("clears an open Manage tags dialog after session expiry before signing in aga
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByRole("button", { name: "Sign out" });
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
-  await screen.findByText("1 assigned");
+  await screen.findByRole("group", { name: "Assigned tags" });
   await fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
   const dialog = await screen.findByRole("dialog", { name: "Manage tags for readme.txt" });
   expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
@@ -300,7 +301,7 @@ it("keeps a new sign-in after an old tag request returns a delayed 401", async (
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByRole("button", { name: "Sign out" });
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
-  await screen.findByText("1 assigned");
+  await screen.findByRole("group", { name: "Assigned tags" });
   await fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
   await screen.findByRole("dialog", { name: "Manage tags for readme.txt" });
   await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
@@ -423,10 +424,8 @@ it("ignores a delayed trash success after signing in again", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByRole("button", { name: "Sign out" });
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
-  await screen.findByText("1 assigned");
-  await fireEvent.click(screen.getAllByRole("button", { name: /Move to trash/ })[0]!);
-  const dialog = await screen.findByRole("dialog", { name: "Move readme.txt to trash" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: /Move to trash/ }));
+  await screen.findByRole("group", { name: "Assigned tags" });
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   await trashStarted;
 
   await fireEvent.click(
@@ -438,13 +437,13 @@ it("ignores a delayed trash success after signing in again", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByRole("button", { name: "Sign out" });
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
-  await screen.findByText("1 assigned");
+  await screen.findByRole("group", { name: "Assigned tags" });
   const loadsBeforeReply = rootLoads();
 
   resolveTrash(json({ ...file, revision: 2, trashed_at: "2026-09-10T00:00:00Z" }));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  expect(screen.getByText("1 assigned")).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Assigned tags" })).toBeTruthy();
   expect(rootLoads()).toBe(loadsBeforeReply);
   expect(logins).toBe(2);
 });
@@ -562,7 +561,7 @@ function delayedReplyFixture(isDelayed: (url: string, init?: RequestInit) => boo
     );
     await signIn();
     await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
-    await screen.findByText("1 assigned");
+    await screen.findByRole("group", { name: "Assigned tags" });
   };
   const rootLoads = () =>
     fetchMock.mock.calls.filter(([input]) => String(input) === "/api/v1/path?path=%2F").length;
@@ -587,8 +586,6 @@ it("ignores a delayed restore success after signing in again", async () => {
   await fixture.signIn();
   await fireEvent.click(screen.getAllByRole("button", { name: "Recoverable trash" })[0]!);
   await fireEvent.click(await screen.findByRole("button", { name: /^Restore$/ }));
-  const dialog = await screen.findByRole("dialog", { name: /Restore old\.txt/ });
-  await fireEvent.click(within(dialog).getByRole("button", { name: /Restore/ }));
   await fixture.started;
   await fixture.signInAgainAndSelect();
   const loadsBeforeReply = fixture.rootLoads();
@@ -596,12 +593,16 @@ it("ignores a delayed restore success after signing in again", async () => {
   fixture.resolveDelayed(fixture.json({ ...fixture.trashed, revision: 3, trashed_at: null }));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  expect(screen.getByText("1 assigned")).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Assigned tags" })).toBeTruthy();
   expect(fixture.rootLoads()).toBe(loadsBeforeReply);
   expect(fixture.state.logins).toBe(2);
 });
 
 it("ignores a delayed tag rename success after signing in again", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   history.replaceState(null, "", "/");
   const fixture = delayedReplyFixture(
     (url, init) =>
@@ -609,7 +610,10 @@ it("ignores a delayed tag rename success after signing in again", async () => {
   );
   render(App);
   await fixture.signIn();
-  const manage = await screen.findByRole("button", { name: "Manage tag definitions" });
+  const filter = await screen.findByRole("combobox", { name: /All tags/ });
+  await waitFor(() => expect((filter as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(filter);
+  const manage = await screen.findByRole("button", { name: "Manage tags" });
   await waitFor(() => expect((manage as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(manage);
   const dialog = await screen.findByRole("dialog", { name: "Manage tag definitions" });

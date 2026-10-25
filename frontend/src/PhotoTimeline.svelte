@@ -94,7 +94,7 @@
               aria-label={`${year.key}, ${countLabel(year.count)}`}
               {disabled}
               onclick={() => onselect(newest(year.key))}
-              ><span>{year.key}</span><small>{year.count.toLocaleString()}</small></button
+              title={countLabel(year.count)}><span>{year.key}</span></button
             >
             {#if open}
               {#each year.months as month (month.key)}
@@ -106,9 +106,8 @@
                   aria-current={current === month.key ? "true" : undefined}
                   {disabled}
                   onclick={() => onselect(month.key)}
-                  ><span>{monthLabel(month.key, { month: "short" })}</span><small
-                    >{month.count.toLocaleString()}</small
-                  ></button
+                  title={countLabel(month.count)}
+                  ><span>{monthLabel(month.key, { month: "short" })}</span></button
                 >
               {/each}
             {/if}
@@ -170,10 +169,6 @@
   .rail-row:disabled {
     cursor: default;
     opacity: var(--opacity-disabled);
-  }
-  .rail-row small {
-    color: var(--text-muted);
-    font-size: 11px;
   }
   .rail-row:not(:disabled):hover {
     color: var(--text-primary);

@@ -364,28 +364,26 @@
 </script>
 
 <section class="hidden-photos" aria-label="Hidden photos">
-  <div class="hidden-boundary">
-    Hidden photos stay out of Photos. Documents and document tools can still read the underlying
-    files.
-  </div>
   <PhotoActionError message={photoActionError} ondismiss={() => onactionerror?.("")} />
   {#if actionError}<p role="alert">{actionError}</p>{/if}
   {#if readError}<p role="alert">{readError}</p>
     <Button size="sm" onclick={() => void checkAccess()}>Retry</Button>{/if}
   {#if access.lockError}
-    <div class="hidden-gate"><h1>Hidden</h1></div>
+    <header class="hidden-bar browser-toolbar"><h1>Hidden</h1></header>
   {:else if !resolved}
+    <header class="hidden-bar browser-toolbar"><h1>Hidden</h1></header>
     <div class="hidden-gate">
-      <h1>Hidden</h1>
       {#if reading}<Spinner />{/if}
     </div>
   {:else if workspace && remaining && workspaceVisible}
-    <div id="hidden-controls" class="hidden-controls" tabindex="-1">
-      <span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span
+    {#snippet lockControls()}
+      <span id="hidden-controls" tabindex="-1"
+        >Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span
       ><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button>
-    </div>
+    {/snippet}
     {#each [workspace] as current (current)}<PhotosWorkspace
         {onperson}
+        toolbarLead={lockControls}
         {onhelp}
         {onloadtags}
         {onloadmoretags}
@@ -411,8 +409,8 @@
   {:else if workspace && remaining}
     <Spinner />
   {:else}
+    <header class="hidden-bar browser-toolbar"><h1>Hidden</h1></header>
     <div class="hidden-gate">
-      <h1>Hidden</h1>
       {#if hiddenState.configured}<p>
           Forgotten passcode? Run <code>docbank photos hidden reset</code>.
         </p>{:else}<p>Unlocks for five minutes.</p>{/if}
@@ -443,9 +441,11 @@
             passcodeError = "";
           }}
         />
-        <Button type="submit" disabled={busy} ariaDescribedby={lockoutDescription}
-          >{hiddenState.configured ? "Unlock" : "Set passcode"}</Button
-        >
+        <div class="form-actions">
+          <Button type="submit" tone="info" disabled={busy} ariaDescribedby={lockoutDescription}
+            >{hiddenState.configured ? "Unlock" : "Set passcode"}</Button
+          >
+        </div>
       </form>
       {#if busy}<Spinner />{/if}
       {#if hiddenState.configured}
@@ -488,14 +488,17 @@
                 nextPasscodeError = "";
               }}
             />
-            <div class="manage-actions">
-              <Button type="submit" disabled={busy} ariaDescribedby={lockoutDescription}
-                >Change passcode</Button
-              ><Button
+            <div class="form-actions">
+              <Button
                 tone="danger"
                 disabled={busy}
                 ariaDescribedby={lockoutDescription}
                 onclick={() => void action("disable")}>Disable Hidden</Button
+              ><Button
+                type="submit"
+                tone="info"
+                disabled={busy}
+                ariaDescribedby={lockoutDescription}>Change passcode</Button
               >
             </div>
             <p class="disable-consequence">
@@ -516,30 +519,37 @@
     min-height: 0;
     overflow: hidden;
   }
-  .hidden-boundary,
-  .hidden-controls {
-    padding: var(--space-3) var(--space-5);
-    font-size: var(--font-size-sm);
-    color: var(--text-muted);
+  .hidden-bar {
+    box-sizing: border-box;
+    /* The height of the Library toolbar, so the heading stays put across Photos pages. */
+    min-height: 59px;
+    justify-content: flex-start;
+    padding-left: var(--space-5);
+    padding-right: var(--space-7);
     border-bottom: 1px solid var(--border-default);
   }
-  .hidden-controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  .hidden-bar h1 {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  #hidden-controls {
+    color: var(--text-muted);
+    font-size: var(--font-size-md);
   }
   .hidden-gate {
     width: 100%;
-    max-width: 440px;
+    max-width: 320px;
     box-sizing: border-box;
-    padding: var(--space-5);
+    margin: var(--space-8) auto 0;
+    padding: 0 var(--space-5);
     overflow-y: auto;
   }
   form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    align-items: flex-start;
+    gap: var(--space-4);
   }
   details {
     margin-top: var(--space-5);
@@ -555,10 +565,10 @@
   details form {
     margin-top: var(--space-3);
   }
-  .manage-actions {
+  .form-actions {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
+    justify-content: flex-end;
+    gap: var(--space-4);
   }
   .disable-consequence,
   .lockout {

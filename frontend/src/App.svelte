@@ -1,4 +1,7 @@
 <script lang="ts">
+  import VaultDrawer from "./VaultDrawer.svelte";
+  import TelemetryNotice from "./TelemetryNotice.svelte";
+  import ExportMenu from "./ExportMenu.svelte";
   import { reportAction, reportFailure, reportSearch } from "./action-events.js";
   import PhotoSearch from "./PhotoSearch.svelte";
   import { photoSearchSort } from "./photoSearch.js";
@@ -11,37 +14,31 @@
   import FolderIcon from "@lucide/svelte/icons/folder";
   import FoldersIcon from "@lucide/svelte/icons/folders";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-  import DownloadIcon from "@lucide/svelte/icons/download";
-  import FileSearchIcon from "@lucide/svelte/icons/file-search";
   import HouseIcon from "@lucide/svelte/icons/house";
-  import LayersIcon from "@lucide/svelte/icons/layers";
   import LibraryIcon from "@lucide/svelte/icons/library";
   import EyeOffIcon from "@lucide/svelte/icons/eye-off";
   import MenuIcon from "@lucide/svelte/icons/menu";
   import SlidersHorizontalIcon from "@lucide/svelte/icons/sliders-horizontal";
-  import StampIcon from "@lucide/svelte/icons/stamp";
-  import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
   import BookmarkIcon from "@lucide/svelte/icons/bookmark";
-  import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import TagIcon from "@lucide/svelte/icons/tag";
-  import TagsIcon from "@lucide/svelte/icons/tags";
   import HistoryIcon from "@lucide/svelte/icons/history";
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
-  import UploadIcon from "@lucide/svelte/icons/upload";
   import {
     Button,
     Card,
     Checkbox,
     Chip,
-    ChipStack,
-    CopyButton,
     EmptyState,
-    IconButton,
+    KbdBadge,
+    Menu,
+    MenuContent,
+    MenuItem,
+    MenuTrigger,
     Modal,
     SearchInput,
     FormField,
@@ -49,17 +46,14 @@
     Spinner,
     Table,
     TableHeaderCell,
-    ThemeToggle,
     TopBar,
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
     type SortDirection,
   } from "@kenn-io/kit-ui";
-  import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import ActionRecoveryModal from "./ActionRecoveryModal.svelte";
-  import BackupDrawer from "./BackupDrawer.svelte";
   import BatesExportDrawer from "./BatesExportDrawer.svelte";
   import ExportDrawer from "./ExportDrawer.svelte";
   import TermReportDrawer from "./TermReportDrawer.svelte";
@@ -68,11 +62,11 @@
   import CollectionsDrawer from "./CollectionsDrawer.svelte";
   import FacetSidebar from "./FacetSidebar.svelte";
   import FileTypeIcon, { fileTypeLabel } from "./FileTypeIcon.svelte";
-  import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import BatchTagsModal from "./BatchTagsModal.svelte";
   import type { BatchTagReceipt } from "./batch-tags.js";
-  import ProcessingDrawer from "./ProcessingDrawer.svelte";
+  import ProcessingDialog from "./ProcessingDialog.svelte";
+  import SimilarDrawer from "./SimilarDrawer.svelte";
   import ScanSearchIcon from "@lucide/svelte/icons/scan-search";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
@@ -102,11 +96,17 @@
   import type { SelectionTarget } from "./selection.js";
   import ShortcutHelpModal from "./ShortcutHelpModal.svelte";
   import RenditionDrawer from "./RenditionDrawer.svelte";
-  import StorageDrawer from "./StorageDrawer.svelte";
   import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
   import QueryBar from "./QueryBar.svelte";
+  import { searchSyntaxOptions } from "./searchSyntax.js";
+  import { loadCollectionNames } from "./collectionNames.js";
+  import PanelResizer from "./PanelResizer.svelte";
+  import { readPanelWidth } from "./panelWidth.js";
+  import ResultName from "./ResultName.svelte";
+  import { resultColumns } from "./resultColumns.js";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
+  import TagRunNotice from "./TagRunNotice.svelte";
   import { parseQuery, type Query } from "./query.js";
   import { readQueryHighlights } from "./queryHighlights.js";
   import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
@@ -114,10 +114,18 @@
   import TagLabel from "./TagLabel.svelte";
   import TagPicker from "./TagPicker.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
-  import TrashNodeModal from "./TrashNodeModal.svelte";
+  import AppTooltip from "./AppTooltip.svelte";
+  import IconAction from "./IconAction.svelte";
+  import ThemeButton from "./ThemeButton.svelte";
+  import Toasts from "./Toasts.svelte";
+  import { clearToasts, showToast } from "./toast.svelte.js";
+  import { moveToTrash, parentPath, undoTrash } from "./trashActions.js";
   import PhotoImportDrawer from "./PhotoImportDrawer.svelte";
+  import DocumentAddMenu from "./DocumentAddMenu.svelte";
+  import type { PickerKind } from "./localFiles.js";
   import UploadDrawer from "./UploadDrawer.svelte";
   import VerifiedPreview from "./VerifiedPreview.svelte";
+  import DocumentInspector from "./DocumentInspector.svelte";
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
   import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
@@ -158,7 +166,11 @@
   } from "./snapshotOverlays.js";
   import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
   import { type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
-  import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
+  import {
+    selectedSourceFromNode,
+    selectedSourceFromSnapshot,
+    type SelectedSource,
+  } from "./selectedSource.js";
   import { listSavedQueries, refreshDefinitionViews } from "./savedQueries.js";
   import type { RenditionObservation } from "./renditionText.js";
   import {
@@ -179,11 +191,9 @@
   } from "./tag-hotkeys.js";
   import { VerifiedUploadChannel } from "./upload.js";
   import {
-    directFileEvidenceNote,
     evidenceKindLabels,
     naturalSearchFallbackNote,
-    naturalSearchModes,
-    naturalQueryBindings,
+    naturalSearchPlaceholder,
     naturalSearchRequest,
     naturalSearchRerank,
     rerankingNote,
@@ -241,8 +251,8 @@
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
     | { kind: "rendition"; target: { attachmentID: string; path: string } }
-    | { kind: "upload" | "mailbox" | "loadFile"; target: Node }
-    | { kind: "trashNode"; target: Row };
+    | { kind: "upload"; target: Node; picker: PickerKind }
+    | { kind: "mailbox" | "loadFile"; target: Node };
 
   const panelScreens: Record<Panel["kind"], generated.TelemetryEventPropertiesScreen | null> = {
     history: "history",
@@ -265,7 +275,6 @@
     upload: "upload",
     mailbox: "mailbox",
     loadFile: "load_file",
-    trashNode: null,
     photoImport: null,
   };
 
@@ -999,6 +1008,27 @@
   let tagHotkeys = $state<TagHotkeyBindings>({});
   let pendingTagHotkey = $state<TagHotkey | "">("");
   let shortcutNotice = $state("");
+  let searchFocused = $state(false);
+  // The inspector keeps its width, so a narrow table drops Modified, then Type.
+  let browserWidth = $state(1000);
+  // Advanced results sit beside their filters, so the table has less room.
+  let snapshotResultsWidth = $state(700);
+  function watchWidth(element: HTMLElement) {
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) browserWidth = entry.contentRect.width;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }
+  function watchSnapshotWidth(element: HTMLElement) {
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) snapshotResultsWidth = entry.contentRect.width;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }
   let shortcutError = $state("");
   let shortcutHelpOpen = $state(false);
   let searchInputEl = $state<HTMLInputElement>();
@@ -1013,6 +1043,7 @@
   let searchPending = $state(false);
   let naturalProfiles = $state<ProcessingProfileSummary[]>([]);
   let naturalSearchMode = $state<NaturalSearchMode>("names");
+  let searchSyntax = $state<Query["syntax"]>("simple");
   let naturalRerank = $state(false);
   let naturalSearchNote = $state("");
   let naturalProfilesError = $state("");
@@ -1024,7 +1055,6 @@
   let sortField = $state<SortField>("name");
   let sortDirection = $state<SortDirection>("asc");
   let selectedAudit = $state<AuditStatus | null>(null);
-  let auditLoading = $state(false);
   let auditError = $state("");
 
   let activePanel = $state<Panel | null>(null);
@@ -1040,6 +1070,11 @@
   });
 
   let queryBarOpen = $state(false);
+  let querySettingsApplied = $state(false);
+  let queryDraftChanged = $state(false);
+  let queryEditorVersion = $state(0);
+  let queryDraftFromDefinition = $state(false);
+  let queryDraftRevision = 0;
   let savedQueryDraft = $state<Query | null>(null);
   let queryEditorInitial = $state<Query>(parseQuery("{}"));
   let queryURLError = $state("");
@@ -1047,10 +1082,8 @@
 
   let manageTagsTarget = $state<Row | null>(null);
   let batchTagsTargets = $state<SelectionTarget[] | null>(null);
-  let batchTagsContext = $state<"live" | "snapshot">("live");
-  let batchTagsChoice = $state<SnapshotActionChoice>();
-  let batchTagsSnapshotID: string | undefined;
-  let batchTagsSnapshotEpoch = 0;
+  let snapshotActionsSnapshotID: string | undefined;
+  let snapshotActionsEpoch = 0;
 
   let generation = 0;
   let auditGeneration = 0;
@@ -1154,6 +1187,27 @@
             selectedSource.blobHash !== currentInspectorNode.blob_hash ||
             selectedSource.size !== currentInspectorNode.size))),
   );
+  // Imports are named from the Import history list; the results only carry their IDs.
+  let inspectorWidth = $state(readPanelWidth("documents"));
+  let collectionNames = $state<Record<string, string>>({});
+  let collectionNamesKey = "";
+  $effect(() => {
+    const session = webSession;
+    const page = snapshotPage;
+    const key = `${session}:${page?.snapshot_id}`;
+    const hasCollections = page?.rows.some((row) => row.display_collection_id);
+    if (!session || !page || !hasCollections || key === collectionNamesKey) return;
+    collectionNamesKey = key;
+    const controller = new AbortController();
+    void loadCollectionNames(session, controller.signal)
+      .then((names) => {
+        if (!controller.signal.aborted) collectionNames = names;
+      })
+      .catch(() => {
+        // Unnamed imports show their short ID.
+      });
+    return () => controller.abort();
+  });
   const selectedSnapshotOverlay = $derived(
     selectedSnapshot ? snapshotOverlay(selectedSnapshot) : undefined,
   );
@@ -1179,13 +1233,28 @@
   );
   const activeTag = $derived(tagCatalog.find((tag) => tag.id === activeTagID));
   const naturalProfile = $derived(selectNaturalSearchProfile(naturalProfiles));
-  const naturalModeOptions = $derived(naturalSearchModes(naturalProfile));
+  const similarAvailable = $derived(
+    naturalProfiles.some((profile) => profile.embedding_bindings.length > 0),
+  );
   const sortedRows = $derived(
     orderRows(rows, sortField, sortDirection, activeQuery !== "" || tagBrowse),
   );
   const visibleDocumentCount = $derived(
     sortedRows.filter((row) => row.node.kind === "file").length,
   );
+  const showingResults = $derived(activeQuery !== "" || tagBrowse);
+  const columns = $derived(
+    snapshotActive
+      ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
+      : showingResults
+        ? resultColumns(browserWidth, { match: activeQuery !== "", actions: similarAvailable })
+        : { modified: browserWidth >= 700, match: false, type: browserWidth >= 540 },
+  );
+  // Previous and Next walk the files of a live results list.
+  const resultFiles = $derived(
+    showingResults ? sortedRows.filter((row) => row.node.kind === "file") : [],
+  );
+  const selectedResultIndex = $derived(resultFiles.findIndex((row) => row.node.id === selectedID));
   const selectedCount = $derived(bulkSelection.selectedIDs.size);
   const bulkTargets = $derived(selectedTargets(sortedRows, bulkSelection.selectedIDs));
   const allVisibleDocumentsSelected = $derived(
@@ -1269,6 +1338,12 @@
   onMount(() => {
     try {
       savedQueryDraft = queryFromFragment(location.hash);
+      queryDraftChanged = savedQueryDraft !== null;
+      queryDraftFromDefinition = savedQueryDraft !== null;
+      if (savedQueryDraft) {
+        searchQuery = savedQueryDraft.text;
+        searchSyntax = savedQueryDraft.syntax;
+      }
     } catch (cause) {
       queryURLError = cause instanceof Error ? cause.message : String(cause);
     }
@@ -1430,8 +1505,7 @@
       naturalProfiles = profiles;
       naturalProfilesError = "";
       const selected = selectNaturalSearchProfile(profiles);
-      const defaultMode: NaturalSearchMode =
-        selected && naturalQueryBindings(selected).length ? "auto" : "names";
+      const defaultMode: NaturalSearchMode = selected ? "auto" : "names";
       if (snapshotActive) {
         naturalProfileDefaultPending = { request, session };
         return;
@@ -1665,9 +1739,14 @@
   }
 
   function resetLocalSessionUI(): void {
+    clearToasts();
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
+    querySettingsApplied = false;
+    queryDraftChanged = false;
+    queryDraftFromDefinition = false;
+    queryDraftRevision++;
     const url = new URL(location.href);
     const params = new URLSearchParams(url.hash.slice(1));
     url.hash = new URLSearchParams(
@@ -1704,11 +1783,9 @@
     tagHotkeys = {};
     shortcutNotice = "";
     shortcutError = "";
-    auditLoading = false;
     auditError = "";
     manageTagsTarget = null;
     batchTagsTargets = null;
-    batchTagsContext = "live";
     shortcutHelpOpen = false;
     activeQuery = "";
     activeTagID = "";
@@ -1722,6 +1799,7 @@
     taggedTrashed = 0;
     searchPending = false;
     searchQuery = "";
+    searchSyntax = "simple";
     tagFilterID = "";
     clearBulkSelection();
     error = "";
@@ -1929,7 +2007,7 @@
       if (resolution.fence.content_version_ids.length === 0) {
         applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
         accepted = true;
-        naturalSearchNote = "No live documents match the current filter.";
+        naturalSearchNote = "No documents match the current filter.";
         loading = false;
         // No search ran, so there is no search_run; a submission still counts as an empty search.
         if (submitted) {
@@ -2094,8 +2172,7 @@
       if (deferredProfileDefault) {
         naturalProfileDefaultPending = null;
         if (acceptedQuery) {
-          const defaultMode: NaturalSearchMode =
-            naturalProfile && naturalQueryBindings(naturalProfile).length ? "auto" : "names";
+          const defaultMode: NaturalSearchMode = naturalProfile ? "auto" : "names";
           const rerun = naturalSearchMode !== defaultMode;
           naturalSearchMode = defaultMode;
           naturalRerank = false;
@@ -2297,17 +2374,35 @@
 
   function clearSearch(): void {
     searchQuery = "";
-    if (!activeQuery && !searchPending) return;
+    const wasSnapshot = snapshotActive;
+    if (wasSnapshot) {
+      leaveSnapshotMode();
+      querySettingsApplied = false;
+      discardQueryDraft();
+    }
+    if (!wasSnapshot && !activeQuery && !searchPending) return;
     if (tagFilterID) void loadTaggedNodes(tagFilterID);
     else if (directory) void loadDirectory(directory.id, false);
   }
 
-  function changeNaturalSearchMode(value: string): void {
-    naturalProfileDefaultPending = null;
-    naturalSearchMode = value as NaturalSearchMode;
-    if (naturalSearchMode === "names") naturalRerank = false;
-    const query = searchPending ? submittedSearchQuery : activeQuery;
-    if (query) void runSearch(selectedID, query);
+  async function submitDocumentSearch(): Promise<void> {
+    if (searchSyntax === "advanced" || querySettingsApplied || queryDraftChanged) {
+      querySettingsApplied ||= queryDraftChanged;
+      await submitSnapshot(currentQueryDraft(), snapshot.state.options ?? { page_size: 100 });
+      return;
+    }
+    savedQueryDraft = null;
+    replaceQueryURL(null);
+    naturalSearchMode = naturalProfile ? "auto" : "names";
+    const outcome = await runSearch(undefined, undefined, true);
+    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+  }
+
+  function changeSearchSyntax(value: string): void {
+    searchSyntax = value as Query["syntax"];
+    if (savedQueryDraft)
+      keepQueryDraft({ ...savedQueryDraft, text: searchQuery, syntax: searchSyntax });
+    if (searchQuery.trim()) void submitDocumentSearch();
   }
 
   function changeNaturalRerank(checked: boolean): void {
@@ -2327,6 +2422,17 @@
   function activate(row: Row): void {
     openDocument(row.node.id);
     if (row.node.kind === "dir") void loadDirectory(row.node.id, true);
+  }
+
+  // The matched text, when it says more than the name the row already shows.
+  function matchExcerpt(row: Row): string {
+    const text = row.excerpt?.trim() ?? "";
+    return row.naturalMode && text !== row.node.name && text !== row.path ? text : "";
+  }
+
+  function navigateResults(direction: "previous" | "next"): void {
+    const target = resultFiles[selectedResultIndex + (direction === "next" ? 1 : -1)];
+    if (target) openDocument(target.node.id);
   }
 
   function openDocument(nodeID: number): void {
@@ -2513,7 +2619,6 @@
   async function loadAuditStatus(nodeID?: number, sourceKey?: string): Promise<void> {
     const request = ++auditGeneration;
     const session = webSession;
-    auditLoading = true;
     try {
       const status = await generated.auditStatus({ node_id: nodeID }, { session });
       if (!inspectorRequestCurrent(request, auditGeneration, session, nodeID, sourceKey)) return;
@@ -2526,8 +2631,6 @@
         return;
       }
       auditError = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      if (request === auditGeneration) auditLoading = false;
     }
   }
 
@@ -2536,7 +2639,7 @@
       sortDirection = sortDirection === "asc" ? "desc" : "asc";
     } else {
       sortField = field;
-      sortDirection = field === "name" ? "asc" : "desc";
+      sortDirection = field === "name" || field === "type" ? "asc" : "desc";
     }
   }
 
@@ -2636,21 +2739,10 @@
 
   function openBatchTags(targets: readonly SelectionTarget[]): void {
     if (loading) return;
-    batchTagsChoice = undefined;
-    batchTagsContext = "live";
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
   function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
-    if (batchTagsContext === "snapshot") {
-      if (
-        batchTagsSnapshotEpoch !== snapshot.epoch ||
-        batchTagsSnapshotID !== snapshot.state.firstPage?.snapshot_id
-      )
-        return;
-      applySnapshotReceipt(_receipt);
-      return;
-    }
     // A replay describes a historical success. Reload current observations
     // instead of overwriting newer rows with the receipt's old revisions.
     refreshCurrentView();
@@ -2663,15 +2755,14 @@
       naturalProfileDefaultPending?.request === profileGeneration &&
       naturalProfileDefaultPending.session === webSession;
     const acceptedQuery = activeQuery;
-    if (batchTagsContext === "snapshot") batchTagsTargets = null;
     if (!resumeLive) naturalProfileDefaultPending = null;
     const wasActive = snapshot.state.status !== "idle";
     snapshot.reset();
     if (!wasActive) return;
+    querySettingsApplied = false;
     if (deferredProfileDefault) {
       naturalProfileDefaultPending = null;
-      const defaultMode: NaturalSearchMode =
-        naturalProfile && naturalQueryBindings(naturalProfile).length ? "auto" : "names";
+      const defaultMode: NaturalSearchMode = naturalProfile ? "auto" : "names";
       if (acceptedQuery && naturalSearchMode !== defaultMode) {
         naturalSearchMode = defaultMode;
         naturalRerank = false;
@@ -2684,7 +2775,6 @@
     query: Query,
     options: SnapshotOptions,
   ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
-    if (batchTagsContext === "snapshot") batchTagsTargets = null;
     invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
@@ -2696,9 +2786,17 @@
   }
 
   async function submitSnapshot(query: Query, options: SnapshotOptions): Promise<void> {
+    const revision = queryDraftRevision;
     const outcome = await runSnapshot(query, options);
     if (outcome?.type === "failed") reportFailure(webSession, "search", outcome.cause);
-    else if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+    else if (outcome) {
+      if (revision === queryDraftRevision) {
+        queryBarOpen = false;
+        queryDraftChanged = false;
+        queryDraftFromDefinition = false;
+      }
+      reportSearch(webSession, outcome.type, outcome.empty);
+    }
   }
 
   function runSnapshotAgain(): void {
@@ -2708,6 +2806,7 @@
 
   function changeSnapshotQuery(query: Query): void {
     if (!snapshot.state.options) return;
+    querySettingsApplied = true;
     void runSnapshot(query, snapshot.state.options);
   }
 
@@ -2822,23 +2921,26 @@
   function startSnapshotAction(choice: SnapshotActionChoice): void {
     if (snapshot.actionBusy || snapshot.state.status !== "ready") return;
     snapshot.actionError = "";
-    if (choice.scope === "selection") openSnapshotBatchTags(choice);
-    else void snapshot.startAction(choice);
+    if (choice.scope === "query") void snapshot.startAction(choice);
   }
 
-  function openSnapshotBatchTags(choice?: SnapshotActionChoice): void {
+  function openSnapshotActions(scope: "selection" | "query"): void {
+    if (snapshot.state.status !== "ready") return;
+    if (scope === "selection" && (snapshotTargets.length === 0 || snapshotTargets.length > 1000))
+      return;
+    snapshotActionsSnapshotID = snapshot.state.firstPage?.snapshot_id;
+    snapshotActionsEpoch = snapshot.epoch;
+    snapshot.openActions(scope);
+  }
+
+  function handleSnapshotSelectionTagged(receipt: BatchTagReceipt): void {
+    // A receipt from before a rerun belongs to documents this view no longer shows.
     if (
-      snapshot.state.status !== "ready" ||
-      snapshotTargets.length === 0 ||
-      snapshotTargets.length > 1000
+      snapshotActionsEpoch !== snapshot.epoch ||
+      snapshotActionsSnapshotID !== snapshot.state.firstPage?.snapshot_id
     )
       return;
-    batchTagsChoice = choice;
-    batchTagsContext = "snapshot";
-    batchTagsSnapshotID = snapshot.state.firstPage?.snapshot_id;
-    batchTagsSnapshotEpoch = snapshot.epoch;
-    batchTagsTargets = snapshotTargets.map((target) => ({ ...target }));
-    snapshot.actionsOpen = false;
+    applySnapshotReceipt(receipt);
   }
 
   async function openCollectionMember(member: Node, current: () => boolean): Promise<void> {
@@ -2916,31 +3018,108 @@
     ]);
   }
 
-  function handleRestored(_receipt: Node): void {
+  function reloadAfterChange(): void {
     void photosChanged();
     void hiddenWorkspace?.refresh();
-    selectNode(undefined);
-
-    // Restore can advance an arbitrary destination parent and make every
-    // cached path snapshot stale. Keep the trash drawer's authoritative
-    // receipt visible while reacquiring the live tree from root.
-    stack = [];
-    directory = null;
-    replaceRows([], false);
-    searchQuery = "";
-    activeQuery = "";
-    tagFilterID = "";
-    activeTagID = "";
-    taggedInspected = 0;
-    taggedTotal = 0;
-    taggedTrashed = 0;
-    truncated = false;
-    void loadRoot();
     void loadTagCatalog();
+    refreshDocumentsView();
+  }
+
+  function failToast(cause: unknown, session: string): void {
+    if (session !== webSession) return;
+    if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+    else showToast(cause instanceof Error ? cause.message : String(cause), { tone: "danger" });
+  }
+
+  let trashing = false;
+  async function trashRow(target: Row): Promise<void> {
+    if (trashing) return;
+    trashing = true;
+    const session = webSession;
+    try {
+      const { receipt, message } = await moveToTrash(session, target.node, target.path);
+      if (session !== webSession) return;
+      selectNode(undefined);
+      reloadAfterChange();
+      showToast(message, { action: { label: "Undo", run: () => undoMove(session, receipt) } });
+    } catch (cause) {
+      failToast(cause, session);
+    } finally {
+      trashing = false;
+    }
+  }
+
+  // A frozen result can't drop a row, so a trash or undo from it runs the search again.
+  async function trashSnapshotDocument(): Promise<void> {
+    const target = currentInspectorNode;
+    if (!target || trashing) return;
+    trashing = true;
+    const session = webSession;
+    try {
+      const { receipt, message } = await moveToTrash(session, target, currentInspectorPath);
+      if (session !== webSession) return;
+      reloadAfterChange();
+      runSnapshotAgain();
+      showToast(message, { action: { label: "Undo", run: () => undoMove(session, receipt) } });
+    } catch (cause) {
+      failToast(cause, session);
+    } finally {
+      trashing = false;
+    }
+  }
+
+  async function undoMove(session: string, receipt: Node): Promise<void> {
+    try {
+      const { notice } = await undoTrash(session, receipt);
+      if (session !== webSession) return;
+      reloadAfterChange();
+      if (snapshotActive) runSnapshotAgain();
+      if (notice) showToast(notice);
+    } catch (cause) {
+      failToast(cause, session);
+    }
+  }
+
+  function handleRestored(receipt: Node, message: string): void {
+    reloadAfterChange();
+    showToast(message, { action: { label: "Show", run: () => showNode(receipt) } });
+  }
+
+  async function showNode(node: Node): Promise<void> {
+    const session = webSession;
+    activePanel = null;
+    try {
+      const parent = await generated.resolvePath(
+        { path: parentPath(node.path ?? "/") },
+        { session },
+      );
+      if (session !== webSession) return;
+      await loadDirectory(parent.id, true, node.id);
+    } catch (cause) {
+      failToast(cause, session);
+    }
+  }
+
+  async function processInspectedSource(source: SelectedSource): Promise<void> {
+    const session = webSession;
+    try {
+      const node = await generated.getNode(source.nodeID, { session });
+      if (session !== webSession) return;
+      activePanel = {
+        kind: "processing",
+        target: { node: { ...node, current_version_id: source.versionID }, path: source.path },
+        intent: null,
+        scope: [source.versionID],
+      };
+    } catch (cause) {
+      if (session === webSession) handleFailure(cause);
+    }
   }
 
   function handleTagChanged(receipt: TagAssignmentReceipt, assigned: boolean): void {
-    const selectedChanged = selectedID === receipt.node.id;
+    const selectedChanged =
+      selectedID === receipt.node.id ||
+      (snapshotActive && selectedSource?.nodeID === receipt.node.id);
     const modalChanged = manageTagsTarget?.node.id === receipt.node.id;
     if (!selectedChanged && !modalChanged) return;
     if (modalChanged && manageTagsTarget) {
@@ -3079,19 +3258,24 @@
   }
 
   function currentQueryDraft(): Query {
-    if (savedQueryDraft) return savedQueryDraft;
-    if (snapshot.state.query) return snapshot.state.query;
+    const existing = savedQueryDraft ?? snapshot.state.query;
+    if (existing) return { ...existing, text: searchQuery, syntax: searchSyntax };
     return {
       ...parseQuery("{}"),
       text: searchQuery,
+      syntax: searchSyntax,
       filters: tagFilterID ? { tag_ids: [tagFilterID] } : {},
       sort: {
         field:
-          sortField === "modified"
-            ? "modified_at"
-            : sortField === "name" && (activeQuery !== "" || tagBrowse)
-              ? "path"
-              : sortField,
+          sortField === "relevance"
+            ? "path"
+            : sortField === "modified"
+              ? "modified_at"
+              : sortField === "type"
+                ? "media_type"
+                : sortField === "name" && (activeQuery !== "" || tagBrowse)
+                  ? "path"
+                  : sortField,
         direction: sortDirection,
       },
     };
@@ -3131,6 +3315,8 @@
   function keepQueryDraft(query: Query): void {
     replaceQueryURL(query);
     savedQueryDraft = query;
+    searchQuery = query.text;
+    searchSyntax = query.syntax;
     queryEditorInitial = query;
     queryURLError = "";
   }
@@ -3158,6 +3344,19 @@
     ];
   });
 
+  // Deep paths keep the first folder and the last two; the middle folds into a menu.
+  const crumbItems = $derived<
+    ({ key: string; name: string; path: string } | { key: string; hidden: typeof breadcrumbs })[]
+  >(
+    breadcrumbs.length > 3
+      ? [
+          { key: breadcrumbs[0]!.path, ...breadcrumbs[0]! },
+          { key: "hidden", hidden: breadcrumbs.slice(1, -2) },
+          ...breadcrumbs.slice(-2).map((crumb) => ({ key: crumb.path, ...crumb })),
+        ]
+      : breadcrumbs.map((crumb) => ({ key: crumb.path, ...crumb })),
+  );
+
   async function openPath(path: string): Promise<void> {
     const request = ++generation;
     const session = webSession;
@@ -3183,14 +3382,25 @@
     activePanel = panel;
   }
 
-  function openSavedQueries(): void {
+  let createSavedSearch = $state(false);
+
+  function openSavedQueries(create = true): void {
+    createSavedSearch = create;
     queryEditorInitial = currentQueryDraft();
     activePanel = { kind: "savedQueries" };
   }
 
   function openQueryEditor(value?: Query): void {
     try {
-      keepQueryDraft(value ?? currentQueryDraft());
+      if (value) {
+        queryEditorVersion++;
+        queryDraftRevision++;
+        queryDraftFromDefinition = true;
+        queryDraftChanged = true;
+      }
+      savedQueryDraft = value ?? currentQueryDraft();
+      if (value) keepQueryDraft(value);
+      queryEditorInitial = savedQueryDraft;
       queryBarOpen = true;
     } catch (cause) {
       queryURLError = cause instanceof Error ? cause.message : String(cause);
@@ -3198,9 +3408,22 @@
   }
 
   function discardQueryDraft(): void {
+    queryDraftRevision++;
+    queryDraftFromDefinition = false;
     queryBarOpen = false;
+    queryDraftChanged = false;
     savedQueryDraft = null;
+    searchQuery = snapshot.state.query?.text ?? "";
+    searchSyntax = snapshot.state.query?.syntax ?? "simple";
     replaceQueryURL(null);
+  }
+
+  function closeQueryEditor(): void {
+    queryBarOpen = false;
+    if (!queryDraftChanged) {
+      savedQueryDraft = snapshot.state.query ?? null;
+      replaceQueryURL(savedQueryDraft);
+    }
   }
 </script>
 
@@ -3250,6 +3473,8 @@
   </main>
 {:else}
   <div class="app-shell">
+    <TelemetryNotice session={webSession} onmanage={() => openPanel({ kind: "telemetry" })} />
+    <Toasts />
     <nav class="app-nav" class:open={navOpen} aria-label="Docbank navigation">
       <div class="brand">
         <span class="brand-mark"><LibraryIcon size="15" aria-hidden="true" /></span>
@@ -3280,15 +3505,15 @@
             onclick={() => navigatePhotos("/photos")}
             ><LibraryIcon size="16" aria-hidden="true" />Library</button
           >
-          <button
-            type="button"
-            class="nav-item"
-            aria-current={mapMode ? "page" : undefined}
-            onclick={() =>
-              navigatePhotos(
-                mapMode ? photoPath : albumID ? `/photos/map/${albumID}` : "/photos/map",
-              )}><MapPinIcon size="16" aria-hidden="true" />Map</button
-          >
+          {#if tiles.tile_url || mapMode}<button
+              type="button"
+              class="nav-item"
+              aria-current={mapMode ? "page" : undefined}
+              onclick={() =>
+                navigatePhotos(
+                  mapMode ? photoPath : albumID ? `/photos/map/${albumID}` : "/photos/map",
+                )}><MapPinIcon size="16" aria-hidden="true" />Map</button
+            >{/if}
           <button
             type="button"
             class="nav-item"
@@ -3297,6 +3522,43 @@
             onclick={() => navigatePhotos("/photos/albums")}
             ><FoldersIcon size="16" aria-hidden="true" />Albums</button
           >
+          {#if photoAlbums?.loadError}<span class="sidebar-album-error">Albums unavailable</span
+            ><Button size="sm" disabled={photoAlbums.busy} onclick={() => void photoAlbums?.load()}
+              >Retry albums</Button
+            >{/if}
+          {#each photoAlbums?.items ?? [] as album (album.id)}
+            <button
+              type="button"
+              class="nav-item album-item"
+              class:album-drop={dragOver === album.id}
+              title={album.name}
+              aria-current={albumID === album.id ? "page" : undefined}
+              onclick={() => navigatePhotos(`/photos/albums/${album.id}`)}
+              ondragover={(event) => {
+                if (event.dataTransfer?.types.includes(photoDragType) && photoAlbums?.drag) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                  dragOver = album.id;
+                }
+              }}
+              ondragleave={() => (dragOver = "")}
+              ondrop={(event) => {
+                dragOver = "";
+                void photoAlbums?.drop(album, event);
+              }}
+            >
+              {#if album.starred}<StarIcon size="14" aria-hidden="true" />{/if}<span
+                class="sidebar-album-name">{album.name}</span
+              ><span class="sidebar-album-count"
+                >{photoAlbums?.loadError || album.included_count === undefined
+                  ? "Count unavailable"
+                  : album.included_count.toLocaleString()}</span
+              >{#if photoAlbums?.targetID === album.id}<TargetIcon
+                  size="14"
+                  aria-label="B target"
+                />{/if}
+            </button>
+          {/each}
           <button
             type="button"
             class="nav-item"
@@ -3312,50 +3574,6 @@
             ><Trash2Icon size="16" aria-hidden="true" />Trash</button
           >
         </div>
-        {#if photoAlbums}
-          <div class="nav-group album-targets">
-            <h2>Albums</h2>
-            {#if photoAlbums.loadError}<span class="sidebar-album-error">Albums unavailable</span
-              ><Button
-                size="sm"
-                disabled={photoAlbums.busy}
-                onclick={() => void photoAlbums?.load()}>Retry albums</Button
-              >{/if}
-            {#each photoAlbums.items as album (album.id)}
-              <button
-                type="button"
-                class="nav-item"
-                class:album-drop={dragOver === album.id}
-                title={album.name}
-                aria-current={albumID === album.id ? "page" : undefined}
-                onclick={() => navigatePhotos(`/photos/albums/${album.id}`)}
-                ondragover={(event) => {
-                  if (event.dataTransfer?.types.includes(photoDragType) && photoAlbums?.drag) {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "copy";
-                    dragOver = album.id;
-                  }
-                }}
-                ondragleave={() => (dragOver = "")}
-                ondrop={(event) => {
-                  dragOver = "";
-                  void photoAlbums?.drop(album, event);
-                }}
-              >
-                {#if album.starred}<StarIcon size="14" aria-hidden="true" />{/if}<span
-                  class="sidebar-album-name">{album.name}</span
-                ><span class="sidebar-album-count"
-                  >{photoAlbums.loadError || album.included_count === undefined
-                    ? "Count unavailable"
-                    : album.included_count.toLocaleString()}</span
-                >{#if photoAlbums.targetID === album.id}<TargetIcon
-                    size="14"
-                    aria-label="B target"
-                  />{/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
       {:else}
         <div class="nav-group">
           <button
@@ -3372,21 +3590,21 @@
           <button
             type="button"
             class="nav-item"
-            aria-label="Saved queries and highlights"
+            aria-label="Saved searches"
             onclick={() => {
               navOpen = false;
-              openSavedQueries();
+              openSavedQueries(false);
             }}
           >
-            <BookmarkIcon size="16" aria-hidden="true" />Saved queries
+            <BookmarkIcon size="16" aria-hidden="true" />Saved searches
           </button>
           <button
             type="button"
             class="nav-item"
-            aria-label="Import collections"
+            aria-label="Import history"
             onclick={() => openPanel({ kind: "collections" })}
           >
-            <FoldersIcon size="16" aria-hidden="true" />Collections
+            <FoldersIcon size="16" aria-hidden="true" />Import history
           </button>
           <button
             type="button"
@@ -3397,55 +3615,13 @@
             <Trash2Icon size="16" aria-hidden="true" />Trash
           </button>
         </div>
-        <div class="nav-group">
-          <h2>Review and export</h2>
-          <button type="button" class="nav-item" onclick={() => openPanel({ kind: "termReports" })}>
-            <FileSearchIcon size="16" aria-hidden="true" />Search exports
-          </button>
-          <button type="button" class="nav-item" onclick={() => openPanel({ kind: "bates" })}>
-            <StampIcon size="16" aria-hidden="true" />Bates export
-          </button>
-          <button
-            type="button"
-            class="nav-item"
-            disabled={snapshotActive && snapshot.state.status !== "ready"}
-            onclick={() => {
-              navOpen = false;
-              snapshot.actionError = "";
-              snapshot.actionsOpen = true;
-            }}
-          >
-            <LayersIcon size="16" aria-hidden="true" />Snapshot actions
-          </button>
-        </div>
       {/if}
-      <div class="nav-group">
-        <h2>Vault</h2>
-        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "backups" })}>
-          <ArchiveIcon size="16" aria-hidden="true" />Backup snapshots
-        </button>
-        <button
-          type="button"
-          class="nav-item"
-          aria-label="Storage status"
-          onclick={() => openPanel({ kind: "storage" })}
+      <div class="nav-group vault-nav">
+        <AppTooltip text="Disk use, backups, protected folders, and usage reporting" side="right"
+          ><button type="button" class="nav-item" onclick={() => openPanel({ kind: "storage" })}>
+            <ArchiveIcon size="16" aria-hidden="true" />System
+          </button></AppTooltip
         >
-          <HardDriveIcon size="16" aria-hidden="true" />Storage
-        </button>
-        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "jobs" })}>
-          <ActivityIcon size="16" aria-hidden="true" />Background jobs
-        </button>
-        <button
-          type="button"
-          class="nav-item"
-          aria-label="Verify permanent audit evidence"
-          onclick={() => openPanel({ kind: "auditEvidence" })}
-        >
-          <ShieldCheckIcon size="16" aria-hidden="true" />Audit evidence
-        </button>
-        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "telemetry" })}>
-          <ActivityIcon size="16" aria-hidden="true" />Anonymous usage
-        </button>
       </div>
     </nav>
     {#if navOpen}
@@ -3457,17 +3633,17 @@
       ></button>
     {/if}
 
-    <div class="app-main">
+    <div class="app-main" style:--content-inset={photoMode ? "var(--space-5)" : undefined}>
       <TopBar class="app-top-bar">
         {#snippet left()}
           <span class="nav-toggle">
-            <IconButton
+            <IconAction
               ariaLabel="Open navigation"
               ariaExpanded={navOpen}
               onclick={() => (navOpen = !navOpen)}
             >
               <MenuIcon size="18" aria-hidden="true" />
-            </IconButton>
+            </IconAction>
           </span>
         {/snippet}
         {#snippet search()}
@@ -3475,44 +3651,59 @@
             <div class="search-controls">
               <form
                 class="search"
+                onfocusin={() => (searchFocused = true)}
+                onfocusout={() => (searchFocused = false)}
                 onsubmit={(event) => {
                   event.preventDefault();
-                  void runSearch(undefined, undefined, true).then((outcome) => {
-                    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
-                  });
+                  void submitDocumentSearch();
                 }}
               >
                 <SearchInput
                   bind:value={searchQuery}
                   bind:inputEl={searchInputEl}
-                  placeholder="Search names and extracted text"
+                  placeholder={naturalSearchPlaceholder(searchSyntax)}
                   ariaLabel="Search documents"
-                  keys={formatShortcutKeys("/")}
                   block
                   onclear={clearSearch}
                 />
-              </form>
-              {#if naturalProfiles.length > 0}
-                <SelectDropdown
-                  title="Search mode"
-                  value={naturalSearchMode}
-                  options={naturalModeOptions}
-                  onchange={changeNaturalSearchMode}
-                />
-                {#if naturalProfile?.reranking_available && naturalSearchMode !== "names"}
-                  <label class="rerank-control">
-                    <Checkbox
-                      checked={naturalRerank}
-                      ariaLabel="Rerank results"
-                      onchange={changeNaturalRerank}
-                    />
-                    <span>Rerank results</span>
-                  </label>
+                {#if !searchFocused && !searchQuery}
+                  <span
+                    class="search-hint"
+                    onclick={() => searchInputEl?.focus()}
+                    role="presentation"
+                  >
+                    <AppTooltip text="Press / to search" align="end"
+                      ><KbdBadge keys={formatShortcutKeys("/")} /></AppTooltip
+                    >
+                  </span>
                 {/if}
+              </form>
+              <SelectDropdown
+                title="Search syntax"
+                value={searchSyntax}
+                options={searchSyntaxOptions}
+                onchange={changeSearchSyntax}
+              />
+              {#if searchSyntax === "simple" && !snapshotActive && naturalSearchMode !== "names" && naturalProfile?.reranking_available}
+                <label class="rerank-control">
+                  <Checkbox
+                    checked={naturalRerank}
+                    ariaLabel="Rerank results"
+                    onchange={changeNaturalRerank}
+                  />
+                  <span>Rerank results</span>
+                </label>
               {/if}
-              <Button size="sm" onclick={() => openQueryEditor()}>
-                <SlidersHorizontalIcon size="14" aria-hidden="true" />Edit query
-              </Button>
+              <AppTooltip text={queryDraftChanged ? "Unapplied changes" : ""}>
+                <Button
+                  size="sm"
+                  ariaExpanded={queryBarOpen}
+                  onclick={() => (queryBarOpen ? closeQueryEditor() : openQueryEditor())}
+                >
+                  <SlidersHorizontalIcon size="14" aria-hidden="true" />Advanced
+                  {#if queryDraftChanged}<span aria-hidden="true">•</span>{/if}
+                </Button>
+              </AppTooltip>
             </div>
           {:else if photoSearchable && activePhotos()}
             <div
@@ -3525,41 +3716,54 @@
                 {/key}
               {/key}
             </div>
+          {:else if photoMode && !hiddenMode && photoValidated && photoState}
+            <!-- Library search stays in place on Albums and Map; submitting opens Library. -->
+            <div
+              class="search-controls"
+              role="search"
+              inert={!!photoID}
+              onsubmit={() => queueMicrotask(() => navigatePhotos("/photos"))}
+            >
+              {#key photoState.photos}
+                {#key photoState.photos.queryResets}
+                  <PhotoSearch photos={photoState.photos} />
+                {/key}
+              {/key}
+            </div>
           {/if}
         {/snippet}
         {#snippet right()}
           <div class="top-actions">
             {#if !photoMode}
-              <Button
-                size="sm"
-                disabled={!exportHasJob &&
+              <ExportMenu
+                downloadDisabled={!exportHasJob &&
                   (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)}
-                onclick={() => openExport()}
-              >
-                <DownloadIcon size="14" aria-hidden="true" />Export
-              </Button>
+                ondownload={() => openExport()}
+                onreport={() => openPanel({ kind: "termReports" })}
+                onbates={() => openPanel({ kind: "bates" })}
+              />
               <span class="divider" aria-hidden="true"></span>
-              <IconButton
+              <IconAction
                 ariaLabel="Keyboard shortcuts and tag hotkeys"
-                title="Keyboard shortcuts and tag hotkeys (?)"
+                tip="Keyboard shortcuts and tag hotkeys (?)"
                 onclick={openShortcutHelp}
               >
                 <KeyboardIcon size="16" aria-hidden="true" />
-              </IconButton>
+              </IconAction>
             {:else}
-              {#if activePhotos()}
-                <IconButton ariaLabel="Keyboard shortcuts" onclick={openShortcutHelp}
-                  ><KeyboardIcon size="16" aria-hidden="true" /></IconButton
-                >
-              {/if}
+              <IconAction
+                ariaLabel="Keyboard shortcuts"
+                tip="Keyboard shortcuts (?)"
+                onclick={openShortcutHelp}><KeyboardIcon size="16" aria-hidden="true" /></IconAction
+              >
             {/if}
-            <ThemeToggle />
-            <IconButton
+            <ThemeButton />
+            <IconAction
               ariaLabel={keySession ? "Sign out" : "Lock web session"}
               onclick={() => void lock()}
             >
               <LogOutIcon size="16" aria-hidden="true" />
-            </IconButton>
+            </IconAction>
           </div>
         {/snippet}
       </TopBar>
@@ -3743,38 +3947,63 @@
         {#if queryURLError}<p class="error" role="alert">
             Query URL could not be loaded: {queryURLError}
           </p>{/if}
-        {#if savedQueryDraft}
-          <div class="query-draft-notice">
-            <span
-              >{snapshotActive
-                ? "Query draft retained · Run to replace the accepted frozen snapshot"
-                : "Query draft retained · not applied to live results"}</span
-            >
-            <Button size="sm" onclick={discardQueryDraft}>Discard query draft</Button>
-          </div>
+        {#if savedQueryDraft && (queryBarOpen || queryDraftChanged)}
+          {#key queryEditorVersion}
+            <QueryBar
+              open={queryBarOpen}
+              session={webSession}
+              query={savedQueryDraft}
+              showExpression={queryDraftFromDefinition}
+              profile={snapshot.state.options?.profile ?? ""}
+              initialPageSize={snapshot.state.options?.page_size ?? 100}
+              runError={snapshot.state.error?.message}
+              profiles={naturalProfiles}
+              onchange={keepQueryDraft}
+              ondirty={(dirty) => {
+                queryDraftRevision++;
+                queryDraftChanged = queryDraftFromDefinition || dirty;
+              }}
+              onrun={(query, options) => {
+                querySettingsApplied = true;
+                void submitSnapshot(query, options);
+              }}
+              onsave={() => {
+                queryDraftChanged = true;
+                queryBarOpen = false;
+                openSavedQueries();
+              }}
+              onclose={closeQueryEditor}
+              oncancel={discardQueryDraft}
+              onauthfailure={handleFailure}
+            />
+          {/key}
         {/if}
 
-        {#if queryBarOpen && savedQueryDraft}
-          <QueryBar
-            session={webSession}
-            query={savedQueryDraft}
-            profile={snapshot.state.options?.profile ?? ""}
-            onchange={keepQueryDraft}
-            onrun={submitSnapshot}
-            onsave={openSavedQueries}
-            onclose={() => (queryBarOpen = false)}
-            onauthfailure={handleFailure}
-          />
-        {/if}
-
-        <main class="workspace">
-          <section class="browser" aria-label="Vault browser">
+        <main
+          class="workspace"
+          style:--inspector-width={inspectorWidth === undefined
+            ? "clamp(420px, 32vw, 480px)"
+            : `min(${inspectorWidth}px, 50vw)`}
+        >
+          <section
+            class="browser"
+            class:hide-modified={!columns.modified}
+            class:hide-type={!columns.type}
+            class:hide-match={!columns.match}
+            aria-label="Vault browser"
+            {@attach watchWidth}
+          >
             {#if snapshotActive}
               <div class="browser-toolbar">
                 <div class="location">
                   <div>
-                    <span>Frozen query snapshot</span>
-                    <strong>{snapshotQuery?.text || "All documents"}</strong>
+                    <span class="location-kind kit-sr-only">Search results</span>
+                    <strong
+                      >{(snapshot.state.firstPage?.total ?? 0).toLocaleString()} result{snapshot
+                        .state.firstPage?.total === 1
+                        ? ""
+                        : "s"}</strong
+                    >
                   </div>
                 </div>
                 <div class="toolbar-actions">
@@ -3783,20 +4012,25 @@
                     >{/if}
                   <Button
                     size="sm"
-                    tone="info"
-                    disabled={snapshot.state.status !== "ready"}
-                    onclick={() => {
-                      snapshot.actionError = "";
-                      snapshot.actionsOpen = true;
-                    }}>Tag or recover</Button
+                    disabled={snapshot.state.status !== "ready" || !snapshot.state.firstPage?.total}
+                    onclick={() => openSnapshotActions("query")}
+                    ><TagIcon size={14} aria-hidden="true" /> Tag all…</Button
                   >
-                  <Button size="sm" onclick={() => leaveSnapshotMode(true)}
-                    >Back to live folder</Button
-                  >
+                  <Button size="sm" onclick={clearSearch}>Clear search</Button>
                 </div>
               </div>
               {#if snapshot.state.error}
                 <div class="banner error" role="alert">{snapshot.state.error.message}</div>
+              {/if}
+              {#if snapshot.retained && !snapshot.recoveryAction && !snapshot.actionsOpen}
+                <TagRunNotice
+                  action={snapshot.retained}
+                  tags={tagCatalog}
+                  busy={snapshot.actionBusy}
+                  error={snapshot.actionError}
+                  onresume={() => void snapshot.resumeAction()}
+                  ondiscard={() => void snapshot.abandonAction()}
+                />
               {/if}
               {#if snapshotPage && snapshotQuery}
                 <div class="snapshot-browser">
@@ -3804,19 +4038,18 @@
                     facets={snapshotPage.facets}
                     query={snapshotQuery}
                     disabled={snapshot.state.status !== "ready"}
+                    {collectionNames}
                     onchange={changeSnapshotQuery}
                   />
                   <section
                     class="snapshot-results"
                     aria-label="Frozen query results"
+                    {@attach watchSnapshotWidth}
                     data-snapshot-id={snapshotPage.snapshot_id}
                     data-member-hash={snapshotPage.member_hash}
                   >
                     {#if snapshotPage.rows.length === 0}
-                      <EmptyState
-                        title="No matching documents"
-                        description="Change the query or a supported facet, then run another frozen snapshot."
-                      >
+                      <EmptyState title="No matching documents">
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
                     {:else}
@@ -3841,6 +4074,7 @@
                             onsort={() => sortSnapshot("name")}
                           />
                           <TableHeaderCell
+                            class="col-type"
                             label="Type"
                             sortable
                             sortDirection={snapshotQuery.sort.field === "media_type"
@@ -3858,6 +4092,7 @@
                             onsort={() => sortSnapshot("size")}
                           />
                           <TableHeaderCell
+                            class="col-modified"
                             label="Modified"
                             sortable
                             sortDirection={snapshotQuery.sort.field === "modified_at"
@@ -3894,18 +4129,18 @@
                                   onchange={(checked) => snapshot.toggleSelection(row, checked)}
                                 />
                               </td>
-                              <td
-                                ><span class="document-name"
-                                  ><FileTypeIcon kind="file" mime={row.mime_type} /><span
-                                    >{row.path}</span
-                                  ></span
-                                ></td
-                              >
-                              <td class="type-cell" title={row.mime_type || undefined}
+                              <td class="name-cell" aria-label={row.path}>
+                                <ResultName
+                                  name={row.name}
+                                  folder={parentPath(row.path)}
+                                  mime={row.mime_type}
+                                />
+                              </td>
+                              <td class="type-cell col-type"
                                 >{fileTypeLabel("file", row.mime_type)}</td
                               >
                               <td class="numeric">{formatBytes(row.size)}</td>
-                              <td>{formatDate(row.modified_at)}</td>
+                              <td class="date-cell col-modified">{formatDate(row.modified_at)}</td>
                             </tr>
                           {/each}
                         {/snippet}
@@ -3933,35 +4168,49 @@
             {:else}
               <div class="browser-toolbar">
                 <div class="location">
-                  <IconButton
+                  <IconAction
                     size="sm"
                     ariaLabel="Back to previous directory"
+                    tip={stack.length === 0 ? "No previous folder" : "Back"}
                     disabled={stack.length === 0}
                     onclick={goBack}
                   >
                     <ArrowLeftIcon size="14" aria-hidden="true" />
-                  </IconButton>
+                  </IconAction>
                   <div>
-                    <span class="location-kind" class:kit-sr-only={!activeQuery && !tagBrowse}>
+                    <span class="location-kind" class:kit-sr-only={!tagBrowse}>
                       {activeQuery
                         ? "Search results"
                         : tagBrowse
                           ? "Documents tagged"
                           : "Current folder"}
                     </span>
-                    {#if activeQuery || tagBrowse}
-                      <strong>
-                        {activeQuery
-                          ? `“${activeQuery}”${activeTag ? ` · ${activeTag.name}` : ""}`
-                          : (activeTag?.name ?? activeTagID)}
-                      </strong>
+                    {#if activeQuery}
+                      <strong
+                        >{rows.length}{truncated ? "+" : ""} result{rows.length === 1
+                          ? ""
+                          : "s"}</strong
+                      >
+                    {:else if tagBrowse}
+                      <strong>{activeTag?.name ?? activeTagID}</strong>
                     {:else}
                       <nav class="breadcrumbs" aria-label="Folder path">
                         <ol>
-                          {#each breadcrumbs as crumb, index (crumb.path)}
+                          {#each crumbItems as crumb, index (crumb.key)}
                             <li>
                               {#if index > 0}<ChevronRightIcon size="16" aria-hidden="true" />{/if}
-                              {#if index === breadcrumbs.length - 1}
+                              {#if "hidden" in crumb}
+                                <Menu>
+                                  <MenuTrigger ariaLabel="Folders in between">…</MenuTrigger>
+                                  <MenuContent ariaLabel="Folders in between">
+                                    {#each crumb.hidden as hidden (hidden.path)}
+                                      <MenuItem onselect={() => void openPath(hidden.path)}
+                                        >{hidden.name}</MenuItem
+                                      >
+                                    {/each}
+                                  </MenuContent>
+                                </Menu>
+                              {:else if index === crumbItems.length - 1}
                                 <span aria-current="page">{crumb.name}</span>
                               {:else}
                                 <button type="button" onclick={() => void openPath(crumb.path)}
@@ -3978,13 +4227,13 @@
                 <div class="toolbar-actions">
                   {#if tagBrowse}
                     <span>
-                      {rows.length} live shown
+                      {rows.length} shown
                       {#if taggedTrashed > 0}
                         · {taggedTrashed} trashed omitted{/if}
                       {#if truncated}
                         · first {taggedInspected} of {taggedTotal} assignments{/if}
                     </span>
-                  {:else}
+                  {:else if !activeQuery}
                     <span
                       >{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span
                     >
@@ -3995,83 +4244,37 @@
                     title={tagPickerTitle}
                     placeholder="All tags"
                     includeAll
-                    disabled={!directory || tagCatalog.length === 0}
+                    disabled={!directory && loading}
                     onchange={changeTagFilter}
-                  />
-                  <IconButton
-                    size="sm"
-                    ariaLabel="Manage tag definitions"
-                    title="Create, rename, or delete tag definitions"
-                    disabled={loading || tagCatalogLoading}
-                    onclick={() => {
+                    manageDisabled={loading || tagCatalogLoading}
+                    onmanage={() => {
                       if (loading || tagCatalogLoading) return;
                       manageTagsTarget = null;
                       activePanel = { kind: "tagCatalog" };
                     }}
-                  >
-                    <TagsIcon size="14" aria-hidden="true" />
-                  </IconButton>
-                  <IconButton
+                  />
+                  <IconAction
                     size="sm"
                     ariaLabel="Refresh current view"
+                    tip="Refresh"
                     onclick={refreshCurrentView}
                   >
                     <RefreshCwIcon size="14" aria-hidden="true" />
-                  </IconButton>
-                  <Button
-                    size="sm"
-                    disabled={!directory ||
-                      loading ||
-                      !uploadChannel ||
-                      Boolean(uploadChannelError) ||
-                      Boolean(activeQuery) ||
-                      tagBrowse}
-                    onclick={() => {
-                      if (!directory) return;
-                      activePanel = { kind: "mailbox", target: directory };
-                    }}>Import mailbox</Button
-                  >
-                  <Button
-                    size="sm"
-                    disabled={!directory ||
-                      loading ||
-                      !uploadChannel ||
-                      Boolean(uploadChannelError) ||
-                      Boolean(activeQuery) ||
-                      tagBrowse}
-                    onclick={() => {
-                      if (!directory) return;
-                      activePanel = { kind: "loadFile", target: directory };
-                    }}>Import load files</Button
-                  >
-                  <Button
-                    size="sm"
-                    tone="info"
-                    surface="solid"
-                    ariaLabel="Upload files to current folder"
-                    title={activeQuery || tagBrowse
-                      ? "Return to a folder before uploading"
-                      : uploadChannelError
-                        ? uploadChannelError
-                        : !uploadChannel
-                          ? "Establishing the verified upload channel"
-                          : directory?.path
-                            ? `Upload files to ${directory.path}`
-                            : "Upload files"}
-                    disabled={!directory ||
-                      loading ||
-                      Boolean(activeQuery) ||
-                      tagBrowse ||
-                      !uploadChannel ||
-                      Boolean(uploadChannelError)}
-                    onclick={() => {
-                      if (!directory || activeQuery || tagBrowse) return;
-                      activePanel = { kind: "upload", target: directory };
-                    }}
-                  >
-                    <UploadIcon size="14" aria-hidden="true" />
-                    Upload
-                  </Button>
+                  </IconAction>
+                  {#if !showingResults}
+                    <DocumentAddMenu
+                      disabledReason={!directory || loading
+                        ? "Waiting for the folder to load"
+                        : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
+                      onselect={(choice) => {
+                        if (!directory || loading || !uploadChannel || uploadChannelError) return;
+                        activePanel =
+                          choice === "files" || choice === "folder"
+                            ? { kind: "upload", target: directory, picker: choice }
+                            : { kind: choice, target: directory };
+                      }}
+                    />
+                  {/if}
                 </div>
               </div>
 
@@ -4113,15 +4316,11 @@
                   title={activeQuery
                     ? "No matching documents"
                     : tagBrowse
-                      ? "No live documents carry this tag"
-                      : "This folder is empty"}
-                  description={activeQuery
-                    ? "Try another name or phrase from extracted text."
-                    : tagBrowse
-                      ? taggedTrashed > 0
-                        ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted from this live view.`
-                        : "Choose another tag or return to the current folder."
-                      : "Use the CLI, API, or an agent to file documents here."}
+                      ? "No documents with this tag"
+                      : "Empty folder"}
+                  description={tagBrowse && taggedTrashed > 0
+                    ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
+                    : undefined}
                 >
                   {#snippet icon()}
                     {#if activeQuery}
@@ -4137,13 +4336,12 @@
                 <Table ariaLabel="Documents" zebra={false} unsorted>
                   {#snippet header()}
                     <th class="selection-column" scope="col">
-                      <Checkbox
-                        checked={allVisibleDocumentsSelected}
-                        disabled={visibleDocumentCount === 0}
-                        indeterminate={selectedCount > 0 && !allVisibleDocumentsSelected}
-                        ariaLabel="Select visible documents"
-                        onchange={selectAllVisibleDocuments}
-                      />
+                      {#if visibleDocumentCount > 0}<Checkbox
+                          checked={allVisibleDocumentsSelected}
+                          indeterminate={selectedCount > 0 && !allVisibleDocumentsSelected}
+                          ariaLabel="Select visible documents"
+                          onchange={selectAllVisibleDocuments}
+                        />{/if}
                     </th>
                     <TableHeaderCell
                       label="Document"
@@ -4151,7 +4349,13 @@
                       sortDirection={sortField === "name" ? sortDirection : null}
                       onsort={() => sortBy("name")}
                     />
-                    <TableHeaderCell label="Type" />
+                    <TableHeaderCell
+                      class="col-type"
+                      label="Type"
+                      sortable
+                      sortDirection={sortField === "type" ? sortDirection : null}
+                      onsort={() => sortBy("type")}
+                    />
                     <TableHeaderCell
                       label="Size"
                       numeric
@@ -4160,13 +4364,16 @@
                       onsort={() => sortBy("size")}
                     />
                     <TableHeaderCell
+                      class="col-modified"
                       label="Modified"
                       sortable
                       sortDirection={sortField === "modified" ? sortDirection : null}
                       onsort={() => sortBy("modified")}
                     />
-                    {#if activeQuery}<TableHeaderCell label="Match" />{/if}
-                    <TableHeaderCell label="Actions" />
+                    {#if activeQuery}<TableHeaderCell class="col-match" label="Match" />{/if}
+                    {#if similarAvailable}<TableHeaderCell
+                        ><span class="kit-sr-only">Actions</span></TableHeaderCell
+                      >{/if}
                   {/snippet}
                   {#snippet children()}
                     {#each sortedRows as row (row.node.id)}
@@ -4203,26 +4410,37 @@
                             />
                           {/if}
                         </td>
-                        <td>
-                          <span class="document-name">
-                            <FileTypeIcon kind={row.node.kind} mime={row.node.mime_type} />
-                            <span>{activeQuery || tagBrowse ? row.path : row.node.name}</span>
-                          </span>
-                          {#if row.naturalMode && row.node.kind === "file"}
-                            <span class="search-excerpt"
-                              >{row.excerpt || directFileEvidenceNote()}</span
-                            >
+                        <td
+                          class:name-cell={showingResults}
+                          aria-label={showingResults &&
+                          row.node.kind === "file" &&
+                          !matchExcerpt(row)
+                            ? row.path
+                            : undefined}
+                        >
+                          {#if showingResults && row.node.kind === "file"}
+                            <ResultName
+                              name={row.node.name}
+                              folder={parentPath(row.path)}
+                              mime={row.node.mime_type}
+                              excerpt={matchExcerpt(row)}
+                            />
+                          {:else}
+                            <span class="document-name">
+                              <FileTypeIcon kind={row.node.kind} mime={row.node.mime_type} />
+                              <span>{showingResults ? row.path : row.node.name}</span>
+                            </span>
                           {/if}
                         </td>
-                        <td class="type-cell" title={row.node.mime_type || undefined}
+                        <td class="type-cell col-type"
                           >{fileTypeLabel(row.node.kind, row.node.mime_type)}</td
                         >
                         <td class="numeric"
                           >{row.node.kind === "dir" ? "—" : formatBytes(row.node.size)}</td
                         >
-                        <td class="date-cell">{formatDate(row.node.modified_at)}</td>
+                        <td class="date-cell col-modified">{formatDate(row.node.modified_at)}</td>
                         {#if activeQuery}
-                          <td>
+                          <td class="col-match">
                             <div class="search-evidence">
                               {#if row.match}<Chip
                                   size="xs"
@@ -4235,33 +4453,36 @@
                             </div>
                           </td>
                         {/if}
-                        <td onkeydown={(event) => event.stopPropagation()}>
-                          {#if row.node.kind === "file" && row.node.current_version_id}
-                            <IconButton
-                              size="sm"
-                              ariaLabel={`Find documents similar to ${row.node.name}`}
-                              onclick={(event) => {
-                                event.stopPropagation();
-                                activePanel = {
-                                  kind: "processing",
-                                  target: row,
-                                  intent: "similar",
-                                  scope: [
-                                    ...new Set(
-                                      rows
-                                        .filter((item) => item.node.kind === "file")
-                                        .flatMap((item) =>
-                                          item.node.current_version_id
-                                            ? [item.node.current_version_id]
-                                            : [],
-                                        ),
-                                    ),
-                                  ],
-                                };
-                              }}><ScanSearchIcon size="14" aria-hidden="true" /></IconButton
-                            >
-                          {/if}
-                        </td>
+                        {#if similarAvailable}
+                          <td onkeydown={(event) => event.stopPropagation()}>
+                            {#if row.node.kind === "file" && row.node.current_version_id}
+                              <IconAction
+                                size="sm"
+                                ariaLabel={`Find documents similar to ${row.node.name}`}
+                                tip="Find similar documents"
+                                onclick={(event) => {
+                                  event.stopPropagation();
+                                  activePanel = {
+                                    kind: "processing",
+                                    target: row,
+                                    intent: "similar",
+                                    scope: [
+                                      ...new Set(
+                                        rows
+                                          .filter((item) => item.node.kind === "file")
+                                          .flatMap((item) =>
+                                            item.node.current_version_id
+                                              ? [item.node.current_version_id]
+                                              : [],
+                                          ),
+                                      ),
+                                    ],
+                                  };
+                                }}><ScanSearchIcon size="18" aria-hidden="true" /></IconAction
+                              >
+                            {/if}
+                          </td>
+                        {/if}
                       </tr>
                     {/each}
                   {/snippet}
@@ -4270,493 +4491,194 @@
             {/if}
           </section>
 
-          <aside class="detail" aria-label="Document authority">
+          <PanelResizer
+            name="documents"
+            label="Resize document inspector"
+            bind:width={inspectorWidth}
+            min={320}
+            max={720}
+          />
+          <aside class="detail" aria-label="Document inspector">
             {#if selectedSnapshot}
-              <section
-                class="inspector"
-                aria-label={`Frozen snapshot authority for ${selectedSnapshot.name}`}
+              <DocumentInspector
+                session={webSession}
+                source={selectedSource ?? undefined}
+                authorizationRevision={currentInspectorNode?.revision}
+                onauthfailure={handleFailure}
+                node={currentInspectorNode ?? undefined}
+                path={selectedSnapshot.path}
+                snapshot={selectedSnapshot}
+                collectionName={collectionNames[selectedSnapshot.display_collection_id ?? ""]}
+                snapshotID={snapshot.state.page?.snapshot_id}
+                previewAvailable={!!selectedSource &&
+                  currentInspectorNode?.id === selectedSource.nodeID}
+                overlay={selectedSnapshotOverlay ?? undefined}
+                protected={membership?.protected}
+                tags={selectedTags}
+                tagsLoading={selectedTagsLoading}
+                tagsError={selectedTagsError}
+                profiles={naturalProfiles}
+                onprocess={() => selectedSource && void processInspectedSource(selectedSource)}
+                onversions={() => (activePanel = { kind: "versions" })}
+                onprovenance={() => (activePanel = { kind: "provenance" })}
+                onhistory={() => (activePanel = { kind: "history" })}
+                tagsDisabled={selectedTagsLoading || selectedTagsError !== ""}
+                tagsDisabledReason={selectedTagsError !== ""
+                  ? "Tags couldn't be loaded"
+                  : "Loading tags…"}
+                ontags={currentInspectorNode && !currentInspectorNode.trashed_at
+                  ? () => {
+                      if (currentInspectorNode)
+                        manageTagsTarget = {
+                          node: currentInspectorNode,
+                          path: currentInspectorPath,
+                        };
+                    }
+                  : undefined}
+                ontrash={currentInspectorNode && !currentInspectorNode.trashed_at
+                  ? () => void trashSnapshotDocument()
+                  : undefined}
               >
-                <div class="authority-content">
-                  <header class="authority-header">
-                    <FileTypeIcon kind="file" mime={selectedSnapshot.mime_type} size={22} />
-                    <h2>{selectedSnapshot.name}</h2>
-                    <div class="authority-kind">
-                      <span>Original snapshot facts</span><code>id:{selectedSnapshot.node_id}</code>
-                    </div>
-                  </header>
-                  <dl>
-                    <div class="wide-fact">
-                      <dt>Path</dt>
-                      <dd>{selectedSnapshot.path}</dd>
-                    </div>
-                    <div>
-                      <dt>Revision</dt>
-                      <dd>{selectedSnapshot.revision}</dd>
-                    </div>
-                    {#if selectedSnapshotOverlay}
-                      <div>
-                        <dt>Confirmed later</dt>
-                        <dd>Revision {selectedSnapshotOverlay.revision}</dd>
-                      </div>
-                    {/if}
-                    <div>
-                      <dt>Observed</dt>
-                      <dd>{formatDate(snapshot.state.page?.observed_at ?? "")}</dd>
-                    </div>
-                    <div>
-                      <dt>Size</dt>
-                      <dd>{formatBytes(selectedSnapshot.size)} ({selectedSnapshot.size} bytes)</dd>
-                    </div>
-                    <div>
-                      <dt>Media type</dt>
-                      <dd>{selectedSnapshot.mime_type || "application/octet-stream"}</dd>
-                    </div>
-                    <div class="identity">
-                      <dt>Version</dt>
-                      <dd>
-                        <code>{selectedSnapshot.content_version_id}</code><CopyButton
-                          text={selectedSnapshot.content_version_id}
-                          ariaLabel="Copy snapshot version ID"
-                        />
-                      </dd>
-                    </div>
-                    <div class="identity">
-                      <dt>SHA-256</dt>
-                      <dd>
-                        <code>{selectedSnapshot.blob_hash}</code><CopyButton
-                          text={selectedSnapshot.blob_hash}
-                          ariaLabel="Copy snapshot SHA-256"
-                        />
-                      </dd>
-                    </div>
-                    <div class="identity">
-                      <dt>Snapshot</dt>
-                      <dd><code>{snapshot.state.page?.snapshot_id}</code></dd>
-                    </div>
-                    <div class="wide-fact">
-                      <dt>Collection at observation</dt>
-                      <dd>
-                        {selectedSnapshot.display_collection_label ??
-                          selectedSnapshot.display_collection_id ??
-                          "No document-bearing import collection"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Collection memberships</dt>
-                      <dd>{selectedSnapshot.collection_ids.length}</dd>
-                    </div>
-                  </dl>
-                  <div class="node-tags">
-                    <div class="node-tags-heading">
-                      <span><TagIcon size="13" aria-hidden="true" /> Tags at observation</span><span
-                        >{selectedSnapshot.tags.length} assigned</span
-                      >
-                    </div>
-                    {#if selectedSnapshot.tags.length === 0}<p>
-                        No tags were recorded in this snapshot.
-                      </p>
-                    {:else}<div class="snapshot-tags">
-                        {#each selectedSnapshot.tags as tag (tag.id)}<Chip
-                            size="sm"
-                            uppercase={false}>{tag.name}</Chip
-                          >{/each}
-                      </div>{/if}
-                  </div>
-                  {#if selectedSnapshotOverlay}
-                    <div class="node-tags">
-                      <div class="node-tags-heading">
-                        <span
-                          ><TagIcon size="13" aria-hidden="true" /> Tag changes since this snapshot</span
-                        >
-                      </div>
-                      <div class="snapshot-tags">
-                        {#each Object.entries(selectedSnapshotOverlay.assignments) as [tagID, assignment] (tagID)}
-                          <Chip
-                            size="sm"
-                            tone={assignment.assign ? "success" : "muted"}
-                            uppercase={false}
-                          >
-                            {assignment.assign ? "Added" : "Removed"}: {assignment.label}
-                          </Chip>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  <div class="node-tags live-observations">
-                    <div class="node-tags-heading">
-                      <span
-                        ><ActivityIcon size="13" aria-hidden="true" /> Current live observations</span
-                      >
-                      {#if currentInspectorNode}<span>Revision {currentInspectorNode.revision}</span
-                        >{/if}
-                    </div>
-                    {#if selectedTagsLoading}
-                      <div class="loading">
-                        <Spinner size={13} /> Loading complete live metadata…
-                      </div>
-                    {:else if selectedTagsError}
-                      <p>{selectedTagsError}</p>
-                    {:else if currentInspectorNode}
-                      <dl>
-                        <div class="wide-fact">
-                          <dt>Current path</dt>
-                          <dd>{currentInspectorNode.path ?? "Unavailable"}</dd>
-                        </div>
-                        <div>
-                          <dt>Current name</dt>
-                          <dd>{currentInspectorNode.name}</dd>
-                        </div>
-                        <div>
-                          <dt>Current tags</dt>
-                          <dd>{selectedTagsTotal}</dd>
-                        </div>
-                        <div>
-                          <dt>Current audit</dt>
-                          <dd>
-                            {membership?.protected
-                              ? "Protected"
-                              : selectedAudit?.enabled
-                                ? "Not audited"
-                                : "Dormant"}
-                          </dd>
-                        </div>
-                      </dl>
-                      {#if selectedTags.length > 0}
-                        <ChipStack
-                          items={selectedTags}
-                          key={(tag) => tag.id}
-                          maxVisible={6}
-                          size="sm"
-                          ariaLabel="Current live tags"
-                        >
-                          {#snippet chip(tag)}<TagLabel {tag} size="sm" />{/snippet}
-                        </ChipStack>
-                      {:else}<p>No tags are currently assigned to this node.</p>{/if}
-                      <div class="document-actions">
-                        <Button size="sm" onclick={() => (activePanel = { kind: "provenance" })}>
-                          <MapPinIcon size="14" aria-hidden="true" /> Current provenance
-                        </Button>
-                        {#if membership?.protected}
-                          <Button size="sm" onclick={() => (activePanel = { kind: "history" })}>
-                            <HistoryIcon size="14" aria-hidden="true" /> Current audit history
-                          </Button>
-                        {/if}
-                      </div>
-                    {/if}
-                  </div>
-                  {#if selectedSource && currentInspectorNode?.id === selectedSource.nodeID}
-                    <VerifiedPreview
-                      bind:activeTab={inspectorContentTab}
-                      session={webSession}
-                      source={selectedSource}
-                      authorizationRevision={currentInspectorNode.revision}
-                      profileName={snapshot.state.options?.profile ?? ""}
-                      observed={selectedRenditionObservation}
-                      queryTerms={snapshotQueryTerms}
-                      queryHighlightError={snapshotQueryHighlightError}
-                      highlightSets={inspectorHighlightSets}
-                      snapshotPosition={selectedSnapshotPosition}
-                      snapshotTotal={snapshotPage?.total}
-                      canPrevious={snapshot.state.status === "ready" &&
-                        (selectedSnapshotPosition ?? 0) > 0}
-                      canNext={snapshot.state.status === "ready" &&
-                        selectedSnapshotPosition !== undefined &&
-                        selectedSnapshotPosition + 1 < (snapshotPage?.total ?? 0)}
-                      snapshotExpired={snapshot.state.status === "expired"}
-                      onnavigate={(direction) => snapshot.navigateDocument(direction)}
-                      onreturnfocus={() =>
-                        document
-                          .querySelector<HTMLElement>(
-                            `tr[data-snapshot-node="${snapshot.selectedID}"]`,
-                          )
-                          ?.focus()}
-                      onauthfailure={handleFailure}
-                    />
-                  {/if}
-                </div>
-              </section>
+                {#snippet preview(ondisplay)}
+                  <VerifiedPreview
+                    {ondisplay}
+                    onprocess={(source) => void processInspectedSource(source)}
+                    bind:activeTab={inspectorContentTab}
+                    session={webSession}
+                    source={selectedSource!}
+                    authorizationRevision={currentInspectorNode!.revision}
+                    profileName={snapshot.state.options?.profile ?? ""}
+                    observed={selectedRenditionObservation}
+                    queryTerms={snapshotQueryTerms}
+                    queryHighlightError={snapshotQueryHighlightError}
+                    highlightSets={inspectorHighlightSets}
+                    snapshotPosition={selectedSnapshotPosition}
+                    snapshotTotal={snapshotPage?.total}
+                    canPrevious={snapshot.state.status === "ready" &&
+                      (selectedSnapshotPosition ?? 0) > 0}
+                    canNext={snapshot.state.status === "ready" &&
+                      selectedSnapshotPosition !== undefined &&
+                      selectedSnapshotPosition + 1 < (snapshotPage?.total ?? 0)}
+                    snapshotExpired={snapshot.state.status === "expired"}
+                    onnavigate={(direction) => snapshot.navigateDocument(direction)}
+                    onreturnfocus={() =>
+                      document
+                        .querySelector<HTMLElement>(
+                          `tr[data-snapshot-node="${snapshot.selectedID}"]`,
+                        )
+                        ?.focus()}
+                    onauthfailure={handleFailure}
+                  />
+                {/snippet}
+              </DocumentInspector>
             {:else if !snapshotActive && selected}
-              <section
-                class="inspector"
-                aria-label={`${selected.node.kind === "dir" ? "Folder" : "Document authority"} for ${basename(selected.path)}`}
+              <DocumentInspector
+                session={webSession}
+                source={selectedSource ?? undefined}
+                authorizationRevision={currentInspectorNode?.revision}
+                onauthfailure={handleFailure}
+                node={selected.node}
+                path={selected.path}
+                protected={membership?.protected}
+                tags={selectedTags}
+                tagsLoading={selectedTagsLoading}
+                tagsError={selectedTagsError}
+                tagsDisabled={loading ||
+                  selectedTagsLoading ||
+                  selectedTagsError !== "" ||
+                  pendingTagHotkey !== "" ||
+                  liveSelectionNeedsRefresh}
+                tagsDisabledReason={liveSelectionNeedsRefresh
+                  ? "Refresh this view first"
+                  : selectedTagsError !== ""
+                    ? "Tags couldn't be loaded"
+                    : pendingTagHotkey !== ""
+                      ? "Applying a tag shortcut"
+                      : "Loading tags…"}
+                previewAvailable={selected.node.kind === "file" &&
+                  !!selectedSource &&
+                  currentInspectorNode?.id === selectedSource.nodeID &&
+                  !liveSelectionNeedsRefresh}
+                actionsDisabled={liveSelectionNeedsRefresh}
+                profiles={naturalProfiles}
+                ontags={() => {
+                  if (!loading && selected) manageTagsTarget = selected;
+                }}
+                onopen={selected.node.kind === "dir"
+                  ? () => {
+                      if (selected) void activate(selected);
+                    }
+                  : undefined}
+                onversions={selected.node.kind === "file"
+                  ? () => (activePanel = { kind: "versions" })
+                  : undefined}
+                onprovenance={() => (activePanel = { kind: "provenance" })}
+                onhistory={() => (activePanel = { kind: "history" })}
+                onprocess={selected.node.kind === "file"
+                  ? () => {
+                      if (selected)
+                        activePanel = {
+                          kind: "processing",
+                          target: selected,
+                          intent: null,
+                          scope: [
+                            ...new Set(
+                              rows
+                                .filter((item) => item.node.kind === "file")
+                                .flatMap((item) =>
+                                  item.node.current_version_id
+                                    ? [item.node.current_version_id]
+                                    : [],
+                                ),
+                            ),
+                          ],
+                        };
+                    }
+                  : undefined}
+                ontrash={() => {
+                  if (selected) void trashRow(selected);
+                }}
               >
-                <div class="authority-content">
-                  <header class="authority-header">
-                    <FileTypeIcon
-                      kind={selected.node.kind}
-                      mime={selected.node.mime_type}
-                      size={22}
-                    />
-                    <h2>{basename(selected.path)}</h2>
-                    <div class="authority-kind">
-                      <span
-                        >{selected.node.kind === "dir" ? "Folder" : "Current live authority"}</span
-                      >
-                      <code>id:{selected.node.id}</code>
-                    </div>
-                  </header>
-                  <dl>
-                    <div class="wide-fact">
-                      <dt>Path</dt>
-                      <dd>{selected.path}</dd>
-                    </div>
-                    <div>
-                      <dt>Revision</dt>
-                      <dd>{selected.node.revision}</dd>
-                    </div>
-                    <div>
-                      <dt>Modified</dt>
-                      <dd>{formatDate(selected.node.modified_at)}</dd>
-                    </div>
-                    {#if selected.node.kind === "file"}
-                      <div>
-                        <dt>Size</dt>
-                        <dd>{formatBytes(selected.node.size)} ({selected.node.size} bytes)</dd>
-                      </div>
-                      <div>
-                        <dt>Media type</dt>
-                        <dd>{selected.node.mime_type || "application/octet-stream"}</dd>
-                      </div>
-                      <div class="identity">
-                        <dt>Version</dt>
-                        <dd>
-                          <code>{selected.node.current_version_id}</code>
-                          {#if selected.node.current_version_id}
-                            <CopyButton
-                              text={selected.node.current_version_id}
-                              ariaLabel="Copy version ID"
-                            />
-                          {/if}
-                        </dd>
-                      </div>
-                      <div class="identity">
-                        <dt>SHA-256</dt>
-                        <dd>
-                          <code>{selected.node.blob_hash}</code>
-                          {#if selected.node.blob_hash}
-                            <CopyButton text={selected.node.blob_hash} ariaLabel="Copy SHA-256" />
-                          {/if}
-                        </dd>
-                      </div>
-                    {/if}
-                  </dl>
-                  <div class="node-tags">
-                    <div class="node-tags-heading">
-                      <span><TagIcon size="13" aria-hidden="true" /> Current live tags</span>
-                      <div class="node-tags-controls">
-                        {#if selectedTagsLoading}
-                          <Spinner size={13} />
-                        {:else if selectedTagsError}
-                          <Chip size="xs" tone="warning">Unavailable</Chip>
-                        {:else}
-                          <span>
-                            {selectedTags.length < selectedTagsTotal
-                              ? `${selectedTags.length} of ${selectedTagsTotal}`
-                              : selectedTagsTotal}
-                            assigned
-                          </span>
-                        {/if}
-                        <Button
-                          size="sm"
-                          disabled={loading ||
-                            selectedTagsLoading ||
-                            selectedTagsError !== "" ||
-                            pendingTagHotkey !== "" ||
-                            liveSelectionNeedsRefresh}
-                          onclick={() => {
-                            if (!loading && selected) manageTagsTarget = selected;
-                          }}
-                        >
-                          Manage
-                        </Button>
-                      </div>
-                    </div>
-                    {#if selectedTagsError}
-                      <p>{selectedTagsError}</p>
-                    {:else if !selectedTagsLoading && selectedTags.length === 0}
-                      <p>No tags are assigned to this node.</p>
-                    {:else if selectedTags.length > 0}
-                      <ChipStack
-                        items={selectedTags}
-                        key={(tag) => tag.id}
-                        maxVisible={6}
-                        size="sm"
-                        ariaLabel="Assigned tags"
-                      >
-                        {#snippet chip(tag)}
-                          <TagLabel
-                            {tag}
-                            size="sm"
-                            title={`${tag.name} · ${tag.assignment_count} total assignment${tag.assignment_count === 1 ? "" : "s"} · ${tag.id}`}
-                          />
-                        {/snippet}
-                      </ChipStack>
-                    {/if}
-                  </div>
-                  {#if selected.node.kind === "file"}
-                    <div class="document-actions">
-                      <Button
-                        size="sm"
-                        disabled={liveSelectionNeedsRefresh}
-                        onclick={() => {
-                          activePanel = { kind: "versions" };
-                        }}
-                      >
-                        <HistoryIcon size="14" aria-hidden="true" />
-                        Version history
-                      </Button>
-                      <Button
-                        size="sm"
-                        onclick={() => {
-                          activePanel = { kind: "provenance" };
-                        }}
-                      >
-                        <MapPinIcon size="14" aria-hidden="true" />
-                        Provenance
-                      </Button>
-                      <Button
-                        size="sm"
-                        disabled={!selected.node.current_version_id || liveSelectionNeedsRefresh}
-                        onclick={() => {
-                          activePanel = {
-                            kind: "processing",
-                            target: selected,
-                            intent: null,
-                            scope: [
-                              ...new Set(
-                                rows
-                                  .filter((item) => item.node.kind === "file")
-                                  .flatMap((item) =>
-                                    item.node.current_version_id
-                                      ? [item.node.current_version_id]
-                                      : [],
-                                  ),
-                              ),
-                            ],
-                          };
-                        }}
-                      >
-                        <ActivityIcon size="14" aria-hidden="true" />
-                        Process and retrieve
-                      </Button>
-                      <Button
-                        size="sm"
-                        tone="danger"
-                        disabled={liveSelectionNeedsRefresh}
-                        onclick={() => {
-                          activePanel = { kind: "trashNode", target: selected };
-                        }}
-                      >
-                        <Trash2Icon size="14" aria-hidden="true" />
-                        Move to trash
-                      </Button>
-                    </div>
-                    {#if selectedSource && currentInspectorNode?.id === selectedSource.nodeID}
-                      {#if liveSelectionNeedsRefresh}
-                        <p role="status">Refresh the current view before using document actions.</p>
-                      {:else}
-                        <VerifiedPreview
-                          bind:activeTab={inspectorContentTab}
-                          highlightSets={inspectorHighlightSets}
-                          session={webSession}
-                          source={selectedSource}
-                          authorizationRevision={currentInspectorNode.revision}
-                          onreturnfocus={() =>
-                            document
-                              .querySelector<HTMLElement>(`tr[data-live-node="${selectedID}"]`)
-                              ?.focus()}
-                          onauthfailure={handleFailure}
-                        />
-                      {/if}
-                    {/if}
-                  {/if}
-                  <div class="audit-protection">
-                    <div class="audit-protection-heading">
-                      <span>Permanent audit</span>
-                      {#if auditLoading}
-                        <Spinner size={14} />
-                      {:else if auditError}
-                        <Chip size="xs" tone="warning">Unavailable</Chip>
-                      {:else if membership?.protected}
-                        <Chip size="xs" tone="success" dot>Protected</Chip>
-                      {:else if selectedAudit?.enabled}
-                        <Chip size="xs" tone="muted">Not audited</Chip>
-                      {:else}
-                        <Chip size="xs" tone="muted">Dormant</Chip>
-                      {/if}
-                    </div>
-                    {#if auditError}
-                      <p>{auditError}</p>
-                    {:else if membership?.protected}
-                      <p>
-                        Permanently protected by {membership.scope_ids.length}
-                        scope{membership.scope_ids.length === 1 ? "" : "s"}.
-                      </p>
-                      <Button
-                        size="sm"
-                        onclick={() => {
-                          activePanel = { kind: "history" };
-                        }}
-                      >
-                        <HistoryIcon size="14" aria-hidden="true" />
-                        Audit history
-                      </Button>
-                    {:else if selectedAudit?.enabled}
-                      <p>This node is outside every permanent audit scope.</p>
-                    {:else if !auditLoading}
-                      <p>No permanent audit scope has been enabled for this vault.</p>
-                    {/if}
-                  </div>
-                  {#if selected.node.kind === "dir"}
-                    <div class="directory-actions">
-                      <Button size="sm" onclick={() => activate(selected)}>
-                        <FolderIcon size="14" aria-hidden="true" />
-                        Open folder
-                      </Button>
-                      <Button
-                        size="sm"
-                        tone="danger"
-                        onclick={() => {
-                          activePanel = { kind: "trashNode", target: selected };
-                        }}
-                      >
-                        <Trash2Icon size="14" aria-hidden="true" />
-                        Move to trash
-                      </Button>
-                    </div>
-                  {/if}
-                </div>
-              </section>
+                {#snippet preview(ondisplay)}
+                  <VerifiedPreview
+                    {ondisplay}
+                    onprocess={(source) => void processInspectedSource(source)}
+                    bind:activeTab={inspectorContentTab}
+                    highlightSets={inspectorHighlightSets}
+                    session={webSession}
+                    source={selectedSource!}
+                    authorizationRevision={currentInspectorNode!.revision}
+                    snapshotPosition={selectedResultIndex >= 0 ? selectedResultIndex : undefined}
+                    snapshotTotal={selectedResultIndex >= 0 ? resultFiles.length : undefined}
+                    canPrevious={selectedResultIndex > 0}
+                    canNext={selectedResultIndex >= 0 &&
+                      selectedResultIndex + 1 < resultFiles.length}
+                    onnavigate={navigateResults}
+                    onreturnfocus={() =>
+                      document
+                        .querySelector<HTMLElement>(`tr[data-live-node="${selectedID}"]`)
+                        ?.focus()}
+                    onauthfailure={handleFailure}
+                  />
+                {/snippet}
+              </DocumentInspector>
             {:else}
-              <div class="inspector-empty">
-                <EmptyState
-                  title="Select a document"
-                  description="Choose a row to inspect its stable identity, current version, and verified content hash."
-                >
-                  {#snippet icon()}<FileIcon size="22" />{/snippet}
-                </EmptyState>
-              </div>
+              <div class="inspector-empty"><EmptyState title="Select a document" /></div>
             {/if}
           </aside>
         </main>
-        {#if snapshotActive && snapshotTargets.length > 0}
+        {#if snapshotActive && snapshot.state.firstPage}
           <SelectionDock
             selectedCount={snapshotTargets.length}
             visibleDocumentCount={snapshotPage?.rows.length ?? 0}
             truncated={(snapshotPage?.total ?? 0) > (snapshotPage?.rows.length ?? 0)}
             context="snapshot"
-            wholeQueryCount={snapshotPage?.total ?? 0}
             onclear={() => snapshot.selectVisible(false)}
             onselectvisible={() => snapshot.selectVisible()}
             tagsDisabled={snapshot.state.status !== "ready"}
-            ontags={() => openSnapshotBatchTags()}
-            onwholequerytags={() => {
-              snapshot.actionError = "";
-              snapshot.actionsOpen = true;
-            }}
+            ontags={() => openSnapshotActions("selection")}
             onexport={() => openExport(true)}
             onreport={openSelectedReport}
-            onexportquery={() => openExport()}
           />
         {/if}
         {#if !snapshotActive && selectedCount > 0}
@@ -4825,11 +4747,11 @@
               onauthfailure={handleFailure}
             />
           {/if}
-        {:else if !snapshotActive && selected?.node.kind === "file"}
+        {:else if currentInspectorNode?.kind === "file"}
           <VersionHistoryDrawer
             session={webSession}
-            node={selected.node}
-            path={selected.path}
+            node={currentInspectorNode}
+            path={currentInspectorPath}
             onclose={closePanel(panel)}
             onauthfailure={handleFailure}
           />
@@ -4844,13 +4766,20 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if panel.kind === "processing" && panel.target.node.kind === "file"}
-        <ProcessingDrawer
+      {#if panel.kind === "processing" && panel.target.node.kind === "file" && panel.intent === "similar"}
+        <SimilarDrawer
           session={webSession}
           node={panel.target.node}
           path={panel.target.path}
           scopeVersionIDs={panel.scope}
-          intent={panel.intent}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {:else if panel.kind === "processing" && panel.target.node.kind === "file"}
+        <ProcessingDialog
+          session={webSession}
+          node={panel.target.node}
+          path={panel.target.path}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
           onrendition={(attachmentID) => {
@@ -4868,9 +4797,10 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if panel.kind === "jobs"}
-        <JobsDrawer
+      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry"].includes(panel.kind)}
+        <VaultDrawer
           session={webSession}
+          initialTab={panel.kind}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
         />
@@ -4891,33 +4821,28 @@
           }}
         />
       {/if}
-      {#if panel.kind === "auditEvidence"}
-        <AuditEvidenceDrawer
-          session={webSession}
-          onclose={closePanel(panel)}
-          onauthfailure={handleFailure}
-        />
-      {/if}
+
       {#if panel.kind === "savedQueries"}
         <SavedQueriesDrawer
           session={webSession}
+          createSearch={createSavedSearch}
           initialQuery={queryEditorInitial}
-          onload={keepQueryDraft}
+          onload={(query) => {
+            queryEditorVersion++;
+            queryDraftRevision++;
+            queryDraftFromDefinition = true;
+            keepQueryDraft(query);
+            queryDraftChanged = true;
+          }}
           onopenquery={(query) => {
-            openQueryEditor(query);
             closePanel(panel)();
+            void submitSnapshot(query, snapshot.state.options ?? {});
           }}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if panel.kind === "backups"}
-        <BackupDrawer
-          session={webSession}
-          onclose={closePanel(panel)}
-          onauthfailure={handleFailure}
-        />
-      {/if}
+
       {#if panel.kind === "bates"}
         {#key webSession}
           <BatesExportDrawer
@@ -4936,42 +4861,7 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if panel.kind === "storage"}
-        <StorageDrawer
-          session={webSession}
-          onclose={closePanel(panel)}
-          onauthfailure={handleFailure}
-        />
-      {/if}
-      {#if panel.kind === "telemetry"}
-        <Modal
-          title="Anonymous usage"
-          ariaLabel="Anonymous usage"
-          tone="info"
-          onclose={closePanel(panel)}
-        >
-          <div class="telemetry-note">
-            <p>
-              Docbank reports when the daemon runs, the web app opens, you open a screen, and you
-              add, search, or open documents, and when a search finds nothing or a search, add, or
-              open you ran fails, so the team can count vaults in use. It also reports how long a
-              browser or terminal session lasted, as a rough bucket. Reporting is on by default.
-            </p>
-            <p>
-              Reports go to PostHog with a random ID for this vault, the app version, operating
-              system, and install age. They never include document content, filenames, paths, tags,
-              or search queries.
-            </p>
-            <p>
-              To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment
-              that starts the daemon, then run <code>docbank daemon restart</code>.
-            </p>
-          </div>
-          {#snippet footer()}
-            <Button surface="soft" onclick={closePanel(panel)}>Done</Button>
-          {/snippet}
-        </Modal>
-      {/if}
+
       {#if panel.kind === "trash"}
         <TrashDrawer
           session={webSession}
@@ -5019,6 +4909,7 @@
           session={webSession}
           channel={uploadChannel}
           directory={panel.target}
+          initialPicker={panel.picker}
           disabledReason={uploadChannelError}
           onclose={closePanel(panel)}
           oncomplete={async () => {
@@ -5049,19 +4940,6 @@
           onclose={closePanel(panel)}
           oncomplete={async () => {
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
-          }}
-          onauthfailure={handleFailure}
-        />
-      {/if}
-      {#if panel.kind === "trashNode"}
-        <TrashNodeModal
-          session={webSession}
-          node={panel.target.node}
-          path={panel.target.path}
-          onclose={closePanel(panel)}
-          ontrashed={(receipt) => {
-            closePanel(panel)();
-            handleTrashed(receipt);
           }}
           onauthfailure={handleFailure}
         />
@@ -5105,9 +4983,7 @@
         targets={batchTagsTargets}
         catalog={tagCatalog}
         catalogTotal={tagCatalogTotal}
-        disabled={loading || (batchTagsContext === "snapshot" && snapshot.state.status !== "ready")}
-        context={batchTagsContext}
-        initialChoice={batchTagsChoice}
+        disabled={loading}
         onclose={() => (batchTagsTargets = null)}
         onchanged={handleBatchTagsChanged}
         onauthfailure={handleFailure}
@@ -5115,17 +4991,22 @@
     {/if}
     {#if snapshot.actionsOpen}
       <SnapshotActions
-        selectedCount={snapshotTargets.length}
-        total={snapshot.state.firstPage?.total ?? 0}
+        session={webSession}
+        scope={snapshot.actionsScope}
+        count={snapshot.actionsScope === "selection"
+          ? snapshotTargets.length
+          : (snapshot.state.firstPage?.total ?? 0)}
+        targets={snapshotTargets}
         catalog={tagCatalog}
-        catalogTotal={tagCatalogTotal}
-        disabled={snapshot.actionBusy || (snapshotActive && snapshot.state.status !== "ready")}
+        disabled={snapshotActive && snapshot.state.status !== "ready"}
+        preparing={snapshot.actionBusy}
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
+        onchanged={handleSnapshotSelectionTagged}
+        oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onresume={() => void snapshot.resumeAction()}
-        onabandon={() => void snapshot.abandonAction()}
         onclose={() => snapshot.cancelAction()}
+        onauthfailure={handleFailure}
       />
     {/if}
     {#if snapshot.recoveryJournal && snapshot.recoveryAction}
@@ -5137,7 +5018,7 @@
         tag={snapshot.recoveryTag}
         disabled={snapshotActive && snapshot.state.status !== "ready"}
         onprogress={(action, receipt) => snapshot.handleRecoveryProgress(action, receipt)}
-        onclose={() => snapshot.closeRecovery()}
+        onclose={() => snapshot.dismissRecovery()}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5147,6 +5028,12 @@
 {#if hiddenAccess?.setupPrompt}<HiddenSetupModal access={hiddenAccess} />{/if}
 
 <style>
+  .vault-nav {
+    margin-top: auto;
+  }
+  .app-nav :global(.kit-tooltip-trigger) {
+    width: 100%;
+  }
   .photo-access-error {
     display: flex;
     flex-direction: column;
@@ -5170,10 +5057,10 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
-  .album-targets h2 {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    margin: var(--space-3);
+  .album-item {
+    min-height: 30px;
+    padding-left: calc(var(--space-4) + 16px + var(--space-5));
+    font-size: var(--font-size-sm);
   }
   .album-drop {
     outline: 2px solid var(--accent-blue);
@@ -5184,17 +5071,6 @@
     flex-direction: column;
     gap: var(--space-4);
   }
-  .telemetry-note {
-    display: grid;
-    gap: var(--space-4);
-    line-height: 1.5;
-  }
-  .telemetry-note p {
-    margin: 0;
-  }
-  .telemetry-note code {
-    overflow-wrap: anywhere;
-  }
   :global(body .app-shell .browser th.selection-column),
   :global(body .app-shell .browser td.selection-column) {
     width: 44px;
@@ -5204,8 +5080,17 @@
     cursor: default;
   }
 
+  /* Same header recipe as the sortable cells: a border here would sit a pixel
+   * off their inset line. */
   :global(body .app-shell .browser th.selection-column) {
-    border-bottom: 1px solid var(--border-default);
+    padding-block: 10px;
+    background: var(--bg-surface);
+    box-shadow: inset 0 -1px 0 var(--border-default);
+  }
+
+  :global(body .app-shell .browser .selection-column .kit-checkbox) {
+    display: flex;
+    width: 16px;
   }
 
   .shortcut-notice,
@@ -5218,12 +5103,32 @@
     align-items: center;
     gap: var(--space-4);
     min-width: 0;
-    width: min(820px, 100%);
+    width: 820px;
+    max-width: 100%;
   }
 
   .search-controls :global(.search) {
+    position: relative;
     min-width: 0;
     flex: 1;
+  }
+
+  /* The badge sits over the box's right end, centered on the field. */
+  .search-hint {
+    position: absolute;
+    top: 0;
+    right: var(--space-4);
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    cursor: text;
+  }
+
+  .search-hint :global(.kit-kbd-badge) {
+    justify-content: center;
+    box-sizing: border-box;
+    height: 18px;
+    padding: 0 var(--space-3);
   }
 
   .search-controls :global(.kit-select-dropdown) {
@@ -5247,17 +5152,6 @@
     gap: var(--space-2);
     white-space: nowrap;
     font-size: var(--font-size-sm);
-  }
-
-  .search-excerpt {
-    display: block;
-    max-width: 60ch;
-    margin: var(--space-1) 0 0 calc(18px + var(--space-5));
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .search-evidence {

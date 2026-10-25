@@ -25,6 +25,7 @@
     source,
     authorizationRevision,
     label = "Download",
+    surface = "solid",
     onauthfailure,
   }: {
     session: string;
@@ -33,6 +34,7 @@
     source?: SelectedSource;
     authorizationRevision?: number;
     label?: string;
+    surface?: "solid" | "soft";
     onauthfailure: (cause: unknown) => void;
   } = $props();
 
@@ -129,7 +131,7 @@
   <Button
     size="sm"
     tone={controller ? "danger" : "info"}
-    surface={controller ? "soft" : "solid"}
+    surface={controller ? "soft" : surface}
     onclick={() => void download()}
   >
     {#if controller}

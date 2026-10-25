@@ -1,22 +1,26 @@
 <script lang="ts">
   import { reportAction, reportFailure } from "./action-events.js";
-  import { tick } from "svelte";
+  import "./inspector.css";
+  import { tick, untrack } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import AttachmentsTab from "./AttachmentsTab.svelte";
   import EmailViewer from "./EmailViewer.svelte";
   import { readRelatedSource, type AttachmentIdentity } from "./attachments.js";
   import DownloadButton from "./DownloadButton.svelte";
+  import InspectorDetails from "./InspectorDetails.svelte";
   import DuplicatesTab from "./DuplicatesTab.svelte";
   import OriginalPreview from "./OriginalPreview.svelte";
   import PageViewer from "./PageViewer.svelte";
   import { parseMediaType, type HighlightTerm } from "./query.js";
-  import type { RenditionObservation } from "./renditionText.js";
+  import { resolveRenditionText, type RenditionObservation } from "./renditionText.js";
+  import { hasPreviewType, previewEligibility } from "./download.js";
   import type {
     LiveSelectedSource,
     RelatedSelectedSource,
     SelectedSource,
   } from "./selectedSource.js";
+  import TabStrip from "./TabStrip.svelte";
   import VerifiedText from "./VerifiedText.svelte";
 
   type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
@@ -37,7 +41,9 @@
     snapshotExpired = false,
     onnavigate = () => undefined,
     onreturnfocus = () => undefined,
+    onprocess,
     onauthfailure,
+    ondisplay,
   }: {
     session: string;
     source: SelectedSource;
@@ -55,7 +61,9 @@
     snapshotExpired?: boolean;
     onnavigate?: (direction: "previous" | "next") => void | Promise<void>;
     onreturnfocus?: () => void;
+    onprocess?: (source: SelectedSource) => void;
     onauthfailure: (cause: unknown) => void;
+    ondisplay?: (source: SelectedSource, revision: number) => void;
   } = $props();
   let duplicateSource = $state<LiveSelectedSource | undefined>();
   let relatedSources = $state<RelatedSelectedSource[]>([]);
@@ -66,14 +74,61 @@
   let frozenKey = "";
   const relatedSource = $derived(relatedSources.at(-1));
   const displayedSource = $derived(relatedSource ?? duplicateSource ?? source);
+  let redundantText = $state(false);
+  const displayedObservation = $derived(duplicateSource || relatedSource ? undefined : observed);
+  const isEmail = $derived(parseMediaType(displayedSource.mimeType) === "message/rfc822");
+  // An email has its own tab; its Preview would only say it cannot render.
+  const showPreview = $derived(!isEmail || hasPreviewType(displayedSource.mimeType));
+  const fallbackTab = $derived(showPreview ? "preview" : "email");
   const displayedTab = $derived(
-    activeTab === "email" && parseMediaType(displayedSource.mimeType) !== "message/rfc822"
-      ? "preview"
-      : activeTab,
+    (activeTab === "text" && redundantText) || (activeTab === "email" && !isEmail)
+      ? fallbackTab
+      : activeTab === "preview" && !showPreview
+        ? fallbackTab
+        : activeTab,
   );
+  const tabList = $derived([
+    ...(showPreview ? [{ value: "preview", label: "Preview" }] : []),
+    ...(!redundantText ? [{ value: "text", label: "Text" }] : []),
+    { value: "duplicates", label: "Duplicates" },
+    { value: "attachments", label: "Attachments" },
+    ...(isEmail ? [{ value: "email", label: "Email" }] : []),
+  ]);
   const displayedRevision = $derived(
     relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision,
   );
+
+  $effect(() => {
+    const selected = displayedSource;
+    const revision = displayedRevision;
+    const currentSession = session;
+    const profile = profileName;
+    const observation = displayedObservation;
+    redundantText = false;
+    try {
+      if (previewEligibility(selected.mimeType, selected.size).kind !== "text") return;
+    } catch {
+      return;
+    }
+    const controller = new AbortController();
+    void resolveRenditionText(
+      currentSession,
+      selected,
+      revision,
+      profile,
+      observation,
+      controller.signal,
+    )
+      .then((resolution) => {
+        if (!controller.signal.aborted)
+          redundantText = resolution.state === "unconfigured" || resolution.state === "unprocessed";
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted && cause instanceof APIError && cause.status === 401)
+          untrack(() => onauthfailure(cause));
+      });
+    return () => controller.abort();
+  });
 
   $effect(() => {
     const key = `${session}:${source.key}`;
@@ -84,6 +139,10 @@
       navigationError = "";
     }
     return cancelNavigation;
+  });
+
+  $effect(() => {
+    ondisplay?.(displayedSource, displayedRevision);
   });
 
   function cancelNavigation(): void {
@@ -159,27 +218,48 @@
   aria-label={`Verified content of ${displayedSource.name}`}
   data-source-version={displayedSource.versionID}
 >
+  {#if !ondisplay}<div class="preview-actions">
+      <DownloadButton
+        {session}
+        source={displayedSource}
+        authorizationRevision={displayedRevision}
+        {onauthfailure}
+      />
+    </div>{/if}
   {#if relatedSource}
     <div class="separate-context related-context" role="status">
-      <span>Related document · separate inspector context · current path {relatedSource.path}</span>
-      <span>Exact related version {relatedSource.versionID}</span>
+      <strong>Attachment</strong>
+      <InspectorDetails
+        label="Preview file"
+        facts={[
+          { label: "Path", value: relatedSource.path, copy: true },
+          { label: "Version", value: relatedSource.versionID, copy: true },
+          { label: "SHA-256", value: relatedSource.blobHash, copy: true },
+        ]}
+      />
       <div class="related-actions">
         <Button size="sm" surface="soft" onclick={backRelated}>Back to previous document</Button>
         <Button size="sm" surface="soft" onclick={() => void returnToOrigin()}
-          >Return to {source.kind === "snapshot" ? "frozen" : "selected"} document</Button
+          >Return to selected document</Button
         >
       </div>
     </div>
   {:else if duplicateSource}
     <div class="separate-context" role="status">
-      <span>Outside duplicate · {duplicateSource.path}</span>
-      <Button size="sm" surface="soft" onclick={closeDuplicate}
-        >Return to {source.kind === "snapshot" ? "frozen" : "selected"} document</Button
-      >
+      <strong>Duplicate</strong>
+      <InspectorDetails
+        label="Preview file"
+        facts={[
+          { label: "Path", value: duplicateSource.path, copy: true },
+          { label: "Version", value: duplicateSource.versionID, copy: true },
+          { label: "SHA-256", value: duplicateSource.blobHash, copy: true },
+        ]}
+      />
+      <Button size="sm" surface="soft" onclick={closeDuplicate}>Return to selected document</Button>
     </div>
   {/if}
   {#if !duplicateSource && !relatedSource && snapshotPosition !== undefined && snapshotTotal !== undefined}
-    <nav class="document-navigation" aria-label="Snapshot document navigation">
+    <nav class="document-navigation" aria-label="Document navigation">
       <Button
         size="sm"
         surface="soft"
@@ -195,131 +275,97 @@
       >
     </nav>
     {#if snapshotExpired}<p class="expired" role="status">
-        This frozen snapshot expired. Run the query again to continue navigation.
+        These results expired. Run the query again to continue.
       </p>{/if}
   {/if}
-  <div class="tabs" role="tablist" aria-label="Verified content view">
-    <button
-      type="button"
-      role="tab"
-      aria-selected={displayedTab === "preview"}
-      onclick={() => chooseTab("preview")}>Preview</button
-    >
-    <button
-      type="button"
-      role="tab"
-      aria-selected={displayedTab === "text"}
-      onclick={() => chooseTab("text")}>Text</button
-    >
-    <button
-      type="button"
-      role="tab"
-      aria-selected={displayedTab === "duplicates"}
-      onclick={() => chooseTab("duplicates")}>Duplicates</button
-    >
-    <button
-      type="button"
-      role="tab"
-      aria-selected={displayedTab === "attachments"}
-      onclick={() => chooseTab("attachments")}>Attachments</button
-    >
-    {#if parseMediaType(displayedSource.mimeType) === "message/rfc822"}
-      <button
-        type="button"
-        role="tab"
-        aria-selected={displayedTab === "email"}
-        onclick={() => chooseTab("email")}>Email</button
-      >
-    {/if}
-  </div>
-  {#if navigationPending}<p role="status">
-      Checking related document access and exact version…
-    </p>{/if}
+  <TabStrip
+    tabs={tabList}
+    value={displayedTab}
+    ariaLabel="Verified content view"
+    onchange={(tab) => chooseTab(tab as typeof activeTab)}
+  />
+  {#if navigationPending}<p role="status">Loading document…</p>{/if}
   {#if navigationError}<p role="status">Related document unavailable: {navigationError}</p>{/if}
-  {#if displayedTab === "preview"}
-    {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
-      <PageViewer
-        {session}
-        source={displayedSource}
-        authorizationRevision={displayedRevision}
-        {onauthfailure}
-      />
-    {:else}
-      <OriginalPreview
-        {session}
-        source={displayedSource}
-        authorizationRevision={displayedRevision}
-        {onauthfailure}
-      />
-    {/if}
-  {:else}
-    {#if displayedTab === "email"}
-      {#key `${session}:${displayedSource.key}:${displayedRevision}`}
-        <EmailViewer
+  <div class="tab-content inspector-content">
+    {#if displayedTab === "preview"}
+      {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
+        <PageViewer
           {session}
           source={displayedSource}
           authorizationRevision={displayedRevision}
-          onattachments={() => chooseTab("attachments")}
           {onauthfailure}
         />
-      {/key}
-    {:else if displayedTab === "text"}
-      <VerifiedText
-        {session}
-        source={displayedSource}
-        authorizationRevision={displayedRevision}
-        {profileName}
-        observed={duplicateSource || relatedSource ? undefined : observed}
-        {queryTerms}
-        {queryHighlightError}
-        {highlightSets}
-        {onauthfailure}
-      />
-    {:else if displayedTab === "attachments"}
-      <AttachmentsTab
-        {session}
-        source={displayedSource}
-        onopen={(target) => void openRelated(target)}
-        {onauthfailure}
-      />
+      {:else}
+        <OriginalPreview
+          {session}
+          source={displayedSource}
+          authorizationRevision={displayedRevision}
+          {onauthfailure}
+        />
+      {/if}
     {:else}
-      <DuplicatesTab {session} source={displayedSource} onopen={openDuplicate} {onauthfailure} />
+      {#if displayedTab === "email"}
+        {#key `${session}:${displayedSource.key}:${displayedRevision}`}
+          <EmailViewer
+            {session}
+            source={displayedSource}
+            authorizationRevision={displayedRevision}
+            onattachments={() => chooseTab("attachments")}
+            {onauthfailure}
+          />
+        {/key}
+      {:else if displayedTab === "text"}
+        <VerifiedText
+          {session}
+          source={displayedSource}
+          authorizationRevision={displayedRevision}
+          {profileName}
+          observed={displayedObservation}
+          {queryTerms}
+          {queryHighlightError}
+          {highlightSets}
+          onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
+          {onauthfailure}
+        />
+      {:else if displayedTab === "attachments"}
+        <AttachmentsTab
+          {session}
+          source={displayedSource}
+          onopen={(target) => void openRelated(target)}
+          {onauthfailure}
+        />
+      {:else}
+        <DuplicatesTab {session} source={displayedSource} onopen={openDuplicate} {onauthfailure} />
+      {/if}
     {/if}
-  {/if}
-  <DownloadButton
-    {session}
-    source={displayedSource}
-    authorizationRevision={displayedRevision}
-    label="Download verified original"
-    {onauthfailure}
-  />
+  </div>
 </section>
 
 <style>
   .verified-preview {
     display: grid;
-    gap: var(--space-3);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border-default);
+    gap: var(--space-5);
+    min-width: 0;
   }
-  .tabs {
+  .preview-actions {
     display: flex;
-    gap: var(--space-1);
-    border-bottom: 1px solid var(--border-default);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
   }
-  .tabs button {
-    padding: var(--space-2) var(--space-3);
+  .tab-content :global(.original-preview pre),
+  .tab-content :global(.original-preview .image-frame),
+  .tab-content :global(.verified-text pre) {
     border: 0;
-    border-bottom: 2px solid transparent;
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--font-size-sm);
+    padding: 0;
+    border-radius: 0;
   }
-  .tabs button[aria-selected="true"] {
-    border-bottom-color: var(--accent-blue);
-    color: var(--text-primary);
+  .tab-content :global(.original-preview pre) {
+    padding-right: calc(14px + var(--space-3));
+  }
+  .tab-content :global(.original-preview .verified) {
+    top: 2px;
+    right: 0;
   }
   .document-navigation {
     display: flex;

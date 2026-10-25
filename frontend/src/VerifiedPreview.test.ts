@@ -220,7 +220,7 @@ it("keeps unsupported content on the verified-download fallback without a previe
   });
 
   expect(await screen.findByText(/not an eligible text or raster image preview/i)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -333,6 +333,9 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
       buildID: authority.build,
     },
     queryTerms: ["alpha"],
+    highlightSets: [
+      { id: "review-terms", name: "Review terms", terms: [{ text: "beta", color: "#ffcc00" }] },
+    ],
     onauthfailure: vi.fn(),
   };
   const view = render(VerifiedPreview, props);
@@ -343,6 +346,29 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
   expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(screen.queryByText("No matches")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Next text match" })).toBeNull();
+  const find = screen.getByRole("searchbox", { name: "Find in verified text" });
+  await fireEvent.input(find, { target: { value: "missing" } });
+  expect(screen.getByText("No matches")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Next text match" })).toBeNull();
+  await fireEvent.input(find, { target: { value: "lph" } });
+  expect(screen.getByText("1 of 2")).toBeTruthy();
+  await fireEvent.input(find, { target: { value: "alpha" } });
+  expect(screen.getByRole("button", { name: "Next text match" })).toBeTruthy();
+  await fireEvent.input(find, { target: { value: "" } });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Element.prototype.scrollIntoView ??= () => {};
+  await fireEvent.click(screen.getByRole("combobox", { name: "Saved highlight set: Highlights" }));
+  expect(screen.getByRole("option", { name: "Review terms" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("option", { name: "Highlights" }));
 
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
@@ -351,9 +377,9 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
 
 it.each([
   ["failed", "Text processing failed for this selected version."],
-  ["unprocessed", "This selected version has not been processed for text."],
-  ["unconfigured", "Text processing is not configured for this vault."],
-])("keeps the %s reason visible with verified original-text fallback", async (state, message) => {
+  ["unprocessed", ""],
+  ["unconfigured", ""],
+])("shows original Preview for %s text while retaining failures", async (state, message) => {
   const bytes = new TextEncoder().encode("Synthetic fallback evidence");
   const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -393,7 +419,11 @@ it.each([
     onauthfailure: vi.fn(),
   });
   expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
-  expect(screen.getByText(message).getAttribute("role")).toBe("status");
+  if (message) expect(screen.getByText(message).getAttribute("role")).toBe("status");
+  else {
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Text" })).toBeNull());
+    expect(screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected")).toBe("true");
+  }
 });
 
 it.each([0, 64 * 1024 * 1024 + 1])(
@@ -415,3 +445,22 @@ it.each([0, 64 * 1024 * 1024 + 1])(
     expect(fetcher).not.toHaveBeenCalled();
   },
 );
+
+it("opens an email on its Email tab and offers no Preview it cannot render", async () => {
+  const selected = source(
+    new TextEncoder().encode("From: a@example.com\r\n\r\nhello"),
+    "66666666-6666-4666-8666-666666666666",
+    "message/rfc822",
+  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
+
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    onauthfailure: vi.fn(),
+  });
+
+  expect(screen.queryByRole("tab", { name: "Preview" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
+});

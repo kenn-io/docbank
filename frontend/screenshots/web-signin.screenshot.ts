@@ -121,9 +121,9 @@ test("key login, insecure HTTP crypto, port isolation, independent tabs, restart
       if (!value.session?.token) throw new Error("login response omitted the scoped tab token");
       await expect(tab.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
       await expect(tab.getByRole("alert")).toHaveCount(0);
-      await expect(
-        tab.getByRole("button", { name: "Upload files to current folder", exact: true }),
-      ).toBeEnabled();
+      await tab.getByRole("button", { name: "Add", exact: true }).click();
+      await expect(tab.getByRole("menuitem", { name: "Upload files", exact: true })).toBeEnabled();
+      await tab.keyboard.press("Escape");
       return value.session.token;
     };
     const firstTagsResponsePromise = page.waitForResponse(
@@ -139,7 +139,8 @@ test("key login, insecure HTTP crypto, port isolation, independent tabs, restart
     expect(firstCookie?.domain).toBe("archive.example.test");
     expect(firstCookie?.value).not.toBe(apiKey);
 
-    await page.getByRole("button", { name: "Upload files to current folder", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Upload files", exact: true }).click();
     await page.getByLabel("Choose local files", { exact: true }).setInputFiles({
       name: "web-signin-session-expiry.txt",
       mimeType: "text/plain",

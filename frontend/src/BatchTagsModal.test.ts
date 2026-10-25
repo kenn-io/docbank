@@ -38,73 +38,11 @@ afterEach(() => {
 });
 
 async function chooseTag() {
-  await fireEvent.click(
-    screen.getByRole("combobox", { name: "Tag for selected documents: Choose a tag…" }),
-  );
-  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag for selected documents" }), {
+    target: { value: "Review" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (1)" }));
 }
-
-it.each([true, false])(
-  "retains the snapshot tag choice and operation: assign=%s",
-  async (assign) => {
-    const onchanged = vi.fn();
-    let sent: unknown;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-      if (String(url).endsWith("/preview"))
-        return new Response(
-          JSON.stringify({
-            tag_id: tag.id,
-            tag_revision: 2,
-            nodes: targets.map((target, index) => ({ ...target, assigned: index === 0 })),
-          }),
-        );
-      const request = JSON.parse(String(init?.body));
-      sent = request;
-      return new Response(
-        JSON.stringify({
-          version: 1,
-          operation_id: request.operation_id,
-          request_digest: await batchTagRequestDigest(request),
-          tag_id: tag.id,
-          assign,
-          tag_revision: 3,
-          assignment_count: assign ? 2 : 0,
-          completed_at: "2026-09-11T00:00:00.000000000Z",
-          nodes: targets.map((target, index) => ({
-            node_id: target.node_id,
-            expected_revision: target.revision,
-            revision: target.revision + Number(assign !== (index === 0)),
-            changed: assign !== (index === 0),
-          })),
-        }),
-      );
-    });
-    render(BatchTagsModal, {
-      props: {
-        session: "session",
-        targets,
-        catalog: [tag],
-        catalogTotal: 1,
-        disabled: false,
-        context: "snapshot",
-        initialChoice: { tagID: tag.id, assign },
-        onclose: vi.fn(),
-        onchanged,
-        onauthfailure: vi.fn(),
-      },
-    });
-    await screen.findByText("1 of 2 selected documents have this tag.");
-    expect(sent).toBeUndefined();
-    expect(
-      screen.queryByRole("button", { name: assign ? "Remove from all" : "Add to all" }),
-    ).toBeNull();
-    await fireEvent.click(
-      screen.getByRole("button", { name: assign ? "Add to all" : "Remove from all" }),
-    );
-    await waitFor(() => expect(onchanged).toHaveBeenCalledOnce());
-    expect(sent).toMatchObject({ tag_id: tag.id, assign, nodes: targets });
-  },
-);
 
 it("shows exact mixed membership and retries the same uncertain operation", async () => {
   const requests: { operation_id: string; nodes: typeof targets }[] = [];
@@ -242,23 +180,54 @@ it.each([
   expect(screen.queryByRole("button", { name: "Retry same operation" })).toBeNull();
 });
 
-it("identifies a frozen visible selection without promising a snapshot refresh", () => {
-  render(BatchTagsModal, {
-    props: {
-      session: "session",
-      targets,
-      catalog: [tag],
-      catalogTotal: 1,
-      disabled: false,
-      context: "snapshot",
-      onclose: vi.fn(),
-      onchanged: vi.fn(),
-      onauthfailure: vi.fn(),
-    },
+it("creates and assigns a new tag to the captured selection in one step", async () => {
+  const onchanged = vi.fn();
+  let assigned = false;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (url === "/api/v1/tags")
+      return Response.json({ ...tag, name: "New tag", revision: 1, assignment_count: 0 });
+    if (String(url).endsWith("/preview"))
+      return Response.json({
+        tag_id: tag.id,
+        tag_revision: assigned ? 3 : 1,
+        nodes: targets.map((node) => ({
+          ...node,
+          revision: node.revision + Number(assigned),
+          assigned,
+        })),
+      });
+    const request = JSON.parse(String(init?.body));
+    expect(request).toMatchObject({ tag_id: tag.id, assign: true, nodes: targets });
+    assigned = true;
+    return Response.json({
+      version: 1,
+      operation_id: request.operation_id,
+      request_digest: await batchTagRequestDigest(request),
+      tag_id: tag.id,
+      assign: true,
+      tag_revision: 3,
+      assignment_count: 2,
+      completed_at: "2026-09-11T00:00:00.000000000Z",
+      nodes: [
+        { node_id: 7, expected_revision: 3, revision: 4, changed: true },
+        { node_id: 9, expected_revision: 4, revision: 5, changed: true },
+      ],
+    });
   });
-
-  expect(screen.getByText(/visible frozen selection/)).toBeTruthy();
-  expect(
-    screen.getByText("This snapshot keeps the same documents and order. Tag changes appear below."),
-  ).toBeTruthy();
+  render(BatchTagsModal, {
+    session: "session",
+    targets,
+    catalog: [],
+    catalogTotal: 0,
+    disabled: false,
+    onclose: vi.fn(),
+    onchanged,
+    onauthfailure: vi.fn(),
+  });
+  const input = screen.getByRole("combobox");
+  await fireEvent.input(input, { target: { value: "New tag" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(onchanged).toHaveBeenCalledOnce());
+  expect(await screen.findByText("2 of 2 selected documents have this tag.")).toBeTruthy();
+  expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
 });

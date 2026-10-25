@@ -1,10 +1,13 @@
 <script lang="ts">
   import CheckIcon from "@lucide/svelte/icons/check";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import { autoReposition, dismissable, floatingPopoverStyle } from "@kenn-io/kit-ui";
-  import { tick } from "svelte";
+  import { TextInput, autoReposition, dismissable, floatingPopoverStyle } from "@kenn-io/kit-ui";
+  import { onDestroy, tick } from "svelte";
   import type { Tag } from "./generated/docbank.js";
+  import { APIError } from "./api-transport.js";
+  import { createTag } from "./receipts.js";
   import { groupTags } from "./tagPresentation.js";
+  import AppTooltip from "./AppTooltip.svelte";
 
   interface PickerOption {
     id: string;
@@ -13,34 +16,80 @@
     count?: number;
     color?: string;
     tag?: Tag;
+    create?: boolean;
   }
 
   interface Props {
+    session?: string;
+    contextKey?: string;
+    excludedTagIDs?: readonly string[];
+    onpick?: (tag: Tag, created: boolean) => void | Promise<void>;
+    onauthfailure?: (cause: unknown) => void;
     value: string;
     tags: readonly Tag[];
     title: string;
     placeholder: string;
     onchange: (value: string) => void;
+    onmanage?: () => void;
+    manageDisabled?: boolean;
     includeAll?: boolean;
     disabled?: boolean;
     tooltip?: string;
+    /** Reopen the list after a pick so several tags can be chosen in a row. */
+    reopenAfterPick?: boolean;
     align?: "start" | "end";
     class?: string;
   }
 
   let {
+    session,
+    contextKey = "",
+    excludedTagIDs = [],
+    onpick,
+    onauthfailure,
     value,
     tags,
     title,
     placeholder,
     onchange,
+    onmanage,
+    manageDisabled = false,
     includeAll = false,
     disabled = false,
     tooltip,
+    reopenAfterPick = true,
     align = "start",
     class: className = "",
   }: Props = $props();
 
+  let query = $state("");
+  let createdTags = $state<Tag[]>([]);
+  let pending = $state(false);
+  let failure = $state("");
+  let inputEl = $state<HTMLInputElement>();
+  let quietFocus = false;
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+  });
+  const searchable = $derived(session !== undefined);
+  const catalog = $derived([
+    ...tags,
+    ...createdTags.filter((tag) => !tags.some((item) => item.id === tag.id)),
+  ]);
+  const typedName = $derived(query.trim().normalize("NFC"));
+  const filteredTags = $derived(
+    catalog.filter(
+      (tag) =>
+        !excludedTagIDs.includes(tag.id) &&
+        (!searchable || tag.name.toLocaleLowerCase().includes(typedName.toLocaleLowerCase())),
+    ),
+  );
+  const canCreate = $derived(
+    searchable &&
+      typedName !== "" &&
+      !catalog.some((tag) => tag.name.normalize("NFC") === typedName),
+  );
   let open = $state(false);
   let highlightedIndex = $state(0);
   let containerEl = $state<HTMLDivElement>();
@@ -50,7 +99,7 @@
 
   const dropdownID = $props.id();
   const listboxID = `${dropdownID}-listbox`;
-  const groups = $derived(groupTags(tags));
+  const groups = $derived(groupTags(filteredTags));
   const options = $derived.by(() => {
     const items: PickerOption[] = includeAll
       ? [{ id: "", label: placeholder, fullName: placeholder }]
@@ -67,13 +116,26 @@
         });
       }
     }
+    if (canCreate)
+      items.push({
+        id: "__create",
+        label: `Create “${typedName}”`,
+        fullName: `Create “${typedName}”`,
+        create: true,
+      });
     return items;
   });
   const optionIndexes = $derived(new Map(options.map((option, index) => [option.id, index])));
-  const selected = $derived(options.find((option) => option.id === value));
+  const selectedTag = $derived(catalog.find((tag) => tag.id === value));
+  const selected = $derived(
+    options.find((option) => option.id === value) ??
+      (selectedTag
+        ? { label: selectedTag.name, fullName: selectedTag.name, color: undefined }
+        : undefined),
+  );
   const triggerText = $derived(selected?.label ?? placeholder);
   const triggerFullName = $derived(selected?.fullName ?? placeholder);
-  const trulyDisabled = $derived(disabled || options.length === 0);
+  const trulyDisabled = $derived(disabled || pending || (!searchable && options.length === 0));
 
   $effect(() => {
     if (!open) return;
@@ -81,7 +143,7 @@
       dismissable({
         owners: () => [containerEl],
         dismiss: close,
-        escapeFocus: () => buttonEl,
+        escapeFocus: () => inputEl ?? buttonEl,
       }),
       autoReposition(() => [listEl], positionList),
     ];
@@ -97,8 +159,9 @@
   }
 
   function positionList(): void {
-    if (!buttonEl || !listEl) return;
-    const trigger = buttonEl.getBoundingClientRect();
+    const anchor = inputEl ?? buttonEl;
+    if (!anchor || !listEl) return;
+    const trigger = anchor.getBoundingClientRect();
     const width = Math.max(listEl.offsetWidth, trigger.width);
     listStyle = `${floatingPopoverStyle({
       trigger,
@@ -129,11 +192,66 @@
     else void show();
   }
 
-  function select(option: PickerOption): void {
+  async function select(option: PickerOption): Promise<void> {
     if (trulyDisabled) return;
-    onchange(option.id);
+    if (!searchable) {
+      onchange(option.id);
+      close();
+      buttonEl?.focus();
+      return;
+    }
+    const requestSession = session!;
+    const requestContext = contextKey;
+    const name = typedName;
+    pending = true;
+    failure = "";
     close();
-    buttonEl?.focus();
+    try {
+      const tag = option.create ? await createTag(requestSession, name) : option.tag;
+      if (destroyed || session !== requestSession || contextKey !== requestContext || !tag) return;
+      if (option.create) createdTags = [...createdTags, tag];
+      if (onpick) await onpick(tag, option.create === true);
+      else onchange(tag.id);
+      if (!destroyed && session === requestSession) query = "";
+    } catch (cause) {
+      if (destroyed || session !== requestSession || contextKey !== requestContext) return;
+      if (cause instanceof APIError && cause.status === 401) onauthfailure?.(cause);
+      else failure = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (!destroyed) {
+        pending = false;
+        await tick();
+        quietFocus = !reopenAfterPick;
+        inputEl?.focus();
+        quietFocus = false;
+      }
+    }
+  }
+
+  function onInput(value: string): void {
+    query = value;
+    failure = "";
+    highlightedIndex = 0;
+    open = true;
+    void tick().then(positionList);
+  }
+
+  function onInputKeydown(event: KeyboardEvent): void {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) void show();
+      else moveHighlight(event.key === "ArrowDown" ? 1 : -1);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const option = options[highlightedIndex];
+      if (open && option) void select(option);
+      else void show();
+    } else if (event.key === "Escape") {
+      if (open) {
+        event.stopPropagation();
+        close();
+      }
+    } else if (event.key === "Tab") close();
   }
 
   function moveHighlight(delta: number): void {
@@ -150,6 +268,11 @@
 
   function onButtonKeydown(event: KeyboardEvent): void {
     if (event.key === "Tab") {
+      if (open && onmanage && !manageDisabled && !event.shiftKey) {
+        event.preventDefault();
+        listEl?.querySelector<HTMLButtonElement>(".tag-picker__manage button")?.focus();
+        return;
+      }
       close();
       return;
     }
@@ -172,110 +295,166 @@
         return;
       }
       const option = options[highlightedIndex];
-      if (option) select(option);
+      if (option) void select(option);
     }
   }
 </script>
 
 {#snippet optionRow(option: PickerOption, index: number)}
-  <button
-    id={optionID(index)}
-    type="button"
-    tabindex="-1"
-    class="tag-picker__option"
-    class:highlighted={index === highlightedIndex}
-    class:selected={option.id === value}
-    role="option"
-    aria-label={option.count === undefined
-      ? option.fullName
-      : `${option.fullName} (${option.count})`}
-    aria-selected={option.id === value}
-    title={option.tag ? option.fullName : undefined}
-    onclick={() => select(option)}
-    onmouseenter={() => (highlightedIndex = index)}
-  >
-    {#if option.color}
-      <span
-        class="tag-picker__swatch"
-        data-tag-swatch
-        style:background-color={option.color}
-        aria-hidden="true"
-      ></span>
-    {:else}
-      <span class="tag-picker__swatch-placeholder" aria-hidden="true"></span>
-    {/if}
-    <span class="tag-picker__option-label">{option.label}</span>
-    {#if option.count !== undefined}
-      <span class="tag-picker__count">{option.count}</span>
-    {/if}
-    <span class="tag-picker__check">
-      {#if option.id === value}
-        <CheckIcon size="12" strokeWidth="2.2" aria-hidden="true" />
+  <AppTooltip text={option.tag ? option.fullName : ""} side="right">
+    <button
+      id={optionID(index)}
+      type="button"
+      tabindex="-1"
+      class="tag-picker__option"
+      class:highlighted={index === highlightedIndex}
+      class:selected={option.id === value}
+      role="option"
+      aria-label={option.count === undefined
+        ? option.fullName
+        : `${option.fullName} (${option.count})`}
+      aria-selected={option.id === value}
+      onclick={() => void select(option)}
+      onmouseenter={() => (highlightedIndex = index)}
+    >
+      {#if option.color}
+        <span
+          class="tag-picker__swatch"
+          data-tag-swatch
+          style:background-color={option.color}
+          aria-hidden="true"
+        ></span>
+      {:else}
+        <span class="tag-picker__swatch-placeholder" aria-hidden="true"></span>
       {/if}
-    </span>
-  </button>
+      <span class="tag-picker__option-label">{option.label}</span>
+      {#if option.count !== undefined}
+        <span class="tag-picker__count">{option.count}</span>
+      {/if}
+      <span class="tag-picker__check">
+        {#if option.id === value}
+          <CheckIcon size="12" strokeWidth="2.2" aria-hidden="true" />
+        {/if}
+      </span>
+    </button>
+  </AppTooltip>
 {/snippet}
 
-<div class={["tag-picker", className]} bind:this={containerEl} onfocusout={onFocusout}>
-  <button
-    // kit-ui-check-ignore: pinned kit dropdowns cannot render each inactive tag's color.
-    role="combobox"
-    bind:this={buttonEl}
-    class="tag-picker__trigger"
-    type="button"
-    onclick={toggle}
-    onkeydown={onButtonKeydown}
-    aria-haspopup="listbox"
-    aria-expanded={open}
-    aria-controls={listboxID}
-    aria-activedescendant={open ? optionID(highlightedIndex) : undefined}
-    aria-label={`${title}: ${triggerFullName}`}
-    title={tooltip ?? `${title}: ${triggerFullName}`}
-    disabled={trulyDisabled}
-  >
-    {#if selected?.color}
-      <span
-        class="tag-picker__swatch"
-        data-tag-swatch
-        style:background-color={selected.color}
-        aria-hidden="true"
-      ></span>
-    {/if}
-    <span class="tag-picker__value">{triggerText}</span>
-    <ChevronDownIcon class="tag-picker__chevron" size="12" strokeWidth="2" aria-hidden="true" />
-  </button>
+<div
+  class={["tag-picker", className]}
+  bind:this={containerEl}
+  onfocusout={onFocusout}
+  onfocusin={() => {
+    if (searchable && !open && !pending && !quietFocus) void show();
+  }}
+>
+  {#if searchable}
+    <TextInput
+      value={query || (open ? "" : (selected?.fullName ?? ""))}
+      bind:inputEl
+      // kit-ui-check-ignore: Typeahead replaces its input with a button on blur; assignment keeps the field visible.
+      role="combobox"
+      ariaLabel={title}
+      ariaExpanded={open && options.length > 0}
+      ariaControls={listboxID}
+      ariaActivedescendant={open && options.length ? optionID(highlightedIndex) : undefined}
+      ariaAutocomplete="list"
+      placeholder="Tag name"
+      disabled={trulyDisabled}
+      block
+      oninput={onInput}
+      onkeydown={onInputKeydown}
+    />
+  {:else}
+    <AppTooltip text={tooltip ?? `${title}: ${triggerFullName}`} align="start">
+      <button
+        // kit-ui-check-ignore: pinned kit dropdowns cannot render each inactive tag's color.
+        role="combobox"
+        bind:this={buttonEl}
+        class="tag-picker__trigger"
+        type="button"
+        onclick={toggle}
+        onkeydown={onButtonKeydown}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxID}
+        aria-activedescendant={open ? optionID(highlightedIndex) : undefined}
+        aria-label={`${title}: ${triggerFullName}`}
+        disabled={trulyDisabled}
+      >
+        {#if selected?.color}
+          <span
+            class="tag-picker__swatch"
+            data-tag-swatch
+            style:background-color={selected.color}
+            aria-hidden="true"
+          ></span>
+        {/if}
+        <span class="tag-picker__value">{triggerText}</span>
+        <ChevronDownIcon class="tag-picker__chevron" size="12" strokeWidth="2" aria-hidden="true" />
+      </button>
+    </AppTooltip>
+  {/if}
+  {#if failure}<p class="tag-picker__failure" role="alert">{failure}</p>{/if}
 
-  {#if open}
-    <div
-      // kit-ui-check-ignore: paired with the scoped color-aware combobox above.
-      role="listbox"
-      id={listboxID}
-      class="tag-picker__list kit-popover-card"
-      style={listStyle}
-      bind:this={listEl}
-    >
-      {#if includeAll && options[0]}
-        {@render optionRow(options[0], 0)}
-      {/if}
-      {#each groups as group}
-        <div class="tag-picker__group" role="group" aria-label={group.name ?? "Ungrouped tags"}>
-          {#if group.name}
-            <div class="tag-picker__group-heading">{group.name}</div>
-          {/if}
-          {#each group.tags as item (item.tag.id)}
-            {@const index = optionIndexes.get(item.tag.id) ?? 0}
-            {@render optionRow(options[index]!, index)}
-          {/each}
+  {#if open && options.length > 0}
+    <div class="tag-picker__list kit-popover-card" style={listStyle} bind:this={listEl}>
+      <div
+        // kit-ui-check-ignore: paired with the scoped color-aware combobox above.
+        role="listbox"
+        id={listboxID}
+      >
+        {#if includeAll && options[0]}
+          {@render optionRow(options[0], 0)}
+        {/if}
+        {#each groups as group}
+          <div class="tag-picker__group" role="group" aria-label={group.name ?? "Ungrouped tags"}>
+            {#if group.name}
+              <div class="tag-picker__group-heading">{group.name}</div>
+            {/if}
+            {#each group.tags as item (item.tag.id)}
+              {@const index = optionIndexes.get(item.tag.id) ?? 0}
+              {@render optionRow(options[index]!, index)}
+            {/each}
+          </div>
+        {/each}
+        {#if canCreate}{@render optionRow(options[options.length - 1]!, options.length - 1)}{/if}
+      </div>
+      {#if onmanage}
+        <div class="tag-picker__manage">
+          <button
+            type="button"
+            class="tag-picker__option"
+            disabled={manageDisabled}
+            onclick={() => {
+              close();
+              buttonEl?.focus();
+              onmanage?.();
+            }}>Manage tags</button
+          >
         </div>
-      {/each}
+      {/if}
     </div>
   {/if}
 </div>
 
 <style>
+  .tag-picker__failure {
+    margin: var(--space-2) 0 0;
+    color: var(--accent-red);
+    font-size: var(--font-size-xs);
+  }
+
   .tag-picker {
     position: relative;
     min-width: 150px;
+  }
+
+  /* The tooltip wrappers take the width of the control they describe. */
+  .tag-picker > :global(.kit-tooltip-trigger),
+  .tag-picker__list :global(.kit-tooltip-trigger) {
+    display: flex;
+    width: 100%;
   }
 
   /* kit-ui-check-ignore: the pinned select cannot render arbitrary tag swatches. */
@@ -331,6 +510,12 @@
     max-height: min(360px, calc(100vh - 16px));
     overflow-y: auto;
     padding: 2px;
+  }
+
+  .tag-picker__manage {
+    margin-top: var(--space-1);
+    padding-top: var(--space-1);
+    border-top: 1px solid var(--border-muted);
   }
 
   .tag-picker__group + .tag-picker__group {

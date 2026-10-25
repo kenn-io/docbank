@@ -41,8 +41,7 @@
       .catch((cause: unknown) => {
         if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
         if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
-        else if (cause instanceof APIError && cause.status === 404)
-          error = "No current duplicate group exists for this exact content.";
+        else if (cause instanceof APIError && cause.status === 404) error = "No duplicates";
         else error = cause instanceof Error ? cause.message : String(cause);
       })
       .finally(() => {
@@ -58,13 +57,14 @@
 </script>
 
 <div class="duplicates">
-  <div>
-    <strong>Current exact-content duplicates</strong>
-    {#if total}<span>{total} live references{truncated ? " · first 16 shown" : ""}</span>{/if}
-  </div>
-  {#if loading}<p role="status"><Spinner size={14} /> Loading exact duplicate group…</p>
+  {#if loading}<p role="status"><Spinner size={14} /> Loading…</p>
   {:else if error}<p role="status">{error}</p>
-  {:else}<ul>
+  {:else if references.length < 2}<p role="status">No duplicates</p>
+  {:else}
+    <div>
+      <span>{total} copies{truncated ? ", first 16 shown" : ""}</span>
+    </div>
+    <ul>
       {#each references as reference (reference.nodeID)}
         <li
           class:active={reference.nodeID === source.nodeID &&

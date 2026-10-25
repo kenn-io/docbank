@@ -741,14 +741,14 @@ it("retries a failed rail fetch without navigating", async () => {
   expect(document.activeElement).toBe(button);
 });
 
-it("starts details closed, opens with Metadata and closes with I", async () => {
+it("starts details open, closes with Metadata and opens with I", async () => {
   const { props } = setup();
   render(PhotoLoupe, props);
-  expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
-  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
   expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
+  expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
 });
 
 it("hides an unreadable capture time when the file modified time placed the photo", async () => {
@@ -756,7 +756,6 @@ it("hides an unreadable capture time when the file modified time placed the phot
   props.photo.capture_time = "0000-01-01";
   props.photo.file_modified_time = "2023-11-04T18:22:03Z";
   render(PhotoLoupe, props);
-  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
   expect(screen.getByText("File modified")).toBeTruthy();
   expect(screen.getByText("2023-11-04 18:22 UTC")).toBeTruthy();
   expect(screen.queryByText("Captured")).toBeNull();
@@ -767,7 +766,6 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   props.photo.capture_time = "2023-11-04T18:22:03";
   props.photo.file_modified_time = null;
   render(PhotoLoupe, props);
-  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
   expect(screen.getByText("Captured")).toBeTruthy();
   expect(screen.getByText("2023-11-04T18:22:03")).toBeTruthy();
   expect(screen.queryByText("File modified")).toBeNull();

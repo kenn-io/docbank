@@ -95,7 +95,7 @@ Download does not release the retained job automatically.
 
 ## Export photos
 
-In Photos, choose **Export all N photos** in the **⋯** menu for the current scope or **Export selection** for selected photos. Choose **Prepare**, review the frozen plan, then **Start reviewed export** and **Download verified ZIP**.
+In Photos, choose **Export all N photos** in the **⋯** menu for the current scope or **Export selection** for selected photos. Choose **Download ZIP**; Docbank freezes the plan, builds the verified archive, and hands it to your browser.
 
 Opening a new photo export captures current membership when you prepare it.
 Retries and output-setting changes reuse that preparation's frozen selection.

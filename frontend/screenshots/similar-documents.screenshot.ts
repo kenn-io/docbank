@@ -264,9 +264,9 @@ trust_boundary = "local_process"
       await section.scrollIntoViewIfNeeded();
       await page.screenshot({ path: path.join(output!, "web-similar-" + width + ".png") });
     }
-    await page.getByRole("button", { name: "Close document processing" }).click();
+    await page.getByRole("button", { name: "Close similar documents" }).click();
     await page.getByRole("button", { name: "Find documents similar to z-unembedded.txt" }).click();
-    await expect(section.getByText(/Unavailable: no current embedding/)).toBeVisible();
+    await expect(section.getByText(/no search vectors yet/)).toBeVisible();
     for (const width of [1440, 1280, 768, 400]) {
       await page.setViewportSize({ width, height: 960 });
       await section.scrollIntoViewIfNeeded();

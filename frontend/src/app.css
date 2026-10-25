@@ -56,6 +56,20 @@ body .app-shell .kit-chip {
   font-weight: var(--font-weight-medium);
 }
 
+/* Chips match the height of the small controls beside them. Drawers render
+ * outside .app-shell, so this can't hang off it. */
+body .kit-chip.kit-chip--xs {
+  align-items: center;
+  min-height: 22px;
+  padding-block: var(--space-1);
+}
+
+body .kit-chip.kit-chip--sm {
+  align-items: center;
+  min-height: 24px;
+  padding-block: var(--space-1);
+}
+
 body .app-shell .kit-button--outline.kit-button--neutral,
 body .app-shell .kit-button--outline.kit-button--danger {
   background: var(--bg-surface);
@@ -115,6 +129,9 @@ body .app-shell .kit-th {
 }
 
 .app-main {
+  /* Where the content starts: the search box lines up with it. In Documents
+   * that is the file name column (selection column plus cell padding). */
+  --content-inset: calc(44px + var(--space-5));
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -124,8 +141,26 @@ body .app-shell .kit-th {
 
 body .app-shell .app-top-bar {
   gap: var(--space-6);
-  padding-inline: var(--space-7) var(--space-6);
+  padding-inline: var(--content-inset) var(--space-6);
+  /* The bar's content box is 55px tall beside a 1px border, which leaves
+   * half-pixel offsets on every control; a spare pixel makes them whole. */
+  padding-block: 0 1px;
   border-color: var(--border-muted);
+}
+
+/* The search box starts on the content column's left edge. Only the compact
+ * layout has anything in the left region (the navigation toggle). */
+body .app-shell .app-top-bar .kit-top-bar__left {
+  display: none;
+}
+
+body .app-shell .app-top-bar .kit-top-bar__search {
+  margin-inline: 0 auto;
+}
+
+/* The Advanced button matches the Export button beside it. */
+body .app-shell .search-controls .kit-button--outline.kit-button--neutral {
+  background: var(--kit-button-fill);
 }
 
 .nav-toggle {
@@ -263,7 +298,7 @@ body .app-shell .app-top-bar {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--inspector-width);
+  grid-template-columns: minmax(0, 1fr) auto var(--inspector-width);
   flex: 1;
   min-height: 0;
 }
@@ -371,7 +406,8 @@ body .app-shell .app-top-bar {
   color: var(--text-muted);
 }
 
-.breadcrumbs button {
+.breadcrumbs button,
+body .app-shell .breadcrumbs .kit-menu__trigger {
   overflow: hidden;
   padding: var(--space-1) var(--space-2);
   border: 0;
@@ -384,7 +420,8 @@ body .app-shell .app-top-bar {
   cursor: pointer;
 }
 
-.breadcrumbs button:hover {
+.breadcrumbs button:hover,
+body .app-shell .breadcrumbs .kit-menu__trigger:hover {
   background: var(--bg-surface-hover);
   color: var(--text-primary);
 }
@@ -499,7 +536,6 @@ tr:focus-visible {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  border-left: 1px solid var(--border-muted);
   background: var(--bg-surface);
 }
 
@@ -744,6 +780,10 @@ dd {
     display: inline-flex;
   }
 
+  body .app-shell .app-top-bar .kit-top-bar__left {
+    display: flex;
+  }
+
   body .app-shell .app-top-bar {
     height: auto;
     min-height: var(--header-height);
@@ -762,6 +802,10 @@ dd {
 
   .workspace {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace > .panel-resizer {
+    display: none;
   }
 
   .browser {
@@ -843,4 +887,54 @@ dd {
   .node-tags-heading {
     flex-wrap: wrap;
   }
+}
+
+/* A control with no reason to give has no bubble (see AppTooltip). */
+.kit-tooltip:empty {
+  display: none;
+}
+
+/* The bubble renders beside its trigger and would inherit a nowrap row, cell,
+ * or button, running the text past its own background. */
+.kit-tooltip {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.browser.hide-modified .col-modified,
+.browser.hide-type .col-type {
+  display: none;
+}
+
+.browser.hide-type .document-name {
+  min-width: 160px;
+}
+
+/* One control height across the top bar, folder header, and inspector header. */
+body .app-shell :is(.top-actions, .search-controls, .toolbar-actions, .inspector-actions) {
+  --control-height: 30px;
+}
+
+body
+  .app-shell
+  :is(.top-actions, .search-controls, .toolbar-actions, .inspector-actions)
+  :is(
+    .kit-button,
+    .kit-icon-button,
+    .kit-menu__trigger,
+    .kit-select-dropdown__trigger,
+    .kit-text-input,
+    .tag-picker__trigger
+  ) {
+  box-sizing: border-box;
+  height: var(--control-height);
+  min-height: var(--control-height);
+}
+
+body
+  .app-shell
+  :is(.top-actions, .search-controls, .toolbar-actions, .inspector-actions)
+  .kit-icon-button {
+  width: var(--control-height);
 }

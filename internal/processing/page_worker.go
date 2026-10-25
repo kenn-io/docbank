@@ -32,6 +32,7 @@ func NewPageWorker(catalog *store.Store, blobs *blob.Store, runtime *pagerender.
 }
 
 func (w *PageWorker) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	if err := w.retryCatalogMutation(ctx, func() error { return w.catalog.RequeuePageJobs(ctx) }); err != nil {
 		return err
 	}
@@ -78,6 +79,8 @@ func (w *PageWorker) RunOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	work, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	err = w.process(work, claim)

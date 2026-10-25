@@ -10,6 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -226,6 +227,7 @@ func (s *Service) resumeCheckpoint(ctx context.Context, j store.MailboxJob, c st
 // RunWorker belongs to the daemon supervisor. At most two workers claim work;
 // the catalog enforces both global and owner bounds across all callers.
 func (s *Service) RunWorker(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -255,6 +257,8 @@ func (s *Service) RunWorker(ctx context.Context) error {
 	}
 }
 func (s *Service) runCancelableJob(ctx context.Context, j store.MailboxJob) error {
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	parent := ctx
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(context.Canceled)

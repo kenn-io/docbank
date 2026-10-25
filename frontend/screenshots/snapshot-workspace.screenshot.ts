@@ -182,9 +182,9 @@ async function retainedAction(
 }
 
 async function runSnapshot(page: Page): Promise<void> {
-  const editor = page.getByRole("region", { name: "Query editor" });
+  const editor = page.getByRole("dialog", { name: "Advanced search" });
   await expect(editor).toBeVisible();
-  await editor.getByRole("button", { name: "Run query", exact: true }).click();
+  await editor.getByRole("button", { name: "Search", exact: true }).click();
 }
 
 async function verifyCheckpoint(page: Page, checkpoint: string): Promise<void> {
@@ -543,39 +543,42 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await runSnapshot(page);
     await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
     await expect(page.getByRole("complementary", { name: "Snapshot facets" })).toBeVisible();
-    const editor = page.getByRole("region", { name: "Query editor" });
-    const runQuery = editor.getByRole("button", { name: "Run query", exact: true });
-    await editor.getByLabel("Structured facets JSON").fill(
+    await page.getByRole("button", { name: "Advanced", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Advanced search" });
+    await editor.getByText("Filters (JSON)", { exact: true }).click();
+    const runQuery = editor.getByRole("button", { name: "Search", exact: true });
+    await editor.getByLabel("Filters JSON").fill(
       JSON.stringify({
         tag_ids: ["77777777-7777-4777-8777-777777777777"],
       }),
     );
     await runQuery.click();
     await expect(page.locator(".browser .banner[role=alert]")).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
     await page.getByRole("button", { name: "Next page", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "101–200 of 1,001" })).toBeVisible();
     await page.getByRole("button", { name: "Previous page", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
-    await editor.getByLabel("Structured facets JSON").fill(JSON.stringify(untaggedQuery.filters));
-    for (const mode of ["semantic", "hybrid"]) {
-      await editor.getByRole("combobox", { name: /^Query mode:/ }).click();
+    await page.getByRole("button", { name: "Advanced", exact: true }).click();
+    await editor.getByText("Filters (JSON)", { exact: true }).click();
+    await editor.getByLabel("Filters JSON").fill(JSON.stringify(untaggedQuery.filters));
+    for (const mode of ["Meaning", "Words and meaning"]) {
+      await editor.getByRole("combobox", { name: /^Find:/ }).click();
       await page.getByRole("option", { name: mode, exact: true }).click();
-      await expect(editor.getByText("Frozen snapshots support lexical mode only.")).toBeVisible();
+      await expect(editor.getByText("Choose Words to run this search.")).toBeVisible();
       await expect(runQuery).toBeDisabled();
     }
-    await editor.getByRole("combobox", { name: /^Query mode:/ }).click();
-    await page.getByRole("option", { name: "lexical", exact: true }).click();
-    await editor.getByRole("combobox", { name: /^Query sort:/ }).click();
-    await page.getByRole("option", { name: "relevance", exact: true }).click();
-    await expect(
-      editor.getByText(/Frozen snapshots do not support relevance sorting/),
-    ).toBeVisible();
+    await editor.getByRole("combobox", { name: /^Find:/ }).click();
+    await page.getByRole("option", { name: "Words", exact: true }).click();
+    await editor.getByRole("combobox", { name: /^Sort by:/ }).click();
+    await page.getByRole("option", { name: "Relevance", exact: true }).click();
+    await expect(editor.getByText(/Choose a sort other than Relevance/)).toBeVisible();
     await expect(runQuery).toBeDisabled();
-    await editor.getByRole("combobox", { name: /^Query sort:/ }).click();
-    await page.getByRole("option", { name: "path", exact: true }).click();
+    await editor.getByRole("combobox", { name: /^Sort by:/ }).click();
+    await page.getByRole("option", { name: "Path", exact: true }).click();
     await expect(runQuery).toBeEnabled();
-    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
+    await page.keyboard.press("Escape");
     await page.getByText("Frozen query snapshot", { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({
       path: path.join(screenshots!, "web-snapshot-workspace.png"),
@@ -585,7 +588,7 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await page
       .getByRole("checkbox", { name: "Select /Workspace review/workspace-0000.txt", exact: true })
       .check();
-    await page.getByRole("button", { name: "Edit query", exact: true }).click();
+    await page.getByRole("button", { name: "Advanced", exact: true }).click();
     let releaseRerun!: () => void;
     const rerunGate = new Promise<void>((resolve) => {
       releaseRerun = resolve;
@@ -622,7 +625,6 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await expect(page.getByRole("region", { name: "Selected documents", exact: true })).toHaveCount(
       0,
     );
-    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
     console.log("snapshot acceptance: all tagging controls stay disabled during a rerun");
 
     await page.getByRole("button", { name: "txt, 501 documents", exact: true }).click();
@@ -654,7 +656,6 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await expect(
       replayPage.getByRole("status").filter({ hasText: "1–100 of 1,001" }),
     ).toBeVisible();
-    await replayPage.getByRole("button", { name: "Close query editor", exact: true }).click();
 
     // Cancel while enumeration is waiting on a real page response, then run
     // a new snapshot before that old response is delivered.
@@ -689,10 +690,9 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
       await actions.getByRole("button", { name: "Cancel", exact: true }).click();
       await aborted;
       await page.getByRole("button", { name: "Back to live folder", exact: true }).click();
-      await page.getByRole("button", { name: "Edit query", exact: true }).click();
+      await page.getByRole("button", { name: "Advanced", exact: true }).click();
       await runSnapshot(page);
       await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
-      await page.getByRole("button", { name: "Close query editor", exact: true }).click();
     } finally {
       releaseCapture();
     }
@@ -961,11 +961,12 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await restartedRecovery
       .getByRole("button", { name: "Abandon action without rollback", exact: true })
       .click();
-    await restartedPage.getByRole("button", { name: "Edit query", exact: true }).click();
-    const staleEditor = restartedPage.getByRole("region", { name: "Query editor" });
+    await restartedPage.getByRole("button", { name: "Advanced", exact: true }).click();
+    const staleEditor = restartedPage.getByRole("dialog", { name: "Advanced search" });
     await staleEditor.getByLabel("Query expression", { exact: true }).fill("workspace-0000");
-    await staleEditor.getByLabel("Structured facets JSON", { exact: true }).fill("{}");
-    await staleEditor.getByRole("button", { name: "Run query", exact: true }).click();
+    await staleEditor.getByText("Filters (JSON)", { exact: true }).click();
+    await staleEditor.getByLabel("Filters JSON", { exact: true }).fill("{}");
+    await staleEditor.getByRole("button", { name: "Search", exact: true }).click();
     await expect(restartedPage.getByRole("status").filter({ hasText: "1–1 of 1" })).toBeVisible();
     await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
     const staleActions = restartedPage.getByRole("dialog", { name: "Tag frozen snapshot" });
@@ -1020,12 +1021,12 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await staleRecovery
       .getByRole("button", { name: "Abandon action without rollback", exact: true })
       .click();
+    await restartedPage.getByRole("button", { name: "Advanced", exact: true }).click();
     await staleEditor.getByLabel("Query expression", { exact: true }).fill("");
-    await staleEditor.getByRole("button", { name: "Run query", exact: true }).click();
+    await staleEditor.getByRole("button", { name: "Search", exact: true }).click();
     await expect(
       restartedPage.getByRole("status").filter({ hasText: "1–100 of 1,001" }),
     ).toBeVisible();
-    await restartedPage.getByRole("button", { name: "Close query editor", exact: true }).click();
     await restartedPage
       .getByRole("checkbox", { name: "Select /Workspace review/workspace-0000.txt", exact: true })
       .check();

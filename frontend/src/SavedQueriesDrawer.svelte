@@ -1,6 +1,14 @@
 <script lang="ts">
+  import DrawerShell from "./DrawerShell.svelte";
   import { onMount, untrack } from "svelte";
-  import { Button, DetailDrawer, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import XIcon from "@lucide/svelte/icons/x";
+  import { Button, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import "./toolForm.css";
   import { APIError } from "./api-transport.js";
   import {
     canonicalQuery,
@@ -23,6 +31,7 @@
   let {
     session,
     initialQuery,
+    createSearch = false,
     onload,
     onclose,
     onauthfailure,
@@ -30,6 +39,7 @@
   }: {
     session: string;
     initialQuery: Query;
+    createSearch?: boolean;
     onload: (query: Query) => void;
     onopenquery?: (query: Query) => void;
     onclose: () => void;
@@ -44,6 +54,7 @@
   let failure = $state("");
   let receiptFailed = $state(false);
   let notice = $state("");
+  let editorOpen = $state(untrack(() => createSearch));
   let selected = $state<SavedQuery | null>(null);
   let deleting = $state<SavedQuery | null>(null);
   let kind = $state<SavedQueryKind>("query");
@@ -86,6 +97,7 @@
   }
 
   function edit(item: SavedQuery): void {
+    editorOpen = true;
     receiptFailed = false;
     selected = item;
     deleting = null;
@@ -99,6 +111,7 @@
   }
 
   function fresh(nextKind: SavedQueryKind): void {
+    editorOpen = true;
     receiptFailed = false;
     selected = null;
     deleting = null;
@@ -124,7 +137,7 @@
       const query = parseQuery(rawQuery);
       onload(query);
       rawQuery = JSON.stringify(JSON.parse(canonicalQuery(query)), null, 2);
-      notice = "Query draft kept in this tab and URL. It has not been executed.";
+      notice = "Search draft saved.";
     } catch (cause) {
       fail(cause);
     }
@@ -159,9 +172,12 @@
     try {
       const removed = await deleteSavedQuery(session, deleting);
       if (!alive) return;
-      if (selected?.id === removed.id) fresh("query");
+      if (selected?.id === removed.id) {
+        selected = null;
+        editorOpen = false;
+      }
       deleting = null;
-      notice = `Deleted ${removed.name}. Documents were not changed.`;
+      notice = `Deleted ${removed.name}.`;
       await refresh(0);
     } catch (cause) {
       await mutationFailed(cause);
@@ -182,35 +198,33 @@
   }
 </script>
 
-<DetailDrawer
-  title="Saved queries & highlights"
-  ariaLabel="Saved queries and highlights"
-  width="min(760px, 100vw)"
+<DrawerShell
+  title="Saved searches"
   onclose={() => {
     if (!pending) onclose();
   }}
   closeOnOverlayClick={!pending}
 >
-  <div class="workspace">
-    <p class="boundary">
-      Save search intent and reusable literal highlights. Definitions contain no result rows or
-      document bodies.
-    </p>
-    {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
-    {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+  {#snippet actions()}
+    <Button size="sm" disabled={pending} onclick={() => fresh("highlight_set")}
+      ><PlusIcon size="14" aria-hidden="true" /> New highlight list</Button
+    >
+    <IconButton
+      size="sm"
+      ariaLabel="Refresh saved searches"
+      title="Refresh"
+      disabled={pending || loading}
+      onclick={() => void refresh()}><RefreshCwIcon size="14" aria-hidden="true" /></IconButton
+    >
+  {/snippet}
+  <div class="tool-body">
+    {#if failure}<p class="tool-error" role="alert">{failure}</p>{/if}
+    {#if notice}<p class="tool-muted" role="status">{notice}</p>{/if}
 
     {#if deleting}
-      <section aria-label="Delete saved definition" class="editor">
+      <section aria-label="Delete saved definition" class="tool-section">
         <h3>Delete {deleting.name}?</h3>
-        <p>Revision {deleting.revision} · <code>{deleting.id}</code></p>
-        <p>
-          This permanently removes only this saved definition. Documents, other saved definitions
-          and the kept query draft are unchanged.
-        </p>
-        <div class="actions">
-          <Button tone="danger" disabled={pending} onclick={() => void remove()}
-            >Confirm deletion</Button
-          >
+        <div class="tool-actions">
           <Button
             disabled={pending}
             onclick={() => {
@@ -218,216 +232,200 @@
               failure = "";
             }}>Cancel</Button
           >
+          <Button tone="danger" surface="solid" disabled={pending} onclick={() => void remove()}
+            >Confirm deletion</Button
+          >
         </div>
       </section>
     {:else}
-      <div class="actions">
-        <Button disabled={pending} onclick={() => fresh("query")}>New query</Button>
-        <Button disabled={pending} onclick={() => fresh("highlight_set")}>New highlight set</Button>
-        <Button disabled={pending || loading} onclick={() => void refresh()}
-          >Reload definitions</Button
-        >
-      </div>
-      <section aria-label="Saved definitions" class="catalog">
-        {#if loading}<span><Spinner size={14} /> Loading definitions…</span>{/if}
-        {#each items as item (item.id)}
-          <div class="definition-row">
-            <div>
-              <strong>{item.name}</strong><small
-                >{item.kind === "query" ? "Query" : "Highlight set"} · revision {item.revision}</small
-              >
-            </div>
-            {#if item.kind === "query" && onopenquery}<Button
-                size="sm"
-                disabled={pending}
-                ariaLabel={`Open query ${item.name}`}
-                onclick={() => item.kind === "query" && onopenquery?.(item.payload)}
-                >Open query</Button
-              >{/if}
-            <Button
-              size="sm"
-              disabled={pending}
-              onclick={() => edit(item)}
-              ariaLabel={`Edit ${item.name}`}>Edit</Button
-            >
-            <Button
-              size="sm"
-              disabled={pending}
-              onclick={() => {
-                deleting = item;
-                failure = "";
-                notice = "";
-              }}
-              ariaLabel={`Delete ${item.name}`}>Delete</Button
-            >
-          </div>
-        {:else}
-          {#if !loading}<p>No saved definitions on this page.</p>{/if}
-        {/each}
-        <div class="actions">
-          <span>{items.length} shown · {total} total</span>
-          <Button
-            size="sm"
-            disabled={pending || loading || offset === 0}
-            onclick={() => void refresh(Math.max(0, offset - 100))}>Previous</Button
-          >
-          <Button
-            size="sm"
-            disabled={pending || loading || offset + 100 >= total}
-            onclick={() => void refresh(offset + 100)}>Next</Button
-          >
-        </div>
-      </section>
-
-      <section class="editor" aria-label="Definition editor">
-        <h3>
-          {selected
-            ? `Edit ${selected.name}`
-            : kind === "query"
-              ? "New query"
-              : "New highlight set"}
-        </h3>
-        {#if selected}<small>Revision {selected.revision} · {selected.id}</small>{/if}
-        <label for="definition-name">Name</label>
-        <TextInput
-          id="definition-name"
-          ariaLabel="Definition name"
-          bind:value={name}
-          disabled={pending}
-          block
-        />
-        <label for="definition-description">Description</label>
-        <textarea
-          id="definition-description"
-          aria-label="Definition description"
-          bind:value={description}
-          disabled={pending}
-          rows="2"
-          maxlength="4096"></textarea>
-        {#if kind === "query"}
-          <label for="query-json">Complete query JSON</label>
-          <p class="boundary">
-            Expression, facets, mode and sort stay together. Unsupported or unknown fields are never
-            silently removed.
-          </p>
-          <textarea
-            id="query-json"
-            aria-label="Complete query JSON"
-            bind:value={rawQuery}
-            disabled={pending}
-            rows="13"
-            maxlength="131072"
-            spellcheck="false"></textarea>
-          <p class="boundary">
-            Saved-query execution is unavailable: the current live-search adapter cannot honor the
-            complete query contract. Keeping or saving this draft does not change live results.
-          </p>
-        {:else}
-          <p class="boundary">
-            Literal terms only: 1–64 unique terms, up to 256 characters each, with lowercase #rrggbb
-            colors. Highlight rendering is not available in the document viewer.
-          </p>
-          {#each terms as term, index}
-            <div class="term-row">
+      {#if editorOpen}<section class="tool-section" aria-label="Definition editor">
+          <h3>
+            {selected
+              ? `Edit ${selected.name}`
+              : kind === "query"
+                ? "New search"
+                : "New highlight list"}
+          </h3>
+          <div class="tool-grid">
+            <div class="tool-field tool-span-all">
+              <label for="definition-name">Name</label>
               <TextInput
-                ariaLabel={`Term ${index + 1}`}
-                bind:value={term.text}
+                id="definition-name"
+                ariaLabel="Definition name"
+                bind:value={name}
                 disabled={pending}
                 block
               />
-              <TextInput
-                ariaLabel={`Color ${index + 1}`}
-                bind:value={term.color}
-                disabled={pending}
-              />
-              <Button
-                size="sm"
-                ariaLabel={`Remove term ${index + 1}`}
-                disabled={pending || terms.length === 1}
-                onclick={() => {
-                  terms = terms.filter((_, i) => i !== index);
-                }}>Remove</Button
-              >
             </div>
-          {/each}
-          <Button
-            size="sm"
-            disabled={pending || terms.length >= 64}
-            onclick={() => {
-              terms = [...terms, { text: "", color: "#ffcc00" }];
-            }}>Add term</Button
-          >
-        {/if}
-        <div class="actions">
-          <Button
-            tone="info"
-            surface="solid"
-            disabled={pending || receiptFailed || !name}
-            onclick={() => void save(true)}>Save as new</Button
-          >
-          {#if selected}<Button
+            <div class="tool-field tool-span-all">
+              <label for="definition-description">Description</label>
+              <textarea
+                id="definition-description"
+                aria-label="Definition description"
+                bind:value={description}
+                disabled={pending}
+                rows="2"
+                maxlength="4096"></textarea>
+            </div>
+            {#if kind === "query"}
+              <details class="tool-disclosure tool-span-all">
+                <summary
+                  ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label"
+                    >Edit as JSON</span
+                  ></summary
+                >
+                <div class="tool-section">
+                  <textarea
+                    id="query-json"
+                    aria-label="Complete query JSON"
+                    bind:value={rawQuery}
+                    disabled={pending}
+                    rows="10"
+                    maxlength="131072"
+                    spellcheck="false"></textarea>
+                  <div class="tool-actions tool-actions--start">
+                    <Button size="sm" disabled={pending} onclick={keepDraft}
+                      >Keep query draft</Button
+                    >
+                  </div>
+                </div>
+              </details>
+            {:else}
+              <div class="tool-field tool-span-all">
+                <span class="tool-label">Terms</span>
+                {#each terms as term, index}
+                  <div class="term-row">
+                    <TextInput
+                      ariaLabel={`Term ${index + 1}`}
+                      bind:value={term.text}
+                      disabled={pending}
+                      block
+                    />
+                    <TextInput
+                      ariaLabel={`Color ${index + 1}`}
+                      bind:value={term.color}
+                      disabled={pending}
+                      block
+                    />
+                    <span
+                      >{#if terms.length > 1}<IconButton
+                          size="sm"
+                          ariaLabel={`Remove term ${index + 1}`}
+                          title="Remove term"
+                          disabled={pending}
+                          onclick={() => {
+                            terms = terms.filter((_, i) => i !== index);
+                          }}><XIcon size="14" aria-hidden="true" /></IconButton
+                        >{/if}</span
+                    >
+                  </div>
+                {/each}
+                <div class="tool-actions tool-actions--start">
+                  <Button
+                    size="sm"
+                    disabled={pending || terms.length >= 64}
+                    onclick={() => {
+                      terms = [...terms, { text: "", color: "#ffcc00" }];
+                    }}><PlusIcon size="14" aria-hidden="true" /> Add term</Button
+                  >
+                </div>
+              </div>
+            {/if}
+          </div>
+          <div class="tool-actions">
+            <Button disabled={pending} onclick={() => (editorOpen = false)}>Cancel</Button>
+            <Button
+              tone={selected ? "neutral" : "info"}
+              surface={selected ? "outline" : "solid"}
               disabled={pending || receiptFailed || !name}
-              onclick={() => void save(false)}>Save changes</Button
-            >{/if}
-          {#if kind === "query"}<Button disabled={pending} onclick={keepDraft}
-              >Keep query draft</Button
-            >{/if}
-        </div>
+              onclick={() => void save(true)}>Save as new</Button
+            >
+            {#if selected}<Button
+                tone="info"
+                surface="solid"
+                disabled={pending || receiptFailed || !name}
+                onclick={() => void save(false)}>Save changes</Button
+              >{/if}
+          </div>
+        </section>{/if}
+
+      <section aria-label="Saved definitions" class="tool-section">
+        {#if loading}<p class="tool-muted"><Spinner size={14} /> Loading…</p>{/if}
+        {#if items.length}
+          <ul class="tool-list">
+            {#each items as item (item.id)}
+              <li>
+                <div class="tool-row-main">
+                  <strong>{item.name}</strong>
+                  {#if item.description || item.kind === "highlight_set"}<span
+                      >{[item.kind === "highlight_set" ? "Highlight list" : "", item.description]
+                        .filter(Boolean)
+                        .join(" · ")}</span
+                    >{/if}
+                </div>
+                <div class="tool-row-actions">
+                  {#if item.kind === "query" && onopenquery}<Button
+                      size="sm"
+                      disabled={pending}
+                      ariaLabel={`Run ${item.name}`}
+                      onclick={() => item.kind === "query" && onopenquery?.(item.payload)}
+                      >Run</Button
+                    >{/if}
+                  <IconButton
+                    size="sm"
+                    disabled={pending}
+                    onclick={() => edit(item)}
+                    title="Rename"
+                    ariaLabel={`Rename ${item.name}`}><PencilIcon size="14" /></IconButton
+                  >
+                  <IconButton
+                    size="sm"
+                    disabled={pending}
+                    onclick={() => {
+                      deleting = item;
+                      failure = "";
+                      notice = "";
+                    }}
+                    title="Delete"
+                    ariaLabel={`Delete ${item.name}`}><Trash2Icon size="14" /></IconButton
+                  >
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {:else if !loading}<p class="tool-muted">
+            No saved searches yet. Save one from Advanced → Save….
+          </p>{/if}
+        {#if total > 100}<div class="tool-actions">
+            <span class="tool-muted">{offset + 1}–{offset + items.length} of {total}</span>
+            <Button
+              size="sm"
+              disabled={pending || loading || offset === 0}
+              onclick={() => void refresh(Math.max(0, offset - 100))}>Previous</Button
+            >
+            <Button
+              size="sm"
+              disabled={pending || loading || offset + 100 >= total}
+              onclick={() => void refresh(offset + 100)}>Next</Button
+            >
+          </div>{/if}
       </section>
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .workspace {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    padding: var(--space-5);
-  }
-  .boundary,
-  small {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .catalog,
-  .editor {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    padding: var(--space-4);
-  }
-  .definition-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .definition-row > div {
-    flex: 1;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .definition-row small {
-    display: block;
-  }
   .term-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(80px, 120px) auto;
-    gap: var(--space-2);
+    grid-template-columns: minmax(0, 1fr) 112px 28px;
+    align-items: center;
+    gap: var(--space-4);
   }
   textarea {
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
-    padding: var(--space-3);
+    padding: var(--space-3) var(--space-4);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
@@ -437,19 +435,5 @@
   #query-json {
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
-  }
-  .failure {
-    color: var(--accent-red);
-  }
-  .notice {
-    color: var(--accent-green);
-  }
-  h3,
-  p {
-    margin: 0;
-  }
-  code,
-  small {
-    overflow-wrap: anywhere;
   }
 </style>

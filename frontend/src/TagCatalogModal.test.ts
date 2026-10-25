@@ -83,13 +83,9 @@ it("creates, renames, and deliberately deletes stable tag definitions", async ()
   expect(await screen.findByText("Renamed tag to tax filing.")).toBeTruthy();
 
   await fireEvent.click(screen.getByRole("button", { name: "Delete tag tax filing" }));
-  expect(
-    screen.getByText(
-      "This permanently removes the tag definition and every assignment that currently uses it. Documents and their stored content are not deleted.",
-    ),
-  ).toBeTruthy();
+  expect(screen.getByText(/is on 3 files\. Deleting it removes it from them/)).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Delete tag" }));
-  expect(await screen.findByText("Deleted tax filing and removed 3 assignments.")).toBeTruthy();
+  expect(await screen.findByText("Deleted tax filing from 3 files.")).toBeTruthy();
 
   expect(fetchMock).toHaveBeenCalledTimes(3);
   expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match")).toBe("2");
@@ -202,4 +198,32 @@ it("keeps an identity color while a rename moves the tag between groups", async 
   expect((afterVisual?.firstElementChild as HTMLElement).style.backgroundColor).toBe(
     "rgb(188, 76, 0)",
   );
+});
+
+it("deletes an unused tag in one click without a confirmation", async () => {
+  const unused = { ...tax, id: "33333333-3333-4333-8333-333333333333", assignment_count: 0 };
+  const onchanged = vi.fn();
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ tag: unused, removed_assignments: 0 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  render(TagCatalogModal, {
+    session: "short-lived",
+    catalog: [unused],
+    catalogTotal: 1,
+    disabled: false,
+    onclose: vi.fn(),
+    onchanged,
+    onauthfailure: vi.fn(),
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Delete tag tax" }));
+  expect(await screen.findByText("Deleted tax.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Keep tag" })).toBeNull();
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("DELETE");
+  expect(onchanged).toHaveBeenCalledWith(expect.objectContaining({ kind: "deleted" }));
+  expect(screen.queryByText(unused.id)).toBeNull();
 });

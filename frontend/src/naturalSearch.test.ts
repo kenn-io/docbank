@@ -3,7 +3,7 @@ import {
   directFileEvidenceNote,
   evidenceKindLabels,
   naturalSearchFallbackNote,
-  naturalSearchModes,
+  naturalSearchPlaceholder,
   naturalSearchRequest,
   naturalSearchRerank,
   rerankingNote,
@@ -38,15 +38,8 @@ describe("natural search mapping", () => {
 
   it("keeps Auto lexical when no embedding binding exists", () => {
     const noBinding = profile("private", [], true);
-    expect(naturalSearchModes(noBinding).map((option) => option.value)).toEqual([
-      "names",
-      "auto",
-      "lexical",
-    ]);
-    expect(naturalSearchRequest("auto", noBinding)).toEqual({ mode: "auto" });
-    expect(naturalSearchRequest("lexical", noBinding)).toEqual({ mode: "lexical" });
-    expect(naturalSearchRerank(noBinding, "lexical", true)).toBe(true);
-    expect(naturalSearchRequest("semantic", noBinding)).toBeUndefined();
+    expect(naturalSearchRequest("auto", noBinding)).toEqual({ mode: "lexical" });
+    expect(naturalSearchRerank(noBinding, "auto", true)).toBe(true);
   });
 
   it("maps embedding-backed Auto to hybrid and omits rerank when off", () => {
@@ -55,24 +48,14 @@ describe("natural search mapping", () => {
       mode: "hybrid",
       binding_id: "embed",
     });
-    expect(naturalSearchRequest("hybrid", withBinding)).toEqual({
-      mode: "hybrid",
-      binding_id: "embed",
-    });
-    expect(naturalSearchRerank(withBinding, "hybrid", false)).toBeUndefined();
+    expect(naturalSearchRerank(withBinding, "auto", false)).toBeUndefined();
   });
 
   it("keeps processing-only bindings out of natural search", () => {
     const directOnly = profile("direct", ["direct-file"], false, []);
     const mixed = profile("mixed", ["direct-file", "semantic"], false, ["semantic"]);
     expect(selectNaturalSearchProfile([directOnly, mixed])?.name).toBe("mixed");
-    expect(naturalSearchModes(directOnly).map((option) => option.value)).toEqual([
-      "names",
-      "auto",
-      "lexical",
-    ]);
-    expect(naturalSearchRequest("auto", directOnly)).toEqual({ mode: "auto" });
-    expect(naturalSearchRequest("hybrid", directOnly)).toBeUndefined();
+    expect(naturalSearchRequest("auto", directOnly)).toEqual({ mode: "lexical" });
     expect(naturalSearchRequest("auto", mixed)).toEqual({ mode: "hybrid", binding_id: "semantic" });
   });
 
@@ -83,6 +66,11 @@ describe("natural search mapping", () => {
     ]);
     expect(directFileEvidenceNote()).toContain("no text excerpt");
     expect(rerankingNote("degraded", "timed_out")).toContain("timed_out");
-    expect(naturalSearchFallbackNote("search failed")).toContain("Names and text");
+    expect(naturalSearchFallbackNote("search failed")).toContain("names and text");
   });
+});
+
+it("uses a syntax-specific prompt independently of embeddings", () => {
+  expect(naturalSearchPlaceholder("simple")).toBe("Search names and text");
+  expect(naturalSearchPlaceholder("advanced")).toBe("name:invoice AND tag:urgent");
 });

@@ -74,7 +74,7 @@ it.each(["none", "tags", "audit"])(
         if (url.includes("node_id=2") && ++auditAttempts === 1 && failure === "audit")
           throw new TypeError("Audit request lost");
         return json({
-          enabled: false,
+          enabled: failure === "audit",
           vault_id: "synthetic",
           operation_sequence_high_water: 0,
           allocation_entry_count: 0,
@@ -83,7 +83,7 @@ it.each(["none", "tags", "audit"])(
             node_id: 2,
             path: node.path,
             trashed: false,
-            protected: false,
+            protected: failure === "audit" && auditAttempts > 1,
             scope_ids: [],
             baseline_digests: [],
           },
@@ -97,7 +97,7 @@ it.each(["none", "tags", "audit"])(
     if (failure === "tags")
       await screen.findByText("Refresh the current view before using document actions.");
     else await screen.findByText(/No page inventory/);
-    if (failure === "audit") await screen.findByText("Audit request lost");
+    if (failure === "audit") await waitFor(() => expect(auditAttempts).toBe(1));
     await fireEvent.click(screen.getByRole("cell", { name: "synthetic.pdf" }));
     await screen.findByText(/No page inventory/);
     await waitFor(() => {
@@ -108,9 +108,14 @@ it.each(["none", "tags", "audit"])(
       ).toBeNull();
     });
     expect(screen.getByRole("region", { name: "Pages of synthetic.pdf" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
     if (failure !== "tags") expect(inventories).toBe(1);
     if (failure === "tags") expect(tagAttempts).toBe(2);
-    if (failure === "audit") expect(auditAttempts).toBe(2);
+    if (failure === "audit") {
+      expect(auditAttempts).toBe(2);
+      expect(
+        await screen.findByRole("button", { name: "Protected, open Audit history" }),
+      ).toBeTruthy();
+    }
   },
 );

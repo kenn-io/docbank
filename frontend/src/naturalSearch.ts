@@ -1,11 +1,6 @@
 import type { DocumentSearchRequestMode, ProcessingProfileSummary } from "./generated/docbank.js";
 
-export type NaturalSearchMode = "names" | "auto" | "lexical" | "semantic" | "hybrid";
-
-export interface NaturalSearchModeOption {
-  value: NaturalSearchMode;
-  label: string;
-}
+export type NaturalSearchMode = "names" | "auto";
 
 export interface NaturalSearchRequestMode {
   mode: DocumentSearchRequestMode;
@@ -15,14 +10,6 @@ export interface NaturalSearchRequestMode {
 export function naturalQueryBindings(profile: ProcessingProfileSummary): string[] {
   return profile.query_embedding_bindings ?? profile.embedding_bindings;
 }
-
-const modeLabels: Record<NaturalSearchMode, string> = {
-  names: "Names and text",
-  auto: "Auto",
-  lexical: "Lexical",
-  semantic: "Semantic",
-  hybrid: "Hybrid",
-};
 
 export function selectNaturalSearchProfile(
   profiles: ProcessingProfileSummary[],
@@ -35,14 +22,8 @@ export function selectNaturalSearchProfile(
   );
 }
 
-export function naturalSearchModes(
-  profile: ProcessingProfileSummary | undefined,
-): NaturalSearchModeOption[] {
-  const modes: NaturalSearchMode[] = ["names"];
-  if (!profile) return modes.map((value) => ({ value, label: modeLabels[value] }));
-  modes.push("auto", "lexical");
-  if (naturalQueryBindings(profile).length > 0) modes.push("semantic", "hybrid");
-  return modes.map((value) => ({ value, label: modeLabels[value] }));
+export function naturalSearchPlaceholder(syntax: "simple" | "advanced"): string {
+  return syntax === "advanced" ? "name:invoice AND tag:urgent" : "Search names and text";
 }
 
 export function naturalSearchRequest(
@@ -51,11 +32,7 @@ export function naturalSearchRequest(
 ): NaturalSearchRequestMode | undefined {
   if (mode === "names") return undefined;
   const bindingID = naturalQueryBindings(profile)[0];
-  if ((mode === "semantic" || mode === "hybrid") && !bindingID) return undefined;
-  if (mode === "auto" && bindingID) return { mode: "hybrid", binding_id: bindingID };
-  if ((mode === "semantic" || mode === "hybrid") && bindingID)
-    return { mode, binding_id: bindingID };
-  return { mode: mode as DocumentSearchRequestMode };
+  return bindingID ? { mode: "hybrid", binding_id: bindingID } : { mode: "lexical" };
 }
 
 export function naturalSearchRerank(
@@ -101,8 +78,8 @@ export function rerankingNote(outcome: string, cause = ""): string {
 export function naturalSearchFallbackNote(cause: string): string {
   const detail = cause.trim().slice(0, 128);
   return detail
-    ? `Natural-language search unavailable: ${detail}. Showing Names and text.`
-    : "Natural-language search unavailable. Showing Names and text.";
+    ? `Natural-language search unavailable: ${detail}. Showing names and text.`
+    : "Natural-language search unavailable. Showing names and text.";
 }
 
 export function directFileEvidenceNote(): string {

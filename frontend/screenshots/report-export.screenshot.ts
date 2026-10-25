@@ -117,7 +117,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
       await expect(drawer.getByRole("combobox", { name: "Coverage policy" })).toHaveValue("strict");
       const creating = post("/api/v1/search-exports");
-      await drawer.getByRole("button", { name: "Create export", exact: true }).click();
+      await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
       expect(response.status()).toBe(422);
       expect(await response.json()).toMatchObject({ code: "incomplete_coverage" });
@@ -125,7 +125,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await expect(drawer.getByRole("table")).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
       expect(await history()).toEqual(before);
-      await drawer.getByRole("button", { name: "Close search exports" }).click();
+      await drawer.getByRole("button", { name: "Close search term report" }).click();
       await page.getByRole("checkbox", { name: "Select missing.bin", exact: true }).uncheck();
     });
 
@@ -196,7 +196,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
         .getByRole("combobox", { name: "Coverage policy" })
         .selectOption("available_only");
       const creating = post("/api/v1/search-exports");
-      await drawer.getByRole("button", { name: "Create export", exact: true }).click();
+      await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
       expect(response.status()).toBe(200);
       const submitted = response.request().postDataJSON();
@@ -476,7 +476,7 @@ print('Verified report evidence, CSV and all three original byte streams')
       const completed = drawer.locator(".history-item").filter({ hasText: "Counts ready" });
       await completed.getByRole("button", { name: "Use as draft" }).click();
       const creating = post("/api/v1/search-exports");
-      await drawer.getByRole("button", { name: "Create export", exact: true }).click();
+      await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
       expect(response.request().postDataJSON().selected_documents.documents).toEqual(identities);
       expect(response.status()).toBe(409);

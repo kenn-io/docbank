@@ -39,7 +39,9 @@ vector space where applicable, provider-visible metadata, and retained artifact
 roles. These runtime disclosures are part of the plan fingerprint. Re-run the
 preview when the source, profile, or provider destination changes. The consent
 state shown in a plan is advisory and does not change the fingerprint.
-Execution checks consent again.
+Execution checks consent again. When the profile's provider doesn't accept the
+file's format, the plan reports `unsupported_media_type` and a build fails with
+`rendition_source_ineligible`. The web app doesn't offer such a profile.
 
 Run only the reviewed plan:
 
@@ -301,7 +303,7 @@ file is configured.
 
 Docling and Mistral processing can open encrypted PDFs using `[media].pdf_passwords_file` from [configuration](../configuration.md). Put one password per line in that owner-only file. LF and CRLF line endings work; blank lines are ignored, and spaces belong to the password. The file must be UTF-8 without a byte-order mark and may contain up to 16 KiB and 128 passwords.
 
-Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. When no password opens the PDF, or no password file is configured, the browser drawer shows "pdf password required" as the reason and disables Run. CLI and API builds create a job that ends `failed` with `pdf_password_required`. The CLI says "no configured PDF password opens this PDF" and points to `media.pdf_passwords_file`. Read the job with `docbank processing status <job-id>`.
+Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. When no password opens the PDF, or no password file is configured, the browser dialog says the PDF is locked and disables its run button. CLI and API builds create a job that ends `failed` with `pdf_password_required`. The CLI says "no configured PDF password opens this PDF" and points to `media.pdf_passwords_file`. Read the job with `docbank processing status <job-id>`.
 
 Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. If the file can't be read, planning or building a locked PDF returns `rendition_operator_required` with "PDF passwords file can't be read; check media.pdf_passwords_file", without the file's path. Queued jobs retry until the file is fixed. Plain PDFs and audio keep processing.
 
@@ -311,11 +313,12 @@ The pinned pdfcpu v0.15.0 password preparation rejects spaces, non-ASCII punctua
 
 ## Find similar documents
 
-Choose a file's **Find similar** row action in the web app. The processing
-drawer searches the file versions loaded in the current view. Select a profile
-with embeddings. Results use the selected file's stored embeddings locally. An
-unavailable report names the missing binding. Run processing to build it, then
-retry. Views above 4,096 file versions must be narrowed first.
+Choose a file's **Find similar** row action in the web app. The **Similar
+documents** drawer searches the file versions loaded in the current view. With
+several profiles that store embeddings, choose one. Results use the selected
+file's stored embeddings locally. A file without embeddings for that profile
+shows none; process it, then retry. Views above 4,096 file versions must be
+narrowed first.
 
 In the TUI, press uppercase `S` on a file to search the current listing.
 Lowercase `s` still sorts. The selected file is excluded, while another file

@@ -1,17 +1,10 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import XIcon from "@lucide/svelte/icons/x";
   import FileArchiveIcon from "@lucide/svelte/icons/file-archive";
-  import {
-    Button,
-    Card,
-    Checkbox,
-    Chip,
-    DetailDrawer,
-    IconButton,
-    SelectDropdown,
-    Spinner,
-  } from "@kenn-io/kit-ui";
+  import { Button, Checkbox, Chip, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import DrawerShell from "./DrawerShell.svelte";
+  import FileChooser from "./FileChooser.svelte";
+  import "./toolForm.css";
   import { APIError } from "./api-transport.js";
   import { randomUUID } from "./crypto.js";
   import { formatBytes } from "./format.js";
@@ -161,232 +154,208 @@
   }
 </script>
 
-<DetailDrawer width="min(720px, 100vw)" ariaLabel="Import load-file package" {onclose}>
-  {#snippet header()}<div class="drawer-heading">
-      <div>
-        <span>Load-file import</span><strong>Import reviewed package</strong><small
-          >{destination}</small
-        >
-      </div>
-      <IconButton size="sm" ariaLabel="Close load-file import" onclick={onclose}
-        ><XIcon size="14" /></IconButton
-      >
-    </div>{/snippet}
-  <div class="content">
-    <p>
-      Upload a bounded ZIP, review its records, pages, and diagnostics, then start a resumable
-      import.
-    </p>
-    <label class="file-label"
-      >Choose load-file ZIP<input
-        type="file"
+<DrawerShell
+  title={`Import load files to ${destination}`}
+  ariaLabel="Import load-file package"
+  closeLabel="Close load-file import"
+  {onclose}
+>
+  <div class="tool-body">
+    <section class="tool-section" aria-label="Package source">
+      <FileChooser
         accept=".zip,application/zip"
-        aria-label="Choose load-file ZIP"
+        label="Choose load-file ZIP"
+        {file}
         disabled={busy}
+        icon={FileArchiveIcon}
         onchange={choose}
-      /></label
-    >
-    <div class="choices">
-      <label
-        >Metadata profile<SelectDropdown
-          title="Metadata profile"
-          value={profile}
-          options={[
-            { value: "dat-concordance-v1", label: "Concordance DAT" },
-            { value: "csv-rfc4180-v1", label: "RFC 4180 CSV" },
-          ]}
-          disabled={busy || Boolean(preview)}
-          onchange={(value) => {
-            profile = value;
-          }}
-        /></label
-      ><label
-        >Page map<SelectDropdown
-          title="Page map profile"
-          value={pageMapProfile}
-          options={[
-            { value: "", label: "Detect from extension" },
-            { value: "opt-standard-v1", label: "Standard OPT" },
-            { value: "opt-pagecount5-v1", label: "OPT page count" },
-            { value: "lfp-ipro-v1", label: "IPRO LFP" },
-          ]}
-          disabled={busy || Boolean(preview)}
-          onchange={(value) => {
-            pageMapProfile = value;
-          }}
-        /></label
-      ><label
-        >Encoding<SelectDropdown
-          title="Source encoding"
-          value={encoding}
-          options={[
-            { value: "utf-8", label: "UTF-8" },
-            { value: "windows-1252", label: "Windows-1252" },
-          ]}
-          disabled={busy || Boolean(preview)}
-          onchange={(value) => {
-            encoding = value;
-          }}
-        /></label
-      >
-    </div>
-    {#if file}<div class="file-name">
-        <FileArchiveIcon size="18" /><strong>{file.name}</strong><span
-          >{formatBytes(file.size)}</span
-        >
+      />
+      <div class="tool-grid">
+        <div class="tool-field tool-span-2">
+          <span class="tool-label">Metadata</span>
+          <SelectDropdown
+            title="Metadata profile"
+            value={profile}
+            options={[
+              { value: "dat-concordance-v1", label: "Concordance DAT" },
+              { value: "csv-rfc4180-v1", label: "RFC 4180 CSV" },
+            ]}
+            disabled={busy || Boolean(preview)}
+            onchange={(value) => {
+              profile = value;
+            }}
+          />
+        </div>
+        <div class="tool-field tool-span-2">
+          <span class="tool-label">Page map</span>
+          <SelectDropdown
+            title="Page map profile"
+            value={pageMapProfile}
+            options={[
+              { value: "", label: "Detect from extension" },
+              { value: "opt-standard-v1", label: "Standard OPT" },
+              { value: "opt-pagecount5-v1", label: "OPT page count" },
+              { value: "lfp-ipro-v1", label: "IPRO LFP" },
+            ]}
+            disabled={busy || Boolean(preview)}
+            onchange={(value) => {
+              pageMapProfile = value;
+            }}
+          />
+        </div>
+        <div class="tool-field tool-span-2">
+          <span class="tool-label">Encoding</span>
+          <SelectDropdown
+            title="Source encoding"
+            value={encoding}
+            options={[
+              { value: "utf-8", label: "UTF-8" },
+              { value: "windows-1252", label: "Windows-1252" },
+            ]}
+            disabled={busy || Boolean(preview)}
+            onchange={(value) => {
+              encoding = value;
+            }}
+          />
+        </div>
       </div>
-      <Button tone="info" disabled={busy} onclick={() => void previewPackage()}
-        >Upload and preview</Button
-      >{/if}
-    {#if busy}<div class="progress">
-        <Spinner size={16} /><span
-          >{stage}{#if total}
-            · {formatBytes(processed)} / {formatBytes(total)}{/if}</span
-        >
-      </div>{/if}
-    {#if error}<p role="alert" class="error">{error}</p>{/if}
+      {#if error}<p role="alert" class="tool-error">{error}</p>{/if}
+      {#if !preview && !job}
+        <div class="tool-actions">
+          {#if busy}<span class="tool-muted" role="status"
+              ><Spinner size={14} />
+              {stage}{#if total}
+                · {formatBytes(processed)} of {formatBytes(total)}{/if}</span
+            >{/if}
+          <Button
+            tone="info"
+            surface="solid"
+            disabled={busy || !file}
+            onclick={() => void previewPackage()}>Upload and preview</Button
+          >
+        </div>
+      {/if}
+    </section>
+
     {#if preview}
       {@const currentPreview = preview}
-      <Card title="Package preview" eyebrow="Source verified" padding="md">
-        {#snippet actions()}<Chip size="xs" tone={currentPreview.blocking ? "danger" : "success"}
+      <section class="tool-section" aria-label="Package preview">
+        <div class="tool-heading">
+          <h3>Package preview</h3>
+          <Chip size="xs" tone={currentPreview.blocking ? "danger" : "success"}
             >{currentPreview.blocking ? "Blocked" : "Ready"}</Chip
-          >{/snippet}
-        <div class="counts">
-          <div><strong>{currentPreview.records}</strong><span>Records</span></div>
-          <div><strong>{currentPreview.pages}</strong><span>Pages</span></div>
-          <div><strong>{currentPreview.diagnostic_count}</strong><span>Diagnostics</span></div>
-        </div>
-        {#each currentPreview.diagnostics as diagnostic}<p
-            class:diagnostic-error={diagnostic.severity === "blocking"}
           >
-            <strong>{diagnostic.code}</strong>
-            {diagnostic.detail}
-          </p>{/each}
-        <label>Package name<input bind:value={name} maxlength="128" /></label><label
-          >Sending party<input bind:value={party} maxlength="64" /></label
-        >
-        <Checkbox
-          label="Index package-supplied text"
-          checked={indexText}
-          onchange={(checked) => {
-            indexText = checked;
-          }}
-        /><Checkbox
-          label="Keep supported records and report gaps"
-          checked={acceptPartial}
-          onchange={(checked) => {
-            acceptPartial = checked;
-          }}
-        />
-        <Button
-          tone="success"
-          disabled={busy || currentPreview.blocking || !name}
-          onclick={() => void start()}>Import package</Button
-        >
-      </Card>
+        </div>
+        <dl class="tool-stats">
+          <div>
+            <dt>Records</dt>
+            <dd>{currentPreview.records}</dd>
+          </div>
+          <div>
+            <dt>Pages</dt>
+            <dd>{currentPreview.pages}</dd>
+          </div>
+          <div>
+            <dt>Diagnostics</dt>
+            <dd>{currentPreview.diagnostic_count}</dd>
+          </div>
+        </dl>
+        {#if currentPreview.diagnostics.length}
+          <ul class="tool-list">
+            {#each currentPreview.diagnostics as diagnostic}<li
+                class:tool-error={diagnostic.severity === "blocking"}
+              >
+                <span><strong>{diagnostic.code}</strong> {diagnostic.detail}</span>
+              </li>{/each}
+          </ul>
+        {/if}
+        {#if !job}
+          <div class="tool-grid">
+            <div class="tool-field tool-span-3">
+              <label for="loadfile-name">Package name</label>
+              <TextInput id="loadfile-name" bind:value={name} block />
+            </div>
+            <div class="tool-field tool-span-3">
+              <label for="loadfile-party">Sending party</label>
+              <TextInput id="loadfile-party" bind:value={party} block />
+            </div>
+            <div class="checks tool-span-all">
+              <Checkbox
+                label="Index package-supplied text"
+                checked={indexText}
+                onchange={(checked) => {
+                  indexText = checked;
+                }}
+              /><Checkbox
+                label="Keep supported records and report gaps"
+                checked={acceptPartial}
+                onchange={(checked) => {
+                  acceptPartial = checked;
+                }}
+              />
+            </div>
+          </div>
+          {#if name.length > 128 || party.length > 64}<p class="tool-error">
+              Use at most 128 characters for the name and 64 for the sending party.
+            </p>{/if}
+          <div class="tool-actions">
+            {#if busy}<span class="tool-muted" role="status"><Spinner size={14} /> {stage}</span
+              >{/if}
+            <Button
+              tone="info"
+              surface="solid"
+              disabled={busy ||
+                currentPreview.blocking ||
+                !name ||
+                name.length > 128 ||
+                party.length > 64}
+              onclick={() => void start()}>Import package</Button
+            >
+          </div>
+        {/if}
+      </section>
     {/if}
-    {#if job}{@const currentJob = job}<Card
-        title={currentJob.state === "complete" ? "Import complete" : "Package import"}
-        eyebrow="Durable import report"
-        padding="md"
-        >{#snippet actions()}<Chip
+    {#if job}{@const currentJob = job}
+      <section class="tool-section" aria-label="Import report">
+        <div class="tool-heading">
+          <h3>{currentJob.state === "complete" ? "Import complete" : "Package import"}</h3>
+          <Chip
             size="xs"
             tone={currentJob.state === "complete"
               ? "success"
               : currentJob.state === "failed"
                 ? "danger"
                 : "info"}>{currentJob.state}</Chip
-          >{/snippet}
-        <div class="counts">
-          <div><strong>{currentJob.committed}</strong><span>Imported</span></div>
-          <div><strong>{currentJob.gap_count}</strong><span>Gaps</span></div>
-          <div><strong>{currentJob.total}</strong><span>Total</span></div>
+          >
         </div>
-        <small>Operation {currentJob.operation_id}</small></Card
-      >{/if}
+        <dl class="tool-stats">
+          <div>
+            <dt>Imported</dt>
+            <dd>{currentJob.committed}</dd>
+          </div>
+          <div>
+            <dt>Gaps</dt>
+            <dd>{currentJob.gap_count}</dd>
+          </div>
+          <div>
+            <dt>Total</dt>
+            <dd>{currentJob.total}</dd>
+          </div>
+        </dl>
+        <p class="tool-muted">Operation <code>{currentJob.operation_id}</code></p>
+      </section>
+    {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading,
-  .file-name,
-  .progress {
+  .checks {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: var(--space-7);
   }
-  .drawer-heading {
-    justify-content: space-between;
-    width: 100%;
-  }
-  .drawer-heading > div {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .drawer-heading span,
-  small {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  .drawer-heading strong {
-    font-size: var(--font-size-lg);
-  }
-  .content {
-    display: grid;
-    gap: 16px;
-    padding: 24px;
-    overflow: auto;
-  }
-  .content p {
-    margin: 0;
-    line-height: 1.5;
-  }
-  .file-label,
-  .choices label,
-  .content > label {
-    display: grid;
-    gap: 8px;
+  code {
     font-size: var(--font-size-sm);
-  }
-  .choices {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 12px;
-  }
-  .file-name {
-    padding: 12px;
-    border: 1px solid var(--border-default);
-    border-radius: 8px;
-  }
-  .file-name strong {
-    flex: 1;
-  }
-  .counts {
-    display: flex;
-    gap: 24px;
-    margin: 12px 0;
-  }
-  .counts div {
-    display: grid;
-    gap: 4px;
-  }
-  .counts strong {
-    font-size: var(--font-size-2xl);
-  }
-  .counts span {
-    color: var(--text-secondary);
-    font-size: var(--font-size-xs);
-  }
-  .error,
-  .diagnostic-error {
-    color: var(--accent-red);
-  }
-  input {
-    padding: 9px;
-    border: 1px solid var(--border-default);
-    border-radius: 6px;
-    background: var(--bg-surface);
-    color: var(--text-primary);
+    overflow-wrap: anywhere;
   }
 </style>

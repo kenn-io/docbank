@@ -245,14 +245,16 @@ trust_boundary = "local_process"
       const body = await started.text();
       if (!started.ok || !body.includes('"state":"completed"')) throw Error(body);
     }
-    const mode = page.getByRole("combobox", { name: "Search mode: Auto" });
+    const mode = page.getByRole("combobox", { name: "Search mode: Words and meaning (auto)" });
     await expect(mode).toBeVisible();
     await mode.click();
     await expect(page.getByRole("option", { name: "Names and text" })).toBeVisible();
     await expect(page.getByRole("option", { name: "Auto" })).toBeVisible();
-    await expect(page.getByRole("option", { name: "Lexical" })).toBeVisible();
-    await expect(page.getByRole("option", { name: "Semantic" })).toBeVisible();
-    await expect(page.getByRole("option", { name: "Hybrid" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Words", exact: true })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Meaning", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("option", { name: "Words and meaning", exact: true }),
+    ).toBeVisible();
     await page.keyboard.press("Escape");
     const search = page.getByRole("searchbox", { name: "Search documents" });
     await search.fill("solar maintenance");

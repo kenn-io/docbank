@@ -4,17 +4,17 @@
 </script>
 
 <script lang="ts">
+  import IconAction from "./IconAction.svelte";
   import { reportAction, reportFailure } from "./action-events.js";
   import { type PhotoBrowseRow } from "./photoRows.js";
   import { fittedPhotoView } from "./photoView.js";
   import { APIError } from "./api-transport.js";
   import { settleReads, type PhotoChange } from "./photoEvents.js";
-  import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import {
     Button,
     EmptyState,
-    IconButton,
     Menu,
     MenuTrigger,
     MenuContent,
@@ -32,6 +32,7 @@
     type ShortcutManager,
   } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
+  import InfoIcon from "@lucide/svelte/icons/info";
   import ImageIcon from "@lucide/svelte/icons/image";
   import { activeFilterCount, isFilterSet } from "./photoSearch.js";
   import {
@@ -71,6 +72,8 @@
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import PhotoCompare from "./PhotoCompare.svelte";
   import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
+  import PanelResizer from "./PanelResizer.svelte";
+  import { readPanelWidth } from "./panelWidth.js";
 
   import type PhotoMap from "./PhotoMap.svelte";
   import type { MapTiles } from "./photoMap.js";
@@ -104,6 +107,7 @@
     onexport,
     onadd,
     uploadChannelError = "",
+    toolbarLead,
   }: {
     photos: Photos;
     vaultID?: string;
@@ -137,6 +141,7 @@
     onexport?: (input: ExportInput) => void;
     onadd?: () => void;
     uploadChannelError?: string;
+    toolbarLead?: Snippet;
   } = $props();
   let cull = $state.raw<CullRun>();
   let cullPhoto = $state.raw<PhotoBrowseRow>();
@@ -205,6 +210,22 @@
   }
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
+  let metadataOpen = $state(readMetadataPreference());
+  let detailsWidth = $state(readPanelWidth("photos"));
+  function readMetadataPreference(): boolean {
+    try {
+      return localStorage.getItem("docbank.photoMetadata") !== "closed";
+    } catch {
+      return true;
+    }
+  }
+  $effect(() => {
+    try {
+      localStorage.setItem("docbank.photoMetadata", metadataOpen ? "open" : "closed");
+    } catch {
+      /* Browser storage is optional. */
+    }
+  });
   const inspectorFaces = untrack(() => {
     const owner = photos,
       actionError = onactionerror;
@@ -232,7 +253,7 @@
       : comparing
         ? undefined
         : photoID ||
-          (editing && !photos.allResults && photos.selectedIDs.size === 1
+          (metadataOpen && !photos.allResults && photos.selectedIDs.size === 1
             ? [...photos.selectedIDs][0]
             : undefined);
     const validating =
@@ -277,8 +298,6 @@
     });
     return () => controller.abort();
   });
-  let editing = $state(false);
-  let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
   // A live refresh never blocks edits: every write carries revisions the server checks.
   const actionDisabled = $derived(photos.blocking || photos.hiding || photos.trashing);
@@ -291,7 +310,7 @@
   );
   $effect(() => {
     const id = photoID,
-      active = id ? loupeMetadata : editing,
+      active = metadataOpen,
       revision = photos.editScopeRevision;
     untrack(() => {
       void revision;
@@ -299,7 +318,6 @@
         editor.reset();
         editor.inspectedID = id;
       }
-      if (!id) loupeMetadata = false;
       if (
         active &&
         !editor.targets.length &&
@@ -595,7 +613,7 @@
       .finally(() => {
         if (!controller.signal.aborted) {
           detailLoading = false;
-          if (loupeMetadata && !editor.dirty && !editor.busy) void editor.reload(true);
+          if (metadataOpen && !editor.dirty && !editor.busy) void editor.reload(true);
         }
       });
     return () => {
@@ -857,6 +875,14 @@
         : direct
       : undefined,
   );
+  // The photo the metadata panel edits, shown by name above its fields.
+  const inspected = $derived(
+    photoID
+      ? current
+      : !photos.allResults && photos.selectedIDs.size === 1
+        ? shown.find((item) => photos.selectedIDs.has(item.asset_id))
+        : undefined,
+  );
   $effect(() => {
     if (!openIntent) return;
     if (photoID && photoID !== openIntent) openIntent = "";
@@ -924,6 +950,20 @@
   }
   function escape(event: KeyboardEvent) {
     if (mapMode && !tiles.tile_url) return;
+    if (
+      !photoID &&
+      !culling &&
+      !comparing &&
+      event.key.toLowerCase() === "i" &&
+      !event.repeat &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !isAppShortcutSuppressed(event, false, document, ".photo-cell, .toolbar-actions button")
+    ) {
+      event.preventDefault();
+      metadataOpen = !metadataOpen;
+    }
     if (
       !photoID &&
       event.key === "Escape" &&
@@ -1101,9 +1141,9 @@
         <div class="library-grid">
           <div class="photo-bar browser-toolbar">
             <div class="photo-crumbs">
-              {#if searchable}<IconButton
+              {#if searchable}<IconAction
                   size="sm"
-                  title="Filters"
+                  tip="Filters"
                   tone={photos.filtersOpen ? "info" : "neutral"}
                   ariaLabel={activeFilters
                     ? `Filters, ${activeFilters} active filter${activeFilters === 1 ? "" : "s"}`
@@ -1114,7 +1154,7 @@
                 >
                   <SlidersHorizontalIcon size="14" aria-hidden="true" />
                   {#if activeFilters}<Chip size="xs" tone="info">{activeFilters}</Chip>{/if}
-                </IconButton>{/if}
+                </IconAction>{/if}
               {#if albumID}<button
                   type="button"
                   class="album-back"
@@ -1153,11 +1193,12 @@
               {#if photos.personFilter && photos.query.filters.person_ids?.includes(photos.personFilter.id)}
                 <span>Person: {photos.personFilter.name}</span>
               {/if}
-              {#if searchable && albums}<PhotoSmartSet {photos} {albums} {onnavigate} />{/if}
+              {#if filtered && albums}<PhotoSmartSet {photos} {albums} {onnavigate} />{/if}
               {#if cull?.progress}<span role="status">{cull.progress}</span>{/if}
               {#if cull?.error}<span role="alert">{cull.error}</span>{/if}
             </div>
             <div class="toolbar-actions">
+              {#if toolbarLead}{@render toolbarLead()}{/if}
               <span title={photoCount}>
                 <span class="photo-count-value">{photoCount}</span>
               </span>
@@ -1196,14 +1237,14 @@
                   options={densityOptions}
                   onchange={(value) => relayout(() => photos.setDensity(value as Density))}
                 />{/if}
-              {#if album && albums}<IconButton
+              {#if album && albums}<IconAction
                   size="sm"
                   ariaLabel={album.starred ? "Unstar album" : "Star album"}
-                  title={album.starred ? "Unstar album" : "Star album"}
+                  tip={album.starred ? "Unstar album" : "Star album"}
                   ariaPressed={album.starred}
                   disabled={albums.busy || renaming}
                   onclick={() => void albums!.update(album!, { starred: !album!.starred })}
-                  ><StarIcon size="14" fill={album.starred ? "currentColor" : "none"} /></IconButton
+                  ><StarIcon size="14" fill={album.starred ? "currentColor" : "none"} /></IconAction
                 >{/if}
               {#if !mapMode && !photos.hidden}
                 {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}
@@ -1222,6 +1263,14 @@
                     >{/if}
                 {/if}
               {/if}
+              {#if !mapMode && !photos.hidden && !albumID}<Button
+                  size="sm"
+                  tone="info"
+                  surface="solid"
+                  disabled={!onadd}
+                  title={uploadChannelError || undefined}
+                  onclick={onadd}><PlusIcon size="14" aria-hidden="true" />Add photos</Button
+                >{/if}
               <Menu align="end">
                 <MenuTrigger ariaLabel="More photo actions"><EllipsisIcon size="16" /></MenuTrigger>
                 <MenuContent ariaLabel="More photo actions">
@@ -1264,7 +1313,7 @@
                         if (!editor.canChangeTarget()) return;
                         rejectsOpen = true;
                         void photos.previewRejects();
-                      }}>Move rejects</MenuItem
+                      }}>Trash rejected photos</MenuItem
                     >
                     <MenuItem
                       disabled={photos.blocking ||
@@ -1298,37 +1347,17 @@
                   {/if}
                 </MenuContent>
               </Menu>
-              {#if !mapMode && !photos.hidden && !albumID}<Button
-                  size="sm"
-                  tone="info"
-                  surface="solid"
-                  disabled={!onadd}
-                  title={uploadChannelError || undefined}
-                  onclick={onadd}><PlusIcon size="14" aria-hidden="true" />Add photos</Button
-                >{/if}
+              <IconAction
+                size="sm"
+                ariaLabel="Metadata"
+                ariaPressed={metadataOpen}
+                onclick={() => (metadataOpen = !metadataOpen)}><InfoIcon size={16} /></IconAction
+              >
             </div>
           </div>
-          {#if !mapMode}<div class="photo-stack-controls browser-toolbar">
-              {#if photos.groupingIncomplete}<p role="status">
-                  Some camera details are missing or outdated. Stacks can change once they update.
-                </p>{/if}
-              <label class="burst-gap"
-                >Burst gap (seconds) <input
-                  aria-label="Burst gap (seconds)"
-                  type="number"
-                  min="1"
-                  max="30"
-                  value={photos.burstGapSeconds}
-                  disabled={photos.blocking || editor.busy}
-                  onchange={async (event) => {
-                    const input = event.currentTarget;
-                    await photos.setBurstGap(input.valueAsNumber, preserve);
-                    input.value = String(photos.burstGapSeconds);
-                    onactionerror?.(photos.actionError);
-                  }}
-                /></label
-              >
-            </div>{/if}
+          {#if !mapMode && photos.groupingIncomplete}<p class="photo-search-limit" role="status">
+              Some camera details are missing or outdated. Stacks can change once they update.
+            </p>{/if}
           {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
           {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
@@ -1484,18 +1513,34 @@
                     >{/if}
                 </div>{/if}
             </div>
-            {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
-                <PhotoInspector
-                  {cache}
-                  {editor}
-                  {actionDisabled}
-                  count={editCount}
-                  onedit={edit}
-                  onresponse={suggestionRefresh}
-                  faces={inspectorFaces}
-                  session={photos.session}
-                  {onperson}
-                />
+            {#if metadataOpen && !photoID}<PanelResizer
+                name="photos"
+                label="Resize photo details"
+                bind:width={detailsWidth}
+                min={240}
+                max={560}
+              />
+              <aside
+                class="grid-inspector"
+                aria-label="Photo details"
+                style:--details-width={detailsWidth === undefined
+                  ? undefined
+                  : `min(${detailsWidth}px, 50vw)`}
+              >
+                {#if editCount || editor.dirty}<PhotoInspector
+                    {cache}
+                    session={photos.session}
+                    onauthfailure={photos.onauthfailure}
+                    faces={inspectorFaces}
+                    {onperson}
+                    {editor}
+                    {actionDisabled}
+                    count={editCount}
+                    name={inspected?.name}
+                    mime={inspected && "media_type" in inspected ? inspected.media_type : undefined}
+                    onedit={edit}
+                    onresponse={suggestionRefresh}
+                  />{:else}<EmptyState title="Select a photo" />{/if}
               </aside>{/if}
           </div>
           {#if !photoID}
@@ -1582,11 +1627,6 @@
                     >{/if}
                   {#if editor.error}<span role="alert">{editor.error}</span>{/if}
                 {/if}
-                <Button
-                  size="sm"
-                  disabled={inspectorFaces.busy || (!editCount && !editor.dirty)}
-                  onclick={() => (editing = !editing)}>Metadata</Button
-                >
                 {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
                 {#if album && albums}<Button
                     size="sm"
@@ -1636,7 +1676,8 @@
   {#if photoID}<PhotoLoupe
       faces={inspectorFaces}
       {onperson}
-      bind:metadataOpen={loupeMetadata}
+      bind:metadataOpen
+      bind:detailsWidth
       {editor}
       {actionDisabled}
       onedit={edit}
@@ -1746,20 +1787,6 @@
 {/if}
 
 <style>
-  .burst-gap {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: var(--font-size-sm);
-  }
-  .burst-gap input {
-    width: 4rem;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    padding: 4px 8px;
-  }
   .photo-layout {
     display: flex;
     flex: 1;
@@ -1846,11 +1873,10 @@
     flex: 1;
   }
   .grid-inspector {
-    width: 280px;
+    width: var(--details-width, 320px);
     flex-shrink: 0;
     padding: 16px;
     overflow: auto;
-    border-left: 1px solid var(--border-default);
   }
   .photo-results {
     position: relative;
@@ -1887,6 +1913,9 @@
     }
     .photo-browser {
       flex-direction: column;
+    }
+    .photo-browser > :global(.panel-resizer) {
+      display: none;
     }
     .photo-browser:has(.grid-inspector) {
       flex: none;
@@ -1929,7 +1958,7 @@
   form,
   .modal-actions {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--space-4);
     align-items: center;
     flex-wrap: wrap;
   }
@@ -1959,20 +1988,12 @@
     border-radius: 999px;
     z-index: 4;
   }
-  .photo-bar,
-  .photo-stack-controls {
+  .photo-bar {
     padding-left: var(--space-5);
     padding-right: var(--space-7);
   }
   .photo-bar {
     border-bottom: 1px solid var(--border-default);
-  }
-  .photo-stack-controls {
-    justify-content: flex-start;
-  }
-  .photo-stack-controls p {
-    flex-basis: 100%;
-    margin: 0;
   }
   /* The shared mobile rule hides toolbar counts; here the count stays visible. */
   .photo-bar .toolbar-actions > span {
@@ -1980,6 +2001,7 @@
   }
   .photo-count-value {
     flex-shrink: 0;
+    font-size: var(--font-size-md);
   }
   .photo-bar .toolbar-actions :global(.kit-select-dropdown) {
     width: auto;
@@ -1995,7 +2017,7 @@
   }
   .photo-crumbs h1 {
     margin: 0;
-    font-size: 18px;
+    font-size: var(--font-size-xl);
     font-weight: 600;
     color: var(--text-primary);
   }

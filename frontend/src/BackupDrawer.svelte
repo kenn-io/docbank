@@ -1,19 +1,11 @@
 <script lang="ts">
+  import DrawerShell from "./DrawerShell.svelte";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
-  import ArchiveIcon from "@lucide/svelte/icons/archive";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Button,
-    Card,
-    Chip,
-    CopyButton,
-    DetailDrawer,
-    EmptyState,
-    IconButton,
-    Spinner,
-  } from "@kenn-io/kit-ui";
+  import { Button, Chip, CopyButton, IconButton, Spinner, Table } from "@kenn-io/kit-ui";
+  import CommandBox from "./CommandBox.svelte";
+  import InspectorDetails from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
   import { type BackupSnapshot, type BackupSnapshotList } from "./generated/docbank.js";
   import { formatBytes, formatDate } from "./format.js";
@@ -28,6 +20,7 @@
 
   let report = $state<BackupSnapshotList | null>(null);
   let loading = $state(true);
+  let loaded = $state(false);
   let error = $state("");
   let unconfigured = $state(false);
   let generation = 0;
@@ -72,7 +65,10 @@
       }
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      if (request === generation) loading = false;
+      if (request === generation) {
+        loading = false;
+        loaded = true;
+      }
     }
   }
 
@@ -81,46 +77,33 @@
   }
 </script>
 
-<DetailDrawer width="min(760px, 100vw)" ariaLabel="Backup snapshots" {onclose}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <span>Recovery points</span>
-        <strong>Backup snapshots</strong>
-        <small>
-          {#if report}
-            {report.items.length} immutable snapshot{report.items.length === 1 ? "" : "s"}
-          {:else}
-            Configured repository history
-          {/if}
-        </small>
-      </div>
-      <div class="drawer-actions">
-        <IconButton
-          size="sm"
-          ariaLabel="Refresh backup snapshots"
-          disabled={loading}
-          onclick={() => void refresh()}
-        >
-          <RefreshCwIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton size="sm" ariaLabel="Close backup snapshots" onclick={onclose}>
-          <XIcon size="14" aria-hidden="true" />
-        </IconButton>
-      </div>
-    </div>
+<DrawerShell
+  title="Backups"
+  ariaLabel="Backup snapshots"
+  closeLabel="Close backup snapshots"
+  {onclose}
+>
+  {#snippet actions()}
+    {#if loaded && !unconfigured}
+      <IconButton
+        size="sm"
+        ariaLabel="Refresh backup snapshots"
+        disabled={loading}
+        onclick={() => void refresh()}
+      >
+        <RefreshCwIcon size="14" aria-hidden="true" />
+      </IconButton>
+    {/if}
   {/snippet}
 
   <div class="backups">
     {#if loading && !report}
-      <div class="loading"><Spinner size={16} /> Reading backup history…</div>
+      <div class="loading"><Spinner size={16} /> Reading backups…</div>
     {:else if unconfigured}
-      <EmptyState
-        title="No backup repository configured"
-        description="Set [backup] repo in config.toml, then initialize and create snapshots from the CLI."
-      >
-        {#snippet icon()}<ArchiveIcon size="22" />{/snippet}
-      </EmptyState>
+      <div class="empty">
+        <p>No backup repository. Set <code>[backup] repo</code> in config.toml, then run</p>
+        <CommandBox label="backup init command" command="docbank backup init" />
+      </div>
     {:else if error && !report}
       <div class="load-error">
         <p role="alert">{error}</p>
@@ -128,119 +111,68 @@
       </div>
     {:else if report?.repository}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <section class="repository" aria-label="Backup repository identity">
-        <div>
-          <span>Configured repository</span>
-          <strong>{report.repository.path}</strong>
-        </div>
-        <div class="repository-id">
-          <code>{report.repository.id}</code>
-          <CopyButton text={report.repository.id} ariaLabel="Copy backup repository ID" />
-        </div>
-      </section>
+      <div class="repository">
+        <InspectorDetails
+          label="Backup repository"
+          facts={[
+            { label: "Repository", value: report.repository.path },
+            { label: "ID", value: report.repository.id, copy: true },
+          ]}
+        />
+      </div>
 
       {#if snapshots.length === 0}
-        <EmptyState
-          title="No snapshots yet"
-          description="The repository is initialized, but it does not contain a recovery point."
-        >
-          {#snippet icon()}<ArchiveIcon size="22" />{/snippet}
-        </EmptyState>
-      {:else}
-        <div class="snapshot-list" aria-live="polite">
-          {#each snapshots as snapshot (snapshot.id)}
-            <Card
-              level="default"
-              padding="sm"
-              eyebrow={formatDate(snapshot.created_at)}
-              title={snapshot.tag || "Untagged snapshot"}
-            >
-              {#snippet actions()}
-                <Chip size="xs" tone={snapshot.parent_id ? "info" : "neutral"}>
-                  {snapshotKind(snapshot)}
-                </Chip>
-              {/snippet}
-              <div class="snapshot-id">
-                <code>{snapshot.id}</code>
-                <CopyButton text={snapshot.id} ariaLabel={`Copy snapshot ID ${snapshot.id}`} />
-              </div>
-              <dl>
-                <div>
-                  <dt>Tree</dt>
-                  <dd>{snapshot.files} files · {snapshot.nodes} nodes</dd>
-                </div>
-                <div>
-                  <dt>Content</dt>
-                  <dd>{snapshot.blobs} blobs · {formatBytes(snapshot.blob_bytes)}</dd>
-                </div>
-                <div>
-                  <dt>Added</dt>
-                  <dd>
-                    {formatBytes(snapshot.bytes_added)} · {snapshot.packs_added}
-                    {snapshot.packs_added === 1 ? "pack" : "packs"}
-                  </dd>
-                </div>
-              </dl>
-            </Card>
-          {/each}
+        <div class="empty">
+          <p>No snapshots yet. Run</p>
+          <CommandBox label="backup create command" command="docbank backup create" />
         </div>
+      {:else}
+        <Table bare unsorted ariaLabel="Backup snapshots" class="snapshots">
+          <thead
+            ><tr
+              ><th scope="col">Snapshot</th><th scope="col">Type</th><th scope="col">Content</th><th
+                scope="col">Added</th
+              ><th scope="col"><span class="kit-sr-only">Copy ID</span></th></tr
+            ></thead
+          >
+          <tbody aria-live="polite">
+            {#each snapshots as snapshot (snapshot.id)}
+              <tr>
+                <th scope="row">
+                  <div class="stack">
+                    <span class="tag">{snapshot.tag || "Untagged snapshot"}</span>
+                    <span class="muted">{formatDate(snapshot.created_at)}</span>
+                  </div>
+                </th>
+                <td>
+                  <Chip size="xs" tone={snapshot.parent_id ? "info" : "neutral"}>
+                    {snapshotKind(snapshot)}
+                  </Chip>
+                </td>
+                <td class="num">
+                  {snapshot.files}
+                  {snapshot.files === 1 ? "file" : "files"} · {formatBytes(snapshot.blob_bytes)}
+                </td>
+                <td class="num">{formatBytes(snapshot.bytes_added)}</td>
+                <td class="copy">
+                  <CopyButton text={snapshot.id} ariaLabel={`Copy snapshot ID ${snapshot.id}`} />
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </Table>
       {/if}
-
-      <aside class="recovery-note">
-        <strong>Snapshot presence is not recovery proof.</strong>
-        <p>
-          This view lists immutable manifests only. Run
-          <code>docbank backup verify</code> to prove repository bytes, and restore into a separate vault
-          to rehearse recovery.
-        </p>
-      </aside>
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    width: 100%;
-    min-width: 0;
-  }
-
-  .drawer-heading > div:first-child {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .drawer-heading span,
-  .repository span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-  }
-
-  .drawer-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-lg);
-  }
-
-  .drawer-heading small {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .drawer-actions {
-    display: flex;
-    gap: var(--space-2);
-    flex-shrink: 0;
-  }
-
   .backups {
     display: grid;
+    align-content: start;
     gap: var(--space-5);
     padding: var(--space-5);
+    font-size: var(--font-size-sm);
   }
 
   .loading {
@@ -248,7 +180,6 @@
     align-items: center;
     gap: var(--space-3);
     color: var(--text-secondary);
-    font-size: var(--font-size-sm);
   }
 
   .load-error {
@@ -261,101 +192,68 @@
   .error {
     margin: 0;
     color: var(--accent-red);
-    font-size: var(--font-size-sm);
   }
 
-  .repository {
+  .empty {
     display: grid;
+    justify-items: start;
     gap: var(--space-3);
-    padding: var(--space-4);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-lg);
-    background: var(--bg-inset);
   }
 
-  .repository > div:first-child {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-
-  .repository strong {
-    overflow-wrap: anywhere;
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-  }
-
-  .repository-id,
-  .snapshot-id {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
+  .empty p {
+    margin: 0;
+    color: var(--text-secondary);
   }
 
   code {
-    overflow-wrap: anywhere;
-    color: var(--text-secondary);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
   }
 
-  .snapshot-list {
-    display: grid;
-    gap: var(--space-3);
+  .repository :global(.inspector-details > div) {
+    grid-template-columns: 7rem minmax(0, 1fr);
   }
 
-  .snapshot-id {
-    margin-bottom: var(--space-4);
+  .backups :global(.snapshots) {
+    width: 100%;
+    border-collapse: collapse;
   }
 
-  dl {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-3);
-    margin: 0;
+  th,
+  td {
+    padding: var(--space-3) var(--space-3) var(--space-3) 0;
+    border-bottom: 1px solid var(--border-muted);
+    text-align: left;
+    font-weight: var(--font-weight-normal);
+    vertical-align: middle;
   }
 
-  dl > div {
+  thead th {
+    padding-block: var(--space-2);
+    color: var(--text-muted);
+  }
+
+  .stack {
     display: grid;
     gap: var(--space-1);
   }
 
-  dt {
+  .tag {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .muted {
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
   }
 
-  dd {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
+  .num {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 
-  .recovery-note {
-    padding: var(--space-4);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-lg);
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-  }
-
-  .recovery-note strong {
-    color: var(--text-primary);
-  }
-
-  .recovery-note p {
-    margin: var(--space-2) 0 0;
-  }
-
-  .recovery-note code {
-    margin: 0 var(--space-1);
-    color: var(--text-primary);
-  }
-
-  @media (max-width: 640px) {
-    dl {
-      grid-template-columns: 1fr;
-    }
+  .copy {
+    width: 1%;
+    padding-right: 0;
+    text-align: right;
   }
 </style>

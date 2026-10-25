@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
 
 const evidence = {
@@ -44,9 +44,10 @@ describe("audit evidence drawer", () => {
     });
 
     expect(await screen.findByText("Protected history and content agree")).toBeTruthy();
-    expect(
-      screen.getByText("3 of 3 unique retained blobs passed SHA-256 verification."),
-    ).toBeTruthy();
+    const summary = within(screen.getByLabelText("Verification summary"));
+    expect(summary.getByText("4.00 KiB in 3 files")).toBeTruthy();
+    expect(summary.getByText("3 of 3 files (SHA-256)")).toBeTruthy();
+    expect(screen.getByText("Details").closest("details")!.open).toBe(false);
     expect(screen.getByText(evidence.lineage_id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.chain_head)).toBeTruthy();
@@ -59,16 +60,46 @@ describe("audit evidence drawer", () => {
     );
   });
 
-  it("distinguishes a dormant vault and can retry verification", async () => {
+  it("distinguishes a dormant vault and offers no refresh until a folder is protected", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          enabled: false,
+          protected_blobs: 0,
+          protected_bytes: 0,
+          verified_blobs: 0,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    render(AuditEvidenceDrawer, {
+      session: "short-lived",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy audit enable command" }).title).toBe(
+      "docbank audit enable /folder",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Run permanent audit verification again" }),
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("verifies again on request and reports each problem", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            enabled: false,
-            protected_blobs: 0,
-            protected_bytes: 0,
-            verified_blobs: 0,
+            enabled: true,
+            evidence,
+            protected_blobs: 1,
+            protected_bytes: 12,
+            verified_blobs: 1,
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -93,14 +124,14 @@ describe("audit evidence drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    expect(await screen.findByText("Permanent audit is dormant")).toBeTruthy();
+    expect(await screen.findByText("Protected history and content agree")).toBeTruthy();
     await fireEvent.click(
       screen.getByRole("button", {
         name: "Run permanent audit verification again",
       }),
     );
 
-    expect(await screen.findByText("Protected authority needs attention")).toBeTruthy();
+    expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
     expect(screen.getByText("corrupt")).toBeTruthy();
     expect(screen.getByText("c".repeat(64))).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -126,9 +157,9 @@ describe("audit evidence drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    expect(await screen.findByText("Protected authority needs attention")).toBeTruthy();
+    expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
     expect(screen.getByText("audit scope chain does not match its head")).toBeTruthy();
-    expect(screen.queryByText("Permanent audit is dormant")).toBeNull();
+    expect(screen.queryByText(/No folders are protected/)).toBeNull();
   });
 
   it("withdraws an earlier verified result while refresh is unresolved", async () => {
@@ -164,9 +195,7 @@ describe("audit evidence drawer", () => {
       }),
     );
 
-    expect(
-      screen.getByText("Replaying protected history and hashing retained content…"),
-    ).toBeTruthy();
+    expect(screen.getByText("Verifying…")).toBeTruthy();
     expect(screen.queryByText("Protected history and content agree")).toBeNull();
 
     rejectRefresh(new Error("verification interrupted"));

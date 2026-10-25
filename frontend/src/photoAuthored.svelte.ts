@@ -419,10 +419,6 @@ export class PhotoAuthoredEditor {
     this.refreshPending();
   }
   canChangeTarget() {
-    if (this.loading || this.stackLoading) {
-      this.unavailable();
-      return false;
-    }
     if (!this.dirty && !this.busy && !this.targetBusy()) return true;
     this.unavailable(
       this.busy || this.targetBusy()

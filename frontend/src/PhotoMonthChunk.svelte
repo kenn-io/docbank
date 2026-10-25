@@ -39,16 +39,6 @@
     ondragstart?: (id: string, event: DragEvent) => void;
     ondragend?: () => void;
   } = $props();
-  const loadedCount = $derived(
-    group.items.reduce(
-      (count, photo) =>
-        count +
-        (photo.stack && !expandedStacks.has(photo.stack.asset_ids[0]!)
-          ? photo.stack.asset_ids.length
-          : 1),
-      0,
-    ),
-  );
   const inWindow = $derived(offset <= bottom && offset + layout.intrinsicHeight >= top);
   const rows = $derived(
     inWindow
@@ -80,7 +70,7 @@
 >
   {#if inWindow}
     {#if group.key !== "relevance"}<h2 style:height={`${STICKY_HEADER_HEIGHT}px`}>
-        {group.label}<span>{loadedCount} loaded</span>
+        {group.label}
       </h2>{/if}
     <div
       class="cells"
@@ -134,11 +124,6 @@
     color: var(--text-primary);
     font-size: var(--font-size-sm);
     font-weight: 600;
-  }
-  h2 span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: 400;
   }
   .cells {
     position: absolute;

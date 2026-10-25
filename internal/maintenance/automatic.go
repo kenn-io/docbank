@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"go.kenn.io/kit/pack"
+
+	"go.kenn.io/docbank/internal/jobs"
 )
 
 // RunPackSchedule performs one bounded pack immediately and then once per
@@ -35,7 +37,9 @@ func RunPackSchedule(
 
 	for {
 		runCtx, cancelRun := context.WithTimeout(ctx, interval)
+		jobs.ReportBusy(ctx, true)
 		report, err := run(runCtx)
+		jobs.ReportBusy(ctx, false)
 		deadlineExceeded := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 		cancelRun()
 		if err != nil && ctx.Err() == nil && deadlineExceeded && isCancellationOnly(err) {

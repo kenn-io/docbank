@@ -29,6 +29,22 @@ describe("orderRows", () => {
     expect(orderRows(rows, "relevance", "asc", true).map((row) => row.node.id)).toEqual([3, 1, 2]);
   });
 
+  it("sorts by the type shown, keeping names A to Z inside a type and folders first", () => {
+    const typed = (id: number, name: string, mime: string, kind: Node["kind"] = "file") => ({
+      node: { ...node(id, name, kind), mime_type: mime },
+      path: `/${name}`,
+    });
+    const rows = [
+      typed(1, "b.csv", "text/csv"),
+      typed(2, "a.pdf", "application/pdf"),
+      typed(3, "a.csv", "text/csv"),
+      typed(4, "dir", "", "dir"),
+    ];
+
+    expect(orderRows(rows, "type", "asc", false).map((row) => row.node.id)).toEqual([4, 3, 1, 2]);
+    expect(orderRows(rows, "type", "desc", false).map((row) => row.node.id)).toEqual([4, 2, 3, 1]);
+  });
+
   it("sorts search documents by the full path displayed in the table", () => {
     const rows = [
       { node: node(1, "a.txt"), path: "/zeta/a.txt" },

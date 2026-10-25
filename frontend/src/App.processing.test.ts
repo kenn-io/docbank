@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 
 afterEach(() => {
@@ -9,7 +9,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("opens processing for the selected exact document version", async () => {
+it.each(["header", "text"])("opens exact-version processing from %s", async (entry) => {
   history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -49,26 +49,66 @@ it("opens processing for the selected exact document version", async () => {
     modified_at: "2026-08-28T00:00:00Z",
   };
   const json = (value: unknown) => Response.json(value);
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0")
       return json({ directory: root, items: [file], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/nodes/2") return json({ ...file, path: "/report.pdf" });
     if (url === "/api/v1/tags?limit=1000&offset=0")
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     if (url === "/api/v1/audit/status?node_id=2") return json({ enabled: false, scopes: [] });
     if (url === "/api/v1/nodes/2/tags?limit=1000&offset=0")
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/renditions/text")
+      return json({
+        state: "unprocessed",
+        source: {
+          node_id: 2,
+          revision: 1,
+          version_id: versionID,
+          blob_hash: file.blob_hash,
+          size: file.size,
+          media_type: file.mime_type,
+        },
+        profile: { name: "", configuration: "configured", fingerprint },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
     if (url === "/api/v1/processing/profiles")
-      return json([{ name: "private", fingerprint, rendition: true, embedding_bindings: [] }]);
+      return json([
+        {
+          name: "private",
+          fingerprint,
+          rendition: true,
+          embedding_bindings: entry === "header" ? ["embed"] : [],
+        },
+      ]);
     if (url === "/api/v1/processing/plans")
       return json({
         fingerprint,
         vault_uid: versionID,
         selector: { node_id: 2, content_version_id: versionID, profile: "private" },
         profile_fingerprint: fingerprint,
-        flow: [],
-        disclosed_classes: [],
+        flow: [
+          {
+            capability: "rendition",
+            provider_id: "plaintext.in-process-v1",
+            trust_boundary: "local_process",
+            input_classes: ["original_file"],
+            disclose_filename: false,
+            runtime_disclosure: {
+              immediate_processor: "plaintext.in-process-v1",
+              ultimate_processor: "plaintext.in-process-v1",
+              endpoint: "in-process",
+              deployment: "d".repeat(64),
+              metadata_classes: ["byte_length"],
+              retained_artifact_roles: ["sanitized_markdown"],
+            },
+          },
+        ],
+        disclosed_classes: ["original_file"],
         retained_classes: ["sanitized_markdown"],
         estimate: { source_bytes: 2048, provider_calls: 1, vector_spaces: 0 },
         consent_required: false,
@@ -97,22 +137,33 @@ it("opens processing for the selected exact document version", async () => {
 
   render(App);
   await fireEvent.click(await screen.findByRole("cell", { name: "report.pdf" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Process and retrieve" }));
+  if (entry === "text") {
+    await fireEvent.click(await screen.findByRole("tab", { name: "Text" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Process…" }));
+  } else {
+    await fireEvent.click(await screen.findByRole("button", { name: "Extract text" }));
+  }
+  const dialog = await screen.findByRole("dialog", { name: "Extract text" });
   expect(
-    await screen.findByRole("dialog", { name: "Document processing and coverage" }),
+    await within(dialog).findByText("Runs on this computer. Nothing leaves Docbank."),
   ).toBeTruthy();
-  expect(screen.getByText(`Exact version ${versionID}`)).toBeTruthy();
-  expect(await screen.findByText("Consent active")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Close document processing" }));
-  const similarButton = screen.getByRole("button", {
-    name: "Find documents similar to report.pdf",
+  const planned = fetchMock.mock.calls.find(([input]) => input === "/api/v1/processing/plans");
+  expect(JSON.parse(String(planned?.[1]?.body)).selector).toEqual({
+    node_id: 2,
+    content_version_id: versionID,
+    profile: "private",
   });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  const lens = "Find documents similar to report.pdf";
+  if (entry === "text") {
+    // Without a profile that stores search vectors the lens would lead nowhere.
+    expect(screen.queryByRole("button", { name: lens })).toBeNull();
+    return;
+  }
+  const similarButton = screen.getByRole("button", { name: lens });
   const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
   similarButton.dispatchEvent(enter);
   expect(enter.defaultPrevented).toBe(false);
   await fireEvent.click(similarButton);
-  expect(
-    await screen.findByText("Search the 1 loaded file versions using stored embeddings."),
-  ).toBeTruthy();
-  expect(screen.getByRole("region", { name: "Similar documents" })).toBeTruthy();
+  expect(await screen.findByRole("region", { name: "Similar documents" })).toBeTruthy();
 });

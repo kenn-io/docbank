@@ -138,8 +138,8 @@ test("verified inspector pins replaced content and cancels a changed source", as
 
     await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
     await page.goto(browserURL);
-    const editor = page.getByRole("region", { name: "Query editor" });
-    await editor.getByRole("button", { name: "Run query", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Advanced search" });
+    await editor.getByRole("button", { name: "Search", exact: true }).click();
     const selectedCell = page.getByRole("cell", {
       name: "/Verified inspector/01-selected.txt",
       exact: true,
@@ -149,7 +149,6 @@ test("verified inspector pins replaced content and cancels a changed source", as
       exact: true,
     });
     await expect(selectedCell).toBeVisible();
-    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
 
     await selectedCell.click();
     await expect(page.getByText("Verifying", { exact: false })).toBeVisible();
@@ -169,9 +168,9 @@ test("verified inspector pins replaced content and cancels a changed source", as
     await selectedCell.click();
 
     await expect(page.getByText("Pinned first edition from the frozen query.")).toBeVisible();
-    await expect(page.getByText("Original snapshot facts")).toBeVisible();
-    await expect(page.getByText("Current live observations")).toBeVisible();
-    await expect(page.getByText("SHA-256 verified")).toBeVisible();
+    await expect(page.getByRole("region", { name: "Saved tags" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Current details" })).toBeVisible();
+    await expect(page.getByLabel("Verified", { exact: true })).toBeVisible();
     expect(page.getByText("New live head that must not replace the frozen source.")).toHaveCount(0);
     expect(previewAuthorities.at(-1)).toMatchObject({
       node_id: selectedAuthority.node_id,
@@ -213,13 +212,15 @@ test("DB17 real PDF text and fifty-step snapshot navigation", async ({ page }) =
   });
   await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
   await page.goto(queryURL(db17BrowserURL!));
-  const editor = page.getByRole("region", { name: "Query editor" });
+  const editor = page.getByRole("dialog", { name: "Advanced search" });
   await editor.getByLabel("Query expression").fill("Extracted");
-  await editor.getByLabel("Processing profile").fill("archive");
-  await editor.getByLabel("Documents per page").selectOption("50");
-  await editor.getByRole("button", { name: "Run query", exact: true }).click();
+  await editor.getByRole("combobox", { name: /^Processing profile:/ }).click();
+  await page.getByRole("option", { name: "archive", exact: true }).click();
+  await editor.getByText("Filters (JSON)", { exact: true }).click();
+  await editor.getByRole("combobox", { name: "Documents per page: 100" }).click();
+  await page.getByRole("option", { name: "50", exact: true }).click();
+  await editor.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page.getByRole("cell", { name: "/01-evidence.pdf", exact: true })).toBeVisible();
-  await editor.getByRole("button", { name: "Close query editor", exact: true }).click();
   await page.getByRole("cell", { name: "/01-evidence.pdf", exact: true }).click();
   await page.getByRole("tab", { name: "Text" }).click();
   await expect(page.getByLabel("Verified text of 01-evidence.pdf")).toContainText(

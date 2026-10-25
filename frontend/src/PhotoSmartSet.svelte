@@ -361,7 +361,7 @@
   .modal-actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space-2);
+    gap: var(--space-4);
     margin-top: var(--space-4);
   }
 </style>

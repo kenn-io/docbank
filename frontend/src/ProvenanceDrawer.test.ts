@@ -80,21 +80,52 @@ describe("provenance drawer", () => {
     });
 
     expect(await screen.findByText("/Filed/quarterly-report.txt")).toBeTruthy();
-    expect(screen.getByText("Active origin")).toBeTruthy();
+    expect(screen.getByText("Added from watched folder")).toBeTruthy();
     expect(screen.getByText(activeIdentity)).toBeTruthy();
-    expect(screen.getByText("Supersedes")).toBeTruthy();
+    expect(screen.getByText("Replaces")).toBeTruthy();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/nodes/42/provenance?limit=1000&offset=0");
 
-    const olderHeading = screen.getByText("quarterly reports");
-    const olderButton = olderHeading.closest("button");
-    expect(olderButton).toBeTruthy();
-    await fireEvent.click(olderButton!);
-
-    expect(screen.getByText("Superseded origin")).toBeTruthy();
-    expect(screen.getByText(olderIdentity)).toBeTruthy();
-    expect(screen.queryByText("Supersedes")).toBeNull();
+    expect(screen.getByText("Superseded")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Copy source path" })).toHaveLength(2);
+    expect(screen.getByText("Added from folder")).toBeTruthy();
+    expect(screen.getAllByText("Import details")).toHaveLength(2);
 
     await fireEvent.click(screen.getByRole("button", { name: "Close provenance" }));
     expect(close).toHaveBeenCalledOnce();
   });
+});
+
+it("shows command-line imports as a readable path with copyable audit details", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        node,
+        items: [
+          {
+            ...active,
+            source_kind: "cli",
+            source_description: '["/imports/report.txt"]',
+            original_path: "/imports/report.txt",
+          },
+        ],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      }),
+    ),
+  );
+  render(ProvenanceDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("Added from command line")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Copy source path" }).textContent).toContain(
+    "/imports/report.txt",
+  );
+  expect(screen.getByRole("button", { name: "Copy import ID" }).textContent).toContain(
+    active.ingest_id,
+  );
 });

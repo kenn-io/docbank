@@ -57,11 +57,20 @@ it("restores a full query beside sign-in without running it as empty-text folder
     return new Response(JSON.stringify(value));
   });
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
+  await screen.findByRole("dialog", { name: "Filters and sort" });
   expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
   expect(fetch.mock.calls.some(([url]) => String(url).includes("/search"))).toBe(false);
-  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Saved queries and highlights" }));
+  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.click(screen.getByRole("button", { name: "Saved searches" }));
+  await screen.findByRole("dialog", { name: "Saved searches" });
+  await screen.findByText(/No saved searches/);
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(JSON.parse(new URLSearchParams(location.hash.slice(1)).get("query")!)).toEqual(query);
+  expect(fetch.mock.calls.some(([url]) => String(url).includes("/search"))).toBe(false);
+
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Save…" }));
+  await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value),
   ).toEqual(query);
@@ -70,34 +79,34 @@ it("restores a full query beside sign-in without running it as empty-text folder
     target: { value: JSON.stringify(kept) },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Keep query draft" }));
-  await fireEvent.click(screen.getByRole("button", { name: "New query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(
+    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+  ).toBe(kept.text);
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Save…" }));
+  await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value),
   ).toEqual(kept);
-  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Discard query draft" }));
-  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
-    target: { value: "x".repeat(8193) },
+  await fireEvent.input(screen.getByLabelText("Complete query JSON"), {
+    target: { value: JSON.stringify({ ...kept, text: "x".repeat(8193) }) },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Saved queries and highlights" }));
-  await screen.findByRole("dialog", { name: "Saved queries and highlights" });
-  expect(
-    JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value).text,
-  ).toBe("x".repeat(8193));
   await fireEvent.click(screen.getByRole("button", { name: "Keep query draft" }));
   expect((await screen.findByRole("alert")).textContent).toContain("8192");
-  await fireEvent.click(screen.getByRole("button", { name: "New highlight set" }));
+  await fireEvent.click(screen.getByRole("button", { name: "New highlight list" }));
   expect(screen.getByLabelText("Term 1")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
-    target: { value: "" },
-  });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
   await fireEvent.click(screen.getByRole("option", { name: "review (0)" }));
   await screen.findByText("Documents tagged");
-  await fireEvent.click(screen.getByRole("button", { name: "Saved queries and highlights" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Save…" }));
+  await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value).sort,
   ).toEqual({ field: "path", direction: "asc" });

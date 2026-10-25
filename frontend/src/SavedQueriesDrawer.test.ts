@@ -57,14 +57,14 @@ it("loads a complete definition and saves it without silently executing it", asy
     return json({ items: [record], total: 1, limit: 100, offset: 0 });
   });
   const onload = open();
-  await fireEvent.click(await screen.findByRole("button", { name: "Edit Review PDFs" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Rename Review PDFs" }));
+  await fireEvent.click(screen.getByText("Edit as JSON"));
   expect(
     JSON.parse((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value),
   ).toEqual(JSON.parse(canonical));
   await fireEvent.click(screen.getByRole("button", { name: "Keep query draft" }));
   expect(onload).toHaveBeenCalledWith(parseQuery(canonical));
   onload.mockClear();
-  expect(screen.getByText(/Saved-query execution is unavailable/)).toBeTruthy();
   await fireEvent.input(screen.getByLabelText("Definition name"), {
     target: { value: "Copy of review" },
   });
@@ -81,21 +81,18 @@ it("preserves an unrelated unsaved editor when deleting a definition", async () 
       : json({ items: [record], total: 1, limit: 100, offset: 0 }),
   );
   open();
+  await fireEvent.click(screen.getByRole("button", { name: "New highlight list" }));
   await fireEvent.input(screen.getByLabelText("Definition name"), {
     target: { value: "Unfinished query" },
   });
-  await fireEvent.input(screen.getByLabelText("Complete query JSON"), {
-    target: { value: canonical },
-  });
+  await fireEvent.input(screen.getByLabelText("Term 1"), { target: { value: "retain me" } });
   await fireEvent.click(await screen.findByRole("button", { name: "Delete Review PDFs" }));
   await fireEvent.click(screen.getByRole("button", { name: "Confirm deletion" }));
   await screen.findByText(/^Deleted Review PDFs/);
   expect((screen.getByLabelText("Definition name") as HTMLInputElement).value).toBe(
     "Unfinished query",
   );
-  expect((screen.getByLabelText("Complete query JSON") as HTMLTextAreaElement).value).toBe(
-    canonical,
-  );
+  expect((screen.getByLabelText("Term 1") as HTMLInputElement).value).toBe("retain me");
 });
 
 it.each(["Save as new", "Save changes"])(
@@ -110,22 +107,21 @@ it.each(["Save as new", "Save changes"])(
       return json({ items: [current], total: 1, limit: 100, offset: 0 });
     });
     open();
-    await fireEvent.click(await screen.findByRole("button", { name: "Edit Review PDFs" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Rename Review PDFs" }));
     await fireEvent.input(screen.getByLabelText("Definition name"), {
       target: { value: "\u{20041}\u0323" },
     });
     await fireEvent.click(screen.getByRole("button", { name: action }));
     await screen.findByRole("alert");
-    await screen.findByRole("button", { name: "Edit \u1ea0" });
+    await screen.findByRole("button", { name: "Rename \u1ea0" });
     expect(
       (screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(
       (screen.getByRole("button", { name: "Save as new" }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    await fireEvent.click(screen.getByRole("button", { name: "Edit \u1ea0" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Rename \u1ea0" }));
     expect((screen.getByLabelText("Definition name") as HTMLInputElement).value).toBe("\u1ea0");
-    expect(screen.getByText(new RegExp(`Revision ${current.revision} ·`))).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled,
     ).toBe(false);
@@ -145,12 +141,11 @@ it("keeps stale rename and named revision-bound deletion failures visible", asyn
     return json({ items: [record], total: 1, limit: 100, offset: 0 });
   });
   open();
-  await fireEvent.click(await screen.findByRole("button", { name: "Edit Review PDFs" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Rename Review PDFs" }));
   await fireEvent.input(screen.getByLabelText("Definition name"), { target: { value: "Renamed" } });
   await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Changed elsewhere");
   await fireEvent.click(screen.getByRole("button", { name: "Delete Review PDFs" }));
-  expect(screen.getByText(/Revision 2/)).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Confirm deletion" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Changed elsewhere");
   expect(screen.queryByText(/^Deleted /)).toBeNull();
@@ -166,7 +161,7 @@ it("edits bounded highlight terms without offering execution", async () => {
     json({ items: [], total: 0, limit: 100, offset: 0 }),
   );
   open();
-  await fireEvent.click(screen.getByRole("button", { name: "New highlight set" }));
+  await fireEvent.click(screen.getByRole("button", { name: "New highlight list" }));
   await fireEvent.input(screen.getByLabelText("Definition name"), {
     target: { value: "Key terms" },
   });
@@ -191,6 +186,6 @@ it("opens the exact saved payload through the explicit query-editor action", asy
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  await fireEvent.click(await screen.findByRole("button", { name: "Open query Review PDFs" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Run Review PDFs" }));
   expect(onopenquery).toHaveBeenCalledWith(JSON.parse(canonical));
 });

@@ -8,14 +8,14 @@ import {
   type PhotoImportCheckpoint,
   type PhotoCheckpointHeader,
 } from "./generated/docbank.js";
-import { photoRelativePath } from "./upload.js";
+import { localFilePath } from "./localFiles.js";
 
 export type { PhotoImportCheckpoint } from "./generated/docbank.js";
 
 export function photoImportManifest(files: File[]) {
   const manifest = files
     .map((file) => ({
-      path: photoRelativePath(file),
+      path: localFilePath(file),
       size: file.size,
       modified: file.lastModified,
     }))

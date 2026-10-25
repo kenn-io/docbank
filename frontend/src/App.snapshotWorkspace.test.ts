@@ -85,6 +85,7 @@ function snapshot(
                 count: total,
                 selected: query.filters.extensions?.includes("pdf") ?? false,
               },
+              { key: "txt", label: "txt", count: 1, selected: false },
             ],
           }
         : {
@@ -142,6 +143,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
     });
   const cursors: string[] = [];
   let highlightRequests = 0;
+  let highlightSetReads = 0;
   const payload: HighlightSet = { v: 1, terms: [{ text: "evidence", color: "#ffcc00" }] };
   const highlightSet = {
     id: "44444444-4444-4444-8444-444444444444",
@@ -163,6 +165,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
     if (url === "/api/v1/saved-queries?limit=1000&offset=0&kind=highlight_set") {
+      highlightSetReads++;
       return json({ items: [highlightSet], total: 1, limit: 1000, offset: 0 });
     }
     if (url === "/api/v1/queries/parse")
@@ -236,7 +239,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   });
 
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
   await screen.findByText("Document 1 of 101");
   expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
   searchAction.mockClear();
@@ -250,29 +253,22 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   expect(opened.getAttribute("aria-selected")).toBe("true");
   action.mockClear();
   await fireEvent.click(
-    within(screen.getByRole("navigation", { name: "Snapshot document navigation" })).getByRole(
-      "button",
-      { name: "Next" },
-    ),
+    within(screen.getByRole("navigation", { name: "Document navigation" })).getByRole("button", {
+      name: "Next",
+    }),
   );
   await screen.findByText("Document 101 of 101");
   expect(cursors).toEqual(["next"]);
   expect(screen.getByRole("region", { name: "Verified content of report-101.pdf" })).toBeTruthy();
-  const lastNavigation = within(
-    screen.getByRole("navigation", { name: "Snapshot document navigation" }),
-  );
+  const lastNavigation = within(screen.getByRole("navigation", { name: "Document navigation" }));
   expect((lastNavigation.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(
     true,
   );
   await fireEvent.click(lastNavigation.getByRole("button", { name: "Previous" }));
-  await screen.findByText(
-    "This frozen snapshot expired. Run the query again to continue navigation.",
-  );
+  await screen.findByText("These results expired. Run the query again to continue.");
   // A page that fails while paging is not a submitted search.
   expect(failure).not.toHaveBeenCalled();
-  const expiredNavigation = within(
-    screen.getByRole("navigation", { name: "Snapshot document navigation" }),
-  );
+  const expiredNavigation = within(screen.getByRole("navigation", { name: "Document navigation" }));
   for (const name of ["Previous", "Next"]) {
     expect((expiredNavigation.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(
       true,
@@ -282,12 +278,13 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   expect(action).not.toHaveBeenCalled();
   expect(highlightRequests).toBe(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
-  const choices = await screen.findByRole("combobox", { name: "Saved highlight set" });
-  expect(within(choices).getByRole("option", { name: "Review terms" })).toBeTruthy();
+  // Highlight choices appear only beside readable text; VerifiedPreview covers that menu.
+  await screen.findByText("Text extraction isn't set up.");
+  expect(highlightSetReads).toBeGreaterThan(0);
 
   first.snapshot_id = "1123456789abcdef0123456789abcdef";
-  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByText("Document 1 of 101");
   await waitFor(() => expect(highlightRequests).toBe(2));
   expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", false);
@@ -391,18 +388,18 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   });
 
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await waitFor(() => expect(creates).toBe(1));
-  await fireEvent.input(screen.getByLabelText("Query expression"), {
+  await fireEvent.input(screen.getByLabelText("Query syntax"), {
     target: { value: "new query" },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("cell", { name: "/records/new-result.pdf" });
   resolveOld(json(snapshot(initialQuery, [row(1, "old-result.pdf")], {}, 1)));
   await Promise.resolve();
   expect(screen.queryByRole("cell", { name: "/records/old-result.pdf" })).toBeNull();
-  expect(screen.getByText("1–1 of 1", { exact: false })).toBeTruthy();
+  expect(screen.getByText("1 result")).toBeTruthy();
   expect(workspaceBodies.at(-1)?.query).toMatchObject({
     text: "new query",
     syntax: "advanced",
@@ -432,6 +429,11 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   expect(requests.some((url) => url.includes("audit/status?node_id=1"))).toBe(true);
   expect(requests.some((url) => url === "/api/daemon/web-download")).toBe(false);
   expect(screen.getByText("a".repeat(64))).toBeTruthy();
+  await fireEvent.click(screen.getAllByRole("button", { name: "Clear search" }).at(-1)!);
+  await waitFor(() =>
+    expect(screen.queryByRole("region", { name: "Frozen query results" })).toBeNull(),
+  );
+  expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
 });
 
 it("reruns supported facets and sorting from the complete accepted query", async () => {
@@ -495,9 +497,9 @@ it("reruns supported facets and sorting from the complete accepted query", async
   });
 
   render(App);
-  await screen.findByRole("region", { name: "Query editor" });
+  await screen.findByRole("dialog", { name: "Filters and sort" });
   await fireEvent.click(await screen.findByRole("cell", { name: "live-folder" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("button", { name: "pdf, 1 documents" });
   await fireEvent.click(screen.getByRole("button", { name: "pdf, 1 documents" }));
   await screen.findByRole("button", { name: "pdf, 1 documents, selected" });
@@ -510,7 +512,6 @@ it("reruns supported facets and sorting from the complete accepted query", async
       extensions: ["pdf"],
     },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
   const results = screen.getByRole("region", { name: "Frozen query results" });
   await fireEvent.click(within(results).getByRole("button", { name: "Document" }));
   await waitFor(() => expect(bodies).toHaveLength(3));
@@ -533,16 +534,17 @@ it("reruns supported facets and sorting from the complete accepted query", async
   });
 
   await waitFor(() =>
-    expect(
-      (screen.getByRole("button", { name: "Tag or recover" }) as HTMLButtonElement).disabled,
-    ).toBe(false),
+    expect((screen.getByRole("button", { name: "Tag all…" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    ),
   );
-  await fireEvent.click(screen.getByRole("button", { name: "Discard query draft" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe(
-    initialQuery.text,
-  );
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect(
+    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+  ).toBe(initialQuery.text);
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await waitFor(() => expect(bodies).toHaveLength(4));
   expect(bodies[3].query).toEqual(bodies[2].query);
 });
@@ -587,11 +589,11 @@ it("hides the live detail card when a snapshot has no selected row", async () =>
   });
   render(App);
   await fireEvent.click(await screen.findByRole("cell", { name: "live-folder" }));
-  expect(screen.getByLabelText("Folder for live-folder")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  expect(screen.getByLabelText("Folder details for live-folder")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("region", { name: "Frozen query results" });
-  expect(screen.queryByLabelText("Folder for live-folder")).toBeNull();
+  expect(screen.queryByLabelText("Folder details for live-folder")).toBeNull();
 });
 
 it("refreshes live metadata and download authority after tagging an inspected frozen row", async () => {
@@ -710,26 +712,25 @@ it("refreshes live metadata and download authority after tagging an inspected fr
     throw new Error(`unexpected request: ${url}`);
   });
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
-  await screen.findByText("Revision 3");
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByRole("button", { name: "Download" });
   await fireEvent.click(screen.getByRole("checkbox", { name: `Select ${frozen.path}` }));
-  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "Reviewed" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Add tag to visible selection" }));
-  await screen.findByText("0 of 1 selected documents have this tag.");
-  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
-  await screen.findByText("1 of 1 selected documents have this tag.");
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Reviewed (0)" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
+  await screen.findByText("Added “Reviewed” to 1 document.");
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-  const live = screen
-    .getByText("Current live observations")
-    .closest(".live-observations")! as HTMLElement;
-  expect(await within(live).findByText("Revision 4")).toBeTruthy();
-  expect(within(live).getByRole("group", { name: "Current live tags" }).textContent).toContain(
-    "Reviewed",
+  const current = screen.getByRole("region", { name: "Current details" });
+  await waitFor(() =>
+    expect(within(current).getByRole("group", { name: "Current tags" }).textContent).toContain(
+      "Reviewed",
+    ),
   );
-  expect(screen.getByText("Original snapshot facts")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Download verified original" }));
+  expect(screen.getByRole("region", { name: "Saved tags" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Download" }));
   await waitFor(() =>
     expect(prepared.at(-1)).toMatchObject({
       revision: 4,
@@ -786,18 +787,19 @@ it("reports a submitted frozen run that finds nothing or fails", async () => {
   });
 
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
   await waitFor(() =>
     expect(searchAction).toHaveBeenCalledExactlyOnceWith("synthetic", "text", true),
   );
   expect(failure).not.toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await waitFor(() =>
     expect(failure).toHaveBeenCalledExactlyOnceWith("synthetic", "search", expect.any(Error)),
   );
   expect(searchAction).toHaveBeenCalledOnce();
   // A rejected session sends the person to sign in rather than counting a failed search.
-  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await waitFor(() => expect(runs).toBe(3));
   await screen.findByText(/session expired or was rejected/);
   expect(failure).toHaveBeenCalledOnce();
@@ -828,4 +830,75 @@ it("keeps each frozen run's empty outcome after a newer run supersedes it", asyn
   expect(accepted).toEqual({ type: "text", empty: true });
   expect(await newer).toEqual({ type: "text", empty: false });
   workspace.reset();
+});
+
+it("retains edits made while a submitted search is still running", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  let complete!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    complete = resolve;
+  });
+  let running = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const json = (value: unknown) => new Response(JSON.stringify(value));
+    if (url.includes("/path?")) return json(root);
+    if (url.includes("/children?"))
+      return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse") {
+      const query = JSON.parse(String(init?.body));
+      return json({
+        query,
+        query_fingerprint: `sha256:${createHash("sha256").update(canonicalQuery(query)).digest("hex")}`,
+        dependencies: [],
+      });
+    }
+    if (url === "/api/v1/workspace/queries") {
+      running = true;
+      return pending;
+    }
+    return json({ items: [], total: 0, limit: 1000, offset: 0 });
+  });
+  render(App);
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(running).toBe(true));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":' },
+  });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
+  await fireEvent.click(screen.getByRole("option", { name: "50" }));
+  complete(new Response(JSON.stringify(snapshot(initialQuery, [], {}, 0))));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
+  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect(screen.getByRole("combobox", { name: "Documents per page: 50" })).toBeTruthy();
+  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
 });

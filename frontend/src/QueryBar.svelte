@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import {
     Button,
-    Chip,
+    Modal,
     SelectDropdown,
     Spinner,
     type SelectDropdownOption,
@@ -10,12 +10,20 @@
   import { APIError } from "./api-transport.js";
   import { canonicalQuery, parseQuery, type Query } from "./query.js";
   import { previewQuery, querySelection, type QueryPreview } from "./queryPreview.js";
+  import type { ProcessingProfileSummary } from "./generated/docbank.js";
   import type { SnapshotOptions } from "./snapshots.js";
 
   interface Props {
     session: string;
+    open?: boolean;
+    showExpression?: boolean;
+    profiles?: ProcessingProfileSummary[];
+    ondirty?: (dirty: boolean) => void;
+    oncancel: () => void;
     query: Query;
     profile?: string;
+    initialPageSize?: 50 | 100 | 250;
+    runError?: string;
     onchange: (query: Query) => void;
     onrun: (query: Query, options: SnapshotOptions) => void;
     onsave: () => void;
@@ -24,8 +32,15 @@
   }
   let {
     session,
+    open = true,
+    showExpression = false,
+    profiles = [],
+    ondirty,
+    oncancel,
     query,
     profile = "",
+    initialPageSize = 100,
+    runError = "",
     onchange,
     onrun,
     onsave,
@@ -39,34 +54,36 @@
   let position = $state<unknown>();
   let preview = $state<QueryPreview>();
   let pending = $state(false);
-  let expression: HTMLTextAreaElement;
+  let expression = $state<HTMLTextAreaElement>();
   let generation = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let currentIdentity = "";
   let executionProfile = $state(untrack(() => profile));
-  let pageSize = $state<50 | 100 | 250>(100);
-  const syntaxOptions: SelectDropdownOption[] = [
-    { value: "simple", label: "Simple" },
-    { value: "advanced", label: "Advanced" },
-  ];
-  const modeOptions: SelectDropdownOption[] = ["lexical", "semantic", "hybrid"].map((value) => ({
-    value,
-    label: value,
-  }));
+  let pageSize = $state(untrack(() => initialPageSize));
+  const originalPageSize = untrack(() => initialPageSize);
+  const initialQuery = untrack(() => canonicalQuery(query));
+  const initialProfile = untrack(() => profile);
   const sortOptions: SelectDropdownOption[] = [
-    "name",
-    "path",
-    "modified_at",
-    "size",
-    "media_type",
-    "relevance",
-  ].map((value) => ({ value, label: value }));
+    { value: "name", label: "Name" },
+    { value: "path", label: "Path" },
+    { value: "modified_at", label: "Modified" },
+    { value: "size", label: "Size" },
+    { value: "media_type", label: "File type" },
+  ];
+  const profileOptions = $derived([
+    { value: "", label: "Default" },
+    ...[...new Set([...profiles.map((item) => item.name), ...(profile ? [profile] : [])])]
+      .sort()
+      .map((name) => ({ value: name, label: name })),
+  ]);
   const directionOptions: SelectDropdownOption[] = [
     { value: "asc", label: "Ascending" },
     { value: "desc", label: "Descending" },
   ];
   const selection = $derived(querySelection(draft.text, position));
+  const expressionError = $derived(schemaError.startsWith("query text") ? schemaError : failure);
+  const filtersError = $derived(schemaError.startsWith("query text") ? "" : schemaError);
   const profileError = $derived(
     new TextEncoder().encode(executionProfile.trim()).length > 128
       ? "Processing profile exceeds 128 bytes."
@@ -74,9 +91,9 @@
   );
   const executionError = $derived(
     draft.mode !== "lexical"
-      ? "Frozen snapshots support lexical mode only."
+      ? "This saved query uses an unsupported search method."
       : draft.sort.field === "relevance"
-        ? "Frozen snapshots do not support relevance sorting. Choose another sort order."
+        ? "Choose a sort other than Relevance."
         : "",
   );
   const requestedFacets: SnapshotOptions["facets"] = [
@@ -116,9 +133,13 @@
     } catch (cause) {
       schemaError = cause instanceof Error ? cause.message : String(cause);
       currentIdentity = "";
+      if (emit) notifyDirty();
       return;
     }
-    if (emit) onchange(valid);
+    if (emit) {
+      onchange(valid);
+      notifyDirty();
+    }
     const requestGeneration = generation;
     const identity = currentIdentity;
     const requestSession = session;
@@ -152,21 +173,41 @@
   $effect(() => {
     const canonical = canonicalQuery(query);
     const activeSession = session;
+    const visible = open;
     untrack(() => {
-      draft = parseQuery(canonical);
-      facets = JSON.stringify(draft.filters, null, 2);
+      if (!visible) {
+        invalidate();
+        return;
+      }
+      if (canonical !== currentIdentity && !schemaError) {
+        draft = parseQuery(canonical);
+        facets = JSON.stringify(draft.filters, null, 2);
+      }
       if (activeSession) validate(false);
       else invalidate();
     });
     return () => invalidate();
   });
 
+  function notifyDirty() {
+    ondirty?.(
+      Boolean(schemaError) ||
+        canonicalQuery(draft) !== initialQuery ||
+        executionProfile !== initialProfile ||
+        pageSize !== originalPageSize,
+    );
+  }
+
   function close() {
     invalidate();
     onclose();
   }
+  function cancel() {
+    invalidate();
+    oncancel();
+  }
   function focusError() {
-    if (!selection) return;
+    if (!selection || !expression) return;
     expression.focus();
     expression.setSelectionRange(selection.start, selection.end);
   }
@@ -182,176 +223,174 @@
   }
 </script>
 
-<section class="query-bar" aria-label="Query editor">
-  <div class="heading">
-    <h2>Query editor</h2>
-    <Button size="sm" disabled={schemaError !== ""} onclick={close}>Close query editor</Button>
-  </div>
-  <p>
-    Edit complete query intent. Draft edits do not change an accepted frozen snapshot until you run
-    them.
-  </p>
-  <div class="controls">
-    <SelectDropdown
-      value={draft.syntax}
-      options={syntaxOptions}
-      title="Query syntax"
-      onchange={(value) => {
-        draft = { ...draft, syntax: value as Query["syntax"] };
-        validate(true);
-      }}
-    />
-    <SelectDropdown
-      value={draft.mode}
-      options={modeOptions}
-      title="Query mode"
-      onchange={(value) => {
-        draft = { ...draft, mode: value as Query["mode"] };
-        validate(true);
-      }}
-    />
-    <SelectDropdown
-      value={draft.sort.field}
-      options={sortOptions}
-      title="Query sort"
-      onchange={(value) => {
-        draft = { ...draft, sort: { ...draft.sort, field: value as Query["sort"]["field"] } };
-        validate(true);
-      }}
-    />
-    <SelectDropdown
-      value={draft.sort.direction}
-      options={directionOptions}
-      title="Query direction"
-      onchange={(value) => {
-        draft = {
-          ...draft,
-          sort: { ...draft.sort, direction: value as Query["sort"]["direction"] },
-        };
-        validate(true);
-      }}
-    />
-  </div>
-  <label for="query-expression">Query expression</label>
-  <textarea
-    id="query-expression"
-    bind:this={expression}
-    value={draft.text}
-    rows="2"
-    spellcheck="false"
-    oninput={(event) => {
-      draft = { ...draft, text: event.currentTarget.value };
-      validate(true);
-    }}></textarea>
-  <details>
-    <summary>Syntax help</summary>
-    <p>
-      Simple syntax treats whitespace-separated words as literal prefixes. Advanced syntax supports
-      quoted phrases, parentheses, AND, OR, NOT, suffix * prefixes, and NEAR/5 proximity.
-    </p>
-    <p>
-      Keep field operands in their Boolean scope, for example <code
-        >name:manual OR collection:archive</code
-      >. References use <code>tag:</code>, <code>collection:</code>, or <code>saved:</code>. The
-      server validates supported fields and values; unknown exclusions block validation.
-    </p>
-  </details>
-  <label for="query-facets">Structured facets JSON</label>
-  <textarea
-    id="query-facets"
-    value={facets}
-    rows="3"
-    spellcheck="false"
-    oninput={(event) => {
-      facets = event.currentTarget.value;
-      validate(true);
-    }}></textarea>
-  <div class="summaries" aria-label="Structured facet summaries">
-    {#each Object.entries(draft.filters).filter(([, value]) => value !== undefined) as [key, value]}<Chip
-        >{key}: {JSON.stringify(value)}</Chip
-      >{/each}
-  </div>
-  <label for="query-profile"
-    >Processing profile <span>(optional, exact configured name)</span></label
+{#if open}
+  <Modal
+    title="Filters and sort"
+    width="560px"
+    maxWidth="calc(100vw - 32px)"
+    closable={false}
+    onclose={close}
   >
-  <input
-    id="query-profile"
-    value={executionProfile}
-    autocomplete="off"
-    spellcheck="false"
-    oninput={(event) => (executionProfile = event.currentTarget.value)}
-  />
-  <label for="query-page-size">Documents per page</label>
-  <select id="query-page-size" bind:value={pageSize}>
-    <option value={50}>50</option><option value={100}>100</option><option value={250}>250</option>
-  </select>
-  {#if profileError}<p role="alert">{profileError}</p>{/if}
-  {#if executionError}<p role="alert">{executionError}</p>{/if}
-  {#if schemaError}<p role="alert">
-      {schemaError} Correct the draft or choose Discard query draft before closing.
-    </p>{/if}
-  <div aria-live="polite">
-    {#if pending}<span class="checking"><Spinner size={14} /> Validating query…</span>{/if}
-    {#if preview}
-      <p>Query validated.{executionError ? "" : " Run creates a new frozen snapshot."}</p>
-      <div class="summaries" aria-label="Resolved query dependencies">
-        {#each preview.dependencies as dependency (`${dependency.kind}:${dependency.id}`)}<Chip
-            >{dependency.kind}: {dependency.id} · revision {dependency.revision}</Chip
-          >{/each}
+    <div class="query-bar">
+      {#if showExpression}
+        <div class="field">
+          <label for="query-expression"
+            >{draft.syntax === "advanced" ? "Query syntax" : "Plain words"}</label
+          >
+          <textarea
+            id="query-expression"
+            bind:this={expression}
+            value={draft.text}
+            aria-invalid={expressionError ? "true" : undefined}
+            aria-describedby={expressionError ? "query-expression-error" : undefined}
+            rows="3"
+            spellcheck="false"
+            oninput={(event) => {
+              draft = { ...draft, text: event.currentTarget.value };
+              validate(true);
+            }}></textarea>
+          {#if expressionError}<p id="query-expression-error" class="error" role="alert">
+              {expressionError}
+            </p>{/if}
+          {#if selection}<Button size="sm" onclick={focusError}>Focus query error</Button>{/if}
+          {#if draft.syntax === "advanced"}<details class="syntax-help">
+              <summary>Syntax help</summary>
+              <p>Phrases, AND, OR, NOT, parentheses, suffix *, and NEAR/5.</p>
+              <code>name:manual OR collection:archive</code>
+              <p>References: <code>tag:</code>, <code>collection:</code>, <code>saved:</code>.</p>
+            </details>{/if}
+        </div>
+      {:else if expressionError}<p class="error" role="alert">{expressionError}</p>{/if}
+      <div class="fields">
+        <div class="field">
+          <span class="field-label">Sort by</span>
+          <div class="controls">
+            <SelectDropdown
+              value={draft.sort.field}
+              options={sortOptions}
+              title="Sort by"
+              onchange={(value) => {
+                draft = {
+                  ...draft,
+                  sort: { ...draft.sort, field: value as Query["sort"]["field"] },
+                };
+                validate(true);
+              }}
+            />
+            <SelectDropdown
+              value={draft.sort.direction}
+              options={directionOptions}
+              title="Direction"
+              onchange={(value) => {
+                draft = {
+                  ...draft,
+                  sort: { ...draft.sort, direction: value as Query["sort"]["direction"] },
+                };
+                validate(true);
+              }}
+            />
+          </div>
+          {#if executionError}<p class="error" role="alert">
+              {executionError}
+            </p>{/if}
+        </div>
+        <div class="field">
+          <span class="field-label">Documents per page</span>
+          <SelectDropdown
+            title="Documents per page"
+            value={String(pageSize)}
+            options={[50, 100, 250].map((size) => ({ value: String(size), label: String(size) }))}
+            onchange={(value) => {
+              pageSize = Number(value) as typeof pageSize;
+              notifyDirty();
+            }}
+          />
+        </div>
       </div>
-    {/if}
-    {#if failure}<p role="alert">{failure}</p>{/if}
-  </div>
-  {#if selection}<Button size="sm" onclick={focusError}>Focus query error</Button>{/if}
-  <div class="controls">
-    <Button disabled={schemaError !== ""} onclick={onsave}>Save query draft</Button>
-    <Button
-      tone="info"
-      disabled={schemaError !== "" || profileError !== "" || executionError !== ""}
-      onclick={run}>Run query</Button
-    >
-    <span
-      >Run executes the complete draft. Folder browsing and ordinary live search stay separate.</span
-    >
-  </div>
-</section>
+      <details open={filtersError !== "" || profileError !== ""}>
+        <summary>More</summary>
+        <div class="advanced-fields">
+          {#if profiles.length > 1}
+            <div class="field">
+              <span class="field-label">Processing profile</span>
+              <SelectDropdown
+                title="Processing profile"
+                value={executionProfile}
+                options={profileOptions}
+                onchange={(value) => {
+                  executionProfile = value;
+                  notifyDirty();
+                }}
+              />
+            </div>
+          {/if}
+          <div class="field">
+            <label for="query-facets">Filters JSON</label>
+            <textarea
+              id="query-facets"
+              value={facets}
+              rows="4"
+              spellcheck="false"
+              oninput={(event) => {
+                facets = event.currentTarget.value;
+                validate(true);
+              }}></textarea>
+            {#if filtersError}<p class="error" role="alert">{filtersError}</p>{/if}
+          </div>
+          {#if profileError}<p class="error" role="alert">{profileError}</p>{/if}
+        </div>
+      </details>
+      {#if runError}<p class="error" role="alert">{runError}</p>{/if}
+    </div>
+    {#snippet footer()}
+      <div class="validation" aria-live="polite">
+        {#if pending}<span role="status" aria-label="Checking query"><Spinner size={14} /></span>
+        {:else if preview}<span role="status" aria-label="Query valid" class="kit-sr-only"
+          ></span>{/if}
+      </div>
+      <Button onclick={cancel}>Cancel</Button>
+      <Button disabled={schemaError !== "" || profileError !== ""} onclick={onsave}>Save…</Button>
+      <Button
+        tone="info"
+        surface="solid"
+        disabled={schemaError !== "" || profileError !== "" || executionError !== ""}
+        onclick={run}>Search</Button
+      >
+    {/snippet}
+  </Modal>
+{/if}
 
 <style>
-  .query-bar {
+  .query-bar,
+  .advanced-fields {
     display: grid;
-    gap: var(--space-3);
-    padding: var(--space-4);
-    border-bottom: 1px solid var(--border-default);
-    background: var(--bg-surface);
+    gap: var(--space-4);
   }
-  .query-bar p,
-  h2 {
-    margin: 0;
-  }
-  h2 {
-    font-size: var(--font-size-md);
-  }
-  .heading,
-  .controls,
-  .summaries,
-  .checking {
-    display: flex;
-    align-items: center;
+  .field {
+    display: grid;
+    align-content: start;
     gap: var(--space-2);
+    min-width: 0;
+  }
+  .fields,
+  .controls {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
-  .heading {
-    justify-content: space-between;
+  .fields {
+    gap: var(--space-5);
   }
-  .controls > span {
-    color: var(--text-muted);
+  .controls {
+    gap: var(--space-2);
+  }
+  label,
+  .field-label {
     font-size: var(--font-size-sm);
-    flex: 1;
-    min-width: 200px;
+    font-weight: 500;
   }
-  textarea,
-  input,
-  select {
+  textarea {
     box-sizing: border-box;
     width: 100%;
     padding: var(--space-2);
@@ -359,16 +398,37 @@
     border-radius: var(--radius-md);
     background: var(--bg-surface);
     color: var(--text-primary);
-    font-family: var(--font-mono);
+    font: inherit;
   }
   textarea {
     resize: vertical;
   }
-  label span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+  #query-facets {
+    font-family: var(--font-mono);
   }
-  .summaries {
+  summary {
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+  }
+  .advanced-fields {
+    margin-top: var(--space-3);
+  }
+  p {
+    margin: 0;
+    font-size: var(--font-size-sm);
+  }
+  .syntax-help p,
+  .syntax-help code {
+    margin-top: var(--space-2);
+  }
+  .error {
+    color: var(--accent-red);
     overflow-wrap: anywhere;
+  }
+  .validation {
+    margin-right: auto;
+    align-self: center;
+    color: var(--text-muted);
   }
 </style>

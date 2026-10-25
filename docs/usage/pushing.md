@@ -89,7 +89,7 @@ the pruned version.
 
 Each new identity gets its own document, even when another file already has
 the same bytes. Stored bytes are deduplicated anyway, and the
-[collection quality report](web.md#browse-import-collections) counts
+[collection quality report](web.md#browse-import-history) counts
 duplicate content. Deleting a local file leaves its archived node and history
 intact. Renaming a local path gives it a new identity; it is not an archive
 move. Changing `--dest` affects new identities only. A mapped node in trash is
@@ -97,7 +97,7 @@ an error. Restore that node before pushing the identity again. A new identity fa
 if an unrelated entry occupies its exact destination name; push does not
 overwrite it or add a collision suffix.
 
-Each run is one [import collection](web.md#browse-import-collections) holding
+Each run is one [import collection](web.md#browse-import-history) holding
 the files that run added or changed. In `--watch` mode, each scan that uploads
 something is one collection.
 

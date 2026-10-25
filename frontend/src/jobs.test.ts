@@ -8,6 +8,7 @@ const job = (fields: Partial<Job>): Job => ({
   kind: "place",
   lane: "place",
   status: "running",
+  busy: true,
   started_at: "2026-07-23T12:00:00Z",
   controllable: true,
   paused: false,
@@ -19,24 +20,27 @@ describe("activity lanes", () => {
   it("compares UTC timestamps at full fractional precision and retains paused idle lanes", () => {
     const [lane] = jobLanes(
       [
-        job({ status: "failed", started_at: "2026-07-23T12:00:00.1Z" }),
+        job({ status: "failed", busy: false, started_at: "2026-07-23T12:00:00.1Z" }),
         job({
           name: "storage:b",
           operation_id: "b",
           status: "completed",
+          busy: false,
           started_at: "2026-07-23T12:00:00.12Z",
         }),
         job({
           name: "storage:c",
           operation_id: "c",
           status: "cancelled",
+          busy: false,
           started_at: "2026-07-23T12:00:00.120000001Z",
         }),
       ],
       [{ lane: "place", paused: true, concurrency: 1, revision: 2, can_set_concurrency: false }],
     );
     expect(lane.control?.paused).toBe(true);
-    expect(lane.status).toBe("cancelled");
+    expect(lane.status).toBe("failed");
+    expect(lane.visible).toBe(true);
     expect(lane.members.map((member) => member.operation_id)).toEqual(["c", "b", "a"]);
     const controls = [
       { lane: "repair", paused: false, concurrency: 1, revision: 1, can_set_concurrency: false },
@@ -76,6 +80,7 @@ describe("activity lanes", () => {
           name: "storage:c",
           operation_id: "c",
           status: "completed",
+          busy: false,
           total_objects: 99,
           completed_objects: 99,
         }),
@@ -85,6 +90,7 @@ describe("activity lanes", () => {
           kind: "photo_checkout",
           lane: "photo_checkout",
           status: "completed",
+          busy: false,
           total_objects: 2,
           completed_objects: 1,
         }),
@@ -106,6 +112,7 @@ describe("activity lanes", () => {
       completed: 3,
       total: 12,
       status: "running",
+      active: true,
     });
     expect(lanes.find(({ lane }) => lane === "photo_checkout")).toMatchObject({
       title: "Photo checkout",

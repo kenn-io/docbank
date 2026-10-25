@@ -95,7 +95,7 @@ test("downloads the exact 1001-member frozen source through the real export work
         new URL(r.url()).pathname === "/api/v1/workspace/queries" &&
         r.request().method() === "POST",
     );
-    await page.getByRole("button", { name: "Run query", exact: true }).click();
+    await page.getByRole("button", { name: "Search", exact: true }).click();
     const accepted = (await (await acceptedPromise).json()) as Snapshot;
     expect(accepted.total).toBe(1001);
     const frozen = [...accepted.rows];
@@ -108,7 +108,6 @@ test("downloads the exact 1001-member frozen source through the real export work
       cursor = next.next_cursor;
     }
     expect(frozen).toHaveLength(1001);
-    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
 
     // Replace a captured head, remove that row from the live query, and add a
     // different matching document. Equal live counts must not hide substitution.

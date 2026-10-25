@@ -128,15 +128,13 @@ test("MAIL07 offline email reader on a real daemon", async ({ page, context }) =
   await page.getByRole("option", { name: "HTML · part 1.1.2 · available", exact: true }).click();
   await expect(frame.getByRole("heading", { name: "Project Atlas briefing" })).toBeVisible();
   await reader.getByRole("button", { name: "Inspect attachment documents", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Open attachment notes.txt, part 1.5", exact: true })
-    .click();
+  await page.getByRole("button", { name: "notes.txt", exact: true }).click();
   await expect(page.getByText("Synthetic attachment exact bytes.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Return to selected document", exact: true }).click();
   await page.getByRole("tab", { name: "Email", exact: true }).click();
   await expect(frame.getByRole("heading", { name: "Project Atlas briefing" })).toBeVisible();
   const pendingDownload = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download verified original", exact: true }).click();
+  await page.getByRole("button", { name: "Download", exact: true }).click();
   const download = await pendingDownload;
   expect(download.suggestedFilename()).toBe("01-atlas.eml");
   await download.delete();

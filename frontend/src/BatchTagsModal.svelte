@@ -1,13 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
-  import {
-    Button,
-    Checkbox,
-    Modal,
-    SelectDropdown,
-    Spinner,
-    type SelectDropdownOption,
-  } from "@kenn-io/kit-ui";
+  import { onDestroy, untrack } from "svelte";
+  import { Button, Checkbox, Modal, Spinner } from "@kenn-io/kit-ui";
+  import TagPicker from "./TagPicker.svelte";
   import { APIError } from "./api-transport.js";
   import { type Tag } from "./generated/docbank.js";
   import { randomUUID } from "./crypto.js";
@@ -29,8 +23,6 @@
     onclose: () => void;
     onchanged: (receipt: BatchTagReceipt) => void;
     onauthfailure: (cause: unknown) => void;
-    context?: "live" | "snapshot";
-    initialChoice?: { tagID: string; assign: boolean };
   }
   let {
     session,
@@ -41,11 +33,9 @@
     onclose,
     onchanged,
     onauthfailure,
-    context = "live",
-    initialChoice,
   }: Props = $props();
   let currentTargets = $state(untrack(() => targets.map((target) => ({ ...target }))));
-  let tagID = $state(untrack(() => initialChoice?.tagID ?? ""));
+  let tagID = $state("");
   let preview = $state<BatchTagPreview>();
   let uncertain = $state<BatchTagRequest>();
   let loading = $state(false);
@@ -60,14 +50,7 @@
     alive = false;
     generation++;
   });
-  onMount(() => {
-    if (tagID) void loadPreview();
-  });
 
-  const options = $derived<SelectDropdownOption[]>([
-    { value: "", label: "Choose a tag…" },
-    ...catalog.map((tag) => ({ value: tag.id, label: tag.name })),
-  ]);
   const assignedCount = $derived(preview?.nodes.filter((node) => node.assigned).length ?? 0);
   const busy = $derived(disabled || pending || loading);
   const canChange = $derived(!busy && !stale && !uncertain && preview !== undefined);
@@ -105,11 +88,12 @@
     }
   }
 
-  function selectTag(value: string) {
+  async function selectTag(value: string, created = false) {
     if (busy || stale || uncertain) return;
     tagID = value;
     notice = "";
-    void loadPreview();
+    await loadPreview();
+    if (created) change(true);
   }
 
   async function submit(request: BatchTagRequest) {
@@ -172,18 +156,20 @@
 >
   <div class="batch-tags">
     <p>
-      {currentTargets.length} selected document{currentTargets.length === 1 ? "" : "s"}{context ===
-      "snapshot"
-        ? " in the visible frozen selection"
-        : ""}. Each operation changes one tag across this exact selection, or changes nothing if a
-      document is stale.
+      {currentTargets.length} selected document{currentTargets.length === 1 ? "" : "s"}. Each
+      operation changes one tag across this exact selection, or changes nothing if a document is
+      stale.
     </p>
-    <SelectDropdown
+    <TagPicker
+      {session}
       value={tagID}
-      {options}
+      tags={catalog}
       title="Tag for selected documents"
+      placeholder="Tag name"
       disabled={busy || stale || uncertain !== undefined}
-      onchange={selectTag}
+      onchange={(value) => void selectTag(value)}
+      onpick={(tag, created) => selectTag(tag.id, created)}
+      {onauthfailure}
     />
     {#if catalogTotal > catalog.length}
       <p class="hint">
@@ -202,18 +188,14 @@
       />
     {/if}
     <div class="actions">
-      {#if !initialChoice || initialChoice.assign}
-        <Button
-          tone="info"
-          disabled={!canChange || assignedCount === currentTargets.length}
-          onclick={() => change(true)}>Add to all</Button
-        >
-      {/if}
-      {#if !initialChoice || !initialChoice.assign}
-        <Button disabled={!canChange || assignedCount === 0} onclick={() => change(false)}
-          >Remove from all</Button
-        >
-      {/if}
+      <Button
+        tone="info"
+        disabled={!canChange || assignedCount === currentTargets.length}
+        onclick={() => change(true)}>Add to all</Button
+      >
+      <Button disabled={!canChange || assignedCount === 0} onclick={() => change(false)}
+        >Remove from all</Button
+      >
     </div>
     {#if pending}<div class="loading"><Spinner size={16} /> Confirming operation…</div>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
@@ -239,9 +221,8 @@
       <Button disabled={busy} onclick={onclose}>Close without confirmation</Button>
     {/if}
     <p class="hint">
-      {context === "snapshot"
-        ? "This snapshot keeps the same documents and order. Tag changes appear below."
-        : "No query-wide selection or automatic conflict retry. A confirmed receipt describes the original operation; current membership is checked again afterward."}
+      No query-wide selection or automatic conflict retry. A confirmed receipt describes the
+      original operation; current membership is checked again afterward.
     </p>
   </div>
   {#snippet footer()}<Button surface="soft" disabled={pending || loading} onclick={close}

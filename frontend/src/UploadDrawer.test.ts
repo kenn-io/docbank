@@ -85,7 +85,6 @@ describe("upload documents drawer", () => {
         return;
       }
       expect(await screen.findByText("Added")).toBeTruthy();
-      expect(screen.getByText(/Created node 8, revision 1/)).toBeTruthy();
       await waitFor(() => expect(complete).toHaveBeenCalledOnce());
       expect(action).toHaveBeenCalledExactlyOnceWith("session", "document_added");
       expect(failure).not.toHaveBeenCalled();
@@ -153,7 +152,7 @@ describe("upload documents drawer", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Cancel current upload" }));
 
     expect(await screen.findByText("Unconfirmed")).toBeTruthy();
-    expect(screen.getByText(/retry this file to converge safely/)).toBeTruthy();
+    expect(screen.getByText(/Retry this file to check/)).toBeTruthy();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
     expect(failure).not.toHaveBeenCalled();
   });
@@ -284,8 +283,87 @@ describe("upload documents drawer", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
 
     expect(await screen.findByText("Unconfirmed")).toBeTruthy();
-    expect(screen.getByText(/retry this file after running/)).toBeTruthy();
+    expect(screen.getByText(/Run `docbank web` again, then retry this file/)).toBeTruthy();
     expect(channel.uploadFile).toHaveBeenCalledOnce();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
   });
+});
+
+it("preserves the selected root and subfolders, reuses existing folders, and retries in place", async () => {
+  vi.spyOn(upload, "hashFile").mockResolvedValue("a".repeat(64));
+  const parents: number[] = [];
+  let fail = true;
+  const channel: upload.UploadTransport = {
+    uploadFile: async (parentID, file, hash) => {
+      parents.push(parentID);
+      if (fail) {
+        fail = false;
+        throw new Error("Temporary upload failure");
+      }
+      return {
+        status: "added",
+        computed_hash: hash,
+        computed_size: file.size,
+        node: {
+          id: 20,
+          parent_id: parentID,
+          name: file.name,
+          kind: "file",
+          size: file.size,
+          revision: 1,
+          created_at: "",
+          modified_at: "",
+        },
+      };
+    },
+  };
+  const created: { parent_id: number; name: string; kind: string }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (init?.method === "POST" && url === "/api/v1/nodes") {
+      const body = JSON.parse(String(init.body));
+      created.push(body);
+      if (body.name === "Reports")
+        return Response.json({ code: "exists", detail: "Already exists" }, { status: 409 });
+      return Response.json({ id: 12, parent_id: 11, name: "2026", kind: "dir" });
+    }
+    if (url.startsWith("/api/v1/nodes/3/children"))
+      return Response.json({ items: [{ id: 11, name: "Reports", kind: "dir" }], total: 1 });
+    throw new Error(`Unexpected request ${url}`);
+  });
+  const complete = vi.fn();
+  render(UploadDrawer, {
+    session: "session",
+    channel,
+    directory: {
+      id: 3,
+      path: "/Work",
+      name: "Work",
+      kind: "dir",
+      size: 0,
+      revision: 1,
+      created_at: "",
+      modified_at: "",
+    },
+    onclose: vi.fn(),
+    oncomplete: complete,
+    onauthfailure: vi.fn(),
+  });
+  const first = new File(["a"], "first.txt");
+  const second = new File(["b"], "second.txt");
+  Object.defineProperty(first, "webkitRelativePath", { value: "Reports/2026/first.txt" });
+  Object.defineProperty(second, "webkitRelativePath", { value: "Reports/2026/second.txt" });
+  await fireEvent.change(screen.getByLabelText("Choose local folder"), {
+    target: { files: [first, second] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
+  await screen.findByText("Failed");
+  await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+  await fireEvent.click(screen.getByRole("button", { name: "Upload 1 file" }));
+  await waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
+  expect(parents).toEqual([12, 12, 12]);
+  expect(created).toEqual([
+    { parent_id: 3, name: "Reports", kind: "dir" },
+    { parent_id: 11, name: "2026", kind: "dir" },
+  ]);
 });

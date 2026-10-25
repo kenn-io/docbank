@@ -439,6 +439,11 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		r.URL.RawQuery == "" {
 		return true
 	}
+	// Folder uploads recreate their subfolders; this route creates directories only.
+	if method == http.MethodPost && path == "/api/v1/nodes" &&
+		r.URL.RawQuery == "" {
+		return true
+	}
 	if method == http.MethodPost && r.URL.RawQuery == "" {
 		switch path {
 		case "/api/v1/processing/plans", "/api/v1/processing/jobs",

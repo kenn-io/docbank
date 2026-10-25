@@ -43,13 +43,10 @@ it("shows exact source scope and original warning before any server work, with e
     onauthfailure: vi.fn(),
   });
   expect(await screen.findByText("Selected documents")).toBeTruthy();
-  expect(screen.getByText(/Originals are not redacted or sanitized/)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Preview export" }).hasAttribute("disabled")).toBe(
-    false,
-  );
+  expect(screen.getByRole("button", { name: "Download ZIP" }).hasAttribute("disabled")).toBe(false);
   expect(screen.queryByRole("button", { name: "Start reviewed export" })).toBeNull();
   await fireEvent.click(screen.getByRole("combobox", { name: /^Text export policy/ }));
-  expect(screen.getByRole("option", { name: "Optional — allow unavailable" })).toBeTruthy();
+  expect(screen.getByRole("option", { name: "If available" })).toBeTruthy();
   expect(fetcher).not.toHaveBeenCalled();
 });
 
@@ -63,7 +60,7 @@ it("disables empty sources and fences work when closed", async () => {
     onauthfailure: vi.fn(),
   });
   expect(
-    (await screen.findByRole("button", { name: "Preview export" })).hasAttribute("disabled"),
+    (await screen.findByRole("button", { name: "Download ZIP" })).hasAttribute("disabled"),
   ).toBe(true);
   await fireEvent.click(screen.getByRole("button", { name: "Close export" }));
   expect(close).toHaveBeenCalledOnce();
@@ -87,10 +84,7 @@ it("offers body PDFs with explicit partial, attachment, duplicate and bounded pa
   expect(screen.getByRole("combobox", { name: /^Duplicate outputs/ }).textContent).toContain(
     "Preserve every occurrence",
   );
-  expect(screen.getByRole("button", { name: "Preview export" }).hasAttribute("disabled")).toBe(
-    true,
-  );
-  expect(screen.getByText(/Only qualified nested-email PDFs/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Download ZIP" }).hasAttribute("disabled")).toBe(true);
 });
 
 it("routes an expired browser session to the app authentication handler", async () => {
@@ -103,7 +97,7 @@ it("routes an expired browser session to the app authentication handler", async 
   const onauthfailure = vi.fn(),
     onclose = vi.fn();
   render(ExportDrawer, { session: "s", input, open: true, onclose, onauthfailure });
-  await fireEvent.click(await screen.findByRole("button", { name: "Preview export" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Download ZIP" }));
   await waitFor(() => expect(onauthfailure).toHaveBeenCalledOnce());
   expect(onclose).toHaveBeenCalledOnce();
 });
@@ -121,10 +115,10 @@ it("starts a fresh preparation after a failed source reservation", async () => {
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  await fireEvent.click(await screen.findByRole("button", { name: "Preview export" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Download ZIP" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Start over" }));
   expect(screen.queryByRole("alert")).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
   await screen.findByRole("button", { name: "Start over" });
   expect(ids).toHaveLength(2);
   expect(new Set(ids).size).toBe(2);
@@ -199,11 +193,11 @@ it("shows empty attachment sets and sends the set selected in the drawer", async
   await screen.findByRole("combobox", { name: /^Retained PDF recipe/ });
   await choose(/^Retained PDF recipe/, /A4/);
   await choose(/^Email attachment outputs/, "Include original attachments");
-  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
   const second = await screen.findByRole("radio", { name: /second/ });
   expect(screen.getAllByRole("radio").every((r) => !(r as HTMLInputElement).checked)).toBe(true);
   await fireEvent.click(second);
-  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
   await waitFor(() =>
     expect(selected).toEqual([
       { version_id: input.members[0]!.version_id, operation_id: "second" },
@@ -315,10 +309,10 @@ it("keeps export start available when the first details page fails and retries t
     onauthfailure: vi.fn(),
   });
   await fireEvent.click(screen.getByRole("combobox", { name: /^Text export policy/ }));
-  await fireEvent.click(screen.getByRole("option", { name: "Optional — allow unavailable" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  await fireEvent.click(screen.getByRole("option", { name: "If available" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
   await screen.findByText("Details temporarily unavailable");
-  const start = screen.getByRole("button", { name: "Start reviewed export" });
+  const start = screen.getByRole("button", { name: "Download anyway" });
   expect(start.hasAttribute("disabled")).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Retry unavailable output details" }));
   await screen.findByText("text: Text was not retained for this version.");
@@ -371,14 +365,13 @@ it("validates photo settings, drops document options, and scopes failure recover
   };
   await view.rerender({ input: photos });
   expect(screen.queryByRole("combobox", { name: /^ZIP packaging/ })).toBeNull();
-  expect(screen.getByText(/1 to 100,000 pixels\. Blank keeps the original size\./)).toBeTruthy();
   const edge = screen.getByRole("textbox", { name: "Long edge, pixels" });
-  const prepare = screen.getByRole("button", { name: "Prepare" });
+  const prepare = screen.getByRole("button", { name: "Download ZIP" });
   for (const value of ["100001", "-1", "text", "0", "1.5"]) {
     await fireEvent.input(edge, { target: { value } });
     expect(prepare.hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("alert").textContent).toBe(
-      "Enter a whole number from 1 to 100,000 pixels or leave Long edge blank to enable Prepare.",
+      "Enter a whole number from 1 to 100,000 pixels, or leave Long edge blank.",
     );
   }
   for (const value of ["1", "100000", ""]) {
@@ -391,7 +384,7 @@ it("validates photo settings, drops document options, and scopes failure recover
     await fireEvent.input(quality, { target: { value } });
     expect(prepare.hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("alert").textContent).toBe(
-      "Enter a whole number from 1 to 100 for JPEG quality to enable Prepare.",
+      "Enter a whole number from 1 to 100 for JPEG quality.",
     );
   }
   for (const value of ["1", "100", "90"]) {
@@ -403,7 +396,7 @@ it("validates photo settings, drops document options, and scopes failure recover
   const gps = screen.getByRole("checkbox", { name: "Remove GPS" }) as HTMLInputElement;
   expect(gps.disabled).toBe(true);
   expect(gps.checked).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
   await screen.findByText("Captured preparation");
   expect(requested.photo_render).toEqual({
     format: "jpeg",
@@ -421,7 +414,7 @@ it("validates photo settings, drops document options, and scopes failure recover
   const restoredGPS = screen.getByRole("checkbox", { name: "Remove GPS" }) as HTMLInputElement;
   expect(restoredGPS.disabled).toBe(false);
   expect(restoredGPS.checked).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
   await screen.findByText(
     "Switch to Export selection and select photos without the unavailable photo.",
   );
@@ -430,7 +423,7 @@ it("validates photo settings, drops document options, and scopes failure recover
   await view.rerender({
     input: { ...photos, photos: { ...photos.photos, asset_ids: [input.members[0]!.version_id] } },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
   await screen.findByText("Remove the unavailable photo from your selection and retry.");
 });
 
@@ -529,6 +522,7 @@ it("captures current album members on reopen while retaining settings retries an
           },
         ],
       });
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
     expect(path).toBe("/api/v1/exports/jobs");
     jobs.push(body);
     return Response.json({
@@ -552,39 +546,34 @@ it("captures current album members on reopen while retaining settings retries an
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
-  await screen.findByRole("button", { name: "Start reviewed export" });
-  expect(screen.getByTestId("export-member-hash").textContent).toBe("a".repeat(64));
   await fireEvent.input(screen.getByRole("textbox", { name: "JPEG quality" }), {
     target: { value: "80" },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
-  await screen.findByRole("button", { name: "Start reviewed export" });
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+  await screen.findByRole("button", { name: "New export" });
+  expect(screen.getByTestId("export-member-hash").textContent).toBe("a".repeat(64));
   expect(plans.at(-1).photo_render.quality).toBe(80);
   expect(sources.size).toBe(1);
+  expect(jobs).toHaveLength(1);
 
   await fireEvent.click(screen.getByRole("button", { name: "Close export" }));
   await view.rerender({ open: false });
   albumMembers = [replacementPhoto];
   await view.rerender({ open: true, input: structuredClone(album) });
-  await fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
-  await screen.findByRole("button", { name: "Start reviewed export" });
+  await screen.findByRole("button", { name: "New export" });
+  expect(screen.getByTestId("export-member-hash").textContent).toBe("a".repeat(64));
+  expect(sources.size).toBe(1);
+
+  await fireEvent.click(screen.getByRole("button", { name: "New export" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Download ZIP" }));
+  await waitFor(() => expect(jobs).toHaveLength(2));
+  await screen.findByRole("button", { name: "New export" });
   expect(screen.getByTestId("export-member-hash").textContent).toBe("b".repeat(64));
   expect(sources.size).toBe(2);
   expect(sources.get(plans.at(-1).source.id)!.members).toEqual([
     "44444444-4444-4444-8444-444444444444",
   ]);
-
-  await fireEvent.click(screen.getByRole("button", { name: "Start reviewed export" }));
-  await screen.findByRole("button", { name: "Prepare another export" });
-  await fireEvent.click(screen.getByRole("button", { name: "Close export" }));
-  await view.rerender({ open: false });
-  albumMembers = [removedPhoto];
-  await view.rerender({ open: true });
-  await screen.findByRole("button", { name: "Prepare another export" });
-  expect(screen.getByTestId("export-member-hash").textContent).toBe("b".repeat(64));
-  expect(sources.size).toBe(2);
-  expect(jobs).toHaveLength(1);
+  expect(plans.at(-1).photo_render.quality).toBe(80);
 });
 
 it.each([false, true])(
@@ -670,27 +659,126 @@ it.each([false, true])(
       onauthfailure: vi.fn(),
       onprepareanother,
     });
-    await fireEvent.input(screen.getByRole("textbox", { name: "Downloaded ZIP filename" }), {
+    await fireEvent.input(screen.getByRole("textbox", { name: "ZIP filename" }), {
       target: { value: "documents.zip" },
     });
     await fireEvent.click(screen.getByRole("combobox", { name: /^Duplicate outputs/ }));
     await fireEvent.click(screen.getByRole("option", { name: "Share exact duplicate outputs" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Start reviewed export" }));
-    await screen.findByRole("button", { name: "Prepare another export" });
+    await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await screen.findByRole("button", { name: "New export" });
     if (retainedRequest) await view.rerender({ notice: "Your previous export is still retained." });
-    await fireEvent.click(screen.getByRole("button", { name: "Prepare another export" }));
-    await screen.findByRole("button", { name: "Preview export" });
+    await fireEvent.click(screen.getByRole("button", { name: "New export" }));
+    await screen.findByRole("button", { name: "Download ZIP" });
     expect(onprepareanother).toHaveBeenCalledTimes(Number(retainedRequest));
     if (retainedRequest) return;
     expect(onclose).not.toHaveBeenCalled();
-    expect(
-      (screen.getByRole("textbox", { name: "Downloaded ZIP filename" }) as HTMLInputElement).value,
-    ).toBe("documents.zip");
-    await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
-    await screen.findByRole("button", { name: "Start reviewed export" });
+    expect((screen.getByRole("textbox", { name: "ZIP filename" }) as HTMLInputElement).value).toBe(
+      "documents.zip",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await screen.findByRole("button", { name: "New export" });
     expect(plans).toHaveLength(2);
     expect(plans[1].roles).toEqual(plans[0].roles);
     expect(plans[1].duplicate_policy).toBe("collapse_exact_content");
   },
 );
+
+it("builds and offers the ZIP from one Download ZIP click when every output is available", async () => {
+  const { exportMemberHash } = await import("./exports.js");
+  const memberHash = await exportMemberHash(input.members),
+    hash = "a".repeat(64),
+    future = "2099-01-01T00:00:00Z";
+  const receipt = {
+    format: "docbank-bundle-v1",
+    plan_fingerprint: hash,
+    sha256: "b".repeat(64),
+    size: 120,
+    entries: 4,
+  };
+  const ticketURL = `/api/daemon/web-download/file?ticket=${"t".repeat(43)}`;
+  let source: any, plan: any;
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url),
+      body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    paths.push(path);
+    if (path.endsWith("/sources")) {
+      source = {
+        id: body.operation_id,
+        request_sha256: hash,
+        kind: "explicit",
+        state: "sealed",
+        member_hash: memberHash,
+        total: 1,
+        source_bytes: 12,
+        created_at: "2026-01-01T00:00:00Z",
+        expires_at: future,
+      };
+      return Response.json(source);
+    }
+    if (path.endsWith("/plans")) {
+      plan = {
+        format: "docbank-bundle-v1",
+        id: body.operation_id,
+        vault_id: input.members[0]!.version_id,
+        toolchain: "go1.27",
+        source,
+        roles: body.roles,
+        fingerprint: hash,
+        total: 1,
+        role_entries: 1,
+        role_bytes: 12,
+        metadata_bytes: 100,
+        created_at: source.created_at,
+        expires_at: future,
+      };
+      return Response.json(plan);
+    }
+    if (path.endsWith("/preview"))
+      return Response.json({
+        plan_id: plan.id,
+        fingerprint: hash,
+        member_hash: memberHash,
+        total: 1,
+        roles: [
+          { role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 },
+        ],
+      });
+    if (path.endsWith("/download")) return Response.json({ url: ticketURL, receipt });
+    if (path.endsWith("/jobs"))
+      return Response.json({
+        id: body.operation_id,
+        plan_id: plan.id,
+        fingerprint: hash,
+        state: "completed",
+        sequence: 1,
+        completed_roles: 1,
+        completed_bytes: 12,
+        attempt: 1,
+        receipt,
+        created_at: source.created_at,
+        deadline: future,
+        expires_at: future,
+      });
+    throw new Error(`unexpected request ${path}`);
+  });
+  const clicked: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push(this.getAttribute("href") ?? "");
+  });
+  render(ExportDrawer, {
+    session: "s",
+    input,
+    open: true,
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+  await waitFor(() => expect(clicked).toEqual([ticketURL]));
+  expect(screen.queryByRole("button", { name: "Download anyway" })).toBeNull();
+  expect(paths.filter((path) => path.endsWith("/download"))).toHaveLength(1);
+  expect(await screen.findByText("Download started in your browser.")).toBeTruthy();
+});

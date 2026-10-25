@@ -655,10 +655,8 @@ trust_boundary = "local_process"
     });
     await selectionDock.getByRole("button", { name: "Edit tags" }).click();
     const batchTags = page.getByRole("dialog", { name: "Tag selected documents" });
-    await batchTags
-      .getByRole("combobox", { name: "Tag for selected documents: Choose a tag…" })
-      .click();
-    await page.getByRole("option", { name: "tax", exact: true }).click();
+    await batchTags.getByRole("combobox", { name: "Tag for selected documents" }).fill("tax");
+    await page.getByRole("option", { name: /^tax \(\d+\)$/ }).click();
     await expect(batchTags.getByText("1 of 2 selected documents have this tag.")).toBeVisible();
     await page.screenshot({
       path: screenshotPathFor("web-batch-tags.png"),
@@ -743,7 +741,8 @@ trust_boundary = "local_process"
     });
     await auditEvidence.getByRole("button", { name: "Close permanent audit verification" }).click();
 
-    await page.getByRole("button", { name: "Manage tag definitions" }).click();
+    await page.getByRole("combobox", { name: /^Browse or filter by tag:/ }).click();
+    await page.getByRole("button", { name: "Manage tags", exact: true }).click();
     const catalog = page.getByRole("dialog", {
       name: "Manage tag definitions",
     });
@@ -784,39 +783,34 @@ trust_boundary = "local_process"
       name: "Manage tags for quarterly-tax-report.txt",
     });
     await expect(tags).toContainText("tax");
-    await tags.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }).click();
+    await tags.getByRole("combobox", { name: "Tag to assign" }).fill("reviewed");
     await tags.getByRole("option", { name: "matter/acme/reviewed (0)" }).click();
-    await tags.getByRole("button", { name: "Add tag" }).click();
     await expect(tags).toContainText("Added matter/acme/reviewed.");
     await expect(tags.getByRole("status", { name: "Loading" })).toHaveCount(0);
     await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0);
     await tags.getByRole("button", { name: "Done" }).click();
 
-    await page.getByRole("button", { name: "Process and retrieve" }).click();
-    const processing = page.getByRole("dialog", {
-      name: "Document processing and coverage",
-    });
-    await expect(processing).toContainText("Private network");
-    await expect(processing).toContainText("sanitized_markdown");
+    await page.getByRole("button", { name: "Document actions" }).click();
+    await page.getByRole("menuitem", { name: "Process…" }).click();
+    const processing = page.getByRole("dialog", { name: "Extract text" });
+    await expect(processing).toContainText("on your network");
+    await expect(processing).toContainText("Saves the extracted text");
     await page.screenshot({
       path: processingPlanScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });
-    await processing.getByRole("button", { name: "Consent and run" }).click();
-    await expect(processing.getByRole("button", { name: "Read sanitized Markdown" })).toBeVisible({
+    await processing.getByRole("checkbox").check();
+    await processing.getByRole("button", { name: "Extract text" }).click();
+    await expect(processing.getByRole("button", { name: "Read text" })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(processing).toContainText(/semantic.*complete/i);
-    await processing
-      .getByRole("region", { name: "Document processing coverage" })
-      .scrollIntoViewIfNeeded();
     await page.screenshot({
       path: processingResultScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });
-    await processing.getByRole("button", { name: "Read sanitized Markdown" }).click();
+    await processing.getByRole("button", { name: "Read text" }).click();
     const rendition = page.getByRole("dialog", { name: "Sanitized Markdown rendition" });
     await expect(rendition).toContainText("Synthetic quarterly tax report with reviewed totals");
     await expect(rendition).toContainText("degraded_provenance");

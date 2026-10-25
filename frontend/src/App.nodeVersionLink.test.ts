@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import App from "./App.svelte";
 import { storage, photo, photoMetadataResponse } from "./photo-test-fixtures.js";
 import { node as fileNode, root, version } from "./version-test-fixtures.js";
-import type { Node } from "./generated/docbank.js";
+import type { ContentVersion, Node } from "./generated/docbank.js";
+import { formatDate } from "./format.js";
 
 const oldID = "11111111-1111-4111-8111-111111111111";
 const currentID = "22222222-2222-4222-8222-222222222222";
@@ -19,6 +20,8 @@ const node: Node = {
 };
 const oldVersion = { ...version(oldID, 1, "content_create", "a"), size: 7 };
 const currentVersion = { ...version(currentID, 1001, "content_replace", "b"), size: 200 };
+const detailsName = (version: ContentVersion, kind: "Created" | "Replaced") =>
+  `Details for ${kind} ${formatDate(version.recorded_at)}`;
 const link = (id = oldID) => `#node=42&version=${id}`;
 const credentials = "web_session=synthetic&web_upload_secret=proof&";
 
@@ -117,7 +120,7 @@ it.each([
     api((requestURL) => (requestURL === url ? response() : undefined));
     render(App);
     await waitFor(() => expect(within(screen.getByRole("dialog")).getByText(message)).toBeTruthy());
-    expect(screen.queryByRole("button", { name: "Download this version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
     expect(screen.queryByText(currentID)).toBeNull();
   },
 );
@@ -149,7 +152,7 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
   );
   await screen.findByRole("cell", { name: "other.txt" });
   expect(screen.getByText(oldID)).toBeTruthy();
-  await screen.findByText("1001 retained versions");
+  await screen.findByText("1001 versions");
   expect(location.hash).toBe(link());
 });
 
@@ -245,8 +248,9 @@ it("replaces an ordinary version drawer when a linked version opens in the same 
   );
   render(App);
   await fireEvent.click(await screen.findByRole("cell", { name: "example.txt" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Version history" }));
-  await within(await screen.findByRole("dialog")).findByText(currentID);
+  await fireEvent.click(await screen.findByRole("button", { name: "All versions" }));
+  await within(await screen.findByRole("dialog")).findByText("Current");
+  expect(screen.queryByText(oldID)).toBeNull();
   await act(() => {
     location.hash = link();
   });
@@ -296,19 +300,25 @@ it("reopens exact versions on Back and Forward and uses the renamed node instead
   const mountedDrawer = screen.getByRole("dialog");
   expect(location.hash).toBe(link());
   const drawer = within(mountedDrawer);
-  const timeline = within(drawer.getByRole("region", { name: "Retained versions" }));
-  await fireEvent.click((await timeline.findByText("Revision 1001")).closest("button")!);
+  const timeline = within(drawer.getByRole("list", { name: "Versions" }));
+  const currentDetails = () =>
+    timeline.getByRole("button", { name: detailsName(currentVersion, "Replaced") });
+  const oldDetails = () =>
+    timeline.getByRole("button", { name: detailsName(oldVersion, "Created") });
+  await fireEvent.click(
+    await timeline.findByRole("button", { name: detailsName(currentVersion, "Replaced") }),
+  );
   await within(mountedDrawer).findByText(currentID);
   expect(location.hash).toBe(link(currentID));
   const push = vi.spyOn(history, "pushState");
-  await fireEvent.click(timeline.getByText("Revision 1001").closest("button")!);
+  await fireEvent.click(currentDetails());
   expect(push).not.toHaveBeenCalled();
   failLookup = true;
   history.back();
   await waitFor(() => expect(release).toBeTypeOf("function"));
   const historyLength = history.length;
   expect(location.hash).toBe(link());
-  await fireEvent.click(timeline.getByText("Revision 1").closest("button")!);
+  await fireEvent.click(oldDetails());
   expect(push).not.toHaveBeenCalled();
   expect(location.hash).toBe(link());
   expect(history.length).toBe(historyLength);
@@ -317,17 +327,19 @@ it("reopens exact versions on Back and Forward and uses the renamed node instead
   );
   await drawer.findByText("Version lookup temporarily unavailable");
   expect(location.hash).toBe(link());
-  await fireEvent.click(timeline.getByText("Revision 1001").closest("button")!);
+  await fireEvent.click(currentDetails());
   expect(drawer.queryByText("Version lookup temporarily unavailable")).toBeNull();
   expect(drawer.getByText(currentID)).toBeTruthy();
-  expect(drawer.getByRole("button", { name: "Download this version" })).toBeTruthy();
+  expect(drawer.getAllByRole("button", { name: "Download" })).not.toHaveLength(0);
   changed = true;
   history.back();
   await within(mountedDrawer).findByText(oldID);
   expect(location.hash).toBe(link());
   expect(drawer.getByText("renamed.txt")).toBeTruthy();
   fetchMock.mockClear();
-  await fireEvent.click(drawer.getByRole("button", { name: "Download this version" }));
+  await fireEvent.click(
+    within(oldDetails().closest("li")!).getByRole("button", { name: "Download" }),
+  );
   await drawer.findByText("Download unavailable in fixture");
   const call = fetchMock.mock.calls.find(([input]) => String(input) === "/api/daemon/web-download");
   expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
@@ -381,7 +393,9 @@ it("returns to the grid after selecting a version over a photo opened from the g
     location.hash = `#photo=photo-1&${link().slice(1)}`;
   });
   await screen.findByText(oldID);
-  await fireEvent.click((await screen.findByText("Revision 1001")).closest("button")!);
+  await fireEvent.click(
+    await screen.findByRole("button", { name: detailsName(currentVersion, "Replaced") }),
+  );
   await screen.findByText(currentID);
   await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
   await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));

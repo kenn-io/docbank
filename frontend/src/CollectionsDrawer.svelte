@@ -1,18 +1,13 @@
 <script lang="ts">
-  import ArchiveIcon from "@lucide/svelte/icons/archive";
-  import FileIcon from "@lucide/svelte/icons/file";
+  import DrawerShell from "./DrawerShell.svelte";
+  import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import SearchIcon from "@lucide/svelte/icons/search";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Button,
-    Card,
-    Chip,
-    DetailDrawer,
-    EmptyState,
-    IconButton,
-    Spinner,
-    TextInput,
-  } from "@kenn-io/kit-ui";
+  import { Button, CopyButton, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import "./toolForm.css";
+  import { displayName, sourcePaths } from "./collectionNames.js";
+  import InspectorDetails from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
   import { type Node } from "./generated/docbank.js";
   import {
@@ -55,10 +50,8 @@
   let labelLoading = $state(false);
   let labelPending = $state(false);
   let labelError = $state("");
-  let labelNotice = $state("");
   let openingMemberID = $state<number | null>(null);
   let openError = $state("");
-  let refreshedAt = $state("");
   let loadedSession = "";
   let generation = 0;
   let memberGeneration = 0;
@@ -103,7 +96,6 @@
       profile = "";
       items = [];
       total = 0;
-      refreshedAt = "";
     }
     selected = null;
     members = [];
@@ -112,7 +104,6 @@
     observedLabel = null;
     labelDraft = "";
     labelError = "";
-    labelNotice = "";
     openingMemberID = null;
     openError = "";
     try {
@@ -121,7 +112,6 @@
       items = page.items;
       total = page.total;
       loadedSession = currentSession;
-      refreshedAt = new Date().toISOString();
     } catch (cause) {
       if (request !== generation || currentSession !== session) return;
       if (!authFailure(cause)) error = message(cause);
@@ -144,7 +134,6 @@
     observedLabel = null;
     labelDraft = collection.label ?? "";
     labelError = "";
-    labelNotice = "";
     void reloadLabel(collection);
     try {
       const page = await collectionMembers(currentSession, collection.id);
@@ -191,7 +180,6 @@
     labelLoading = true;
     labelPending = false;
     labelError = "";
-    labelNotice = "";
     try {
       const label = await collectionLabel(currentSession, collection.id);
       if (
@@ -224,7 +212,6 @@
     const fence = observedLabel;
     labelPending = true;
     labelError = "";
-    labelNotice = "";
     try {
       const label = await setCollectionLabel(currentSession, fence, value);
       if (
@@ -236,7 +223,6 @@
       observedLabel = label;
       labelDraft = label.label ?? "";
       applyLabel(label);
-      labelNotice = label.label === null ? "Collection label cleared." : "Collection label saved.";
     } catch (cause) {
       if (
         request !== labelGeneration ||
@@ -266,364 +252,273 @@
       if (current()) openingMemberID = null;
     }
   }
-
-  function displayName(collection: Collection): string {
-    return collection.label ?? `Unlabeled import ${collection.id.slice(0, 8)}`;
-  }
 </script>
 
-<DetailDrawer width="min(760px, 100vw)" ariaLabel="Import collections" onclose={close}>
-  {#snippet header()}
-    <div class="drawer-heading">
-      <div>
-        <span>Import runs</span>
-        <strong>Import collections</strong>
-        <small>
-          {total} collection{total === 1 ? "" : "s"}
-          {#if refreshedAt}
-            · Refreshed {formatDate(refreshedAt)}{/if}
-        </small>
-      </div>
-      <div class="drawer-actions">
-        <IconButton
-          size="sm"
-          ariaLabel="Refresh import collections"
-          disabled={loading}
-          onclick={() => void refresh()}
-        >
-          <RefreshCwIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton size="sm" ariaLabel="Close import collections" onclick={close}>
-          <XIcon size="14" aria-hidden="true" />
-        </IconButton>
-      </div>
-    </div>
+<DrawerShell
+  title="Import history"
+  ariaLabel="Import history"
+  closeLabel="Close import history"
+  onclose={close}
+>
+  {#snippet actions()}
+    <IconButton
+      size="sm"
+      ariaLabel="Refresh import history"
+      title="Refresh"
+      disabled={loading}
+      onclick={() => void refresh()}
+    >
+      <RefreshCwIcon size="14" aria-hidden="true" />
+    </IconButton>
   {/snippet}
 
-  <div class="collections-browser">
+  <div class="tool-body">
     {#if loading && items.length === 0}
-      <div class="loading"><Spinner size={16} /> Loading import collections…</div>
+      <p class="tool-muted" role="status"><Spinner size={14} /> Loading…</p>
     {:else if error && items.length === 0}
-      <div class="load-error">
-        <p role="alert">{error}</p>
+      <div class="tool-heading">
+        <p class="tool-error" role="alert">{error}</p>
         <Button size="sm" onclick={() => void refresh()}>Try again</Button>
       </div>
     {:else if items.length === 0}
-      <EmptyState
-        title="No import collections"
-        description="Collections appear after a filesystem import records at least one document."
-      >
-        {#snippet icon()}<ArchiveIcon size="22" />{/snippet}
-      </EmptyState>
-    {:else}
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <section aria-labelledby="collections-heading">
-        <div class="section-heading">
-          <div>
-            <span>Collections</span>
-            <strong id="collections-heading">Import history</strong>
-          </div>
-          <small>{items.length} shown</small>
-        </div>
-        <div class="collection-list">
-          {#each items as collection (collection.id)}
-            <Card
-              level="default"
-              padding="sm"
-              eyebrow={`${collection.source_kind} import`}
-              title={displayName(collection)}
-              selected={selected?.id === collection.id}
-              ariaLabel={`Browse collection ${displayName(collection)}`}
-              onclick={() => void browse(collection)}
+      <p class="tool-muted">
+        No imports yet. Run <code>docbank add &lt;directory&gt; --dest /documents</code>.
+      </p>
+    {:else if selected}
+      {@const current = selected}
+      <section class="tool-section" aria-labelledby="import-heading">
+        <div class="tool-heading">
+          <div class="title">
+            <IconButton
+              size="sm"
+              ariaLabel="All imports"
+              title="All imports"
+              onclick={() => {
+                memberGeneration += 1;
+                labelGeneration += 1;
+                openGeneration += 1;
+                selected = null;
+                qualityOpen = false;
+              }}><ArrowLeftIcon size="14" aria-hidden="true" /></IconButton
             >
-              <div class="collection-facts">
-                <p>{collection.source_description}</p>
-                <div>
-                  <Chip size="xs" tone="neutral">
-                    {collection.file_count} document{collection.file_count === 1 ? "" : "s"}
-                  </Chip>
-                  <Chip size="xs" tone="neutral">{formatBytes(collection.total_bytes)}</Chip>
-                  <span>Imported {formatDate(collection.started_at)}</span>
-                </div>
-              </div>
-            </Card>
-          {/each}
+            <h3 id="import-heading">{displayName(current)}</h3>
+          </div>
+          <div class="tool-row-actions">
+            <Button
+              size="sm"
+              ariaExpanded={qualityOpen}
+              onclick={() => (qualityOpen = !qualityOpen)}>Quality</Button
+            >
+            {#if onnewquery}<Button size="sm" onclick={() => onnewquery?.(current.id)}
+                ><SearchIcon size="14" aria-hidden="true" /> Search this import</Button
+              >{/if}
+          </div>
         </div>
-        {#if total > items.length}
-          <p class="bounded">Showing the first {items.length} of {total} collections.</p>
-        {/if}
-      </section>
-
-      {#if selected}
-        <Button onclick={() => (qualityOpen = !qualityOpen)}
-          >{qualityOpen ? "Close collection quality" : "Inspect collection quality"}</Button
-        >
+        <InspectorDetails
+          label="Import details"
+          facts={[
+            {
+              label: "Documents",
+              value: `${current.file_count} document${current.file_count === 1 ? "" : "s"}`,
+            },
+            { label: "Size", value: formatBytes(current.total_bytes) },
+            { label: "Imported", value: formatDate(current.started_at) },
+          ]}
+        />
+        {#each sourcePaths(current) as path, index (path)}
+          <div class="source-row">
+            <span class="tool-muted">{index === 0 ? "Source" : ""}</span>
+            <span class="tool-truncate-start" title={path}><bdi>{path}</bdi></span>
+            <CopyButton text={path} ariaLabel={`Copy source path ${path}`} />
+          </div>
+        {/each}
+        <div class="tool-field">
+          <label for="import-label">Label</label>
+          {#if labelLoading && !observedLabel}
+            <p class="tool-muted"><Spinner size={14} /> Loading…</p>
+          {:else}
+            <form
+              class="label-controls"
+              onsubmit={(event) => {
+                event.preventDefault();
+                if (labelDraft !== "") void saveLabel(labelDraft);
+              }}
+            >
+              <TextInput
+                id="import-label"
+                bind:value={labelDraft}
+                block
+                ariaLabel="Import label"
+                placeholder="Unlabeled"
+                disabled={labelLoading || labelPending || !observedLabel}
+                invalid={Boolean(labelError)}
+              />
+              {#if observedLabel?.label !== null && observedLabel?.label !== undefined}<Button
+                  disabled={labelLoading || labelPending}
+                  onclick={() => void saveLabel(null)}>Clear</Button
+                >{/if}
+              <Button
+                type="submit"
+                tone="info"
+                surface="solid"
+                disabled={labelLoading ||
+                  labelPending ||
+                  !observedLabel ||
+                  labelDraft === "" ||
+                  labelDraft === (observedLabel?.label ?? "")}
+                >{labelPending ? "Saving…" : "Save label"}</Button
+              >
+            </form>
+          {/if}
+          {#if labelError}<div class="tool-heading">
+              <p class="tool-error" role="alert">{labelError}</p>
+              <Button size="sm" disabled={labelLoading} onclick={() => void reloadLabel()}
+                >Reload label</Button
+              >
+            </div>{/if}
+        </div>
         {#if qualityOpen}<QualityPanel
             {session}
-            collectionID={selected.id}
+            collectionID={current.id}
             {profile}
             onprofile={(name) => (profile = name)}
             onnewquery={onqualityquery}
             {onauthfailure}
           />{/if}
-        {#if onnewquery}<Button onclick={() => selected && onnewquery?.(selected.id)}
-            >New query for this collection</Button
-          >{/if}
-        <section class="label-editor" aria-labelledby="collection-label-heading">
-          <div class="section-heading">
-            <div>
-              <span>Label</span>
-              <strong id="collection-label-heading">Collection label</strong>
-            </div>
-            {#if observedLabel}<small>Revision {observedLabel.revision}</small>{/if}
-          </div>
-          {#if labelLoading && !observedLabel}
-            <div class="loading"><Spinner size={16} /> Reading label revision…</div>
-          {:else}
-            <div class="label-controls">
-              <TextInput
-                bind:value={labelDraft}
-                block
-                ariaLabel="Collection label"
-                placeholder="Unlabeled import"
-                disabled={labelLoading || labelPending || !observedLabel}
-                invalid={Boolean(labelError)}
-              />
-              <Button
-                size="sm"
-                tone="info"
-                surface="solid"
-                disabled={labelLoading || labelPending || !observedLabel || labelDraft === ""}
-                onclick={() => void saveLabel(labelDraft)}
-                >{labelPending ? "Saving…" : "Save label"}</Button
-              >
-              <Button
-                size="sm"
-                surface="soft"
-                disabled={labelLoading ||
-                  labelPending ||
-                  !observedLabel ||
-                  observedLabel.label === null}
-                onclick={() => void saveLabel(null)}>Clear label</Button
-              >
-              <Button
-                size="sm"
-                surface="soft"
-                disabled={labelLoading || labelPending}
-                onclick={() => void reloadLabel()}>Reload label</Button
-              >
-            </div>
-          {/if}
-          <p class="quality-note">
-            Inspect collection quality for processing coverage and document distributions.
-          </p>
-          {#if labelError}<p class="error" role="alert">{labelError}</p>{/if}
-          {#if labelNotice}<p class="notice" role="status">{labelNotice}</p>{/if}
-        </section>
+      </section>
 
-        <section aria-labelledby="collection-members-heading">
-          <div class="section-heading">
-            <div>
-              <span>Direct membership</span>
-              <strong id="collection-members-heading">Documents in this collection</strong>
-            </div>
-            <small>{displayName(selected)}</small>
+      <section class="tool-section" aria-labelledby="import-members-heading">
+        <div class="tool-heading">
+          <h3 id="import-members-heading">Documents</h3>
+          {#if memberTotal > members.length}<span class="tool-muted"
+              >{members.length} of {memberTotal}</span
+            >{/if}
+        </div>
+        {#if memberLoading}
+          <p class="tool-muted"><Spinner size={14} /> Loading…</p>
+        {:else if memberError}
+          <div class="tool-heading">
+            <p class="tool-error" role="alert">{memberError}</p>
+            <Button size="sm" onclick={() => void browse(current)}>Try again</Button>
           </div>
-          {#if memberLoading}
-            <div class="loading"><Spinner size={16} /> Loading direct members…</div>
-          {:else if memberError}
-            <div class="load-error">
-              <p role="alert">{memberError}</p>
-              <Button
-                size="sm"
-                onclick={() => {
-                  if (selected) void browse(selected);
-                }}>Try again</Button
-              >
-            </div>
-          {:else if members.length === 0}
-            <EmptyState
-              title="No live documents"
-              description="This retained collection currently has no live document members."
-            >
-              {#snippet icon()}<FileIcon size="22" />{/snippet}
-            </EmptyState>
-          {:else}
-            <p class="member-summary">
-              {#if memberTotal > members.length}
-                Showing {members.length} of {memberTotal} direct members.
-              {:else}
-                {memberTotal} direct member{memberTotal === 1 ? "" : "s"}
-              {/if}
-              This list browses collection membership directly; it is not a search filter.
-            </p>
-            <div class="member-list">
-              {#each members as member (member.id)}
-                <Card
-                  level="inset"
-                  padding="sm"
-                  title={member.name}
-                  meta={formatBytes(member.size)}
+        {:else if members.length === 0}
+          <p class="tool-muted">No documents.</p>
+        {:else}
+          <ul class="tool-list">
+            {#each members as member (member.id)}
+              <li>
+                <div class="tool-row-main">
+                  <strong title={member.name}>{member.name}</strong>
+                  <span class="tool-truncate-start" title={member.path}
+                    ><bdi>{member.path} · {formatBytes(member.size)}</bdi></span
+                  >
+                </div>
+                <Button
+                  size="sm"
+                  disabled={openingMemberID !== null}
+                  onclick={() => void openMember(member)}
+                  ariaLabel={`Open document ${member.path}`}
+                  >{openingMemberID === member.id ? "Opening…" : "Open"}</Button
                 >
-                  <div class="member-row">
-                    <span class="path">{member.path}</span>
-                    <Button
-                      size="sm"
-                      tone="info"
-                      surface="soft"
-                      disabled={openingMemberID !== null}
-                      onclick={() => void openMember(member)}
-                      ariaLabel={`Open document ${member.path}`}
-                      >{openingMemberID === member.id ? "Opening…" : "Open"}</Button
-                    >
-                  </div>
-                </Card>
-              {/each}
-            </div>
-            {#if openError}<p class="error" role="alert">{openError}</p>{/if}
-          {/if}
-        </section>
-      {/if}
+              </li>
+            {/each}
+          </ul>
+          {#if openError}<p class="tool-error" role="alert">{openError}</p>{/if}
+        {/if}
+      </section>
+    {:else}
+      {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
+      <section class="tool-section" aria-label="Import history">
+        <ul class="tool-list">
+          {#each items as collection (collection.id)}
+            <li class="import-row">
+              <button
+                class="import-summary"
+                type="button"
+                aria-label={`Browse import ${displayName(collection)}`}
+                title={sourcePaths(collection).join("\n")}
+                onclick={() => void browse(collection)}
+              >
+                <span class="tool-row-main">
+                  <strong>{displayName(collection)}</strong>
+                  <span
+                    >{collection.file_count} document{collection.file_count === 1 ? "" : "s"} · {formatBytes(
+                      collection.total_bytes,
+                    )} · {formatDate(collection.started_at)}</span
+                  >
+                </span>
+                <ChevronRightIcon size="16" aria-hidden="true" />
+              </button>
+            </li>
+          {/each}
+        </ul>
+        {#if total > items.length}
+          <p class="tool-muted">{items.length} of {total} imports</p>
+        {/if}
+      </section>
     {/if}
   </div>
-</DetailDrawer>
+</DrawerShell>
 
 <style>
-  .drawer-heading {
+  .tool-list > li.import-row {
+    padding: 0;
+  }
+  .import-summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
+    gap: var(--space-5);
     width: 100%;
     min-width: 0;
-  }
-
-  .drawer-heading > div:first-child,
-  .section-heading > div {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .drawer-heading span,
-  .section-heading span {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-  }
-
-  .drawer-heading strong {
+    padding: var(--space-4) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
     color: var(--text-primary);
-    font-size: var(--font-size-lg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
-
-  .drawer-heading small,
-  .section-heading small {
+  .import-summary:hover {
+    background: var(--bg-inset);
+  }
+  .import-summary:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+  }
+  .import-summary > :global(svg) {
+    flex-shrink: 0;
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
-
-  .drawer-actions,
-  .collection-facts > div,
-  .member-row,
-  .label-controls {
+  .title {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-  }
-
-  .collections-browser {
-    display: grid;
-    gap: var(--space-6);
-    padding: var(--space-5);
-  }
-
-  section,
-  .collection-list,
-  .member-list {
-    display: grid;
-    gap: var(--space-3);
-  }
-
-  .section-heading {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: var(--space-4);
-  }
-
-  .section-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-md);
-  }
-
-  .collection-facts {
-    display: grid;
     gap: var(--space-3);
     min-width: 0;
   }
-
-  .collection-facts p,
-  .member-summary,
-  .bounded,
-  .quality-note,
-  .notice,
-  .load-error p,
-  .error {
+  .title h3 {
     margin: 0;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
+    overflow: hidden;
+    font-size: var(--font-size-md);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-
-  .collection-facts p,
-  .member-row .path {
-    overflow-wrap: anywhere;
-  }
-
-  .collection-facts span,
-  .member-summary,
-  .bounded,
-  .quality-note,
-  .notice {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .member-row {
-    justify-content: space-between;
-  }
-
-  .label-controls {
-    align-items: stretch;
-    flex-wrap: wrap;
-  }
-
-  .label-controls :global(.kit-text-input) {
-    flex: 1 1 240px;
-  }
-
-  .member-row .path {
-    min-width: 0;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-  }
-
-  .loading {
-    display: flex;
+  .source-row {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-3);
-    color: var(--text-secondary);
+    margin-top: calc(-1 * var(--space-2));
     font-size: var(--font-size-sm);
   }
-
-  .load-error {
-    display: grid;
-    justify-items: start;
-    gap: var(--space-3);
+  .label-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    max-width: 480px;
   }
-
-  .load-error p,
-  .error {
-    color: var(--accent-red);
+  .label-controls :global(.kit-text-input) {
+    flex: 1;
   }
 </style>

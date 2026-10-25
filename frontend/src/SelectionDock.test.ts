@@ -81,11 +81,11 @@ it("offers the bounded tag action when supplied", async () => {
     oncsv: vi.fn(),
   });
 
-  expect((screen.getByRole("button", { name: "Edit tags" }) as HTMLButtonElement).disabled).toBe(
-    true,
-  );
+  expect(
+    (screen.getByRole("button", { name: "Tag selected…" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
   await rerender({ tagsDisabled: false });
-  await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
   expect(ontags).toHaveBeenCalledOnce();
 });
 
@@ -104,9 +104,8 @@ it("labels and invokes the visible-page CSV action for the current selection", a
   expect(oncsv).toHaveBeenCalledOnce();
 });
 
-it("names snapshot-page tagging separately from the whole frozen query", async () => {
+it("offers one tagging action for the snapshot selection", async () => {
   const ontags = vi.fn();
-  const onwholequerytags = vi.fn();
   render(SelectionDock, {
     props: {
       selectedCount: 1,
@@ -117,19 +116,15 @@ it("names snapshot-page tagging separately from the whole frozen query", async (
       onclear: vi.fn(),
       onselectvisible: vi.fn(),
       ontags,
-      onwholequerytags,
     },
   });
 
-  expect(screen.getByText("1 selected on this frozen page")).toBeTruthy();
-  expect(screen.getByText("Visible selection only · whole query has 101 documents")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Tag visible selection" }));
+  expect(screen.getByText("1 selected")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
   expect(ontags).toHaveBeenCalledOnce();
-  await fireEvent.click(screen.getByRole("button", { name: "Tag whole query" }));
-  expect(onwholequerytags).toHaveBeenCalledOnce();
 });
 
-it("disables both snapshot tagging actions together", () => {
+it("disables snapshot tagging while the snapshot is busy", () => {
   render(SelectionDock, {
     props: {
       selectedCount: 1,
@@ -141,13 +136,40 @@ it("disables both snapshot tagging actions together", () => {
       onclear: vi.fn(),
       onselectvisible: vi.fn(),
       ontags: vi.fn(),
-      onwholequerytags: vi.fn(),
     },
   });
   expect(
-    (screen.getByRole("button", { name: "Tag visible selection" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-  expect(
-    (screen.getByRole("button", { name: "Tag whole query" }) as HTMLButtonElement).disabled,
+    (screen.getByRole("button", { name: "Tag selected…" }) as HTMLButtonElement).disabled,
   ).toBe(true);
 });
+
+it.each(["live", "snapshot"] as const)(
+  "offers the same document actions in the %s view and stays closed until something is selected",
+  async (context) => {
+    const props = {
+      visibleDocumentCount: 2,
+      truncated: false,
+      context,
+      onclear: vi.fn(),
+      onselectvisible: vi.fn(),
+      ontags: vi.fn(),
+      onexport: vi.fn(),
+      onreport: vi.fn(),
+    };
+    const view = render(SelectionDock, { props: { ...props, selectedCount: 0 } });
+    expect(screen.queryByRole("button", { name: "Tag selected…" })).toBeNull();
+    await view.rerender({ selectedCount: 1 });
+    expect(
+      screen
+        .getAllByRole("button")
+        .map((button) => button.textContent?.trim())
+        .filter(Boolean),
+    ).toEqual([
+      "Select visible documents",
+      "Clear selection",
+      "Tag selected…",
+      "Report selected documents",
+      "Export selection",
+    ]);
+  },
+);

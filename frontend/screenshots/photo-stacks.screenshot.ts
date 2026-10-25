@@ -142,12 +142,17 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     await expect(
       page.getByRole("button", { name: "Undo last photo edit", exact: true }),
     ).toBeVisible();
-    const gap = page.getByRole("spinbutton", { name: "Burst gap (seconds)" });
-    await gap.fill("1");
-    await gap.dispatchEvent("change");
+    const setGap = async (seconds: number) => {
+      await page.getByRole("button", { name: "Cull", exact: true }).click();
+      const header = page.getByRole("dialog", { name: "Cull photos" });
+      await header.getByRole("combobox", { name: /^Burst gap/ }).click();
+      await page.getByRole("option", { name: `${seconds} s`, exact: true }).click();
+      await expect(header.getByRole("combobox", { name: `Burst gap: ${seconds} s` })).toBeVisible();
+      await header.getByRole("button", { name: "Exit cull", exact: true }).click();
+    };
+    await setGap(1);
     await expect(page.locator(".photo-cell")).toHaveCount(12);
-    await gap.fill("2");
-    await gap.dispatchEvent("change");
+    await setGap(2);
     await expect(page.locator(".photo-cell")).toHaveCount(4);
     await expect(page.locator(".photo-cell img").first()).toHaveAttribute("alt", chosen!);
     await page.screenshot({
@@ -162,16 +167,12 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     });
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
-    await expect(
-      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
-    ).toBeVisible();
+    await expect(cull.getByRole("button", { name: "Keep current", exact: true })).toBeVisible();
     await expect(cull.locator(".photo-stage img")).toBeVisible();
     await expect(cull.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
     await captureThemes(page, output!, "web-photo-cull-preparation-retry");
     await cull.getByRole("button", { name: "Retry", exact: true }).click();
-    await expect(
-      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
-    ).toBeEnabled();
+    await expect(cull.getByRole("button", { name: "Keep current", exact: true })).toBeEnabled();
     const first = await cull.locator("header strong").innerText();
     await page.keyboard.press("j");
     await expect(cull.locator("header strong")).not.toHaveText(first);
@@ -179,14 +180,10 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     await expect(cull.locator("header strong")).toHaveText(first);
     await page.keyboard.press("l");
     await expect(cull.locator("header strong")).not.toHaveText(first);
-    await expect(
-      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
-    ).toBeEnabled();
+    await expect(cull.getByRole("button", { name: "Keep current", exact: true })).toBeEnabled();
     await page.keyboard.press("h");
     await expect(cull.locator("header strong")).toHaveText(first);
-    await expect(
-      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
-    ).toBeEnabled();
+    await expect(cull.getByRole("button", { name: "Keep current", exact: true })).toBeEnabled();
     await expect(cull.locator(".stack-divider").first()).toBeVisible();
     await captureThemes(page, output!, "web-photo-cull-prepared");
     await page.screenshot({
@@ -205,9 +202,7 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     await cull.getByRole("button", { name: "Undo", exact: true }).click();
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
     await page.getByRole("button", { name: "Resume cull", exact: true }).click();
-    await expect(
-      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
-    ).toBeVisible();
+    await expect(cull.getByRole("button", { name: "Keep current", exact: true })).toBeVisible();
   } finally {
     await fixture.dispose();
   }

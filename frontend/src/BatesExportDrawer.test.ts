@@ -132,8 +132,8 @@ it("previews selected pages before explicitly reserving the reviewed range", asy
 
   const preview = await screen.findByRole("region", { name: "Tentative Bates labels" });
   expect(within(preview).getByText("ACME000041")).toBeTruthy();
-  expect(within(preview).getByText("Source page 2")).toBeTruthy();
-  expect(screen.getByText("Nothing has been stamped or reserved.")).toBeTruthy();
+  expect(within(preview).getAllByRole("row")[1]!.textContent).toContain("Source page 2");
+  expect(within(preview).getByText("Not reserved")).toBeTruthy();
   expect(requests.find((request) => request.url.endsWith("/preview"))?.body).toMatchObject({
     namespace_id: namespace.namespace_id,
     snapshot_id: snapshotID,
@@ -187,7 +187,7 @@ it("creates and selects a namespace without reserving a range", async () => {
   });
 
   render(BatesExportDrawer, { session: "session", onclose: vi.fn(), onauthfailure: vi.fn() });
-  await screen.findByText(/Create the first namespace/);
+  await screen.findByRole("heading", { name: "New namespace" });
   await fireEvent.input(screen.getByRole("textbox", { name: "Bates prefix" }), {
     target: { value: "CASE" },
   });
@@ -341,11 +341,7 @@ it("opens a history export without replacing the reserved workflow", async () =>
 
   expect(await screen.findByText("Earlier Bates export")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Start Bates export" })).toBeTruthy();
-  expect(
-    screen.getByText(
-      "This reviewed preview is the exact range reserved below. Nothing has been stamped yet.",
-    ),
-  ).toBeTruthy();
+  expect(screen.getByText("Reserved below. Not stamped yet.")).toBeTruthy();
   expect(screen.queryByText("Stamped PDF ready")).toBeNull();
 });
 
@@ -360,9 +356,8 @@ it("retries a failed reservation with the same operation instead of a new previe
 
   expect((await screen.findByRole("alert")).textContent).toContain("The ledger is busy.");
   expect(screen.queryByRole("button", { name: /^Reserve / })).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Preview Bates labels" }).hasAttribute("disabled"),
-  ).toBe(true);
+  expect(screen.queryByRole("button", { name: "Preview Bates labels" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Change settings" })).toBeNull();
 
   await fireEvent.click(screen.getByRole("button", { name: "Retry reserve" }));
   await screen.findByText("Range reserved");

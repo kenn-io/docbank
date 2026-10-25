@@ -103,13 +103,7 @@
 
 <main class="albums-workspace" aria-label="Albums">
   <div class="browser-toolbar album-toolbar">
-    <div>
-      <h1>Albums</h1>
-      <span
-        >{albums.items.length.toLocaleString()}
-        {albums.items.length === 1 ? "album" : "albums"}</span
-      >
-    </div>
+    <h1>Albums</h1>
     <Button size="sm" tone="info" onclick={beginCreate}>New album</Button>
   </div>
   <section class="smart-sets" aria-label="Smart sets">
@@ -121,7 +115,7 @@
               onclick={() => {
                 if (!smartDisabled) onopensmart?.(saved);
               }}>{saved.name}</Button
-            ><span>Smart set</span>
+            >
           </li>{/each}
       </ul>{/if}
     {#if smartError}<p role="alert">
@@ -140,12 +134,8 @@
   {#if albums.loading && !albums.items.length}<div class="album-loading" role="status">
       <Spinner />Loading albums…
     </div>
-  {:else if !albums.items.length && !albums.loadError}<EmptyState
-      title="Your albums are empty"
-      description="Create an album, then add photos from Library."
-      >{#snippet icon()}<ImageIcon size="24" />{/snippet}<Button onclick={beginCreate}
-        >New album</Button
-      ></EmptyState
+  {:else if !albums.items.length && !albums.loadError}<EmptyState title="No albums yet"
+      >{#snippet icon()}<ImageIcon size="24" />{/snippet}</EmptyState
     >
   {:else}
     <ul class="album-grid">
@@ -235,9 +225,6 @@
   .smart-sets li {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
   }
   .albums-workspace {
     flex: 1;
@@ -246,15 +233,15 @@
     background: var(--bg-surface);
   }
   .album-toolbar {
+    padding-left: var(--space-5);
+    padding-right: var(--space-7);
     border-bottom: 1px solid var(--border-default);
   }
   h1 {
-    margin: 0 0 4px;
-    font-size: var(--font-size-lg);
-  }
-  .album-toolbar span {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+    color: var(--text-primary);
   }
   .album-grid {
     list-style: none;
@@ -325,7 +312,7 @@
   .modal-actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space-3);
+    gap: var(--space-4);
     margin-top: var(--space-4);
   }
   @media (max-width: 640px) {

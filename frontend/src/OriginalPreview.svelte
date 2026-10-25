@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { Chip, Spinner } from "@kenn-io/kit-ui";
+  import { Spinner } from "@kenn-io/kit-ui";
+  import AppTooltip from "./AppTooltip.svelte";
+  import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import { APIError } from "./api-transport.js";
   import {
     readVerifiedPreview,
@@ -76,10 +78,6 @@
 </script>
 
 <div class="original-preview">
-  <div class="preview-heading">
-    <div><strong>Verified original</strong><span>Exact selected version</span></div>
-    {#if preview}<Chip size="xs" tone="success" dot>SHA-256 verified</Chip>{/if}
-  </div>
   {#if loading}
     <div class="preview-loading" role="status">
       <Spinner size={14} />
@@ -98,28 +96,19 @@
   {:else if error}
     <p class="preview-unavailable" role="status">{error}</p>
   {/if}
+  {#if preview}<div class="verified">
+      <AppTooltip text="Matches the stored SHA-256" focusable align="end"
+        ><ShieldCheckIcon size={14} aria-label="Verified" /></AppTooltip
+      >
+    </div>{/if}
 </div>
 
 <style>
   .original-preview {
     display: grid;
-    gap: var(--space-3);
+    position: relative;
+    min-width: 0;
   }
-  .preview-heading,
-  .preview-heading > div {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .preview-heading > div {
-    align-items: baseline;
-  }
-  .preview-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-  }
-  .preview-heading span,
   .preview-loading,
   .preview-unavailable {
     color: var(--text-muted);
@@ -131,6 +120,13 @@
     gap: var(--space-2);
     min-height: 96px;
   }
+  .verified {
+    position: absolute;
+    top: var(--space-4);
+    right: var(--space-4);
+    display: flex;
+    color: var(--accent-green);
+  }
   pre,
   .image-frame {
     max-height: 320px;
@@ -141,7 +137,7 @@
     background: var(--bg-inset);
   }
   pre {
-    padding: var(--space-3);
+    padding: var(--space-4) calc(var(--space-4) * 2 + 14px) var(--space-4) var(--space-4);
     color: var(--text-primary);
     font-family: var(--font-mono);
     font-size: var(--font-size-xs);
@@ -153,7 +149,7 @@
     display: grid;
     min-height: 120px;
     place-items: center;
-    padding: var(--space-2);
+    padding: var(--space-4);
   }
   img {
     display: block;

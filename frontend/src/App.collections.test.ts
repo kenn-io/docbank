@@ -138,25 +138,25 @@ it.each(["%2FArchive%2Freport.txt", "%2FArchive"])(
     });
 
     render(App);
-    await screen.findByText("This folder is empty");
-    await fireEvent.click(screen.getByRole("button", { name: "Import collections" }));
-    const drawer = await screen.findByRole("dialog", { name: "Import collections" });
+    await screen.findByText("Empty folder");
+    await fireEvent.click(screen.getByRole("button", { name: "Import history" }));
+    const drawer = await screen.findByRole("dialog", { name: "Import history" });
     await fireEvent.click(
-      await within(drawer).findByRole("button", { name: "Browse collection Discovery batch" }),
+      await within(drawer).findByRole("button", { name: "Browse import Discovery batch" }),
     );
     await fireEvent.click(
       await within(drawer).findByRole("button", { name: "Open document /Archive/report.txt" }),
     );
 
     expect(await screen.findByRole("cell", { name: "report.txt" })).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: "Import collections" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Import history" })).toBeNull();
     expect(screen.getByRole("heading", { name: "report.txt" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "first.txt" })).toBeNull();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Import collections" }));
-    const reopened = await screen.findByRole("dialog", { name: "Import collections" });
+    await fireEvent.click(screen.getByRole("button", { name: "Import history" }));
+    const reopened = await screen.findByRole("dialog", { name: "Import history" });
     await fireEvent.click(
-      await within(reopened).findByRole("button", { name: "Browse collection Discovery batch" }),
+      await within(reopened).findByRole("button", { name: "Browse import Discovery batch" }),
     );
     replaceMemberPath = true;
     await fireEvent.click(
@@ -172,27 +172,25 @@ it.each(["%2FArchive%2Freport.txt", "%2FArchive"])(
     await fireEvent.click(
       within(reopened).getByRole("button", { name: "Open document /Archive/report.txt" }),
     );
-    await fireEvent.click(
-      within(reopened).getByRole("button", { name: "Close import collections" }),
-    );
+    await fireEvent.click(within(reopened).getByRole("button", { name: "Close import history" }));
     resolveMemberRead(json(member));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Import collections" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "Import history" })).toBeNull(),
     );
     await Promise.resolve();
     expect(parentReads).toBe(1);
 
     deferMemberRead = false;
-    await fireEvent.click(screen.getByRole("button", { name: "Import collections" }));
-    const expired = await screen.findByRole("dialog", { name: "Import collections" });
+    await fireEvent.click(screen.getByRole("button", { name: "Import history" }));
+    const expired = await screen.findByRole("dialog", { name: "Import history" });
     await fireEvent.click(
-      await within(expired).findByRole("button", { name: "Browse collection Discovery batch" }),
+      await within(expired).findByRole("button", { name: "Browse import Discovery batch" }),
     );
     expireSession = true;
     await fireEvent.click(
       await within(expired).findByRole("button", { name: "Open document /Archive/report.txt" }),
     );
     expect(await screen.findByText("Open your Docbank")).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: "Import collections" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Import history" })).toBeNull();
   },
 );

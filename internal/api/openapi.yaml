@@ -7881,6 +7881,9 @@ components:
     Job:
       additionalProperties: false
       properties:
+        busy:
+          description: Whether this job is processing work rather than waiting for an item or its next scheduled run.
+          type: boolean
         can_cancel:
           type: boolean
         can_set_concurrency:
@@ -7938,6 +7941,7 @@ components:
           format: int64
           type: integer
       required:
+        - busy
         - lane
         - controllable
         - paused

@@ -49,10 +49,11 @@ Photos shows **Library**, **Map**, **Albums**, and your album list in the sideba
 Documents/Photos switches keep your place until the session locks. Leaving an album resets its view. Open Library at `/photos`, the
 album index at `/photos/albums`, or an album at `/photos/albums/{id}`. Map requires [tile configuration](../configuration.md#photo-map-tiles) and a restart. See [Browse photos](photos.md#browse-in-the-web-app).
 
-Use the labeled sidebar for **All files**, **Saved queries**, **Collections**,
-and **Trash**. **Review and export** holds search reports, Bates exports, and
-snapshot actions. **Vault** holds backups, storage, jobs, audit evidence, and
-telemetry settings. On a narrow screen, **Open navigation** reveals the same menu.
+Use the sidebar for **All files**, **Saved searches**, **Import history**, and
+**Trash**. **Export** offers **Download files…**, **Search term report…**, and
+**Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
+**Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
+same menu.
 
 Folder breadcrumbs let you jump to any parent. Each file has an icon and a
 plain type name, so you do not need to recognize its media type.
@@ -63,9 +64,11 @@ plain type name, so you do not need to recognize its media type.
   the authority card to navigate into it.
 - Use the back arrow to restore the previous folder or search view, including
   its inspected row and sort order.
-- Click **Document**, **Size**, or **Modified** to sort. Click the active
-  heading again to reverse its direction. Directories remain grouped ahead of
-  files in folder views.
+- Click **Document**, **Type**, **Size**, or **Modified** to sort. Click the
+  active heading again to reverse its direction. Directories remain grouped
+  ahead of files in folder views. Narrow windows hide **Modified**, then
+  **Type**. Deep folder paths show the first folder and the last two, with the
+  folders between them in the **…** menu.
 - Use refresh to reload the current directory by its ID. If another client
   renamed or moved that directory, the browser adopts its current canonical
   path.
@@ -75,10 +78,10 @@ node ID identifies that entry even after a move or rename. Its revision is a
 change counter that Docbank uses to reject changes based on an outdated view.
 
 The browser selects the first row after loading a folder. A selected directory
-shows its path, revision, and modification time. A selected file also shows
-its exact logical size, media type, current-version UUID, and SHA-256 content
-identity. The copy buttons copy the complete UUID or digest even when the card
-wraps it across lines. Every selected node also shows its assigned tag names.
+shows its path and modification time. A selected file also shows its exact
+logical size. Open **Details** for the node ID, media type, current-version
+UUID, and SHA-256 content identity. The copy buttons copy the complete UUID or
+digest even when the card wraps it across lines. Every selected node also shows its assigned tag names.
 Hovering a tag shows its UUID and vault-wide assignment count. The tag stack
 expands in place when a node carries more than six tags.
 
@@ -141,29 +144,29 @@ imports, and international filenames are preserved.
 
 ## Edit a complete query
 
-Choose **Edit query** to write a complete expression, select simple or advanced
-syntax, and edit its mode, sort, and structured facets. Facets stay separate
-from field operands in the expression. Their summaries show the constraints
-you entered. Validation does not move operands into hidden filters.
+Enter text in the top bar and choose **Plain words** or **Query syntax** from
+its menu. Choose **Advanced** to open **Filters and sort**. Select the sort
+field, direction, and documents per page. **More** holds the processing profile
+selector, shown when more than one profile is available, and **Filters JSON** for
+structured filters. **Search** runs the top-bar text with these settings.
 
-The daemon validates each edited draft after a short pause. It resolves saved,
-tag, and collection references and reports their observed revisions. Errors
-remain visible. **Focus query error** selects the reported part of the
+Saved and linked queries also show their expression, labeled **Plain words**
+or **Query syntax**. **Syntax help** appears for query syntax. The daemon
+validates each edited draft after a short pause. Errors appear beside the
+expression or filters. **Focus query error** selects the reported part of an
 expression. A newer edit cancels an older validation request.
 
-**Save query draft** opens the saved-definition editor with the entire draft.
-**Open query** beside a saved query opens it here. From an import collection,
-**New query for this collection** starts a new draft scoped to that collection's
-identity. Closing the query editor keeps the draft in the tab and URL.
-**Discard query draft** removes it.
+**Save…** opens a new definition in **Saved searches** with the entire draft.
+**Run** beside a saved search opens its results. From an import in **Import history**,
+**Search this import** starts a draft scoped to that import.
+Escape, clicking outside, or toggling **Advanced** closes the modal. Edited
+drafts stay in the tab, with a dot on **Advanced**; reopening restores unfinished
+input too. Valid query edits also update the URL fragment. **Cancel** discards
+the draft and clears its fragment. Closing an unchanged new draft leaves no dot.
 
-If the draft has malformed input, such as incomplete facets JSON, correct it
-or choose **Discard query draft** before closing. The editor stays open so
-those unfinished edits are not lost.
-
-Validation does not execute a search. Once the draft is valid, **Run query**
-creates a frozen result through the complete query endpoint. Ordinary
-name/content search remains separate and does not inherit draft constraints.
+Validation does not execute a search. Once the draft is valid, **Search**
+creates a frozen result through the complete query endpoint, which uses word
+search. Clear the search box to return to ordinary search.
 See [field-aware query syntax](searching.md#preview-a-field-aware-query).
 
 ![The complete query editor with a validated field and Boolean expression](https://docbank.ai/assets/generated/web-query-bar.png)
@@ -171,11 +174,13 @@ See [field-aware query syntax](searching.md#preview-a-field-aware-query).
 ## Work with a frozen query
 
 A completed run becomes the accepted frozen snapshot for the tab. Draft edits
-remain separate until you choose **Run query** again. Choose 50, 100, or 250
-documents per page before the run. The workspace shows exact document and byte
-totals, previous and next page controls, and the node, content version, hash,
-size, revision, and tags observed when the snapshot was created. Later vault
-changes do not replace those rows. Live-folder keyboard shortcuts stay inactive
+remain separate until you choose **Search** again. Choose 50, 100, or 250
+documents per page before the run. The workspace shows the result count, **Previous page**
+and **Next page** controls when results span more than one page, and the node, content
+version, hash, size, revision, and tags observed when the snapshot was created. Later
+vault changes do not replace those rows. **Clear search** returns to the folder.
+**Tag all…** tags every result. Select rows to open the selection dock, which offers the same
+actions as the folder view. Live-folder keyboard shortcuts stay inactive
 while the snapshot is open.
 
 Select a frozen row to inspect those original facts and the selected version.
@@ -184,11 +189,10 @@ separately as live observations. A later rename, retag, or content replacement
 therefore does not rewrite the snapshot facts or substitute the new head for
 preview and download.
 
-Use **Refine snapshot** to inspect collection, tag, media-family, extension,
-modified-time, size, text-coverage, and duplicate facets. Choosing a supported
-facet or changing the query creates a new snapshot. It never splices live
-results into the accepted one. An unavailable facet says why instead of
-presenting a zero count.
+Use **Filters** to narrow by import, tag, media family, extension, modified month,
+size, and duplicates. Imports appear under their names. The list leaves out values no
+result has and groups that cannot narrow anything. Choosing a facet or changing the
+query creates a new snapshot. It never splices live results into the accepted one.
 
 Photos' date rail counts each included photo asset once by capture day. It
 creates no snapshot and does not block Documents queries. Choose a year or month
@@ -231,7 +235,7 @@ body.
 
 **Inspect attachment documents** opens the attachment navigation described
 below. Inline display and attachment document publication remain separate.
-**Download verified original** downloads that EML version unchanged. The
+**Download** downloads that EML version unchanged. The
 existing PDF action downloads retained PDFs or uses the configured renderer,
 including the complete chosen body and quoted text. New rendering requires the
 pinned local Chromium/font configuration. An unavailable renderer reports its
@@ -243,25 +247,20 @@ reason.
 
 ## Follow email attachments
 
-Choose **Attachments** in the content inspector to see published attachment
-occurrences and incoming parent messages for the selected version.
-Repeated filenames or identical bytes remain separate occurrences, identified
-by their MIME part and publication order. **Load more** requests another page.
-The view stops at 1,000 occurrences per direction rather than expanding an
-entire message family automatically.
+Choose **Attachments** in the content inspector to list the documents
+attached to the selected version under **Attachments** and the messages it is
+attached to under **Attached to**. A document with neither shows **No
+attachments**. Repeated filenames and identical bytes stay separate rows.
+**Show more** requests another page, up to 1,000 rows per group. An
+unavailable read reports an error, and an empty list then does not mean the
+message has no attachments. Rows without a published document show their
+outcome and cannot be opened.
 
-Each occurrence separates its MIME decoding outcome from current processing
-status. **Check inventory** reads that publication's receipt and reports
-complete or partial inventory independently of indexing. An empty relation
-list, an unavailable read, or an unchecked receipt does not prove that a
-message has no attachments. Occurrences without a published child stay visible.
-The tab does not publish documents, start processing, or grant provider consent.
-
-**Open attachment** and **Open parent** open that related version in its own
-context. Later content replacement does not substitute the live head or its
-media type for that related version. Preview, text, and download keep the usual
-byte verification and current-access checks. Missing or denied targets report an
-error without removing the occurrence.
+Choose a row to open that related version in its own context. Later content
+replacement does not substitute the live head or its media type for that
+related version. Preview, text, and download keep the usual byte verification
+and current-access checks. Missing or denied targets report an error without
+removing the row.
 
 Follow nested messages with **Back to previous document**, or choose **Return
 to frozen document** to restore focus to the original result. These steps do
@@ -275,43 +274,44 @@ Ordinary live selections offer the same return path to the selected document.
 In Photos, choose **Export all N photos** in the **⋯** menu for the current scope or **Export selection** for checked photos. Prepare JPEG or PNG copies with size, image metadata and GPS choices. Each preparation allows up to 16 photos, each at most 100 million pixels. The verified ZIP retains original filenames, vault paths and source hashes. See [Export photos](export-bundles.md#export-photos).
 
 Choose **Export selection** in the selection dock for the checked documents.
-The toolbar's **Export** opens the whole frozen query when one is active, or
+The toolbar's **Export → Download files…** opens the whole frozen query when one is active, or
 the documents on the current page otherwise. Folders are not export members.
 Exports support up to 100,000 documents and 50 GiB of role payloads.
 
-Choose whether original files, retained text, and page images are required,
-optional, or excluded. A missing required role stops planning. An optional
-role records its unavailable status in the bundle. **Preview export** copies
-and checks every frozen page, then stores the selected versions and available
-role files. Later edits to the live query, tags, or current content do not
-substitute new members or bytes.
+Choose **Download ZIP**. By default the ZIP holds the original files. Open
+**Options** to also include retained text, page images, or email body PDFs, to
+share exact duplicate outputs, or to split the ZIP into volumes. Each role is
+**Required**, **If available**, or **Skip**. A missing required role stops the
+export before anything is built. An **If available** role records its
+unavailable status in the bundle.
 
-Review the document count, member hash, role availability, plan fingerprint,
-and expiry before choosing **Start reviewed export**. Role bytes estimate
-payload only. The final ZIP also contains metadata and archive overhead.
-Changing the source or role choices requires another preview. You can change
-the download filename at any time without repeating the preview. The filename
-applies only to the browser download, and bundle paths stay deterministic.
-Originals are not redacted or sanitized by annotation overlays.
+**Download ZIP** copies and checks every frozen page, stores the selected
+versions and available role files, builds the archive, and hands it to your
+browser. Later edits to the live query, tags, or current content do not
+substitute new members or bytes. When some outputs are unavailable, the drawer
+stops on the frozen plan and lists them; choose **Download anyway** to continue.
+The ZIP filename applies only to the browser download, and bundle paths stay
+deterministic. Originals are not redacted or sanitized by annotation overlays.
 
-The drawer offers **Download verified ZIP** only after it receives that job's
-verified archive receipt. It displays the final size and SHA-256 so you can
-check the downloaded file independently. The browser saves the archive
-directly. Docbank does not load the entire ZIP into browser memory. Check your
-browser's download list for local completion.
-**Prepare another export** [releases the finished job](export-bundles.md#free-a-finished-job-slot) for both photos and documents, and asks you to wait while a download is still running.
+The drawer offers the download only after it receives that job's verified
+archive receipt. It displays the final size and SHA-256 so you can check the
+downloaded file independently, and keeps a **Download ZIP** button in case the
+browser blocked the first download. The browser saves the archive directly.
+Docbank does not load the entire ZIP into browser memory. Check your browser's
+download list for local completion.
+**New export** [releases the finished job](export-bundles.md#free-a-finished-job-slot) for both photos and documents, and asks you to wait while a download is still running.
 
 Closing the drawer stops its progress reader, not the server job. Reopen
 **Export** in the same browser session to reconnect to that job, or choose
 **Cancel export** to cancel it. A disconnected stream is not a completed
-export. Expired authority requires a fresh preview. Reloading or ending the
+export. Expired authority requires choosing **Download ZIP** again. Reloading or ending the
 browser session does not preserve the drawer's job handle.
 
 ![A verified bundle ready to download from the reviewed frozen selection](https://docbank.ai/assets/generated/web-export-ready.png)
 
 ## Stamp selected pages with Bates labels
 
-Open **Bates export** in the sidebar and select a sealed package. Bates labels
+Open **Export → Bates-numbered PDFs…** and select a sealed package. Bates labels
 are sequential identifiers stamped on PDF pages, often used when exchanging
 records for review.
 
@@ -329,10 +329,10 @@ again, even if the export was abandoned.
 ## Assign and remove tags
 
 1. Select a file or folder.
-2. Choose **Manage** beside its tags.
-3. Select an existing tag and choose **Add tag**, or remove an assigned tag.
+2. Choose **Add tag**, or **Manage** when it already has tags.
+3. Type a tag name, then select a match or **Create “name”** to create and assign it. Remove an assigned tag with its **×** button.
 
-The dialog lists assigned tags separately from available tags. It loads the
+The dialog opens with the cursor in the tag field and lists assigned tags separately from available tags. It loads the
 first 1,000 definitions in name order, then displays related names in groups.
 The picker uses the same color for a tag wherever it appears. Use the arrow
 keys to navigate its options, Enter to select, and Escape to close it.
@@ -347,9 +347,10 @@ applying it to newer state.
 ### Tag selected documents
 
 Use the document checkboxes to select files on the displayed page, then choose
-**Edit tags** in the selection dock. The picker shows whether all, some, or none
+**Tag selected…** in the selection dock. The picker shows whether all, some, or none
 of the selected documents have the chosen tag. **Add to all** and **Remove from
 all** apply one atomic, revision-checked operation to at most 1,000 documents.
+Type a new name and choose **Create “name”** to create the tag and add it to every selected document.
 Folders and undisplayed query results are not included in page selection.
 
 Keep the dialog open if the result is uncertain: **Retry same operation**
@@ -364,35 +365,53 @@ and backup behavior.
 
 ### Tag a frozen query
 
-In a frozen snapshot, checkboxes select only documents on the visible page.
-**Tag whole query** instead captures every member across all pages, up to
-250,000 documents, and prepares revision-checked batches of at most 1,000. The
-captured population does not expand when an untagged query starts receiving
-the tag. Completed changes appear as overlays while the frozen rows and facet
-membership remain unchanged.
+In a frozen snapshot, the results header shows the result count and
+**Tag all…**, and the selection dock shows **Tag selected…** for the checked
+rows on the visible page. Both open the same dialog: choose or create a tag,
+pick **Add** or **Remove**, and read the line under it, such as “Adds
+“Reviewed” to 128 documents. Undo with Remove.”, before you apply. Removing a
+tag can't be undone automatically.
 
-New actions use confirmed tag revisions only when the receipts connect back
-to the frozen document revision. Other document changes still make it stale.
-Once prepared, an action keeps its original requests and expected revisions.
+**Tag selected…** applies one atomic, revision-checked change to at most 1,000
+documents and reports how many changed. If the response is lost, **Retry**
+resends the same operation without applying it twice. A stale document means
+you close the dialog and select again.
 
-Before any prepared action can mutate the vault, save its recovery checkpoint,
-select that saved file back, and confirm the displayed vault, action, tag,
-operation, and exact targets. **Review exact targets** lists node IDs, content
-versions, hashes, sizes, and expected revisions in pages of 50. The browser also
-journals the action in IndexedDB for that origin. Another tab can resume it, but
-only the original operation identities, requests, and expected revisions are
-retried. If a response is lost after the daemon commits, **Retry same
-operation** recovers the retained receipt without applying the change twice.
+**Tag all…** → **Continue** captures every result, up to 250,000 documents,
+and prepares revision-checked batches of at most 1,000. The captured
+population does not expand when an untagged query starts receiving the tag.
+Completed changes appear as overlays while the frozen rows and facet
+membership remain unchanged. New actions use confirmed tag revisions only when
+the receipts connect back to the frozen document revision. Other document
+changes still make it stale. Once prepared, an action keeps its original
+requests and expected revisions.
 
-A daemon restart creates a fresh browser origin and session, so import the
-saved checkpoint to continue. Import validates and stages the action but does
-not run it. The vault must match, and the new session still requires checkpoint
-readback and confirmation. A stale document revision blocks the action. Docbank
-does not silently refresh its target or partially apply that batch.
+Before a prepared action can change the vault, **Save recovery file**, then
+**Open saved file…** to read it back. **Apply** then runs the batches in the
+same dialog, with progress and **Pause**. Pressing **Apply** is the explicit
+confirmation. **Review documents** lists the vault and action identities and,
+in pages of 50, node IDs, content versions, hashes, sizes, and expected
+revisions. **Cancel** before anything was sent drops the prepared action.
+
+The browser journals the action in IndexedDB for that origin. When a run
+stops early, for example after **Finish later**, a lost response, or a closed
+tab, the results header shows that it didn't finish, with **Resume** and
+**Discard…**. Another tab can resume it, but only the original operation
+identities, requests, and expected revisions are retried. If a response is
+lost after the daemon commits, **Retry** recovers the retained receipt without
+applying the change twice. Starting a new **Tag all…** replaces a finished
+run.
+
+A daemon restart creates a fresh browser origin and session, so choose
+**Tag all…** → **Resume from file…** and select the saved recovery file to
+continue. Import validates and stages the action but does not run it. The
+vault must match, and the new session still requires reading the file back
+and **Apply**. A stale document revision blocks the action. Docbank does not
+silently refresh its target or partially apply that batch.
 
 Recovery files contain instructions supplied by their creator. Checksums detect
-inconsistent files, but they do not authenticate the creator. Review the exact
-targets before confirming an imported action. Receipts inside a file do not
+inconsistent files, but they do not authenticate the creator. Review the
+documents before applying an imported action. Receipts inside a file do not
 update the snapshot's observed revisions. Only receipts returned by the daemon
 during this session do that.
 
@@ -400,23 +419,23 @@ Recovery files contain private document identities, content-version
 identities, hashes, sizes, and revisions. They omit paths, names, query text,
 and browser credentials, but still need the same protection as vault metadata.
 
-Abandoning removes the browser journal and does not roll back changes that
-already committed. If a tag was deleted, recovery still lets you save the
-checkpoint or abandon
-the action. **Abandon retained action** also clears an unreadable journal for
-the current vault, so corrupt browser data cannot block later actions.
+Discarding removes the browser journal and does not roll back changes that
+already committed. If a tag was deleted, the dialog still lets you save the
+recovery file or discard the run. **Discard…** in the results header also
+clears an unreadable journal for the current vault, so corrupt browser data
+cannot block later actions.
 
 ## Manage tag definitions
 
-Choose the tag-catalog button beside the toolbar selector to create, rename,
+Open the tag filter and choose **Manage tags** to create, rename,
 or delete the vault's shared tag definitions. Creating a tag allocates a new
 UUID. Renaming keeps that UUID while advancing the definition revision and
 every assigned node's metadata authority. A stale rename remains visible
 instead of overwriting a definition changed by another person or agent.
 
-Deleting requires a separate confirmation that names the tag's ID, revision,
-and current assignment count. It removes the definition and all of its
-assignments, but never deletes a document or its stored content. Reusing the
+Deleting an unused tag happens in one click. Deleting a tag that is on files
+asks first and says how many files lose it. Deletion removes the definition and
+all of its assignments, but never deletes a document or its stored content. Reusing the
 same name later creates a different identity. After a rename or deletion, the
 browser reloads the active folder, search, or tag view so node revisions and
 assignment counts stay current.
@@ -434,9 +453,9 @@ displayed selection.
 
 ## Export dated search counts
 
-Open **Search exports** in the sidebar to create a CSV of search counts for
+Open **Export → Search term report…** to create a CSV of search counts for
 selected sources and date ranges. Review unresolved dates before downloading
-the CSV or evidence ZIP. **Recent exports** keeps the latest 100 requests and
+the CSV or evidence ZIP. **Recent reports** keeps the latest 100 requests and
 outcomes. **Use as draft** runs a request against current data without its old
 date choices. See [Search exports](search-exports.md) for the full workflow,
 count definitions, and expiry limits.
@@ -445,23 +464,22 @@ count definitions, and expiry limits.
 
 ## Saved queries and highlights
 
-Open **Saved queries** in the sidebar to manage saved queries and highlight
-sets. A new query starts with the current search text, selected tag, and display
-sort. The complete query editor preserves the expression, filters, mode, and sort
-together. Choose **Save as new** to name a definition, or **Edit** and **Save
-changes** to update one. The catalog is paginated in groups of 100.
+Open **Saved searches** in the sidebar to run, rename, or delete a saved search.
+Create searches from **Advanced → Save…**. **Rename** opens the name and
+description fields; **Edit as JSON** reveals the complete definition. Choose
+**Save changes** to update it or **Save as new** to keep a copy. The list is
+paginated in groups of 100. **New highlight list** creates reusable highlights.
 
 **Keep query draft** keeps the complete query in the tab and URL fragment.
 The fragment contains query text and filters, so treat copied URLs as private.
 It does not contain browser-session credentials. Saving a definition does not
-replace the kept draft or change the URL. **Discard query draft**, locking the
+replace the kept draft or change the URL. **Cancel** in advanced search, locking the
 tab, or an expired or rejected session clears the draft and its URL fragment.
 Drafts do not carry over when you open a new session with `docbank web`. Save a
 named definition before reloading or leaving the session if you need it later.
 
-Saved queries are definitions, not frozen result sets. Opening a definition in
-the complete query editor and choosing **Run query** creates a new workspace
-snapshot from that draft. Keeping or saving the draft alone does not run it or
+Saved searches retain the search definition. **Run** creates a new result set
+using current documents. Keeping or saving the draft alone does not run it or
 change the current live results. This browser run does not produce the durable
 saved-run receipt that the authenticated HTTP API exposes. Unknown fields are
 rejected, not silently dropped.
@@ -475,7 +493,7 @@ preferences.
 Edits and deletions use the definition's inspected revision. A stale response
 remains visible without automatically retrying against newer state. Reload the
 definitions and reopen the item before deciding again. Deletion requires a
-separate confirmation naming the definition, ID, and revision. It never deletes
+separate confirmation naming the definition. It never deletes
 documents or discards the kept query draft.
 
 ![A named query retaining its complete expression, filters, and sort](https://docbank.ai/assets/generated/web-saved-queries.png)
@@ -484,15 +502,16 @@ documents or discards the kept query draft.
 
 ## Move a node to recoverable trash
 
-Choose **Move to trash** on the selected live file or folder. Docbank opens a
-confirmation that names the complete virtual path, node ID, and revision
-being acted upon. A folder and its live descendants move to trash together.
+Choose **Move to trash** on the selected live file or folder: the trash
+button for a file, or the folder's actions menu. The item leaves the list at
+once and a notice names it, with the item count for a folder. A folder and its
+live descendants move to trash together. Choose **Undo** in the notice to
+restore it.
 
 The daemon applies the mutation only if that node revision is still
 current. If another person, agent, or CLI command changed the node first, the
-browser keeps the confirmation open and asks you to refresh instead of
-silently acting on an outdated view. A successful receipt removes the selection
-and refreshes the current folder, search, or tag view.
+notice shows the error and the item stays listed. A successful receipt removes
+the selection and refreshes the current folder, search, or tag view in place.
 
 This action is recoverable. It does not empty trash, garbage
 collect content, reclaim packed space, or erase permanent audited history.
@@ -504,17 +523,16 @@ restorable roots. Each entry shows its name, kind, node ID, revision,
 trash time, and logical size for files. A folder entry represents the complete
 subtree that left the live tree in that trash operation.
 
-Choose **Restore** and confirm the inspected revision. Docbank returns the same
+Choose **Restore** to return the item at once. Docbank returns the same
 node and its content to its original live parent when that directory still
 exists. If the parent is unavailable, restore falls back to the vault root. If
 the chosen name is already occupied, Docbank adds its normal collision suffix.
-The completed receipt shows the actual canonical path rather than predicting
-where the item should have landed.
+A notice shows the actual canonical folder, names a missing original folder
+when this browser trashed the item, and counts the files of a photo group. Choose **Show** to open the folder.
 
-If the revision changed, the confirmation stays open so you can refresh and
-review the change. After a successful restore, the browser removes the item
-from the trash drawer and reloads the tree from its root. This discards cached
-paths that may no longer match the restored tree.
+If the revision changed, the notice shows the error and the item stays in the
+drawer. After a successful restore, the browser removes the item from the trash
+drawer and reloads the current view.
 
 The browser cannot empty trash. Permanent tree-metadata deletion, subsequent
 garbage collection, and packed-space reclamation remain CLI or
@@ -523,12 +541,12 @@ master-authenticated API operations.
 ## Upload verified documents
 
 1. Browse to the destination folder.
-2. Choose the upload button.
-3. Select one or more files from this device.
+2. Choose **Add → Upload files** or **Add → Upload folder**.
+3. Select files or a folder from this device, then choose **Upload** in the drawer.
 4. Check each file's result in the upload drawer.
 
 Upload is available only in a live folder, not in search or tag results. The
-drawer names the destination's directory ID and current path.
+drawer shows the destination path once in its heading.
 
 Docbank makes two bounded-memory passes over each selected file. The first pass
 computes the browser's declared SHA-256 while showing hashing progress. The
@@ -554,13 +572,14 @@ result. Name/content collisions keep the ordinary ingest suffix behavior
 rather than overwriting a document. Selecting a local file never changes or
 removes the source.
 
-Browser upload accepts individual files. Folder recursion, server-filesystem
-ingest, watched-inbox configuration, and replacing an existing document remain
-CLI or authenticated API workflows.
+The folder picker keeps each file's relative path. Directory creation currently
+returns `browser sessions cannot use this endpoint`, so folder uploads cannot
+complete. Server-filesystem ingest, watched-inbox configuration, and replacing
+an existing document remain CLI or authenticated API workflows.
 
 ## Import a mailbox
 
-1. Browse to the destination folder and choose **Import mailbox**.
+1. Browse to the destination folder and choose **Add → Import mailbox**.
 2. Choose an MBOX file or Google Takeout ZIP, then **Upload and preview**.
 3. Review the detected mailbox entries and choose **Import messages**.
 4. Follow the imported and rejected counts until the job finishes.
@@ -575,7 +594,7 @@ interrupted import resumes after its last saved message. See
 ## Import load files
 
 1. Browse to the destination folder.
-2. Choose **Import load files**.
+2. Choose **Add → Import load files**.
 3. Choose a ZIP that holds the DAT or CSV load file, an optional OPT or LFP
    page map, and the referenced original documents, images, and supplied text.
 4. Pick the metadata profile, page-map profile, and source encoding, then
@@ -610,19 +629,24 @@ embedding service, it also prepares the document for search by meaning.
 Configure a [processing profile](../configuration.md) first. A new vault has
 none.
 
-1. Select a document and choose **Process and retrieve** in its details.
-2. Select a profile and review the source version, provider destinations,
-   disclosed content, retained outputs, and estimated work.
-3. Choose **Consent and run** only after reviewing that plan. Consent covers
-   this operator and profile configuration for every document, not just this
-   job, until it is revoked or expires.
-4. Follow the job state and coverage. When available, choose **Read sanitized
-   Markdown** to read the verified rendition: the extracted text Docbank
-   stored for that version.
+1. Select a document and choose **Extract text** beside its name. This action appears when a configured profile can extract text from the file.
+2. Read where the file goes. A local profile says it runs on this computer;
+   a network or hosted profile names the service and its address, and says
+   whether the file name goes too. **Details** lists the exact plan, service,
+   deployment, and fingerprints.
+3. The first time you use a profile, tick **Allow "profile" to process
+   documents in this vault**. That permission covers this operator and profile
+   configuration for every document, not just this file, until it is revoked
+   or expires. Later runs need only the button.
+4. When the run finishes, choose **Read text** to read the extracted text
+   Docbank stored for that version.
+
+To withdraw permission, open **Details** and choose **Revoke all processing
+permissions**. It applies to every profile.
 
 ![The processing plan discloses local extraction and a configured network embedding service](https://docbank.ai/assets/generated/web-document-processing-plan.png)
 
-![The finished processing job and retained rendition and embedding coverage](https://docbank.ai/assets/generated/web-document-processing-result.png)
+![A finished text extraction with its text ready to read](https://docbank.ai/assets/generated/web-document-processing-result.png)
 
 ![Verified retained Markdown for the selected source version](https://docbank.ai/assets/generated/web-document-rendition.png)
 
@@ -632,7 +656,8 @@ vault needs fresh consent before network processing. The
 requirements. To inspect results without the browser, see
 [CLI coverage and text windows](../cli-reference.md#docbank-processing).
 
-Choose a file's **Find similar** row action to compare its stored embeddings
+When a processing profile stores search vectors, each file row shows a
+**Find similar** action. Choose it to compare its stored embeddings
 with the file versions loaded in the current view. This calls no provider. If
 embeddings are missing, build them with a processing run, which has its own
 review and consent. See [Find similar documents](document-processing.md#find-similar-documents).
@@ -641,13 +666,16 @@ review and consent. See [Find similar documents](document-processing.md#find-sim
 
 ## Download verified content
 
+The inspector puts the preview above details, tags, and **History**. Drag the inspector's left edge, or focus it and press the arrow keys, to resize it. Double-click the edge to reset. Your browser remembers the width. Click a path, version ID, SHA-256, or ID to copy its full value. **Download** saves the selected version. **Extract text** appears beside it when a configured profile fits the file. The **⋯** menu holds **Move to trash**. Folders have an **Open** button.
+
+Protected items show a **Protected** chip that opens **Audit history**. For an unprotected folder, choose **Protect permanently…** in **⋯** to copy its command-line preview command. The command previews retained history and vault-wide metadata before you explicitly enable irreversible protection.
+
 The selected document card previews PDF and PNG pages, eligible UTF-8 text,
 and bounded PNG, JPEG, and WebP images. Animated WebP images may animate in the browser. Text is rendered as inert text, never as
 document HTML. Docbank verifies the selected version UUID, size, media type, and
 SHA-256 after receiving the complete body and before publishing text or an
 image URL. Unsupported files
-and text larger than 16 MiB remain available through **Download verified
-original** without being decoded in the page.
+and text larger than 16 MiB remain available through **Download** without being decoded in the page.
 
 For PDF files and PNGs with retained page geometry, **Preview** reads retained
 pages and images. Other PNGs use the verified original-image preview, including
@@ -674,11 +702,15 @@ request created elsewhere offers a refresh without taking ownership.
 
 Choose **Text** to read the verified text rendition for the selected version
 and processing profile. The browser binds the source, profile, generation,
-attachment, build, artifact, length, and digest before decoding the text. It
-reports failed, unprocessed, unconfigured, verified-empty, and unavailable
-historical results separately. An eligible original UTF-8 text file is used
-only as a fallback for that same version when no readable rendition is
-available.
+attachment, build, artifact, length, and digest before decoding the text. A
+check icon shows verification. **Find** searches within the displayed text
+and shows its matches in place of query and saved highlights;
+match counts and arrows appear when there is a query and matches, respectively.
+The Text tab stays hidden when it would repeat a plain-text original in Preview.
+Processing failures, verified-empty text, and unavailable historical renditions
+remain distinct. Eligible original UTF-8 text is a fallback for that same version
+when no readable rendition is available. Without a processing profile, **Set up**
+opens the processing guide. With a profile, **Process…** opens the processing plan.
 
 Query text operands are highlighted from the resolved query, not by splitting
 the expression in the browser. Negated and structured operands are excluded.
@@ -692,7 +724,7 @@ and do not replace an expired snapshot with live results. **Duplicates** lists
 at most 16 live documents with the selected content hash. Opening one creates a
 separately labeled live context. **Return** restores the frozen selection.
 
-Choose **Download verified original** on a file to retrieve its selected
+Choose **Download** on a file to retrieve its selected
 version. A live row selects its current head. A frozen query row keeps the
 version captured by that snapshot even when the live head has since changed.
 
@@ -722,11 +754,12 @@ atomic publication, and parent-directory sync.
 
 ## Inspect immutable versions
 
-Choose **Version history** on any file to inspect retained versions
+Choose **All versions** in a file's **History** section to inspect retained versions
 without losing the current folder, search results, or selected document. The
-newest version appears first. Each entry identifies whether the content was
-created, replaced, or restored from a prior version, along with its recorded
-time, node revision, logical size, and version UUID.
+newest version appears first. Each entry says whether the content was
+created, replaced, or restored from a prior version, with its recorded time and
+size, and has a **Download** button. **Details** shows the version ID, SHA-256,
+media type, and the version it was restored from.
 
 Open a link with `#node=<node ID>&version=<version UUID>` to inspect that exact
 version, including versions older than the newest 1,000 listed in the drawer.
@@ -758,17 +791,15 @@ or prune history.
 
 ## Understand where a document came from
 
-Choose **Provenance** on any file to inspect the origin facts Docbank recorded
-when it ingested that document. The newest ingest appears first. Each entry
-shows its source kind and description, original reference, ingest time, and
-whether it is the active origin or has been superseded by a corrected fact.
+The **History** section shows the five most recent versions and imports together, newest first. Click an import entry, such as **Added from command line**, to see its complete import history.
+Each entry shows how the document arrived, its copyable source path or
+filename, and the import date. Corrected entries show **Superseded**.
 
-Selecting an entry shows its complete provenance identity, ingest UUID, node
-ID, canonical ingest timestamp, original modification time when one was
-supplied, and supersession link. The drawer adopts the node state returned with
-the provenance page, so a concurrent move displays the current canonical path
-and a trashed document is labeled as trashed instead of keeping an obsolete
-path from the table.
+Open **Import details** for the import ID, record hash, document ID, source
+reference, original modification time when supplied, and any replaced record.
+Click a value to copy it. The drawer uses the document state returned with the
+history, so a concurrent move displays its current path and a trashed document
+is labeled as trashed.
 
 An original reference records the source at import time. It does not guarantee
 that the source still exists. It may be a portable relative path from a watched
@@ -784,8 +815,10 @@ pinning are not browser workflows.
 ## Browse tags and search text
 
 Enter a word or phrase in the search box and press Enter. Results can match a
-live document name or verified extracted text. The **Match** column identifies
-which one. Name matches keep their API relevance ranking and appear before
+live document name or verified extracted text. The results heading shows the
+count, each row shows the name with its folder beneath, and the **Match** column
+identifies which one. **Previous** and **Next** in the inspector step through the
+results. Name matches keep their API relevance ranking and appear before
 content-only matches until you choose a column sort.
 
 Use the tag selector in the browser toolbar without a text query to browse
@@ -802,19 +835,21 @@ workflows are bound to the tag's UUID, so a later rename does not change which
 definition was selected. Changing the selector reruns the current browse or
 search.
 
-The search mode selector offers **Names and text**, **Auto**, **Lexical**,
-**Semantic**, and **Hybrid** when processing profiles are available. **Auto**
-uses Hybrid with an available embedding binding. Without one, the API keeps
-the request lexical. Semantic and Hybrid require a binding. A profile that
-can rerank still permits Lexical search without a binding, and **Rerank
-results** is opt-in. Base rows appear before reranking settles. Degraded
-reranking keeps those rows and shows its cause. Other processing failures
-return to Names and text with a visible explanation.
+The search box searches words in names and document text. When a processing
+profile has a query embedding binding, it also searches by meaning
+automatically. The menu selects **Plain words** or **Query syntax**, matching
+Photos. Query syntax accepts expressions such as `name:invoice AND tag:urgent`
+and runs through the complete query endpoint.
+
+**Rerank results** is opt-in when a processing profile supports it. Base rows
+appear before reranking settles. Degraded reranking keeps those rows and shows
+its cause. Other processing failures fall back to names and text with a visible
+explanation.
 
 ![The Docbank web application showing extracted-text search results in a synthetic vault.](https://docbank.ai/assets/generated/web-search-results.png)
 
-*Search results display complete virtual paths and offer the same authority
-card as ordinary folder browsing.*
+*Search results show each document's folder under its name and offer the same
+authority card as ordinary folder browsing.*
 
 Clear the search box to return to the selected tag's assignment view, or to
 the current directory when **All tags** is selected. The selector loads at most
@@ -847,19 +882,19 @@ from an empty or non-empty timeline.
 
 ## Verify permanent audit evidence
 
-Choose **Audit evidence** in the sidebar to run the vault-wide permanent
+Choose **System → Protected folders** to run the vault-wide permanent
 audit verifier. The verifier does more than read stored status. Docbank
 replays canonical audit history against the current node, version, membership,
 topology, tag, and provenance projections, then reads and recomputes SHA-256 for
 every unique blob retained by protected history.
 
-A successful result reports the protected and verified blob totals, unique raw
-bytes, vault and allocation-lineage identities, operation high-water mark,
-allocation entry count and head, and each scope's terminal entry count and chain
-head. Copy buttons preserve the complete identities even when they wrap. A
-dormant vault is reported separately from a failed verification. Metadata,
-missing-content, corruption, and unreadable-content problems remain visible
-with the affected hash.
+A successful result reports the protected and verified file totals and the
+protected size. **Details** holds the vault and allocation-lineage identities,
+the operation high-water mark, the allocation entry count and head, and each
+scope's terminal entry count and chain head. Copy buttons preserve the complete
+identities even when they wrap. A vault with nothing protected shows the
+`docbank audit enable` command instead of a failure. Metadata, missing-content,
+corruption, and unreadable-content problems stay visible with the affected hash.
 
 This drawer runs only a fresh proof of current authority. It does not accept a
 previous evidence bundle, enroll a scope, or change protected state. Record
@@ -870,19 +905,17 @@ contention or interruption remains visible, and you can retry.
 
 ## Inspect background work
 
-Choose **Background jobs** in the sidebar to see one card per storage operation
-kind or daemon worker. Active operations in a lane share progress when every
-operation has a known total. Workers without counts show numeric progress as
-unavailable. Each operation keeps its status, times, error and cancel button.
+Choose **System → Running now** to see work in progress, paused workers,
+and failures. Active work appears first, with counts when known and its pause,
+resume, worker count, and cancellation controls beside it. When workers are
+waiting for work, a quiet **Nothing running** line sits above the worker list.
+The list below shows every worker and its status, and offers pause controls for
+idle workers. Queued operations stay in that list until they start.
 
 Pause or resume photo imports, visual previews, and the storage lanes `place`,
 `evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item
-boundary. Visual preview concurrency accepts 1 through 4. Document workers
-remain read-only. Pausing a finished lane keeps its last listed outcome visible.
-A paused lane keeps its Resume control after its last operation disappears.
-Idle lanes show their controls, so you can pause one before it has work. Each
-operation shows its operation ID, which matches `docbank jobs`.
-
+boundary. Visual preview concurrency accepts 1 through 4. A paused lane keeps
+its Resume control after its last operation disappears.
 The drawer reads lane settings with the job list and uses `PUT` to change them.
 The drawer refreshes every two seconds while open. If another client changes
 controls first, review the refreshed settings and try again. Controls survive
@@ -894,32 +927,33 @@ inspect details.
 
 ## Inspect physical storage
 
-Choose **Storage** in the sidebar to see how the current vault occupies
-managed blob storage. The summary separates four related quantities:
+Choose **System → Disk use** to see how the current vault occupies
+managed blob storage. Tiles show the total on disk and the number of stored
+files. When packs hold dead payload, **Reclaimable** shows how much and what
+share of the pack payload it is. **Locations** has one row per storage location
+with its kind (filesystem or S3), stored size, object count, how many objects
+have no other copy, and its observed online, unavailable, fenced, or unbound
+state. When an unhealthy location is the only authority for an object, the drawer
+says how many objects currently have no readable alternative. It never exposes
+binding paths, endpoints, buckets, credential profiles, or ownership epochs.
 
-- **Loose content** is the physical inventory of individual raw or zstd
-  files. It can include untracked files or redundant loose copies of packed
-  objects, so it is not an authority count.
-- **Live packed content** is authoritative content stored in immutable pack
-  files. The view shows both its logical raw size and its stored size.
+**Storage** separates four related quantities:
+
+- **Loose files** is the physical inventory of individual raw or zstd files.
+  It can include untracked files or redundant loose copies of packed objects,
+  so it is not an authority count.
+- **Packed** is authoritative content stored in immutable pack files.
+  The view shows both its logical raw size and its stored size.
 - **Pack files** is the complete stored payload of every pack, including live
   and logically dead entries.
-- **Pending repack** is logically dead payload that still occupies those
+- **Waiting to compact** is logically dead payload that still occupies those
   pack files.
 
-Below the aggregate cards, **Content stores** lists each fixed primary or
-configured secondary with its filesystem/S3 kind, observed online,
-unavailable, fenced, or unbound state, catalog-authorized objects, logical and
-stored bytes, pack count, sole copies, and affected live documents. When an
-unhealthy store is the only authority for an object, the drawer says how many
-objects currently have no readable alternative. It never exposes binding
-paths, endpoints, buckets, credential profiles, or ownership epochs.
-
-Pending-repack bytes have not been reclaimed. This distinction matters when a
+Waiting-to-compact bytes have not been reclaimed. This distinction matters when a
 GC report has removed unreachable catalog mappings but the vault's disk usage
-has not fallen by the same amount. The percentage beside the pending total
-shows how much of the current pack payload is dead, not a compression ratio or
-a promise that every pack is immediately eligible for compaction.
+has not fallen by the same amount. The percentage beside **Reclaimable** shows
+how much of the current pack payload is dead, not a compression ratio or a
+promise that every pack is immediately eligible for compaction.
 
 This drawer is read-only and refreshes from the daemon's current catalog. It
 cannot pack, garbage-collect, or repack content. Use `docbank storage status`
@@ -929,15 +963,17 @@ rewrite eligible sparse packs and retire their old files.
 
 ## Inspect backup snapshots
 
-Choose **Backup snapshots** in the sidebar to inspect the recovery points in
+Choose **System → Backups** to inspect the recovery points in
 the repository selected by `[backup] repo` in `config.toml`. The drawer shows
 the repository path and repository ID so you can tell which repository you are
-inspecting. Snapshots appear newest first with their tag, ID, creation time,
-full or incremental relationship, logical node/file/blob counts, logical
-content bytes, and the pack bytes newly added by that capture.
+inspecting. Snapshots appear newest first with their tag, creation time,
+full or incremental relationship, file count, logical content bytes, and the
+bytes newly added by that capture. A copy button on each row copies the
+snapshot ID.
 
 An initialized repository with no snapshots is different from an unconfigured
-repository, and the browser reports those states separately. The browser does
+repository, and the browser reports those states separately, each with the
+command that fixes it. The browser does
 not accept an arbitrary server path, initialize a repository, create a
 snapshot, verify content, restore a vault, or delete retention history.
 
@@ -946,14 +982,13 @@ still readable. Run `docbank backup verify` to check repository integrity, and
 periodically restore into a separate vault to rehearse the complete recovery
 path.
 
-## Browse import collections
+## Browse import history
 
-Choose **Collections** in the sidebar to browse the vault's import groups.
-Each card shows its label or source description, ingest time, current live
-file count, and logical bytes. Select a collection to browse its current
-live members and inspect a document by its node identity. Counts are
-current membership, not a historical import total. The browser refresh time
-is separate from the ingest time.
+Choose **Import history** in the sidebar.
+Each row shows its label or source folder name, import time, document count,
+and size. Select an import to see its source paths, each with a copy button,
+browse its current live members, and open a document by its node identity. Counts are
+current membership, rather than a historical import total.
 
 Labels belong to the import group, not its documents. Rename or clear a label
 under its inspected revision. If another client changes it first, the drawer
@@ -966,7 +1001,7 @@ failed reads, and truncated lists are reported separately. Use the paginated
 HTTP API to browse beyond that limit. This is direct member browsing, not
 a collection-filtered text search.
 
-Choose **Inspect collection quality** for document distributions, duplicate
+Choose **Quality** for document distributions, duplicate
 content counts, zero-byte files, media/extension mismatches, and text coverage.
 With multiple processing profiles, choose one before reading coverage. Without
 a configured profile, coverage is unavailable. That does not mean zero failures
@@ -1115,7 +1150,7 @@ accepts that credential for the following operations:
 | Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and confirmation. Retries preserve the original operation identities. |
 
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights)
-or **Edit query** to [validate and run a complete query](#edit-a-complete-query).
+or **Advanced** to [validate and run a complete query](#edit-a-complete-query).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
 session. The browser must prove it holds the upload secret before sending any

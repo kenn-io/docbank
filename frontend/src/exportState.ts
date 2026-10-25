@@ -386,7 +386,7 @@ export class ExportSession {
         ...this.state,
         status: "expired",
         reviewed: undefined,
-        error: new Error("The export plan expired. Preview again."),
+        error: new Error("The export plan expired. Choose Download ZIP again."),
       });
       return;
     }
@@ -544,7 +544,7 @@ export class ExportSession {
             ...this.state,
             releasing: false,
             error: new Error(
-              "Your browser is still downloading this export. Choose Prepare another export again once the download finishes.",
+              "Your browser is still downloading this export. Choose New export again once the download finishes.",
             ),
           });
       } else this.fail(started.generation, error);

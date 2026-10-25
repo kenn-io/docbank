@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
@@ -414,6 +415,7 @@ func (lease *IndexLease) Release(ctx context.Context) error {
 }
 
 func (worker *IndexWorker) Run(ctx context.Context) error {
+	jobs.ReportBusy(ctx, false)
 	failures := 0
 	for {
 		err := worker.scan(ctx)
@@ -486,6 +488,8 @@ func (worker *IndexWorker) refresh(ctx context.Context, space string) error {
 			return nil
 		}
 	}
+	jobs.ReportBusy(ctx, true)
+	defer jobs.ReportBusy(ctx, false)
 	_, err = worker.Rebuild(ctx, space)
 	return err
 }

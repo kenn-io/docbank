@@ -47,14 +47,13 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
       response.request().method() === "POST",
   );
   await page
-    .getByRole("region", { name: "Query editor" })
-    .getByRole("button", { name: "Run query", exact: true })
+    .getByRole("dialog", { name: "Advanced search" })
+    .getByRole("button", { name: "Search", exact: true })
     .click();
   const snapshot = (await (await accepted).json()) as SnapshotPage;
   const frozen = page.getByRole("region", { name: "Frozen query results" });
   await expect(frozen).toHaveAttribute("data-snapshot-id", snapshot.snapshot_id);
   await expect(frozen).toHaveAttribute("data-member-hash", snapshot.member_hash);
-  await page.getByRole("button", { name: "Close query editor", exact: true }).click();
   const origin = page.locator(`tr[data-snapshot-node="${fixture.parent.node_id}"]`);
   await origin.getByRole("cell", { name: "/01-family.eml", exact: true }).click();
   await origin.getByRole("checkbox").check();
@@ -82,16 +81,10 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
     ).toBe(selected);
   };
   await page.getByRole("tab", { name: "Attachments", exact: true }).click();
-  const outgoing = page.getByRole("region", { name: "Outgoing attachments" });
+  const outgoing = page.getByRole("region", { name: "Attachments" });
   await expect(outgoing.getByRole("listitem")).toHaveCount(50);
-  await outgoing.getByRole("button", { name: "Load more attachments", exact: true }).click();
+  await outgoing.getByRole("button", { name: "Show more", exact: true }).click();
   await expect(outgoing.getByRole("listitem")).toHaveCount(52);
-  await outgoing
-    .getByRole("button", { name: "Check inventory for synthetic-family", exact: true })
-    .click();
-  await expect(
-    outgoing.getByText("Publication inventory: complete", { exact: true }),
-  ).toBeVisible();
   let release!: () => void;
   let reached!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -110,9 +103,7 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
     },
     { times: 1 },
   );
-  await outgoing
-    .getByRole("button", { name: "Open attachment repeated.txt, part 1.2", exact: true })
-    .click();
+  await outgoing.getByRole("button", { name: "repeated.txt", exact: true }).first().click();
   await reachedVersion;
   const cancelled = page.waitForEvent("requestfailed", {
     predicate: (request) =>
@@ -124,9 +115,7 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
   await expect(page.locator(`[data-source-version="${fixture.parent.version_id}"]`)).toBeVisible();
   await expect(page.locator(`[data-source-version="${fixture.child.version_id}"]`)).toHaveCount(0);
   await page.getByRole("tab", { name: "Attachments", exact: true }).click();
-  await outgoing
-    .getByRole("button", { name: "Open attachment repeated.txt, part 1.2", exact: true })
-    .click();
+  await outgoing.getByRole("button", { name: "repeated.txt", exact: true }).first().click();
   await expect(
     page.getByText("Pinned child edition, verified from its exact version.", { exact: true }),
   ).toBeVisible();
@@ -147,32 +136,26 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
   // A tall real viewport keeps the fixed selection dock below the inspector
   // during element capture; no UI styles or API responses are substituted.
   await page.setViewportSize({ width: 1440, height: 1800 });
-  await page
-    .getByRole("button", { name: "Download verified original", exact: true })
-    .scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "Download", exact: true }).scrollIntoViewIfNeeded();
   await page.locator(`[data-source-version="${fixture.child.version_id}"]`).screenshot({
     path: path.join(screenshots!, "web-attachment-historical-child.png"),
     animations: "disabled",
   });
   await page.getByRole("tab", { name: "Attachments", exact: true }).click();
   await page
-    .getByRole("region", { name: "Incoming parents" })
-    .getByRole("button", { name: "Open parent of repeated.txt, part 1.2", exact: true })
+    .getByRole("region", { name: "Attached to" })
+    .getByRole("button", { name: "01-family.eml", exact: true })
     .click();
   await expect(page.locator(`[data-source-version="${fixture.parent.version_id}"]`)).toBeVisible();
-  await outgoing.getByRole("button", { name: "Load more attachments", exact: true }).click();
-  await outgoing
-    .getByRole("button", { name: "Open attachment nested.eml, part 1.53", exact: true })
-    .click();
+  await outgoing.getByRole("button", { name: "Show more", exact: true }).click();
+  await outgoing.getByRole("button", { name: "nested.eml", exact: true }).click();
   await expect(page.locator(`[data-source-version="${fixture.nested.version_id}"]`)).toBeVisible();
   await expect(
     page
-      .getByRole("region", { name: "Incoming parents" })
-      .getByRole("button", { name: "Open parent of nested.eml, part 1.53", exact: true }),
+      .getByRole("region", { name: "Attached to" })
+      .getByRole("button", { name: "01-family.eml", exact: true }),
   ).toBeVisible();
-  await outgoing
-    .getByRole("button", { name: "Open attachment inside.txt, part 1.2", exact: true })
-    .click();
+  await outgoing.getByRole("button", { name: "inside.txt", exact: true }).click();
   await expect(page.getByText("Exact nested attachment bytes.", { exact: true })).toBeVisible();
   expect(tickets.at(-1)).toMatchObject({
     node_id: fixture.inside.node_id,
@@ -188,7 +171,7 @@ test("DB24 actual attachment navigation preserves frozen authority", async ({ pa
     path: path.join(screenshots!, "web-attachment-nested-family.png"),
     animations: "disabled",
   });
-  await page.getByRole("button", { name: "Return to frozen document", exact: true }).click();
+  await page.getByRole("button", { name: "Return to selected document", exact: true }).click();
   await expect(origin).toBeFocused();
   await expect(page.locator(`[data-source-version="${fixture.parent.version_id}"]`)).toBeVisible();
   await unchanged();

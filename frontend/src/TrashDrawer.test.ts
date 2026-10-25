@@ -1,9 +1,11 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import TrashDrawer from "./TrashDrawer.svelte";
+import { clearToasts, getToasts } from "./toast.svelte.js";
 
 afterEach(() => {
   cleanup();
+  clearToasts();
   vi.restoreAllMocks();
 });
 
@@ -63,29 +65,14 @@ it.each([1, 3])(
     expect(await screen.findByText("quarterly-report.txt")).toBeTruthy();
     expect(screen.getByText(`Photo · ${count} trashed file${count === 1 ? "" : "s"}`)).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Restore" }));
-    const dialog = screen.getByRole("dialog", {
-      name: "Restore quarterly-report.txt from trash",
-    });
-    expect(dialog).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        new RegExp(`recovers ${count} trashed member file${count === 1 ? "" : "s"} together`),
-      ),
-    ).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        "Companions inside trashed folders also restore those folders and their other contents, including other photos.",
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Restore keeps the same stable node and retained content. It does not roll back versions or alter permanent audited history.",
-      ),
-    ).toBeTruthy();
-    await fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+    expect(screen.queryByRole("dialog", { name: /^Restore/ })).toBeNull();
 
-    await waitFor(() => expect(onrestored).toHaveBeenCalledWith(restored));
-    expect(await screen.findByText("/Reports/quarterly-report (2).txt")).toBeTruthy();
+    await waitFor(() =>
+      expect(onrestored).toHaveBeenCalledWith(
+        restored,
+        count === 1 ? "Restored to /Reports" : `Restored ${count} files`,
+      ),
+    );
     expect(await screen.findByText("Trash is empty")).toBeTruthy();
     const [, request] = fetchMock.mock.calls[1] ?? [];
     expect(new Headers(request?.headers).get("If-Match")).toBe("3");
@@ -134,21 +121,12 @@ it("drops stale trash rows when the refresh after a successful restore fails", a
   });
   expect(await screen.findByText("capture.jpg")).toBeTruthy();
   expect(screen.getByText("Companions")).toBeTruthy();
-  expect(screen.getByText("2 restorable items")).toBeTruthy();
   await fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]);
-  await fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Restore capture.jpg from trash" })).getByRole(
-      "button",
-      { name: "Restore" },
-    ),
-  );
-  await waitFor(() => expect(onrestored).toHaveBeenCalledWith(receipt));
-  expect(screen.queryByRole("dialog", { name: "Restore capture.jpg from trash" })).toBeNull();
-  expect(screen.queryByText("capture.jpg")).toBeNull();
+  await waitFor(() => expect(onrestored).toHaveBeenCalledWith(receipt, "Restored 3 files"));
+  expect(screen.queryByRole("dialog", { name: /^Restore/ })).toBeNull();
+  await waitFor(() => expect(screen.queryByText("capture.jpg")).toBeNull());
   expect(screen.queryByText("Companions")).toBeNull();
-  expect(screen.queryByText("2 restorable items")).toBeNull();
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
-  expect(screen.getByText("/Photos/capture.jpg")).toBeTruthy();
   finishRead(
     new Response(JSON.stringify({ detail: "Trash refresh unavailable" }), { status: 503 }),
   );
@@ -157,11 +135,8 @@ it("drops stale trash rows when the refresh after a successful restore fails", a
     "Trash refresh unavailable",
   );
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
-  expect(screen.queryByText("2 restorable items")).toBeNull();
-  expect(screen.getByText("/Photos/capture.jpg")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("Remaining folder")).toBeTruthy();
-  expect(screen.getByText("1 restorable item")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Restore" })).toHaveLength(1);
   expect(screen.queryByText("capture.jpg")).toBeNull();
   expect(screen.queryByText("Companions")).toBeNull();
@@ -207,12 +182,14 @@ it("keeps stale restore authority visible for a fresh decision", async () => {
   });
 
   await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
-  const dialog = screen.getByRole("dialog", {
-    name: "Restore quarterly-report.txt from trash",
-  });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
-  expect(await screen.findByText("node changed; refresh trash before restoring it")).toBeTruthy();
-  expect(
-    screen.getByRole("dialog", { name: "Restore quarterly-report.txt from trash" }),
-  ).toBeTruthy();
+  await waitFor(() =>
+    expect(getToasts().map((toast) => toast.message)).toEqual([
+      "node changed; refresh trash before restoring it",
+    ]),
+  );
+  expect(getToasts()[0]!.tone).toBe("danger");
+  expect(screen.getByText("quarterly-report.txt")).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
 });

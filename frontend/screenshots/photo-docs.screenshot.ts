@@ -80,7 +80,7 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
     await openLibrary(page, fixture.run);
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
-    await expect(cull.getByRole("button", { name: "Pick (P)", exact: true })).toBeEnabled();
+    await expect(cull.getByRole("button", { name: "Pick", exact: true })).toBeEnabled();
     await expect(cull.locator(".photo-stage img")).toBeVisible();
     await page.screenshot({ path: path.join(output, "web-photo-cull.png") });
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
@@ -94,8 +94,8 @@ test("photo library, viewer, timeline, search, albums, cull and trash", async ({
 
     await openLibrary(page, fixture.run);
     await page.getByRole("button", { name: "More photo actions" }).click();
-    await page.getByRole("menuitem", { name: "Move rejects", exact: true }).click();
-    const rejects = page.getByRole("dialog", { name: "Move rejects to trash" });
+    await page.getByRole("menuitem", { name: "Trash rejected photos", exact: true }).click();
+    const rejects = page.getByRole("dialog", { name: "Trash rejected photos" });
     await expect(rejects.getByRole("button", { name: /^Move [1-9]\d* to trash$/ })).toBeVisible();
     await page.screenshot({ path: path.join(output, "web-photo-rejects.png") });
     await rejects.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
@@ -135,9 +135,7 @@ test("burst stacks in the library and in cull", async ({ page }) => {
     await capture(page, "web-photo-stacks.png");
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
-    await expect(
-      cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
-    ).toBeEnabled();
+    await expect(cull.getByRole("button", { name: "Keep current", exact: true })).toBeEnabled();
     await expect(cull.locator(".photo-stage img")).toBeVisible();
     await page.screenshot({ path: path.join(output, "web-photo-cull-stack.png") });
   } finally {

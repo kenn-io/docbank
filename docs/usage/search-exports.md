@@ -18,22 +18,23 @@ or complete retained text, use [document export bundles](export-bundles.md).
 
 ## Create an export in the browser
 
-1. Open **Search exports** in the sidebar, or select documents on the displayed
+1. Open **Export → Search term report…**, or select documents on the displayed
    workspace or query-result page and choose **Report selected documents**.
-2. From the sidebar, choose all documents or import collections. A workspace
+2. Under **Options**, choose **All documents** or **Selected imports**. A workspace
    selection opens a fixed **Selected documents (N)** scope. It uses only those
    displayed versions, without adding other query matches or attachments.
    Select a processing profile when more than one is configured. Exporting uses
    existing text and does not start document processing.
 3. Add search expressions and an inclusive start and end date for each row.
    Choose **Simple** or **Advanced** [query syntax](searching.md).
-4. Choose the export timezone and coverage policy, then **Create export**.
+4. Adjust the report timezone and coverage under **Options** if needed, then
+   **Create report**.
 5. If dates need review, select **Review dates**, inspect the evidence, and
    give a reason for each choice. An interpreted date needs a date and source
    timezone. Select **Create reviewed revision**.
 6. Download `search-export.csv` or `search-export.zip` when counts are ready.
 
-**Recent exports** automatically keeps the latest 100 requests and compact
+**Recent reports** automatically keeps the latest 100 requests and compact
 outcomes in the vault. **Use as draft** copies the request without its old date
 choices. Selected-document drafts keep their version identities, even if the
 workspace refreshes. A new run checks those versions again. If any changed or
