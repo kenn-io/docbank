@@ -6,23 +6,14 @@ variable "BUILD_DATE" { default = "" }
 variable "OCI_OUTPUT_DIR" { default = "./dist" }
 
 target "oci" {
-  name = "oci-${platform.architecture}"
+  name = "oci-${arch}"
   matrix = {
-    platform = [
-      {
-        os           = "linux"
-        architecture = "amd64"
-      },
-      {
-        os           = "linux"
-        architecture = "arm64"
-      },
-    ]
+    arch = ["amd64", "arm64"]
   }
 
   context    = "."
   dockerfile = "Dockerfile"
-  platforms  = ["${platform.os}/${platform.architecture}"]
+  platforms  = ["linux/${arch}"]
 
   args = {
     VERSION = VERSION
@@ -42,7 +33,7 @@ target "oci" {
 
   output = [{
     type             = "oci"
-    dest             = "${OCI_OUTPUT_DIR}/${platform.architecture}.oci.tar"
+    dest             = "${OCI_OUTPUT_DIR}/${arch}.oci.tar"
     "oci-mediatypes" = true
   }]
 }

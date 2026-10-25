@@ -13,6 +13,7 @@ internal/web/dist/*
 !internal/web/dist/.keep
 
 # docs build
+/dist/
 **/__pycache__/
 /.cache/docs-assets/
 /site/

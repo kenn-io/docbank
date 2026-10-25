@@ -12,6 +12,23 @@ amd64. The repository does not publish an image.
 The image selects `0.0.0.0:8485`. Supply an explicit API key or startup fails.
 The ordinary binary still defaults to loopback with an ephemeral key.
 
+## Export OCI archives
+
+To export local Linux amd64 and arm64 OCI archives from the stock Dockerfile,
+use a builder that supports both target architectures:
+
+```bash
+docker buildx bake oci
+```
+
+The command writes `dist/amd64.oci.tar` and `dist/arm64.oci.tar`. Set
+`OCI_OUTPUT_DIR` to choose another output directory. `VERSION` and `COMMIT`
+stamp the binary; `OCI_VERSION`, `REVISION`, and `BUILD_DATE` set the OCI
+version, source revision, and creation labels. These local archives are build
+outputs, not registry pushes. Release publication remains with the central
+distribution pipeline, and this repository does not currently publish a public
+Docbank image.
+
 ## Choose the network boundary
 
 A non-loopback bind is an operator opt-in to sending the API key and vault
