@@ -301,9 +301,9 @@ file is configured.
 
 Docling and Mistral processing can open encrypted PDFs using `[media].pdf_passwords_file` from [configuration](../configuration.md). Put one password per line in that owner-only file. LF and CRLF line endings work; blank lines are ignored, and spaces belong to the password. The file must be UTF-8 without a byte-order mark and may contain up to 16 KiB and 128 passwords.
 
-Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. When no password opens the PDF, or no password file is configured, the browser drawer shows "pdf password required" as the reason and disables Run. CLI and API builds create a job that ends `failed` with `pdf_password_required`. Read it with `docbank processing status <job-id>`.
+Docbank decrypts a copy in memory before sending it to the provider. The archived original stays encrypted and unchanged. When no password opens the PDF, or no password file is configured, the browser drawer shows "pdf password required" as the reason and disables Run. CLI and API builds create a job that ends `failed` with `pdf_password_required`. The CLI says "no configured PDF password opens this PDF" and points to `media.pdf_passwords_file`. Read the job with `docbank processing status <job-id>`.
 
-Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. If the file can't be read, planning or building a locked PDF reports the error, and queued jobs retry until the file is fixed. Plain PDFs and audio keep processing.
+Add a working password to the file, then build again. The daemon reads the file for each locked-PDF inspection, so editing passwords needs no restart. Restart once when first configuring the file path. If the file can't be read, planning or building a locked PDF returns `rendition_operator_required` with "PDF passwords file can't be read; check media.pdf_passwords_file", without the file's path. Queued jobs retry until the file is fixed. Plain PDFs and audio keep processing.
 
 ### Design choices
 

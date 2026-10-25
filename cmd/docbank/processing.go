@@ -356,7 +356,7 @@ func canonicalSHA256(value string) bool {
 }
 
 func init() {
-	processingCmd.AddCommand(newProcessingCoverageCommand(), newProcessingVisionFingerprintsCommand())
+	processingCmd.AddCommand(newProcessingProbeCommand(), newProcessingCoverageCommand(), newProcessingVisionFingerprintsCommand())
 	processingProfilesCmd.Flags().BoolVar(&processingProfilesJSON, "json", false, "print JSON to stdout")
 	processingPlanCmd.Flags().StringVar(&processingPlanProfile, "profile", "", "named executable processing profile")
 	processingPlanCmd.Flags().BoolVar(&processingPlanJSON, "json", false, "print JSON to stdout")

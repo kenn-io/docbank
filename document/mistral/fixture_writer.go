@@ -108,7 +108,7 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf(
-			"fixture matrix remains incomplete: supply synthetic native seeds named %s through FixtureOptions.SeedDirectory",
+			"fixture matrix remains incomplete: supply synthetic native seeds named %s",
 			strings.Join(missing, ", "),
 		)
 	}

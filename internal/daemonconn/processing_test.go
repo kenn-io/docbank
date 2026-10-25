@@ -228,21 +228,22 @@ func TestProcessingClientPreservesRenditionOutcomes(t *testing.T) {
 
 func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testing.T) {
 	for _, test := range []struct {
-		state string
-		code  string
-		want  error
+		state       string
+		code        string
+		want        error
+		wantMessage string
 	}{
-		{"failed", "provider_unavailable", nil},
-		{"failed", "authorization", nil},
-		{"failed", "invalid_response", nil},
-		{"failed", "input_rejected", nil},
-		{"failed", "stale_authority", nil},
-		{"abandoned", "stale_authority", nil},
-		{"failed", "rendition_failed", store.ErrRenditionJobTerminal},
-		{"failed", "pdf_password_required", store.ErrRenditionJobTerminal},
-		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired},
-		{"failed", "processing_consent_expired", daemonconn.ErrProcessingConsent},
-		{"partial", "authorization", nil},
+		{"failed", "provider_unavailable", nil, ""},
+		{"failed", "authorization", nil, ""},
+		{"failed", "invalid_response", nil, ""},
+		{"failed", "input_rejected", nil, ""},
+		{"failed", "stale_authority", nil, ""},
+		{"abandoned", "stale_authority", nil, ""},
+		{"failed", "rendition_failed", store.ErrRenditionJobTerminal, ""},
+		{"failed", "pdf_password_required", store.ErrRenditionJobTerminal, "no configured PDF password opens this PDF; add its password to media.pdf_passwords_file and build again"},
+		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired, ""},
+		{"failed", "processing_consent_expired", daemonconn.ErrProcessingConsent, ""},
+		{"partial", "authorization", nil, ""},
 	} {
 		t.Run(test.state+"/"+test.code, func(t *testing.T) {
 			job := api.ProcessingJob{ContentVersionID: processingStreamVersionID, ProfileFingerprint: processingStreamProfile, ID: strings.Repeat("a", 64)}
@@ -267,6 +268,9 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 				}
 				if test.want != nil {
 					require.ErrorIs(t, err, test.want)
+				}
+				if test.wantMessage != "" {
+					require.ErrorContains(t, err, test.wantMessage)
 				}
 			}
 			assert.Equal(t, job.ID, got.ID)
