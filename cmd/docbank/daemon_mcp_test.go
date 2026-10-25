@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	docmcp "go.kenn.io/docbank/internal/mcp"
+	"go.kenn.io/kit/safefileio"
 )
 
 func daemonMCPEnvironment(t *testing.T) string {
@@ -155,7 +157,7 @@ func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
 
 func TestDaemonMCPHTTPListenFlagOverridesEnvironmentAndTOML(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
-		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
 			root := daemonMCPEnvironment(t)
 			require.NotNil(t, daemonRunCmd.Flags().Lookup("mcp-http-listen"))
 			if explicit {
@@ -170,7 +172,7 @@ func TestDaemonMCPHTTPListenFlagOverridesEnvironmentAndTOML(t *testing.T) {
 				cmd.Flags().String("mcp-http-listen", "", "")
 				if explicit {
 					if err := cmd.Flags().Parse([]string{"--mcp-http-listen="}); err != nil {
-						return err
+						return fmt.Errorf("parsing daemon MCP flags: %w", err)
 					}
 				}
 				return daemonRunCmd.RunE(cmd, nil)
@@ -185,23 +187,23 @@ func TestDaemonMCPHTTPListenFlagOverridesEnvironmentAndTOML(t *testing.T) {
 func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	apiHTTP := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })}
+	apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })}
 	mcpListener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	started, release := make(chan struct{}), make(chan struct{})
 	releaseRead := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(releaseRead)
-	mcpHTTP := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mcpHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-release
 		request, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://"+apiListener.Addr().String(), nil)
 		if requestErr != nil {
-			http.Error(w, "request failed", 500)
+			http.Error(w, "request failed", http.StatusInternalServerError)
 			return
 		}
 		response, requestErr := http.DefaultClient.Do(request)
 		if requestErr != nil {
-			http.Error(w, "API unavailable", 500)
+			http.Error(w, "API unavailable", http.StatusInternalServerError)
 			return
 		}
 		defer func() { _ = response.Body.Close() }()
@@ -244,7 +246,7 @@ func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	started, canceled := make(chan struct{}), make(chan struct{})
-	server := &http.Server{Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-r.Context().Done()
 		close(canceled)
@@ -253,7 +255,7 @@ func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 	stop, done := make(chan struct{}), make(chan error, 1)
 	go func() {
 		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{"MCP HTTP", server, listener}}, server,
-			func(ctx context.Context) error { return ctx.Err() })
+			func(context.Context) error { return nil })
 	}()
 	requestDone := make(chan struct{})
 	go func() {
@@ -276,22 +278,31 @@ func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
 	require.NoError(t, listener.Close())
 	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	mcpHTTP, apiHTTP := &http.Server{}, &http.Server{}
+	t.Cleanup(func() { _ = apiListener.Close() })
+	mcpHTTP, apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second}, &http.Server{ReadHeaderTimeout: 10 * time.Second}
 	err = serveDaemonHTTP(t.Context(), nil,
 		[]servingHTTP{{"API", apiHTTP, apiListener}, {"MCP HTTP", mcpHTTP, listener}}, mcpHTTP,
 		func(context.Context) error { return nil })
 	require.ErrorIs(t, err, net.ErrClosed)
 	require.ErrorContains(t, err, "daemon MCP HTTP server")
-	rebound, err := net.Listen("tcp", apiListener.Addr().String())
-	require.NoError(t, err)
-	require.NoError(t, rebound.Close())
+	// Shutdown can precede the API goroutine's entry into Serve.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		rebound, bindErr := net.Listen("tcp", apiListener.Addr().String())
+		if assert.NoError(c, bindErr) {
+			assert.NoError(c, rebound.Close())
+		}
+	}, daemonShutdownTimeout, 10*time.Millisecond)
 }
 
 func TestDaemonMCPHTTPListenFlagSelectsMountedBinding(t *testing.T) {
 	root := daemonMCPEnvironment(t)
 	address := unusedMCPAddress(t)
 	secret := filepath.Join(root, "mcp-bearer")
-	require.NoError(t, os.WriteFile(secret, []byte("synthetic-mounted-bearer\n"), 0o600))
+	file, err := safefileio.CreatePrivateFile(secret)
+	require.NoError(t, err)
+	_, err = file.WriteString("synthetic-mounted-bearer\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
 	t.Setenv("SYNTHETIC_MCP_BEARER_FILE", secret)
 	t.Setenv("SYNTHETIC_MCP_BEARER", "")
 	t.Setenv("DOCBANK_MCP_HTTP_LISTEN", "invalid-env-listen")
@@ -306,7 +317,7 @@ environment_variable = "SYNTHETIC_MCP_BEARER"
 		cmd.SetContext(ctx)
 		cmd.Flags().String("mcp-http-listen", "", "")
 		if err := cmd.Flags().Parse([]string{"--mcp-http-listen=" + address}); err != nil {
-			return err
+			return fmt.Errorf("parsing daemon MCP flags: %w", err)
 		}
 		return daemonRunCmd.RunE(cmd, nil)
 	})

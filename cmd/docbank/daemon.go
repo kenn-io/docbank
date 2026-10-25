@@ -64,7 +64,7 @@ var daemonRunCmd = &cobra.Command{
 		if cmd.Flags().Changed("mcp-http-listen") {
 			listen, err := cmd.Flags().GetString("mcp-http-listen")
 			if err != nil {
-				return err
+				return fmt.Errorf("reading --mcp-http-listen: %w", err)
 			}
 			listenOverride = &listen
 		}
