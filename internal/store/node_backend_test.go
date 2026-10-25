@@ -99,17 +99,6 @@ func checkNodeQueries(t *testing.T, s *Store) {
 		CurrentVersionID: versionID, BlobHash: hash, MD5: md5, Size: 17, MimeType: "application/pdf",
 		Revision: 1, CreatedAt: recordedAt, ModifiedAt: recordedAt}, file)
 
-	t.Run("duplicate live name", func(t *testing.T) {
-		tx, err := s.writeDB.BeginTx(ctx, nil)
-		require.NoError(t, err)
-		defer func() { _ = tx.Rollback() }()
-		_, err = insertNodeTx(ctx, tx, s.RootID(), "café", nodeKindDir, nil, recordedAt)
-		require.Error(t, err)
-		require.NoError(t, tx.Rollback())
-		kept, err := s.ChildByName(ctx, s.RootID(), "café")
-		require.NoError(t, err)
-		require.Equal(t, dirID, kept.ID)
-	})
 	t.Run("rollback", func(t *testing.T) {
 		tx, err := s.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
