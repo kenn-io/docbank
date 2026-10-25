@@ -24,9 +24,6 @@ var photoUnwatchedTables = map[string][]string{
 	},
 }
 
-// photoRenditionJobsUpdate keeps lease renewals and claims from signalling; Photos shows only these columns.
-const photoRenditionJobsUpdate = "OLD.state IS NOT NEW.state OR OLD.phase IS NOT NEW.phase OR OLD.failure_code IS NOT NEW.failure_code"
-
 // The triggers use UPSERT because an outer statement's conflict policy, such as OR REPLACE, overrides OR IGNORE in a trigger body.
 const photoTriggerPrefix = "photo_dirty_"
 
@@ -140,12 +137,8 @@ func (f *photoEventFeed) installPhotoCapture(ctx context.Context, tx *sql.Tx) er
 	f.installed.Store(true)
 	for _, table := range tables {
 		for _, op := range []struct{ suffix, action string }{{"ins", "INSERT"}, {"upd", "UPDATE"}, {"del", "DELETE"}} {
-			when := ""
-			if table == "rendition_jobs" && op.action == "UPDATE" {
-				when = " WHEN " + photoRenditionJobsUpdate
-			}
 			name := photoTriggerPrefix + table + "_" + op.suffix
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`CREATE TEMP TRIGGER "%s" AFTER %s ON main."%s"%s BEGIN INSERT INTO photo_dirty VALUES(1) ON CONFLICT DO NOTHING; END`, name, op.action, table, when)); err != nil {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`CREATE TEMP TRIGGER "%s" AFTER %s ON main."%s" BEGIN INSERT INTO photo_dirty VALUES(1) ON CONFLICT DO NOTHING; END`, name, op.action, table)); err != nil {
 				return fmt.Errorf("installing %s: %w", name, err)
 			}
 		}

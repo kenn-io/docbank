@@ -535,8 +535,8 @@ touches: job queues and attempt logs, leases, and `storage_operations*`. The rul
 is what Photos reads, not who writes: a document build that moves search or
 duplicate state still signals. A table nobody has listed signals too, so a missed
 table costs one extra refresh instead of a stale view. `rendition_jobs` signals
-only when its state, phase, or failure code changes. A test checks that every
-unwatched table exists in the schema.
+on every write, including a claim heartbeat, because its update time ranks
+coverage results. A test checks that every unwatched table exists in the schema.
 
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited
